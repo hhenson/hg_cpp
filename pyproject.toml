@@ -1,0 +1,57 @@
+[build-system]
+requires = ["scikit-build-core", "nanobind >= 2.2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "hg_cpp"
+version = "0.0.1"
+dependencies = [
+    "hgraph>=0.3.35",
+]
+requires-python = ">=3.12"
+authors = [
+    { name = "Howard Henson", email = "howard@henson.me.uk" },
+]
+maintainers = [
+]
+description = "A C++ performance runtime engine for HGraph"
+readme = "README.md"
+license = { file = "LICENSE" }
+keywords = [
+    "reactive", "graph", "fpg", "forward propogating graph", "time series", "functional reactive programming",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[project.urls]
+Homepage = "https://github.com/hhenson/hg_cpp"
+Repository = "https://github.com/hhenson/hg_cpp.git"
+
+[tool.scikit-build]
+# Protect the configuration against future changes in scikit-build-core
+minimum-version = "0.4"
+
+# Setuptools-style build caching in a local directory
+build-dir = "build/{wheel_tag}"
+
+# Build stable ABI wheels for CPython 3.12+
+wheel.py-api = "cp312"
+
+[tool.cibuildwheel]
+# Necessary to see build output from the actual compilation
+build-verbosity = 1
+
+# Run pytest to ensure that the package was correctly built
+test-command = "pytest {project}/tests"
+test-requires = "pytest"
+
+# Don't test Python 3.8 wheels on macOS/arm64
+test-skip="cp38-macosx_*:arm64"
+
+# Needed for full C++17 support
+[tool.cibuildwheel.macos.environment]
+MACOSX_DEPLOYMENT_TARGET = "10.14"
