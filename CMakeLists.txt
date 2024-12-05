@@ -24,6 +24,8 @@ if (NOT SKBUILD)
   after editing C++ files.")
 endif()
 
+set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "conan_provider.cmake")
+
 set(CMAKE_CXX_STANDARD 23)
 
 if (UNIX)
