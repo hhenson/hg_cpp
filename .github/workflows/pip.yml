@@ -35,6 +35,7 @@ jobs:
         run: |
           uv tool install conan
           uv tool run conan profile detect --force
+          uv tool run conan install .
           uv sync
           uv build --wheel
 
