@@ -33,6 +33,8 @@ jobs:
 
       - name: Build and install
         run: |
+          uv tool install conan
+          uv tool run conan profile detect --force
           uv sync
           uv build --wheel
 
