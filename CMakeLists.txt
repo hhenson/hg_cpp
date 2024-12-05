@@ -26,12 +26,14 @@ endif (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 
 find_package(spdlog CONFIG REQUIRED)
 
-find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter Development)
+find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development)
 include_directories(${Python3_INCLUDE_DIRS})
 link_libraries(${Python3_LIBRARIES})
 
-find_package(pybind11 CONFIG)
-
+execute_process(
+        COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+        OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT)
+find_package(nanobind CONFIG REQUIRED)
 
 find_package(Boost REQUIRED)
 find_package(Threads)

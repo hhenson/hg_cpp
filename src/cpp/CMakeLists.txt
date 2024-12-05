@@ -8,6 +8,9 @@ set(HGRAPH_SOURCES
 
 add_definitions(-Dhgraph_EXPORTS)
 
-pybind11_add_module(${PROJECT_NAME} SHARED ${HGRAPH_SOURCES} ${HGRAPH_INCLUDES})
+nanobind_add_module(${PROJECT_NAME} NB_SHARED ${HGRAPH_SOURCES} ${HGRAPH_INCLUDES})
 
-target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads spdlog::spdlog spdlog::spdlog_header_only Python3::Python)
+target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads spdlog::spdlog spdlog::spdlog_header_only Python::Python)
+
+# Install directive for scikit-build-core
+install(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION ${PROJECT_NAME})
