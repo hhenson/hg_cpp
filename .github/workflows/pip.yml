@@ -16,9 +16,27 @@ jobs:
       matrix:
         platform: [windows-latest, macos-latest, ubuntu-latest]
         python-version: ["3.12"]
+        include:
+          - platform: windows-latest
+            compiler: "msvc"
+          - platform: macos-latest
+            compiler: "llvm"
+          - platform: ubuntu-latest
+            compiler: "gcc"
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Cpp
+        uses: aminya/setup-cpp@v1
+        with:
+          compiler: ${{ matrix.compiler }}
+          vcvarsall: ${{ contains(matrix.platform, 'windows-latest') }}
+          cmake: true
+          ninja: true
+          vcpkg: true
+          cppcheck: true
+          clang-tidy: true
 
       - uses: astral-sh/setup-uv@v4
         with:
