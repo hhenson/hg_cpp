@@ -20,12 +20,18 @@ jobs:
           - platform: windows-latest
             compiler: "msvc"
           - platform: macos-latest
-            compiler: "llvm"
+            compiler: "apple-clang"
           - platform: ubuntu-latest
             compiler: "gcc"
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-suffix: "optional-suffix"
+          python-version: ${{ matrix.python-version }}
 
       - name: Setup Cpp
         uses: aminya/setup-cpp@v1
@@ -34,15 +40,9 @@ jobs:
           vcvarsall: ${{ contains(matrix.platform, 'windows-latest') }}
           cmake: true
           ninja: true
-          vcpkg: true
+          conan: true
           cppcheck: true
           clang-tidy: true
-
-      - uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-          cache-suffix: "optional-suffix"
-          python-version: ${{ matrix.python-version }}
 
       - name: Set min macOS version
         if: runner.os == 'macOS'
