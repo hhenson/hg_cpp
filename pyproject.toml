@@ -44,6 +44,8 @@ build-dir = "build/{wheel_tag}"
 # Build stable ABI wheels for CPython 3.12+
 wheel.py-api = "cp312"
 
+cmake.define = { CMAKE_PROJECT_TOP_LEVEL_INCLUDES="conan_provider.cmake" }
+
 [tool.cibuildwheel]
 # Necessary to see build output from the actual compilation
 build-verbosity = 1

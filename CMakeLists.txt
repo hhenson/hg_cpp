@@ -24,12 +24,10 @@ if (NOT SKBUILD)
   after editing C++ files.")
 endif()
 
-set(CMAKE_PROJECT_TOP_LEVEL_INCLUDES "conan_provider.cmake")
-
-set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD 20)
 
 if (UNIX)
-    set(PYBIND11_CPP_STANDARD -std=c++23)
+    set(PYBIND11_CPP_STANDARD -std=c++20)
     set(CMAKE_CXX_FLAGS_RELEASE "-g -o3")
     set(CMAKE_CXX_FLAGS_DEBUG "-g -v -fsanitize=address")
     set(CMAKE_CXX_FLAGS "-Wall")
