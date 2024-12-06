@@ -15,15 +15,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        compilers: [gcc, clang, msvc]
         python-version: ["3.12"]
-        exclude:
+        include:
           - os: windows-latest
-            compilers: [gcc, clang]
+            compilers: [msvc]
           - os: macos-latest
-            compilers: [msvc, gcc]
+            compilers: [clang]
           - os: ubuntu-latest
-            compilers: [clang, msvc]
+            compilers: [gcc]
 
     steps:
       - uses: actions/checkout@v4
@@ -52,9 +51,9 @@ jobs:
 
       - name: Build and install
         run: |
-          uv tool install conan
-          uv tool run conan profile detect --force
-          uv tool run conan install .
+#          uv tool install conan
+#          uv tool run conan profile detect --force
+#          uv tool run conan install .
           uv sync
           uv build --wheel
 
