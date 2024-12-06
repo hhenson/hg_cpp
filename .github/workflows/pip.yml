@@ -10,19 +10,20 @@ on:
 jobs:
   build:
     name: Build with Pip
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        compilers: [gcc, clang, msvc]
         python-version: ["3.12"]
-        include:
-          - platform: windows-latest
-            compiler: "msvc"
-          - platform: macos-latest
-            compiler: "apple-clang"
-          - platform: ubuntu-latest
-            compiler: "gcc"
+        exclude:
+          - os: windows-latest
+            compilers: [gcc, clang]
+          - os: macos-latest
+            compilers: [msvc, gcc]
+          - os: ubuntu-latest
+            compilers: [clang, msvc]
 
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +38,7 @@ jobs:
         uses: aminya/setup-cpp@v1
         with:
           compiler: ${{ matrix.compiler }}
-          vcvarsall: ${{ contains(matrix.platform, 'windows-latest') }}
+          vcvarsall: ${{ contains(matrix.os, 'windows-latest') }}
           cmake: true
           ninja: true
           conan: true
