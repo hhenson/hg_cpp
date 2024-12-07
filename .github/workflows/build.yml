@@ -44,11 +44,12 @@ jobs:
           uv tool run conan install . --build=missing -s build_type=Release -pr default -s compiler.cppstd=20
 
       - name: Build Python Wheel with scikit-build-core
+        shell: bash
         run: |
           python -m pip install build scikit-build-core
           # On Windows, use 'set' instead of 'export' for environment variables.
           # Use conditional logic for environment variable handling:
-          if( "${{ matrix.os }}" = "windows-latest" ); then
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
             set CMAKE_ARGS=%CMAKE_ARGS%
             uv build --wheel
           else
@@ -57,6 +58,7 @@ jobs:
           fi
 
       - name: Test wheel
+        shell: bash
         run: |
           python -m pip install dist/*.whl
           # Run your tests here, for example:
