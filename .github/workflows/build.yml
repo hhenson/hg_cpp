@@ -46,7 +46,7 @@ jobs:
       - name: Build Python Wheel with scikit-build-core
         shell: bash
         run: |
-          uv pip install build scikit-build-core auditwheel
+          uv pip install build scikit-build-core
           # On Windows, use 'set' instead of 'export' for environment variables.
           # Use conditional logic for environment variable handling:
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
@@ -57,7 +57,8 @@ jobs:
             uv build --wheel
           fi
           if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            auditwheel repair dist/*.whl
+            uv tool install auditwheel
+            uv tool run auditwheel repair dist/*.whl
           fi
 
       - name: Test wheel
