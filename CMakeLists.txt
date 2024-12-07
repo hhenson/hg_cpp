@@ -53,11 +53,13 @@ find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development)
 include_directories(${Python3_INCLUDE_DIRS})
 link_libraries(${Python3_LIBRARIES})
 
+#find_package(tsl-robin-map CONFIG REQUIRED)
 execute_process(
         COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
         OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT)
 find_package(nanobind CONFIG REQUIRED)
-
+include_directories(${NB_DIR}/include)
+message(STATUS "Nanobind DIR: ${NB_DIR}/include")
 find_package(Boost REQUIRED)
 find_package(Threads)
 find_package(range-v3 CONFIG REQUIRED)

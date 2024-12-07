@@ -6,10 +6,10 @@
 #define HGRAPH_PYB_WIRING_H
 
 #include <hgraph/python/pyb.h>
-#include <pybind11/stl.h>
-#include <pybind11/chrono.h>
+// #include <nanobind/stl.h>
+#include <nanobind/stl/chrono.h>
 
-using namespace py::literals;
+using namespace nb::literals;
 
 
 #endif  // HGRAPH_PYB_WIRING_H
