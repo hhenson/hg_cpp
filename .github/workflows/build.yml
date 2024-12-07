@@ -1,0 +1,77 @@
+name: Build and Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # If you want to test multiple Python versions or compilers, you can also add them to the matrix.
+        # python-version: [3.12]
+        # C++ standards, etc. can also be included, but here we keep it simple.
+    runs-on: ${{ matrix.os }}
+    env:
+      # Common environment variables for all platforms.
+      PYTHON_VERSION: "3.12"
+      CMAKE_ARGS: "-DNB_USE_STABLE_ABI=ON -DCMAKE_CXX_STANDARD=20"
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies (pip, conan)
+        run: |
+          python -m pip install --upgrade pip
+          pip install conan
+
+      - name: Configure Conan Profile
+        shell: bash
+        run: |
+          conan profile new default --detect || true
+          # On Linux and macOS, you might specify libcxx.
+          # On Windows, you might specify the runtime differently.
+          # Use if conditions if you need platform-specific profiles:
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            conan profile update settings.compiler.libcxx=libstdc++11 default
+          fi
+          # For Windows with MSVC, you could add:
+          # if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          #   conan profile update settings.compiler.runtime=MD default
+          # fi
+
+      - name: Conan Install
+        run: |
+          conan install . --build=missing -s build_type=Release -pr default
+
+      - name: Build Python Wheel with scikit-build-core
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build scikit-build-core
+          # On Windows, use 'set' instead of 'export' for environment variables.
+          # Use conditional logic for environment variable handling:
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            set CMAKE_ARGS=%CMAKE_ARGS%
+            python -m build --wheel
+          else
+            export CMAKE_ARGS=$CMAKE_ARGS
+            python -m build --wheel
+          fi
+
+      - name: Test wheel
+        run: |
+          python -m pip install dist/*.whl
+          # Run your tests here, for example:
+          # pytest tests
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: wheels-${{ matrix.os }}
+          path: dist/*.whl
