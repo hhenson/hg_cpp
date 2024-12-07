@@ -8,7 +8,7 @@ set(HGRAPH_SOURCES
 
 add_definitions(-Dhgraph_EXPORTS)
 
-nanobind_add_module(${PROJECT_NAME} STABLE_ABI NB_SHARED ${HGRAPH_SOURCES} ${HGRAPH_INCLUDES})
+nanobind_add_module(${PROJECT_NAME} NB_SHARED ${HGRAPH_SOURCES} ${HGRAPH_INCLUDES})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads spdlog::spdlog Python::Python)
 
