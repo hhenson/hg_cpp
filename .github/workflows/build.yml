@@ -38,16 +38,6 @@ jobs:
         shell: bash
         run: |
           uv tool run conan profile detect
-          # On Linux and macOS, you might specify libcxx.
-          # On Windows, you might specify the runtime differently.
-          # Use if conditions if you need platform-specific profiles:
-          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-            uv tool run conan profile update settings.compiler.libcxx=libstdc++11 default
-          fi
-          # For Windows with MSVC, you could add:
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-           uv tool run conan profile update settings.compiler.runtime=MD default
-          fi
 
       - name: Conan Install
         run: |
