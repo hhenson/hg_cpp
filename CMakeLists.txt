@@ -60,7 +60,7 @@ execute_process(
 find_package(nanobind CONFIG REQUIRED)
 include_directories(${NB_DIR}/include)
 message(STATUS "Nanobind DIR: ${NB_DIR}/include")
-find_package(Boost REQUIRED)
+#find_package(Boost REQUIRED)
 find_package(Threads)
 find_package(range-v3 CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)

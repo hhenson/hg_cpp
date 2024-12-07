@@ -16,7 +16,7 @@ jobs:
     env:
       # Common environment variables for all platforms.
       PYTHON_VERSION: "3.12"
-      CMAKE_ARGS: "-DNB_USE_STABLE_ABI=ON -DCMAKE_CXX_STANDARD=20"
+      CMAKE_ARGS: "-DCMAKE_CXX_STANDARD=20"
 
     steps:
       - uses: actions/checkout@v2
@@ -32,7 +32,7 @@ jobs:
           uv venv
           uv tool install conan
           uv tool install pytest
-          uv pip install scikit-build-core
+          uv pip install scikit-build-core numpy
 
       - name: Configure Conan Profile
         shell: bash
