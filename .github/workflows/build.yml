@@ -48,7 +48,7 @@ jobs:
           python -m pip install build scikit-build-core
           # On Windows, use 'set' instead of 'export' for environment variables.
           # Use conditional logic for environment variable handling:
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          if( "${{ matrix.os }}" = "windows-latest" ); then
             set CMAKE_ARGS=%CMAKE_ARGS%
             uv build --wheel
           else
