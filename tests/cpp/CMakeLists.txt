@@ -13,7 +13,7 @@ add_executable(${PROJECT_NAME} ${HGRAPH_UNIT_TEST_SOURCES} ${HGRAPH_INCLUDES})
 
 
 target_link_libraries(${PROJECT_NAME} PRIVATE _hgraph Threads::Threads Catch2::Catch2 Catch2::Catch2WithMain
-        pybind11::embed fmt::fmt spdlog::spdlog spdlog::spdlog_header_only)
+        pybind11::embed fmt::fmt spdlog::spdlog)
 
 
 include(CTest)

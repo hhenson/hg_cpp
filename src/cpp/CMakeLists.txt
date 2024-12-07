@@ -10,7 +10,7 @@ add_definitions(-Dhgraph_EXPORTS)
 
 nanobind_add_module(${PROJECT_NAME} STABLE_ABI NB_SHARED ${HGRAPH_SOURCES} ${HGRAPH_INCLUDES})
 
-target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads spdlog::spdlog spdlog::spdlog_header_only Python::Python)
+target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads spdlog::spdlog Python::Python)
 
 # Install directive for scikit-build-core
 install(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION ${PROJECT_NAME})
