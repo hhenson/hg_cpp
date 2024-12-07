@@ -16,7 +16,7 @@ jobs:
     env:
       # Common environment variables for all platforms.
       PYTHON_VERSION: "3.12"
-      CMAKE_ARGS: "-DCMAKE_CXX_STANDARD=20"
+      CMAKE_ARGS: "-DNB_USE_STABLE_ABI=ON -DCMAKE_CXX_STANDARD=20"
 
     steps:
       - uses: actions/checkout@v2
