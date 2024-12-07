@@ -56,7 +56,7 @@ jobs:
             export CMAKE_ARGS=$CMAKE_ARGS
             uv build --wheel
           fi
-          if [ "${{ matrix.os }}" = "linux-latest" ]; then
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             auditwheel repair dist/*.whl
           fi
 
