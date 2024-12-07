@@ -64,12 +64,29 @@ jobs:
           # Run your tests here, for example:
           # pytest tests
 
-      - name: Publish package distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Upload Wheels as Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          skip-existing: true
-#      - name: Upload Artifact
-#        uses: actions/upload-artifact@v2
-#        with:
-#          name: wheels-${{ matrix.os }}
-#          path: dist/*.whl
+          name: wheels-${{ matrix.os }}
+          path: dist/*.whl
+
+    publish:
+      # Only run if build job succeeded for all OSes
+      needs: [ build ]
+      runs-on: ubuntu-latest
+      environment:
+        name: release
+      permissions:
+        # For PyPI's trusted publishing.
+        id-token: write
+      if: startsWith(github.ref, 'refs/tags/')
+      steps:
+        - name: "Install uv"
+          uses: astral-sh/setup-uv@v4
+        - uses: actions/download-artifact@v4
+          with:
+            pattern: wheels-*
+            path: wheels
+            merge-multiple: true
+        - name: Publish to PyPi
+          run: uv publish -v wheels/*
