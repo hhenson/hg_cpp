@@ -2,8 +2,8 @@ name: Build and Test
 
 on:
   push:
-    tags:
-      - 'v_*'
+#    tags:
+#      - 'v_*'
   pull_request:
 
 jobs:
