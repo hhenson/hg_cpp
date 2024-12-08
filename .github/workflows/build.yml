@@ -77,7 +77,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
-          path: dist/*.whl
+          path: dist/hg_cpp*
 
   publish:
     # Only run if build job succeeded for all OSes

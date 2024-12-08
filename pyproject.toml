@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "hg_cpp"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
     "hgraph>=0.3.35",
     "scikit-build-core",
