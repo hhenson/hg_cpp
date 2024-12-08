@@ -26,8 +26,9 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: C++",
 ]
 
 [project.urls]
