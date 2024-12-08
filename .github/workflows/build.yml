@@ -61,7 +61,7 @@ jobs:
             uv tool run auditwheel repair dist/*.whl --plat manylinux_2_35_x86_64 -w wheelhouse
             rm dist/*.whl
             mv wheelhouse/*.whl dist/
-            uv tool build --sdist
+            uv build --sdist
           fi
 
       - name: Test wheel
