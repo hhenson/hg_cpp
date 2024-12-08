@@ -58,7 +58,7 @@ jobs:
           fi
           if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             uv tool install auditwheel
-            uv tool run auditwheel repair dist/*.whl --plat manylinux2014_x86_64
+            uv tool run auditwheel repair dist/*.whl --plat manylinux_2_35_x86_64
           fi
 
       - name: Test wheel
