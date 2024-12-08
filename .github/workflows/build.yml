@@ -64,7 +64,7 @@ jobs:
             rm dist/*.whl
             mv wheelhouse/*.whl dist/
             uv build --sdist
-            ls build
+            ls -R build/*
           fi
 
       - name: Test wheel
