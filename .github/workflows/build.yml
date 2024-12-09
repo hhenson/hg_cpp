@@ -21,7 +21,7 @@ jobs:
       CMAKE_ARGS: "-DNB_USE_STABLE_ABI=ON -DCMAKE_CXX_STANDARD=20"
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v4
         with:
