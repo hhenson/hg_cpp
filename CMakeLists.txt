@@ -105,6 +105,9 @@ include_directories(include)
 
 set(HGRAPH_INCLUDES
 
+        include/hgraph/runtime/evaluation_context.h
+        include/hgraph/runtime/evaluation_engine.h
+
         include/hgraph/types/time_series_type.h
 
         include/hgraph/python/py_hgraph.h
