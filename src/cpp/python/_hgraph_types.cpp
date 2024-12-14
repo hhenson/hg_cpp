@@ -1,9 +1,11 @@
 
 #include <hgraph/python/pyb_wiring.h>
 
-void export_types(nb::module_ &m) {
-    // using namespace hgraph;
+#include <hgraph/types/time_series_type.h>
 
-    // node_type_enum_py_register(m);
-    // injectable_type_enum(m);
+void export_types(nb::module_ &m) {
+    using namespace hgraph;
+
+    TimeSeriesType::register_with_nanobind(m);
+
 }

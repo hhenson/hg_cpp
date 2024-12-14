@@ -4,6 +4,11 @@ set(HGRAPH_SOURCES
         python/_hgraph_graph.cpp
         python/_hgraph_module.cpp
         python/_hgraph_types.cpp
+        python/py_hgraph.cpp
+
+        types/time_series_type.cpp
+
+        util/lifecycle.cpp
         )
 
 add_definitions(-Dhgraph_EXPORTS)

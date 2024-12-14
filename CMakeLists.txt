@@ -105,13 +105,17 @@ include_directories(include)
 
 set(HGRAPH_INCLUDES
 
+        include/hgraph/types/time_series_type.h
 
+        include/hgraph/python/py_hgraph.h
         include/hgraph/python/pyb.h
         include/hgraph/python/pyb_wiring.h
 
         include/hgraph/util/date_time.h
         include/hgraph/util/lifecycle.h
         include/hgraph/util/reference_count_subscriber.h
+
+        include/hgraph/hgraph_export.h
 )
 
 list(TRANSFORM HGRAPH_INCLUDES PREPEND "${CMAKE_SOURCE_DIR}/")

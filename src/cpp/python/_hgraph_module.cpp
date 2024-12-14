@@ -9,11 +9,30 @@
  */
 
 #include <hgraph/python/pyb_wiring.h>
+#include <nanobind/intrusive/counter.h>
+#include <nanobind/intrusive/counter.inl>
 
-void export_types(nb::module_&);
+void export_types(nb::module_ &);
 
 NB_MODULE(_hgraph, m) {
     m.doc() = "The HGraph C++ runtime engine";
 
     export_types(m);
+
+    nb::intrusive_init(
+        [](PyObject *o) noexcept {
+            nb::gil_scoped_acquire guard;
+            Py_INCREF(o);
+        },
+        [](PyObject *o) noexcept {
+            nb::gil_scoped_acquire guard;
+            Py_DECREF(o);
+        });
 }
+
+/*
+ nb::class_<Object>(
+   m, "Object",
+   nb::intrusive_ptr<Object>(
+       [](Object *o, PyObject *po) noexcept { o->set_self_py(po); }));
+*/

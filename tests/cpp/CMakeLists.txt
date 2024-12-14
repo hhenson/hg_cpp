@@ -7,6 +7,7 @@ enable_testing()
 
 set(HGRAPH_UNIT_TEST_SOURCES
         ./test_hgraph.cpp
+        python/test_hgraph.cpp
 )
 
 add_executable(${PROJECT_NAME} ${HGRAPH_UNIT_TEST_SOURCES} ${HGRAPH_INCLUDES})

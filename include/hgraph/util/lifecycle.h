@@ -7,6 +7,8 @@
 
 #include<hgraph/hgraph_export.h>
 
+#include <nanobind/intrusive/counter.h>
+
 namespace hgraph {
     struct ComponentLifeCycle;
 
@@ -58,8 +60,12 @@ namespace hgraph {
      * NOTE: The start and stop life-cycle methods can be called numerous times during the life-time of the component.
      *       The code should ensure that it is able to start again cleanly after stop has be called. Stop is not dispose,
      *       full clean-up is called only on dispose.
+     *
+     * Since any life-cycle controlled component is likely to reasonably heavy weight, it seems reasonable to make them
+     * ref-counting as well. *** May change my mind about this, but for now seems reasonable ***
      */
-    struct HGRAPH_EXPORT ComponentLifeCycle {
+    struct HGRAPH_EXPORT ComponentLifeCycle : nanobind::intrusive_base   {
+
         virtual ~ComponentLifeCycle() = default;
 
         [[nodiscard]] bool is_initialised() const;
