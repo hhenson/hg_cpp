@@ -4,7 +4,6 @@ set(HGRAPH_SOURCES
         python/_hgraph_graph.cpp
         python/_hgraph_module.cpp
         python/_hgraph_types.cpp
-        python/py_hgraph.cpp
 
         runtime/evaluation_context.cpp
         runtime/evaluation_engine.cpp

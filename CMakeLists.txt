@@ -110,7 +110,6 @@ set(HGRAPH_INCLUDES
 
         include/hgraph/types/time_series_type.h
 
-        include/hgraph/python/py_hgraph.h
         include/hgraph/python/pyb.h
         include/hgraph/python/pyb_wiring.h
 

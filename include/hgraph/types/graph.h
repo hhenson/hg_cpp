@@ -6,6 +6,7 @@
 #define GRAPH_H
 
 #include<hgraph/util/lifecycle.h>
+#include<nanobind/intrusive/ref.h>
 #include<optional>
 #include<vector>
 
@@ -15,6 +16,9 @@ namespace hgraph {
     struct Node;
 
     struct HGRAPH_EXPORT Graph : ComponentLifeCycle {
+
+        using ptr = nanobind::ref<Graph>;
+
         Graph(std::vector<int64_t> graph_id_, std::vector<Node *> nodes_, std::optional<Node *> parent_node_,
               std::optional<std::string> label_);
 

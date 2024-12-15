@@ -5,10 +5,12 @@
 #ifndef TIME_SERIES_TYPE_H
 #define TIME_SERIES_TYPE_H
 
-#include <hgraph/python/py_hgraph.h>
+#include <hgraph/python/pyb.h>
 #include <hgraph/util/date_time.h>
 #include <hgraph/hgraph_export.h>
 #include <hgraph/util/reference_count_subscriber.h>
+#include <hgraph/types/node.h>
+#include <hgraph/types/graph.h>
 
 namespace hgraph
 {
@@ -71,7 +73,7 @@ namespace hgraph
 
     };
 
-    class TimeSeriesInput;
+    struct TimeSeriesInput;
 
     struct HGRAPH_EXPORT TimeSeriesOutput : TimeSeriesType
     {
@@ -79,15 +81,15 @@ namespace hgraph
 
         [[nodiscard]] Node::ptr owning_node() const override;
 
-        [[nodiscard]] TimeSeriesOutput::ptr parent_output() const;
+        [[nodiscard]] ptr parent_output() const;
 
         [[nodiscard]] bool has_parent_output() const;
 
         void re_parent(Node::ptr parent) override;
 
-        void re_parent(TimeSeriesOutput::ptr parent);
+        void re_parent(ptr parent);
 
-        virtual void can_apply_result(nb::object value);
+        virtual bool can_apply_result(nb::object value);
 
         virtual void apply_result(nb::object value) = 0;
 
@@ -125,7 +127,7 @@ namespace hgraph
     private:
         using OutputOrNode = std::variant<TimeSeriesOutput::ptr, Node::ptr>;
         std::optional<OutputOrNode> _parent_output_or_node{};
-        ReferenceCountSubscriber<Node::ptr> _subscribers{};
+        ReferenceCountSubscriber<Node*> _subscribers{};
         engine_time_t _last_modified_time{MIN_DT};
     };
 }  // namespace hgraph

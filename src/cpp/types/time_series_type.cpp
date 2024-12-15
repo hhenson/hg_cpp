@@ -18,7 +18,7 @@ namespace hgraph
             .def_prop_ro("valid", &TimeSeriesType::valid)
             .def_prop_ro("all_valid", &TimeSeriesType::all_valid)
             .def_prop_ro("last_modified_time", &TimeSeriesType::last_modified_time)
-            .def("re_parent", static_cast<void (TimeSeriesType::*)(Node)>(&TimeSeriesType::re_parent));
+            .def("re_parent", static_cast<void (TimeSeriesType::*)(Node::ptr)>(&TimeSeriesType::re_parent));
     }
 
     Graph::ptr TimeSeriesType::owning_graph() const { return owning_node()->owning_graph(); }
@@ -103,8 +103,10 @@ namespace hgraph
         _parent_output_or_node.emplace(parent);
     }
 
-    void TimeSeriesOutput::re_parent(TimeSeriesOutput::ptr parent) {
-        _parent_output_or_node.emplace(parent);
+    void TimeSeriesOutput::re_parent(TimeSeriesOutput::ptr parent) { _parent_output_or_node.emplace(parent); }
+
+    bool TimeSeriesOutput::can_apply_result(nb::object value) {
+        return not modified();
     }
 
     bool TimeSeriesOutput::modified() const {
@@ -126,13 +128,13 @@ namespace hgraph
     void TimeSeriesOutput::mark_invalid() {
         if(_last_modified_time > MIN_DT) {
             _last_modified_time = MIN_DT;
-            _notify(owning_graph()->evaluation_clock()->evaluation_time());
+            _notify(owning_graph()->evaluation_clock().evaluation_time());
         }
     }
 
     void TimeSeriesOutput::mark_modified() {
         if (_parent_output_or_node.has_value()) {
-            mark_modified(owning_graph()->evaluation_clock()->evaluation_time());
+            mark_modified(owning_graph()->evaluation_clock().evaluation_time());
         } else {
             mark_modified(MAX_ET);
         }
@@ -153,11 +155,11 @@ namespace hgraph
     }
 
     void TimeSeriesOutput::subscribe_node(Node::ptr node) {
-        _subscribers.subscribe(node);
+        _subscribers.subscribe(node.get());
     }
 
     void TimeSeriesOutput::un_subscribe_node(Node::ptr node) {
-        _subscribers.un_subscribe(node);
+        _subscribers.un_subscribe(node.get());
     }
 
     void TimeSeriesOutput::_notify(engine_time_t modfied_time) {
