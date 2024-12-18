@@ -54,7 +54,7 @@ namespace hgraph
 
     void injectable_type_enum(nb::module_ &m);
 
-    struct HGRAPH_EXPORT NodeSignature
+    struct HGRAPH_EXPORT NodeSignature : nanobind::intrusive_base
     {
         using ptr = nanobind::ref<NodeSignature>;
 
@@ -156,15 +156,15 @@ namespace hgraph
 
         const std::vector<int64_t> &node_id() const;
 
-        const NodeSignature::ptr &signature() const;
+        const NodeSignature &signature() const;
 
         const nb::dict &scalars() const;
 
-        Graph &graph() const;
+        Graph &graph();
 
         void set_graph(graph_ptr value);
 
-        TimeSeriesBundleInput &input() const;
+        TimeSeriesBundleInput &input();
 
         void set_input(nb::ref<TimeSeriesBundleInput> value);
 

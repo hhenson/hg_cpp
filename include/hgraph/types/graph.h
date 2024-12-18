@@ -26,7 +26,7 @@ namespace hgraph
         using ptr = nanobind::ref<Graph>;
 
         Graph(std::vector<int64_t> graph_id_, std::vector<node_ptr> nodes_, std::optional<node_ptr> parent_node_,
-              std::optional<std::string> label_);
+              std::optional<std::string> label_, traits_ptr traits_);
 
         [[nodiscard]] const std::vector<int64_t> &graph_id() const;
 
@@ -52,20 +52,21 @@ namespace hgraph
 
         std::vector<engine_time_t> &schedule();
 
-        void evaluation_graph();
+        void evaluate_graph();
 
         std::unique_ptr<Graph> copy_with(std::vector<node_ptr> nodes);
 
-        Traits &traits() const;
+        const Traits &traits() const;
 
       private:
         EvaluationEngine          *_evaluation_engine;
         int64_t                    _push_source_nodes_end;
         std::vector<int64_t>       _graph_id;
         std::vector<node_ptr>      _nodes;
+        std::vector<engine_time_t> _schedule;
         std::optional<node_ptr>    _parent_node;
         std::optional<std::string> _label;
-        std::optional<traits_ptr>  _traits;
+        traits_ptr                 _traits;
     };
 }  // namespace hgraph
 

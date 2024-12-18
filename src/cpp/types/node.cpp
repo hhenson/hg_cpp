@@ -150,15 +150,15 @@ namespace hgraph
 
     const std::vector<int64_t> &Node::node_id() const { return _node_id; }
 
-    const NodeSignature::ptr &Node::signature() const { return _signature; }
+    const NodeSignature &Node::signature() const { return *_signature; }
 
     const nb::dict &Node::scalars() const { return _scalars; }
 
-    Graph &Node::graph() const { return *_graph; }
+    Graph &Node::graph() { return *_graph; }
 
     void Node::set_graph(graph_ptr value) { _graph = value; }
 
-    TimeSeriesBundleInput &Node::input() const { return *_input; }
+    TimeSeriesBundleInput &Node::input() { return *_input; }
 
     void Node::set_input(nb::ref<TimeSeriesBundleInput> value) { _input = value; }
 

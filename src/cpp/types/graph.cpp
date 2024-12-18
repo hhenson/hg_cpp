@@ -3,62 +3,46 @@
 
 #include <utility>
 
-namespace hgraph {
-    /*
-    def __init__(self, graph_id: tuple[int, ...], nodes: Iterable[Node], parent_node: Node = None, label: str = None):
-        super().__init__()
-        self._graph_id: tuple[int, ...] = graph_id
-        self._nodes: list[Node] = nodes if type(nodes) is list else list(nodes)
-        self._schedule: list[datetime, ...] = [MIN_DT] * len(nodes)
-        self._evaluation_engine: EvaluationEngine | None = None
-        self._parent_node: Node = parent_node
-        self._label: str = label
-     */
+namespace hgraph
+{
 
-    Graph::Graph(
-        std::vector<int64_t> graph_id_,
-        std::vector<Node::ptr> nodes_, std::optional<Node::ptr> parent_node_,
-        std::optional<std::string> label_) : ComponentLifeCycle(),
-    _graph_id{std::move(graph_id_)},
-    _nodes{std::move(nodes_)},
-    _parent_node{std::move(parent_node_)},
-    _label{std::move(label_)}{
-        auto it{std::find_if(nodes_.begin(), nodes_.end(), [](const Node* v) {
-            return v->signature.node_type != NodeTypeEnum::PUSH_SOURCE_NODE;
-        })};
-        _push_source_nodes_end = std::distance(nodes.begin(), it);
+    Graph::Graph(std::vector<int64_t> graph_id_, std::vector<Node::ptr> nodes_, std::optional<Node::ptr> parent_node_,
+                 std::optional<std::string> label_, traits_ptr traits_)
+        : ComponentLifeCycle(), _graph_id{std::move(graph_id_)}, _nodes{std::move(nodes_)}, _parent_node{std::move(parent_node_)},
+          _label{std::move(label_)}, _traits{traits_} {
+        auto it{std::find_if(nodes_.begin(), nodes_.end(),
+                             [](const Node *v) { return v->signature().node_type != NodeTypeEnum::PUSH_SOURCE_NODE; })};
+        _push_source_nodes_end = std::distance(_nodes.begin(), it);
+        _schedule.resize(_nodes.size(), MIN_DT);
     }
+    const std::vector<int64_t>  &Graph::graph_id() const { return _graph_id; }
 
-    EvaluationEngineApi & Graph::evaluation_engine_api() const {
-        return *_evaluation_engine;
-    }
+    const std::vector<node_ptr> &Graph::nodes() const { return _nodes; }
 
-    EvaluationClock       &Graph::evaluation_clock() const { return _evaluation_engine->engine_evaluation_clock(); }
+    std::optional<node_ptr>    Graph::parent_node() const { return _parent_node; }
 
-    EngineEvaluationClock &Graph::evaluation_engine_clock() {return _evaluation_engine->engine_evaluation_clock(); }
+    std::optional<std::string> Graph::label() const {return _label; }
 
-    EvaluationEngine & Graph::evaluation_engine() const {
-        return *_evaluation_engine;
-    }
+    EvaluationEngineApi &Graph::evaluation_engine_api() const { return *_evaluation_engine; }
 
-    void Graph::set_evaluation_engine(EvaluationEngine::ptr value) {
-        _evaluation_engine = value;
-    }
+    EvaluationClock &Graph::evaluation_clock() const { return _evaluation_engine->engine_evaluation_clock(); }
 
-    int64_t Graph::push_source_nodes_end() const {
-        return _push_source_nodes_end;
-    }
+    EngineEvaluationClock &Graph::evaluation_engine_clock() { return _evaluation_engine->engine_evaluation_clock(); }
 
-    void Graph::schedule_node(int64_t node_ndx, engine_time_t when) {
-    }
+    EvaluationEngine &Graph::evaluation_engine() const { return *_evaluation_engine; }
 
-    std::vector<engine_time_t> & Graph::schedule() {
-    }
+    void Graph::set_evaluation_engine(EvaluationEngine::ptr value) { _evaluation_engine = value; }
 
-    void Graph::evaluation_graph() {
-    }
+    int64_t Graph::push_source_nodes_end() const { return _push_source_nodes_end; }
 
-    std::unique_ptr<Graph> Graph::copy_with(std::vector<Node *> nodes) {
-    }
+    void Graph::schedule_node(int64_t node_ndx, engine_time_t when) {}
 
-}
+    std::vector<engine_time_t> &Graph::schedule() { return _schedule; }
+
+    void Graph::evaluate_graph() {}
+
+    std::unique_ptr<Graph> Graph::copy_with(std::vector<Node::ptr> nodes) {}
+
+    const Traits &Graph::traits() const { return *_traits; }
+
+}  // namespace hgraph
