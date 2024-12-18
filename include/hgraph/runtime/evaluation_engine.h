@@ -146,24 +146,6 @@ namespace hgraph
         virtual void remove_life_cycle_observer(EvaluationLifeCycleObserver::s_ptr observer) = 0;
     };
 
-    struct EvaluationEngineClock : EvaluationClock
-    {
-        using ptr = nanobind::ref<EvaluationEngineClock>;
-
-        virtual void set_evaluation_time(engine_time_t value);
-
-        virtual engine_time_t next_scheduled_evalaution_time() = 0;
-
-        virtual void update_next_scheduled_evaluation_time(engine_time_t next_time) = 0;
-
-        virtual void advance_to_next_scheduled_time() = 0;
-
-        virtual void mark_push_node_requires_scheduling() = 0;
-
-        [[nodiscard]] virtual bool push_node_requires_scheduling() = 0;
-
-        virtual void reset_push_node_requires_scheduling() = 0;
-    };
 
     struct EvaluationEngineDelegate;
 

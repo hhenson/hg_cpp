@@ -17,12 +17,12 @@ namespace hgraph {
 
     Graph::Graph(
         std::vector<int64_t> graph_id_,
-        std::vector<Node *> nodes_, std::optional<Node *> parent_node_,
+        std::vector<Node::ptr> nodes_, std::optional<Node::ptr> parent_node_,
         std::optional<std::string> label_) : ComponentLifeCycle(),
-    graph_id{std::move(graph_id_)},
-    nodes{std::move(nodes_)},
-    parent_node{std::move(parent_node_)},
-    label{std::move(label_)}{
+    _graph_id{std::move(graph_id_)},
+    _nodes{std::move(nodes_)},
+    _parent_node{std::move(parent_node_)},
+    _label{std::move(label_)}{
         auto it{std::find_if(nodes_.begin(), nodes_.end(), [](const Node* v) {
             return v->signature.node_type != NodeTypeEnum::PUSH_SOURCE_NODE;
         })};
@@ -33,15 +33,15 @@ namespace hgraph {
         return *_evaluation_engine;
     }
 
-    EvaluationClock & Graph::evaluation_clock() const {
-        return _evaluation_engine->engine_evaluation_clock();
-    }
+    EvaluationClock       &Graph::evaluation_clock() const { return _evaluation_engine->engine_evaluation_clock(); }
+
+    EngineEvaluationClock &Graph::evaluation_engine_clock() {return _evaluation_engine->engine_evaluation_clock(); }
 
     EvaluationEngine & Graph::evaluation_engine() const {
         return *_evaluation_engine;
     }
 
-    void Graph::set_evaluation_engine(EvaluationEngine *value) {
+    void Graph::set_evaluation_engine(EvaluationEngine::ptr value) {
         _evaluation_engine = value;
     }
 

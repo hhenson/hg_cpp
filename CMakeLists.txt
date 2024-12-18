@@ -108,7 +108,10 @@ set(HGRAPH_INCLUDES
         include/hgraph/runtime/evaluation_context.h
         include/hgraph/runtime/evaluation_engine.h
 
+        include/hgraph/types/graph.h
+        include/hgraph/types/node.h
         include/hgraph/types/time_series_type.h
+        include/hgraph/types/traits.h
 
         include/hgraph/python/pyb.h
         include/hgraph/python/pyb_wiring.h
