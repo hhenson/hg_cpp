@@ -6,7 +6,7 @@
 #define LIFECYCLE_H
 
 #include<hgraph/hgraph_export.h>
-
+#include<hgraph/python/pyb.h>
 #include <nanobind/intrusive/counter.h>
 
 namespace hgraph {
@@ -20,25 +20,30 @@ namespace hgraph {
 
     void HGRAPH_EXPORT dispose_component(ComponentLifeCycle &component);
 
-    class StartTransitionGuard {
-        ComponentLifeCycle &component;
-        bool started;
+    struct TransitionGuard;
 
-    public:
-        StartTransitionGuard(ComponentLifeCycle &component_, bool started_);
-
-        ~StartTransitionGuard();
+    /**
+     * This will intialise the component in the constructor and dispose in the destructor.
+     * This is the closest equivalent to the Python Context Manager.
+     */
+    struct InitialiseDisposeContext {
+        InitialiseDisposeContext(ComponentLifeCycle &component);
+        ~InitialiseDisposeContext();
+    private:
+        ComponentLifeCycle& _component;
     };
 
-    class InitialiseTransitionGuard {
-        ComponentLifeCycle &component;
-        bool initialised;
-
-    public:
-        InitialiseTransitionGuard(ComponentLifeCycle &component_, bool initialised_);
-
-        ~InitialiseTransitionGuard();
+    /**
+     * This will start the component in the constructor and stop in the destructor.
+     * This is the closest equivalent to the Python Context Manager.
+     */
+    struct StartStopContext {
+        StartStopContext(ComponentLifeCycle &component);
+        ~StartStopContext();
+    private:
+        ComponentLifeCycle& _component;
     };
+
 
     /**
      * The Life-cycle and associated method calls are as follows:
@@ -68,15 +73,9 @@ namespace hgraph {
 
         virtual ~ComponentLifeCycle() = default;
 
-        [[nodiscard]] bool is_initialised() const;
-
-        [[nodiscard]] bool is_initialising() const;
-
-        [[nodiscard]] bool is_disposing() const;
-
         /**
          * The componented is started (true) or stopped (false).
-         * By default this is stopped.
+         * By default, this is stopped.
          */
         [[nodiscard]] bool is_started() const;
 
@@ -89,6 +88,8 @@ namespace hgraph {
          * The process is in the process of stopping.
          */
         [[nodiscard]] bool is_stopping() const;
+
+        static void register_with_nanobind(nb::module_ &m);
 
     protected:
         /**
@@ -128,14 +129,10 @@ namespace hgraph {
         virtual void dispose() = 0;
 
     private:
-        bool _initialised{false};
         bool _started{false};
-        bool _initialised_transitioning{false};
-        bool _started_transitioning{false};
+        bool _transitioning{false};
 
-        friend InitialiseTransitionGuard;
-
-        friend StartTransitionGuard;
+        friend TransitionGuard;
 
         friend void initialise_component(ComponentLifeCycle &component);
 

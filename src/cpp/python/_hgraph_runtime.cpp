@@ -5,7 +5,7 @@
 #include <hgraph/types/time_series_type.h>
 
 
-void export_graph_elements(nb::module_& m) {
+void export_runtime(nb::module_& m) {
     using namespace hgraph;
 
 }

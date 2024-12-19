@@ -6,6 +6,6 @@
 void export_types(nb::module_ &m) {
     using namespace hgraph;
 
-    TimeSeriesType::register_with_nanobind(m);
+    // TimeSeriesType::register_with_nanobind(m);
 
 }

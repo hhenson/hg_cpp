@@ -1,16 +1,17 @@
 project(_hgraph)
 
 set(HGRAPH_SOURCES
-        python/_hgraph_graph.cpp
+        python/_hgraph_runtime.cpp
         python/_hgraph_module.cpp
         python/_hgraph_types.cpp
+        python/_hgraph_utils.cpp
 
-        runtime/evaluation_context.cpp
-        runtime/evaluation_engine.cpp
-
-        types/graph.cpp
-        types/node.cpp
-        types/time_series_type.cpp
+#        runtime/evaluation_context.cpp
+#        runtime/evaluation_engine.cpp
+#
+#        types/graph.cpp
+#        types/node.cpp
+#        types/time_series_type.cpp
 
         util/lifecycle.cpp
         )

@@ -12,12 +12,16 @@
 #include <nanobind/intrusive/counter.h>
 #include <nanobind/intrusive/counter.inl>
 
+void export_runtime(nb::module_ &);
 void export_types(nb::module_ &);
+void export_utils(nb::module_ &);
 
 NB_MODULE(_hgraph, m) {
     m.doc() = "The HGraph C++ runtime engine";
 
+    export_utils(m);
     export_types(m);
+    export_runtime(m);
 
     nb::intrusive_init(
         [](PyObject *o) noexcept {
