@@ -107,6 +107,7 @@ set(HGRAPH_INCLUDES
 
         include/hgraph/runtime/evaluation_context.h
         include/hgraph/runtime/evaluation_engine.h
+        include/hgraph/runtime/graph_executor.h
 
         include/hgraph/types/graph.h
         include/hgraph/types/node.h

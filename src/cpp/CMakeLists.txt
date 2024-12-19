@@ -6,8 +6,9 @@ set(HGRAPH_SOURCES
         python/_hgraph_types.cpp
         python/_hgraph_utils.cpp
 
-#        runtime/evaluation_context.cpp
-#        runtime/evaluation_engine.cpp
+        runtime/evaluation_context.cpp
+        runtime/evaluation_engine.cpp
+        runtime/graph_executor.cpp
 #
 #        types/graph.cpp
 #        types/node.cpp

@@ -72,11 +72,11 @@ namespace hgraph
         _evaluation_engine->add_after_evalaution_notification(std::forward<std::function<void()>>(fn));
     }
 
-    void EvaluationEngineDelegate::add_life_cycle_observer(EvaluationLifeCycleObserver::s_ptr observer) {
+    void EvaluationEngineDelegate::add_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) {
         _evaluation_engine->add_life_cycle_observer(std::move(observer));
     }
 
-    void EvaluationEngineDelegate::remove_life_cycle_observer(EvaluationLifeCycleObserver::s_ptr observer) {
+    void EvaluationEngineDelegate::remove_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) {
         _evaluation_engine->remove_life_cycle_observer(std::move(observer));
     }
 
