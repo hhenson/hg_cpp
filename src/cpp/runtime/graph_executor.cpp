@@ -1,5 +1,6 @@
 #include <hgraph/runtime/graph_executor.h>
 #include <hgraph/types/graph.h>
+#include <hgraph/types/node.h>
 
 namespace hgraph
 {

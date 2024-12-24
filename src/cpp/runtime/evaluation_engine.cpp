@@ -1,5 +1,7 @@
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/runtime/evaluation_engine.h>
+#include <hgraph/types/graph.h>
+#include <hgraph/types/node.h>
 
 namespace hgraph
 {
@@ -223,8 +225,7 @@ namespace hgraph
     void BaseEvaluationClock::register_with_nanobind(nb::module_ &m) {
         nb::class_<BaseEvaluationClock, EngineEvaluationClock>(
             m, "BaseEvaluationClock",
-            nb::intrusive_ptr<BaseEvaluationClock>([](BaseEvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }))
-            .def(nb::init<engine_time_t>());
+            nb::intrusive_ptr<BaseEvaluationClock>([](BaseEvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }));
     }
 
     SimulationEvaluationClock::SimulationEvaluationClock(engine_time_t current_time)
