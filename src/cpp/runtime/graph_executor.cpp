@@ -72,6 +72,13 @@ namespace hgraph
         }
     }
 
+    void GraphExecutorImpl::register_with_nanobind(nb::module_ &m) {
+        nb::class_<GraphExecutorImpl, GraphExecutor>(m, "GraphExecutorImpl", nb::intrusive_ptr<GraphExecutorImpl>([](GraphExecutorImpl *o, PyObject *po) noexcept {
+                                      o->set_self_py(po);
+                                  }))
+            .def(nb::init<graph_ptr, EvaluationMode, std::vector<EvaluationLifeCycleObserver::ptr>>());
+    }
+
     void GraphExecutorImpl::_evaluate(EvaluationEngine &evaluationEngine) {
         evaluationEngine.notify_before_evaluation();
         _graph->evaluate_graph();

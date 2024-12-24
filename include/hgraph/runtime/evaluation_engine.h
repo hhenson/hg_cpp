@@ -11,19 +11,17 @@
 #include <set>
 #include <thread>
 
+#include <hgraph/runtime/graph_executor.h>
 #include <hgraph/util/date_time.h>
 #include <hgraph/util/lifecycle.h>
 #include <nanobind/intrusive/ref.h>
-#include <hgraph/runtime/graph_executor.h>
 
 namespace hgraph
 {
 
-    struct HGRAPH_EXPORT EvaluationClock
+    struct HGRAPH_EXPORT EvaluationClock : nb::intrusive_base
     {
         using ptr = nanobind::ref<EvaluationClock>;
-
-        virtual ~EvaluationClock() = default;
 
         [[nodiscard]] virtual engine_time_t evaluation_time() = 0;
 
@@ -32,6 +30,8 @@ namespace hgraph
         [[nodiscard]] virtual engine_time_t next_cycle_evaluation_time() = 0;
 
         [[nodiscard]] virtual engine_time_delta_t cycle_time() = 0;
+
+        static void register_with_nanobind(nb::module_ &m);
     };
 
     struct HGRAPH_EXPORT EngineEvaluationClock : EvaluationClock
@@ -51,11 +51,13 @@ namespace hgraph
         [[nodiscard]] virtual bool push_node_requires_scheduling() = 0;
 
         virtual void reset_push_node_requires_scheduling() = 0;
+
+        static void register_with_nanobind(nb::module_ &m);
     };
 
     struct HGRAPH_EXPORT EngineEvaluationClockDelegate : EngineEvaluationClock
     {
-        explicit EngineEvaluationClockDelegate(EngineEvaluationClock *clock);
+        explicit EngineEvaluationClockDelegate(EngineEvaluationClock::ptr clock);
 
         [[nodiscard]] engine_time_t evaluation_time() override;
 
@@ -79,8 +81,10 @@ namespace hgraph
 
         void reset_push_node_requires_scheduling() override;
 
+        static void register_with_nanobind(nb::module_ &m);
+
       private:
-        EngineEvaluationClock *_engine_evalaution_clock;
+        EngineEvaluationClock::ptr _engine_evalaution_clock;
     };
 
     struct Graph;
@@ -102,15 +106,16 @@ namespace hgraph
 
         virtual bool is_stop_requested() = 0;
 
-        virtual void add_before_evalaution_notification(std::function<void()> &&fn) = 0;
+        virtual void add_before_evaluation_notification(std::function<void()> &&fn) = 0;
 
-        virtual void add_after_evalaution_notification(std::function<void()> &&fn) = 0;
+        virtual void add_after_evaluation_notification(std::function<void()> &&fn) = 0;
 
         virtual void add_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) = 0;
 
         virtual void remove_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) = 0;
-    };
 
+        static void register_with_nanobind(nb::module_ &m);
+    };
 
     struct EvaluationEngineDelegate;
 
@@ -144,12 +149,14 @@ namespace hgraph
         virtual void notify_before_stop_graph(Graph &graph) = 0;
         virtual void notify_after_stop_graph(Graph &graph)  = 0;
 
+        static void register_with_nanobind(nb::module_ &m);
+
         friend EvaluationEngineDelegate;
     };
 
     struct HGRAPH_EXPORT EvaluationEngineDelegate : EvaluationEngine
     {
-        explicit EvaluationEngineDelegate(EvaluationEngine *api);
+        explicit EvaluationEngineDelegate(EvaluationEngine::ptr api);
 
         [[nodiscard]] EvaluationMode evaluation_mode() const override;
 
@@ -165,9 +172,9 @@ namespace hgraph
 
         bool is_stop_requested() override;
 
-        void add_before_evalaution_notification(std::function<void()> &&fn) override;
+        void add_before_evaluation_notification(std::function<void()> &&fn) override;
 
-        void add_after_evalaution_notification(std::function<void()> &&fn) override;
+        void add_after_evaluation_notification(std::function<void()> &&fn) override;
 
         void add_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) override;
 
@@ -203,6 +210,8 @@ namespace hgraph
 
         void notify_after_stop_graph(Graph &graph) override;
 
+        static void register_with_nanobind(nb::module_ &m);
+
       protected:
         void initialise() override;
 
@@ -213,7 +222,7 @@ namespace hgraph
         void dispose() override;
 
       private:
-        EvaluationEngine *_evaluation_engine;
+        EvaluationEngine::ptr _evaluation_engine;
     };
 
     struct BaseEvaluationClock : EngineEvaluationClock
@@ -224,6 +233,8 @@ namespace hgraph
         [[nodiscard]] engine_time_t next_cycle_evaluation_time() override;
         [[nodiscard]] engine_time_t next_scheduled_evaluation_time() override;
         void                        update_next_scheduled_evaluation_time(engine_time_t scheduled_time) override;
+
+        static void register_with_nanobind(nb::module_ &m);
 
       private:
         engine_time_t _evaluation_time;
@@ -242,6 +253,8 @@ namespace hgraph
         void                              mark_push_node_requires_scheduling() override;
         [[nodiscard]] bool                push_node_requires_scheduling() override;
         void                              reset_push_node_requires_scheduling() override;
+
+        static void register_with_nanobind(nb::module_ &m);
 
       private:
         engine_time_t _system_clock_at_start_of_evaluation;
@@ -268,6 +281,8 @@ namespace hgraph
         void set_alarm(engine_time_t alarm_time, const std::string &name, std::function<void(engine_time_t)> callback);
 
         void cancel_alarm(const std::string &name);
+
+        static void register_with_nanobind(nb::module_ &m);
 
       private:
         bool          _push_node_requires_scheduling;
@@ -299,8 +314,8 @@ namespace hgraph
         [[nodiscard]] EvaluationClock &evaluation_clock() override;
         void                           request_engine_stop() override;
         bool                           is_stop_requested() override;
-        void                           add_before_evalaution_notification(std::function<void()> &&fn) override;
-        void                           add_after_evalaution_notification(std::function<void()> &&fn) override;
+        void                           add_before_evaluation_notification(std::function<void()> &&fn) override;
+        void                           add_after_evaluation_notification(std::function<void()> &&fn) override;
         void                           add_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) override;
         void                           remove_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) override;
         EngineEvaluationClock         &engine_evaluation_clock() override;
@@ -319,13 +334,18 @@ namespace hgraph
         void                           notify_after_stop_node(Node &node) override;
         void                           notify_before_stop_graph(Graph &graph) override;
         void                           notify_after_stop_graph(Graph &graph) override;
-        ~EvaluationEngineImpl() override;
+
+        static void register_with_nanobind(nb::module_ &m);
 
       private:
-        EngineEvaluationClock::ptr _clock;
-        engine_time_t              _start_time;
-        engine_time_t              _end_time;
-        EvaluationMode             _run_mode;
+        EngineEvaluationClock::ptr                    _clock;
+        engine_time_t                                 _start_time;
+        engine_time_t                                 _end_time;
+        EvaluationMode                                _run_mode;
+        bool                                          _stop_requested{false};
+        std::vector<EvaluationLifeCycleObserver::ptr> _life_cycle_observers{};
+        std::vector<std::function<void()>>            _before_evaluation_notification{};
+        std::vector<std::function<void()>>            _after_evaluation_notification{};
     };
 }  // namespace hgraph
 

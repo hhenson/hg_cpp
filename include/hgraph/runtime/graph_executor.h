@@ -60,7 +60,6 @@ namespace hgraph
 
     struct HGRAPH_EXPORT GraphExecutor : nb::intrusive_base
     {
-        virtual ~GraphExecutor() = default;
 
         // Abstract methods.
         virtual EvaluationMode run_mode() const                                                    = 0;
@@ -79,6 +78,8 @@ namespace hgraph
         const Graph & graph() const override;
 
         void           run(const engine_time_t &start_time, const engine_time_t &end_time) override;
+
+        void static register_with_nanobind(nb::module_ &m);
 
     protected:
         void _evaluate(EvaluationEngine& evaluationEngine);

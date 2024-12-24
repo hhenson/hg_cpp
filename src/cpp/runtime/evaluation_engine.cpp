@@ -1,3 +1,4 @@
+#include <hgraph/python/pyb_wiring.h>
 #include <hgraph/runtime/evaluation_engine.h>
 
 namespace hgraph
@@ -8,7 +9,31 @@ namespace hgraph
         _next_scheduled_evaluation_time = MAX_DT;
     }
 
-    EngineEvaluationClockDelegate::EngineEvaluationClockDelegate(EngineEvaluationClock *clock) : _engine_evalaution_clock{clock} {}
+    void EvaluationClock::register_with_nanobind(nb::module_ &m) {
+        nb::class_<EvaluationClock>(
+            m, "EvaluationClock",
+            nb::intrusive_ptr<EvaluationClock>([](EvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def_prop_ro("evaluation_time", &EvaluationClock::evaluation_time)
+            .def_prop_ro("now", &EvaluationClock::now)
+            .def_prop_ro("next_cycle_evaluation_time", &EvaluationClock::next_cycle_evaluation_time)
+            .def_prop_ro("cycle_time", &EvaluationClock::cycle_time);
+    }
+
+    void EngineEvaluationClock::register_with_nanobind(nb::module_ &m) {
+        nb::class_<EngineEvaluationClock, EvaluationClock>(
+            m, "EngineEvaluationClock",
+            nb::intrusive_ptr<EngineEvaluationClock>([](EngineEvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def_prop_rw("evaluation_time", &EngineEvaluationClock::evaluation_time, &EngineEvaluationClock::set_evaluation_time)
+            .def_prop_ro("next_cycle_evaluation_time", &EngineEvaluationClock::next_cycle_evaluation_time)
+            .def("update_next_scheduled_evaluation_time", &EngineEvaluationClock::update_next_scheduled_evaluation_time, "et"_a)
+            .def("advance_to_next_scheduled_time", &EngineEvaluationClock::advance_to_next_scheduled_time)
+            .def("mark_push_node_requires_scheduling", &EngineEvaluationClock::mark_push_node_requires_scheduling)
+            .def_prop_ro("push_node_requires_scheduling", &EngineEvaluationClock::push_node_requires_scheduling)
+            .def("reset_push_node_requires_scheduling", &EngineEvaluationClock::reset_push_node_requires_scheduling);
+    }
+
+    EngineEvaluationClockDelegate::EngineEvaluationClockDelegate(EngineEvaluationClock::ptr clock)
+        : _engine_evalaution_clock{std::move(clock)} {}
 
     engine_time_t EngineEvaluationClockDelegate::evaluation_time() { return _engine_evalaution_clock->evaluation_time(); }
 
@@ -46,7 +71,51 @@ namespace hgraph
         _engine_evalaution_clock->reset_push_node_requires_scheduling();
     }
 
-    EvaluationEngineDelegate::EvaluationEngineDelegate(EvaluationEngine *api) : _evaluation_engine{api} {}
+    void EngineEvaluationClockDelegate::register_with_nanobind(nb::module_ &m) {
+        nb::class_<EngineEvaluationClockDelegate, EngineEvaluationClock>(
+            m, "EngineEvaluationClockDelegate",
+            nb::intrusive_ptr<EngineEvaluationClockDelegate>(
+                [](EngineEvaluationClockDelegate *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def(nb::init<EngineEvaluationClock::ptr>());
+    }
+
+    void EvaluationEngineApi::register_with_nanobind(nb::module_ &m) {
+        nb::class_<EvaluationEngineApi, ComponentLifeCycle>(
+            m, "EvaluationEngineApi",
+            nb::intrusive_ptr<EvaluationEngineApi>([](EvaluationEngineApi *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def_prop_ro("evaluation_mode", &EvaluationEngineApi::evaluation_mode)
+            .def_prop_ro("start_time", &EvaluationEngineApi::start_time)
+            .def_prop_ro("end_time", &EvaluationEngineApi::end_time)
+            .def_prop_ro("evaluation_clock", &EvaluationEngineApi::evaluation_clock)
+            .def("request_engine_stop", &EvaluationEngineApi::request_engine_stop)
+            .def_prop_ro("is_stop_requested", &EvaluationEngineApi::is_stop_requested)
+            .def("add_before_evaluation_notification", &EvaluationEngineApi::add_before_evaluation_notification, "fn"_a)
+            .def("add_after_evaluation_notification", &EvaluationEngineApi::add_after_evaluation_notification, "fn"_a)
+            .def("add_life_cycle_observer", &EvaluationEngineApi::add_life_cycle_observer, "observer"_a)
+            .def("remove_life_cycle_observer", &EvaluationEngineApi::remove_life_cycle_observer, "observer"_a);
+    }
+
+    void EvaluationEngine::register_with_nanobind(nb::module_ &m) {
+        nb::class_<EvaluationEngine, EvaluationEngineApi>(
+            m, "EvaluationEngine",
+            nb::intrusive_ptr<EvaluationEngine>([](EvaluationEngine *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def_prop_ro("engine_evaluation_clock", &EvaluationEngine::engine_evaluation_clock)
+            .def("advance_engine_time", &EvaluationEngine::advance_engine_time)
+            .def("notify_before_evaluation", &EvaluationEngine::notify_before_evaluation)
+            .def("notify_after_evaluation", &EvaluationEngine::notify_after_evaluation)
+            .def("notify_before_start_node", &EvaluationEngine::notify_before_start_node)
+            .def("notify_after_start_node", &EvaluationEngine::notify_after_start_node)
+            .def("notify_before_graph_evaluation", &EvaluationEngine::notify_before_graph_evaluation)
+            .def("notify_after_graph_evaluation", &EvaluationEngine::notify_after_graph_evaluation)
+            .def("notify_before_node_evaluation", &EvaluationEngine::notify_before_node_evaluation)
+            .def("notify_after_node_evaluation", &EvaluationEngine::notify_after_node_evaluation)
+            .def("notify_before_stop_node", &EvaluationEngine::notify_before_stop_node)
+            .def("notify_after_stop_node", &EvaluationEngine::notify_after_stop_node)
+            .def("notify_before_stop_graph", &EvaluationEngine::notify_before_stop_graph)
+            .def("notify_after_stop_graph", &EvaluationEngine::notify_after_stop_graph);
+    }
+
+    EvaluationEngineDelegate::EvaluationEngineDelegate(EvaluationEngine::ptr api) : _evaluation_engine{std::move(api)} {}
 
     EvaluationMode EvaluationEngineDelegate::evaluation_mode() const { return _evaluation_engine->evaluation_mode(); }
 
@@ -64,12 +133,12 @@ namespace hgraph
 
     bool EvaluationEngineDelegate::is_stop_requested() { return _evaluation_engine->is_stop_requested(); }
 
-    void EvaluationEngineDelegate::add_before_evalaution_notification(std::function<void()> &&fn) {
-        _evaluation_engine->add_before_evalaution_notification(std::forward<std::function<void()>>(fn));
+    void EvaluationEngineDelegate::add_before_evaluation_notification(std::function<void()> &&fn) {
+        _evaluation_engine->add_before_evaluation_notification(std::forward<std::function<void()>>(fn));
     }
 
-    void EvaluationEngineDelegate::add_after_evalaution_notification(std::function<void()> &&fn) {
-        _evaluation_engine->add_after_evalaution_notification(std::forward<std::function<void()>>(fn));
+    void EvaluationEngineDelegate::add_after_evaluation_notification(std::function<void()> &&fn) {
+        _evaluation_engine->add_after_evaluation_notification(std::forward<std::function<void()>>(fn));
     }
 
     void EvaluationEngineDelegate::add_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) {
@@ -118,6 +187,14 @@ namespace hgraph
 
     void EvaluationEngineDelegate::notify_after_stop_graph(Graph &graph) { _evaluation_engine->notify_after_stop_graph(graph); }
 
+    void EvaluationEngineDelegate::register_with_nanobind(nb::module_ &m) {
+        nb::class_<EvaluationEngineDelegate, EvaluationEngine>(
+            m, "EvaluationEngineDelegate",
+            nb::intrusive_ptr<EvaluationEngineDelegate>(
+                [](EvaluationEngineDelegate *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def(nb::init<EvaluationEngineDelegate::ptr>());
+    }
+
     void EvaluationEngineDelegate::initialise() { _evaluation_engine->initialise(); }
 
     void EvaluationEngineDelegate::start() { _evaluation_engine->start(); }
@@ -141,6 +218,13 @@ namespace hgraph
         }
         _next_scheduled_evaluation_time =
             std::max(next_cycle_evaluation_time(), std::min(_next_scheduled_evaluation_time, scheduled_time));
+    }
+
+    void BaseEvaluationClock::register_with_nanobind(nb::module_ &m) {
+        nb::class_<BaseEvaluationClock, EngineEvaluationClock>(
+            m, "BaseEvaluationClock",
+            nb::intrusive_ptr<BaseEvaluationClock>([](BaseEvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def(nb::init<engine_time_t>());
     }
 
     SimulationEvaluationClock::SimulationEvaluationClock(engine_time_t current_time)
@@ -167,6 +251,14 @@ namespace hgraph
 
     void SimulationEvaluationClock::reset_push_node_requires_scheduling() {
         throw std::runtime_error("Simulation mode does not support push nodes.");
+    }
+
+    void SimulationEvaluationClock::register_with_nanobind(nb::module_ &m) {
+        nb::class_<SimulationEvaluationClock, BaseEvaluationClock>(
+            m, "SimulationEvaluationClock",
+            nb::intrusive_ptr<SimulationEvaluationClock>(
+                [](SimulationEvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def(nb::init<engine_time_t>());
     }
 
     RealTimeEvaluationClock::RealTimeEvaluationClock(engine_time_t start_time)
@@ -223,9 +315,9 @@ namespace hgraph
 
             while (now < next_scheduled_time && !_push_node_requires_scheduling) {
                 auto sleep_time = (next_scheduled_time - now);
-                    _push_node_requires_scheduling_condition.wait_for(
-                        lock, std::min(sleep_time, duration_cast<engine_time_delta_t>(std::chrono::seconds(10))));
-                    now = engine_clock::now();
+                _push_node_requires_scheduling_condition.wait_for(
+                    lock, std::min(sleep_time, duration_cast<engine_time_delta_t>(std::chrono::seconds(10))));
+                now = engine_clock::now();
             }
         }
         set_evaluation_time(std::min(next_scheduled_time, std::max(next_cycle_evaluation_time(), now)));
@@ -270,6 +362,139 @@ namespace hgraph
                 ++it;
             }
         }
+    }
+
+    void RealTimeEvaluationClock::register_with_nanobind(nb::module_ &m) {
+        nb::class_<RealTimeEvaluationClock, BaseEvaluationClock>(
+            m, "RealTimeEvaluationClock",
+            nb::intrusive_ptr<RealTimeEvaluationClock>(
+                [](RealTimeEvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def(nb::init<engine_time_t>())
+            .def("set_alarm", &RealTimeEvaluationClock::set_alarm, "alarm_time"_a, "name"_a, "callback"_a)
+            .def("cancel_alarm", &RealTimeEvaluationClock::cancel_alarm, "name"_a);
+    }
+
+    EvaluationEngineImpl::EvaluationEngineImpl(EngineEvaluationClock::ptr clock, engine_time_t start_time, engine_time_t end_time,
+                                               EvaluationMode run_mode)
+        : _clock{std::move(clock)}, _start_time{start_time}, _end_time{end_time}, _run_mode{run_mode} {}
+
+    void EvaluationEngineImpl::initialise() {}
+
+    void EvaluationEngineImpl::start() {}
+
+    void EvaluationEngineImpl::stop() {}
+
+    void EvaluationEngineImpl::dispose() {}
+
+    EvaluationMode EvaluationEngineImpl::evaluation_mode() const { return _run_mode; }
+
+    engine_time_t EvaluationEngineImpl::start_time() const { return _start_time; }
+
+    engine_time_t EvaluationEngineImpl::end_time() const { return _end_time; }
+
+    EvaluationClock &EvaluationEngineImpl::evaluation_clock() { return *_clock; }
+
+    void EvaluationEngineImpl::request_engine_stop() { _stop_requested = true; }
+
+    bool EvaluationEngineImpl::is_stop_requested() { return _stop_requested; }
+
+    void EvaluationEngineImpl::add_before_evaluation_notification(std::function<void()> &&fn) {
+        _before_evaluation_notification.emplace_back(fn);
+    }
+
+    void EvaluationEngineImpl::add_after_evaluation_notification(std::function<void()> &&fn) {
+        _after_evaluation_notification.emplace_back(fn);
+    }
+
+    void EvaluationEngineImpl::add_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) {
+        _life_cycle_observers.emplace_back(std::move(observer));
+    }
+
+    void EvaluationEngineImpl::remove_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) {
+        auto it{std::find(_life_cycle_observers.begin(), _life_cycle_observers.end(), observer)};
+        if (it != _life_cycle_observers.end()) {
+            // Since order is not important, we can swap the observer to remove with the last observer and then pop it.
+            std::iter_swap(it, _life_cycle_observers.end() - 1);
+            _life_cycle_observers.pop_back();
+        }
+    }
+
+    EngineEvaluationClock &EvaluationEngineImpl::engine_evaluation_clock() { return *_clock; }
+
+    void EvaluationEngineImpl::advance_engine_time() {
+
+        if (_stop_requested) {
+            _clock->set_evaluation_time(_end_time + MIN_TD);
+            return;
+        }
+        // Ensure we don't run past the end time. So schedule to the end time + 1 tick.
+        _clock->update_next_scheduled_evaluation_time(_end_time + MIN_TD);
+
+        _clock->advance_to_next_scheduled_time();
+    }
+
+    void EvaluationEngineImpl::notify_before_evaluation() {
+        for (auto &notification_receiver : _before_evaluation_notification) { notification_receiver(); }
+        _before_evaluation_notification.clear();
+    }
+
+    void EvaluationEngineImpl::notify_after_evaluation() {
+        for (auto it = _after_evaluation_notification.rbegin(); it != _after_evaluation_notification.rend(); ++it) { (*it)(); }
+        _after_evaluation_notification.clear();
+    }
+
+    void EvaluationEngineImpl::notify_before_start_graph(Graph &graph) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_before_start_graph(graph); }
+    }
+
+    void EvaluationEngineImpl::notify_after_start_graph(Graph &graph) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_after_start_graph(graph); }
+    }
+
+    void EvaluationEngineImpl::notify_before_start_node(Node &node) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_before_start_node(node); }
+    }
+
+    void EvaluationEngineImpl::notify_after_start_node(Node &node) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_after_start_node(node); }
+    }
+    void EvaluationEngineImpl::notify_before_graph_evaluation(Graph &graph) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_before_graph_evaluation(graph); }
+    }
+
+    void EvaluationEngineImpl::notify_after_graph_evaluation(Graph &graph) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_after_graph_evaluation(graph); }
+    }
+
+    void EvaluationEngineImpl::notify_before_node_evaluation(Node &node) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_before_node_evaluation(node); }
+    }
+
+    void EvaluationEngineImpl::notify_after_node_evaluation(Node &node) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_after_node_evaluation(node); }
+    }
+
+    void EvaluationEngineImpl::notify_before_stop_node(Node &node) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_before_stop_node(node); }
+    }
+
+    void EvaluationEngineImpl::notify_after_stop_node(Node &node) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_after_stop_node(node); }
+    }
+
+    void EvaluationEngineImpl::notify_before_stop_graph(Graph &graph) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_before_start_graph(graph); }
+    }
+
+    void EvaluationEngineImpl::notify_after_stop_graph(Graph &graph) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_after_stop_graph(graph); }
+    }
+
+    void EvaluationEngineImpl::register_with_nanobind(nb::module_ &m) {
+        nb::class_<EvaluationEngineImpl, EvaluationEngine>(
+            m, "EvaluationEngineImpl",
+            nb::intrusive_ptr<EvaluationEngineImpl>([](EvaluationEngineImpl *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def(nb::init<EngineEvaluationClock::ptr, engine_time_t, engine_time_t, EvaluationMode>());
     }
 
 }  // namespace hgraph
