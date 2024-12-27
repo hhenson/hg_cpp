@@ -1,3 +1,5 @@
+#include <hgraph/types/time_series_type.h>
+
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
@@ -25,6 +27,24 @@ namespace hgraph
             .value("LOGGER", InjectableTypesEnum::LOGGER)
             .export_values();
     }
+    NodeSignature::NodeSignature(std::string name, NodeTypeEnum node_type, std::vector<std::string> args,
+                                 std::optional<std::unordered_map<std::string, nb::object>> time_series_inputs,
+                                 std::optional<nb::object>                                  time_series_output,
+                                 std::optional<std::unordered_map<std::string, nb::object>> scalars, nb::object src_location,
+                                 std::optional<std::unordered_set<std::string>> active_inputs,
+                                 std::optional<std::unordered_set<std::string>> valid_inputs,
+                                 std::optional<std::unordered_set<std::string>> all_valid_inputs,
+                                 std::optional<std::unordered_set<std::string>> context_inputs,
+                                 InjectableTypesEnum injectable_inputs, std::string wiring_path_name,
+                                 std::optional<std::string> label, std::optional<std::string> record_replay_id, bool capture_values,
+                                 bool capture_exception, char8_t trace_back_depth)
+        : name{std::move(name)}, node_type{node_type}, args{std::move(args)}, time_series_inputs{std::move(time_series_inputs)},
+          time_series_output{std::move(time_series_output)}, scalars{std::move(scalars)}, src_location{std::move(src_location)},
+          active_inputs{std::move(active_inputs)}, valid_inputs{std::move(valid_inputs)},
+          all_valid_inputs{std::move(all_valid_inputs)}, context_inputs{std::move(context_inputs)},
+          injectable_inputs{injectable_inputs}, wiring_path_name{std::move(wiring_path_name)}, label{std::move(label)},
+          record_replay_id{std::move(record_replay_id)}, capture_values{capture_values}, capture_exception{capture_exception},
+          trace_back_depth{trace_back_depth} {}
 
     [[nodiscard]] nb::object NodeSignature::get_arg_type(const std::string &arg) const {
         if (time_series_inputs && time_series_inputs->contains(arg)) { return time_series_inputs->at(arg); }
@@ -156,22 +176,50 @@ namespace hgraph
 
     Graph &Node::graph() { return *_graph; }
 
+    const Graph &Node::graph() const { return *_graph; }
+
     void Node::set_graph(graph_ptr value) { _graph = value; }
 
     TimeSeriesBundleInput &Node::input() { return *_input; }
 
-    void Node::set_input(nb::ref<TimeSeriesBundleInput> value) { _input = value; }
+    void Node::set_input(time_series_bundle_input_ptr value) { _input = value; }
 
-    nb::ref<TimeSeriesOutput> Node::output() const { return _output; }
+    TimeSeriesOutput &Node::output() { return *_output; }
 
-    void Node::set_output(nb::ref<TimeSeriesOutput> value) { _output = value; }
+    void Node::set_output(time_series_output_ptr value) { _output = value; }
 
-    nb::ref<TimeSeriesBundleOutput> Node::recordable_state() const { return _recordable_state; }
+    TimeSeriesBundleOutput &Node::recordable_state() { return *_recordable_state; }
 
     void Node::set_recordable_state(nb::ref<TimeSeriesBundleOutput> value) { _recordable_state = value; }
 
     std::optional<NodeScheduler> Node::scheduler() const { return _scheduler; }
 
-    nb::ref<TimeSeriesOutput> Node::error_output() const { return _error_output; }
+    TimeSeriesOutput &Node::error_output() { return *_error_output; }
+
+    void Node::set_error_output(time_series_output_ptr value) { _error_output = std::move(value); }
+
+    void PushQueueNode::eval() {}
+
+    void PushQueueNode::enqueue_message(std::any message) {
+        ++_messages_queued;
+        _receiver->enqueue({node_ndx(), std::move(message)});
+    }
+
+    bool PushQueueNode::apply_message(std::any message) {
+        if (_elide || output().can_apply_result(message)) {
+            output().apply_result(std::move(message));
+            return true;
+        }
+        return false;
+    }
+
+    int64_t PushQueueNode::messages_in_queue() const { return _messages_queued - _messages_dequeued; }
+
+    void PushQueueNode::set_receiver(sender_receiver_state_ptr value) { _receiver = value; }
+
+    void PushQueueNode::start() {
+        _receiver = &graph().receiver();
+        _elide    = scalars().contains("elide") ? nb::cast<bool>(scalars()["elide"]) : false;
+    }
 
 }  // namespace hgraph

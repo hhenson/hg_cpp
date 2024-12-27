@@ -29,10 +29,14 @@ namespace hgraph
         // Pure virtual methods to be implemented in derived classes
 
         // Method for owning node
-        [[nodiscard]] virtual Node::ptr owning_node() const = 0;
+        [[nodiscard]] virtual Node &owning_node() = 0;
+
+        [[nodiscard]] virtual const Node &owning_node() const = 0;
 
         // Method for owning graph
-        [[nodiscard]] virtual Graph::ptr owning_graph() const;
+        [[nodiscard]] virtual Graph &owning_graph();
+
+        [[nodiscard]] const Graph &owning_graph() const;
 
         // Method for value - as python object
         [[nodiscard]] virtual nb::object py_value() const = 0;
@@ -66,8 +70,8 @@ namespace hgraph
         */
         virtual void re_parent(Node::ptr parent) = 0;
 
-        // Overload for re_parent with TimeSeries
-        virtual void re_parent(TimeSeriesType::ptr parent) = 0;
+        // // Overload for re_parent with TimeSeries
+        // virtual void re_parent(TimeSeriesType::ptr parent) = 0;
 
         static void register_with_nanobind(nb::module_ &m);
 
@@ -79,7 +83,9 @@ namespace hgraph
     {
         using ptr = nb::ref<TimeSeriesOutput>;
 
-        [[nodiscard]] Node::ptr owning_node() const override;
+        [[nodiscard]] Node &owning_node() override;
+
+        [[nodiscard]] const Node &owning_node() const override;
 
         [[nodiscard]] ptr parent_output() const;
 
@@ -87,11 +93,11 @@ namespace hgraph
 
         void re_parent(Node::ptr parent) override;
 
-        void re_parent(ptr parent);
+        virtual void re_parent(ptr parent);
 
-        virtual bool can_apply_result(nb::object value);
+        virtual bool can_apply_result(std::any value);
 
-        virtual void apply_result(nb::object value) = 0;
+        virtual void apply_result(std::any value) = 0;
 
         [[nodiscard]] bool modified() const override;
 
@@ -129,6 +135,57 @@ namespace hgraph
         std::optional<OutputOrNode> _parent_output_or_node{};
         ReferenceCountSubscriber<Node*> _subscribers{};
         engine_time_t _last_modified_time{MIN_DT};
+
+        const Node &_owning_node() const;
+    };
+
+    struct HGRAPH_EXPORT TimeSeriesInput : TimeSeriesType
+    {
+        using ptr = nb::ref<TimeSeriesInput>;
+
+        // Constructor and Destructor
+        TimeSeriesInput()           = default;
+        ~TimeSeriesInput() override = default;
+
+        // Pure virtual properties and methods
+
+        // The input that this input is bound to. This will be nullptr if this is the root input.
+        [[nodiscard]] virtual ptr parent_input() const = 0;
+
+        // True if this input is a child of another input, False otherwise
+        [[nodiscard]] virtual bool has_parent_input() const = 0;
+
+        // Is this time-series input bound to an output?
+        [[nodiscard]] virtual bool bound() const = 0;
+
+        // True if this input is peered.
+        [[nodiscard]] virtual bool has_peer() const = 0;
+
+        // The output bound to this input. If the input is not bound then this will be nullptr.
+        [[nodiscard]] virtual time_series_output_ptr output() const = 0;
+
+        // FOR LIBRARY USE ONLY. Binds the output provided to this input.
+        virtual bool bind_output(time_series_output_ptr value) = 0;
+
+        // FOR LIBRARY USE ONLY. Unbinds the output from this input.
+        virtual void un_bind_output() = 0;
+
+        // Derived classes override this to implement specific behaviors for binding.
+        virtual bool do_bind_output(time_series_output_ptr value) = 0;
+
+        // Derived classes override this to implement specific behaviors for unbinding.
+        virtual void do_un_bind_output() = 0;
+
+        // An active input will cause the node it is associated with to be scheduled when the value
+        // the input represents is modified. Returns True if this input is active.
+        [[nodiscard]] virtual bool active() const = 0;
+
+        // Marks the input as being active, causing its node to be scheduled for evaluation when the value changes.
+        virtual void make_active() = 0;
+
+        // Marks the input as passive, preventing the associated node from being scheduled for evaluation
+        // when the value changes.
+        virtual void make_passive() = 0;
     };
 }  // namespace hgraph
 

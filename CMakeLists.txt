@@ -105,14 +105,24 @@ include_directories(include)
 
 set(HGRAPH_INCLUDES
 
+        include/hgraph/hgraph_forward_declarations.h
+
+        include/hgraph/builders/builder.h
+        include/hgraph/builders/graph_builder.h
+        include/hgraph/builders/input_builder.h
+        include/hgraph/builders/node_builder.h
+        include/hgraph/builders/output_builder.h
+
         include/hgraph/runtime/evaluation_context.h
         include/hgraph/runtime/evaluation_engine.h
         include/hgraph/runtime/graph_executor.h
 
+        include/hgraph/types/error_type.h
         include/hgraph/types/graph.h
         include/hgraph/types/node.h
         include/hgraph/types/time_series_type.h
         include/hgraph/types/traits.h
+        include/hgraph/types/tsb.h
 
         include/hgraph/python/pyb.h
         include/hgraph/python/pyb_wiring.h
@@ -120,6 +130,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/util/date_time.h
         include/hgraph/util/lifecycle.h
         include/hgraph/util/reference_count_subscriber.h
+        include/hgraph/util/sender_receiver_state.h
 
         include/hgraph/hgraph_export.h
 )

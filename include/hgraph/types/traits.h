@@ -16,7 +16,9 @@ namespace hgraph
     {
         using ptr = nb::ref<Traits>;
 
-        Traits(Traits::ptr parent_traits);
+        Traits();
+
+        explicit Traits(Traits::ptr parent_traits);
 
         void set_traits(std::unordered_map<std::string, std::any> traits);
 

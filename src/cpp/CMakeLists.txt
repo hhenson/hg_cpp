@@ -1,6 +1,9 @@
 project(_hgraph)
 
 set(HGRAPH_SOURCES
+
+        builders/node_builder.cpp
+
         python/_hgraph_runtime.cpp
         python/_hgraph_module.cpp
         python/_hgraph_types.cpp
@@ -9,12 +12,14 @@ set(HGRAPH_SOURCES
         runtime/evaluation_context.cpp
         runtime/evaluation_engine.cpp
         runtime/graph_executor.cpp
-#
-#        types/graph.cpp
-#        types/node.cpp
-#        types/time_series_type.cpp
+
+        types/graph.cpp
+        types/node.cpp
+        types/time_series_type.cpp
+        types/tsb.cpp
 
         util/lifecycle.cpp
+        util/sender_receiver_state.cpp
         )
 
 add_definitions(-Dhgraph_EXPORTS)
