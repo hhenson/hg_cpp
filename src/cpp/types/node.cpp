@@ -164,6 +164,124 @@ namespace hgraph
             ;
     }
 
+    NodeScheduler::NodeScheduler(Node &node) : _node{node} {}
+
+    engine_time_t NodeScheduler::next_scheduled_time() const {
+        return !_scheduled_events.empty() ? (*_scheduled_events.begin()).first : MIN_DT;
+    }
+
+    bool NodeScheduler::is_scheduled() const { return !_scheduled_events.empty() || !_alarm_tags.empty(); }
+
+    bool NodeScheduler::is_scheduled_node() const {
+        return !_scheduled_events.empty() && _scheduled_events.begin()->first == _node.graph().evaluation_clock().evaluation_time();
+    }
+
+    bool NodeScheduler::has_tag(const std::string &tag) const { return _tags.contains(tag); }
+
+    engine_time_t NodeScheduler::pop_tag(const std::string &tag, std::optional<engine_time_t> default_time) {
+        if (_tags.contains(tag)) {
+            auto dt = _tags.at(tag);
+            _tags.erase(tag);
+            _scheduled_events.erase({dt, tag});
+            return dt;
+        } else {
+            return default_time.value_or(MIN_DT);
+        }
+    }
+
+    void NodeScheduler::schedule(engine_time_t when, std::optional<std::string> tag, bool on_wall_clock) {
+        std::optional<engine_time_t> original_time = std::nullopt;
+
+        if (tag.has_value() && _tags.contains(tag.value())) {
+            original_time = next_scheduled_time();
+            _scheduled_events.erase({_tags.at(tag.value()), tag.value()});
+        }
+
+        if (on_wall_clock) {
+            auto clock{dynamic_cast<RealTimeEvaluationClock *>(&_node.graph().evaluation_clock())};
+            if (clock) {
+                if (!tag.has_value()) { throw std::runtime_error("Can't schedule an alarm without a tag"); }
+                auto        tag_{tag.value()};
+                std::string alarm_tag = std::format("{}:{}", reinterpret_cast<std::uintptr_t>(this), tag_);
+                clock->set_alarm(when, alarm_tag, [this, tag_](engine_time_t et) { _on_alarm(et, tag_); });
+                _alarm_tags[alarm_tag] = when;
+                return;
+            }
+        }
+
+        auto is_started{_node.is_started()};
+        auto now_{is_scheduled_node() ? _node.graph().evaluation_clock().evaluation_time() : MIN_DT};
+        if (when > now_) {
+            _tags[tag.value_or("")] = when;
+            auto current_first      = !_scheduled_events.empty() ? _scheduled_events.begin()->first : MAX_DT;
+            _scheduled_events.insert({when, tag.value_or("")});
+            auto next_{next_scheduled_time()};
+            if (is_started && current_first > next_) {
+                bool force_set{original_time.has_value() && original_time.value() < when};
+                _node.graph().schedule_node(_node.node_ndx(), next_, force_set);
+            }
+        }
+    }
+
+    void NodeScheduler::schedule(engine_time_delta_t when, std::optional<std::string> tag, bool on_wall_clock) {
+        auto when_{_node.graph().evaluation_clock().evaluation_time() + when};
+        schedule(when_, std::move(tag), on_wall_clock);
+    }
+    
+    void NodeScheduler::un_schedule(std::optional<std::string> tag) {
+        if (tag.has_value()) {
+            auto it = _tags.find(tag.value());
+            if (it != _tags.end()) {
+                _scheduled_events.erase({it->second, tag.value()});
+                _tags.erase(it);
+            }
+        } else if (!_scheduled_events.empty()) {
+            _scheduled_events.erase(_scheduled_events.begin());
+        }
+    }
+    
+    void NodeScheduler::reset() {
+        _scheduled_events.clear();
+        _tags.clear();
+        auto real_time_clock = dynamic_cast<RealTimeEvaluationClock *>(&_node.graph().evaluation_clock());
+        if (real_time_clock) {
+            for (const auto &alarm : _alarm_tags) { real_time_clock->cancel_alarm(alarm.first); }
+            _alarm_tags.clear();
+        }
+    }
+
+    void NodeScheduler::_on_alarm(engine_time_t when, std::string tag) {
+        _tags[tag]            = when;
+        std::string alarm_tag = std::format("{}:{}", reinterpret_cast<std::uintptr_t>(this), tag);
+        _alarm_tags.erase(alarm_tag);
+        _scheduled_events.insert({when, tag});
+        _node.graph().schedule_node(_node.node_ndx(), when);
+    }
+
+    Node::Node(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars)
+        : _node_ndx{node_ndx}, _owning_graph_id{std::move(owning_graph_id)}, _signature{std::move(signature)},
+          _scalars{std::move(scalars)} {}
+
+    std::vector<nb::ref<TimeSeriesInput>> Node::start_inputs() { return _start_inputs; }
+
+    void Node::notify(engine_time_t modified_time) {
+        if (is_started() || is_starting()) {
+            graph().schedule_node(node_ndx(), modified_time);
+        } else {
+            scheduler()->schedule(MIN_ST, "start");
+        }
+    }
+
+    void Node::notify() { notify(graph().evaluation_clock().evaluation_time()); }
+
+    void Node::notify_next_cycle() {
+        if (is_started() || is_starting()) {
+            graph().schedule_node(node_ndx(), graph().evaluation_clock().next_cycle_evaluation_time());
+        } else {
+            notify();
+        }
+    }
+
     int64_t Node::node_ndx() const { return _node_ndx; }
 
     const std::vector<int64_t> &Node::owning_graph_id() const { return _owning_graph_id; }

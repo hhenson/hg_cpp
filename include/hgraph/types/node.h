@@ -6,6 +6,7 @@
 #include <hgraph/hgraph_export.h>
 #include <hgraph/python/pyb.h>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -123,27 +124,42 @@ namespace hgraph
 
     struct NodeScheduler
     {
+        explicit NodeScheduler(Node& node);
+
         [[nodiscard]] engine_time_t next_scheduled_time() const;
         [[nodiscard]] bool          is_scheduled() const;
         [[nodiscard]] bool          is_scheduled_node() const;
         [[nodiscard]] bool          has_tag(const std::string &tag) const;
         engine_time_t               pop_tag(const std::string &tag, std::optional<engine_time_t> default_time);
-        void                        schedule(engine_time_t when, std::optional<std::string> tag);
-        void                        schedule(engine_time_delta_t when, std::optional<std::string> tag);
+        void                        schedule(engine_time_t when, std::optional<std::string> tag, bool on_wall_clock=false);
+        void                        schedule(engine_time_delta_t when, std::optional<std::string> tag, bool on_wall_clock=false);
         void                        un_schedule(std::optional<std::string> tag);
         void                        reset();
+
+    protected:
+        void _on_alarm(engine_time_t when, std::string tag);
+
+      private:
+        Node                                           &_node;
+        std::set<std::pair<engine_time_t, std::string>> _scheduled_events;
+        std::unordered_map<std::string, engine_time_t>  _tags;
+        std::unordered_map<std::string, engine_time_t>  _alarm_tags;
+        engine_time_t                                   _last_scheduled_time{MIN_DT};
     };
 
     struct HGRAPH_EXPORT Node : ComponentLifeCycle
     {
         using ptr = nanobind::ref<Node>;
 
-        Node(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature signature, nb::dict scalars);
+        Node(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars);
 
-        std::vector<nb::ref<TimeSeriesInput>> start_inputs() const;
+        std::vector<nb::ref<TimeSeriesInput>> start_inputs();
 
         virtual void eval() = 0;
         virtual void notify(engine_time_t modified_time);
+
+        void notify();
+
         virtual void notify_next_cycle();
 
         int64_t node_ndx() const;
@@ -194,6 +210,9 @@ namespace hgraph
         time_series_output_ptr        _error_output;
         time_series_bundle_output_ptr _recordable_state;
         std::optional<NodeScheduler>  _scheduler;
+        // I am not a fan of this approach to managing the start inputs, but for now keep consistent with current code base in
+        // Python.
+        std::vector<nb::ref<TimeSeriesInput>> _start_inputs;
     };
 
     struct PushQueueNode : Node
