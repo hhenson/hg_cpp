@@ -5,7 +5,9 @@
 #ifndef ERROR_TYPE_H
 #define ERROR_TYPE_H
 
+#include <exception>
 #include <hgraph/hgraph_export.h>
+#include <hgraph/hgraph_forward_declarations.h>
 #include <stdexcept>
 
 namespace hgraph

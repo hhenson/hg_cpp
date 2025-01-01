@@ -13,6 +13,7 @@ set(HGRAPH_SOURCES
         runtime/evaluation_engine.cpp
         runtime/graph_executor.cpp
 
+        types/error_type.cpp
         types/graph.cpp
         types/node.cpp
         types/time_series_type.cpp
