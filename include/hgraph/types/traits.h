@@ -5,10 +5,11 @@
 #ifndef TRAITS_H
 #define TRAITS_H
 
-#include <optional>
-#include <unordered_map>
-#include <string>
 #include <any>
+#include <hgraph/python/pyb.h>
+#include <optional>
+#include <string>
+#include <unordered_map>
 
 namespace hgraph
 {
@@ -16,22 +17,22 @@ namespace hgraph
     {
         using ptr = nb::ref<Traits>;
 
-        Traits();
+        Traits() = default;
 
         explicit Traits(Traits::ptr parent_traits);
 
-        void set_traits(std::unordered_map<std::string, std::any> traits);
+        void set_traits(nb::kwargs traits);
 
-        [[nodiscard]] std::any& get_trait(const std::string &trait_name) const;
+        [[nodiscard]] nb::object get_trait(const std::string &trait_name) const;
 
-        [[nodiscard]] std::any& get_trait_or(const std::string &trait_name, std::any& def_value) const;
+        [[nodiscard]] nb::object get_trait_or(const std::string &trait_name, nb::object &def_value) const;
 
         [[nodiscard]] Traits::ptr copy() const;
 
-    private:
-        std::optional<Traits::ptr> _parent_traits;
-        std::unordered_map<std::string, std::any> _traits;
+      private:
+        std::optional<ptr> _parent_traits;
+        nb::dict           _traits;
     };
-}
+}  // namespace hgraph
 
 #endif  // TRAITS_H

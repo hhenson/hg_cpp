@@ -37,7 +37,7 @@ namespace hgraph
                                  std::optional<std::unordered_set<std::string>> context_inputs,
                                  InjectableTypesEnum injectable_inputs, std::string wiring_path_name,
                                  std::optional<std::string> label, std::optional<std::string> record_replay_id, bool capture_values,
-                                 bool capture_exception, char8_t trace_back_depth)
+                                 bool capture_exception, int64_t trace_back_depth)
         : name{std::move(name)}, node_type{node_type}, args{std::move(args)}, time_series_inputs{std::move(time_series_inputs)},
           time_series_output{std::move(time_series_output)}, scalars{std::move(scalars)}, src_location{std::move(src_location)},
           active_inputs{std::move(active_inputs)}, valid_inputs{std::move(valid_inputs)},
@@ -131,7 +131,7 @@ namespace hgraph
                           std::optional<std::unordered_set<std::string>>, std::optional<std::unordered_set<std::string>>,
                           std::optional<std::unordered_set<std::string>>, std::optional<std::unordered_set<std::string>>,
                           InjectableTypesEnum, std::string, std::optional<std::string>, std::optional<std::string>, bool, bool,
-                          char8_t>(),
+                          int64_t>(),
                  "name"_a, "node_type"_a, "args"_a, "time_series_inputs"_a, "time_series_output"_a, "scalars"_a, "src_location"_a,
                  "active_inputs"_a, "valid_inputs"_a, "all_valid_inputs"_a, "context_inputs"_a, "injectable_inputs"_a,
                  "wiring_path_name"_a, "label"_a, "record_replay_id"_a, "capture_values"_a, "capture_exception"_a,

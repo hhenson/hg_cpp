@@ -70,7 +70,7 @@ namespace hgraph
                       std::optional<std::unordered_set<std::string>> all_valid_inputs,
                       std::optional<std::unordered_set<std::string>> context_inputs, InjectableTypesEnum injectable_inputs,
                       std::string wiring_path_name, std::optional<std::string> label, std::optional<std::string> record_replay_id,
-                      bool capture_values, bool capture_exception, char8_t trace_back_depth);
+                      bool capture_values, bool capture_exception, int64_t trace_back_depth);
 
         std::string                                                name{};
         NodeTypeEnum                                               node_type{NodeTypeEnum::NONE};
@@ -89,7 +89,7 @@ namespace hgraph
         std::optional<std::string>                                 record_replay_id{};
         bool                                                       capture_values{false};
         bool                                                       capture_exception{false};
-        char8_t                                                    trace_back_depth{1};
+        int64_t                                                    trace_back_depth{1};
 
         [[nodiscard]] nb::object get_arg_type(const std::string &arg) const;
 

@@ -17,6 +17,7 @@ set(HGRAPH_SOURCES
         types/graph.cpp
         types/node.cpp
         types/time_series_type.cpp
+        types/traits.cpp
         types/tsb.cpp
 
         util/lifecycle.cpp
