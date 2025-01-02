@@ -3,6 +3,8 @@
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
+#include <sstream>
+#include <fmt/format.h>
 
 namespace hgraph
 {
@@ -202,7 +204,7 @@ namespace hgraph
             if (clock) {
                 if (!tag.has_value()) { throw std::runtime_error("Can't schedule an alarm without a tag"); }
                 auto        tag_{tag.value()};
-                std::string alarm_tag = std::format("{}:{}", reinterpret_cast<std::uintptr_t>(this), tag_);
+                std::string alarm_tag = fmt::format("{}:{}", reinterpret_cast<std::uintptr_t>(this), tag_);
                 clock->set_alarm(when, alarm_tag, [this, tag_](engine_time_t et) { _on_alarm(et, tag_); });
                 _alarm_tags[alarm_tag] = when;
                 return;
@@ -252,7 +254,7 @@ namespace hgraph
 
     void NodeScheduler::_on_alarm(engine_time_t when, std::string tag) {
         _tags[tag]            = when;
-        std::string alarm_tag = std::format("{}:{}", reinterpret_cast<std::uintptr_t>(this), tag);
+        std::string alarm_tag = fmt::format("{}:{}", reinterpret_cast<std::uintptr_t>(this), tag);
         _alarm_tags.erase(alarm_tag);
         _scheduled_events.insert({when, tag});
         _node.graph().schedule_node(_node.node_ndx(), when);

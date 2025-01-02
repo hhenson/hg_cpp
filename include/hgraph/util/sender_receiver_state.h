@@ -9,6 +9,7 @@
 #include <deque>
 #include <hgraph/hgraph_forward_declarations.h>
 #include <mutex>
+#include <optional>
 
 namespace hgraph
 {

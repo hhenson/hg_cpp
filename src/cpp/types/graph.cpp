@@ -48,7 +48,7 @@ namespace hgraph
 
     int64_t Graph::push_source_nodes_end() const {
         if (_push_source_nodes_end == -1) {
-            for (auto i = 0; i < _nodes.size(); ++i) {
+            for (size_t i = 0; i < _nodes.size(); ++i) {
                 if (_nodes[i]->signature().node_type != NodeTypeEnum::PUSH_SOURCE_NODE) {
                     _push_source_nodes_end = static_cast<int64_t>(i);
                     break;

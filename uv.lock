@@ -78,7 +78,7 @@ wheels = [
 
 [[package]]
 name = "conan"
-version = "2.10.1"
+version = "2.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama" },
@@ -91,7 +91,7 @@ dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e3/93/b1ae4bb56daa2adafd97f057f35abac1728c25f4a95c2445acbcb7db13b2/conan-2.10.1.tar.gz", hash = "sha256:dece8e21c49e06cb4846ab9b342f30aa6fbc88bc3d2235f30519bfcb8b3267b6", size = 475496 }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/48/5ca06bcc3b380fc7d952fa420a63a71ad93e2e60304d8f4bf4f7f87fb6d3/conan-2.11.0.tar.gz", hash = "sha256:87f78a295716d1a37dfabc26f5d1b6a0ed49594618ea339420bb89627ececeda", size = 476759 }
 
 [[package]]
 name = "distro"
@@ -209,7 +209,7 @@ requires-dist = [{ name = "hgraph", specifier = ">=0.3.37" }]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "conan" },
+    { name = "conan", specifier = ">=2.11.0" },
     { name = "nanobind", specifier = ">=2.2.0" },
     { name = "pytest", specifier = ">=8.3.4" },
     { name = "scikit-build-core" },

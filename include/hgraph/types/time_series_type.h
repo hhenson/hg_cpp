@@ -11,6 +11,7 @@
 #include <hgraph/util/reference_count_subscriber.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/graph.h>
+#include <variant>
 
 namespace hgraph
 {

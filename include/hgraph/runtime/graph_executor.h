@@ -6,6 +6,7 @@
 #include <hgraph/python/pyb.h>
 #include <hgraph/util/date_time.h>
 #include <nanobind/intrusive/counter.h>
+#include <vector>
 
 
 namespace hgraph

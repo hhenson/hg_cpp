@@ -11,8 +11,8 @@ namespace hgraph
 
     NodeException NodeException::capture_error(std::exception_ptr e, const Node &node, const std::string &msg) {
         try {
-            rethrow_exception(e);
-        } catch (exception e_) {
+            rethrow_exception(std::move(e));
+        } catch (exception &e_) {
             return NodeException{fmt::format("{}: {} in node {}", msg, e_.what(), node.signature().signature())};
         }
     }
