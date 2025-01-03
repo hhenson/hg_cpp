@@ -11,7 +11,7 @@
 
 namespace hgraph
 {
-    enum class HGRAPH_EXPORT EvaluationMode : u_int8_t { REAL_TIME = 0, SIMULATION = 1 };
+    enum class HGRAPH_EXPORT EvaluationMode { REAL_TIME = 0, SIMULATION = 1 };
 
     struct Graph;
     struct Node;
