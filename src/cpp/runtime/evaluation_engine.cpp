@@ -2,6 +2,7 @@
 #include <hgraph/runtime/evaluation_engine.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
+#include <algorithm>
 
 namespace hgraph
 {
