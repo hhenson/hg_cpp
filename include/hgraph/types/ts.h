@@ -13,9 +13,9 @@ namespace hgraph
     {
         using value_type = T;
 
-        TimeSeriesValueOutput() = default;
+        using TimeSeriesOutput::TimeSeriesOutput;
 
-        [[nodiscard]] nb::object py_value() const override { return nb::cast<nb::object>(_value); }
+        [[nodiscard]] nb::object py_value() const override { return nb::cast(_value); }
 
         [[nodiscard]] nb::object py_delta_value() const override { return py_value(); }
 
@@ -39,10 +39,8 @@ namespace hgraph
 
         }
 
-        void clear() override;
-
       private:
-        T _value;
+        T _value{};
     };
 
     template<typename T> struct TimeSeriesValueInput : TimeSeriesInput

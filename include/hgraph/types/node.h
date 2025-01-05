@@ -119,7 +119,7 @@ namespace hgraph
 
         [[nodiscard]] bool is_recordable() const;
 
-        static void py_register(nb::module_ &m);
+        static void register_with_nanobind(nb::module_ &m);
     };
 
     struct NodeScheduler

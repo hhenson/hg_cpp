@@ -22,9 +22,7 @@ namespace hgraph
             .def("re_parent", static_cast<void (TimeSeriesType::*)(Node::ptr)>(&TimeSeriesType::re_parent));
     }
 
-    const TimeSeriesType::ptr &TimeSeriesType::_time_series() const {
-        return const_cast<TimeSeriesType *>(this)->_time_series();
-    }
+    const TimeSeriesType::ptr &TimeSeriesType::_time_series() const { return const_cast<TimeSeriesType *>(this)->_time_series(); }
 
     TimeSeriesType::ptr &TimeSeriesType::_time_series() {
         if (_parent_ts_or_node.has_value()) {
@@ -89,6 +87,10 @@ namespace hgraph
             throw std::runtime_error("No node is accessible");
         }
     }
+
+    TimeSeriesType::TimeSeriesType(node_ptr parent) : _parent_ts_or_node{parent} {}
+
+    TimeSeriesType::TimeSeriesType(ptr parent) : _parent_ts_or_node{parent} {}
 
     Node &TimeSeriesType::owning_node() { return const_cast<Node &>(_owning_node()); }
 
@@ -204,9 +206,7 @@ namespace hgraph
         const auto &et{owning_graph().evaluation_clock().evaluation_time()};
         if (_last_modified_time < et) {
             _last_modified_time = et;
-            if (_has_time_series()) {
-                _time_series_output().mark_modified();
-            }
+            if (_has_time_series()) { _time_series_output().mark_modified(); }
             _notify(modified_time);
         }
     }
@@ -223,7 +223,5 @@ namespace hgraph
         return *dynamic_cast<const TimeSeriesOutput *>(_time_series().get());
     }
 
-    TimeSeriesOutput &TimeSeriesOutput::_time_series_output() {
-        return *dynamic_cast<TimeSeriesOutput *>(_time_series().get());
-    }
+    TimeSeriesOutput &TimeSeriesOutput::_time_series_output() { return *dynamic_cast<TimeSeriesOutput *>(_time_series().get()); }
 }  // namespace hgraph

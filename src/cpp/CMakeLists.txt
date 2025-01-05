@@ -2,8 +2,11 @@ project(_hgraph)
 
 set(HGRAPH_SOURCES
 
+        builders/input_builder.cpp
         builders/node_builder.cpp
+        builders/output_builder.cpp
 
+        python/_hgraph_builder.cpp
         python/_hgraph_runtime.cpp
         python/_hgraph_module.cpp
         python/_hgraph_types.cpp

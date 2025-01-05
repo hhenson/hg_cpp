@@ -27,5 +27,7 @@ namespace hgraph
 
     inline auto static MIN_TD = smallest_time_increment();
 
+    using engine_date_t = std::chrono::year_month_day;
+
 }  // namespace hgraph
 #endif  // HGRAPH_DATE_TIME_H

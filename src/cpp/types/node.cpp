@@ -125,7 +125,7 @@ namespace hgraph
 
     [[nodiscard]] bool NodeSignature::is_recordable() const { return (bool)record_replay_id; }
 
-    void NodeSignature::py_register(nb::module_ &m) {
+    void NodeSignature::register_with_nanobind(nb::module_ &m) {
         nb::class_<NodeSignature>(m, "NodeSignature")
             .def(nb::init<std::string, NodeTypeEnum, std::vector<std::string>,
                           std::optional<std::unordered_map<std::string, nb::object>>, std::optional<nb::object>,

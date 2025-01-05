@@ -17,7 +17,8 @@ namespace hgraph
     {
         using ptr = nb::ref<TimeSeriesType>;
 
-        TimeSeriesType()                                  = default;
+        TimeSeriesType(node_ptr parent);
+        TimeSeriesType(ptr parent);
         TimeSeriesType(const TimeSeriesType &)            = default;
         TimeSeriesType(TimeSeriesType &&)                 = default;
         TimeSeriesType &operator=(const TimeSeriesType &) = default;
@@ -92,6 +93,8 @@ namespace hgraph
     {
         using ptr = nb::ref<TimeSeriesOutput>;
 
+        using TimeSeriesType::TimeSeriesType;
+
         [[nodiscard]] ptr parent_output() const;
 
         [[nodiscard]] bool has_parent_output() const;
@@ -144,9 +147,7 @@ namespace hgraph
     {
         using ptr = nb::ref<TimeSeriesInput>;
 
-        // Constructor and Destructor
-        TimeSeriesInput()           = default;
-        ~TimeSeriesInput() override = default;
+        using TimeSeriesType::TimeSeriesType;
 
         // The input that this input is bound to. This will be nullptr if this is the root input.
         [[nodiscard]] ptr parent_input() const;
