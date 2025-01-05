@@ -82,7 +82,7 @@ version = "2.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama" },
-    { name = "distro", marker = "platform_system == 'FreeBSD' or platform_system == 'Linux'" },
+    { name = "distro", marker = "platform_system == 'FreeBSD' or sys_platform == 'linux'" },
     { name = "fasteners" },
     { name = "jinja2" },
     { name = "patch-ng" },
@@ -190,7 +190,7 @@ wheels = [
 
 [[package]]
 name = "hg-cpp"
-version = "0.0.4"
+version = "0.0.5"
 source = { editable = "." }
 dependencies = [
     { name = "hgraph" },

@@ -50,6 +50,15 @@ namespace hgraph
     struct TimeSeriesOutput;
     using time_series_output_ptr = nanobind::ref<TimeSeriesOutput>;
 
+    struct TimeSeriesReference;
+    using time_series_reference_ptr = nanobind::ref<TimeSeriesReference>;
+
+    struct TimeSeriesReferenceInput;
+    using time_series_reference_input_ptr = nanobind::ref<TimeSeriesReferenceInput>;
+
+    struct TimeSeriesReferenceOutput;
+    using time_series_reference_output_ptr = nanobind::ref<TimeSeriesReferenceOutput>;
+
 }  // namespace hgraph
 
 #endif  // HGRAPH_FORWARD_DECLARATIONS_H

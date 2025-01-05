@@ -21,7 +21,7 @@ NB_MODULE(_hgraph, m) {
 
     export_utils(m);
     export_types(m);
-    export_runtime(m);
+    // export_runtime(m);
 
     nb::intrusive_init(
         [](PyObject *o) noexcept {

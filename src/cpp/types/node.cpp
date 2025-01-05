@@ -320,12 +320,12 @@ namespace hgraph
 
     void PushQueueNode::eval() {}
 
-    void PushQueueNode::enqueue_message(std::any message) {
+    void PushQueueNode::enqueue_message(nb::object message) {
         ++_messages_queued;
         _receiver->enqueue({node_ndx(), std::move(message)});
     }
 
-    bool PushQueueNode::apply_message(std::any message) {
+    bool PushQueueNode::apply_message(nb::object message) {
         if (_elide || output().can_apply_result(message)) {
             output().apply_result(std::move(message));
             return true;

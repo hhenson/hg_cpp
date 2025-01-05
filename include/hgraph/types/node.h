@@ -221,9 +221,9 @@ namespace hgraph
 
         void eval() override;
 
-        void enqueue_message(std::any message);
+        void enqueue_message(nb::object message);
 
-        [[nodiscard]] bool apply_message(std::any message);
+        [[nodiscard]] bool apply_message(nb::object message);
 
         int64_t messages_in_queue() const;
 

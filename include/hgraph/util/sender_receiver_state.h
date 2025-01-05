@@ -18,7 +18,7 @@ namespace hgraph
         using ptr = SenderReceiverState *;
         using LockType   = std::recursive_mutex;
         using LockGuard  = std::lock_guard<LockType>;
-        using value_type = std::pair<int64_t, std::any>;
+        using value_type = std::pair<int64_t, nb::object>;
 
         SenderReceiverState() = default;
 
