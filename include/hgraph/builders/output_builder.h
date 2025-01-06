@@ -13,6 +13,7 @@ namespace hgraph
     struct HGRAPH_EXPORT OutputBuilder : Builder
     {
         using ptr = nb::ref<OutputBuilder>;
+        using Builder::Builder;
 
         virtual time_series_output_ptr make_instance(node_ptr owning_node) = 0;
 
@@ -25,6 +26,7 @@ namespace hgraph
 
     template <typename T> struct HGRAPH_EXPORT TimeSeriesValueOutputBuilder : OutputBuilder
     {
+        using OutputBuilder::OutputBuilder;
 
         time_series_output_ptr make_instance(node_ptr owning_node) override {
             auto v{new TimeSeriesValueOutput<T>(owning_node)};

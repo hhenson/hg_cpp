@@ -21,6 +21,7 @@ namespace hgraph
      */
     struct Builder : nb::intrusive_base
     {
+        Builder() = default;
         ~Builder() override = default;
         /**
          * Create a new instance of the item.
