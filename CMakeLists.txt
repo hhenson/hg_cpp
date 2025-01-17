@@ -62,7 +62,10 @@ include_directories(${NB_DIR}/include)
 message(STATUS "Nanobind DIR: ${NB_DIR}/include")
 #find_package(Boost REQUIRED)
 find_package(Threads)
+
 find_package(range-v3 CONFIG REQUIRED)
+include_directories(${range-v3_INCLUDE_DIRS})
+
 find_package(fmt CONFIG REQUIRED)
 #find_package(immer CONFIG REQUIRED)
 

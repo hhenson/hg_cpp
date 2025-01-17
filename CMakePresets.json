@@ -5,6 +5,7 @@
     {
       "name": "debug",
       "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
         "CMAKE_PROJECT_TOP_LEVEL_INCLUDES": "conan_provider.cmake",
         "CMAKE_BUILD_TYPE": "Debug"
@@ -13,6 +14,7 @@
     {
       "name": "relwithdebinfo",
       "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/relwithdebinfo",
       "cacheVariables": {
         "CMAKE_PROJECT_TOP_LEVEL_INCLUDES": "conan_provider.cmake",
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
