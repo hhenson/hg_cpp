@@ -143,8 +143,13 @@ namespace hgraph
 
     const TimeSeriesReference::ptr &TimeSeriesReferenceInput::value() const { return reference_output().value(); }
 
-    void                            TimeSeriesReferenceInput::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) {
-        //TODO: Implement this
+    void TimeSeriesReferenceInput::start() {
+        auto sample_time = owning_graph().evaluation_clock().evaluation_time();
+        notify(sample_time);
+    }
+
+    void TimeSeriesReferenceInput::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) {
+        // TODO: Implement this
     }
 
 }  // namespace hgraph

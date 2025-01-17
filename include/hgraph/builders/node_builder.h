@@ -29,7 +29,7 @@ namespace hgraph
 
         virtual node_ptr make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) = 0;
 
-        virtual void release_instance(node_ptr &item) = 0;
+        virtual void release_instance(node_ptr &item) {};
 
       protected:
         node_signature_ptr                signature;
@@ -46,6 +46,23 @@ namespace hgraph
 
     protected:
         void _build_inputs_and_outputs(node_ptr node);
+    };
+
+    struct PythonNodeBuilder : BaseNodeBuilder
+    {
+        PythonNodeBuilder(node_signature_ptr signature_, nb::dict scalars_,
+                    std::optional<input_builder_ptr>  input_builder_,
+                    std::optional<output_builder_ptr> output_builder_,
+                    std::optional<output_builder_ptr> error_builder_,
+                    std::optional<output_builder_ptr> recordable_state_builder_,
+                    nb::callable eval_fn, nb::callable start_fn, nb::callable stop_fn);
+
+        node_ptr make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) override;
+
+    private:
+        nb::callable _eval_fn;
+        nb::callable _start_fn;
+        nb::callable _stop_fn;
     };
 }  // namespace hgraph
 

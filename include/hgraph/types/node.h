@@ -63,33 +63,35 @@ namespace hgraph
 
         NodeSignature(std::string name, NodeTypeEnum node_type, std::vector<std::string> args,
                       std::optional<std::unordered_map<std::string, nb::object>> time_series_inputs,
-                      std::optional<nb::object>                                  time_series_output,
-                      std::optional<std::unordered_map<std::string, nb::object>> scalars, nb::object src_location,
+                      std::optional<nb::object> time_series_output, std::optional<nb::kwargs> scalars,
+                      std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs,
+                      nb::object src_location,
                       std::optional<std::unordered_set<std::string>> active_inputs,
                       std::optional<std::unordered_set<std::string>> valid_inputs,
                       std::optional<std::unordered_set<std::string>> all_valid_inputs,
-                      std::optional<std::unordered_set<std::string>> context_inputs, InjectableTypesEnum injectable_inputs,
+                      std::optional<std::unordered_set<std::string>> context_inputs, InjectableTypesEnum injectables,
                       std::string wiring_path_name, std::optional<std::string> label, std::optional<std::string> record_replay_id,
                       bool capture_values, bool capture_exception, int64_t trace_back_depth);
 
-        std::string                                                name{};
-        NodeTypeEnum                                               node_type{NodeTypeEnum::NONE};
-        std::vector<std::string>                                   args{};
-        std::optional<std::unordered_map<std::string, nb::object>> time_series_inputs{};
-        std::optional<nb::object>                                  time_series_output{};
-        std::optional<std::unordered_map<std::string, nb::object>> scalars{};
-        nb::object                                                 src_location{nb::none()};
-        std::optional<std::unordered_set<std::string>>             active_inputs{};
-        std::optional<std::unordered_set<std::string>>             valid_inputs{};
-        std::optional<std::unordered_set<std::string>>             all_valid_inputs{};
-        std::optional<std::unordered_set<std::string>>             context_inputs{};
-        InjectableTypesEnum                                        injectable_inputs{InjectableTypesEnum::NONE};
-        std::string                                                wiring_path_name{};
-        std::optional<std::string>                                 label{};
-        std::optional<std::string>                                 record_replay_id{};
-        bool                                                       capture_values{false};
-        bool                                                       capture_exception{false};
-        int64_t                                                    trace_back_depth{1};
+        std::string                                                         name{};
+        NodeTypeEnum                                                        node_type{NodeTypeEnum::NONE};
+        std::vector<std::string>                                            args{};
+        std::optional<std::unordered_map<std::string, nb::object>>          time_series_inputs{};
+        std::optional<nb::object>                                           time_series_output{};
+        std::optional<nb::kwargs>                                           scalars{};
+        std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs{};
+        nb::object                                                          src_location{nb::none()};
+        std::optional<std::unordered_set<std::string>>                      active_inputs{};
+        std::optional<std::unordered_set<std::string>>                      valid_inputs{};
+        std::optional<std::unordered_set<std::string>>                      all_valid_inputs{};
+        std::optional<std::unordered_set<std::string>>                      context_inputs{};
+        InjectableTypesEnum                                                 injectables{InjectableTypesEnum::NONE};
+        std::string                                                         wiring_path_name{};
+        std::optional<std::string>                                          label{};
+        std::optional<std::string>                                          record_replay_id{};
+        bool                                                                capture_values{false};
+        bool                                                                capture_exception{false};
+        int64_t                                                             trace_back_depth{1};
 
         [[nodiscard]] nb::object get_arg_type(const std::string &arg) const;
 
@@ -124,19 +126,19 @@ namespace hgraph
 
     struct NodeScheduler
     {
-        explicit NodeScheduler(Node& node);
+        explicit NodeScheduler(Node &node);
 
         [[nodiscard]] engine_time_t next_scheduled_time() const;
         [[nodiscard]] bool          is_scheduled() const;
         [[nodiscard]] bool          is_scheduled_node() const;
         [[nodiscard]] bool          has_tag(const std::string &tag) const;
         engine_time_t               pop_tag(const std::string &tag, std::optional<engine_time_t> default_time);
-        void                        schedule(engine_time_t when, std::optional<std::string> tag, bool on_wall_clock=false);
-        void                        schedule(engine_time_delta_t when, std::optional<std::string> tag, bool on_wall_clock=false);
+        void                        schedule(engine_time_t when, std::optional<std::string> tag, bool on_wall_clock = false);
+        void                        schedule(engine_time_delta_t when, std::optional<std::string> tag, bool on_wall_clock = false);
         void                        un_schedule(std::optional<std::string> tag);
         void                        reset();
 
-    protected:
+      protected:
         void _on_alarm(engine_time_t when, std::string tag);
 
       private:
@@ -152,8 +154,6 @@ namespace hgraph
         using ptr = nanobind::ref<Node>;
 
         Node(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars);
-
-        std::vector<nb::ref<TimeSeriesInput>> start_inputs();
 
         virtual void eval() = 0;
         virtual void notify(engine_time_t modified_time);
@@ -190,6 +190,8 @@ namespace hgraph
 
         void set_recordable_state(time_series_bundle_output_ptr value);
 
+        bool has_recordable_state() const;
+
         std::optional<NodeScheduler> scheduler() const;
 
         TimeSeriesOutput &error_output();
@@ -197,6 +199,10 @@ namespace hgraph
         void set_error_output(time_series_output_ptr value);
 
         friend struct Graph;
+
+    protected:
+
+        void _initialise_inputs();
 
       private:
         int64_t                       _node_ndx;
@@ -212,7 +218,45 @@ namespace hgraph
         std::optional<NodeScheduler>  _scheduler;
         // I am not a fan of this approach to managing the start inputs, but for now keep consistent with current code base in
         // Python.
-        std::vector<nb::ref<TimeSeriesInput>> _start_inputs;
+        std::vector<nb::ref<TimeSeriesReferenceInput>> _start_inputs;
+    };
+
+    struct BasePythonNode : Node
+    {
+        BasePythonNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars,
+                       nb::callable eval_fn, nb::callable start_fn, nb::callable end_fn);
+
+        void _initialise_kwargs();
+
+        void _initialise_state();
+
+      protected:
+        void initialise() override;
+        void start() override;
+        void stop() override;
+        void dispose() override;
+
+        nb::callable _eval_fn;
+        nb::callable _start_fn;
+        nb::callable _end_fn;
+
+        nb::kwargs _kwargs;
+        nb::kwargs _start_kwargs;
+        nb::kwargs _stop_kwargs;
+    };
+
+    struct PythonNode : BasePythonNode
+    {
+        using BasePythonNode::BasePythonNode;
+
+      protected:
+        void initialise() override;
+        void start() override;
+        void stop() override;
+        void dispose() override;
+
+      public:
+        void eval() override;
     };
 
     struct PushQueueNode : Node

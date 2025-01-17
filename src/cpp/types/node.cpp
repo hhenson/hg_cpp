@@ -1,10 +1,13 @@
+#include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
+#include <hgraph/types/tsb.h>
 
+#include <fmt/format.h>
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
+#include <range/v3/all.hpp>
 #include <sstream>
-#include <fmt/format.h>
 
 namespace hgraph
 {
@@ -31,26 +34,26 @@ namespace hgraph
     }
     NodeSignature::NodeSignature(std::string name, NodeTypeEnum node_type, std::vector<std::string> args,
                                  std::optional<std::unordered_map<std::string, nb::object>> time_series_inputs,
-                                 std::optional<nb::object>                                  time_series_output,
-                                 std::optional<std::unordered_map<std::string, nb::object>> scalars, nb::object src_location,
-                                 std::optional<std::unordered_set<std::string>> active_inputs,
+                                 std::optional<nb::object> time_series_output, std::optional<nb::kwargs> scalars,
+                                 std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs,
+                                 nb::object src_location, std::optional<std::unordered_set<std::string>> active_inputs,
                                  std::optional<std::unordered_set<std::string>> valid_inputs,
                                  std::optional<std::unordered_set<std::string>> all_valid_inputs,
-                                 std::optional<std::unordered_set<std::string>> context_inputs,
-                                 InjectableTypesEnum injectable_inputs, std::string wiring_path_name,
-                                 std::optional<std::string> label, std::optional<std::string> record_replay_id, bool capture_values,
-                                 bool capture_exception, int64_t trace_back_depth)
+                                 std::optional<std::unordered_set<std::string>> context_inputs, InjectableTypesEnum injectables,
+                                 std::string wiring_path_name, std::optional<std::string> label,
+                                 std::optional<std::string> record_replay_id, bool capture_values, bool capture_exception,
+                                 int64_t trace_back_depth)
         : name{std::move(name)}, node_type{node_type}, args{std::move(args)}, time_series_inputs{std::move(time_series_inputs)},
-          time_series_output{std::move(time_series_output)}, scalars{std::move(scalars)}, src_location{std::move(src_location)},
+          time_series_output{std::move(time_series_output)}, scalars{std::move(scalars)},
+          injectable_inputs{std::move(injectable_inputs)}, src_location{std::move(src_location)},
           active_inputs{std::move(active_inputs)}, valid_inputs{std::move(valid_inputs)},
-          all_valid_inputs{std::move(all_valid_inputs)}, context_inputs{std::move(context_inputs)},
-          injectable_inputs{injectable_inputs}, wiring_path_name{std::move(wiring_path_name)}, label{std::move(label)},
-          record_replay_id{std::move(record_replay_id)}, capture_values{capture_values}, capture_exception{capture_exception},
-          trace_back_depth{trace_back_depth} {}
+          all_valid_inputs{std::move(all_valid_inputs)}, context_inputs{std::move(context_inputs)}, injectables{injectables},
+          wiring_path_name{std::move(wiring_path_name)}, label{std::move(label)}, record_replay_id{std::move(record_replay_id)},
+          capture_values{capture_values}, capture_exception{capture_exception}, trace_back_depth{trace_back_depth} {}
 
     [[nodiscard]] nb::object NodeSignature::get_arg_type(const std::string &arg) const {
         if (time_series_inputs && time_series_inputs->contains(arg)) { return time_series_inputs->at(arg); }
-        if (scalars && scalars->contains(arg)) { return scalars->at(arg); }
+        if (scalars.has_value()) { return scalars->attr("get")(nb::cast(arg)); }
         return nb::none();
     }
 
@@ -80,27 +83,27 @@ namespace hgraph
     }
 
     [[nodiscard]] bool NodeSignature::uses_scheduler() const {
-        return (injectable_inputs & InjectableTypesEnum::SCHEDULER) == InjectableTypesEnum::SCHEDULER;
+        return (injectables & InjectableTypesEnum::SCHEDULER) == InjectableTypesEnum::SCHEDULER;
     }
 
     [[nodiscard]] bool NodeSignature::uses_clock() const {
-        return (injectable_inputs & InjectableTypesEnum::CLOCK) == InjectableTypesEnum::CLOCK;
+        return (injectables & InjectableTypesEnum::CLOCK) == InjectableTypesEnum::CLOCK;
     }
 
     [[nodiscard]] bool NodeSignature::uses_engine() const {
-        return (injectable_inputs & InjectableTypesEnum::ENGINE_API) == InjectableTypesEnum::ENGINE_API;
+        return (injectables & InjectableTypesEnum::ENGINE_API) == InjectableTypesEnum::ENGINE_API;
     }
 
     [[nodiscard]] bool NodeSignature::uses_state() const {
-        return (injectable_inputs & InjectableTypesEnum::STATE) == InjectableTypesEnum::STATE;
+        return (injectables & InjectableTypesEnum::STATE) == InjectableTypesEnum::STATE;
     }
 
     [[nodiscard]] bool NodeSignature::uses_output_feedback() const {
-        return (injectable_inputs & InjectableTypesEnum::OUTPUT) == InjectableTypesEnum::OUTPUT;
+        return (injectables & InjectableTypesEnum::OUTPUT) == InjectableTypesEnum::OUTPUT;
     }
 
     [[nodiscard]] bool NodeSignature::uses_replay_state() const {
-        return (injectable_inputs & InjectableTypesEnum::REPLAY_STATE) == InjectableTypesEnum::REPLAY_STATE;
+        return (injectables & InjectableTypesEnum::REPLAY_STATE) == InjectableTypesEnum::REPLAY_STATE;
     }
 
     [[nodiscard]] bool NodeSignature::is_source_node() const {
@@ -129,15 +132,15 @@ namespace hgraph
         nb::class_<NodeSignature>(m, "NodeSignature")
             .def(nb::init<std::string, NodeTypeEnum, std::vector<std::string>,
                           std::optional<std::unordered_map<std::string, nb::object>>, std::optional<nb::object>,
-                          std::optional<std::unordered_map<std::string, nb::object>>, nb::object,
+                          std::optional<nb::kwargs>, std::optional<std::unordered_map<std::string, InjectableTypesEnum>>,
+                          nb::object, std::optional<std::unordered_set<std::string>>,
                           std::optional<std::unordered_set<std::string>>, std::optional<std::unordered_set<std::string>>,
-                          std::optional<std::unordered_set<std::string>>, std::optional<std::unordered_set<std::string>>,
-                          InjectableTypesEnum, std::string, std::optional<std::string>, std::optional<std::string>, bool, bool,
-                          int64_t>(),
-                 "name"_a, "node_type"_a, "args"_a, "time_series_inputs"_a, "time_series_output"_a, "scalars"_a, "src_location"_a,
-                 "active_inputs"_a, "valid_inputs"_a, "all_valid_inputs"_a, "context_inputs"_a, "injectable_inputs"_a,
-                 "wiring_path_name"_a, "label"_a, "record_replay_id"_a, "capture_values"_a, "capture_exception"_a,
-                 "trace_back_depth"_a)
+                          std::optional<std::unordered_set<std::string>>, InjectableTypesEnum, std::string,
+                          std::optional<std::string>, std::optional<std::string>, bool, bool, int64_t>(),
+                 "name"_a, "node_type"_a, "args"_a, "time_series_inputs"_a, "time_series_output"_a, "scalars"_a,
+                 "injectable_inputs"_a, "src_location"_a, "active_inputs"_a, "valid_inputs"_a, "all_valid_inputs"_a,
+                 "context_inputs"_a, "injectable_inputs"_a, "wiring_path_name"_a, "label"_a, "record_replay_id"_a,
+                 "capture_values"_a, "capture_exception"_a, "trace_back_depth"_a)
             .def_prop_ro("signature", &NodeSignature::signature)
             .def_prop_ro("uses_scheduler", &NodeSignature::uses_scheduler)
             .def_prop_ro("uses_clock", &NodeSignature::uses_clock)
@@ -229,7 +232,7 @@ namespace hgraph
         auto when_{_node.graph().evaluation_clock().evaluation_time() + when};
         schedule(when_, std::move(tag), on_wall_clock);
     }
-    
+
     void NodeScheduler::un_schedule(std::optional<std::string> tag) {
         if (tag.has_value()) {
             auto it = _tags.find(tag.value());
@@ -241,7 +244,7 @@ namespace hgraph
             _scheduled_events.erase(_scheduled_events.begin());
         }
     }
-    
+
     void NodeScheduler::reset() {
         _scheduled_events.clear();
         _tags.clear();
@@ -263,8 +266,6 @@ namespace hgraph
     Node::Node(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars)
         : _node_ndx{node_ndx}, _owning_graph_id{std::move(owning_graph_id)}, _signature{std::move(signature)},
           _scalars{std::move(scalars)} {}
-
-    std::vector<nb::ref<TimeSeriesInput>> Node::start_inputs() { return _start_inputs; }
 
     void Node::notify(engine_time_t modified_time) {
         if (is_started() || is_starting()) {
@@ -312,11 +313,92 @@ namespace hgraph
 
     void Node::set_recordable_state(nb::ref<TimeSeriesBundleOutput> value) { _recordable_state = value; }
 
+    bool Node::has_recordable_state() const { return _recordable_state.get() != nullptr; }
+
     std::optional<NodeScheduler> Node::scheduler() const { return _scheduler; }
 
     TimeSeriesOutput &Node::error_output() { return *_error_output; }
 
     void Node::set_error_output(time_series_output_ptr value) { _error_output = std::move(value); }
+
+    BasePythonNode::BasePythonNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
+                                   nb::dict scalars, nb::callable eval_fn, nb::callable start_fn, nb::callable end_fn)
+        : Node(node_ndx, std::move(owning_graph_id), std::move(signature), std::move(scalars)), _eval_fn{std::move(eval_fn)},
+          _start_fn{std::move(start_fn)}, _end_fn{std::move(end_fn)} {}
+
+    void BasePythonNode::_initialise_kwargs() {
+        // Assuming Injector and related types are properly defined, and scalars is a map-like container
+        auto &signature_args = signature().args;
+        _kwargs              = {};
+
+        bool has_injectables{signature().injectable_inputs.has_value()};
+        for (const auto &[key_, value] : scalars()) {
+            std::string key{nb::cast<std::string>(key_)};
+            if (has_injectables && signature().injectable_inputs->contains(key)) {
+                _kwargs[key_] = value(*(this));  // Assuming this call applies the Injector properly
+            } else {
+                _kwargs[key_] = value;
+            }
+        }
+
+        for (const auto &[key, value] : input()) {
+            if (ranges::contains(signature_args, key)) { _kwargs[key.c_str()] = value; }
+        }
+    }
+
+    void Node::_initialise_inputs() {
+        if (signature().time_series_inputs.has_value()) {
+            for (auto &start_input : _start_inputs) {
+                start_input->start();  // Assuming start_input is some time series type with a start method
+            }
+            for (auto &[key, ts] : input()) {
+                if (!signature().active_inputs || ranges::contains(*signature().active_inputs, key)) {
+                    ts->make_active();  // Assuming `make_active` is a method of the `TimeSeriesInput` type
+                }
+            }
+        }
+    }
+
+    void BasePythonNode::_initialise_state() {
+        if (has_recordable_state()) {
+            // TODO: Implement this
+
+            // auto &record_context = RecordReplayContext::instance();
+            // auto  mode           = record_context.mode();
+            //
+            // if (mode.contains(RecordReplayEnum::RECOVER)) {
+            //     // TODO: make recordable_id unique by using parent node context information
+            //     auto recordable_id   = get_fq_recordable_id(this->graph().traits(), this->signature().record_replay_id());
+            //     auto clock           = this->graph().evaluation_clock();
+            //     auto evaluation_time = clock.evaluation_time();
+            //     auto as_of_time      = get_as_of(clock);
+            //
+            //     this->recordable_state().value() =
+            //         replay_const("__state__", this->signature().recordable_state().tsb_type().py_type(), recordable_id,
+            //                      evaluation_time - MIN_TD,  // We want the state just before now
+            //                      as_of_time)
+            //             .value();
+            // }
+        }
+    }
+
+    void BasePythonNode::initialise() {}
+
+    void BasePythonNode::start() {}
+
+    void BasePythonNode::stop() {}
+
+    void BasePythonNode::dispose() {}
+
+    void PythonNode::initialise() {}
+
+    void PythonNode::start() {}
+
+    void PythonNode::stop() {}
+
+    void PythonNode::dispose() {}
+
+    void PythonNode::eval() {}
 
     void PushQueueNode::eval() {}
 

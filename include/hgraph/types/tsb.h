@@ -33,9 +33,8 @@ namespace hgraph
     //
     //     // Finds the first key for a matching value
     //     std::string key_from_value(const TimeSeriesType &value) const {
-    //         auto it = std::find_if(_ts_values.cbegin(), _ts_values.cend(), [&](const auto &pair) { return pair.second == value; });
-    //         if (it != _ts_values.cend()) { return it->first; }
-    //         return "";
+    //         auto it = std::find_if(_ts_values.cbegin(), _ts_values.cend(), [&](const auto &pair) { return pair.second == value;
+    //         }); if (it != _ts_values.cend()) { return it->first; } return "";
     //     }
     //
     //     // Retrieves keys of the schema
@@ -129,7 +128,7 @@ namespace hgraph
         // Retrieves valid keys
         std::vector<std::string> valid_keys() const {
             std::vector<std::string> result;
-            for (size_t i=0, l=_ts_values.size(); i<l; i++) {
+            for (size_t i = 0, l = _ts_values.size(); i < l; i++) {
                 auto &ts{_ts_values[i]};
                 if (ts->valid()) { result.push_back(_schema->keys()[i]); }
             }
@@ -139,7 +138,7 @@ namespace hgraph
         // Retrieves valid values
         std::vector<time_series_output_ptr> valid_values() const {
             std::vector<time_series_output_ptr> result;
-            for (size_t i=0, l=_ts_values.size(); i<l; i++) {
+            for (size_t i = 0, l = _ts_values.size(); i < l; i++) {
                 auto &ts{_ts_values[i]};
                 if (ts->valid()) { result.push_back(ts); }
             }
@@ -149,7 +148,7 @@ namespace hgraph
         // Retrieves valid items
         std::vector<std::pair<std::string, time_series_output_ptr>> valid_items() const {
             std::vector<std::pair<std::string, time_series_output_ptr>> result;
-            for (size_t i=0, l=_ts_values.size(); i<l; i++) {
+            for (size_t i = 0, l = _ts_values.size(); i < l; i++) {
                 auto &ts{_ts_values[i]};
                 if (ts->valid()) { result.push_back({_schema->keys()[i], ts}); }
             }
@@ -158,16 +157,41 @@ namespace hgraph
 
         static void register_with_nanobind(nb::module_ &m);
 
-    private:
-        TimeSeriesSchema::ptr _schema;
+      private:
+        TimeSeriesSchema::ptr               _schema;
         std::vector<time_series_output_ptr> _ts_values;
     };
 
     struct TimeSeriesBundleInput : TimeSeriesInput
     {
+        using TimeSeriesInput::TimeSeriesInput;
 
+        // Define an iterator type for the unordered_map
+        using iterator       = std::unordered_map<std::string, TimeSeriesInput::ptr>::iterator;
+        using const_iterator = std::unordered_map<std::string, TimeSeriesInput::ptr>::const_iterator;
+
+        // Begin iterator
+        iterator       begin();
+        const_iterator begin() const;
+
+        // End iterator
+        iterator       end();
+        const_iterator end() const;
+
+        // Access elements by key
+        TimeSeriesInput       &operator[](const std::string &key);
+        const TimeSeriesInput &operator[](const std::string &key) const;
+
+        // Check if a key exists
+        bool contains(const std::string &key) const;
+
+        // Static method for nanobind registration
         static void register_with_nanobind(nb::module_ &m);
-    };
-}
 
-#endif //TSB_H
+      private:
+        // Stores the time-series data
+        std::unordered_map<std::string, TimeSeriesInput::ptr> _ts_values;
+    };
+}  // namespace hgraph
+
+#endif  // TSB_H

@@ -3,7 +3,7 @@
 namespace hgraph
 {
 
-    Traits::Traits(Traits::ptr parent_traits) : _parent_traits{std::move(_parent_traits)} {}
+    Traits::Traits(Traits::ptr parent_traits) : _parent_traits{std::move(parent_traits)} {}
 
     void Traits::set_traits(nb::kwargs traits) { _traits.update(traits); }
 

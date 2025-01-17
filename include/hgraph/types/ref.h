@@ -69,6 +69,8 @@ namespace hgraph
 
     struct TimeSeriesReferenceOutput : TimeSeriesOutput
     {
+        using TimeSeriesOutput::TimeSeriesOutput;
+
         const TimeSeriesReference::ptr &value() const;
 
         void set_value(TimeSeriesReference::ptr value);
@@ -98,9 +100,13 @@ namespace hgraph
 
     struct TimeSeriesReferenceInput : TimeSeriesInput
     {
+        using TimeSeriesInput::TimeSeriesInput;
+
         const TimeSeriesReferenceOutput &reference_output() const;
 
         const TimeSeriesReference::ptr &value() const;
+
+        void start();
 
       protected:
         void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;

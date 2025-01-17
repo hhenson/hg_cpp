@@ -39,4 +39,22 @@ namespace hgraph
         }
     }
 
+    PythonNodeBuilder::PythonNodeBuilder(node_signature_ptr signature_, nb::dict scalars_,
+                                         std::optional<input_builder_ptr>  input_builder_,
+                                         std::optional<output_builder_ptr> output_builder_,
+                                         std::optional<output_builder_ptr> error_builder_,
+                                         std::optional<output_builder_ptr> recordable_state_builder_, nb::callable eval_fn,
+                                         nb::callable start_fn, nb::callable stop_fn)
+        : BaseNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
+                          std::move(error_builder_), std::move(recordable_state_builder_)),
+          _eval_fn{std::move(eval_fn)}, _start_fn{std::move(start_fn)}, _stop_fn{std::move(stop_fn)} {}
+
+    node_ptr PythonNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) {
+        nb::ref<Node> node{new PythonNode{node_ndx, std::move(owning_graph_id), std::move(signature), std::move(scalars),
+                                                _eval_fn, _start_fn, _stop_fn}};
+
+        _build_inputs_and_outputs(node);
+        return node;
+    }
+
 }  // namespace hgraph
