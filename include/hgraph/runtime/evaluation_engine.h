@@ -4,6 +4,7 @@
 
 #ifndef EVALUATION_ENGINE_H
 #define EVALUATION_ENGINE_H
+#include <hgraph/python/pyb.h>
 
 #include <condition_variable>
 #include <functional>
@@ -13,7 +14,7 @@
 #include <hgraph/runtime/graph_executor.h>
 #include <hgraph/util/date_time.h>
 #include <hgraph/util/lifecycle.h>
-#include <nanobind/intrusive/ref.h>
+
 
 namespace hgraph
 {

@@ -16,7 +16,7 @@
 #include <hgraph/hgraph_forward_declarations.h>
 #include <hgraph/util/date_time.h>
 #include <hgraph/util/lifecycle.h>
-#include <nanobind/intrusive/ref.h>
+#include <hgraph/python/pyb.h>
 
 namespace hgraph
 {

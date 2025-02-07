@@ -6,7 +6,7 @@
 #define HGRAPH_FORWARD_DECLARATIONS_H
 
 #include <hgraph/hgraph_export.h>
-#include <nanobind/intrusive/ref.h>
+#include <hgraph/python/pyb.h>
 
 namespace hgraph
 {

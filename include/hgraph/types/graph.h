@@ -8,7 +8,7 @@
 #include <hgraph/hgraph_forward_declarations.h>
 
 #include <hgraph/util/lifecycle.h>
-#include <nanobind/intrusive/ref.h>
+#include <hgraph/python/pyb.h>
 #include <optional>
 #include <vector>
 
