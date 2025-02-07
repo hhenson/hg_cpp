@@ -1,10 +1,9 @@
 #ifndef HGRAPH_PYB_H
 #define HGRAPH_PYB_H
 
-#include <fmt/format.h>
-
 #include <nanobind/nanobind.h>
 #include <nanobind/intrusive/ref.h>
+#include <fmt/format.h>
 
 namespace nb = nanobind;
 
