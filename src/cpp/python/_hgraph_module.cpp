@@ -19,12 +19,6 @@ void export_utils(nb::module_ &);
 
 NB_MODULE(_hgraph, m) {
     m.doc() = "The HGraph C++ runtime engine";
-
-    export_utils(m);
-    export_types(m);
-    export_builders(m);
-    // export_runtime(m);
-
     nb::intrusive_init(
         [](PyObject *o) noexcept {
             nb::gil_scoped_acquire guard;
@@ -34,6 +28,16 @@ NB_MODULE(_hgraph, m) {
             nb::gil_scoped_acquire guard;
             Py_DECREF(o);
         });
+
+    nb::class_<nb::intrusive_base>(
+        m, "intrusive_base",
+        nb::intrusive_ptr<nb::intrusive_base>(
+            [](nb::intrusive_base *o, PyObject *po) noexcept { o->set_self_py(po); }));
+
+    export_utils(m);
+    export_types(m);
+    export_builders(m);
+    // export_runtime(m);
 }
 
 /*

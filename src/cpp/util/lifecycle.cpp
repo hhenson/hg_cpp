@@ -10,9 +10,7 @@ namespace hgraph
     bool ComponentLifeCycle::is_stopping() const { return _transitioning && _started; }
 
     void ComponentLifeCycle::register_with_nanobind(nb::module_ &m) {
-        nb::class_<ComponentLifeCycle>(
-            m, "ComponentLifeCycle",
-            nb::intrusive_ptr<ComponentLifeCycle>([](ComponentLifeCycle *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<ComponentLifeCycle, nb::intrusive_base>(m, "ComponentLifeCycle")
             .def_prop_ro("is_started", &ComponentLifeCycle::is_started)
             .def_prop_ro("is_starting", &ComponentLifeCycle::is_starting)
             .def_prop_ro("is_stopping", &ComponentLifeCycle::is_stopping);

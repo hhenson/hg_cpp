@@ -31,6 +31,8 @@ namespace hgraph
 
         virtual void release_instance(node_ptr &item) {};
 
+        static void register_with_nanobind(nb::module_ &m);
+
       protected:
         node_signature_ptr                signature;
         nb::dict                          scalars;

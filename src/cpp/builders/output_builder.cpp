@@ -11,9 +11,7 @@ namespace hgraph
 
     void OutputBuilder::register_with_nanobind(nb::module_ &m) {
 
-        nb::class_<OutputBuilder>(m, "OutputBuilder", nb::intrusive_ptr<OutputBuilder>([](OutputBuilder *o, PyObject *po) noexcept {
-                                      o->set_self_py(po);
-                                  }))
+        nb::class_<OutputBuilder, Builder>(m, "OutputBuilder")
             .def(
                 "make_instance",
                 [](OutputBuilder::ptr self, nb::object owning_node, nb::object owning_output) -> time_series_output_ptr {

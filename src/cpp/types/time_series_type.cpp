@@ -8,9 +8,7 @@ namespace hgraph
     void TimeSeriesType::re_parent(Node::ptr parent) { _parent_ts_or_node = parent; }
 
     void TimeSeriesType::register_with_nanobind(nb::module_ &m) {
-        nb::class_<TimeSeriesType>(
-            m, "TimeSeriesType",
-            nb::intrusive_ptr<TimeSeriesType>([](TimeSeriesType *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<TimeSeriesType, nb::intrusive_base>(m, "TimeSeriesType")
             .def_prop_ro("owning_node", static_cast<const Node &(TimeSeriesType::*)() const>(&TimeSeriesType::owning_node))
             .def_prop_ro("owning_graph", static_cast<const Graph &(TimeSeriesType::*)() const>(&TimeSeriesType::owning_graph))
             .def_prop_ro("value", &TimeSeriesType::py_value)
@@ -51,9 +49,7 @@ namespace hgraph
     void TimeSeriesOutput::clear() {}
 
     void TimeSeriesOutput::register_with_nanobind(nb::module_ &m) {
-        nb::class_<TimeSeriesOutput>(
-            m, "TimeSeriesOutput",
-            nb::intrusive_ptr<TimeSeriesOutput>([](TimeSeriesOutput *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<TimeSeriesOutput, TimeSeriesType>(m, "TimeSeriesOutput")
             .def_prop_ro("parent_output", &TimeSeriesOutput::parent_output)
             .def_prop_ro("has_parent_output", &TimeSeriesOutput::has_parent_output)
             .def("can_apply_result", &TimeSeriesOutput::can_apply_result)
@@ -139,9 +135,7 @@ namespace hgraph
     bool TimeSeriesInput::active() const { return _active; }
 
     void TimeSeriesInput::register_with_nanobind(nb::module_ &m) {
-        nb::class_<TimeSeriesInput>(
-            m, "TimeSeriesInput",
-            nb::intrusive_ptr<TimeSeriesInput>([](TimeSeriesInput *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<TimeSeriesInput, TimeSeriesType>(m, "TimeSeriesInput")
             .def_prop_ro("parent_input", &TimeSeriesInput::parent_input)
             .def_prop_ro("has_parent_input", &TimeSeriesInput::has_parent_input)
             .def_prop_ro("bound", &TimeSeriesInput::bound)

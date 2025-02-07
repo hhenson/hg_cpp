@@ -6,6 +6,7 @@
 #define REF_H
 
 #include <hgraph/hgraph_forward_declarations.h>
+#include <hgraph/python/pyb.h>
 #include <hgraph/types/time_series_type.h>
 
 namespace hgraph
@@ -16,7 +17,8 @@ namespace hgraph
         using ptr = nb::ref<TimeSeriesReference>;
 
         virtual void        bind_input(TimeSeriesInput &ts_input) const              = 0;
-        virtual bool        has_peer() const                                         = 0;
+        virtual bool        has_output() const                                       = 0;
+        virtual bool        is_empty() const                                         = 0;
         virtual bool        is_valid() const                                         = 0;
         virtual bool        operator==(const TimeSeriesReferenceOutput &other) const = 0;
         virtual std::string to_string() const                                        = 0;
@@ -24,12 +26,15 @@ namespace hgraph
         static ptr make();
         static ptr make(time_series_output_ptr output);
         static ptr make(std::vector<ptr> items);
+
+        static void register_with_nanobind(nb::module_ &m);
     };
 
     struct EmptyTimeSeriesReference final : TimeSeriesReference
     {
         void        bind_input(TimeSeriesInput &ts_input) const override;
-        bool        has_peer() const override;
+        bool        has_output() const override;
+        bool        is_empty() const override;
         bool        is_valid() const override;
         bool        operator==(const TimeSeriesReferenceOutput &other) const override;
         std::string to_string() const override;
@@ -37,12 +42,13 @@ namespace hgraph
 
     struct BoundTimeSeriesReference final : TimeSeriesReference
     {
-        BoundTimeSeriesReference(time_series_output_ptr output);
+        explicit BoundTimeSeriesReference(time_series_output_ptr output);
 
         const TimeSeriesOutput::ptr &output() const;
 
         void        bind_input(TimeSeriesInput &ts_input) const override;
-        bool        has_peer() const override;
+        bool        has_output() const override;
+        bool        is_empty() const override;
         bool        is_valid() const override;
         bool        operator==(const TimeSeriesReferenceOutput &other) const override;
         std::string to_string() const override;
@@ -53,11 +59,13 @@ namespace hgraph
 
     struct UnBoundTimeSeriesReference final : TimeSeriesReference
     {
-        UnBoundTimeSeriesReference(std::vector<ptr> items);
+        explicit UnBoundTimeSeriesReference(std::vector<ptr> items);
+
+        const std::vector<ptr> &items() const;
 
         void bind_input(TimeSeriesInput &ts_input) const override;
-
-        bool has_peer() const override;
+        bool has_output() const override;
+        bool is_empty() const override;
         bool is_valid() const override;
         bool operator==(const TimeSeriesReferenceOutput &other) const override;
 
@@ -87,14 +95,14 @@ namespace hgraph
 
         [[nodiscard]] nb::object py_delta_value() const override;
 
-        void                     invalidate() override;
+        void invalidate() override;
 
-        void                     copy_from_output(TimeSeriesOutput &output) override;
+        void copy_from_output(TimeSeriesOutput &output) override;
 
-        void                     copy_from_input(TimeSeriesInput &input) override;
+        void copy_from_input(TimeSeriesInput &input) override;
 
       private:
-        TimeSeriesReference::ptr _value;
+        TimeSeriesReference::ptr              _value;
         std::unordered_set<TimeSeriesInput *> _reference_observers;
     };
 
@@ -111,7 +119,7 @@ namespace hgraph
       protected:
         void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
 
-    private:
+      private:
         TimeSeriesReference::ptr _value;
     };
 

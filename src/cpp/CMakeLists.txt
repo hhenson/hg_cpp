@@ -1,7 +1,7 @@
 project(_hgraph)
 
 set(HGRAPH_SOURCES
-
+        builders/builder.cpp
         builders/input_builder.cpp
         builders/node_builder.cpp
         builders/output_builder.cpp

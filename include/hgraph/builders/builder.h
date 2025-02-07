@@ -35,6 +35,7 @@ namespace hgraph
          * Release the item and its resources.
          */
         //virtual void release_instance(ITEM item) = 0;
+        static void register_with_nanobind(nb::module_ &m);
     };
 }
 #endif //BUILDER_H

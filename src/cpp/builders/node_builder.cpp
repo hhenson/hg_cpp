@@ -17,6 +17,10 @@ namespace hgraph
           output_builder(std::move(output_builder_)), error_builder(std::move(error_builder_)),
           recordable_state_builder(std::move(recordable_state_builder_)) {}
 
+    void NodeBuilder::register_with_nanobind(nb::module_ &m) {
+        nb::class_<NodeBuilder, Builder>(m, "NodeBuilder");
+    }
+
     void BaseNodeBuilder::_build_inputs_and_outputs(node_ptr node) {
         if (input_builder) {
             auto ts_input = (*input_builder)->make_instance(node);

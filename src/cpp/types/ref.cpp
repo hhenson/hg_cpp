@@ -22,9 +22,41 @@ namespace hgraph
         return new UnBoundTimeSeriesReference(items);
     }
 
+    void TimeSeriesReference::register_with_nanobind(nb::module_ &m) {
+        nb::class_<TimeSeriesReference, nb::intrusive_base>(m, "TimeSeriesReference")
+            .def("__str__", &TimeSeriesReference::to_string)
+            .def("__ref__", &TimeSeriesReference::to_string)
+            .def("bind_input", &TimeSeriesReference::bind_input)
+            .def_prop_ro("has_output", &TimeSeriesReference::has_output)
+            .def_prop_ro("is_empty", &TimeSeriesReference::is_empty)
+            .def_prop_ro("is_valid", &TimeSeriesReference::is_valid)
+            .def_static("make", static_cast<ptr (*)()>(&TimeSeriesReference::make))
+            .def_static("make", static_cast<ptr (*)(TimeSeriesOutput::ptr)>(&TimeSeriesReference::make))
+            .def_static("make", static_cast<ptr (*)(std::vector<ptr>)>(&TimeSeriesReference::make));
+
+        nb::class_<EmptyTimeSeriesReference, TimeSeriesReference>(
+            m, "EmptyTimeSeriesReference",
+            nb::intrusive_ptr<EmptyTimeSeriesReference>(
+                [](EmptyTimeSeriesReference *o, PyObject *po) noexcept { o->set_self_py(po); }));
+
+        nb::class_<BoundTimeSeriesReference, TimeSeriesReference>(
+            m, "BoundTimeSeriesReference",
+            nb::intrusive_ptr<BoundTimeSeriesReference>(
+                [](BoundTimeSeriesReference *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def_prop_ro("output", &BoundTimeSeriesReference::output);
+
+        nb::class_<UnBoundTimeSeriesReference, TimeSeriesReference>(
+            m, "UnBoundTimeSeriesReference",
+            nb::intrusive_ptr<UnBoundTimeSeriesReference>(
+                [](UnBoundTimeSeriesReference *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            .def_prop_ro("items", &UnBoundTimeSeriesReference::items);
+    }
+
     void EmptyTimeSeriesReference::bind_input(TimeSeriesInput &ts_input) const { ts_input.un_bind_output(); }
 
-    bool EmptyTimeSeriesReference::has_peer() const { return false; }
+    bool EmptyTimeSeriesReference::has_output() const { return false; }
+
+    bool EmptyTimeSeriesReference::is_empty() const { return true; }
 
     bool EmptyTimeSeriesReference::is_valid() const { return false; }
 
@@ -45,7 +77,9 @@ namespace hgraph
         if (reactivate) { ts_input.make_active(); }
     }
 
-    bool BoundTimeSeriesReference::has_peer() const { return true; }
+    bool BoundTimeSeriesReference::has_output() const { return true; }
+
+    bool BoundTimeSeriesReference::is_empty() const { return false; }
 
     bool BoundTimeSeriesReference::is_valid() const { return true; }
 
@@ -62,6 +96,8 @@ namespace hgraph
 
     UnBoundTimeSeriesReference::UnBoundTimeSeriesReference(std::vector<ptr> items) : _items{std::move(items)} {}
 
+    const std::vector<TimeSeriesReference::ptr> &UnBoundTimeSeriesReference::items() const { return _items; }
+
     void UnBoundTimeSeriesReference::bind_input(TimeSeriesInput &ts_input) const {
         IndexedTimeSeriesInput *indexed_input{dynamic_cast<IndexedTimeSeriesInput *>(&ts_input)};
         if (indexed_input == nullptr) {
@@ -70,7 +106,9 @@ namespace hgraph
         for (size_t i = 0; i < _items.size(); ++i) { _items[i]->bind_input(*(*indexed_input)[i]); }
     }
 
-    bool UnBoundTimeSeriesReference::has_peer() const { return false; }
+    bool UnBoundTimeSeriesReference::has_output() const { return false; }
+
+    bool UnBoundTimeSeriesReference::is_empty() const { return false; }
 
     bool UnBoundTimeSeriesReference::is_valid() const { return true; }
 
