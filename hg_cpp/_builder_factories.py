@@ -29,10 +29,12 @@ def python_time_series_reference_builder(
         ts: typing.Optional[TimeSeriesInput | TimeSeriesOutput] = None,
         from_items: typing.Iterable[TimeSeriesOutput] = None) -> TimeSeriesReference:
     from _hgraph import TimeSeriesReference as CppTimeSeriesReference
+    from _hgraph import TimeSeriesOutput as CppTimeSeriesOutput
+    from _hgraph import TimeSeriesReferenceInput
     if ts is not None:
-        if isinstance(ts, TimeSeriesOutput):
+        if isinstance(ts, CppTimeSeriesOutput):
             return CppTimeSeriesReference.make(ts)
-        if isinstance(ts, TimeSeriesReferenceInput):
+        if isinstance(ts, CppTimeSeriesReferenceInput):
             return ts.value
         if ts.has_peer:
             return CppTimeSeriesReference.make(ts.output)

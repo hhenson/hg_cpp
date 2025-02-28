@@ -26,6 +26,7 @@ namespace hgraph
         static ptr make();
         static ptr make(time_series_output_ptr output);
         static ptr make(std::vector<ptr> items);
+        static ptr make(std::vector<nb::ref<TimeSeriesReferenceInput>> items);
 
         static void register_with_nanobind(nb::module_ &m);
     };
@@ -79,7 +80,11 @@ namespace hgraph
     {
         using TimeSeriesOutput::TimeSeriesOutput;
 
+        ~TimeSeriesReferenceOutput() override;
+
         const TimeSeriesReference::ptr &value() const;
+
+        TimeSeriesReference::ptr &value();
 
         void set_value(TimeSeriesReference::ptr value);
 
@@ -101,26 +106,62 @@ namespace hgraph
 
         void copy_from_input(TimeSeriesInput &input) override;
 
+        static void register_with_nanobind(nb::module_ &m);
+
+
       private:
         TimeSeriesReference::ptr              _value;
+        // Use a raw pointer as we don't have hash implemented on ptr at the moment,
+        // So this is a work arround the code managing this also ensures the pointers are incremented
+        // and decremented.
         std::unordered_set<TimeSeriesInput *> _reference_observers;
     };
 
     struct TimeSeriesReferenceInput : TimeSeriesInput
     {
+        using ptr = nb::ref<TimeSeriesReferenceInput>;
         using TimeSeriesInput::TimeSeriesInput;
 
-        const TimeSeriesReferenceOutput &reference_output() const;
-
-        const TimeSeriesReference::ptr &value() const;
+        TimeSeriesReference::ptr value() const;
+        TimeSeriesReference::ptr value();
 
         void start();
 
+        [[nodiscard]] nb::object py_value() const override;
+
+        [[nodiscard]] nb::object py_delta_value() const override;
+
+        // Duplicate binding of another input
+        void clone_binding(const TimeSeriesReferenceInput &other);
+
+        [[nodiscard]] bool          modified() const override;
+        [[nodiscard]] bool          valid() const override;
+        [[nodiscard]] bool          all_valid() const override;
+        [[nodiscard]] engine_time_t last_modified_time() const override;
+        bool                        bind_output(time_series_output_ptr value) override;
+        void                        un_bind_output() override;
+        void                        make_active() override;
+        void                        make_passive() override;
+
+      protected:
+        bool do_bind_output(time_series_output_ptr value) override;
+        void do_un_bind_output() override;
+
+      public:
+        static void register_with_nanobind(nb::module_ &m);
       protected:
         void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
 
+        std::vector<TimeSeriesReferenceInput::ptr> &items();
+
+        const std::vector<TimeSeriesReferenceInput::ptr> &items() const;
+
+        const TimeSeriesReferenceOutput &reference_output() const;
+        TimeSeriesReferenceOutput &reference_output();
+
       private:
-        TimeSeriesReference::ptr _value;
+        mutable TimeSeriesReference::ptr _value;
+        std::vector<TimeSeriesReferenceInput::ptr> _items;
     };
 
 }  // namespace hgraph

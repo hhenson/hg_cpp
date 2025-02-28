@@ -3,6 +3,8 @@
 #include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
 
+#include <utility>
+
 namespace hgraph
 {
     void TimeSeriesType::re_parent(Node::ptr parent) { _parent_ts_or_node = parent; }
@@ -20,9 +22,11 @@ namespace hgraph
             .def("re_parent", static_cast<void (TimeSeriesType::*)(Node::ptr)>(&TimeSeriesType::re_parent));
     }
 
-    const TimeSeriesType::ptr &TimeSeriesType::_time_series() const { return const_cast<TimeSeriesType *>(this)->_time_series(); }
+    const TimeSeriesType::ptr &TimeSeriesType::_parent_time_series() const {
+        return const_cast<TimeSeriesType *>(this)->_parent_time_series();
+    }
 
-    TimeSeriesType::ptr &TimeSeriesType::_time_series() {
+    TimeSeriesType::ptr &TimeSeriesType::_parent_time_series() {
         if (_parent_ts_or_node.has_value()) {
             return std::get<ptr>(_parent_ts_or_node.value());
         } else {
@@ -30,7 +34,7 @@ namespace hgraph
         }
     }
 
-    bool TimeSeriesType::_has_time_series() const {
+    bool TimeSeriesType::_has_parent_time_series() const {
         if (_parent_ts_or_node.has_value()) {
             return std::holds_alternative<ptr>(_parent_ts_or_node.value());
         } else {
@@ -38,7 +42,7 @@ namespace hgraph
         }
     }
 
-    void TimeSeriesType::_set_time_series(TimeSeriesType *ts) { _parent_ts_or_node = ptr{ts}; }
+    void TimeSeriesType::_set_parent_time_series(TimeSeriesType *ts) { _parent_ts_or_node = ptr{ts}; }
 
     bool TimeSeriesType::has_parent_or_node() const { return _parent_ts_or_node.has_value(); }
 
@@ -58,8 +62,8 @@ namespace hgraph
             .def("mark_invalid", &TimeSeriesOutput::mark_invalid)
             .def("mark_modified", static_cast<void (TimeSeriesOutput::*)()>(&TimeSeriesOutput::mark_modified))
             .def("mark_modified", static_cast<void (TimeSeriesOutput::*)(engine_time_t)>(&TimeSeriesOutput::mark_modified))
-            .def("subscribe", &TimeSeriesOutput::subscribe_node)
-            .def("unsubscribe", &TimeSeriesOutput::un_subscribe_node)
+            .def("subscribe", &TimeSeriesOutput::subscribe)
+            .def("unsubscribe", &TimeSeriesOutput::un_subscribe)
             .def("copy_from_output", &TimeSeriesOutput::copy_from_output)
             .def("copy_from_input", &TimeSeriesOutput::copy_from_input)
             .def("re_parent", static_cast<void (TimeSeriesOutput::*)(ptr &)>(&TimeSeriesOutput::re_parent));
@@ -93,10 +97,10 @@ namespace hgraph
     const Node &TimeSeriesType::owning_node() const { return _owning_node(); }
 
     TimeSeriesInput::ptr TimeSeriesInput::parent_input() const {
-        return const_cast<TimeSeriesInput *>(static_cast<const TimeSeriesInput *>(_time_series().get()));
+        return const_cast<TimeSeriesInput *>(static_cast<const TimeSeriesInput *>(_parent_time_series().get()));
     }
 
-    bool TimeSeriesInput::has_parent_input() const { return _has_time_series(); }
+    bool TimeSeriesInput::has_parent_input() const { return _has_parent_time_series(); }
 
     bool TimeSeriesInput::bound() const { return _output.get() != nullptr; }
 
@@ -107,6 +111,8 @@ namespace hgraph
     }
 
     time_series_output_ptr TimeSeriesInput::output() const { return _output; }
+
+    bool TimeSeriesInput::has_output() const { return _output.get() != nullptr; }
 
     bool TimeSeriesInput::bind_output(time_series_output_ptr value) {
         bool peer;
@@ -134,6 +140,47 @@ namespace hgraph
 
     bool TimeSeriesInput::active() const { return _active; }
 
+    void TimeSeriesInput::make_active() {
+        if (!_active) {
+            _active = true;
+            if (bound()) {
+                output()->subscribe(subscribe_input() ? static_cast<Notifiable *>(this)
+                                                      : static_cast<Notifiable *>(&owning_node()));
+                if (output()->valid() && output()->modified()) {
+                    notify(output()->last_modified_time());
+                    return;  // If the output is modified we do not need to check if sampled
+                }
+            }
+
+            if (sampled()) { notify(_sample_time); }
+        }
+    }
+
+    void TimeSeriesInput::make_passive() {
+        if (_active) {
+            _active = false;
+            if (bound()) {
+                output()->un_subscribe(subscribe_input() ? static_cast<Notifiable *>(this)
+                                                         : static_cast<Notifiable *>(&owning_node()));
+            }
+        }
+    }
+
+    nb::object TimeSeriesInput::py_value() const {
+        if (has_peer()) {
+            return _output->py_value();
+        } else {
+            return nb::none();
+        }
+    }
+    nb::object TimeSeriesInput::py_delta_value() const {
+        if (has_peer()) {
+            return _output->py_delta_value();
+        } else {
+            return nb::none();
+        }
+    }
+
     void TimeSeriesInput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesInput, TimeSeriesType>(m, "TimeSeriesInput")
             .def_prop_ro("parent_input", &TimeSeriesInput::parent_input)
@@ -148,6 +195,18 @@ namespace hgraph
             .def("make_passive", &TimeSeriesInput::make_passive);
     }
 
+    bool TimeSeriesInput::do_bind_output(time_series_output_ptr value) {
+        bool active = this->active();
+        this->make_passive();  // Ensure we are unsubscribed from the old output.
+        _output = std::move(value);
+        if (active) {
+            this->make_active();  // If we were active now subscribe to the new output,
+                                  // this is important even if we were not bound previously as this will ensure the new output gets
+                                  // subscribed to
+        }
+        return true;
+    }
+
     void TimeSeriesInput::notify(engine_time_t modified_time) {
         if (_notify_time != modified_time) {
             _notify_time = modified_time;
@@ -159,15 +218,34 @@ namespace hgraph
         }
     }
 
-    void TimeSeriesInput::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) { notify(modified_time); }
-
-    TimeSeriesOutput::ptr TimeSeriesOutput::parent_output() const {
-        return const_cast<TimeSeriesOutput *>(static_cast<const TimeSeriesOutput *>(_time_series().get()));
+    void TimeSeriesInput::do_un_bind_output() {
+        if (_active) {
+            output()->un_subscribe(subscribe_input() ? static_cast<Notifiable *>(this) : static_cast<Notifiable *>(&owning_node()));
+        }
+        _output = nullptr;
     }
 
-    bool TimeSeriesOutput::has_parent_output() const { return _has_time_series(); }
+    void TimeSeriesInput::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) { notify(modified_time); }
 
-    void TimeSeriesOutput::re_parent(ptr &parent) { _set_time_series(parent.get()); }
+    void TimeSeriesInput::set_sample_time(engine_time_t sample_time) { _sample_time = sample_time; }
+
+    engine_time_t TimeSeriesInput::sample_time() const { return _sample_time; }
+
+    void TimeSeriesInput::set_subscribe_method(bool subscribe_input) { _subscribe_input = subscribe_input; }
+
+    bool TimeSeriesInput::subscribe_input() const { return _subscribe_input; }
+
+    bool TimeSeriesInput::sampled() const {
+        return _sample_time != MIN_DT && _sample_time == owning_graph().evaluation_clock().evaluation_time();
+    }
+
+    TimeSeriesOutput::ptr TimeSeriesOutput::parent_output() const {
+        return const_cast<TimeSeriesOutput *>(static_cast<const TimeSeriesOutput *>(_parent_time_series().get()));
+    }
+
+    bool TimeSeriesOutput::has_parent_output() const { return _has_parent_time_series(); }
+
+    void TimeSeriesOutput::re_parent(ptr &parent) { _set_parent_time_series(parent.get()); }
 
     bool TimeSeriesOutput::can_apply_result(nb::object value) { return not modified(); }
 
@@ -189,7 +267,7 @@ namespace hgraph
     }
 
     void TimeSeriesOutput::mark_modified() {
-        if (has_parent_output()) {
+        if (has_parent_or_node()) {
             mark_modified(owning_graph().evaluation_clock().evaluation_time());
         } else {
             mark_modified(MAX_ET);
@@ -197,25 +275,39 @@ namespace hgraph
     }
 
     void TimeSeriesOutput::mark_modified(engine_time_t modified_time) {
-        const auto &et{owning_graph().evaluation_clock().evaluation_time()};
-        if (_last_modified_time < et) {
-            _last_modified_time = et;
-            if (_has_time_series()) { _time_series_output().mark_modified(); }
+        if (_last_modified_time < modified_time) {
+            _last_modified_time = modified_time;
+            if (has_parent_output()) { parent_output()->mark_child_modified(modified_time); }
             _notify(modified_time);
         }
     }
 
-    void TimeSeriesOutput::subscribe_node(Node::ptr node) { _subscribers.subscribe(node.get()); }
+    void TimeSeriesOutput::mark_child_modified(engine_time_t modified_time) { mark_modified(modified_time); }
 
-    void TimeSeriesOutput::un_subscribe_node(Node::ptr node) { _subscribers.un_subscribe(node.get()); }
+    void TimeSeriesOutput::subscribe(Notifiable *notifiable) { _subscribers.subscribe(notifiable); }
+
+    void TimeSeriesOutput::un_subscribe(Notifiable *notifiable) { _subscribers.un_subscribe(notifiable); }
 
     void TimeSeriesOutput::_notify(engine_time_t modfied_time) {
-        _subscribers.apply([modfied_time](Node::ptr node) { node->notify(modfied_time); });
+        _subscribers.apply([modfied_time](Notifiable *notifiable) { notifiable->notify(modfied_time); });
     }
 
     const TimeSeriesOutput &TimeSeriesOutput::_time_series_output() const {
-        return *dynamic_cast<const TimeSeriesOutput *>(_time_series().get());
+        return *dynamic_cast<const TimeSeriesOutput *>(_parent_time_series().get());
     }
 
-    TimeSeriesOutput &TimeSeriesOutput::_time_series_output() { return *dynamic_cast<TimeSeriesOutput *>(_time_series().get()); }
+    TimeSeriesOutput &TimeSeriesOutput::_time_series_output() {
+        return *dynamic_cast<TimeSeriesOutput *>(_parent_time_series().get());
+    }
+
+    bool TimeSeriesInput::modified() const { return _output != nullptr && (_output->modified() || sampled()); }
+
+    bool TimeSeriesInput::valid() const { return bound() && _output != nullptr && _output->valid(); }
+
+    bool          TimeSeriesInput::all_valid() const { return bound() && _output != nullptr && _output->all_valid(); }
+
+    engine_time_t TimeSeriesInput::last_modified_time() const {
+        return bound() ? std::max(_output->last_modified_time(), _sample_time) : MIN_DT;
+    }
+
 }  // namespace hgraph

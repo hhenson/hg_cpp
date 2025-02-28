@@ -21,39 +21,46 @@ namespace hgraph
 
         void apply_result(nb::object value) override {
             if (value.is_none()) { return; }
-            _value = nb::cast<T>(value);
-            mark_modified();
+            set_value(nb::cast<T>(value));
         }
 
         const T &value() { return _value; }
+
+        void set_value(const T &value) {
+            _value = value;
+            mark_modified();
+        }
+
+        void set_value(T &&value) {
+            _value = value;
+            mark_modified();
+        }
 
         void invalidate() override { mark_invalid(); }
 
         void copy_from_output(TimeSeriesOutput &output) override {
             TimeSeriesValueOutput<T> &output_t = dynamic_cast<TimeSeriesValueOutput<T> &>(output);
-            _value                             = output_t._value;
-            mark_modified();
+            set_value(output_t._value);
         }
 
-        void copy_from_input(TimeSeriesInput &input) override {
-
-        }
+        void copy_from_input(TimeSeriesInput &input) override;
 
       private:
         T _value{};
     };
 
-    template<typename T> struct TimeSeriesValueInput : TimeSeriesInput
+    template <typename T> struct TimeSeriesValueInput : TimeSeriesInput
     {
 
-        [[nodiscard]] TimeSeriesValueOutput<T> &value_output() {
-            return dynamic_cast<TimeSeriesValueOutput<T> &>(*output());
-        }
+        [[nodiscard]] TimeSeriesValueOutput<T> &value_output() { return dynamic_cast<TimeSeriesValueOutput<T> &>(*output()); }
 
-        [[nodiscard]] const T& value() {
-            return value_output().value();
-        }
+        [[nodiscard]] const T &value() { return value_output().value(); }
     };
+
+    template <typename T> void TimeSeriesValueOutput<T>::copy_from_input(TimeSeriesInput &input) {
+        TimeSeriesValueInput<T> &input_t = dynamic_cast<TimeSeriesValueInput<T> &>(input);
+        set_value(input_t.value());
+    }
 }  // namespace hgraph
 
 #endif  // TS_H

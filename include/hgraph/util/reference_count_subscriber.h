@@ -9,6 +9,13 @@
 
 namespace hgraph
 {
+
+    struct Notifiable
+    {
+        virtual ~Notifiable() = default;
+        virtual void notify(engine_time_t) = 0;
+    };
+
     template <typename T> class ReferenceCountSubscriber
     {
       public:

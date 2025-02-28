@@ -75,10 +75,10 @@ namespace hgraph
         static void register_with_nanobind(nb::module_ &m);
 
       protected:
-        const ptr &_time_series() const;
-        ptr       &_time_series();
-        bool       _has_time_series() const;
-        void       _set_time_series(TimeSeriesType *ts);
+        const ptr &_parent_time_series() const;
+        ptr       &_parent_time_series();
+        bool       _has_parent_time_series() const;
+        void       _set_parent_time_series(TimeSeriesType *ts);
         bool       has_parent_or_node() const;
 
       private:
@@ -121,9 +121,11 @@ namespace hgraph
 
         virtual void mark_modified(engine_time_t modified_time);
 
-        void subscribe_node(Node::ptr node);
+        virtual void mark_child_modified(engine_time_t modified_time);
 
-        void un_subscribe_node(Node::ptr node);
+        void subscribe(Notifiable *node);
+
+        void un_subscribe(Notifiable *node);
 
         virtual void copy_from_output(TimeSeriesOutput &output) = 0;
 
@@ -139,15 +141,23 @@ namespace hgraph
         TimeSeriesOutput       &_time_series_output();
 
       private:
-        ReferenceCountSubscriber<Node *> _subscribers{};
-        engine_time_t                    _last_modified_time{MIN_DT};
+        ReferenceCountSubscriber<Notifiable *> _subscribers{};
+        engine_time_t                          _last_modified_time{MIN_DT};
     };
 
-    struct HGRAPH_EXPORT TimeSeriesInput : TimeSeriesType
+    struct HGRAPH_EXPORT TimeSeriesInput : TimeSeriesType, Notifiable
     {
         using ptr = nb::ref<TimeSeriesInput>;
 
         using TimeSeriesType::TimeSeriesType;
+
+        [[nodiscard]] bool modified() const override;
+
+        [[nodiscard]] bool valid() const override;
+
+        [[nodiscard]] bool all_valid() const override;
+
+        [[nodiscard]] engine_time_t last_modified_time() const override;
 
         // The input that this input is bound to. This will be nullptr if this is the root input.
         [[nodiscard]] ptr parent_input() const;
@@ -164,6 +174,8 @@ namespace hgraph
         // The output bound to this input. If the input is not bound then this will be nullptr.
         [[nodiscard]] virtual time_series_output_ptr output() const;
 
+        [[nodiscard]] virtual bool has_output() const;
+
         // FOR LIBRARY USE ONLY. Binds the output provided to this input.
         virtual bool bind_output(time_series_output_ptr value);
 
@@ -175,24 +187,38 @@ namespace hgraph
         [[nodiscard]] virtual bool active() const;
 
         // Marks the input as being active, causing its node to be scheduled for evaluation when the value changes.
-        virtual void make_active() = 0;
+        virtual void make_active();
 
         // Marks the input as passive, preventing the associated node from being scheduled for evaluation
         // when the value changes.
-        virtual void make_passive() = 0;
+        virtual void make_passive();
+
+        [[nodiscard]] nb::object py_value() const override;
+
+        [[nodiscard]] nb::object py_delta_value() const override;
 
         static void register_with_nanobind(nb::module_ &m);
 
       protected:
         // Derived classes override this to implement specific behaviours
-        virtual bool do_bind_output(time_series_output_ptr value) = 0;
+        virtual bool do_bind_output(time_series_output_ptr value);
 
         // Derived classes override this to implement specific behaviours
-        virtual void do_un_bind_output() = 0;
+        virtual void do_un_bind_output();
 
-        void notify(engine_time_t modified_time);
+        void notify(engine_time_t modified_time) override;
 
         virtual void notify_parent(TimeSeriesInput *child, engine_time_t modified_time);
+
+        void set_sample_time(engine_time_t sample_time);
+
+        [[nodiscard]] engine_time_t sample_time() const;
+
+        void set_subscribe_method(bool subscribe_input);
+
+        [[nodiscard]] bool subscribe_input() const;
+
+        [[nodiscard]] bool sampled() const;
 
       private:
         time_series_output_ptr _output;
@@ -205,7 +231,19 @@ namespace hgraph
 
     struct IndexedTimeSeriesInput : TimeSeriesInput
     {
-        virtual ptr &operator[](size_t ndx) = 0;
+        using ptr = nb::ref<IndexedTimeSeriesInput>;
+        using TimeSeriesInput::TimeSeriesInput;
+        using iterator       = std::vector<TimeSeriesInput::ptr>::iterator;
+        using const_iterator = std::vector<TimeSeriesInput::ptr>::const_iterator;
+
+        virtual TimeSeriesInput::ptr &operator[](size_t ndx) = 0;
+
+        virtual iterator       begin()       = 0;
+        virtual const_iterator begin() const = 0;
+        virtual iterator       end()         = 0;
+        virtual const_iterator end() const   = 0;
+
+        virtual size_t size() const = 0;
     };
 }  // namespace hgraph
 

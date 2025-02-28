@@ -17,6 +17,7 @@
 #include <hgraph/util/date_time.h>
 #include <hgraph/util/lifecycle.h>
 #include <hgraph/python/pyb.h>
+#include <hgraph/util/reference_count_subscriber.h>
 
 namespace hgraph
 {
@@ -149,14 +150,15 @@ namespace hgraph
         engine_time_t                                   _last_scheduled_time{MIN_DT};
     };
 
-    struct HGRAPH_EXPORT Node : ComponentLifeCycle
+    struct HGRAPH_EXPORT Node : ComponentLifeCycle, Notifiable
     {
         using ptr = nanobind::ref<Node>;
 
         Node(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars);
 
         virtual void eval() = 0;
-        virtual void notify(engine_time_t modified_time);
+
+        void notify(engine_time_t modified_time) override;
 
         void notify();
 
@@ -199,6 +201,8 @@ namespace hgraph
         void set_error_output(time_series_output_ptr value);
 
         friend struct Graph;
+
+        void add_start_input(nb::ref<TimeSeriesReferenceInput> input);
 
     protected:
 
