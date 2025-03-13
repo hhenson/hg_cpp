@@ -28,6 +28,7 @@ classifiers = [
     "Programming Language :: C++",
 ]
 
+[tool.setuptools]
 packages = [
     { include = "hg_cpp" },
 ]
