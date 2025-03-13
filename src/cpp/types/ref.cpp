@@ -4,6 +4,7 @@
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
+#include <algorithm>
 
 namespace hgraph
 {
