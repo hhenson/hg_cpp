@@ -13,9 +13,7 @@ namespace hgraph
     }
 
     void EvaluationClock::register_with_nanobind(nb::module_ &m) {
-        nb::class_<EvaluationClock>(
-            m, "EvaluationClock",
-            nb::intrusive_ptr<EvaluationClock>([](EvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<EvaluationClock>(m, "EvaluationClock")
             .def_prop_ro("evaluation_time", &EvaluationClock::evaluation_time)
             .def_prop_ro("now", &EvaluationClock::now)
             .def_prop_ro("next_cycle_evaluation_time", &EvaluationClock::next_cycle_evaluation_time)
@@ -23,9 +21,7 @@ namespace hgraph
     }
 
     void EngineEvaluationClock::register_with_nanobind(nb::module_ &m) {
-        nb::class_<EngineEvaluationClock, EvaluationClock>(
-            m, "EngineEvaluationClock",
-            nb::intrusive_ptr<EngineEvaluationClock>([](EngineEvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<EngineEvaluationClock, EvaluationClock>(m, "EngineEvaluationClock")
             .def_prop_rw("evaluation_time", &EngineEvaluationClock::evaluation_time, &EngineEvaluationClock::set_evaluation_time)
             .def_prop_ro("next_cycle_evaluation_time", &EngineEvaluationClock::next_cycle_evaluation_time)
             .def("update_next_scheduled_evaluation_time", &EngineEvaluationClock::update_next_scheduled_evaluation_time, "et"_a)
@@ -75,17 +71,12 @@ namespace hgraph
     }
 
     void EngineEvaluationClockDelegate::register_with_nanobind(nb::module_ &m) {
-        nb::class_<EngineEvaluationClockDelegate, EngineEvaluationClock>(
-            m, "EngineEvaluationClockDelegate",
-            nb::intrusive_ptr<EngineEvaluationClockDelegate>(
-                [](EngineEvaluationClockDelegate *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<EngineEvaluationClockDelegate, EngineEvaluationClock>(m, "EngineEvaluationClockDelegate")
             .def(nb::init<EngineEvaluationClock::ptr>());
     }
 
     void EvaluationEngineApi::register_with_nanobind(nb::module_ &m) {
-        nb::class_<EvaluationEngineApi, ComponentLifeCycle>(
-            m, "EvaluationEngineApi",
-            nb::intrusive_ptr<EvaluationEngineApi>([](EvaluationEngineApi *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<EvaluationEngineApi, ComponentLifeCycle>(m, "EvaluationEngineApi")
             .def_prop_ro("evaluation_mode", &EvaluationEngineApi::evaluation_mode)
             .def_prop_ro("start_time", &EvaluationEngineApi::start_time)
             .def_prop_ro("end_time", &EvaluationEngineApi::end_time)
@@ -99,9 +90,7 @@ namespace hgraph
     }
 
     void EvaluationEngine::register_with_nanobind(nb::module_ &m) {
-        nb::class_<EvaluationEngine, EvaluationEngineApi>(
-            m, "EvaluationEngine",
-            nb::intrusive_ptr<EvaluationEngine>([](EvaluationEngine *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<EvaluationEngine, EvaluationEngineApi>(m, "EvaluationEngine")
             .def_prop_ro("engine_evaluation_clock",  static_cast<const EngineEvaluationClock& (EvaluationEngine::*)() const>(&EvaluationEngine::engine_evaluation_clock))
             .def("advance_engine_time", &EvaluationEngine::advance_engine_time)
             .def("notify_before_evaluation", &EvaluationEngine::notify_before_evaluation)
@@ -256,9 +245,7 @@ namespace hgraph
     }
 
     void BaseEvaluationClock::register_with_nanobind(nb::module_ &m) {
-        nb::class_<BaseEvaluationClock, EngineEvaluationClock>(
-            m, "BaseEvaluationClock",
-            nb::intrusive_ptr<BaseEvaluationClock>([](BaseEvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }));
+        nb::class_<BaseEvaluationClock, EngineEvaluationClock>(m, "BaseEvaluationClock");
     }
 
     SimulationEvaluationClock::SimulationEvaluationClock(engine_time_t current_time)
@@ -288,10 +275,7 @@ namespace hgraph
     }
 
     void SimulationEvaluationClock::register_with_nanobind(nb::module_ &m) {
-        nb::class_<SimulationEvaluationClock, BaseEvaluationClock>(
-            m, "SimulationEvaluationClock",
-            nb::intrusive_ptr<SimulationEvaluationClock>(
-                [](SimulationEvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<SimulationEvaluationClock, BaseEvaluationClock>(m, "SimulationEvaluationClock")
             .def(nb::init<engine_time_t>());
     }
 
@@ -528,8 +512,7 @@ namespace hgraph
 
     void EvaluationEngineImpl::register_with_nanobind(nb::module_ &m) {
         nb::class_<EvaluationEngineImpl, EvaluationEngine>(
-            m, "EvaluationEngineImpl",
-            nb::intrusive_ptr<EvaluationEngineImpl>([](EvaluationEngineImpl *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            m, "EvaluationEngineImpl")
             .def(nb::init<EngineEvaluationClock::ptr, engine_time_t, engine_time_t, EvaluationMode>());
     }
 

@@ -4,11 +4,37 @@
 
 namespace hgraph
 {
+    struct PyEvaluationLifeCycleObserver : EvaluationLifeCycleObserver
+    {
+        NB_TRAMPOLINE(EvaluationLifeCycleObserver, 12);
+
+        void on_before_start_graph(const Graph &graph) override { NB_OVERRIDE(on_before_start_graph, graph); }
+
+        void on_after_start_graph(const Graph &graph) override { NB_OVERRIDE(on_after_start_graph, graph); }
+
+        void on_before_start_node(const Node &node) override { NB_OVERRIDE(on_before_start_node, node); }
+
+        void on_after_start_node(const Node &node) override { NB_OVERRIDE(on_after_start_node, node); }
+
+        void on_before_graph_evaluation(const Graph &graph) override { NB_OVERRIDE(on_before_graph_evaluation, graph); }
+
+        void on_after_graph_evaluation(const Graph &graph) override { NB_OVERRIDE(on_after_graph_evaluation, graph); }
+
+        void on_before_node_evaluation(const Node &node) override { NB_OVERRIDE(on_before_node_evaluation, node); }
+
+        void on_after_node_evaluation(const Node &node) override { NB_OVERRIDE(on_after_node_evaluation, node); }
+
+        void on_before_stop_node(const Node &node) override { NB_OVERRIDE(on_before_stop_node, node); }
+
+        void on_after_stop_node(const Node &node) override { NB_OVERRIDE(on_after_stop_node, node); }
+
+        void on_before_stop_graph(const Graph &graph) override { NB_OVERRIDE(on_before_stop_graph, graph); }
+
+        void on_after_stop_graph(const Graph &graph) override { NB_OVERRIDE(on_after_stop_graph, graph); }
+    };
 
     void GraphExecutor::register_with_nanobind(nb::module_ &m) {
-        nb::class_<GraphExecutor>(m, "GraphExecutor", nb::intrusive_ptr<GraphExecutor>([](GraphExecutor *o, PyObject *po) noexcept {
-                                      o->set_self_py(po);
-                                  }))
+        nb::class_<GraphExecutor>(m, "GraphExecutor")
             .def("run_mode", &GraphExecutor::run_mode)
             .def("graph", &GraphExecutor::graph)
             .def("run", &GraphExecutor::run);
@@ -18,10 +44,7 @@ namespace hgraph
             .value("SIMULATION", EvaluationMode::SIMULATION)
             .export_values();
 
-        nb::class_<EvaluationLifeCycleObserver>(
-            m, "EvaluationLifeCycleObserver",
-            nb::intrusive_ptr<EvaluationLifeCycleObserver>(
-                [](EvaluationLifeCycleObserver *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<EvaluationLifeCycleObserver, PyEvaluationLifeCycleObserver>(m, "EvaluationLifeCycleObserver")
             .def("on_before_start_graph", &EvaluationLifeCycleObserver::on_before_start_graph)
             .def("on_after_start_graph", &EvaluationLifeCycleObserver::on_after_start_graph)
             .def("on_before_start_node", &EvaluationLifeCycleObserver::on_before_start_node)
@@ -74,9 +97,7 @@ namespace hgraph
     }
 
     void GraphExecutorImpl::register_with_nanobind(nb::module_ &m) {
-        nb::class_<GraphExecutorImpl, GraphExecutor>(m, "GraphExecutorImpl", nb::intrusive_ptr<GraphExecutorImpl>([](GraphExecutorImpl *o, PyObject *po) noexcept {
-                                      o->set_self_py(po);
-                                  }))
+        nb::class_<GraphExecutorImpl, GraphExecutor>(m, "GraphExecutorImpl")
             .def(nb::init<graph_ptr, EvaluationMode, std::vector<EvaluationLifeCycleObserver::ptr>>());
     }
 

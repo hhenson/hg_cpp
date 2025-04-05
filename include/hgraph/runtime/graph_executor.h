@@ -6,8 +6,8 @@
 #include <hgraph/python/pyb.h>
 #include <hgraph/util/date_time.h>
 #include <nanobind/intrusive/counter.h>
+#include <nanobind/trampoline.h>
 #include <vector>
-
 
 namespace hgraph
 {
@@ -22,41 +22,29 @@ namespace hgraph
     {
         using ptr = nb::ref<EvaluationLifeCycleObserver>;
 
-        virtual void on_before_start_graph(const Graph &) {
-        };
+        virtual void on_before_start_graph(const Graph &) {};
 
-        virtual void on_after_start_graph(const Graph &) {
-        };
+        virtual void on_after_start_graph(const Graph &) {};
 
-        virtual void on_before_start_node(const Node &) {
-        };
+        virtual void on_before_start_node(const Node &) {};
 
-        virtual void on_after_start_node(const Node &) {
-        };
+        virtual void on_after_start_node(const Node &) {};
 
-        virtual void on_before_graph_evaluation(const Graph &) {
-        };
+        virtual void on_before_graph_evaluation(const Graph &) {};
 
-        virtual void on_after_graph_evaluation(const Graph &) {
-        };
+        virtual void on_after_graph_evaluation(const Graph &) {};
 
-        virtual void on_before_node_evaluation(const Node &) {
-        };
+        virtual void on_before_node_evaluation(const Node &) {};
 
-        virtual void on_after_node_evaluation(const Node &) {
-        };
+        virtual void on_after_node_evaluation(const Node &) {};
 
-        virtual void on_before_stop_node(const Node &) {
-        };
+        virtual void on_before_stop_node(const Node &) {};
 
-        virtual void on_after_stop_node(const Node &) {
-        };
+        virtual void on_after_stop_node(const Node &) {};
 
-        virtual void on_before_stop_graph(const Graph &) {
-        };
+        virtual void on_before_stop_graph(const Graph &) {};
 
-        virtual void on_after_stop_graph(const Graph &) {
-        };
+        virtual void on_after_stop_graph(const Graph &) {};
     };
 
     struct HGRAPH_EXPORT GraphExecutor : nb::intrusive_base
@@ -76,18 +64,18 @@ namespace hgraph
 
         EvaluationMode run_mode() const override;
 
-        const Graph & graph() const override;
+        const Graph &graph() const override;
 
-        void           run(const engine_time_t &start_time, const engine_time_t &end_time) override;
+        void run(const engine_time_t &start_time, const engine_time_t &end_time) override;
 
         void static register_with_nanobind(nb::module_ &m);
 
-    protected:
-        void _evaluate(EvaluationEngine& evaluationEngine);
+      protected:
+        void _evaluate(EvaluationEngine &evaluationEngine);
 
-    private:
-        graph_ptr _graph;
-        EvaluationMode _run_mode;
+      private:
+        graph_ptr                                     _graph;
+        EvaluationMode                                _run_mode;
         std::vector<EvaluationLifeCycleObserver::ptr> _observers;
     };
 

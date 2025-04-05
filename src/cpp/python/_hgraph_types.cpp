@@ -10,5 +10,8 @@ void export_types(nb::module_ &m) {
     TimeSeriesType::register_with_nanobind(m);
     TimeSeriesOutput::register_with_nanobind(m);
     TimeSeriesInput::register_with_nanobind(m);
+
     TimeSeriesReference::register_with_nanobind(m);
+    TimeSeriesReferenceOutput::register_with_nanobind(m);
+    TimeSeriesReferenceInput::register_with_nanobind(m);
 }
