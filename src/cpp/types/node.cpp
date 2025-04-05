@@ -6,7 +6,7 @@
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
-#include <range/v3/all.hpp>
+#include <ranges>
 #include <sstream>
 
 namespace hgraph
@@ -321,9 +321,7 @@ namespace hgraph
 
     void Node::set_error_output(time_series_output_ptr value) { _error_output = std::move(value); }
 
-    void Node::add_start_input(nb::ref<TimeSeriesReferenceInput> input) {
-        _start_inputs.push_back(std::move(input));
-    }
+    void Node::add_start_input(nb::ref<TimeSeriesReferenceInput> input) { _start_inputs.push_back(std::move(input)); }
 
     BasePythonNode::BasePythonNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
                                    nb::dict scalars, nb::callable eval_fn, nb::callable start_fn, nb::callable end_fn)
@@ -346,7 +344,8 @@ namespace hgraph
         }
 
         for (const auto &[key, value] : input()) {
-            if (ranges::contains(signature_args, key)) { _kwargs[key.c_str()] = value; }
+            // Apple does not yet support contains :(
+            if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) { _kwargs[key.c_str()] = value; }
         }
     }
 
@@ -356,7 +355,9 @@ namespace hgraph
                 start_input->start();  // Assuming start_input is some time series type with a start method
             }
             for (auto &[key, ts] : input()) {
-                if (!signature().active_inputs || ranges::contains(*signature().active_inputs, key)) {
+                // Apple does not yet support contains :(
+                if (!signature().active_inputs ||
+                    (std::ranges::find(*signature().active_inputs, key) != std::ranges::end(*signature().active_inputs))) {
                     ts->make_active();  // Assuming `make_active` is a method of the `TimeSeriesInput` type
                 }
             }
