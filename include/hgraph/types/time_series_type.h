@@ -180,7 +180,7 @@ namespace hgraph
         virtual bool bind_output(time_series_output_ptr value);
 
         // FOR LIBRARY USE ONLY. Unbinds the output from this input.
-        virtual void un_bind_output() = 0;
+        virtual void un_bind_output();
 
         // An active input will cause the node it is associated with to be scheduled when the value
         // the input represents is modified. Returns True if this input is active.

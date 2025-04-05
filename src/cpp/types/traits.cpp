@@ -1,3 +1,4 @@
+#include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/traits.h>
 
 namespace hgraph
@@ -17,6 +18,14 @@ namespace hgraph
         auto new_traits{_parent_traits.has_value() ? new Traits(_parent_traits.value()) : new Traits()};
         new_traits->set_traits(nb::cast<nb::kwargs>(_traits));
         return new_traits;
+    }
+
+    void Traits::register_with_nanobind(nb::module_ &m) {
+        nb::class_<Traits, nb::intrusive_base>(m, "Traits")
+            .def("get_trait", &Traits::get_trait, "trait_name"_a)
+            .def("set_traits", &Traits::set_traits)
+            .def("get_trait_or", &Traits::get_trait_or, "trait_name"_a, "def_value"_a)
+            .def("copy", &Traits::copy);
     }
 
 }  // namespace hgraph

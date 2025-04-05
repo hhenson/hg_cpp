@@ -29,6 +29,8 @@ namespace hgraph
 
         [[nodiscard]] Traits::ptr copy() const;
 
+        static void register_with_nanobind(nb::module_ &m);
+
       private:
         std::optional<ptr> _parent_traits;
         nb::dict           _traits;

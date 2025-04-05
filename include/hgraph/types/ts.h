@@ -51,6 +51,7 @@ namespace hgraph
 
     template <typename T> struct TimeSeriesValueInput : TimeSeriesInput
     {
+        using TimeSeriesInput::TimeSeriesInput;
 
         [[nodiscard]] TimeSeriesValueOutput<T> &value_output() { return dynamic_cast<TimeSeriesValueOutput<T> &>(*output()); }
 
@@ -61,6 +62,8 @@ namespace hgraph
         TimeSeriesValueInput<T> &input_t = dynamic_cast<TimeSeriesValueInput<T> &>(input);
         set_value(input_t.value());
     }
+
+    void register_ts_with_nanobind(nb::module_ &m);
 }  // namespace hgraph
 
 #endif  // TS_H

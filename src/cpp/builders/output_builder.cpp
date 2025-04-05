@@ -3,8 +3,7 @@
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
-#include <hgraph/types/ts.h>
-#include <hgraph/types/tsb.h>
+
 
 namespace hgraph
 {
@@ -28,39 +27,15 @@ namespace hgraph
         using OutputBuilder_TS_Date      = TimeSeriesValueOutputBuilder<engine_date_t>;
         using OutputBuilder_TS_DateTime  = TimeSeriesValueOutputBuilder<engine_time_t>;
         using OutputBuilder_TS_TimeDelta = TimeSeriesValueOutputBuilder<engine_time_delta_t>;
-        using OutputBuilder_TS_Python    = TimeSeriesValueOutputBuilder<nb::object>;
+        using OutputBuilder_TS_Object   = TimeSeriesValueOutputBuilder<nb::object>;
 
-        nb::class_<OutputBuilder_TS_Bool, OutputBuilder>(
-            m, "OutputBuilder_TS_Bool",
-            nb::intrusive_ptr<OutputBuilder_TS_Bool>([](OutputBuilder_TS_Bool *o, PyObject *po) noexcept { o->set_self_py(po); }))
-            .def(nb::init<>());
-        nb::class_<OutputBuilder_TS_Int, OutputBuilder>(
-            m, "OutputBuilder_TS_Int",
-            nb::intrusive_ptr<OutputBuilder_TS_Int>([](OutputBuilder_TS_Int *o, PyObject *po) noexcept { o->set_self_py(po); }))
-            .def(nb::init<>());
-        nb::class_<OutputBuilder_TS_Float, OutputBuilder>(
-            m, "OutputBuilder_TS_Float",
-            nb::intrusive_ptr<OutputBuilder_TS_Float>([](OutputBuilder_TS_Float *o, PyObject *po) noexcept { o->set_self_py(po); }))
-            .def(nb::init<>());
-        nb::class_<OutputBuilder_TS_Date, OutputBuilder>(
-            m, "OutputBuilder_TS_Date",
-            nb::intrusive_ptr<OutputBuilder_TS_Date>([](OutputBuilder_TS_Date *o, PyObject *po) noexcept { o->set_self_py(po); }))
-            .def(nb::init<>());
-        nb::class_<OutputBuilder_TS_DateTime, OutputBuilder>(
-            m, "OutputBuilder_TS_DateTime",
-            nb::intrusive_ptr<OutputBuilder_TS_DateTime>(
-                [](OutputBuilder_TS_DateTime *o, PyObject *po) noexcept { o->set_self_py(po); }))
-            .def(nb::init<>());
-        nb::class_<OutputBuilder_TS_TimeDelta, OutputBuilder>(
-            m, "OutputBuilder_TS_TimeDelta",
-            nb::intrusive_ptr<OutputBuilder_TS_TimeDelta>(
-                [](OutputBuilder_TS_TimeDelta *o, PyObject *po) noexcept { o->set_self_py(po); }))
-            .def(nb::init<>());
-        nb::class_<OutputBuilder_TS_Python, OutputBuilder>(
-            m, "OutputBuilder_TS_Python",
-            nb::intrusive_ptr<OutputBuilder_TS_Python>(
-                [](OutputBuilder_TS_Python *o, PyObject *po) noexcept { o->set_self_py(po); }))
-            .def(nb::init<>());
+        nb::class_<OutputBuilder_TS_Bool, OutputBuilder>(m, "OutputBuilder_TS_Bool").def(nb::init<>());
+        nb::class_<OutputBuilder_TS_Int, OutputBuilder>(m, "OutputBuilder_TS_Int").def(nb::init<>());
+        nb::class_<OutputBuilder_TS_Float, OutputBuilder>(m, "OutputBuilder_TS_Float").def(nb::init<>());
+        nb::class_<OutputBuilder_TS_Date, OutputBuilder>(m, "OutputBuilder_TS_Date").def(nb::init<>());
+        nb::class_<OutputBuilder_TS_DateTime, OutputBuilder>(m, "OutputBuilder_TS_DateTime").def(nb::init<>());
+        nb::class_<OutputBuilder_TS_TimeDelta, OutputBuilder>(m, "OutputBuilder_TS_TimeDelta").def(nb::init<>());
+        nb::class_<OutputBuilder_TS_Object, OutputBuilder>(m, "OutputBuilder_TS_Object").def(nb::init<>());
     }
 
 }  // namespace hgraph

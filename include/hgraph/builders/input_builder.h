@@ -7,27 +7,50 @@
 
 #include <hgraph/builders/builder.h>
 #include <hgraph/hgraph_forward_declarations.h>
+#include <hgraph/types/ts.h>
 
 namespace hgraph
 {
 
     // The InputBuilder class implementation
 
-    struct  InputBuilder : Builder
+    struct InputBuilder : Builder
     {
+        using ptr = nb::ref<InputBuilder>;
+
         /**
-         * Create an instance of InputBuilder.
-         * Either `owningNode` or `owningInput` must be provided.
+         * Create an instance of InputBuilder using an owning node
          */
-        virtual time_series_input_ptr make_instance(node_ptr owningNode = nullptr, time_series_input_ptr owningInput = nullptr) = 0;
+        virtual time_series_input_ptr make_instance(node_ptr owningNode = nullptr) = 0;
+
+        /**
+         * Create an instance of InputBuilder using an parent input
+         */
+        virtual time_series_input_ptr make_instance(time_series_input_ptr owningInput = nullptr) = 0;
 
         /**
          * Release an instance of the input type.
          * By default, do nothing.
          */
-        virtual void release_instance(time_series_input_ptr item) {
+        virtual void release_instance(time_series_input_ptr item) {}
+
+        static void register_with_nanobind(nb::module_ &m);
+    };
+
+    template <typename T> struct HGRAPH_EXPORT TimeSeriesValueInputBuilder : InputBuilder
+    {
+        using InputBuilder::InputBuilder;
+
+        time_series_input_ptr make_instance(node_ptr owning_node) override {
+            auto v{new TimeSeriesValueInput<T>(owning_node)};
+            return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
+        }
+
+        time_series_input_ptr make_instance(time_series_input_ptr owning_output) override {
+            auto v{new TimeSeriesValueInput<T>(dynamic_cast_ref<TimeSeriesType>(owning_output))};
+            return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
         }
     };
-}
+}  // namespace hgraph
 
 #endif  // INPUT_BUILDER_H

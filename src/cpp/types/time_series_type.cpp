@@ -137,6 +137,23 @@ namespace hgraph
 
         return peer;
     }
+    void TimeSeriesInput::un_bind_output() {
+        if (not bound()) { return; }
+        bool was_valid = valid();
+        if (auto ref_output = dynamic_cast_ref<TimeSeriesReferenceOutput>(_output)) {
+            ref_output->stop_observing_reference(this);
+            _reference_output.reset();
+        }
+        do_un_bind_output();
+
+        if (owning_node().is_started() && was_valid) {
+            _sample_time = owning_graph().evaluation_clock().evaluation_time();
+            if (active()) {
+                // Notify as the state of the node has changed from bound to un_bound
+                owning_node().notify(_sample_time);
+            }
+        }
+    }
 
     bool TimeSeriesInput::active() const { return _active; }
 
@@ -304,7 +321,7 @@ namespace hgraph
 
     bool TimeSeriesInput::valid() const { return bound() && _output != nullptr && _output->valid(); }
 
-    bool          TimeSeriesInput::all_valid() const { return bound() && _output != nullptr && _output->all_valid(); }
+    bool TimeSeriesInput::all_valid() const { return bound() && _output != nullptr && _output->all_valid(); }
 
     engine_time_t TimeSeriesInput::last_modified_time() const {
         return bound() ? std::max(_output->last_modified_time(), _sample_time) : MIN_DT;
