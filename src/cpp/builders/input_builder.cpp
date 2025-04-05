@@ -33,5 +33,22 @@ namespace hgraph
         nb::class_<InputBuilder_TS_DateTime, InputBuilder>(m, "InputBuilder_TS_DateTime").def(nb::init<>());
         nb::class_<InputBuilder_TS_TimeDelta, InputBuilder>(m, "InputBuilder_TS_TimeDelta").def(nb::init<>());
         nb::class_<InputBuilder_TS_Object, InputBuilder>(m, "InputBuilder_TS_Object").def(nb::init<>());
+
+        nb::class_<TimeSeriesRefInputBuilder, InputBuilder>(m, "InputBuilder_TS_Ref").def(nb::init<>());
+        nb::class_<TimeSeriesBundleInputBuilder, InputBuilder>(m, "InputBuilder_TSB").def(nb::init<>());
     }
+
+    time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(node_ptr owning_node) {
+        auto v{new TimeSeriesReferenceInput(owning_node)};
+        return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
+    }
+
+    time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(time_series_input_ptr owning_input) {
+        auto v{new TimeSeriesReferenceInput(dynamic_cast_ref<TimeSeriesType>(owning_input))};
+        return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
+    }
+
+    time_series_input_ptr TimeSeriesBundleInputBuilder::make_instance(node_ptr owning_node) { return nullptr; }
+
+    time_series_input_ptr TimeSeriesBundleInputBuilder::make_instance(time_series_input_ptr owning_input) { return nullptr; }
 }  // namespace hgraph

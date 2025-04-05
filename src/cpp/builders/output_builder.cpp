@@ -27,7 +27,7 @@ namespace hgraph
         using OutputBuilder_TS_Date      = TimeSeriesValueOutputBuilder<engine_date_t>;
         using OutputBuilder_TS_DateTime  = TimeSeriesValueOutputBuilder<engine_time_t>;
         using OutputBuilder_TS_TimeDelta = TimeSeriesValueOutputBuilder<engine_time_delta_t>;
-        using OutputBuilder_TS_Object   = TimeSeriesValueOutputBuilder<nb::object>;
+        using OutputBuilder_TS_Object    = TimeSeriesValueOutputBuilder<nb::object>;
 
         nb::class_<OutputBuilder_TS_Bool, OutputBuilder>(m, "OutputBuilder_TS_Bool").def(nb::init<>());
         nb::class_<OutputBuilder_TS_Int, OutputBuilder>(m, "OutputBuilder_TS_Int").def(nb::init<>());
@@ -36,6 +36,25 @@ namespace hgraph
         nb::class_<OutputBuilder_TS_DateTime, OutputBuilder>(m, "OutputBuilder_TS_DateTime").def(nb::init<>());
         nb::class_<OutputBuilder_TS_TimeDelta, OutputBuilder>(m, "OutputBuilder_TS_TimeDelta").def(nb::init<>());
         nb::class_<OutputBuilder_TS_Object, OutputBuilder>(m, "OutputBuilder_TS_Object").def(nb::init<>());
+
+        nb::class_<TimeSeriesRefOutputBuilder, OutputBuilder>(m, "OutputBuilder_TS_Ref").def(nb::init<>());
+        nb::class_<TimeSeriesBundleOutputBuilder, OutputBuilder>(m, "OutputBuilder_TSB").def(nb::init<>());
+    }
+
+    time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(node_ptr owning_node) {
+        auto v{new TimeSeriesReferenceOutput(owning_node)};
+        return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
+    }
+
+    time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(time_series_output_ptr owning_output) {
+        auto v{new TimeSeriesReferenceOutput(dynamic_cast_ref<TimeSeriesType>(owning_output))};
+        return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
+    }
+
+    time_series_output_ptr TimeSeriesBundleOutputBuilder::make_instance(node_ptr owning_node) { return nullptr; }
+
+    time_series_output_ptr TimeSeriesBundleOutputBuilder::make_instance(time_series_output_ptr owning_output) {
+        return nullptr;
     }
 
 }  // namespace hgraph

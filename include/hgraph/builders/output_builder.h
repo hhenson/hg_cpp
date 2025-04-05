@@ -38,6 +38,24 @@ namespace hgraph
             return time_series_output_ptr{static_cast<TimeSeriesOutput*>(v)};
         }
     };
+
+    struct HGRAPH_EXPORT TimeSeriesRefOutputBuilder : OutputBuilder
+    {
+        using OutputBuilder::OutputBuilder;
+
+        time_series_output_ptr make_instance(node_ptr owning_node) override;
+
+        time_series_output_ptr make_instance(time_series_output_ptr owning_output) override;
+    };
+
+    struct HGRAPH_EXPORT TimeSeriesBundleOutputBuilder : OutputBuilder
+    {
+        using OutputBuilder::OutputBuilder;
+
+        time_series_output_ptr make_instance(node_ptr owning_node) override;
+
+        time_series_output_ptr make_instance(time_series_output_ptr owning_output) override;
+    };
 }  // namespace hgraph
 
 #endif  // OUTPUT_BUILDER_H
