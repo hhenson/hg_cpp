@@ -3,7 +3,7 @@
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
-
+#include <ranges>
 
 namespace hgraph
 {
@@ -38,7 +38,8 @@ namespace hgraph
         nb::class_<OutputBuilder_TS_Object, OutputBuilder>(m, "OutputBuilder_TS_Object").def(nb::init<>());
 
         nb::class_<TimeSeriesRefOutputBuilder, OutputBuilder>(m, "OutputBuilder_TS_Ref").def(nb::init<>());
-        nb::class_<TimeSeriesBundleOutputBuilder, OutputBuilder>(m, "OutputBuilder_TSB").def(nb::init<>());
+        nb::class_<TimeSeriesBundleOutputBuilder, OutputBuilder>(m, "OutputBuilder_TSB")
+            .def(nb::init<TimeSeriesSchema::ptr, std::vector<OutputBuilder::ptr>>());
     }
 
     time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(node_ptr owning_node) {
@@ -50,11 +51,28 @@ namespace hgraph
         auto v{new TimeSeriesReferenceOutput(dynamic_cast_ref<TimeSeriesType>(owning_output))};
         return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
     }
+    TimeSeriesBundleOutputBuilder::TimeSeriesBundleOutputBuilder(TimeSeriesSchema::ptr           schema,
+                                                                 std::vector<OutputBuilder::ptr> output_builders)
+        : OutputBuilder(), schema{std::move(schema)}, output_builders{std::move(output_builders)} {}
 
-    time_series_output_ptr TimeSeriesBundleOutputBuilder::make_instance(node_ptr owning_node) { return nullptr; }
+    time_series_output_ptr TimeSeriesBundleOutputBuilder::make_instance(node_ptr owning_node) {
+        auto v{new TimeSeriesBundleOutput{owning_node, schema}};
+        return make_and_set_outputs(v);
+    }
 
     time_series_output_ptr TimeSeriesBundleOutputBuilder::make_instance(time_series_output_ptr owning_output) {
-        return nullptr;
+        auto v{new TimeSeriesBundleOutput(dynamic_cast_ref<TimeSeriesType>(owning_output), schema)};
+        return make_and_set_outputs(v);
+    }
+
+    time_series_output_ptr TimeSeriesBundleOutputBuilder::make_and_set_outputs(TimeSeriesBundleOutput *output) {
+        std::vector<time_series_output_ptr> outputs;
+        time_series_output_ptr              output_{output};
+        outputs.reserve(output_builders.size());
+        std::ranges::copy(output_builders | std::views::transform([&](auto &builder) { return builder->make_instance(output_); }),
+                          std::back_inserter(outputs));
+        output->set_outputs(outputs);
+        return output_;
     }
 
 }  // namespace hgraph

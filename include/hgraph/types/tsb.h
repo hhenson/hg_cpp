@@ -9,6 +9,9 @@
 namespace hgraph
 {
 
+    struct TimeSeriesBundleOutputBuilder;
+    struct TimeSeriesBundleInputBuilder;
+
     struct TimeSeriesSchema : nb::intrusive_base
     {
         using ptr = nb::ref<TimeSeriesSchema>;
@@ -27,6 +30,7 @@ namespace hgraph
 
     struct TimeSeriesBundleOutput : TimeSeriesOutput
     {
+        using ptr = nb::ref<TimeSeriesBundleOutput>;
         // Define an iterator type for the unordered_map
         using iterator       = std::vector<TimeSeriesOutput::ptr>::iterator;
         using const_iterator = std::vector<TimeSeriesOutput::ptr>::const_iterator;
@@ -53,10 +57,10 @@ namespace hgraph
         iterator       end();
         const_iterator end() const;
 
-        TimeSeriesOutput &operator[](const std::string &key);
+        TimeSeriesOutput       &operator[](const std::string &key);
         const TimeSeriesOutput &operator[](const std::string &key) const;
 
-        TimeSeriesOutput &operator[](std::size_t ndx);
+        TimeSeriesOutput       &operator[](std::size_t ndx);
         const TimeSeriesOutput &operator[](std::size_t ndx) const;
 
         [[nodiscard]] bool all_valid() const override;
@@ -90,19 +94,20 @@ namespace hgraph
 
         bool contains(const std::string &key) const;
 
-
-
       protected:
+        friend TimeSeriesBundleOutputBuilder;
         void set_outputs(std::vector<time_series_output_ptr> ts_values);
 
         // Retrieves valid keys
         std::vector<c_string_ref> keys_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
 
         // Retrieves valid values
-        std::vector<time_series_output_ptr> values_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
+        std::vector<time_series_output_ptr>
+        values_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
 
         // Retrieves valid items
-        std::vector<std::pair<c_string_ref, time_series_output_ptr>> items_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
+        std::vector<std::pair<c_string_ref, time_series_output_ptr>>
+        items_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
 
       private:
         TimeSeriesSchema::ptr               _schema;
@@ -111,11 +116,20 @@ namespace hgraph
 
     struct TimeSeriesBundleInput : TimeSeriesInput
     {
+        using ptr = nb::ref<TimeSeriesBundleInput>;
         using TimeSeriesInput::TimeSeriesInput;
 
         // Define an iterator type for the unordered_map
         using iterator       = std::vector<TimeSeriesInput::ptr>::iterator;
         using const_iterator = std::vector<TimeSeriesInput::ptr>::const_iterator;
+
+        explicit TimeSeriesBundleInput(const node_ptr &parent, const TimeSeriesSchema::ptr &schema);
+        explicit TimeSeriesBundleInput(const TimeSeriesType::ptr &parent, const TimeSeriesSchema::ptr &schema);
+        TimeSeriesBundleInput(const TimeSeriesBundleInput &)            = default;
+        TimeSeriesBundleInput(TimeSeriesBundleInput &&)                 = default;
+        TimeSeriesBundleInput &operator=(const TimeSeriesBundleInput &) = default;
+        TimeSeriesBundleInput &operator=(TimeSeriesBundleInput &&)      = default;
+        ~TimeSeriesBundleInput() override                               = default;
 
         // Begin iterator
         iterator       begin();
@@ -141,16 +155,19 @@ namespace hgraph
 
         const TimeSeriesSchema &schema() const;
 
-    protected:
+      protected:
+        friend TimeSeriesBundleInputBuilder;
+        void set_inputs(std::vector<time_series_input_ptr> ts_values);
 
         // Retrieves valid keys
-        std::vector<c_string_ref> keys_with_constraint(std::function<bool(const TimeSeriesInput&)> constraint) const;
+        std::vector<c_string_ref> keys_with_constraint(std::function<bool(const TimeSeriesInput &)> constraint) const;
 
         // Retrieves valid values
-        std::vector<time_series_input_ptr> values_with_constraint(std::function<bool(const TimeSeriesInput&)> constraint) const;
+        std::vector<time_series_input_ptr> values_with_constraint(std::function<bool(const TimeSeriesInput &)> constraint) const;
 
         // Retrieves valid items
-        std::vector<std::pair<c_string_ref, time_series_input_ptr>> items_with_constraint(std::function<bool(const TimeSeriesInput&)> constraint) const;
+        std::vector<std::pair<c_string_ref, time_series_input_ptr>>
+        items_with_constraint(std::function<bool(const TimeSeriesInput &)> constraint) const;
 
       private:
         // Stores the time-series data

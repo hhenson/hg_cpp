@@ -169,13 +169,7 @@ namespace hgraph
             .def("modified_items", &TimeSeriesBundleOutput::modified_items);
     }
 
-    void TimeSeriesBundleOutput::set_outputs(std::vector<time_series_output_ptr> ts_values) {
-        if (ts_values.size() != _schema->keys().size()) {
-            throw std::runtime_error(std::format("Invalid number of inputs provided to TSD, expected {} got {}",
-                                                 _schema->keys().size(), ts_values.size()));
-        }
-        _ts_values = std::move(ts_values);
-    }
+    void TimeSeriesBundleOutput::set_outputs(std::vector<time_series_output_ptr> ts_values) { _ts_values = std::move(ts_values); }
 
     std::vector<c_string_ref>
     TimeSeriesBundleOutput::keys_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const {
@@ -209,6 +203,12 @@ namespace hgraph
         }
         return result;
     }
+
+    TimeSeriesBundleInput::TimeSeriesBundleInput(const node_ptr &parent, const TimeSeriesSchema::ptr &schema)
+        : TimeSeriesInput(parent), _schema{schema} {}
+
+    TimeSeriesBundleInput::TimeSeriesBundleInput(const TimeSeriesType::ptr &parent, const TimeSeriesSchema::ptr &schema)
+        : TimeSeriesInput(parent), _schema{schema} {}
 
     // Retrieves valid keys
     std::vector<c_string_ref> TimeSeriesBundleOutput::valid_keys() const {
@@ -273,6 +273,8 @@ namespace hgraph
     }
 
     const TimeSeriesSchema &TimeSeriesBundleInput::schema() const { return *_schema; }
+
+    void TimeSeriesBundleInput::set_inputs(std::vector<time_series_input_ptr> ts_values) { _ts_values = std::move(ts_values); }
 
     void TimeSeriesBundleInput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesBundleInput, TimeSeriesInput>(m, "TimeSeriesBundleInput")

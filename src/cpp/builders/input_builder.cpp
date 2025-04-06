@@ -1,7 +1,6 @@
 #include <hgraph/builders/input_builder.h>
 #include <hgraph/python/pyb_wiring.h>
-#include <hgraph/types/ref.h>
-#include <hgraph/types/time_series_type.h>
+#include <ranges>
 
 namespace hgraph
 {
@@ -35,7 +34,7 @@ namespace hgraph
         nb::class_<InputBuilder_TS_Object, InputBuilder>(m, "InputBuilder_TS_Object").def(nb::init<>());
 
         nb::class_<TimeSeriesRefInputBuilder, InputBuilder>(m, "InputBuilder_TS_Ref").def(nb::init<>());
-        nb::class_<TimeSeriesBundleInputBuilder, InputBuilder>(m, "InputBuilder_TSB").def(nb::init<>());
+        nb::class_<TimeSeriesBundleInputBuilder, InputBuilder>(m, "InputBuilder_TSB").def(nb::init<TimeSeriesSchema::ptr, std::vector<InputBuilder::ptr>>());
     }
 
     time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(node_ptr owning_node) {
@@ -48,7 +47,27 @@ namespace hgraph
         return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
     }
 
-    time_series_input_ptr TimeSeriesBundleInputBuilder::make_instance(node_ptr owning_node) { return nullptr; }
+    TimeSeriesBundleInputBuilder::TimeSeriesBundleInputBuilder(TimeSeriesSchema::ptr          schema,
+                                                               std::vector<InputBuilder::ptr> input_builders)
+        : InputBuilder(), schema{std::move(schema)}, input_builders{std::move(input_builders)} {}
 
-    time_series_input_ptr TimeSeriesBundleInputBuilder::make_instance(time_series_input_ptr owning_input) { return nullptr; }
+    time_series_input_ptr TimeSeriesBundleInputBuilder::make_instance(node_ptr owning_node) {
+        auto v{new TimeSeriesBundleInput{owning_node, schema}};
+        return make_and_set_inputs(v);
+    }
+
+    time_series_input_ptr TimeSeriesBundleInputBuilder::make_instance(time_series_input_ptr owning_input) {
+        auto v{new TimeSeriesBundleInput{dynamic_cast_ref<TimeSeriesType>(owning_input), schema}};
+        return make_and_set_inputs(v);
+    }
+
+    time_series_input_ptr TimeSeriesBundleInputBuilder::make_and_set_inputs(TimeSeriesBundleInput *input) {
+        std::vector<time_series_input_ptr> inputs;
+        time_series_input_ptr              input_{input};
+        inputs.reserve(input_builders.size());
+        std::ranges::copy(input_builders | std::views::transform([&](auto &builder) { return builder->make_instance(input_); }),
+                          std::back_inserter(inputs));
+        input->set_inputs(inputs);
+        return input_;
+    }
 }  // namespace hgraph

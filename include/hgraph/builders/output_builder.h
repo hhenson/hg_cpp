@@ -2,10 +2,15 @@
 #ifndef OUTPUT_BUILDER_H
 #define OUTPUT_BUILDER_H
 
-#include <hgraph/builders/builder.h>
 #include <hgraph/hgraph_forward_declarations.h>
-#include <hgraph/types/time_series_type.h>
+
+#include <hgraph/types/tsb.h>
+
+#include <hgraph/builders/builder.h>
+
+#include <hgraph/types/ref.h>
 #include <hgraph/types/ts.h>
+#include <hgraph/types/tsb.h>
 
 namespace hgraph
 {
@@ -30,12 +35,12 @@ namespace hgraph
 
         time_series_output_ptr make_instance(node_ptr owning_node) override {
             auto v{new TimeSeriesValueOutput<T>(owning_node)};
-            return time_series_output_ptr{static_cast<TimeSeriesOutput*>(v)};
+            return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
         }
 
         time_series_output_ptr make_instance(time_series_output_ptr owning_output) override {
             auto v{new TimeSeriesValueOutput<T>(dynamic_cast_ref<TimeSeriesType>(owning_output))};
-            return time_series_output_ptr{static_cast<TimeSeriesOutput*>(v)};
+            return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
         }
     };
 
@@ -50,11 +55,16 @@ namespace hgraph
 
     struct HGRAPH_EXPORT TimeSeriesBundleOutputBuilder : OutputBuilder
     {
-        using OutputBuilder::OutputBuilder;
+        TimeSeriesBundleOutputBuilder(TimeSeriesSchema::ptr schema, std::vector<OutputBuilder::ptr> output_builders);
 
         time_series_output_ptr make_instance(node_ptr owning_node) override;
 
         time_series_output_ptr make_instance(time_series_output_ptr owning_output) override;
+
+      private:
+        time_series_output_ptr make_and_set_outputs(TimeSeriesBundleOutput *output);
+        TimeSeriesSchema::ptr           schema;
+        std::vector<OutputBuilder::ptr> output_builders;
     };
 }  // namespace hgraph
 

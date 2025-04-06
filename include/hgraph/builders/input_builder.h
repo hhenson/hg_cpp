@@ -5,11 +5,13 @@
 #ifndef INPUT_BUILDER_H
 #define INPUT_BUILDER_H
 
-#include "hgraph/types/ref.h"
-
 #include <hgraph/builders/builder.h>
 #include <hgraph/hgraph_forward_declarations.h>
+
 #include <hgraph/types/ts.h>
+#include <hgraph/types/ref.h>
+#include <hgraph/types/tsb.h>
+
 
 namespace hgraph
 {
@@ -65,12 +67,16 @@ namespace hgraph
 
     struct HGRAPH_EXPORT TimeSeriesBundleInputBuilder : InputBuilder
     {
-        using InputBuilder::InputBuilder;
+        TimeSeriesBundleInputBuilder(TimeSeriesSchema::ptr schema, std::vector<InputBuilder::ptr> input_builders);
 
         time_series_input_ptr make_instance(node_ptr owning_node) override;
 
         time_series_input_ptr make_instance(time_series_input_ptr owning_input) override;
 
+      private:
+        time_series_input_ptr          make_and_set_inputs(TimeSeriesBundleInput *input);
+        TimeSeriesSchema::ptr          schema;
+        std::vector<InputBuilder::ptr> input_builders;
     };
 }  // namespace hgraph
 
