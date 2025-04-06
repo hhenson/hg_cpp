@@ -94,6 +94,8 @@ namespace hgraph
 
         bool contains(const std::string &key) const;
 
+        size_t size() const;
+
       protected:
         friend TimeSeriesBundleOutputBuilder;
         void set_outputs(std::vector<time_series_output_ptr> ts_values);
@@ -131,6 +133,9 @@ namespace hgraph
         TimeSeriesBundleInput &operator=(TimeSeriesBundleInput &&)      = default;
         ~TimeSeriesBundleInput() override                               = default;
 
+        [[nodiscard]] nb::object py_value() const override;
+        [[nodiscard]] nb::object py_delta_value() const override;
+
         // Begin iterator
         iterator       begin();
         const_iterator begin() const;
@@ -138,6 +143,23 @@ namespace hgraph
         // End iterator
         iterator       end();
         const_iterator end() const;
+
+        size_t size() const;
+
+        // Retrieves valid keys
+        std::vector<c_string_ref> keys() const;
+        std::vector<c_string_ref> valid_keys() const;
+        std::vector<c_string_ref> modified_keys() const;
+
+        // Retrieves valid values
+        std::vector<time_series_input_ptr> values() const;
+        std::vector<time_series_input_ptr> valid_values() const;
+        std::vector<time_series_input_ptr> modified_values() const;
+
+        // Retrieves valid items
+        std::vector<std::pair<c_string_ref, time_series_input_ptr>> items() const;
+        std::vector<std::pair<c_string_ref, time_series_input_ptr>> valid_items() const;
+        std::vector<std::pair<c_string_ref, time_series_input_ptr>> modified_items() const;
 
         // Access elements by key
         TimeSeriesInput       &operator[](const std::string &key);
@@ -147,6 +169,15 @@ namespace hgraph
         TimeSeriesInput       &operator[](size_t ndx);
         const TimeSeriesInput &operator[](size_t ndx) const;
 
+        [[nodiscard]] bool          modified() const override;
+        [[nodiscard]] bool          valid() const override;
+        [[nodiscard]] bool          all_valid() const override;
+        [[nodiscard]] engine_time_t last_modified_time() const override;
+        [[nodiscard]] bool          bound() const override;
+        [[nodiscard]] bool          active() const override;
+        void                        make_active() override;
+        void                        make_passive() override;
+
         // Check if a key exists
         bool contains(const std::string &key) const;
 
@@ -155,25 +186,33 @@ namespace hgraph
 
         const TimeSeriesSchema &schema() const;
 
+        void set_subscribe_method(bool subscribe_input) override;
+
       protected:
+        bool do_bind_output(time_series_output_ptr value) override;
+        void do_un_bind_output() override;
+
         friend TimeSeriesBundleInputBuilder;
         void set_inputs(std::vector<time_series_input_ptr> ts_values);
 
         // Retrieves valid keys
-        std::vector<c_string_ref> keys_with_constraint(std::function<bool(const TimeSeriesInput &)> constraint) const;
+        std::vector<c_string_ref> keys_with_constraint(const std::function<bool(const TimeSeriesInput &)>& constraint) const;
 
         // Retrieves valid values
-        std::vector<time_series_input_ptr> values_with_constraint(std::function<bool(const TimeSeriesInput &)> constraint) const;
+        std::vector<time_series_input_ptr> values_with_constraint(const std::function<bool(const TimeSeriesInput &)>& constraint) const;
 
         // Retrieves valid items
         std::vector<std::pair<c_string_ref, time_series_input_ptr>>
-        items_with_constraint(std::function<bool(const TimeSeriesInput &)> constraint) const;
+        items_with_constraint(const std::function<bool(const TimeSeriesInput &)>& constraint) const;
+
+        nb::object py_value_with_constraint(const std::function<bool(const TimeSeriesInput &)>& constraint) const;
 
       private:
         // Stores the time-series data
         TimeSeriesSchema::ptr             _schema;
         std::vector<TimeSeriesInput::ptr> _ts_values;
     };
+
 }  // namespace hgraph
 
 #endif  // TSB_H

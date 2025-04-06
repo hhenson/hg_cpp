@@ -1,10 +1,9 @@
+#include <algorithm>
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/tsb.h>
 #include <nanobind/make_iterator.h>
 #include <numeric>
 #include <ranges>
-#include <algorithm>
-
 
 namespace hgraph
 {
@@ -136,6 +135,8 @@ namespace hgraph
         return std::ranges::find(schema().keys(), key) != schema().keys().end();
     }
 
+    size_t TimeSeriesBundleOutput::size() const { return _ts_values.size(); }
+
     void TimeSeriesBundleOutput::clear() {
         for (auto &v : _ts_values) { v->clear(); }
     }
@@ -161,6 +162,7 @@ namespace hgraph
                     return nb::make_iterator(nb::type<TimeSeriesBundleOutput>(), "iterator", self.begin(), self.end());
                 },
                 nb::keep_alive<0, 1>())
+            .def("__len__", &TimeSeriesBundleOutput::size)
             .def("keys", &TimeSeriesBundleOutput::keys)
             .def("values", &TimeSeriesBundleOutput::values)
             .def("items", &TimeSeriesBundleOutput::items)
@@ -246,6 +248,33 @@ namespace hgraph
         return items_with_constraint([](const TimeSeriesOutput &ts) -> bool { return ts.modified(); });
     }
 
+    nb::object
+    TimeSeriesBundleInput::py_value_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const {
+        nb::dict v;
+        for (size_t i = 0; i < _ts_values.size(); ++i) {
+            const auto &key = _schema->keys()[i].c_str();
+            const auto &ts  = _ts_values[i];
+            if (constraint(*ts)) { v[key] = ts->py_value(); }
+        }
+
+        const auto &s = _schema->scalar_type();
+        if (!s.is_none()) {
+            return s(**v);
+        } else {
+            return v;
+        }
+    }
+
+    nb::object TimeSeriesBundleInput::py_value() const {
+        if (has_peer()) { return TimeSeriesInput::py_value(); }
+        return py_value_with_constraint([](const TimeSeriesInput &ts) { return ts.valid(); });
+    }
+
+    nb::object TimeSeriesBundleInput::py_delta_value() const {
+        if (has_peer()) { return TimeSeriesInput::py_delta_value(); }
+        return py_value_with_constraint([](const TimeSeriesInput &ts) { return ts.modified(); });
+    }
+
     TimeSeriesBundleInput::iterator TimeSeriesBundleInput::begin() { return _ts_values.begin(); }
 
     TimeSeriesBundleInput::const_iterator TimeSeriesBundleInput::begin() const { return _ts_values.begin(); }
@@ -253,6 +282,40 @@ namespace hgraph
     TimeSeriesBundleInput::iterator TimeSeriesBundleInput::end() { return _ts_values.end(); }
 
     TimeSeriesBundleInput::const_iterator TimeSeriesBundleInput::end() const { return _ts_values.end(); }
+
+    size_t TimeSeriesBundleInput::size() const { return _ts_values.size(); }
+
+    std::vector<c_string_ref> TimeSeriesBundleInput::keys() const { return {schema().keys().begin(), schema().keys().end()}; }
+
+    std::vector<c_string_ref> TimeSeriesBundleInput::valid_keys() const {
+        return keys_with_constraint([](const TimeSeriesInput &ts) -> bool { return ts.valid(); });
+    }
+
+    std::vector<c_string_ref> TimeSeriesBundleInput::modified_keys() const {
+        return keys_with_constraint([](const TimeSeriesInput &ts) -> bool { return ts.modified(); });
+    }
+
+    std::vector<time_series_input_ptr> TimeSeriesBundleInput::values() const { return {_ts_values.begin(), _ts_values.end()}; }
+
+    std::vector<time_series_input_ptr> TimeSeriesBundleInput::valid_values() const {
+        return values_with_constraint([](const TimeSeriesInput &ts) -> bool { return ts.valid(); });
+    }
+
+    std::vector<time_series_input_ptr> TimeSeriesBundleInput::modified_values() const {
+        return values_with_constraint([](const TimeSeriesInput &ts) -> bool { return ts.modified(); });
+    }
+
+    std::vector<std::pair<c_string_ref, time_series_input_ptr>> TimeSeriesBundleInput::items() const {
+        return items_with_constraint([](const TimeSeriesInput &ts) -> bool { return true; });
+    }
+
+    std::vector<std::pair<c_string_ref, time_series_input_ptr>> TimeSeriesBundleInput::valid_items() const {
+        return items_with_constraint([](const TimeSeriesInput &ts) -> bool { return ts.valid(); });
+    }
+
+    std::vector<std::pair<c_string_ref, time_series_input_ptr>> TimeSeriesBundleInput::modified_items() const {
+        return items_with_constraint([](const TimeSeriesInput &ts) -> bool { return ts.modified(); });
+    }
 
     TimeSeriesInput &TimeSeriesBundleInput::operator[](const std::string &key) {
         auto it{std::ranges::find(_schema->keys(), key)};
@@ -271,6 +334,77 @@ namespace hgraph
 
     const TimeSeriesInput &TimeSeriesBundleInput::operator[](size_t ndx) const { return *_ts_values.at(ndx); }
 
+    bool TimeSeriesBundleInput::modified() const {
+        if (has_peer()) { return TimeSeriesInput::modified(); }
+        return std::ranges::any_of(_ts_values, [](const time_series_input_ptr &ts) { return ts->modified(); });
+    }
+
+    bool TimeSeriesBundleInput::valid() const {
+        if (has_peer()) { return TimeSeriesInput::valid(); }
+        return std::ranges::any_of(_ts_values, [](const time_series_input_ptr &ts) { return ts->valid(); });
+    }
+
+    bool TimeSeriesBundleInput::all_valid() const {
+        return std::ranges::all_of(_ts_values, [](const time_series_input_ptr &ts) { return ts->valid(); });
+    }
+
+    engine_time_t TimeSeriesBundleInput::last_modified_time() const {
+        if (has_peer()) { return TimeSeriesInput::last_modified_time(); }
+        if (_ts_values.empty()) { return MIN_DT; }
+        return std::ranges::max(_ts_values |
+                                std::views::transform([](const time_series_input_ptr &ts) { return ts->last_modified_time(); }));
+    }
+
+    bool TimeSeriesBundleInput::bound() const {
+        return TimeSeriesInput::bound() ||
+               std::ranges::any_of(_ts_values, [](const time_series_input_ptr &ts) { return ts->bound(); });
+    }
+
+    bool TimeSeriesBundleInput::active() const {
+        if (has_peer()) { return TimeSeriesInput::active(); }
+        return std::ranges::any_of(_ts_values, [](const time_series_input_ptr &ts) { return ts->active(); });
+    }
+
+    void TimeSeriesBundleInput::make_active() {
+        if (has_peer()) {
+            TimeSeriesInput::make_active();
+        } else {
+            for (auto &ts : _ts_values) { ts->make_active(); }
+        }
+    }
+
+    void TimeSeriesBundleInput::make_passive() {
+        if (has_peer()) {
+            TimeSeriesInput::make_passive();
+        } else {
+            for (auto &ts : _ts_values) { ts->make_passive(); }
+        }
+    }
+
+    void TimeSeriesBundleInput::set_subscribe_method(bool subscribe_input) {
+        TimeSeriesInput::set_subscribe_method(subscribe_input);
+
+        for (auto &ts : _ts_values) { ts->set_subscribe_method(subscribe_input); }
+    }
+
+    bool TimeSeriesBundleInput::do_bind_output(time_series_output_ptr value) {
+
+        auto output_bundle = dynamic_cast<TimeSeriesBundleOutput *>(value.get());
+        bool peer          = true;
+
+        if (output_bundle) {
+            for (size_t i = 0; i < _ts_values.size(); ++i) { peer &= _ts_values[i]->bind_output(&(*output_bundle)[i]); }
+        }
+
+        TimeSeriesInput::do_bind_output(peer ? value : nullptr);
+        return peer;
+    }
+
+    void TimeSeriesBundleInput::do_un_bind_output() {
+        for (auto &ts : _ts_values) { ts->un_bind_output(); }
+        if (has_peer()) { TimeSeriesInput::do_un_bind_output(); }
+    }
+
     bool TimeSeriesBundleInput::contains(const std::string &key) const {
         return std::ranges::find(schema().keys(), key) != schema().keys().end();
     }
@@ -278,6 +412,39 @@ namespace hgraph
     const TimeSeriesSchema &TimeSeriesBundleInput::schema() const { return *_schema; }
 
     void TimeSeriesBundleInput::set_inputs(std::vector<time_series_input_ptr> ts_values) { _ts_values = std::move(ts_values); }
+
+    std::vector<c_string_ref>
+    TimeSeriesBundleInput::keys_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const {
+        std::vector<c_string_ref> result;
+        result.reserve(_ts_values.size());
+        for (size_t i = 0, l = _ts_values.size(); i < l; i++) {
+            auto &ts{_ts_values[i]};
+            if (constraint(*ts)) { result.emplace_back(schema().keys()[i]); }
+        }
+        return result;
+    }
+
+    std::vector<time_series_input_ptr>
+    TimeSeriesBundleInput::values_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const {
+        std::vector<time_series_input_ptr> result;
+        result.reserve(_ts_values.size());
+        for (size_t i = 0, l = _ts_values.size(); i < l; i++) {
+            auto &ts{_ts_values[i]};
+            if (constraint(*ts)) { result.emplace_back(ts); }
+        }
+        return result;
+    }
+
+    std::vector<std::pair<c_string_ref, time_series_input_ptr>>
+    TimeSeriesBundleInput::items_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const {
+        std::vector<std::pair<c_string_ref, time_series_input_ptr>> result;
+        result.reserve(_ts_values.size());
+        for (size_t i = 0, l = _ts_values.size(); i < l; i++) {
+            auto &ts{_ts_values[i]};
+            if (constraint(*ts)) { result.emplace_back(schema().keys()[i], ts); }
+        }
+        return result;
+    }
 
     void TimeSeriesBundleInput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesBundleInput, TimeSeriesInput>(m, "TimeSeriesBundleInput")
@@ -296,14 +463,16 @@ namespace hgraph
                     return nb::make_iterator(nb::type<TimeSeriesBundleInput>(), "iterator", self.begin(), self.end());
                 },
                 nb::keep_alive<0, 1>())
-            // .def("__len__", &TimeSeriesBundleInput::size)
-            // .def("keys", &TimeSeriesBundleInput::keys)
-            // .def("items", &TimeSeriesBundleInput::items)
-            // .def("values", &TimeSeriesBundleInput::values)
-            // .def("modified_keys", &TimeSeriesBundleInput::modified_keys)
-            // .def("valid_values", &TimeSeriesBundleInput::valid_values)
-            // .def("valid_items", &TimeSeriesBundleInput::valid_items)
-            ;
+            .def("__len__", &TimeSeriesBundleInput::size)
+            .def("keys", &TimeSeriesBundleInput::keys)
+            .def("items", &TimeSeriesBundleInput::items)
+            .def("values", &TimeSeriesBundleInput::values)
+            .def("modified_keys", &TimeSeriesBundleInput::modified_keys)
+            .def("modified_values", &TimeSeriesBundleInput::modified_values)
+            .def("modified_items", &TimeSeriesBundleInput::modified_items)
+            .def("valid_keys", &TimeSeriesBundleInput::valid_keys)
+            .def("valid_values", &TimeSeriesBundleInput::valid_values)
+            .def("valid_items", &TimeSeriesBundleInput::valid_items);
     }
 
 }  // namespace hgraph

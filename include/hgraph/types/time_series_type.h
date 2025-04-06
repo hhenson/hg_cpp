@@ -199,6 +199,8 @@ namespace hgraph
 
         static void register_with_nanobind(nb::module_ &m);
 
+        virtual void set_subscribe_method(bool subscribe_input);
+
       protected:
         // Derived classes override this to implement specific behaviours
         virtual bool do_bind_output(time_series_output_ptr value);
@@ -213,8 +215,6 @@ namespace hgraph
         void set_sample_time(engine_time_t sample_time);
 
         [[nodiscard]] engine_time_t sample_time() const;
-
-        void set_subscribe_method(bool subscribe_input);
 
         [[nodiscard]] bool subscribe_input() const;
 
