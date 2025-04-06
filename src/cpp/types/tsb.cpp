@@ -428,8 +428,8 @@ namespace hgraph
     TimeSeriesBundleInput::values_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const {
         std::vector<time_series_input_ptr> result;
         result.reserve(_ts_values.size());
-        for (size_t i = 0, l = _ts_values.size(); i < l; i++) {
-            auto &ts{_ts_values[i]};
+        for (const auto & _ts_value : _ts_values) {
+            auto &ts{_ts_value};
             if (constraint(*ts)) { result.emplace_back(ts); }
         }
         return result;
