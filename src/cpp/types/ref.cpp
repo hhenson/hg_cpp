@@ -355,7 +355,7 @@ namespace hgraph
     }
     
     bool TimeSeriesReferenceInput::do_bind_output(time_series_output_ptr value) {
-        if (auto output_t = dynamic_cast<TimeSeriesReferenceOutput *>(value.get())) {
+        if (dynamic_cast<TimeSeriesReferenceOutput *>(value.get())) {
             return TimeSeriesInput::do_bind_output(value);
         } else {
             _value = TimeSeriesReference::make(std::move(value));

@@ -2,6 +2,9 @@
 #include <hgraph/types/tsb.h>
 #include <nanobind/make_iterator.h>
 #include <numeric>
+#include <ranges>
+#include <algorithm>
+
 
 namespace hgraph
 {
