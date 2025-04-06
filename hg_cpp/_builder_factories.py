@@ -12,10 +12,12 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
         return {
             hgraph.HgTSTypeMetaData: lambda: _ts_input_type_for(value_tp.value_scalar_type),
             hgraph.HgTSBTypeMetaData: lambda: _hgraph.InputBuilder_TSB(
-                #schema=cast(HgTSBTypeMetaData, value_tp).bundle_schema_tp.py_type
+                # TODO: Cache the schema
+                schema=_hgraph.TimSeriesSchema(keys=value_tp.bundle_schema_tp.meta_data_schema.keys(),
+                                               scalar_type=value_tp.bundle_schema_tp.py_type)
             ),
             hgraph.HgREFTypeMetaData: lambda: _hgraph.InputBuilder_TS_REF(
-             #   value_tp=cast(HgREFTypeMetaData, value_tp).value_tp
+                #   value_tp=cast(HgREFTypeMetaData, value_tp).value_tp
             )
         }.get(type(value_tp), lambda: _throw(value_tp))()
 
@@ -23,7 +25,9 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
         return {
             hgraph.HgTSTypeMetaData: lambda: _ts_output_type_for(value_tp.value_scalar_tp),
             hgraph.HgTSBTypeMetaData: lambda: _hgraph.OutputBuilder_TSB(
-                #schema=cast(HgTSBTypeMetaData, value_tp).bundle_schema_tp.py_type
+                # TODO: Cache the schema
+                schema=_hgraph.TimSeriesSchema(keys=value_tp.bundle_schema_tp.meta_data_schema.keys(),
+                                               scalar_type=value_tp.bundle_schema_tp.py_type)
             ),
             hgraph.HgREFTypeMetaData: lambda: _hgraph.OutputBuilder_TS_REF(
                 #   value_tp=cast(HgREFTypeMetaData, value_tp).value_tp
