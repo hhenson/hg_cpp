@@ -181,7 +181,7 @@ namespace hgraph
         }
     }
 
-    void TimeSeriesReferenceOutput::apply_result(nb::object value) {
+    void TimeSeriesReferenceOutput::apply_result(nb::handle value) {
         if (value.is_none()) { return; }
         set_value(nb::cast<TimeSeriesReference::ptr>(value));
     }

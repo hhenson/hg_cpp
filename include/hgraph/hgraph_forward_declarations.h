@@ -7,6 +7,7 @@
 
 #include <hgraph/hgraph_export.h>
 #include <hgraph/python/pyb.h>
+#include <functional>
 
 namespace hgraph
 {
@@ -59,6 +60,7 @@ namespace hgraph
     struct TimeSeriesReferenceOutput;
     using time_series_reference_output_ptr = nanobind::ref<TimeSeriesReferenceOutput>;
 
+    using c_string_ref = std::reference_wrapper<const std::string>;
 }  // namespace hgraph
 
 #endif  // HGRAPH_FORWARD_DECLARATIONS_H

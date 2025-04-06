@@ -6,6 +6,7 @@
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
+#include <nanobind/ndarray.h>
 #include <ranges>
 #include <sstream>
 
@@ -343,9 +344,10 @@ namespace hgraph
             }
         }
 
-        for (const auto &[key, value] : input()) {
+        for (size_t i = 0; i < input().schema().keys().size(); ++i) {
             // Apple does not yet support contains :(
-            if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) { _kwargs[key.c_str()] = value; }
+            auto key{input().schema().keys()[i]};
+            if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) { _kwargs[key.c_str()] = input()[i]; }
         }
     }
 
@@ -354,11 +356,11 @@ namespace hgraph
             for (auto &start_input : _start_inputs) {
                 start_input->start();  // Assuming start_input is some time series type with a start method
             }
-            for (auto &[key, ts] : input()) {
+            for (size_t i = 0; i < signature().time_series_inputs->size(); ++i) {
                 // Apple does not yet support contains :(
-                if (!signature().active_inputs ||
-                    (std::ranges::find(*signature().active_inputs, key) != std::ranges::end(*signature().active_inputs))) {
-                    ts->make_active();  // Assuming `make_active` is a method of the `TimeSeriesInput` type
+                if (!signature().active_inputs || (std::ranges::find(*signature().active_inputs, signature().args[i]) !=
+                                                   std::ranges::end(*signature().active_inputs))) {
+                    input()[i].make_active();  // Assuming `make_active` is a method of the `TimeSeriesInput` type
                 }
             }
         }

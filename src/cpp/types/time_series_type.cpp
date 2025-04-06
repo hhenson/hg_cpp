@@ -88,9 +88,9 @@ namespace hgraph
         }
     }
 
-    TimeSeriesType::TimeSeriesType(node_ptr parent) : _parent_ts_or_node{parent} {}
+    TimeSeriesType::TimeSeriesType(const node_ptr &parent) : _parent_ts_or_node{parent} {}
 
-    TimeSeriesType::TimeSeriesType(ptr parent) : _parent_ts_or_node{parent} {}
+    TimeSeriesType::TimeSeriesType(const ptr &parent) : _parent_ts_or_node{parent} {}
 
     Node &TimeSeriesType::owning_node() { return const_cast<Node &>(_owning_node()); }
 
@@ -264,7 +264,7 @@ namespace hgraph
 
     void TimeSeriesOutput::re_parent(ptr &parent) { _set_parent_time_series(parent.get()); }
 
-    bool TimeSeriesOutput::can_apply_result(nb::object value) { return not modified(); }
+    bool TimeSeriesOutput::can_apply_result(nb::handle value) { return not modified(); }
 
     bool TimeSeriesOutput::modified() const { return owning_graph().evaluation_clock().evaluation_time() == _last_modified_time; }
 

@@ -17,8 +17,8 @@ namespace hgraph
     {
         using ptr = nb::ref<TimeSeriesType>;
 
-        TimeSeriesType(node_ptr parent);
-        TimeSeriesType(ptr parent);
+        explicit TimeSeriesType(const node_ptr &parent);
+        explicit TimeSeriesType(const ptr &parent);
         TimeSeriesType(const TimeSeriesType &)            = default;
         TimeSeriesType(TimeSeriesType &&)                 = default;
         TimeSeriesType &operator=(const TimeSeriesType &) = default;
@@ -101,9 +101,9 @@ namespace hgraph
 
         void re_parent(ptr &parent);
 
-        virtual bool can_apply_result(nb::object value);
+        virtual bool can_apply_result(nb::handle value);
 
-        virtual void apply_result(nb::object value) = 0;
+        virtual void apply_result(nb::handle value) = 0;
 
         [[nodiscard]] bool modified() const override;
 
