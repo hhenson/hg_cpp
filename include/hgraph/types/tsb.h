@@ -16,16 +16,17 @@ namespace hgraph
     {
         using ptr = nb::ref<TimeSeriesSchema>;
 
-        explicit TimeSeriesSchema(std::vector<std::string> keys, const nb::type_object &type);
+        explicit TimeSeriesSchema(std::vector<std::string> keys);
+        explicit TimeSeriesSchema(std::vector<std::string> keys, const nb::object &type);
 
         const std::vector<std::string> &keys() const;
-        const nb::type_object          &scalar_type() const;
+        const nb::object               &scalar_type() const;
 
         static void register_with_nanobind(nb::module_ &m);
 
       private:
         std::vector<std::string> _keys;
-        nb::type_object          _scalar_type;
+        nb::object               _scalar_type;
     };
 
     struct TimeSeriesBundleOutput : TimeSeriesOutput
@@ -196,16 +197,17 @@ namespace hgraph
         void set_inputs(std::vector<time_series_input_ptr> ts_values);
 
         // Retrieves valid keys
-        std::vector<c_string_ref> keys_with_constraint(const std::function<bool(const TimeSeriesInput &)>& constraint) const;
+        std::vector<c_string_ref> keys_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const;
 
         // Retrieves valid values
-        std::vector<time_series_input_ptr> values_with_constraint(const std::function<bool(const TimeSeriesInput &)>& constraint) const;
+        std::vector<time_series_input_ptr>
+        values_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const;
 
         // Retrieves valid items
         std::vector<std::pair<c_string_ref, time_series_input_ptr>>
-        items_with_constraint(const std::function<bool(const TimeSeriesInput &)>& constraint) const;
+        items_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const;
 
-        nb::object py_value_with_constraint(const std::function<bool(const TimeSeriesInput &)>& constraint) const;
+        nb::object py_value_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const;
 
       private:
         // Stores the time-series data

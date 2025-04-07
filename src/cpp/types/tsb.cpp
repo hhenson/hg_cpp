@@ -7,20 +7,23 @@
 
 namespace hgraph
 {
-    TimeSeriesSchema::TimeSeriesSchema(std::vector<std::string> keys, const nb::type_object &type)
+    TimeSeriesSchema::TimeSeriesSchema(std::vector<std::string> keys) : TimeSeriesSchema(std::move(keys), nb::none()) {}
+
+    TimeSeriesSchema::TimeSeriesSchema(std::vector<std::string> keys, const nb::object &type)
         : _keys{std::move(keys)}, _scalar_type{type} {}
 
     const std::vector<std::string> &TimeSeriesSchema::keys() const { return _keys; }
 
-    const nb::type_object &TimeSeriesSchema::scalar_type() const { return _scalar_type; }
+    const nb::object &TimeSeriesSchema::scalar_type() const { return _scalar_type; }
 
     void TimeSeriesSchema::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesSchema, nb::intrusive_base>(m, "TimeSeriesSchema")
-            .def(nb::init<std::vector<std::string>, const nb::type_object &>(), "keys"_a, "scalar_type"_a = nb::none())
+            .def(nb::init<std::vector<std::string>>(), "keys"_a)
+            .def(nb::init<std::vector<std::string>, const nb::type_object &>(), "keys"_a, "scalar_type"_a)
             .def_prop_ro("keys", &TimeSeriesSchema::keys)
             .def_prop_ro("scalar_type", &TimeSeriesSchema::scalar_type)
             .def("__str__", [](const TimeSeriesSchema &self) {
-                if (self.scalar_type().is_none()) { return nb::str("unnamed:{}").format(self.keys()); }
+                if (self.scalar_type().is_valid()) { return nb::str("unnamed:{}").format(self.keys()); }
                 return nb::str("{}{}}").format(self.scalar_type(), self.keys());
             });
         ;
