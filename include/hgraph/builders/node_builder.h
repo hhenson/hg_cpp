@@ -33,7 +33,6 @@ namespace hgraph
 
         static void register_with_nanobind(nb::module_ &m);
 
-      protected:
         node_signature_ptr                signature;
         nb::dict                          scalars;
         std::optional<input_builder_ptr>  input_builder;
@@ -61,10 +60,9 @@ namespace hgraph
 
         node_ptr make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) override;
 
-    private:
-        nb::callable _eval_fn;
-        nb::callable _start_fn;
-        nb::callable _stop_fn;
+        nb::callable eval_fn;
+        nb::callable start_fn;
+        nb::callable stop_fn;
     };
 }  // namespace hgraph
 

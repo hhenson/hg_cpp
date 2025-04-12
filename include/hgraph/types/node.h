@@ -14,9 +14,9 @@
 #include <vector>
 
 #include <hgraph/hgraph_forward_declarations.h>
+#include <hgraph/python/pyb.h>
 #include <hgraph/util/date_time.h>
 #include <hgraph/util/lifecycle.h>
-#include <hgraph/python/pyb.h>
 #include <hgraph/util/reference_count_subscriber.h>
 
 namespace hgraph
@@ -43,15 +43,16 @@ namespace hgraph
 
     void node_type_enum_py_register(nb::module_ &m);
 
-    enum class InjectableTypesEnum : char8_t {
-        NONE         = 0,
-        STATE        = 1,
-        SCHEDULER    = 1 << 1,
-        OUTPUT       = 1 << 2,
-        CLOCK        = 1 << 3,
-        ENGINE_API   = 1 << 4,
-        REPLAY_STATE = 1 << 5,
-        LOGGER       = 1 << 6
+    enum class InjectableTypesEnum : int16_t {
+        NONE             = 0,
+        STATE            = 1,
+        RECORDABLE_STATE = 1 << 1,
+        SCHEDULER        = 1 << 2,
+        OUTPUT           = 1 << 3,
+        CLOCK            = 1 << 4,
+        ENGINE_API       = 1 << 5,
+        LOGGER           = 1 << 6,
+        NODE             = 1 << 7
     };
 
     void injectable_type_enum(nb::module_ &m);
@@ -60,39 +61,37 @@ namespace hgraph
     {
         using ptr = nanobind::ref<NodeSignature>;
 
-        NodeSignature() = default;
-
         NodeSignature(std::string name, NodeTypeEnum node_type, std::vector<std::string> args,
                       std::optional<std::unordered_map<std::string, nb::object>> time_series_inputs,
-                      std::optional<nb::object> time_series_output, std::optional<nb::kwargs> scalars,
+                      std::optional<nb::object> time_series_output, std::optional<nb::kwargs> scalars, nb::object src_location,
+                      std::optional<std::unordered_set<std::string>>                      active_inputs,
+                      std::optional<std::unordered_set<std::string>>                      valid_inputs,
+                      std::optional<std::unordered_set<std::string>>                      all_valid_inputs,
+                      std::optional<std::unordered_set<std::string>>                      context_inputs,
                       std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs,
-                      nb::object src_location,
-                      std::optional<std::unordered_set<std::string>> active_inputs,
-                      std::optional<std::unordered_set<std::string>> valid_inputs,
-                      std::optional<std::unordered_set<std::string>> all_valid_inputs,
-                      std::optional<std::unordered_set<std::string>> context_inputs, InjectableTypesEnum injectables,
-                      std::string wiring_path_name, std::optional<std::string> label, std::optional<std::string> record_replay_id,
-                      bool capture_values, bool capture_exception, int64_t trace_back_depth);
+                      InjectableTypesEnum injectables, bool capture_exception, int64_t trace_back_depth,
+                      std::string wiring_path_name, std::optional<std::string> label, bool capture_values,
+                      std::optional<std::string> record_replay_id);
 
-        std::string                                                         name{};
-        NodeTypeEnum                                                        node_type{NodeTypeEnum::NONE};
-        std::vector<std::string>                                            args{};
-        std::optional<std::unordered_map<std::string, nb::object>>          time_series_inputs{};
-        std::optional<nb::object>                                           time_series_output{};
-        std::optional<nb::kwargs>                                           scalars{};
-        std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs{};
-        nb::object                                                          src_location{nb::none()};
-        std::optional<std::unordered_set<std::string>>                      active_inputs{};
-        std::optional<std::unordered_set<std::string>>                      valid_inputs{};
-        std::optional<std::unordered_set<std::string>>                      all_valid_inputs{};
-        std::optional<std::unordered_set<std::string>>                      context_inputs{};
-        InjectableTypesEnum                                                 injectables{InjectableTypesEnum::NONE};
-        std::string                                                         wiring_path_name{};
-        std::optional<std::string>                                          label{};
-        std::optional<std::string>                                          record_replay_id{};
-        bool                                                                capture_values{false};
-        bool                                                                capture_exception{false};
-        int64_t                                                             trace_back_depth{1};
+        std::string                                                         name;
+        NodeTypeEnum                                                        node_type;
+        std::vector<std::string>                                            args;
+        std::optional<std::unordered_map<std::string, nb::object>>          time_series_inputs;
+        std::optional<nb::object>                                           time_series_output;
+        std::optional<nb::kwargs>                                           scalars;
+        nb::object                                                          src_location;
+        std::optional<std::unordered_set<std::string>>                      active_inputs;
+        std::optional<std::unordered_set<std::string>>                      valid_inputs;
+        std::optional<std::unordered_set<std::string>>                      all_valid_inputs;
+        std::optional<std::unordered_set<std::string>>                      context_inputs;
+        std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs;
+        InjectableTypesEnum                                                 injectables;
+        bool                                                                capture_exception;
+        int64_t                                                             trace_back_depth;
+        std::string                                                         wiring_path_name;
+        std::optional<std::string>                                          label;
+        bool                                                                capture_values;
+        std::optional<std::string>                                          record_replay_id;
 
         [[nodiscard]] nb::object get_arg_type(const std::string &arg) const;
 
@@ -106,9 +105,11 @@ namespace hgraph
 
         [[nodiscard]] bool uses_state() const;
 
-        [[nodiscard]] bool uses_output_feedback() const;
+        [[nodiscard]] bool uses_recordable_state() const;
 
-        [[nodiscard]] bool uses_replay_state() const;
+        [[nodiscard]] std::optional<std::string> recordable_state_arg() const;
+
+        [[nodiscard]] bool uses_output_feedback() const;
 
         [[nodiscard]] bool is_source_node() const;
 
@@ -121,6 +122,9 @@ namespace hgraph
         [[nodiscard]] bool is_sink_node() const;
 
         [[nodiscard]] bool is_recordable() const;
+
+        [[nodiscard]] nb::dict to_dict() const;
+        [[nodiscard]] ptr      copy_with(nb::kwargs kwargs) const;
 
         static void register_with_nanobind(nb::module_ &m);
     };
@@ -204,8 +208,7 @@ namespace hgraph
 
         void add_start_input(nb::ref<TimeSeriesReferenceInput> input);
 
-    protected:
-
+      protected:
         void _initialise_inputs();
 
       private:

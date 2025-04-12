@@ -25,32 +25,85 @@ namespace hgraph
     void injectable_type_enum(nb::module_ &m) {
         nb::enum_<InjectableTypesEnum>(m, "InjectableTypes")
             .value("STATE", InjectableTypesEnum::STATE)
+            .value("RECORDABLE_STATE", InjectableTypesEnum::RECORDABLE_STATE)
             .value("SCHEDULER", InjectableTypesEnum::SCHEDULER)
             .value("OUTPUT", InjectableTypesEnum::OUTPUT)
             .value("CLOCK", InjectableTypesEnum::CLOCK)
             .value("ENGINE_API", InjectableTypesEnum::ENGINE_API)
-            .value("REPLAY_STATE", InjectableTypesEnum::REPLAY_STATE)
             .value("LOGGER", InjectableTypesEnum::LOGGER)
             .export_values();
     }
+
     NodeSignature::NodeSignature(std::string name, NodeTypeEnum node_type, std::vector<std::string> args,
                                  std::optional<std::unordered_map<std::string, nb::object>> time_series_inputs,
                                  std::optional<nb::object> time_series_output, std::optional<nb::kwargs> scalars,
-                                 std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs,
                                  nb::object src_location, std::optional<std::unordered_set<std::string>> active_inputs,
-                                 std::optional<std::unordered_set<std::string>> valid_inputs,
-                                 std::optional<std::unordered_set<std::string>> all_valid_inputs,
-                                 std::optional<std::unordered_set<std::string>> context_inputs, InjectableTypesEnum injectables,
-                                 std::string wiring_path_name, std::optional<std::string> label,
-                                 std::optional<std::string> record_replay_id, bool capture_values, bool capture_exception,
-                                 int64_t trace_back_depth)
+                                 std::optional<std::unordered_set<std::string>>                      valid_inputs,
+                                 std::optional<std::unordered_set<std::string>>                      all_valid_inputs,
+                                 std::optional<std::unordered_set<std::string>>                      context_inputs,
+                                 std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs,
+                                 InjectableTypesEnum injectables, bool capture_exception, int64_t trace_back_depth,
+                                 std::string wiring_path_name, std::optional<std::string> label, bool capture_values,
+                                 std::optional<std::string> record_replay_id)
         : name{std::move(name)}, node_type{node_type}, args{std::move(args)}, time_series_inputs{std::move(time_series_inputs)},
-          time_series_output{std::move(time_series_output)}, scalars{std::move(scalars)},
-          injectable_inputs{std::move(injectable_inputs)}, src_location{std::move(src_location)},
+          time_series_output{std::move(time_series_output)}, scalars{std::move(scalars)}, src_location{std::move(src_location)},
           active_inputs{std::move(active_inputs)}, valid_inputs{std::move(valid_inputs)},
-          all_valid_inputs{std::move(all_valid_inputs)}, context_inputs{std::move(context_inputs)}, injectables{injectables},
-          wiring_path_name{std::move(wiring_path_name)}, label{std::move(label)}, record_replay_id{std::move(record_replay_id)},
-          capture_values{capture_values}, capture_exception{capture_exception}, trace_back_depth{trace_back_depth} {}
+          all_valid_inputs{std::move(all_valid_inputs)}, context_inputs{std::move(context_inputs)},
+          injectable_inputs{std::move(injectable_inputs)}, injectables{injectables}, capture_exception{capture_exception},
+          trace_back_depth{trace_back_depth}, wiring_path_name{std::move(wiring_path_name)}, label{std::move(label)},
+          capture_values{capture_values}, record_replay_id{std::move(record_replay_id)} {}
+
+    void NodeSignature::register_with_nanobind(nb::module_ &m) {
+        nb::class_<NodeSignature>(m, "NodeSignature")
+            .def(nb::init<std::string, NodeTypeEnum, std::vector<std::string>,
+                          std::optional<std::unordered_map<std::string, nb::object>>, std::optional<nb::object>,
+                          std::optional<nb::kwargs>, nb::object, std::optional<std::unordered_set<std::string>>,
+                          std::optional<std::unordered_set<std::string>>, std::optional<std::unordered_set<std::string>>,
+                          std::optional<std::unordered_set<std::string>>,
+                          std::optional<std::unordered_map<std::string, InjectableTypesEnum>>, InjectableTypesEnum, bool, int64_t,
+                          std::string, std::optional<std::string>, bool, std::optional<std::string>>(),
+                 "name"_a, "node_type"_a, "args"_a, "time_series_inputs"_a, "time_series_output"_a, "scalars"_a, "src_location"_a,
+                 "active_inputs"_a, "valid_inputs"_a, "all_valid_inputs"_a, "context_inputs"_a, "injectable_inputs"_a,
+                 "injectables"_a, "capture_exception"_a, "trace_back_depth"_a, "wiring_path_name"_a, "label"_a, "capture_values"_a,
+                 "record_replay_id"_a)
+
+            .def_ro("name", &NodeSignature::name)
+            .def_ro("node_type", &NodeSignature::node_type)
+            .def_ro("args", &NodeSignature::args)
+            .def_ro("time_series_inputs", &NodeSignature::time_series_inputs)
+            .def_ro("time_series_output", &NodeSignature::time_series_output)
+            .def_ro("scalars", &NodeSignature::scalars)
+            .def_ro("injectable_inputs", &NodeSignature::injectable_inputs)
+            .def_ro("src_location", &NodeSignature::src_location)
+            .def_ro("active_inputs", &NodeSignature::active_inputs)
+            .def_ro("valid_inputs", &NodeSignature::valid_inputs)
+            .def_ro("all_valid_inputs", &NodeSignature::all_valid_inputs)
+            .def_ro("context_inputs", &NodeSignature::context_inputs)
+            .def_ro("injectables", &NodeSignature::injectables)
+            .def_ro("wiring_path_name", &NodeSignature::wiring_path_name)
+            .def_ro("label", &NodeSignature::label)
+            .def_ro("record_replay_id", &NodeSignature::record_replay_id)
+            .def_ro("capture_values", &NodeSignature::capture_values)
+            .def_ro("capture_exception", &NodeSignature::capture_exception)
+            .def_ro("trace_back_depth", &NodeSignature::trace_back_depth)
+
+            .def_prop_ro("signature", &NodeSignature::signature)
+            .def_prop_ro("uses_scheduler", &NodeSignature::uses_scheduler)
+            .def_prop_ro("uses_clock", &NodeSignature::uses_clock)
+            .def_prop_ro("uses_engine", &NodeSignature::uses_engine)
+            .def_prop_ro("uses_state", &NodeSignature::uses_state)
+            .def_prop_ro("uses_output_feedback", &NodeSignature::uses_output_feedback)
+            .def_prop_ro("uses_recordable_state", &NodeSignature::uses_recordable_state)
+            .def_prop_ro("is_source_node", &NodeSignature::is_source_node)
+            .def_prop_ro("is_push_source_node", &NodeSignature::is_push_source_node)
+            .def_prop_ro("is_pull_source_node", &NodeSignature::is_pull_source_node)
+            .def_prop_ro("is_compute_node", &NodeSignature::is_compute_node)
+            .def_prop_ro("is_sink_node", &NodeSignature::is_sink_node)
+            .def_prop_ro("is_recordable", &NodeSignature::is_recordable)
+
+            .def("to_dict", &NodeSignature::to_dict)
+            .def("copy_with", &NodeSignature::copy_with);
+    }
 
     [[nodiscard]] nb::object NodeSignature::get_arg_type(const std::string &arg) const {
         if (time_series_inputs && time_series_inputs->contains(arg)) { return time_series_inputs->at(arg); }
@@ -103,8 +156,13 @@ namespace hgraph
         return (injectables & InjectableTypesEnum::OUTPUT) == InjectableTypesEnum::OUTPUT;
     }
 
-    [[nodiscard]] bool NodeSignature::uses_replay_state() const {
-        return (injectables & InjectableTypesEnum::REPLAY_STATE) == InjectableTypesEnum::REPLAY_STATE;
+    [[nodiscard]] bool NodeSignature::uses_recordable_state() const {
+        return (injectables & InjectableTypesEnum::RECORDABLE_STATE) == InjectableTypesEnum::RECORDABLE_STATE;
+    }
+
+    std::optional<std::string> NodeSignature::recordable_state_arg() const {
+        // TODO: Implement
+        return std::nullopt;
     }
 
     [[nodiscard]] bool NodeSignature::is_source_node() const {
@@ -129,45 +187,59 @@ namespace hgraph
 
     [[nodiscard]] bool NodeSignature::is_recordable() const { return (bool)record_replay_id; }
 
-    void NodeSignature::register_with_nanobind(nb::module_ &m) {
-        nb::class_<NodeSignature>(m, "NodeSignature")
-            .def(nb::init<std::string, NodeTypeEnum, std::vector<std::string>,
-                          std::optional<std::unordered_map<std::string, nb::object>>, std::optional<nb::object>,
-                          std::optional<nb::kwargs>, std::optional<std::unordered_map<std::string, InjectableTypesEnum>>,
-                          nb::object, std::optional<std::unordered_set<std::string>>,
-                          std::optional<std::unordered_set<std::string>>, std::optional<std::unordered_set<std::string>>,
-                          std::optional<std::unordered_set<std::string>>, InjectableTypesEnum, std::string,
-                          std::optional<std::string>, std::optional<std::string>, bool, bool, int64_t>(),
-                 "name"_a, "node_type"_a, "args"_a, "time_series_inputs"_a, "time_series_output"_a, "scalars"_a,
-                 "injectable_inputs"_a, "src_location"_a, "active_inputs"_a, "valid_inputs"_a, "all_valid_inputs"_a,
-                 "context_inputs"_a, "injectable_inputs"_a, "wiring_path_name"_a, "label"_a, "record_replay_id"_a,
-                 "capture_values"_a, "capture_exception"_a, "trace_back_depth"_a)
-            .def_prop_ro("signature", &NodeSignature::signature)
-            .def_prop_ro("uses_scheduler", &NodeSignature::uses_scheduler)
-            .def_prop_ro("uses_clock", &NodeSignature::uses_clock)
-            .def_prop_ro("uses_engine", &NodeSignature::uses_engine)
-            .def_prop_ro("uses_state", &NodeSignature::uses_state)
-            .def_prop_ro("uses_output_feedback", &NodeSignature::uses_output_feedback)
-            .def_prop_ro("uses_replay_state", &NodeSignature::uses_replay_state)
-            .def_prop_ro("is_source_node", &NodeSignature::is_source_node)
-            .def_prop_ro("is_push_source_node", &NodeSignature::is_push_source_node)
-            .def_prop_ro("is_pull_source_node", &NodeSignature::is_pull_source_node)
-            .def_prop_ro("is_compute_node", &NodeSignature::is_compute_node)
-            .def_prop_ro("is_sink_node", &NodeSignature::is_sink_node)
-            .def_prop_ro("is_recordable", &NodeSignature::is_recordable)
-            .def("to_dict",
-                 [](const NodeSignature &self) {
-                     nb::dict d{};
-                     d["name"] = self.name;
-                     return d;
-                 })
-            // .def("copy_with", [](const NodeSignature& self, py::kwargs kwargs) {
-            //     return std::shared_ptr<NodeSignature>(
-            //         kwargs.contains("name") ? py::cast<std::string>(kwargs["name"]) : self->name
-            //         ...
-            //     );
-            // })
-            ;
+    nb::dict NodeSignature::to_dict() const {
+        nb::dict d;
+        d["name"]               = name;
+        d["node_type"]          = node_type;
+        d["args"]               = args;
+        d["time_series_inputs"] = time_series_inputs;
+        d["time_series_output"] = time_series_output;
+        d["scalars"]            = scalars;
+        d["src_location"]       = src_location;
+        d["active_inputs"]      = active_inputs;
+        d["valid_inputs"]       = valid_inputs;
+        d["all_valid_inputs"]   = all_valid_inputs;
+        d["injectable_inputs"]  = injectable_inputs;
+        d["capture_exception"]  = capture_exception;
+        d["trace_back_depth"]   = trace_back_depth;
+        d["wiring_path_name"]   = wiring_path_name;
+        d["label"]              = label;
+        d["capture_values"]     = capture_values;
+        d["record_replay_id"]   = record_replay_id;
+        return d;
+    }
+
+    NodeSignature::ptr NodeSignature::copy_with(nb::kwargs kwargs) const {
+        auto kwargs_ = to_dict();
+        for (const auto &item : kwargs) { kwargs_[item.first] = item.second; }
+        return new NodeSignature(
+            nb::cast<std::string>(kwargs_["name"]), nb::cast<NodeTypeEnum>(kwargs_["node_type"]),
+            nb::cast<std::vector<std::string>>(kwargs_["args"]),
+            kwargs_.contains("time_series_inputs")
+                ? nb::cast<std::optional<std::unordered_map<std::string, nb::object>>>(kwargs_["time_series_inputs"])
+                : std::nullopt,
+            kwargs_.contains("time_series_output") ? nb::cast<std::optional<nb::object>>(kwargs_["time_series_output"])
+                                                   : std::nullopt,
+            kwargs_.contains("scalars") ? nb::cast<std::optional<nb::kwargs>>(kwargs_["scalars"]) : std::nullopt,
+            nb::cast<nb::object>(kwargs_["src_location"]),
+            kwargs_.contains("active_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["active_inputs"])
+                                              : std::nullopt,
+            kwargs_.contains("valid_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["valid_inputs"])
+                                             : std::nullopt,
+            kwargs_.contains("all_valid_inputs")
+                ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["all_valid_inputs"])
+                : std::nullopt,
+            kwargs_.contains("context_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["context_inputs"])
+                                               : std::nullopt,
+            kwargs_.contains("injectables")
+                ? nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(kwargs_["injectables"])
+                : std::nullopt,
+            nb::cast<InjectableTypesEnum>(kwargs_["wiring_path_name"]), nb::cast<bool>(kwargs_["label"]),
+            nb::cast<int64_t>(kwargs_["capture_values"]), nb::cast<std::string>(kwargs_["capture_exception"]),
+            kwargs_.contains("trace_back_depth") ? nb::cast<std::optional<std::string>>(kwargs_["trace_back_depth"]) : std::nullopt,
+            nb::cast<bool>(kwargs_["trace_back_depth"]),
+            kwargs_.contains("trace_back_depth") ? nb::cast<std::optional<std::string>>(kwargs_["trace_back_depth"])
+                                                 : std::nullopt);
     }
 
     NodeScheduler::NodeScheduler(Node &node) : _node{node} {}
