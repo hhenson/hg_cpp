@@ -25,12 +25,12 @@ namespace hgraph
         /**
          * Create an instance of InputBuilder using an owning node
          */
-        virtual time_series_input_ptr make_instance(node_ptr owning_node = nullptr) = 0;
+        virtual time_series_input_ptr make_instance(node_ptr owning_node) = 0;
 
         /**
          * Create an instance of InputBuilder using an parent input
          */
-        virtual time_series_input_ptr make_instance(time_series_input_ptr owning_input = nullptr) = 0;
+        virtual time_series_input_ptr make_instance(time_series_input_ptr owning_input) = 0;
 
         /**
          * Release an instance of the input type.
@@ -43,6 +43,7 @@ namespace hgraph
 
     template <typename T> struct HGRAPH_EXPORT TimeSeriesValueInputBuilder : InputBuilder
     {
+        using ptr = nb::ref<TimeSeriesValueInputBuilder<T>>;
         using InputBuilder::InputBuilder;
 
         time_series_input_ptr make_instance(node_ptr owning_node) override {
@@ -67,6 +68,8 @@ namespace hgraph
 
     struct HGRAPH_EXPORT TimeSeriesBundleInputBuilder : InputBuilder
     {
+        using ptr = nb::ref<TimeSeriesBundleInputBuilder>;
+
         TimeSeriesBundleInputBuilder(TimeSeriesSchema::ptr schema, std::vector<InputBuilder::ptr> input_builders);
 
         time_series_input_ptr make_instance(node_ptr owning_node) override;

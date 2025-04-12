@@ -39,7 +39,7 @@ namespace hgraph
 
         nb::class_<TimeSeriesRefOutputBuilder, OutputBuilder>(m, "OutputBuilder_TS_Ref").def(nb::init<>());
         nb::class_<TimeSeriesBundleOutputBuilder, OutputBuilder>(m, "OutputBuilder_TSB")
-            .def(nb::init<TimeSeriesSchema::ptr, std::vector<OutputBuilder::ptr>>());
+            .def(nb::init<TimeSeriesSchema::ptr, std::vector<OutputBuilder::ptr>>(), "schema"_a, "output_builders"_a);
     }
 
     time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(node_ptr owning_node) {

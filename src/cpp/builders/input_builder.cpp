@@ -1,6 +1,8 @@
 #include <hgraph/builders/input_builder.h>
 #include <hgraph/python/pyb_wiring.h>
+#include <iostream>
 #include <ranges>
+#include <utility>
 
 namespace hgraph
 {
@@ -34,7 +36,8 @@ namespace hgraph
         nb::class_<InputBuilder_TS_Object, InputBuilder>(m, "InputBuilder_TS_Object").def(nb::init<>());
 
         nb::class_<TimeSeriesRefInputBuilder, InputBuilder>(m, "InputBuilder_TS_Ref").def(nb::init<>());
-        nb::class_<TimeSeriesBundleInputBuilder, InputBuilder>(m, "InputBuilder_TSB").def(nb::init<TimeSeriesSchema::ptr, std::vector<InputBuilder::ptr>>());
+        nb::class_<TimeSeriesBundleInputBuilder, InputBuilder>(m, "InputBuilder_TSB")
+            .def(nb::init<TimeSeriesSchema::ptr, std::vector<ptr>>(), "schema"_a, "input_builders"_a);
     }
 
     time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(node_ptr owning_node) {
