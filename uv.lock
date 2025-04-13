@@ -175,7 +175,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "hgraph", specifier = ">=0.3.48" }]
+requires-dist = [{ name = "hgraph", specifier = ">=0.3.49" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -187,7 +187,7 @@ dev = [
 
 [[package]]
 name = "hgraph"
-version = "0.4.28"
+version = "0.4.29"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "duckdb" },
@@ -202,9 +202,9 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/4e/bf30c3410779553e229e407b23c0c5b97cf60aac5251977608481f0ee7a6/hgraph-0.4.28.tar.gz", hash = "sha256:c0fac37ca22ddfafdc0ef3ffc51cde2b897793933943b222ddb068ea9ffeebf5", size = 349083 }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/a8/8aa0fab2d5637f96c24357d9c33f61017d3ecd091de9b736317591df9dc6/hgraph-0.4.29.tar.gz", hash = "sha256:7e45682bad4700cc304971d93d0b5342fef1d2b7162c950512828a1f3149482b", size = 349291 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2c/b8/727f34bfe10d3f28ce21ef72782b25fe94154e36056ccaf94ef7985a3c9d/hgraph-0.4.28-py3-none-any.whl", hash = "sha256:8edb58ec684fed0bfc46a50644176c3594fbbb5311ca50803ebc2f31f9e69b02", size = 491257 },
+    { url = "https://files.pythonhosted.org/packages/28/e9/fae6fbac0248214e47168bd550b1613fee5b0b2be15bc62f86ed3926f283/hgraph-0.4.29-py3-none-any.whl", hash = "sha256:105b5ced580da6522a66383dc395471f71fc0560c4d60c4a10dddca2f7367ac0", size = 491637 },
 ]
 
 [[package]]

@@ -7,6 +7,7 @@
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/traits.h>
 #include <hgraph/types/ts.h>
+#include <hgraph/types/node.h>
 
 void export_types(nb::module_ &m) {
     using namespace hgraph;
@@ -20,6 +21,7 @@ void export_types(nb::module_ &m) {
     TimeSeriesReferenceInput::register_with_nanobind(m);
 
     Traits::register_with_nanobind(m);
+    NodeSignature::register_with_nanobind(m);
 
     register_ts_with_nanobind(m);
 
