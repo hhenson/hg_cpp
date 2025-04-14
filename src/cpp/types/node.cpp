@@ -396,6 +396,12 @@ namespace hgraph
 
     void Node::add_start_input(nb::ref<TimeSeriesReferenceInput> input) { _start_inputs.push_back(std::move(input)); }
 
+    void Node::register_with_nanobind(nb::module_ &m) {
+        nb::class_<Node, ComponentLifeCycle>(m, "Node")
+        //TODO: Add in methods
+        ;
+    }
+
     BasePythonNode::BasePythonNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
                                    nb::dict scalars, nb::callable eval_fn, nb::callable start_fn, nb::callable end_fn)
         : Node(node_ndx, std::move(owning_graph_id), std::move(signature), std::move(scalars)), _eval_fn{std::move(eval_fn)},

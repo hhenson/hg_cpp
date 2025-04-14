@@ -208,6 +208,8 @@ namespace hgraph
 
         void add_start_input(nb::ref<TimeSeriesReferenceInput> input);
 
+        static void register_with_nanobind(nb::module_ &m);
+
       protected:
         void _initialise_inputs();
 
