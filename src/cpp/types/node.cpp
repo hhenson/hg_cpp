@@ -23,7 +23,8 @@ namespace hgraph
     }
 
     void injectable_type_enum(nb::module_ &m) {
-        nb::enum_<InjectableTypesEnum>(m, "InjectableTypes")
+        nb::enum_<InjectableTypesEnum>(m, "InjectableTypesEnum")
+            .value("NONE", InjectableTypesEnum::NONE)
             .value("STATE", InjectableTypesEnum::STATE)
             .value("RECORDABLE_STATE", InjectableTypesEnum::RECORDABLE_STATE)
             .value("SCHEDULER", InjectableTypesEnum::SCHEDULER)
@@ -36,7 +37,7 @@ namespace hgraph
 
     NodeSignature::NodeSignature(std::string name, NodeTypeEnum node_type, std::vector<std::string> args,
                                  std::optional<std::unordered_map<std::string, nb::object>> time_series_inputs,
-                                 std::optional<nb::object> time_series_output, std::optional<nb::kwargs> scalars,
+                                 std::optional<nb::object> time_series_output, std::optional<nb::dict> scalars,
                                  nb::object src_location, std::optional<std::unordered_set<std::string>> active_inputs,
                                  std::optional<std::unordered_set<std::string>>                      valid_inputs,
                                  std::optional<std::unordered_set<std::string>>                      all_valid_inputs,

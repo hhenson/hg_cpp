@@ -63,7 +63,7 @@ namespace hgraph
 
         NodeSignature(std::string name, NodeTypeEnum node_type, std::vector<std::string> args,
                       std::optional<std::unordered_map<std::string, nb::object>> time_series_inputs,
-                      std::optional<nb::object> time_series_output, std::optional<nb::kwargs> scalars, nb::object src_location,
+                      std::optional<nb::object> time_series_output, std::optional<nb::dict> scalars, nb::object src_location,
                       std::optional<std::unordered_set<std::string>>                      active_inputs,
                       std::optional<std::unordered_set<std::string>>                      valid_inputs,
                       std::optional<std::unordered_set<std::string>>                      all_valid_inputs,
@@ -78,7 +78,7 @@ namespace hgraph
         std::vector<std::string>                                            args;
         std::optional<std::unordered_map<std::string, nb::object>>          time_series_inputs;
         std::optional<nb::object>                                           time_series_output;
-        std::optional<nb::kwargs>                                           scalars;
+        std::optional<nb::dict>                                             scalars;
         nb::object                                                          src_location;
         std::optional<std::unordered_set<std::string>>                      active_inputs;
         std::optional<std::unordered_set<std::string>>                      valid_inputs;

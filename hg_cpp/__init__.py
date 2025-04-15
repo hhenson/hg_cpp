@@ -2,6 +2,9 @@ import _hgraph
 import hgraph
 
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.NODE_SIGNATURE = _hgraph.NodeSignature
+hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.NODE_TYPE_ENUM = _hgraph.NodeTypeEnum
+hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.INJECTABLE_TYPES_ENUM = _hgraph.InjectableTypesEnum
+
 hgraph._runtime._evaluation_engine.EvaluationMode = _hgraph.EvaluationMode
 hgraph._runtime._evaluation_engine.EvaluationLifeCycleObserver = _hgraph.EvaluationLifeCycleObserver
 
