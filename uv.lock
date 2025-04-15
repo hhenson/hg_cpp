@@ -57,7 +57,7 @@ wheels = [
 
 [[package]]
 name = "conan"
-version = "2.15.0"
+version = "2.15.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama" },
@@ -70,7 +70,7 @@ dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/30/0b/6aa79aed2e8af73c5517ce2fe4ae1c19f5ca8a858c36349a6d3cdd47a4be/conan-2.15.0.tar.gz", hash = "sha256:c984c5fb0623ea60b39c2feb351886a3e2df8f6a1f99e3f322125a24198f05da", size = 496404 }
+sdist = { url = "https://files.pythonhosted.org/packages/f7/f1/15889cc19b6f67294c70c6b450a39b097b57c49d268fcb001c586da1a723/conan-2.15.1.tar.gz", hash = "sha256:c4114e197f7908409766ad16cea758f088ebc926f8426212b2a6a62829f996a3", size = 496418 }
 
 [[package]]
 name = "distro"
@@ -175,7 +175,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "hgraph", specifier = ">=0.3.49" }]
+requires-dist = [{ name = "hgraph", specifier = ">=0.4.31" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -187,7 +187,7 @@ dev = [
 
 [[package]]
 name = "hgraph"
-version = "0.4.29"
+version = "0.4.31"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "duckdb" },
@@ -202,9 +202,9 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f4/a8/8aa0fab2d5637f96c24357d9c33f61017d3ecd091de9b736317591df9dc6/hgraph-0.4.29.tar.gz", hash = "sha256:7e45682bad4700cc304971d93d0b5342fef1d2b7162c950512828a1f3149482b", size = 349291 }
+sdist = { url = "https://files.pythonhosted.org/packages/30/ca/8232d5ccefffdedd9b15bf70e462c8e428eb95934a9b4cc5f0d3ca90ded1/hgraph-0.4.31.tar.gz", hash = "sha256:0f944e81085ff6cd43d136f0d5a62f2e92a320cd5ac251583772c9f85ee3c1ea", size = 349818 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/e9/fae6fbac0248214e47168bd550b1613fee5b0b2be15bc62f86ed3926f283/hgraph-0.4.29-py3-none-any.whl", hash = "sha256:105b5ced580da6522a66383dc395471f71fc0560c4d60c4a10dddca2f7367ac0", size = 491637 },
+    { url = "https://files.pythonhosted.org/packages/b9/89/ba13bd1286bd4af524b0bd4df9f21f33aa18ab061725fa200b668d06d68a/hgraph-0.4.31-py3-none-any.whl", hash = "sha256:898e8cd2ede08ce53c9555663b3a37dddf3a281b6d989756089a6f4f6b481d25", size = 492115 },
 ]
 
 [[package]]
