@@ -32,6 +32,7 @@ namespace hgraph
             .value("CLOCK", InjectableTypesEnum::CLOCK)
             .value("ENGINE_API", InjectableTypesEnum::ENGINE_API)
             .value("LOGGER", InjectableTypesEnum::LOGGER)
+            .value("NODE", InjectableTypesEnum::NODE)
             .export_values();
     }
 
@@ -56,17 +57,52 @@ namespace hgraph
 
     void NodeSignature::register_with_nanobind(nb::module_ &m) {
         nb::class_<NodeSignature>(m, "NodeSignature")
-            .def(nb::init<std::string, NodeTypeEnum, std::vector<std::string>,
-                          std::optional<std::unordered_map<std::string, nb::object>>, std::optional<nb::object>,
-                          std::optional<nb::kwargs>, nb::object, std::optional<std::unordered_set<std::string>>,
-                          std::optional<std::unordered_set<std::string>>, std::optional<std::unordered_set<std::string>>,
-                          std::optional<std::unordered_set<std::string>>,
-                          std::optional<std::unordered_map<std::string, InjectableTypesEnum>>, InjectableTypesEnum, bool, int64_t,
-                          std::string, std::optional<std::string>, bool, std::optional<std::string>>(),
-                 "name"_a, "node_type"_a, "args"_a, "time_series_inputs"_a, "time_series_output"_a, "scalars"_a, "src_location"_a,
-                 "active_inputs"_a, "valid_inputs"_a, "all_valid_inputs"_a, "context_inputs"_a, "injectable_inputs"_a,
-                 "injectables"_a, "capture_exception"_a, "trace_back_depth"_a, "wiring_path_name"_a, "label"_a, "capture_values"_a,
-                 "record_replay_id"_a)
+            .def("__init__",
+                 [](NodeSignature *self, nb::kwargs kwargs) {
+                     new (self) NodeSignature(
+                         nb::cast<std::string>(kwargs["name"]), nb::cast<NodeTypeEnum>(kwargs["node_type"]),
+                         nb::cast<std::vector<std::string>>(kwargs["args"]),
+                         kwargs.contains("time_series_inputs")
+                             ? nb::cast<std::optional<std::unordered_map<std::string, nb::object>>>(kwargs["time_series_inputs"])
+                             : std::nullopt,
+                         kwargs.contains("time_series_output") ? nb::cast<std::optional<nb::object>>(kwargs["time_series_output"])
+                                                               : std::nullopt,
+                         kwargs.contains("scalars") ? nb::cast<std::optional<nb::dict>>(kwargs["scalars"]) : std::nullopt,
+                         nb::cast<nb::object>(kwargs["src_location"]),
+                         kwargs.contains("active_inputs")
+                             ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["active_inputs"])
+                             : std::nullopt,
+                         kwargs.contains("valid_inputs")
+                             ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["valid_inputs"])
+                             : std::nullopt,
+                         kwargs.contains("all_valid_inputs")
+                             ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["all_valid_inputs"])
+                             : std::nullopt,
+                         kwargs.contains("context_inputs")
+                             ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["context_inputs"])
+                             : std::nullopt,
+                         kwargs.contains("injectable_types")
+                             ? nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(kwargs["injectable_types"])
+                             : std::nullopt,
+                         nb::cast<InjectableTypesEnum>(kwargs["injectables"]), nb::cast<bool>(kwargs["capture_exception"]),
+                         nb::cast<int64_t>(kwargs["trace_back_depth"]), nb::cast<std::string>(kwargs["wiring_path_name"]),
+                         kwargs.contains("label") ? nb::cast<std::optional<std::string>>(kwargs["label"]) : std::nullopt,
+                         nb::cast<bool>(kwargs["capture_values"]),
+                         kwargs.contains("record_replay_id") ? nb::cast<std::optional<std::string>>(kwargs["record_replay_id"])
+                                                             : std::nullopt);
+                     ;
+                 })
+            // .def(nb::init<std::string, NodeTypeEnum, std::vector<std::string>,
+            //               std::optional<std::unordered_map<std::string, nb::object>>, std::optional<nb::object>,
+            //               std::optional<nb::kwargs>, nb::object, std::optional<std::unordered_set<std::string>>,
+            //               std::optional<std::unordered_set<std::string>>, std::optional<std::unordered_set<std::string>>,
+            //               std::optional<std::unordered_set<std::string>>,
+            //               std::optional<std::unordered_map<std::string, InjectableTypesEnum>>, InjectableTypesEnum, bool,
+            //               int64_t, std::string, std::optional<std::string>, bool, std::optional<std::string>>(),
+            //      "name"_a, "node_type"_a, "args"_a, "time_series_inputs"_a, "time_series_output"_a, "scalars"_a,
+            //      "src_location"_a, "active_inputs"_a, "valid_inputs"_a, "all_valid_inputs"_a, "context_inputs"_a,
+            //      "injectable_inputs"_a, "injectables"_a, "capture_exception"_a, "trace_back_depth"_a, "wiring_path_name"_a,
+            //      "label"_a, "capture_values"_a, "record_replay_id"_a)
 
             .def_ro("name", &NodeSignature::name)
             .def_ro("node_type", &NodeSignature::node_type)
@@ -399,8 +435,8 @@ namespace hgraph
 
     void Node::register_with_nanobind(nb::module_ &m) {
         nb::class_<Node, ComponentLifeCycle>(m, "Node")
-        //TODO: Add in methods
-        ;
+            // TODO: Add in methods
+            ;
     }
 
     BasePythonNode::BasePythonNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
