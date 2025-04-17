@@ -44,9 +44,8 @@ namespace hgraph
                                  std::optional<std::unordered_set<std::string>>                      all_valid_inputs,
                                  std::optional<std::unordered_set<std::string>>                      context_inputs,
                                  std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs,
-                                 InjectableTypesEnum injectables, bool capture_exception, int64_t trace_back_depth,
-                                 std::string wiring_path_name, std::optional<std::string> label, bool capture_values,
-                                 std::optional<std::string> record_replay_id)
+                                 size_t injectables, bool capture_exception, int64_t trace_back_depth, std::string wiring_path_name,
+                                 std::optional<std::string> label, bool capture_values, std::optional<std::string> record_replay_id)
         : name{std::move(name)}, node_type{node_type}, args{std::move(args)}, time_series_inputs{std::move(time_series_inputs)},
           time_series_output{std::move(time_series_output)}, scalars{std::move(scalars)}, src_location{std::move(src_location)},
           active_inputs{std::move(active_inputs)}, valid_inputs{std::move(valid_inputs)},
@@ -82,9 +81,10 @@ namespace hgraph
                              ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["context_inputs"])
                              : std::nullopt,
                          kwargs.contains("injectable_types")
-                             ? nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(kwargs["injectable_types"])
+                             ? nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(
+                                   kwargs["injectable_types"])
                              : std::nullopt,
-                         nb::cast<InjectableTypesEnum>(kwargs["injectables"]), nb::cast<bool>(kwargs["capture_exception"]),
+                         nb::cast<size_t>(kwargs["injectables"]), nb::cast<bool>(kwargs["capture_exception"]),
                          nb::cast<int64_t>(kwargs["trace_back_depth"]), nb::cast<std::string>(kwargs["wiring_path_name"]),
                          kwargs.contains("label") ? nb::cast<std::optional<std::string>>(kwargs["label"]) : std::nullopt,
                          nb::cast<bool>(kwargs["capture_values"]),
@@ -97,7 +97,7 @@ namespace hgraph
             //               std::optional<nb::kwargs>, nb::object, std::optional<std::unordered_set<std::string>>,
             //               std::optional<std::unordered_set<std::string>>, std::optional<std::unordered_set<std::string>>,
             //               std::optional<std::unordered_set<std::string>>,
-            //               std::optional<std::unordered_map<std::string, InjectableTypesEnum>>, InjectableTypesEnum, bool,
+            //               std::optional<std::unordered_map<std::string, InjectableTypesEnum>>, size_t, bool,
             //               int64_t, std::string, std::optional<std::string>, bool, std::optional<std::string>>(),
             //      "name"_a, "node_type"_a, "args"_a, "time_series_inputs"_a, "time_series_output"_a, "scalars"_a,
             //      "src_location"_a, "active_inputs"_a, "valid_inputs"_a, "all_valid_inputs"_a, "context_inputs"_a,

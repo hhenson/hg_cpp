@@ -31,11 +31,31 @@ namespace hgraph
         nb::class_<BaseNodeBuilder, NodeBuilder>(m, "BaseNodeBuilder");
 
         nb::class_<PythonNodeBuilder, BaseNodeBuilder>(m, "PythonNodeBuilder")
-            .def(nb::init<node_signature_ptr, nb::dict, std::optional<input_builder_ptr>, std::optional<output_builder_ptr>,
-                          std::optional<output_builder_ptr>, std::optional<output_builder_ptr>, nb::callable, nb::callable,
-                          nb::callable>(),
-                 "signature"_a, "scalars"_a, "input_builder"_a, "output_builder"_a, "error_builder"_a, "recordable_state_builder"_a,
-                 "eval_fn"_a, "start_fn"_a, "stop_fn"_a)
+            .def("__init__",
+                 [](PythonNodeBuilder *self, nb::kwargs kwargs) {
+                     auto                             signature_ = nb::cast<node_signature_ptr>(kwargs["signature"]);
+                     auto                             scalars_   = nb::cast<nb::dict>(kwargs["scalars"]);
+                     std::optional<input_builder_ptr> input_builder_ =
+                         kwargs.contains("input_builder") ? nb::cast<std::optional<input_builder_ptr>>(kwargs["input_builder"])
+                                                          : std::nullopt;
+                     std::optional<output_builder_ptr> output_builder_ =
+                         kwargs.contains("output_builder") ? nb::cast<std::optional<output_builder_ptr>>(kwargs["output_builder"])
+                                                           : std::nullopt;
+                     std::optional<output_builder_ptr> error_builder_ =
+                         kwargs.contains("error_builder") ? nb::cast<std::optional<output_builder_ptr>>(kwargs["error_builder"])
+                                                          : std::nullopt;
+                     std::optional<output_builder_ptr> recordable_state_builder_ =
+                         kwargs.contains("recordable_state_builder")
+                             ? nb::cast<std::optional<output_builder_ptr>>(kwargs["recordable_state_builder"])
+                             : std::nullopt;
+                     auto eval_fn  = nb::cast<nb::callable>(kwargs["eval_fn"]);
+                     auto start_fn = nb::cast<nb::callable>(kwargs["start_fn"]);
+                     auto stop_fn  = nb::cast<nb::callable>(kwargs["stop_fn"]);
+                     new (self) PythonNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_),
+                                                  std::move(output_builder_), std::move(error_builder_),
+                                                  std::move(recordable_state_builder_), std::move(eval_fn), std::move(start_fn),
+                                                  std::move(stop_fn));
+                 })
             .def_ro("eval_fn", &PythonNodeBuilder::eval_fn)
             .def_ro("start_fn", &PythonNodeBuilder::start_fn)
             .def_ro("stop_fn", &PythonNodeBuilder::stop_fn);

@@ -43,7 +43,7 @@ namespace hgraph
 
     void node_type_enum_py_register(nb::module_ &m);
 
-    enum class InjectableTypesEnum : int16_t {
+    enum InjectableTypesEnum : int16_t {
         NONE             = 0,
         STATE            = 1,
         RECORDABLE_STATE = 1 << 1,
@@ -68,10 +68,9 @@ namespace hgraph
                       std::optional<std::unordered_set<std::string>>                      valid_inputs,
                       std::optional<std::unordered_set<std::string>>                      all_valid_inputs,
                       std::optional<std::unordered_set<std::string>>                      context_inputs,
-                      std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs,
-                      InjectableTypesEnum injectables, bool capture_exception, int64_t trace_back_depth,
-                      std::string wiring_path_name, std::optional<std::string> label, bool capture_values,
-                      std::optional<std::string> record_replay_id);
+                      std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs, size_t injectables,
+                      bool capture_exception, int64_t trace_back_depth, std::string wiring_path_name,
+                      std::optional<std::string> label, bool capture_values, std::optional<std::string> record_replay_id);
 
         std::string                                                         name;
         NodeTypeEnum                                                        node_type;
@@ -85,7 +84,7 @@ namespace hgraph
         std::optional<std::unordered_set<std::string>>                      all_valid_inputs;
         std::optional<std::unordered_set<std::string>>                      context_inputs;
         std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs;
-        InjectableTypesEnum                                                 injectables;
+        size_t                                                              injectables;
         bool                                                                capture_exception;
         int64_t                                                             trace_back_depth;
         std::string                                                         wiring_path_name;
