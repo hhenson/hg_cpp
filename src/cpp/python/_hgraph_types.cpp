@@ -24,6 +24,7 @@ void export_types(nb::module_ &m) {
     node_type_enum_py_register(m);
     injectable_type_enum(m);
     NodeSignature::register_with_nanobind(m);
+    NodeScheduler::register_with_nanobind(m);
     Node::register_with_nanobind(m);
 
     register_ts_with_nanobind(m);

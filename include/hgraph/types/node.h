@@ -128,7 +128,7 @@ namespace hgraph
         static void register_with_nanobind(nb::module_ &m);
     };
 
-    struct NodeScheduler
+    struct NodeScheduler : nanobind::intrusive_base
     {
         explicit NodeScheduler(Node &node);
 
@@ -136,11 +136,14 @@ namespace hgraph
         [[nodiscard]] bool          is_scheduled() const;
         [[nodiscard]] bool          is_scheduled_node() const;
         [[nodiscard]] bool          has_tag(const std::string &tag) const;
-        engine_time_t               pop_tag(const std::string &tag, std::optional<engine_time_t> default_time);
+        engine_time_t               pop_tag(const std::string &tag);
+        engine_time_t               pop_tag(const std::string &tag, engine_time_t default_time);
         void                        schedule(engine_time_t when, std::optional<std::string> tag, bool on_wall_clock = false);
         void                        schedule(engine_time_delta_t when, std::optional<std::string> tag, bool on_wall_clock = false);
         void                        un_schedule(std::optional<std::string> tag);
         void                        reset();
+
+        static void register_with_nanobind(nb::module_ &m);
 
       protected:
         void _on_alarm(engine_time_t when, std::string tag);
@@ -257,14 +260,13 @@ namespace hgraph
     {
         using BasePythonNode::BasePythonNode;
 
+        void eval() override;
+
       protected:
         void initialise() override;
         void start() override;
         void stop() override;
         void dispose() override;
-
-      public:
-        void eval() override;
     };
 
     struct PushQueueNode : Node
@@ -289,6 +291,18 @@ namespace hgraph
         int64_t                   _messages_queued{0};
         int64_t                   _messages_dequeued{0};
         bool                      _elide{false};
+    };
+
+    struct PythonGeneratorNode : BasePythonNode
+    {
+        using BasePythonNode::BasePythonNode;
+        nb::iterator generator{};
+        nb::object   next_value{};
+
+        void eval() override;
+
+      protected:
+        void start() override;
     };
 }  // namespace hgraph
 

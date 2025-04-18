@@ -293,14 +293,16 @@ namespace hgraph
 
     bool NodeScheduler::has_tag(const std::string &tag) const { return _tags.contains(tag); }
 
-    engine_time_t NodeScheduler::pop_tag(const std::string &tag, std::optional<engine_time_t> default_time) {
+    engine_time_t NodeScheduler::pop_tag(const std::string &tag) { return pop_tag(tag, MIN_DT); }
+
+    engine_time_t NodeScheduler::pop_tag(const std::string &tag, engine_time_t default_time) {
         if (_tags.contains(tag)) {
             auto dt = _tags.at(tag);
             _tags.erase(tag);
             _scheduled_events.erase({dt, tag});
             return dt;
         } else {
-            return default_time.value_or(MIN_DT);
+            return default_time;
         }
     }
 
@@ -363,6 +365,36 @@ namespace hgraph
             for (const auto &alarm : _alarm_tags) { real_time_clock->cancel_alarm(alarm.first); }
             _alarm_tags.clear();
         }
+    }
+
+    void NodeScheduler::register_with_nanobind(nb::module_ &m) {
+        nb::class_<NodeScheduler, intrusive_base>(m, "NodeScheduler")
+            .def_prop_ro("next_scheduled_time", &NodeScheduler::next_scheduled_time)
+            .def_prop_ro("is_scheduled", &NodeScheduler::is_scheduled)
+            .def_prop_ro("is_scheduled_node", &NodeScheduler::is_scheduled_node)
+            .def_prop_ro("has_tag", &NodeScheduler::has_tag)
+            .def(
+                "pop_tag", [](NodeScheduler &self, const std::string &tag) { return self.pop_tag(tag); }, "tag"_a)
+            .def(
+                "pop_tag",
+                [](NodeScheduler &self, const std::string &tag, engine_time_t default_time) {
+                    return self.pop_tag(tag, default_time);
+                },
+                "tag"_a, "default_time"_a)
+            .def(
+                "schedule",
+                [](NodeScheduler &self, engine_time_t when, std::optional<std::string> tag, bool on_wall_clock) {
+                    self.schedule(when, std::move(tag), on_wall_clock);
+                },
+                "when"_a, "tag"_a = nb::none(), "on_wall_clock"_a = false)
+            .def(
+                "schedule",
+                [](NodeScheduler &self, engine_time_delta_t when, std::optional<std::string> tag, bool on_wall_clock) {
+                    self.schedule(when, std::move(tag), on_wall_clock);
+                },
+                "when"_a, "tag"_a = nb::none(), "on_wall_clock"_a = false)
+            .def("un_schedule", &NodeScheduler::un_schedule, "tag"_a = nb::none())
+            .def("reset", &NodeScheduler::reset);
     }
 
     void NodeScheduler::_on_alarm(engine_time_t when, std::string tag) {
@@ -435,8 +467,39 @@ namespace hgraph
 
     void Node::register_with_nanobind(nb::module_ &m) {
         nb::class_<Node, ComponentLifeCycle>(m, "Node")
-            // TODO: Add in methods
-            ;
+            .def_prop_ro("node_ndx", &Node::node_ndx)
+            .def_prop_ro("owning_graph_id", &Node::owning_graph_id)
+            .def_prop_ro("node_id", &Node::node_id)
+            .def_prop_ro("signature", &Node::signature)
+            .def_prop_ro("scalars", &Node::scalars)
+            .def_prop_ro("graph", static_cast<const Graph &(Node::*)() const>(&Node::graph))
+            .def_prop_ro("input", &Node::input)
+            .def_prop_ro("inputs",
+                         [](Node &self) {
+                             nb::dict d;
+                             auto     inp_{self.input()};
+                             for (const auto &key : self.input().schema().keys()) { d[key.c_str()] = inp_[key]; }
+                             return d;
+                         })
+            .def_prop_ro("start_inputs",
+                         [](Node &self) {
+                             nb::list l;
+                             for (const auto &input : self._start_inputs) { l.append(input); }
+                             return l;
+                         })
+            .def_prop_ro("output", &Node::output)
+            .def_prop_ro("recordable_state", &Node::recordable_state)
+            .def_prop_ro("scheduler", &Node::scheduler)
+            .def("eval", &Node::eval)
+            .def("notify", [](Node &self) { self.notify(); })
+            .def(
+                "notify", [](Node &self, engine_time_t modified_time) { self.notify(modified_time); }, "modified_time"_a)
+            .def("notify_next_cycle", &Node::notify_next_cycle)
+            .def_prop_ro("error_output", &Node::error_output);
+
+        nb::class_<BasePythonNode, Node>(m, "BasePythonNode");
+        nb::class_<PythonNode, BasePythonNode>(m, "PythonNode");
+        nb::class_<PythonGeneratorNode, BasePythonNode>(m, "PythonGeneratorNode");
     }
 
     BasePythonNode::BasePythonNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
@@ -545,5 +608,11 @@ namespace hgraph
         _receiver = &graph().receiver();
         _elide    = scalars().contains("elide") ? nb::cast<bool>(scalars()["elide"]) : false;
     }
+
+    void PythonGeneratorNode::eval() {
+
+    }
+
+    void PythonGeneratorNode::start() { BasePythonNode::start(); }
 
 }  // namespace hgraph
