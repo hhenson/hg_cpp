@@ -431,7 +431,13 @@ namespace hgraph
 
     const std::vector<int64_t> &Node::owning_graph_id() const { return _owning_graph_id; }
 
-    const std::vector<int64_t> &Node::node_id() const { return _node_id; }
+    std::vector<int64_t> Node::node_id() const {
+        std::vector<int64_t> node_id;
+        node_id.reserve(_owning_graph_id.size() + 1);
+        node_id.insert(node_id.end(), _owning_graph_id.begin(), _owning_graph_id.end());  // Copy graph_id into node_id
+        node_id.push_back(_node_ndx);
+        return node_id;
+    }
 
     const NodeSignature &Node::signature() const { return *_signature; }
 

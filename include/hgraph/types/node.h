@@ -174,7 +174,7 @@ namespace hgraph
 
         const std::vector<int64_t> &owning_graph_id() const;
 
-        const std::vector<int64_t> &node_id() const;
+        std::vector<int64_t> node_id() const;
 
         const NodeSignature &signature() const;
 
@@ -218,7 +218,6 @@ namespace hgraph
       private:
         int64_t                       _node_ndx;
         std::vector<int64_t>          _owning_graph_id;
-        std::vector<int64_t>          _node_id;
         NodeSignature::ptr            _signature;
         nb::dict                      _scalars;
         graph_ptr                     _graph;
