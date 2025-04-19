@@ -222,6 +222,10 @@ namespace hgraph
         bool has_input() const;
         bool has_output() const;
 
+        std::string repr() const;
+
+        std::string str() const;
+
       protected:
         virtual void do_eval() = 0;
 
@@ -255,6 +259,7 @@ namespace hgraph
         void _initialise_state();
 
       protected:
+        void do_eval() override;
         virtual void do_start();
         virtual void do_stop();
         void         initialise() override;

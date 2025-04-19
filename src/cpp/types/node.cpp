@@ -4,6 +4,8 @@
 #include <hgraph/types/tsb.h>
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
+#include <fmt/chrono.h>
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
@@ -543,7 +545,9 @@ namespace hgraph
             .def(
                 "notify", [](Node &self, engine_time_t modified_time) { self.notify(modified_time); }, "modified_time"_a)
             .def("notify_next_cycle", &Node::notify_next_cycle)
-            .def_prop_rw("error_output", &Node::error_output, &Node::set_error_output);
+            .def_prop_rw("error_output", &Node::error_output, &Node::set_error_output)
+            .def("__repr__", &Node::repr)
+            .def("__str__", &Node::str);
 
         nb::class_<BasePythonNode, Node>(m, "BasePythonNode");
         nb::class_<PythonNode, BasePythonNode>(m, "PythonNode")
@@ -556,6 +560,48 @@ namespace hgraph
     bool Node::has_input() const { return _input.get() != nullptr; }
 
     bool Node::has_output() const { return _output.get() != nullptr; }
+
+    std::string Node::repr() const {
+        std::ostringstream oss;
+        bool               first = true;
+        auto               none_str{std::string("None")};
+
+        oss << "[";
+        for (auto ndx : _owning_graph_id) {
+            if (!first) { oss << ", "; }
+            oss << ndx;
+            first = false;
+        }
+        oss << ", " << _node_ndx << "]" << signature().name << "(";
+
+        auto obj_to_type = [&](const nb::object &obj) { return obj.is_none() ? none_str : nb::cast<std::string>(obj); };
+
+        first = true;
+        for (const auto &arg : signature().args) {
+            if (!first) { oss << ", "; }
+            oss << arg << ": " << obj_to_type(signature().get_arg_type(arg));
+            if (!signature().time_series_inputs->contains(arg)) {
+                auto s{nb::str(_scalars[arg.c_str()])};
+                if (nb::len(s) > 8) { s = nb::str("{}...").format(s[nb::slice(0, 8)]); }
+                oss << "=" << s.c_str();
+            }
+            first = false;
+        }
+
+        oss << ")";
+
+        if (bool(signature().time_series_output)) {
+            auto v = signature().time_series_output.value();
+            oss << " -> " << (v.is_none() ? none_str : nb::cast<std::string>(v));
+        }
+
+        return oss.str();
+    }
+
+    std::string Node::str() const {
+        if (signature().label.has_value()) { return fmt::format("{}.{}", signature().wiring_path_name, signature().label.value()); }
+        return fmt::format("{}.{}", signature().wiring_path_name, signature().name);
+    }
 
     BasePythonNode::BasePythonNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
                                    nb::dict scalars, nb::callable eval_fn, nb::callable start_fn, nb::callable stop_fn)
@@ -621,6 +667,10 @@ namespace hgraph
             //             .value();
             // }
         }
+    }
+    void BasePythonNode::do_eval() {
+        auto out{_eval_fn(**_kwargs)};
+        if (!out.is_none()) { output().apply_result(out); }
     }
 
     void BasePythonNode::do_start() {
@@ -740,8 +790,7 @@ namespace hgraph
         _initialise_inputs();
         _initialise_state();
 
-        auto out{_eval_fn(**_kwargs)};
-        if (!out.is_none()) { output().apply_result(out); }
+        do_start();
 
         if (has_scheduler()) {
             auto scheduler_ = scheduler();
@@ -796,8 +845,49 @@ namespace hgraph
         _elide    = scalars().contains("elide") ? nb::cast<bool>(scalars()["elide"]) : false;
     }
 
-    void PythonGeneratorNode::do_eval() {}
+    void PythonGeneratorNode::do_eval() {
+        auto       et = graph().evaluation_clock().evaluation_time();
+        auto       next_time{MIN_DT};
+        auto       sentinel{nb::iterator::sentinel()};
+        nb::object out;
+        for (nb::iterator v = ++generator; v != sentinel; ++v) {  // Returns NULL if there are no new values
+            auto time = nb::cast<nb::object>(v[0]);
+            out       = nb::cast<nb::object>(v[1]);
 
-    void PythonGeneratorNode::start() { BasePythonNode::start(); }
+            if (time.type().is(nb::type<engine_time_delta_t>())) {
+                next_time = et + nb::cast<engine_time_delta_t>(time);
+                break;
+            }
+            next_time = nb::cast<engine_time_t>(time);
+            if (next_time >= et) { break; }
+        }
+
+        if (next_time > MIN_DT && next_time <= et) {
+            if (output().last_modified_time() == next_time) {
+                throw std::runtime_error(
+                    fmt::format("Duplicate time produced by generator: [{:%FT%T%z}] - {}", next_time, nb::str(out).c_str()));
+            }
+            output().apply_result(out);
+            next_value = nb::none();
+            do_eval();  // We are going to apply now! Prepare next step
+            return;
+        }
+
+        if (!next_value.is_none()) {
+            output().apply_result(next_value);
+            next_value = nb::none();
+        }
+
+        if (next_time != MIN_DT) {
+            next_value = out;
+            graph().schedule_node(node_ndx(), next_time);
+        }
+    }
+
+    void PythonGeneratorNode::start() {
+        BasePythonNode::_initialise_kwargs();
+        generator = nb::cast<nb::iterator>(_eval_fn(**_kwargs));
+        graph().schedule_node(node_ndx(), graph().evaluation_clock().evaluation_time());
+    }
 
 }  // namespace hgraph
