@@ -64,6 +64,20 @@ namespace hgraph
         nb::callable start_fn;
         nb::callable stop_fn;
     };
+
+    struct PythonGeneratorNodeBuilder : BaseNodeBuilder
+    {
+        PythonGeneratorNodeBuilder(node_signature_ptr signature_, nb::dict scalars_,
+            std::optional<input_builder_ptr>  input_builder_,
+            std::optional<output_builder_ptr> output_builder_,
+            std::optional<output_builder_ptr> error_builder_,
+            std::optional<output_builder_ptr> recordable_state_builder_,
+            nb::callable eval_fn);
+
+        node_ptr make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) override;
+
+        nb::callable eval_fn;
+    };
 }  // namespace hgraph
 
 #endif  // NODE_BUILDER_H

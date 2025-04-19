@@ -3,9 +3,9 @@
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/tsb.h>
 
+#include <fmt/chrono.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
-#include <fmt/chrono.h>
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
