@@ -130,9 +130,12 @@ namespace hgraph
 
     struct NodeScheduler : nanobind::intrusive_base
     {
+        using ptr = nanobind::ref<NodeScheduler>;
+
         explicit NodeScheduler(Node &node);
 
         [[nodiscard]] engine_time_t next_scheduled_time() const;
+        [[nodiscard]] bool          requires_scheduling() const;
         [[nodiscard]] bool          is_scheduled() const;
         [[nodiscard]] bool          is_scheduled_node() const;
         [[nodiscard]] bool          has_tag(const std::string &tag) const;
@@ -140,8 +143,10 @@ namespace hgraph
         engine_time_t               pop_tag(const std::string &tag, engine_time_t default_time);
         void                        schedule(engine_time_t when, std::optional<std::string> tag, bool on_wall_clock = false);
         void                        schedule(engine_time_delta_t when, std::optional<std::string> tag, bool on_wall_clock = false);
-        void                        un_schedule(std::optional<std::string> tag);
+        void                        un_schedule(const std::string &tag);
+        void                        un_schedule();
         void                        reset();
+        void                        advance();
 
         static void register_with_nanobind(nb::module_ &m);
 
@@ -162,13 +167,13 @@ namespace hgraph
 
         Node(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars);
 
-        virtual void eval() = 0;
+        void eval();
 
         void notify(engine_time_t modified_time) override;
 
         void notify();
 
-        virtual void notify_next_cycle();
+        void notify_next_cycle();
 
         int64_t node_ndx() const;
 
@@ -200,7 +205,9 @@ namespace hgraph
 
         bool has_recordable_state() const;
 
-        std::optional<NodeScheduler> scheduler() const;
+        NodeScheduler &scheduler();
+        bool           has_scheduler() const;
+        void           unset_scheduler();
 
         TimeSeriesOutput &error_output();
 
@@ -212,7 +219,12 @@ namespace hgraph
 
         static void register_with_nanobind(nb::module_ &m);
 
+        bool has_input() const;
+        bool has_output() const;
+
       protected:
+        virtual void do_eval() = 0;
+
         void _initialise_inputs();
 
       private:
@@ -225,43 +237,45 @@ namespace hgraph
         time_series_output_ptr        _output;
         time_series_output_ptr        _error_output;
         time_series_bundle_output_ptr _recordable_state;
-        std::optional<NodeScheduler>  _scheduler;
+        NodeScheduler::ptr            _scheduler;
         // I am not a fan of this approach to managing the start inputs, but for now keep consistent with current code base in
         // Python.
         std::vector<nb::ref<TimeSeriesReferenceInput>> _start_inputs;
+        std::vector<nb::ref<TimeSeriesInput>>          _check_valid_inputs;
+        std::vector<nb::ref<TimeSeriesInput>>          _check_all_valid_inputs;
     };
 
     struct BasePythonNode : Node
     {
         BasePythonNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars,
-                       nb::callable eval_fn, nb::callable start_fn, nb::callable end_fn);
+                       nb::callable eval_fn, nb::callable start_fn, nb::callable stop_fn);
 
         void _initialise_kwargs();
 
         void _initialise_state();
 
       protected:
-        void initialise() override;
-        void start() override;
-        void stop() override;
-        void dispose() override;
+        virtual void do_start();
+        virtual void do_stop();
+        void         initialise() override;
+        void         start() override;
+        void         stop() override;
+        void         dispose() override;
 
         nb::callable _eval_fn;
         nb::callable _start_fn;
-        nb::callable _end_fn;
+        nb::callable _stop_fn;
 
         nb::kwargs _kwargs;
-        nb::kwargs _start_kwargs;
-        nb::kwargs _stop_kwargs;
     };
 
     struct PythonNode : BasePythonNode
     {
         using BasePythonNode::BasePythonNode;
 
-        void eval() override;
-
       protected:
+        void do_eval() override;
+
         void initialise() override;
         void start() override;
         void stop() override;
@@ -272,8 +286,6 @@ namespace hgraph
     {
         using Node::Node;
 
-        void eval() override;
-
         void enqueue_message(nb::object message);
 
         [[nodiscard]] bool apply_message(nb::object message);
@@ -283,6 +295,7 @@ namespace hgraph
         void set_receiver(sender_receiver_state_ptr value);
 
       protected:
+        void do_eval() override;
         void start() override;
 
       private:
@@ -298,9 +311,8 @@ namespace hgraph
         nb::iterator generator{};
         nb::object   next_value{};
 
-        void eval() override;
-
       protected:
+        void do_eval() override;
         void start() override;
     };
 }  // namespace hgraph

@@ -1,3 +1,4 @@
+#include <complex>
 #include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/tsb.h>
@@ -92,6 +93,7 @@ namespace hgraph
                                                              : std::nullopt);
                      ;
                  })
+            // For some reason doing this does not work, and need to use the lambda form above, very annoying.
             // .def(nb::init<std::string, NodeTypeEnum, std::vector<std::string>,
             //               std::optional<std::unordered_map<std::string, nb::object>>, std::optional<nb::object>,
             //               std::optional<nb::kwargs>, nb::object, std::optional<std::unordered_set<std::string>>,
@@ -285,6 +287,8 @@ namespace hgraph
         return !_scheduled_events.empty() ? (*_scheduled_events.begin()).first : MIN_DT;
     }
 
+    bool NodeScheduler::requires_scheduling() const { return !_scheduled_events.empty(); }
+
     bool NodeScheduler::is_scheduled() const { return !_scheduled_events.empty() || !_alarm_tags.empty(); }
 
     bool NodeScheduler::is_scheduled_node() const {
@@ -345,16 +349,16 @@ namespace hgraph
         schedule(when_, std::move(tag), on_wall_clock);
     }
 
-    void NodeScheduler::un_schedule(std::optional<std::string> tag) {
-        if (tag.has_value()) {
-            auto it = _tags.find(tag.value());
-            if (it != _tags.end()) {
-                _scheduled_events.erase({it->second, tag.value()});
-                _tags.erase(it);
-            }
-        } else if (!_scheduled_events.empty()) {
-            _scheduled_events.erase(_scheduled_events.begin());
+    void NodeScheduler::un_schedule(const std::string &tag) {
+        auto it = _tags.find(tag);
+        if (it != _tags.end()) {
+            _scheduled_events.erase({it->second, tag});
+            _tags.erase(it);
         }
+    }
+
+    void NodeScheduler::un_schedule() {
+        if (!_scheduled_events.empty()) { _scheduled_events.erase(_scheduled_events.begin()); }
     }
 
     void NodeScheduler::reset() {
@@ -365,6 +369,18 @@ namespace hgraph
             for (const auto &alarm : _alarm_tags) { real_time_clock->cancel_alarm(alarm.first); }
             _alarm_tags.clear();
         }
+    }
+
+    static const std::string VERY_LARGE_STRING = "\xFF";
+
+    void NodeScheduler::advance() {
+        if (_scheduled_events.empty()) { return; }
+        auto until = _node.graph().evaluation_clock().evaluation_time();
+        // Note: empty string is considered smallest in std::string comparison,
+        // so upper_bound will correctly find elements <= until regardless of tag value
+        _scheduled_events.erase(_scheduled_events.begin(), _scheduled_events.upper_bound({until, VERY_LARGE_STRING}));
+
+        if (!_scheduled_events.empty()) { _node.graph().schedule_node(_node.node_ndx(), _scheduled_events.begin()->first); }
     }
 
     void NodeScheduler::register_with_nanobind(nb::module_ &m) {
@@ -393,7 +409,8 @@ namespace hgraph
                     self.schedule(when, std::move(tag), on_wall_clock);
                 },
                 "when"_a, "tag"_a = nb::none(), "on_wall_clock"_a = false)
-            .def("un_schedule", &NodeScheduler::un_schedule, "tag"_a = nb::none())
+            .def("un_schedule", static_cast<void (NodeScheduler::*)(const std::string &)>(&NodeScheduler::un_schedule), "tag"_a)
+            .def("un_schedule", static_cast<void (NodeScheduler::*)()>(&NodeScheduler::un_schedule))
             .def("reset", &NodeScheduler::reset);
     }
 
@@ -413,7 +430,7 @@ namespace hgraph
         if (is_started() || is_starting()) {
             graph().schedule_node(node_ndx(), modified_time);
         } else {
-            scheduler()->schedule(MIN_ST, "start");
+            scheduler().schedule(MIN_ST, "start");
         }
     }
 
@@ -432,6 +449,8 @@ namespace hgraph
     const std::vector<int64_t> &Node::owning_graph_id() const { return _owning_graph_id; }
 
     std::vector<int64_t> Node::node_id() const {
+        // Check how often this is called, in the Python code this is a cached property, which means we could just
+        // construct in the constructor, but if it is not used frequently this may be a better use of resources.
         std::vector<int64_t> node_id;
         node_id.reserve(_owning_graph_id.size() + 1);
         node_id.insert(node_id.end(), _owning_graph_id.begin(), _owning_graph_id.end());  // Copy graph_id into node_id
@@ -451,7 +470,23 @@ namespace hgraph
 
     TimeSeriesBundleInput &Node::input() { return *_input; }
 
-    void Node::set_input(time_series_bundle_input_ptr value) { _input = value; }
+    void Node::set_input(time_series_bundle_input_ptr value) {
+        if (has_input()) { throw std::runtime_error("Input input already set on node: " + _signature->signature()); }
+        _input = value;
+        _check_all_valid_inputs.reserve(signature().valid_inputs.has_value() ? signature().valid_inputs->size()
+                                                                             : signature().time_series_inputs->size());
+        if (signature().valid_inputs.has_value()) {
+            for (const auto &key : std::views::all(*signature().valid_inputs)) { _check_all_valid_inputs.push_back(&input()[key]); }
+        } else {
+            for (const auto &key : std::views::elements<0>(*signature().time_series_inputs)) {
+                _check_all_valid_inputs.push_back(&input()[key]);
+            }
+        }
+        if (signature().all_valid_inputs.has_value()) {
+            _check_all_valid_inputs.reserve(signature().all_valid_inputs->size());
+            for (const auto &key : *signature().all_valid_inputs) { _check_all_valid_inputs.push_back(&input()[key]); }
+        }
+    }
 
     TimeSeriesOutput &Node::output() { return *_output; }
 
@@ -463,7 +498,14 @@ namespace hgraph
 
     bool Node::has_recordable_state() const { return _recordable_state.get() != nullptr; }
 
-    std::optional<NodeScheduler> Node::scheduler() const { return _scheduler; }
+    NodeScheduler &Node::scheduler() {
+        if (_scheduler.get() == nullptr) { _scheduler = new NodeScheduler(*this); }
+        return *_scheduler;
+    }
+
+    bool Node::has_scheduler() const { return _scheduler.get() != nullptr; }
+
+    void Node::unset_scheduler() { _scheduler.reset(); }
 
     TimeSeriesOutput &Node::error_output() { return *_error_output; }
 
@@ -478,8 +520,8 @@ namespace hgraph
             .def_prop_ro("node_id", &Node::node_id)
             .def_prop_ro("signature", &Node::signature)
             .def_prop_ro("scalars", &Node::scalars)
-            .def_prop_ro("graph", static_cast<const Graph &(Node::*)() const>(&Node::graph))
-            .def_prop_ro("input", &Node::input)
+            .def_prop_rw("graph", static_cast<const Graph &(Node::*)() const>(&Node::graph), &Node::set_graph)
+            .def_prop_rw("input", &Node::input, &Node::set_input)
             .def_prop_ro("inputs",
                          [](Node &self) {
                              nb::dict d;
@@ -493,43 +535,51 @@ namespace hgraph
                              for (const auto &input : self._start_inputs) { l.append(input); }
                              return l;
                          })
-            .def_prop_ro("output", &Node::output)
-            .def_prop_ro("recordable_state", &Node::recordable_state)
+            .def_prop_rw("output", &Node::output, &Node::set_output)
+            .def_prop_rw("recordable_state", &Node::recordable_state, &Node::set_recordable_state)
             .def_prop_ro("scheduler", &Node::scheduler)
             .def("eval", &Node::eval)
             .def("notify", [](Node &self) { self.notify(); })
             .def(
                 "notify", [](Node &self, engine_time_t modified_time) { self.notify(modified_time); }, "modified_time"_a)
             .def("notify_next_cycle", &Node::notify_next_cycle)
-            .def_prop_ro("error_output", &Node::error_output);
+            .def_prop_rw("error_output", &Node::error_output, &Node::set_error_output);
 
         nb::class_<BasePythonNode, Node>(m, "BasePythonNode");
-        nb::class_<PythonNode, BasePythonNode>(m, "PythonNode");
+        nb::class_<PythonNode, BasePythonNode>(m, "PythonNode")
+            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, nb::callable, nb::callable, nb::callable>(),
+                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "eval_fn"_a = nb::none(), "start_fn"_a = nb::none(),
+                 "stop_fn"_a = nb::none());
         nb::class_<PythonGeneratorNode, BasePythonNode>(m, "PythonGeneratorNode");
     }
 
+    bool Node::has_input() const { return _input.get() != nullptr; }
+
+    bool Node::has_output() const { return _output.get() != nullptr; }
+
     BasePythonNode::BasePythonNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
-                                   nb::dict scalars, nb::callable eval_fn, nb::callable start_fn, nb::callable end_fn)
+                                   nb::dict scalars, nb::callable eval_fn, nb::callable start_fn, nb::callable stop_fn)
         : Node(node_ndx, std::move(owning_graph_id), std::move(signature), std::move(scalars)), _eval_fn{std::move(eval_fn)},
-          _start_fn{std::move(start_fn)}, _end_fn{std::move(end_fn)} {}
+          _start_fn{std::move(start_fn)}, _stop_fn{std::move(stop_fn)} {}
 
     void BasePythonNode::_initialise_kwargs() {
         // Assuming Injector and related types are properly defined, and scalars is a map-like container
         auto &signature_args = signature().args;
         _kwargs              = {};
 
-        bool has_injectables{signature().injectable_inputs.has_value()};
+        bool has_injectables{signature().injectables != 0};
         for (const auto &[key_, value] : scalars()) {
             std::string key{nb::cast<std::string>(key_)};
             if (has_injectables && signature().injectable_inputs->contains(key)) {
+                // TODO: This may be better extracted directly, but for now use the python function calls.
                 _kwargs[key_] = value(*(this));  // Assuming this call applies the Injector properly
             } else {
                 _kwargs[key_] = value;
             }
         }
 
-        for (size_t i = 0; i < input().schema().keys().size(); ++i) {
-            // Apple does not yet support contains :(
+        for (size_t i = 0, l = input().schema().keys().size(); i < l; ++i) {
+            // Apple does not yet support ranges::contains :(
             auto key{input().schema().keys()[i]};
             if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) { _kwargs[key.c_str()] = input()[i]; }
         }
@@ -541,7 +591,7 @@ namespace hgraph
                 start_input->start();  // Assuming start_input is some time series type with a start method
             }
             for (size_t i = 0; i < signature().time_series_inputs->size(); ++i) {
-                // Apple does not yet support contains :(
+                // Apple does not yet support ranges::contains :(
                 if (!signature().active_inputs || (std::ranges::find(*signature().active_inputs, signature().args[i]) !=
                                                    std::ranges::end(*signature().active_inputs))) {
                     input()[i].make_active();  // Assuming `make_active` is a method of the `TimeSeriesInput` type
@@ -552,8 +602,8 @@ namespace hgraph
 
     void BasePythonNode::_initialise_state() {
         if (has_recordable_state()) {
-            // TODO: Implement this
-
+            // TODO: Implement this once a bit more infra is in place
+            throw std::runtime_error("Recordable state not yet implemented");
             // auto &record_context = RecordReplayContext::instance();
             // auto  mode           = record_context.mode();
             //
@@ -573,13 +623,144 @@ namespace hgraph
         }
     }
 
+    void BasePythonNode::do_start() {
+        if (!_start_fn.is_none()) {
+            // Get the callable signature parameters
+            nb::dict params = _start_fn.attr("__code__").attr("co_varnames");
+
+            // Filter kwargs to only include parameters in start_fn signature
+            nb::dict filtered_kwargs;
+            for (auto [k, v] : params) {
+                if (_kwargs.contains(k)) { filtered_kwargs[k] = _kwargs[k]; }
+            }
+
+            // Call start_fn with filtered kwargs
+            _start_fn(**filtered_kwargs);
+        }
+    }
+
+    void BasePythonNode::do_stop() {
+        if (!_stop_fn.is_none()) {
+            // Get the callable signature parameters
+            nb::dict params = _start_fn.attr("__code__").attr("co_varnames");
+
+            // Filter kwargs to only include parameters in start_fn signature
+            nb::dict filtered_kwargs;
+            for (auto [k, v] : params) {
+                if (_kwargs.contains(k)) { filtered_kwargs[k] = _kwargs[k]; }
+            }
+
+            // Call start_fn with filtered kwargs
+            _start_fn(**filtered_kwargs);
+        }
+    }
+
+    void Node::eval() {
+        bool scheduled{!has_scheduler() ? _scheduler->is_scheduled_node() : false};
+        bool should_eval{true};
+
+        if (has_input()) {
+
+            // Check validity of required inputs
+            for (const auto &input_ : _check_valid_inputs) {
+                if (!input_->valid()) {
+                    should_eval = false;
+                    break;
+                }
+            }
+
+            if (should_eval) {
+                // Check all_valid inputs
+                if (signature().all_valid_inputs.has_value()) {
+                    for (const auto &input_ : _check_all_valid_inputs) {
+                        if (!input_->all_valid()) {
+                            should_eval = false;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Check scheduler state
+            if (should_eval && _signature->uses_scheduler()) {
+                // It is possible that this was scheduled and then unscheduled, in which case we should ensure
+                // that at least on input was modified to make the call
+                if (!scheduled) {
+                    bool any_modified = false;
+                    if (signature().time_series_inputs.has_value()) {
+                        // This is a bit expensive, but hopefully fast enough
+                        for (const auto &input_ : input()) {
+                            if (input_->modified() && input_->active()) {
+                                any_modified = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!any_modified) { should_eval = false; }
+                }
+            }
+        }
+
+        if (should_eval) {
+            // Handle context inputs
+            if (signature().context_inputs.has_value()) {
+                // TODO: Figure out how to deal with context stacks outside of Python or assume these to be Python only?
+                throw std::runtime_error("Context inputs not yet supported");
+            }
+
+            // Execute with error handling
+            // It may be worth reviewing how to remove some of these conditionals from this very performance sensitve method.
+            if (_error_output) {
+                try {
+                    do_eval();
+                } catch (const std::exception &e) {
+                    // TODO: Implement proper error capture
+                    // This needs a bit of machinery to be built.
+                    throw std::runtime_error("Can't process error handling yet, error caught: " + std::string(e.what()));
+                    //_error_output->apply_result(nb::cast(e.what()));
+                }
+            } else {
+                do_eval();
+            }
+        }
+
+        // Handle scheduling
+        if (scheduled) {
+            // Must have a scheduler if it is scheduled
+            _scheduler->advance();
+        } else if (has_scheduler() && _scheduler->requires_scheduling()) {
+            graph().schedule_node(node_ndx(), _scheduler->next_scheduled_time());
+        }
+    }
+
     void BasePythonNode::initialise() {}
 
-    void BasePythonNode::start() {}
+    void BasePythonNode::start() {
+        _initialise_kwargs();
+        _initialise_inputs();
+        _initialise_state();
 
-    void BasePythonNode::stop() {}
+        auto out{_eval_fn(**_kwargs)};
+        if (!out.is_none()) { output().apply_result(out); }
 
-    void BasePythonNode::dispose() {}
+        if (has_scheduler()) {
+            auto scheduler_ = scheduler();
+            if (scheduler_.pop_tag("start", MIN_DT) != MIN_DT) {
+                notify();
+                if (!signature().uses_scheduler()) { unset_scheduler(); }
+            } else {
+                scheduler_.advance();
+            }
+        }
+    }
+
+    void BasePythonNode::stop() {
+        do_stop();
+        if (has_input()) { input().un_bind_output(); }
+        if (has_scheduler()) { scheduler().reset(); }
+    }
+
+    void BasePythonNode::dispose() { _kwargs.clear(); }
 
     void PythonNode::initialise() {}
 
@@ -589,9 +770,9 @@ namespace hgraph
 
     void PythonNode::dispose() {}
 
-    void PythonNode::eval() {}
+    void PythonNode::do_eval() {}
 
-    void PushQueueNode::eval() {}
+    void PushQueueNode::do_eval() {}
 
     void PushQueueNode::enqueue_message(nb::object message) {
         ++_messages_queued;
@@ -615,9 +796,7 @@ namespace hgraph
         _elide    = scalars().contains("elide") ? nb::cast<bool>(scalars()["elide"]) : false;
     }
 
-    void PythonGeneratorNode::eval() {
-
-    }
+    void PythonGeneratorNode::do_eval() {}
 
     void PythonGeneratorNode::start() { BasePythonNode::start(); }
 
