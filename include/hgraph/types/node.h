@@ -192,14 +192,17 @@ namespace hgraph
         void set_graph(graph_ptr value);
 
         TimeSeriesBundleInput &input();
+        time_series_bundle_input_ptr input_ptr();
 
         void set_input(time_series_bundle_input_ptr value);
 
         TimeSeriesOutput &output();
+        time_series_output_ptr output_ptr();
 
         void set_output(time_series_output_ptr value);
 
         TimeSeriesBundleOutput &recordable_state();
+        time_series_bundle_output_ptr recordable_state_ptr();
 
         void set_recordable_state(time_series_bundle_output_ptr value);
 
@@ -210,6 +213,7 @@ namespace hgraph
         void           unset_scheduler();
 
         TimeSeriesOutput &error_output();
+        time_series_output_ptr error_output_ptr();
 
         void set_error_output(time_series_output_ptr value);
 

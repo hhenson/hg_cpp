@@ -40,12 +40,12 @@ namespace hgraph
             .def(nb::init<TimeSeriesSchema::ptr, std::vector<ptr>>(), "schema"_a, "input_builders"_a);
     }
 
-    time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(node_ptr owning_node) {
+    time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(node_ptr owning_node) const {
         auto v{new TimeSeriesReferenceInput(owning_node)};
         return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
     }
 
-    time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(time_series_input_ptr owning_input) {
+    time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(time_series_input_ptr owning_input) const {
         auto v{new TimeSeriesReferenceInput(dynamic_cast_ref<TimeSeriesType>(owning_input))};
         return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
     }
@@ -54,17 +54,17 @@ namespace hgraph
                                                                std::vector<InputBuilder::ptr> input_builders)
         : InputBuilder(), schema{std::move(schema)}, input_builders{std::move(input_builders)} {}
 
-    time_series_input_ptr TimeSeriesBundleInputBuilder::make_instance(node_ptr owning_node) {
+    time_series_input_ptr TimeSeriesBundleInputBuilder::make_instance(node_ptr owning_node) const {
         auto v{new TimeSeriesBundleInput{owning_node, schema}};
         return make_and_set_inputs(v);
     }
 
-    time_series_input_ptr TimeSeriesBundleInputBuilder::make_instance(time_series_input_ptr owning_input) {
+    time_series_input_ptr TimeSeriesBundleInputBuilder::make_instance(time_series_input_ptr owning_input) const {
         auto v{new TimeSeriesBundleInput{dynamic_cast_ref<TimeSeriesType>(owning_input), schema}};
         return make_and_set_inputs(v);
     }
 
-    time_series_input_ptr TimeSeriesBundleInputBuilder::make_and_set_inputs(TimeSeriesBundleInput *input) {
+    time_series_input_ptr TimeSeriesBundleInputBuilder::make_and_set_inputs(TimeSeriesBundleInput *input) const {
         std::vector<time_series_input_ptr> inputs;
         time_series_input_ptr              input_{input};
         inputs.reserve(input_builders.size());

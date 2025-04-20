@@ -42,12 +42,12 @@ namespace hgraph
             .def(nb::init<TimeSeriesSchema::ptr, std::vector<OutputBuilder::ptr>>(), "schema"_a, "output_builders"_a);
     }
 
-    time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(node_ptr owning_node) {
+    time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(node_ptr owning_node) const {
         auto v{new TimeSeriesReferenceOutput(owning_node)};
         return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
     }
 
-    time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(time_series_output_ptr owning_output) {
+    time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(time_series_output_ptr owning_output) const {
         auto v{new TimeSeriesReferenceOutput(dynamic_cast_ref<TimeSeriesType>(owning_output))};
         return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
     }
@@ -55,17 +55,17 @@ namespace hgraph
                                                                  std::vector<OutputBuilder::ptr> output_builders)
         : OutputBuilder(), schema{std::move(schema)}, output_builders{std::move(output_builders)} {}
 
-    time_series_output_ptr TimeSeriesBundleOutputBuilder::make_instance(node_ptr owning_node) {
+    time_series_output_ptr TimeSeriesBundleOutputBuilder::make_instance(node_ptr owning_node) const {
         auto v{new TimeSeriesBundleOutput{owning_node, schema}};
         return make_and_set_outputs(v);
     }
 
-    time_series_output_ptr TimeSeriesBundleOutputBuilder::make_instance(time_series_output_ptr owning_output) {
+    time_series_output_ptr TimeSeriesBundleOutputBuilder::make_instance(time_series_output_ptr owning_output) const {
         auto v{new TimeSeriesBundleOutput(dynamic_cast_ref<TimeSeriesType>(owning_output), schema)};
         return make_and_set_outputs(v);
     }
 
-    time_series_output_ptr TimeSeriesBundleOutputBuilder::make_and_set_outputs(TimeSeriesBundleOutput *output) {
+    time_series_output_ptr TimeSeriesBundleOutputBuilder::make_and_set_outputs(TimeSeriesBundleOutput *output) const {
         std::vector<time_series_output_ptr> outputs;
         time_series_output_ptr              output_{output};
         outputs.reserve(output_builders.size());

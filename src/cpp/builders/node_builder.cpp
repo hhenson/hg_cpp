@@ -86,7 +86,7 @@ namespace hgraph
             .def_ro("eval_fn", &PythonGeneratorNodeBuilder::eval_fn);
     }
 
-    void BaseNodeBuilder::_build_inputs_and_outputs(node_ptr node) {
+    void BaseNodeBuilder::_build_inputs_and_outputs(node_ptr node) const {
         if (input_builder) {
             auto ts_input = (*input_builder)->make_instance(node);
             node->set_input(dynamic_cast_ref<TimeSeriesBundleInput>(ts_input));
@@ -118,7 +118,7 @@ namespace hgraph
                           std::move(error_builder_), std::move(recordable_state_builder_)),
           eval_fn{std::move(eval_fn)}, start_fn{std::move(start_fn)}, stop_fn{std::move(stop_fn)} {}
 
-    node_ptr PythonNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) {
+    node_ptr PythonNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) const {
         nb::ref<Node> node{new PythonNode{node_ndx, owning_graph_id, signature, scalars, eval_fn, start_fn, stop_fn}};
 
         _build_inputs_and_outputs(node);
@@ -133,7 +133,7 @@ namespace hgraph
                           std::move(error_builder_), std::nullopt),
           eval_fn{std::move(eval_fn)} {}
 
-    node_ptr PythonGeneratorNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) {
+    node_ptr PythonGeneratorNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) const {
         nb::ref<Node> node{new PythonGeneratorNode{node_ndx, owning_graph_id, signature, scalars, eval_fn, {}, {}}};
         _build_inputs_and_outputs(node);
         return node;

@@ -1,4 +1,6 @@
 
+#include "hgraph/builders/graph_builder.h"
+
 #include <hgraph/python/pyb_wiring.h>
 
 #include <hgraph/builders/builder.h>
@@ -12,4 +14,5 @@ void export_builders(nb::module_ &m) {
     OutputBuilder::register_with_nanobind(m);
     InputBuilder::register_with_nanobind(m);
     NodeBuilder::register_with_nanobind(m);
+    GraphBuilder::register_with_nanobind(m);
 }

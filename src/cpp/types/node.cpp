@@ -173,7 +173,7 @@ namespace hgraph
 
         if (time_series_output.has_value()) {
             auto v = time_series_output.value();
-            oss << " -> " <<  obj_to_str(v);
+            oss << " -> " << obj_to_str(v);
         }
 
         return oss.str();
@@ -473,6 +473,7 @@ namespace hgraph
     void Node::set_graph(graph_ptr value) { _graph = value; }
 
     TimeSeriesBundleInput &Node::input() { return *_input; }
+    time_series_bundle_input_ptr Node::input_ptr() { return _input; }
 
     void Node::set_input(time_series_bundle_input_ptr value) {
         if (has_input()) { throw std::runtime_error("Input input already set on node: " + _signature->signature()); }
@@ -492,11 +493,13 @@ namespace hgraph
         }
     }
 
-    TimeSeriesOutput &Node::output() { return *_output; }
+    TimeSeriesOutput      &Node::output() { return *_output; }
+    time_series_output_ptr Node::output_ptr() { return _output; }
 
     void Node::set_output(time_series_output_ptr value) { _output = value; }
 
-    TimeSeriesBundleOutput &Node::recordable_state() { return *_recordable_state; }
+    TimeSeriesBundleOutput       &Node::recordable_state() { return *_recordable_state; }
+    time_series_bundle_output_ptr Node::recordable_state_ptr() { return _recordable_state; }
 
     void Node::set_recordable_state(nb::ref<TimeSeriesBundleOutput> value) { _recordable_state = value; }
 
@@ -511,7 +514,8 @@ namespace hgraph
 
     void Node::unset_scheduler() { _scheduler.reset(); }
 
-    TimeSeriesOutput &Node::error_output() { return *_error_output; }
+    TimeSeriesOutput      &Node::error_output() { return *_error_output; }
+    time_series_output_ptr Node::error_output_ptr() { return _error_output; }
 
     void Node::set_error_output(time_series_output_ptr value) { _error_output = std::move(value); }
 

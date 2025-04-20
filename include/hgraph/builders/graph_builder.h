@@ -15,12 +15,12 @@ namespace hgraph
 
     struct Edge
     {
-        int                  src_node;
+        int64_t                  src_node;
         std::vector<int64_t> output_path;
-        int                  dst_node;
+        int64_t                  dst_node;
         std::vector<int64_t> input_path;
 
-        Edge(int src, std::vector<int64_t> out_path, int dst, std::vector<int64_t> in_path)
+        Edge(int64_t src, std::vector<int64_t> out_path, int64_t dst, std::vector<int64_t> in_path)
             : src_node(src), output_path(std::move(out_path)), dst_node(dst), input_path(std::move(in_path)) {}
     };
 
@@ -28,26 +28,32 @@ namespace hgraph
 
     struct GraphBuilder : public Builder
     {
-        std::vector<node_ptr> node_builders;
+        std::vector<node_builder_ptr> node_builders;
         std::vector<Edge>     edges;
+
+        GraphBuilder(std::vector<node_builder_ptr> node_builders, std::vector<Edge>     edges);
 
         /**
          * Construct an instance of a graph. The id provided is the id for the graph instance to be constructed.
          */
-        virtual graph_ptr make_instance(const std::vector<int64_t> &graph_id, node_ptr parent_node = nullptr,
-                                        const std::string &label = "") const = 0;
+        graph_ptr make_instance(const std::vector<int64_t> &graph_id, node_ptr parent_node = nullptr,
+                                        const std::string &label = "") const;
 
         /**
          * Make the nodes described in the node builders and connect the edges as described in the edges.
          * Return the iterable of newly constructed and wired nodes.
          * This can be used to feed into a new graph instance or to extend (or re-initialise) an existing graph.
          */
-        virtual std::vector<node_ptr> make_and_connect_nodes(const std::vector<int64_t> &graph_id, int64_t first_node_ndx) const = 0;
+        std::vector<node_ptr> make_and_connect_nodes(const std::vector<int64_t> &graph_id,
+                                                             int64_t                     first_node_ndx) const;
 
         /**
          * Release resources constructed during the build process, plus the graph.
          */
-        virtual void release_instance(graph_ptr item) const = 0;
+        void release_instance(graph_ptr item) const;
+
+        static void register_with_nanobind(nb::module_ &m);
     };
+
 };  // namespace hgraph
 #endif  // GRAPH_BUILDER_H

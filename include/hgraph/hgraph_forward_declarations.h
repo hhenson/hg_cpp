@@ -39,6 +39,9 @@ namespace hgraph
     struct OutputBuilder;
     using output_builder_ptr = nanobind::ref<OutputBuilder>;
 
+    struct NodeBuilder;
+    using node_builder_ptr = nanobind::ref<NodeBuilder>;
+
     struct TimeSeriesInput;
     using time_series_input_ptr = nanobind::ref<TimeSeriesInput>;
 
