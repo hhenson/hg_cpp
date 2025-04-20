@@ -34,9 +34,10 @@ namespace hgraph
 
         nb::class_<PythonNodeBuilder, BaseNodeBuilder>(m, "PythonNodeBuilder")
             .def("__init__",
-                 [](PythonNodeBuilder *self, nb::kwargs kwargs) {
-                     auto                             signature_ = nb::cast<node_signature_ptr>(kwargs["signature"]);
-                     auto                             scalars_   = nb::cast<nb::dict>(kwargs["scalars"]);
+                 [](PythonNodeBuilder *self, const nb::kwargs &kwargs) {
+                     auto signature_ = nb::cast<node_signature_ptr>(kwargs["signature"]);
+                     auto scalars_   = nb::cast<nb::dict>(kwargs["scalars"]);
+
                      std::optional<input_builder_ptr> input_builder_ =
                          kwargs.contains("input_builder") ? nb::cast<std::optional<input_builder_ptr>>(kwargs["input_builder"])
                                                           : std::nullopt;
@@ -64,9 +65,10 @@ namespace hgraph
 
         nb::class_<PythonGeneratorNodeBuilder, BaseNodeBuilder>(m, "PythonGeneratorNodeBuilder")
             .def("__init__",
-                 [](PythonGeneratorNodeBuilder *self, nb::kwargs kwargs) {
-                     auto                             signature_ = nb::cast<node_signature_ptr>(kwargs["signature"]);
-                     auto                             scalars_   = nb::cast<nb::dict>(kwargs["scalars"]);
+                 [](PythonGeneratorNodeBuilder *self, const nb::kwargs &kwargs) {
+                     auto signature_ = nb::cast<node_signature_ptr>(kwargs["signature"]);
+                     auto scalars_   = nb::cast<nb::dict>(kwargs["scalars"]);
+
                      std::optional<input_builder_ptr> input_builder_ =
                          kwargs.contains("input_builder") ? nb::cast<std::optional<input_builder_ptr>>(kwargs["input_builder"])
                                                           : std::nullopt;
@@ -77,9 +79,9 @@ namespace hgraph
                          kwargs.contains("error_builder") ? nb::cast<std::optional<output_builder_ptr>>(kwargs["error_builder"])
                                                           : std::nullopt;
                      auto eval_fn = nb::cast<nb::callable>(kwargs["eval_fn"]);
-                     new (self) PythonGeneratorNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_),
-                                                           std::move(output_builder_), std::move(error_builder_),
-                                                           std::move(eval_fn));
+                     new (self)
+                         PythonGeneratorNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_),
+                                                    std::move(output_builder_), std::move(error_builder_), std::move(eval_fn));
                  })
             .def_ro("eval_fn", &PythonGeneratorNodeBuilder::eval_fn);
     }

@@ -20,6 +20,9 @@ void export_types(nb::module_ &m) {
     TimeSeriesReferenceOutput::register_with_nanobind(m);
     TimeSeriesReferenceInput::register_with_nanobind(m);
 
+    TimeSeriesBundleInput::register_with_nanobind(m);
+    TimeSeriesBundleOutput::register_with_nanobind(m);
+
     Traits::register_with_nanobind(m);
     node_type_enum_py_register(m);
     injectable_type_enum(m);

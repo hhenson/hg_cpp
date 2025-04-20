@@ -30,7 +30,7 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
                 schema=_hgraph.TimSeriesSchema(keys=value_tp.bundle_schema_tp.meta_data_schema.keys(),
                                                scalar_type=value_tp.bundle_schema_tp.py_type)
             ),
-            hgraph.HgREFTypeMetaData: lambda: _hgraph.OutputBuilder_TS_REF(
+            hgraph.HgREFTypeMetaData: lambda: _hgraph.OutputBuilder_TS_Ref(
                 #   value_tp=cast(HgREFTypeMetaData, value_tp).value_tp
             )
         }.get(type(value_tp), lambda: _throw(value_tp))()

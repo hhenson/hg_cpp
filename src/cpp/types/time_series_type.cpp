@@ -74,7 +74,7 @@ namespace hgraph
             return std::visit(
                 [](auto &&value) -> const Node & {
                     using T = std::decay_t<decltype(value)>;  // Get the actual type
-                    if constexpr (std::is_same_v<T, TimeSeriesOutput::ptr>) {
+                    if constexpr (std::is_same_v<T, TimeSeriesType::ptr>) {
                         return (*value).owning_node();
                     } else if constexpr (std::is_same_v<T, Node::ptr>) {
                         return *value;
@@ -116,7 +116,8 @@ namespace hgraph
 
     bool TimeSeriesInput::bind_output(time_series_output_ptr value) {
         bool peer;
-        if (auto ref_output = dynamic_cast_ref<TimeSeriesReferenceOutput>(value); ref_output.get()) {
+        auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(value.get());
+        if (ref_output) {  // Is a TimeseriesReferenceOutput
             if (ref_output->valid()) { ref_output->value()->bind_input(*this); }
             ref_output->observe_reference(this);
             _reference_output = ref_output;
