@@ -23,4 +23,5 @@ void export_runtime(nb::module_& m) {
     EvaluationEngineApi::register_with_nanobind(m);
     EvaluationEngine::register_with_nanobind(m);
     EvaluationEngineImpl::register_with_nanobind(m);
+    EvaluationEngineDelegate::register_with_nanobind(m);
 }

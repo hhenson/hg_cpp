@@ -201,8 +201,7 @@ namespace hgraph
     }
 
     void Graph::register_with_nanobind(nb::module_ &m) {
-        nb::class_<Graph, ComponentLifeCycle>(m, "Graph",
-                                              nb::intrusive_ptr<Graph>([](Graph *o, PyObject *po) noexcept { o->set_self_py(po); }))
+        nb::class_<Graph, ComponentLifeCycle>(m, "Graph")
             .def(nb::init<std::vector<int64_t>, std::vector<node_ptr>, std::optional<node_ptr>, std::string, traits_ptr>(),
                  "graph_id"_a, "nodes"_a, "parent_node"_a, "label"_a, "traits"_a)
             .def_prop_ro("graph_id", &Graph::graph_id)

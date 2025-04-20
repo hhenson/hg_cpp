@@ -8,6 +8,8 @@
 #include <hgraph/types/traits.h>
 #include <hgraph/types/ts.h>
 #include <hgraph/types/node.h>
+#include <hgraph/types/traits.h>
+#include <hgraph/types/graph.h>
 
 void export_types(nb::module_ &m) {
     using namespace hgraph;
@@ -29,6 +31,9 @@ void export_types(nb::module_ &m) {
     NodeSignature::register_with_nanobind(m);
     NodeScheduler::register_with_nanobind(m);
     Node::register_with_nanobind(m);
+
+    Traits::register_with_nanobind(m);
+    Graph::register_with_nanobind(m);
 
     register_ts_with_nanobind(m);
 
