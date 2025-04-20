@@ -17,7 +17,7 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
                                                 scalar_type=value_tp.bundle_schema_tp.py_type),
                 [self.make_input_builder(tp) for tp in value_tp.bundle_schema_tp.meta_data_schema.values()]
             ),
-            hgraph.HgREFTypeMetaData: lambda: _hgraph.InputBuilder_TS_REF(
+            hgraph.HgREFTypeMetaData: lambda: _hgraph.InputBuilder_TS_Ref(
                 #   value_tp=cast(HgREFTypeMetaData, value_tp).value_tp
             )
         }.get(type(value_tp), lambda: _throw(value_tp))()
