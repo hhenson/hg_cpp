@@ -20,3 +20,4 @@ hgraph.GraphEngineFactory.declare(_hgraph.GraphExecutorImpl)
 hgraph.TimeSeriesBuilderFactory.declare(HgCppFactory())
 
 hgraph._wiring._wiring_node_class.PythonWiringNodeClass.BUILDER_CLASS = _hgraph.PythonNodeBuilder
+hgraph._wiring._wiring_node_class.PythonGeneratorWiringNodeClass.BUILDER_CLASS = _hgraph.PythonGeneratorNodeBuilder

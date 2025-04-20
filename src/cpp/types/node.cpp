@@ -49,13 +49,19 @@ namespace hgraph
                                  std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_inputs,
                                  size_t injectables, bool capture_exception, int64_t trace_back_depth, std::string wiring_path_name,
                                  std::optional<std::string> label, bool capture_values, std::optional<std::string> record_replay_id)
-        : name{std::move(name)}, node_type{node_type}, args{std::move(args)}, time_series_inputs{std::move(time_series_inputs)},
-          time_series_output{std::move(time_series_output)}, scalars{std::move(scalars)}, src_location{std::move(src_location)},
-          active_inputs{std::move(active_inputs)}, valid_inputs{std::move(valid_inputs)},
-          all_valid_inputs{std::move(all_valid_inputs)}, context_inputs{std::move(context_inputs)},
-          injectable_inputs{std::move(injectable_inputs)}, injectables{injectables}, capture_exception{capture_exception},
-          trace_back_depth{trace_back_depth}, wiring_path_name{std::move(wiring_path_name)}, label{std::move(label)},
-          capture_values{capture_values}, record_replay_id{std::move(record_replay_id)} {}
+        : intrusive_base(), name{std::move(name)}, node_type{node_type}, args{std::move(args)},
+          time_series_inputs{std::move(time_series_inputs)}, time_series_output{std::move(time_series_output)},
+          scalars{std::move(scalars)}, src_location{std::move(src_location)}, active_inputs{std::move(active_inputs)},
+          valid_inputs{std::move(valid_inputs)}, all_valid_inputs{std::move(all_valid_inputs)},
+          context_inputs{std::move(context_inputs)}, injectable_inputs{std::move(injectable_inputs)}, injectables{injectables},
+          capture_exception{capture_exception}, trace_back_depth{trace_back_depth}, wiring_path_name{std::move(wiring_path_name)},
+          label{std::move(label)}, capture_values{capture_values}, record_replay_id{std::move(record_replay_id)} {}
+
+    std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_types_to_map(nb::dict d) {
+        auto out{std::unordered_map<std::string, InjectableTypesEnum>()};
+        for (const auto &item : d) { out.emplace(nb::cast<std::string>(item.first), nb::cast<InjectableTypesEnum>(item.second)); }
+        return out;
+    }
 
     void NodeSignature::register_with_nanobind(nb::module_ &m) {
         nb::class_<NodeSignature>(m, "NodeSignature")
@@ -70,7 +76,7 @@ namespace hgraph
                          kwargs.contains("time_series_output") ? nb::cast<std::optional<nb::object>>(kwargs["time_series_output"])
                                                                : std::nullopt,
                          kwargs.contains("scalars") ? nb::cast<std::optional<nb::dict>>(kwargs["scalars"]) : std::nullopt,
-                         nb::cast<nb::object>(kwargs["src_location"]),
+                         kwargs["src_location"],
                          kwargs.contains("active_inputs")
                              ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["active_inputs"])
                              : std::nullopt,
@@ -83,9 +89,9 @@ namespace hgraph
                          kwargs.contains("context_inputs")
                              ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["context_inputs"])
                              : std::nullopt,
-                         kwargs.contains("injectable_types")
+                         kwargs.contains("injectable_inputs")
                              ? nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(
-                                   kwargs["injectable_types"])
+                                   kwargs["injectable_inputs"])
                              : std::nullopt,
                          nb::cast<size_t>(kwargs["injectables"]), nb::cast<bool>(kwargs["capture_exception"]),
                          nb::cast<int64_t>(kwargs["trace_back_depth"]), nb::cast<std::string>(kwargs["wiring_path_name"]),
@@ -93,7 +99,6 @@ namespace hgraph
                          nb::cast<bool>(kwargs["capture_values"]),
                          kwargs.contains("record_replay_id") ? nb::cast<std::optional<std::string>>(kwargs["record_replay_id"])
                                                              : std::nullopt);
-                     ;
                  })
             // For some reason doing this does not work, and need to use the lambda form above, very annoying.
             // .def(nb::init<std::string, NodeTypeEnum, std::vector<std::string>,
