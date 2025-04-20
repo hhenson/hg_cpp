@@ -76,14 +76,10 @@ namespace hgraph
                      std::optional<output_builder_ptr> error_builder_ =
                          kwargs.contains("error_builder") ? nb::cast<std::optional<output_builder_ptr>>(kwargs["error_builder"])
                                                           : std::nullopt;
-                     std::optional<output_builder_ptr> recordable_state_builder_ =
-                         kwargs.contains("recordable_state_builder")
-                             ? nb::cast<std::optional<output_builder_ptr>>(kwargs["recordable_state_builder"])
-                             : std::nullopt;
                      auto eval_fn = nb::cast<nb::callable>(kwargs["eval_fn"]);
                      new (self) PythonGeneratorNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_),
                                                            std::move(output_builder_), std::move(error_builder_),
-                                                           std::move(recordable_state_builder_), std::move(eval_fn));
+                                                           std::move(eval_fn));
                  })
             .def_ro("eval_fn", &PythonGeneratorNodeBuilder::eval_fn);
     }
@@ -130,11 +126,9 @@ namespace hgraph
     PythonGeneratorNodeBuilder::PythonGeneratorNodeBuilder(node_signature_ptr signature_, nb::dict scalars_,
                                                            std::optional<input_builder_ptr>  input_builder_,
                                                            std::optional<output_builder_ptr> output_builder_,
-                                                           std::optional<output_builder_ptr> error_builder_,
-                                                           std::optional<output_builder_ptr> recordable_state_builder_,
-                                                           nb::callable                      eval_fn)
+                                                           std::optional<output_builder_ptr> error_builder_, nb::callable eval_fn)
         : BaseNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
-                          std::move(error_builder_), std::move(recordable_state_builder_)),
+                          std::move(error_builder_), std::nullopt),
           eval_fn{std::move(eval_fn)} {}
 
     node_ptr PythonGeneratorNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) {
