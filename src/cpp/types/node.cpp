@@ -57,12 +57,6 @@ namespace hgraph
           capture_exception{capture_exception}, trace_back_depth{trace_back_depth}, wiring_path_name{std::move(wiring_path_name)},
           label{std::move(label)}, capture_values{capture_values}, record_replay_id{std::move(record_replay_id)} {}
 
-    std::optional<std::unordered_map<std::string, InjectableTypesEnum>> injectable_types_to_map(nb::dict d) {
-        auto out{std::unordered_map<std::string, InjectableTypesEnum>()};
-        for (const auto &item : d) { out.emplace(nb::cast<std::string>(item.first), nb::cast<InjectableTypesEnum>(item.second)); }
-        return out;
-    }
-
     void NodeSignature::register_with_nanobind(nb::module_ &m) {
         nb::class_<NodeSignature>(m, "NodeSignature")
             .def("__init__",
@@ -157,6 +151,11 @@ namespace hgraph
         return nb::none();
     }
 
+    [[nodiscard]] std::string obj_to_str(const nb::object &obj) {
+        if (obj.is_none()) { return "None"; }
+        return nb::cast<std::string>(nb::str(obj));
+    }
+
     [[nodiscard]] std::string NodeSignature::signature() const {
         std::ostringstream oss;
         bool               first = true;
@@ -164,19 +163,17 @@ namespace hgraph
 
         oss << name << "(";
 
-        auto obj_to_type = [&](const nb::object &obj) { return obj.is_none() ? none_str : nb::cast<std::string>(obj); };
-
         for (const auto &arg : args) {
             if (!first) { oss << ", "; }
-            oss << arg << ": " << obj_to_type(get_arg_type(arg));
+            oss << arg << ": " << obj_to_str(get_arg_type(arg));
             first = false;
         }
 
         oss << ")";
 
-        if (bool(time_series_output)) {
+        if (time_series_output.has_value()) {
             auto v = time_series_output.value();
-            oss << " -> " << (v.is_none() ? none_str : nb::cast<std::string>(v));
+            oss << " -> " <<  obj_to_str(v);
         }
 
         return oss.str();
