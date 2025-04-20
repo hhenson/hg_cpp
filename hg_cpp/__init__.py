@@ -13,6 +13,8 @@ from hg_cpp._builder_factories import HgCppFactory
 hgraph.TimeSeriesReference._BUILDER = _hgraph.TimeSeriesReference.make
 hgraph.TimeSeriesReference._INSTANCE_OF = lambda obj: isinstance(obj, _hgraph.TimeSeriesReference)
 
+hgraph.GraphBuilderFactory.declare(_hgraph.GraphBuilder)
+
 # The graph engine type
 hgraph.GraphEngineFactory.declare(_hgraph.GraphExecutorImpl)
 
