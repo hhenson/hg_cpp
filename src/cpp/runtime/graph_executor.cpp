@@ -1,3 +1,4 @@
+#include <hgraph/python/pyb_wiring.h>
 #include <hgraph/runtime/graph_executor.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
@@ -98,7 +99,8 @@ namespace hgraph
 
     void GraphExecutorImpl::register_with_nanobind(nb::module_ &m) {
         nb::class_<GraphExecutorImpl, GraphExecutor>(m, "GraphExecutorImpl")
-            .def(nb::init<graph_ptr, EvaluationMode, std::vector<EvaluationLifeCycleObserver::ptr>>());
+            .def(nb::init<graph_ptr, EvaluationMode, std::vector<EvaluationLifeCycleObserver::ptr>>(), "graph"_a, "run_mode"_a,
+                 "observers"_a = std::vector<EvaluationLifeCycleObserver::ptr>{});
     }
 
     void GraphExecutorImpl::_evaluate(EvaluationEngine &evaluationEngine) {

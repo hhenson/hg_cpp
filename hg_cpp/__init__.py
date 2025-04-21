@@ -17,7 +17,9 @@ hgraph._builder._graph_builder.EDGE_TYPE = _hgraph.Edge
 hgraph.GraphBuilderFactory.declare(_hgraph.GraphBuilder)
 
 # The graph engine type
-hgraph.GraphEngineFactory.declare(_hgraph.GraphExecutorImpl)
+hgraph.GraphEngineFactory.declare(lambda graph, run_mode, observers: _hgraph.GraphExecutorImpl(
+    graph, {hgraph.EvaluationMode.SIMULATION: _hgraph.EvaluationMode.SIMULATION,
+            hgraph.EvaluationMode.REAL_TIME: _hgraph.EvaluationMode.REAL_TIME}[run_mode], observers))
 
 #The time-series builder factory.
 hgraph.TimeSeriesBuilderFactory.declare(HgCppFactory())
