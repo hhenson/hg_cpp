@@ -14,7 +14,7 @@ namespace hgraph
                  std::string label_, traits_ptr traits_)
         : ComponentLifeCycle(), _graph_id{std::move(graph_id_)}, _nodes{std::move(nodes_)}, _parent_node{std::move(parent_node_)},
           _label{std::move(label_)}, _traits{std::move(traits_)} {
-        auto it{std::find_if(nodes_.begin(), nodes_.end(),
+        auto it{std::find_if(_nodes.begin(), _nodes.end(),
                              [](const Node *v) { return v->signature().node_type != NodeTypeEnum::PUSH_SOURCE_NODE; })};
         _push_source_nodes_end = std::distance(_nodes.begin(), it);
         _schedule.resize(_nodes.size(), MIN_DT);
@@ -47,7 +47,7 @@ namespace hgraph
     }
 
     int64_t Graph::push_source_nodes_end() const {
-        if (_push_source_nodes_end == -1) {
+        if (_push_source_nodes_end == -1LL) {
             for (size_t i = 0; i < _nodes.size(); ++i) {
                 if (_nodes[i]->signature().node_type != NodeTypeEnum::PUSH_SOURCE_NODE) {
                     _push_source_nodes_end = static_cast<int64_t>(i);
