@@ -192,7 +192,9 @@ namespace hgraph
         void set_graph(graph_ptr value);
 
         TimeSeriesBundleInput &input();
+        const TimeSeriesBundleInput &input() const;
         time_series_bundle_input_ptr input_ptr();
+        time_series_bundle_input_ptr input_ptr() const;
 
         void set_input(time_series_bundle_input_ptr value);
 

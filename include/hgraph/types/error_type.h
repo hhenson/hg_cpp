@@ -5,18 +5,73 @@
 #ifndef ERROR_TYPE_H
 #define ERROR_TYPE_H
 
+#include "hgraph/util/date_time.h"
+
 #include <exception>
 #include <hgraph/hgraph_export.h>
 #include <hgraph/hgraph_forward_declarations.h>
+#include <hgraph/python/pyb_wiring.h>
+#include <ostream>
 #include <stdexcept>
 
 namespace hgraph
 {
-    struct HGRAPH_EXPORT NodeError{};
+    struct HGRAPH_EXPORT BacktraceSignature
+    {
+        std::string              name;
+        std::vector<std::string> args;
+        std::string              wiring_path_name;
+        std::string              runtime_path_name;
+        std::string              node_id;
+
+        BacktraceSignature(std::string name_, std::vector<std::string> args_, std::string wiring_path_name_,
+                           std::string runtime_path_name_, std::string node_id_);
+    };
+
+    struct HGRAPH_EXPORT BackTrace
+    {
+        std::optional<BacktraceSignature>              signature;
+        std::unordered_map<std::string, BackTrace>     active_inputs;
+        std::unordered_map<std::string, std::string>   input_short_values;
+        std::unordered_map<std::string, std::string>   input_delta_values;
+        std::unordered_map<std::string, std::string>   input_values;
+        std::unordered_map<std::string, engine_time_t> input_last_modified_time;
+
+        [[nodiscard]] std::string arg_str(const std::string &arg_name) const;
+        [[nodiscard]] std::string level_str(int level = 0) const;
+        [[nodiscard]] std::string to_string() const;
+
+        static std::string runtime_path_name(const Node &node, bool use_label = true);
+        static BackTrace   capture_back_trace(const Node *node, bool capture_values = false, int64_t depth = 4);
+        static void        capture_input(std::unordered_map<std::string, BackTrace> &active_inputs, const TimeSeriesInput &input,
+                                         const std::string &input_name, bool capture_values, int64_t depth);
+    };
+
+    struct HGRAPH_EXPORT NodeError : nanobind::intrusive_base
+    {
+        std::string signature_name;
+        std::string label;
+        std::string wiring_path;
+        std::string error_msg;
+        std::string stack_trace;
+        std::string activation_back_trace;
+        std::string additional_context;
+
+        explicit NodeError(std::string signature_name_ = "", std::string label_ = "", std::string wiring_path_ = "",
+                           std::string error_msg_ = "", std::string stack_trace_ = "", std::string activation_back_trace_ = "",
+                           std::string additional_context_ = "");
+
+        std::string to_string() const;
+
+        friend std::ostream &operator<<(std::ostream &os, const NodeError &error);
+
+        static void register_with_nanobind(nb::module_ &m);
+    };
 
     struct HGRAPH_EXPORT NodeException : std::runtime_error
     {
-        using std::runtime_error::runtime_error;
+        NodeError error;
+        explicit NodeException(NodeError error);
 
         NodeException static capture_error(const std::exception &e, const Node &node, const std::string &msg);
 

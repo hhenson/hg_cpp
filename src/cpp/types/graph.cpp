@@ -1,3 +1,4 @@
+#include <fmt/chrono.h>
 #include <hgraph/builders/graph_builder.h>
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/runtime/evaluation_engine.h>
@@ -5,15 +6,15 @@
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/traits.h>
-#include <fmt/chrono.h>
 
 namespace hgraph
 {
 
     Graph::Graph(std::vector<int64_t> graph_id_, std::vector<Node::ptr> nodes_, std::optional<Node::ptr> parent_node_,
                  std::string label_, traits_ptr traits_)
-        : ComponentLifeCycle(), _graph_id{std::move(graph_id_)}, _nodes{std::move(nodes_)}, _parent_node{std::move(parent_node_)},
-          _label{std::move(label_)}, _traits{std::move(traits_)} {
+        : ComponentLifeCycle(), _graph_id{std::move(graph_id_)}, _nodes{std::move(nodes_)},
+          _parent_node{parent_node_.has_value() ? std::move(*parent_node_) : nullptr}, _label{std::move(label_)},
+          _traits{std::move(traits_)} {
         auto it{std::find_if(_nodes.begin(), _nodes.end(),
                              [](const Node *v) { return v->signature().node_type != NodeTypeEnum::PUSH_SOURCE_NODE; })};
         _push_source_nodes_end = std::distance(_nodes.begin(), it);
@@ -23,7 +24,7 @@ namespace hgraph
 
     const std::vector<node_ptr> &Graph::nodes() const { return _nodes; }
 
-    std::optional<node_ptr> Graph::parent_node() const { return _parent_node; }
+    node_ptr Graph::parent_node() const { return _parent_node; }
 
     std::optional<std::string> Graph::label() const { return _label; }
 
@@ -46,22 +47,7 @@ namespace hgraph
         if (_push_source_nodes_end > 0) { _receiver.set_evaluation_clock(nb::ref(&evaluation_engine_clock())); }
     }
 
-    int64_t Graph::push_source_nodes_end() const {
-        if (_push_source_nodes_end == -1LL) {
-            for (size_t i = 0; i < _nodes.size(); ++i) {
-                if (_nodes[i]->signature().node_type != NodeTypeEnum::PUSH_SOURCE_NODE) {
-                    _push_source_nodes_end = static_cast<int64_t>(i);
-                    break;
-                }
-            }
-            if (_push_source_nodes_end == -1) {
-                _push_source_nodes_end =
-                    static_cast<int64_t>(_nodes.size());  // In the very unlikely event that there are only push source nodes.
-            }
-        }
-        // result is computed on demand and then cached.
-        return _push_source_nodes_end;
-    }
+    int64_t Graph::push_source_nodes_end() const { return _push_source_nodes_end; }
 
     void Graph::schedule_node(int64_t node_ndx, engine_time_t when) { schedule_node(node_ndx, when, false); }
 
@@ -70,8 +56,9 @@ namespace hgraph
         auto  et    = clock.evaluation_time();
 
         if (when < et) {
-            auto msg{fmt::format("Graph[{}] Trying to schedule node: {}[{}] for {:%Y-%m-%d %H:%M:%S} but current time is {:%Y-%m-%d %H:%M:%S}",
-                                 this->graph_id().front(), this->nodes()[node_ndx]->signature().signature(), node_ndx, when, et)};
+            auto msg{fmt::format(
+                "Graph[{}] Trying to schedule node: {}[{}] for {:%Y-%m-%d %H:%M:%S} but current time is {:%Y-%m-%d %H:%M:%S}",
+                this->graph_id().front(), this->nodes()[node_ndx]->signature().signature(), node_ndx, when, et)};
             throw std::runtime_error(msg);
         }
 
@@ -209,7 +196,7 @@ namespace hgraph
             .def_prop_ro("parent_node", &Graph::parent_node)
             .def_prop_ro("label", &Graph::label)
             .def_prop_ro("evaluation_engine_api", &Graph::evaluation_engine_api)
-            .def_prop_ro("evaluation_clock", static_cast<const EvaluationClock& (Graph::*)() const>(&Graph::evaluation_clock))
+            .def_prop_ro("evaluation_clock", static_cast<const EvaluationClock &(Graph::*)() const>(&Graph::evaluation_clock))
             .def_prop_ro("evaluation_engine_clock", &Graph::evaluation_engine_clock)
             .def_prop_rw("evaluation_engine", &Graph::evaluation_engine, &Graph::set_evaluation_engine)
             .def_prop_ro("push_source_nodes_end", &Graph::push_source_nodes_end)
@@ -222,10 +209,38 @@ namespace hgraph
         ;
     }
 
-    void Graph::initialise() {}
+    void Graph::initialise() {
+        // Need to ensure that the graph is set prior to initialising the nodes
+        // In case of interaction between nodes.
+        for (auto &node : _nodes) { node->set_graph(this); }
+        for (auto &node : _nodes) { node->initialise(); }
+    }
 
-    void Graph::start() {}
-    void Graph::stop() {}
-    void Graph::dispose() {}
+    void Graph::start() {
+        auto &engine = *_evaluation_engine;
+        engine.notify_before_start_graph(*this);
+        for (auto &node : _nodes) {
+            engine.notify_before_start_node(*node);
+            node->start();
+            engine.notify_after_start_node(*node);
+        }
+        engine.notify_after_start_graph(*this);
+    }
+
+    void Graph::stop() {
+        auto &engine = *_evaluation_engine;
+        engine.notify_before_stop_graph(*this);
+        for (auto &node : _nodes) {
+            engine.notify_before_stop_node(*node);
+            node->stop();
+            engine.notify_after_stop_node(*node);
+        }
+        engine.notify_after_stop_graph(*this);
+    }
+
+    void Graph::dispose() {
+        // Since we initialise nodes from within the graph, we need to dispose them here.
+        for (auto &node : _nodes) { node->dispose(); }
+    }
 
 }  // namespace hgraph

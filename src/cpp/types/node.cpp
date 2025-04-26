@@ -472,8 +472,11 @@ namespace hgraph
 
     void Node::set_graph(graph_ptr value) { _graph = value; }
 
-    TimeSeriesBundleInput &Node::input() { return *_input; }
+    TimeSeriesBundleInput       &Node::input() { return *_input; }
+    const TimeSeriesBundleInput &Node::input() const { return *_input; }
+
     time_series_bundle_input_ptr Node::input_ptr() { return _input; }
+    time_series_bundle_input_ptr Node::input_ptr() const { return _input; }
 
     void Node::set_input(time_series_bundle_input_ptr value) {
         if (has_input()) { throw std::runtime_error("Input input already set on node: " + _signature->signature()); }
@@ -510,7 +513,7 @@ namespace hgraph
         return *_scheduler;
     }
 
-    bool Node::has_scheduler() const { return _scheduler.get() != nullptr; }
+    bool Node::has_scheduler() const { return _scheduler != nullptr; }
 
     void Node::unset_scheduler() { _scheduler.reset(); }
 
@@ -529,7 +532,7 @@ namespace hgraph
             .def_prop_ro("signature", &Node::signature)
             .def_prop_ro("scalars", &Node::scalars)
             .def_prop_rw("graph", static_cast<const Graph &(Node::*)() const>(&Node::graph), &Node::set_graph)
-            .def_prop_rw("input", &Node::input, &Node::set_input)
+            .def_prop_rw("input", static_cast<const TimeSeriesBundleInput &(Node::*)() const>(&Node::input), &Node::set_input)
             .def_prop_ro("inputs",
                          [](Node &self) {
                              nb::dict d;
@@ -629,8 +632,8 @@ namespace hgraph
                 _kwargs[key_] = value;
             }
         }
-
-        for (size_t i = 0, l = input().schema().keys().size(); i < l; ++i) {
+        for (size_t i = 0, l = signature().time_series_inputs.has_value() ? signature().time_series_inputs->size() : 0; i < l;
+             ++i) {
             // Apple does not yet support ranges::contains :(
             auto key{input().schema().keys()[i]};
             if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) { _kwargs[key.c_str()] = input()[i]; }
@@ -680,7 +683,7 @@ namespace hgraph
     }
 
     void BasePythonNode::do_start() {
-        if (!_start_fn.is_none()) {
+        if (_start_fn.is_valid() && !_start_fn.is_none()) {
             // Get the callable signature parameters
             nb::dict params = _start_fn.attr("__code__").attr("co_varnames");
 
@@ -696,7 +699,7 @@ namespace hgraph
     }
 
     void BasePythonNode::do_stop() {
-        if (!_stop_fn.is_none()) {
+        if (_stop_fn.is_valid() and !_stop_fn.is_none()) {
             // Get the callable signature parameters
             nb::dict params = _start_fn.attr("__code__").attr("co_varnames");
 
@@ -712,7 +715,7 @@ namespace hgraph
     }
 
     void Node::eval() {
-        bool scheduled{!has_scheduler() ? _scheduler->is_scheduled_node() : false};
+        bool scheduled{has_scheduler() ? _scheduler->is_scheduled_node() : false};
         bool should_eval{true};
 
         if (has_input()) {
@@ -759,7 +762,7 @@ namespace hgraph
 
         if (should_eval) {
             // Handle context inputs
-            if (signature().context_inputs.has_value()) {
+            if (signature().context_inputs.has_value() && signature().context_inputs->size() > 0) {
                 // TODO: Figure out how to deal with context stacks outside of Python or assume these to be Python only?
                 throw std::runtime_error("Context inputs not yet supported");
             }

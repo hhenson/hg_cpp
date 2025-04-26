@@ -7,8 +7,8 @@
 
 #include <hgraph/hgraph_forward_declarations.h>
 
-#include <hgraph/util/lifecycle.h>
 #include <hgraph/python/pyb.h>
+#include <hgraph/util/lifecycle.h>
 #include <optional>
 #include <vector>
 
@@ -30,7 +30,7 @@ namespace hgraph
 
         [[nodiscard]] const std::vector<node_ptr> &nodes() const;
 
-        [[nodiscard]] std::optional<node_ptr> parent_node() const;
+        [[nodiscard]] node_ptr parent_node() const;
 
         [[nodiscard]] std::optional<std::string> label() const;
 
@@ -85,12 +85,12 @@ namespace hgraph
         std::vector<int64_t>       _graph_id;
         std::vector<node_ptr>      _nodes;
         std::vector<engine_time_t> _schedule;
-        std::optional<node_ptr>    _parent_node;
+        node_ptr                   _parent_node;
         std::string                _label;
         traits_ptr                 _traits;
         SenderReceiverState        _receiver;
         engine_time_t              _last_evaluation_time{MIN_DT};
-        mutable int64_t            _push_source_nodes_end{-1};
+        int64_t                    _push_source_nodes_end{-1};
     };
 
 }  // namespace hgraph
