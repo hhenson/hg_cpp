@@ -860,8 +860,9 @@ namespace hgraph
         auto       sentinel{nb::iterator::sentinel()};
         nb::object out;
         for (nb::iterator v = ++generator; v != sentinel; ++v) {  // Returns NULL if there are no new values
-            auto time = nb::cast<nb::object>(v[0]);
-            out       = nb::cast<nb::object>(v[1]);
+            auto tpl = *v;
+            auto time = nb::cast<nb::object>(tpl[0]);
+            out       = nb::cast<nb::object>(tpl[1]);
 
             if (time.type().is(nb::type<engine_time_delta_t>())) {
                 next_time = et + nb::cast<engine_time_delta_t>(time);

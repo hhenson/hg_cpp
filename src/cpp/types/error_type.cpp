@@ -126,7 +126,7 @@ namespace hgraph
         if (node) {
             auto node_sig = node->signature();
             signature     = BacktraceSignature(node_sig.name, node_sig.args, node_sig.wiring_path_name, runtime_path_name(*node),
-                                               fmt::format("({})", fmt::join(node->node_id(), ", ")));
+                                               fmt::format("{}", fmt::join(node->node_id(), ",")));
         }
 
         if (depth > 0 && node) {
@@ -212,13 +212,21 @@ namespace hgraph
 
     NodeException::NodeException(NodeError error) : std::runtime_error(error.to_string()), error{std::move(error)} {}
 
+    std::string traceback_to_string(nb::python_error exception) {
+        auto trace_back_mod{nb::module_::import_("traceback")};
+        auto format_exception{trace_back_mod.attr("format_exception")};
+        auto str_list{format_exception(exception.type(), exception.value(), exception.traceback())};
+        auto result{nb::str("").attr("join")(str_list)};
+        return nb::cast<std::string>(result);
+    }
+
     NodeException NodeException::capture_error(const std::exception &e, const Node &node, const std::string &msg) {
         auto py_err{dynamic_cast<const nb::python_error *>(&e)};
         auto back_trace{BackTrace::capture_back_trace(&node, node.signature().capture_values, node.signature().trace_back_depth)};
-
+        auto stack_trace{py_err == nullptr ? "" : traceback_to_string(*py_err)};
         return NodeException{
             NodeError(node.signature().signature(), node.signature().label.value_or(""), node.signature().wiring_path_name,
-                      e.what(), py_err == nullptr ? "" : nb::cast<std::string>(py_err->traceback()), back_trace.to_string(), msg)};
+                      e.what(), stack_trace, back_trace.to_string(), msg)};
     }
 
     NodeException NodeException::capture_error(std::exception_ptr e, const Node &node, const std::string &msg) {

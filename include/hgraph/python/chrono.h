@@ -155,7 +155,7 @@ public:
         long long minute = hms.minutes().count();
         long long second = hms.seconds().count();
         auto subseconds = hms.subseconds(); // This is a duration
-        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(subseconds).count();
+        auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(subseconds).count();
 
         return pack_datetime(year,
                              month,
@@ -163,7 +163,7 @@ public:
                              hour,
                              minute,
                              second,
-                             milliseconds);
+                             microseconds);
     }
     #if PY_VERSION_HEX < 0x03090000
         NB_TYPE_CASTER(type, io_name("typing.Union[datetime.datetime, datetime.date, datetime.time]",

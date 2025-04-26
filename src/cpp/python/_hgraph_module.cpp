@@ -18,6 +18,7 @@ void export_types(nb::module_ &);
 void export_utils(nb::module_ &);
 
 NB_MODULE(_hgraph, m) {
+    nb::set_leak_warnings(false);
     m.doc() = "The HGraph C++ runtime engine";
     nb::intrusive_init(
         [](PyObject *o) noexcept {

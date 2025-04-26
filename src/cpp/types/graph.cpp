@@ -136,7 +136,7 @@ namespace hgraph
             _nodes.emplace_back(node);
             _schedule.emplace_back(MIN_DT);
         }
-        initialise_sugraph(first_node_index, capacity);
+        initialise_subgraph(first_node_index, capacity);
         if (!delay_start && is_started()) { start_subgraph(first_node_index, capacity); }
     }
 
@@ -149,7 +149,7 @@ namespace hgraph
         _schedule.erase(_schedule.begin() + start_node, _schedule.end());
     }
 
-    void Graph::initialise_sugraph(int64_t start, int64_t end) {
+    void Graph::initialise_subgraph(int64_t start, int64_t end) {
         // Need to ensure that the graph is set prior to initialising the nodes
         // In case of interaction between nodes.
         for (auto i = start; i < end; ++i) {
