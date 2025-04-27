@@ -9,6 +9,7 @@
 #include <hgraph/types/node.h>
 #include <nanobind/nanobind.h>
 #include <sstream>
+#include <utility>
 
 namespace hgraph
 {
@@ -17,6 +18,15 @@ namespace hgraph
                                            std::string runtime_path_name_, std::string node_id_)
         : name(std::move(name_)), args(std::move(args_)), wiring_path_name(std::move(wiring_path_name_)),
           runtime_path_name(std::move(runtime_path_name_)), node_id(std::move(node_id_)) {}
+
+    BackTrace::BackTrace(std::optional<BacktraceSignature> signature_, std::unordered_map<std::string, BackTrace> active_inputs_,
+                         std::unordered_map<std::string, std::string>   input_short_values_,
+                         std::unordered_map<std::string, std::string>   input_delta_values_,
+                         std::unordered_map<std::string, std::string>   input_values_,
+                         std::unordered_map<std::string, engine_time_t> input_last_modified_time_)
+        : signature{std::move(signature_)}, active_inputs{std::move(active_inputs_)},
+          input_short_values{std::move(input_short_values_)}, input_delta_values{std::move(input_delta_values_)},
+          input_values{std::move(input_values_)}, input_last_modified_time{std::move(input_last_modified_time_)} {}
 
     std::string BackTrace::arg_str(const std::string &arg_name) const {
         if (active_inputs.contains(arg_name)) {
@@ -155,9 +165,8 @@ namespace hgraph
 
             return BackTrace(signature, active_inputs, input_short_values, input_delta_values, input_values,
                              input_last_modified_time);
-        } else {
-            return BackTrace(signature, {},{}, {}, {}, {});
         }
+        return BackTrace(signature, {}, {}, {}, {}, {});
     }
 
     auto BackTrace::capture_input(std::unordered_map<std::string, BackTrace> &active_inputs, const TimeSeriesInput &input,
@@ -165,8 +174,8 @@ namespace hgraph
         if (input.modified()) {
             if (input.bound()) {
                 if (input.has_peer()) {
-                    active_inputs[input_name] =
-                        BackTrace::capture_back_trace(&input.output()->owning_node(), capture_values, depth - 1);
+                    active_inputs.emplace(input_name,
+                                         BackTrace::capture_back_trace(&input.output()->owning_node(), capture_values, depth - 1));
                 } else {
                     auto iterable_inputs{dynamic_cast<const TimeSeriesBundleInput *>(&input)};
                     if (iterable_inputs) {
@@ -179,8 +188,7 @@ namespace hgraph
             } else if (auto ts_ref{dynamic_cast<const TimeSeriesReferenceInput *>(&input)}; ts_ref != nullptr) {
                 auto value{nb::cast<TimeSeriesInput &>(input.py_value())};
                 if (value.has_output()) {
-                    active_inputs[input_name] =
-                        BackTrace::capture_back_trace(&value.output()->owning_node(), capture_values, depth - 1);
+                    active_inputs.emplace(input_name, BackTrace::capture_back_trace(&value.output()->owning_node(), capture_values, depth - 1));
                 }
             }
         }
@@ -224,9 +232,8 @@ namespace hgraph
         auto py_err{dynamic_cast<const nb::python_error *>(&e)};
         auto back_trace{BackTrace::capture_back_trace(&node, node.signature().capture_values, node.signature().trace_back_depth)};
         auto stack_trace{py_err == nullptr ? "" : traceback_to_string(*py_err)};
-        return NodeException{
-            NodeError(node.signature().signature(), node.signature().label.value_or(""), node.signature().wiring_path_name,
-                      e.what(), stack_trace, back_trace.to_string(), msg)};
+        return NodeException{NodeError(node.signature().signature(), node.signature().label.value_or(""),
+                                       node.signature().wiring_path_name, e.what(), stack_trace, back_trace.to_string(), msg)};
     }
 
     NodeException NodeException::capture_error(std::exception_ptr e, const Node &node, const std::string &msg) {

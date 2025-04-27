@@ -26,6 +26,11 @@ namespace hgraph
 
         BacktraceSignature(std::string name_, std::vector<std::string> args_, std::string wiring_path_name_,
                            std::string runtime_path_name_, std::string node_id_);
+
+        BacktraceSignature(const BacktraceSignature &)            = default;
+        BacktraceSignature &operator=(const BacktraceSignature &) = default;
+        BacktraceSignature(BacktraceSignature &&)                 = default;
+        BacktraceSignature &operator=(BacktraceSignature &&)      = default;
     };
 
     struct HGRAPH_EXPORT BackTrace
@@ -36,6 +41,20 @@ namespace hgraph
         std::unordered_map<std::string, std::string>   input_delta_values;
         std::unordered_map<std::string, std::string>   input_values;
         std::unordered_map<std::string, engine_time_t> input_last_modified_time;
+
+        explicit BackTrace(
+            std::optional<BacktraceSignature> signature_,
+                std::unordered_map<std::string, BackTrace> active_inputs_,
+                std::unordered_map<std::string, std::string> input_short_values_,
+                std::unordered_map<std::string, std::string> input_delta_values_,
+                std::unordered_map<std::string, std::string> input_values_,
+                std::unordered_map<std::string, engine_time_t> input_last_modified_time_
+            );
+
+        BackTrace(const BackTrace &)            = default;
+        BackTrace &operator=(const BackTrace &) = default;
+        BackTrace(BackTrace &&)                 = default;
+        BackTrace &operator=(BackTrace &&)      = default;
 
         [[nodiscard]] std::string arg_str(const std::string &arg_name) const;
         [[nodiscard]] std::string level_str(int level = 0) const;
