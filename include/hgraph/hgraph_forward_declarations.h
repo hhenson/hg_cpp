@@ -6,6 +6,7 @@
 #define HGRAPH_FORWARD_DECLARATIONS_H
 
 #include <functional>
+#include <string>
 #include <nanobind/intrusive/ref.h>
 
 namespace hgraph
