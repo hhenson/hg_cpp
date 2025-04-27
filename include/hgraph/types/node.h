@@ -283,14 +283,7 @@ namespace hgraph
     struct PythonNode : BasePythonNode
     {
         using BasePythonNode::BasePythonNode;
-
-      protected:
-        void do_eval() override;
-
-        void initialise() override;
-        void start() override;
-        void stop() override;
-        void dispose() override;
+        // So far, nothing to do other than what is already done in the base ndoe.
     };
 
     struct PushQueueNode : Node

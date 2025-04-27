@@ -12,7 +12,7 @@ template <typename T, typename T_> nb::ref<T> dynamic_cast_ref(nb::ref<T_> ptr) 
     if (v != nullptr) {
         return nb::ref<T>(v);
     } else {
-        throw std::runtime_error(fmt::format("Cannot cast from: {} to : {}", typeid(T_).name(), typeid(T).name()));
+        return nb::ref<T>();
     }
 }
 

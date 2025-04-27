@@ -221,7 +221,7 @@ namespace hgraph
         engine.notify_before_start_graph(*this);
         for (auto &node : _nodes) {
             engine.notify_before_start_node(*node);
-            node->start();
+            start_component(*node);
             engine.notify_after_start_node(*node);
         }
         engine.notify_after_start_graph(*this);
@@ -232,7 +232,7 @@ namespace hgraph
         engine.notify_before_stop_graph(*this);
         for (auto &node : _nodes) {
             engine.notify_before_stop_node(*node);
-            node->stop();
+            stop_component(*node);
             engine.notify_after_stop_node(*node);
         }
         engine.notify_after_stop_graph(*this);

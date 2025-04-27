@@ -629,7 +629,9 @@ namespace hgraph
             std::string key{nb::cast<std::string>(key_)};
             if (has_injectables && signature().injectable_inputs->contains(key)) {
                 // TODO: This may be better extracted directly, but for now use the python function calls.
-                _kwargs[key_] = value(*(this));  // Assuming this call applies the Injector properly
+                nb::object node{nb::cast(this)};
+                nb::object key_handle{value(node)};
+                _kwargs[key_] = key_handle;  // Assuming this call applies the Injector properly
             } else {
                 _kwargs[key_] = value;
             }
@@ -687,14 +689,12 @@ namespace hgraph
     void BasePythonNode::do_start() {
         if (_start_fn.is_valid() && !_start_fn.is_none()) {
             // Get the callable signature parameters
-            nb::dict params = _start_fn.attr("__code__").attr("co_varnames");
-
+            nb::tuple params = _start_fn.attr("__code__").attr("co_varnames");
             // Filter kwargs to only include parameters in start_fn signature
             nb::dict filtered_kwargs;
-            for (auto [k, v] : params) {
+            for (auto k : params) {
                 if (_kwargs.contains(k)) { filtered_kwargs[k] = _kwargs[k]; }
             }
-
             // Call start_fn with filtered kwargs
             _start_fn(**filtered_kwargs);
         }
@@ -703,16 +703,16 @@ namespace hgraph
     void BasePythonNode::do_stop() {
         if (_stop_fn.is_valid() and !_stop_fn.is_none()) {
             // Get the callable signature parameters
-            nb::dict params = _start_fn.attr("__code__").attr("co_varnames");
+            nb::tuple params = _stop_fn.attr("__code__").attr("co_varnames");
 
             // Filter kwargs to only include parameters in start_fn signature
             nb::dict filtered_kwargs;
-            for (auto [k, v] : params) {
+            for (auto k : params) {
                 if (_kwargs.contains(k)) { filtered_kwargs[k] = _kwargs[k]; }
             }
 
-            // Call start_fn with filtered kwargs
-            _start_fn(**filtered_kwargs);
+            // Call stop_fn with filtered kwargs
+            _stop_fn(**filtered_kwargs);
         }
     }
 
@@ -821,16 +821,6 @@ namespace hgraph
     }
 
     void BasePythonNode::dispose() { _kwargs.clear(); }
-
-    void PythonNode::initialise() {}
-
-    void PythonNode::start() {}
-
-    void PythonNode::stop() {}
-
-    void PythonNode::dispose() {}
-
-    void PythonNode::do_eval() {}
 
     void PushQueueNode::do_eval() {}
 
