@@ -51,9 +51,14 @@ namespace hgraph
                          kwargs.contains("recordable_state_builder")
                              ? nb::cast<std::optional<output_builder_ptr>>(kwargs["recordable_state_builder"])
                              : std::nullopt;
-                     auto eval_fn  = nb::cast<nb::callable>(kwargs["eval_fn"]);
-                     auto start_fn = nb::cast<nb::callable>(kwargs["start_fn"]);
-                     auto stop_fn  = nb::cast<nb::callable>(kwargs["stop_fn"]);
+                     auto eval_fn_  = nb::cast<nb::handle>(kwargs["eval_fn"]);
+                     auto start_fn_ = nb::cast<nb::handle>(kwargs["start_fn"]);
+                     auto stop_fn_  = nb::cast<nb::handle>(kwargs["stop_fn"]);
+
+                     nb::callable eval_fn = eval_fn_.is_valid() && !eval_fn_.is_none() ? nb::cast<nb::callable>(eval_fn_) : nb::callable{};
+                     nb::callable start_fn = start_fn_.is_valid() && !start_fn_.is_none() ? nb::cast<nb::callable>(start_fn_) : nb::callable{};
+                     nb::callable stop_fn = stop_fn_.is_valid() && !stop_fn_.is_none() ? nb::cast<nb::callable>(stop_fn_) : nb::callable{};
+
                      new (self) PythonNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_),
                                                   std::move(output_builder_), std::move(error_builder_),
                                                   std::move(recordable_state_builder_), std::move(eval_fn), std::move(start_fn),
