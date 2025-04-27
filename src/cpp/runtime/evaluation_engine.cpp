@@ -330,7 +330,7 @@ namespace hgraph
             _last_time_allowed_push = now;
 
             while (now < next_scheduled_time && !_push_node_requires_scheduling) {
-                auto sleep_time = (next_scheduled_time - now);
+                auto sleep_time = std::chrono::duration_cast<engine_time_delta_t>(next_scheduled_time - now);
                 _push_node_requires_scheduling_condition.wait_for(
                     lock, std::min(sleep_time, duration_cast<engine_time_delta_t>(std::chrono::seconds(10))));
                 now = engine_clock::now();
