@@ -36,6 +36,7 @@ namespace hgraph
             .value("ENGINE_API", InjectableTypesEnum::ENGINE_API)
             .value("LOGGER", InjectableTypesEnum::LOGGER)
             .value("NODE", InjectableTypesEnum::NODE)
+            .value("TRAIT", InjectableTypesEnum::TRAIT)
             .export_values();
     }
 

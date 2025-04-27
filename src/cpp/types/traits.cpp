@@ -10,8 +10,8 @@ namespace hgraph
 
     nb::object Traits::get_trait(const std::string &trait_name) const { return _traits[trait_name.c_str()]; }
 
-    nb::object Traits::get_trait_or(const std::string &trait_name, nb::object &def_value) const {
-        return _traits.contains(trait_name.c_str()) ? _traits[trait_name.c_str()] : def_value;
+    nb::object Traits::get_trait_or(const std::string &trait_name, nb::object def_value) const {
+        return _traits.contains(trait_name.c_str()) ? _traits[trait_name.c_str()] : std::move(def_value);
     }
 
     Traits::ptr Traits::copy() const {
@@ -24,7 +24,7 @@ namespace hgraph
         nb::class_<Traits, nb::intrusive_base>(m, "Traits")
             .def("get_trait", &Traits::get_trait, "trait_name"_a)
             .def("set_traits", &Traits::set_traits)
-            .def("get_trait_or", &Traits::get_trait_or, "trait_name"_a, "def_value"_a)
+            .def("get_trait_or", &Traits::get_trait_or, "trait_name"_a, "def_value"_a=nb::none())
             .def("copy", &Traits::copy);
     }
 

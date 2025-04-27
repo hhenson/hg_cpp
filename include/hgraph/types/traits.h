@@ -25,7 +25,7 @@ namespace hgraph
 
         [[nodiscard]] nb::object get_trait(const std::string &trait_name) const;
 
-        [[nodiscard]] nb::object get_trait_or(const std::string &trait_name, nb::object &def_value) const;
+        [[nodiscard]] nb::object get_trait_or(const std::string &trait_name, nb::object def_value) const;
 
         [[nodiscard]] Traits::ptr copy() const;
 

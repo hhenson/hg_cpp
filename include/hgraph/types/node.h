@@ -52,7 +52,8 @@ namespace hgraph
         CLOCK            = 1 << 4,
         ENGINE_API       = 1 << 5,
         LOGGER           = 1 << 6,
-        NODE             = 1 << 7
+        NODE             = 1 << 7,
+        TRAIT            = 1 << 8
     };
 
     void injectable_type_enum(nb::module_ &m);
