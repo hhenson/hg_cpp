@@ -31,7 +31,9 @@ namespace hgraph
         auto input = dynamic_cast_ref<TimeSeriesInput>(node->input_ptr());
         for (auto index : path) {
             try {
-                input = &dynamic_cast_ref<TimeSeriesInput>(input)[index];
+                //TODO: Currently assume all path based inputs are bundles, but this needs to be corrected.
+                auto index_bndl{dynamic_cast<TimeSeriesBundleInput*>(input.get())};
+                input = &(*index_bndl)[index];
             } catch (const std::exception &) { throw std::runtime_error("Invalid path index"); }
         }
         return input;
