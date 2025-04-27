@@ -590,8 +590,10 @@ namespace hgraph
             if (!first) { oss << ", "; }
             oss << arg << ": " << obj_to_type(signature().get_arg_type(arg));
             if (!signature().time_series_inputs->contains(arg)) {
-                auto s{nb::str(_scalars[arg.c_str()])};
-                if (nb::len(s) > 8) { s = nb::str("{}...").format(s[nb::slice(0, 8)]); }
+                nb::handle key_handle{_scalars[arg.c_str()]};
+                nb::str s{nb::str(key_handle)};
+                size_t length{nb::len(s)};
+                if (length > 8) { s = nb::str("{}...").format(s[nb::slice(0, 8)]); }
                 oss << "=" << s.c_str();
             }
             first = false;
