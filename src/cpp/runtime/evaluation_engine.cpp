@@ -1,8 +1,8 @@
+#include <algorithm>
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/runtime/evaluation_engine.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
-#include <algorithm>
 
 namespace hgraph
 {
@@ -91,7 +91,8 @@ namespace hgraph
 
     void EvaluationEngine::register_with_nanobind(nb::module_ &m) {
         nb::class_<EvaluationEngine, EvaluationEngineApi>(m, "EvaluationEngine")
-            .def_prop_ro("engine_evaluation_clock",  static_cast<const EngineEvaluationClock& (EvaluationEngine::*)() const>(&EvaluationEngine::engine_evaluation_clock))
+            .def_prop_ro("engine_evaluation_clock", static_cast<const EngineEvaluationClock &(EvaluationEngine::*)() const>(
+                                                        &EvaluationEngine::engine_evaluation_clock))
             .def("advance_engine_time", &EvaluationEngine::advance_engine_time)
             .def("notify_before_evaluation", &EvaluationEngine::notify_before_evaluation)
             .def("notify_after_evaluation", &EvaluationEngine::notify_after_evaluation)
@@ -112,18 +113,14 @@ namespace hgraph
         _evaluation_engine.notify_before_graph_evaluation(_graph);
     }
 
-    NotifyGraphEvaluation::~NotifyGraphEvaluation() {
-        _evaluation_engine.notify_after_graph_evaluation(_graph);
-    }
+    NotifyGraphEvaluation::~NotifyGraphEvaluation() { _evaluation_engine.notify_after_graph_evaluation(_graph); }
 
     NotifyNodeEvaluation::NotifyNodeEvaluation(EvaluationEngine &evaluation_engine, const Node &node)
         : _evaluation_engine{evaluation_engine}, _node{node} {
         _evaluation_engine.notify_before_node_evaluation(_node);
     }
 
-    NotifyNodeEvaluation::~NotifyNodeEvaluation() {
-        _evaluation_engine.notify_after_node_evaluation(_node);
-    }
+    NotifyNodeEvaluation::~NotifyNodeEvaluation() { _evaluation_engine.notify_after_node_evaluation(_node); }
 
     EvaluationEngineDelegate::EvaluationEngineDelegate(ptr api) : _evaluation_engine{std::move(api)} {}
 
@@ -259,7 +256,7 @@ namespace hgraph
     engine_time_t SimulationEvaluationClock::now() const { return evaluation_time() + cycle_time(); }
 
     engine_time_delta_t SimulationEvaluationClock::cycle_time() const {
-        return engine_clock::now() - _system_clock_at_start_of_evaluation;
+        return std::chrono::duration_cast<engine_time_delta_t>(engine_clock::now() - _system_clock_at_start_of_evaluation);
     }
 
     void SimulationEvaluationClock::advance_to_next_scheduled_time() { set_evaluation_time(next_scheduled_evaluation_time()); }
@@ -275,8 +272,7 @@ namespace hgraph
     }
 
     void SimulationEvaluationClock::register_with_nanobind(nb::module_ &m) {
-        nb::class_<SimulationEvaluationClock, BaseEvaluationClock>(m, "SimulationEvaluationClock")
-            .def(nb::init<engine_time_t>());
+        nb::class_<SimulationEvaluationClock, BaseEvaluationClock>(m, "SimulationEvaluationClock").def(nb::init<engine_time_t>());
     }
 
     RealTimeEvaluationClock::RealTimeEvaluationClock(engine_time_t start_time)
@@ -287,8 +283,10 @@ namespace hgraph
         return std::chrono::time_point_cast<std::chrono::milliseconds>(engine_clock::now());
     }
 
-    engine_time_delta_t RealTimeEvaluationClock::cycle_time() const { return engine_clock::now() - evaluation_time(); }
-    void                RealTimeEvaluationClock::mark_push_node_requires_scheduling() {
+    engine_time_delta_t RealTimeEvaluationClock::cycle_time() const {
+        return std::chrono::duration_cast<engine_time_delta_t>(engine_clock::now() - evaluation_time());
+    }
+    void RealTimeEvaluationClock::mark_push_node_requires_scheduling() {
         std::unique_lock<std::mutex> lock(_condition_mutex);
         _push_node_requires_scheduling = true;
         _push_node_requires_scheduling_condition.notify_all();
@@ -402,7 +400,7 @@ namespace hgraph
 
     void EvaluationEngineImpl::stop() {}
 
-    void                         EvaluationEngineImpl::dispose() {}
+    void EvaluationEngineImpl::dispose() {}
 
     const EngineEvaluationClock &EvaluationEngineImpl::engine_evaluation_clock() const { return *_clock; }
 
@@ -511,8 +509,7 @@ namespace hgraph
     }
 
     void EvaluationEngineImpl::register_with_nanobind(nb::module_ &m) {
-        nb::class_<EvaluationEngineImpl, EvaluationEngine>(
-            m, "EvaluationEngineImpl")
+        nb::class_<EvaluationEngineImpl, EvaluationEngine>(m, "EvaluationEngineImpl")
             .def(nb::init<EngineEvaluationClock::ptr, engine_time_t, engine_time_t, EvaluationMode>());
     }
 
