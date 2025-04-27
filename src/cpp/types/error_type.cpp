@@ -156,7 +156,7 @@ namespace hgraph
             return BackTrace(signature, active_inputs, input_short_values, input_delta_values, input_values,
                              input_last_modified_time);
         } else {
-            return BackTrace(signature, {});
+            return BackTrace(signature, {},{}, {}, {}, {});
         }
     }
 
