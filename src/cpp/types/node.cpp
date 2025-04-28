@@ -816,6 +816,7 @@ namespace hgraph
     }
 
     void BasePythonNode::stop() {
+
         do_stop();
         if (has_input()) { input().un_bind_output(); }
         if (has_scheduler()) { scheduler().reset(); }
@@ -876,7 +877,7 @@ namespace hgraph
             return;
         }
 
-        if (!next_value.is_none()) {
+        if (next_value.is_valid() && !next_value.is_none()) {
             output().apply_result(next_value);
             next_value = nb::none();
         }

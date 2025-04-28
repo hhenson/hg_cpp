@@ -174,8 +174,7 @@ namespace hgraph
     void TimeSeriesReferenceOutput::set_value(TimeSeriesReference::ptr value) {
         _value = value;
         mark_modified();
-        auto it{_reference_observers.begin()};
-        while (it != _reference_observers.end()) {
+        for (auto it{_reference_observers.begin()}; it != _reference_observers.end(); ++it) {
             TimeSeriesInput *input{*it};
             _value->bind_input(*input);
         }
