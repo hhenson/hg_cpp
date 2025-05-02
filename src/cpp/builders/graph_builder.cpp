@@ -33,7 +33,7 @@ namespace hgraph
             try {
                 //TODO: Currently assume all path based inputs are bundles, but this needs to be corrected.
                 auto index_bndl{dynamic_cast<TimeSeriesBundleInput*>(input.get())};
-                input = &(*index_bndl)[index];
+                input = (*index_bndl)[index];
             } catch (const std::exception &) { throw std::runtime_error("Invalid path index"); }
         }
         return input;

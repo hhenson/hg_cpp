@@ -17,7 +17,7 @@ namespace hgraph
         using ptr = nb::ref<TimeSeriesSchema>;
 
         explicit TimeSeriesSchema(std::vector<std::string> keys);
-        explicit TimeSeriesSchema(std::vector<std::string> keys, const nb::object &type);
+        explicit TimeSeriesSchema(std::vector<std::string> keys, nb::object type);
 
         const std::vector<std::string> &keys() const;
         const nb::object               &scalar_type() const;
@@ -29,15 +29,15 @@ namespace hgraph
         nb::object               _scalar_type;
     };
 
-    struct TimeSeriesBundleOutput : TimeSeriesOutput
+    struct TimeSeriesBundleOutput : IndexedTimeSeriesOutput
     {
         using ptr = nb::ref<TimeSeriesBundleOutput>;
         // Define an iterator type for the unordered_map
         using iterator       = std::vector<TimeSeriesOutput::ptr>::iterator;
         using const_iterator = std::vector<TimeSeriesOutput::ptr>::const_iterator;
 
-        explicit TimeSeriesBundleOutput(const node_ptr &parent, const TimeSeriesSchema::ptr &schema);
-        explicit TimeSeriesBundleOutput(const TimeSeriesType::ptr &parent, const TimeSeriesSchema::ptr &schema);
+        explicit TimeSeriesBundleOutput(const node_ptr &parent, TimeSeriesSchema::ptr schema);
+        explicit TimeSeriesBundleOutput(const TimeSeriesType::ptr &parent, TimeSeriesSchema::ptr schema);
         TimeSeriesBundleOutput(const TimeSeriesBundleOutput &)            = default;
         TimeSeriesBundleOutput(TimeSeriesBundleOutput &&)                 = default;
         TimeSeriesBundleOutput &operator=(const TimeSeriesBundleOutput &) = default;
@@ -51,18 +51,18 @@ namespace hgraph
         void apply_result(nb::handle value) override;
 
         // Begin iterator
-        iterator       begin();
-        const_iterator begin() const;
+        iterator       begin() override;
+        const_iterator begin() const override;
 
         // End iterator
-        iterator       end();
-        const_iterator end() const;
+        iterator       end() override;
+        const_iterator end() const override;
 
-        TimeSeriesOutput       &operator[](const std::string &key);
-        const TimeSeriesOutput &operator[](const std::string &key) const;
+        TimeSeriesOutput::ptr       &operator[](const std::string &key);
+        const TimeSeriesOutput::ptr &operator[](const std::string &key) const;
 
-        TimeSeriesOutput       &operator[](std::size_t ndx);
-        const TimeSeriesOutput &operator[](std::size_t ndx) const;
+        TimeSeriesOutput::ptr       &operator[](std::size_t ndx) override;
+        const TimeSeriesOutput::ptr &operator[](std::size_t ndx) const override;
 
         [[nodiscard]] bool all_valid() const override;
 
@@ -95,7 +95,7 @@ namespace hgraph
 
         bool contains(const std::string &key) const;
 
-        size_t size() const;
+        size_t size() const override;
 
       protected:
         friend TimeSeriesBundleOutputBuilder;
@@ -117,17 +117,17 @@ namespace hgraph
         std::vector<time_series_output_ptr> _ts_values;
     };
 
-    struct TimeSeriesBundleInput : TimeSeriesInput
+    struct TimeSeriesBundleInput : IndexedTimeSeriesInput
     {
         using ptr = nb::ref<TimeSeriesBundleInput>;
-        using TimeSeriesInput::TimeSeriesInput;
+        using IndexedTimeSeriesInput::IndexedTimeSeriesInput;
 
         // Define an iterator type for the unordered_map
         using iterator       = std::vector<TimeSeriesInput::ptr>::iterator;
         using const_iterator = std::vector<TimeSeriesInput::ptr>::const_iterator;
 
-        explicit TimeSeriesBundleInput(const node_ptr &parent, const TimeSeriesSchema::ptr &schema);
-        explicit TimeSeriesBundleInput(const TimeSeriesType::ptr &parent, const TimeSeriesSchema::ptr &schema);
+        explicit TimeSeriesBundleInput(const node_ptr &parent, TimeSeriesSchema::ptr schema);
+        explicit TimeSeriesBundleInput(const TimeSeriesType::ptr &parent, TimeSeriesSchema::ptr schema);
         TimeSeriesBundleInput(const TimeSeriesBundleInput &)            = default;
         TimeSeriesBundleInput(TimeSeriesBundleInput &&)                 = default;
         TimeSeriesBundleInput &operator=(const TimeSeriesBundleInput &) = default;
@@ -138,14 +138,14 @@ namespace hgraph
         [[nodiscard]] nb::object py_delta_value() const override;
 
         // Begin iterator
-        iterator       begin();
-        const_iterator begin() const;
+        iterator       begin() override;
+        const_iterator begin() const override;
 
         // End iterator
-        iterator       end();
-        const_iterator end() const;
+        iterator       end() override;
+        const_iterator end() const override;
 
-        size_t size() const;
+        size_t size() const override;
 
         // Retrieves valid keys
         std::vector<c_string_ref> keys() const;
@@ -163,12 +163,12 @@ namespace hgraph
         std::vector<std::pair<c_string_ref, time_series_input_ptr>> modified_items() const;
 
         // Access elements by key
-        TimeSeriesInput       &operator[](const std::string &key);
-        const TimeSeriesInput &operator[](const std::string &key) const;
+        TimeSeriesInput::ptr       &operator[](const std::string &key);
+        const TimeSeriesInput::ptr &operator[](const std::string &key) const;
 
         // Access elements by index
-        TimeSeriesInput       &operator[](size_t ndx);
-        const TimeSeriesInput &operator[](size_t ndx) const;
+        TimeSeriesInput::ptr       &operator[](size_t ndx) override;
+        const TimeSeriesInput::ptr &operator[](size_t ndx) const override;
 
         [[nodiscard]] bool          modified() const override;
         [[nodiscard]] bool          valid() const override;

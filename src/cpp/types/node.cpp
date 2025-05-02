@@ -485,15 +485,15 @@ namespace hgraph
         _check_all_valid_inputs.reserve(signature().valid_inputs.has_value() ? signature().valid_inputs->size()
                                                                              : signature().time_series_inputs->size());
         if (signature().valid_inputs.has_value()) {
-            for (const auto &key : std::views::all(*signature().valid_inputs)) { _check_all_valid_inputs.push_back(&input()[key]); }
+            for (const auto &key : std::views::all(*signature().valid_inputs)) { _check_all_valid_inputs.push_back(input()[key]); }
         } else {
             for (const auto &key : std::views::elements<0>(*signature().time_series_inputs)) {
-                _check_all_valid_inputs.push_back(&input()[key]);
+                _check_all_valid_inputs.push_back(input()[key]);
             }
         }
         if (signature().all_valid_inputs.has_value()) {
             _check_all_valid_inputs.reserve(signature().all_valid_inputs->size());
-            for (const auto &key : *signature().all_valid_inputs) { _check_all_valid_inputs.push_back(&input()[key]); }
+            for (const auto &key : *signature().all_valid_inputs) { _check_all_valid_inputs.push_back(input()[key]); }
         }
     }
 
@@ -654,7 +654,7 @@ namespace hgraph
                 // Apple does not yet support ranges::contains :(
                 if (!signature().active_inputs || (std::ranges::find(*signature().active_inputs, signature().args[i]) !=
                                                    std::ranges::end(*signature().active_inputs))) {
-                    input()[i].make_active();  // Assuming `make_active` is a method of the `TimeSeriesInput` type
+                    input()[i]->make_active();  // Assuming `make_active` is a method of the `TimeSeriesInput` type
                 }
             }
         }

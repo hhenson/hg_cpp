@@ -145,6 +145,27 @@ namespace hgraph
         engine_time_t                          _last_modified_time{MIN_DT};
     };
 
+    struct IndexedTimeSeriesOutput : TimeSeriesOutput
+    {
+        using ptr = nb::ref<IndexedTimeSeriesOutput>;
+        using TimeSeriesOutput::TimeSeriesOutput;
+        using collection_type = std::vector<TimeSeriesOutput::ptr>;
+        using iterator        = collection_type::iterator;
+        using const_iterator  = collection_type::const_iterator;
+
+        virtual TimeSeriesOutput::ptr &operator[](size_t ndx) = 0;
+        virtual const TimeSeriesOutput::ptr &operator[](std::size_t ndx) const = 0;
+
+        virtual iterator       begin()       = 0;
+        virtual const_iterator begin() const = 0;
+        virtual iterator       end()         = 0;
+        virtual const_iterator end() const   = 0;
+
+        virtual size_t size() const = 0;
+
+        static void register_with_nanobind(nb::module_ &m);
+    };
+
     struct HGRAPH_EXPORT TimeSeriesInput : TimeSeriesType, Notifiable
     {
         using ptr = nb::ref<TimeSeriesInput>;
@@ -233,10 +254,12 @@ namespace hgraph
     {
         using ptr = nb::ref<IndexedTimeSeriesInput>;
         using TimeSeriesInput::TimeSeriesInput;
-        using iterator       = std::vector<TimeSeriesInput::ptr>::iterator;
-        using const_iterator = std::vector<TimeSeriesInput::ptr>::const_iterator;
+        using collection_type = std::vector<TimeSeriesInput::ptr>;
+        using iterator       = collection_type::iterator;
+        using const_iterator = collection_type::const_iterator;
 
         virtual TimeSeriesInput::ptr &operator[](size_t ndx) = 0;
+        virtual const TimeSeriesInput::ptr &operator[](size_t ndx) const = 0;
 
         virtual iterator       begin()       = 0;
         virtual const_iterator begin() const = 0;
@@ -244,6 +267,8 @@ namespace hgraph
         virtual const_iterator end() const   = 0;
 
         virtual size_t size() const = 0;
+
+        static void register_with_nanobind(nb::module_ &m);
     };
 }  // namespace hgraph
 

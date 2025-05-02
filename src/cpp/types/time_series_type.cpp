@@ -318,6 +318,19 @@ namespace hgraph
         return *dynamic_cast<TimeSeriesOutput *>(_parent_time_series().get());
     }
 
+    void IndexedTimeSeriesOutput::register_with_nanobind(nb::module_ &m) {
+        nb::class_<IndexedTimeSeriesOutput, TimeSeriesOutput>(m, "IndexedTimeSeriesOutput")
+            .def(
+                "__getitem__", [](const IndexedTimeSeriesOutput &self, size_t idx) { return self[idx]; }, "index"_a)
+            .def(
+                "__iter__",
+                [](const IndexedTimeSeriesOutput &self) {
+                    nb::make_iterator(nb::type<collection_type>(), "iterator", self.begin(), self.end());
+                },
+                nb::keep_alive<0, 1>())
+            .def("__len__", &IndexedTimeSeriesOutput::size);
+    }
+
     bool TimeSeriesInput::modified() const { return _output != nullptr && (_output->modified() || sampled()); }
 
     bool TimeSeriesInput::valid() const { return bound() && _output != nullptr && _output->valid(); }
@@ -326,6 +339,19 @@ namespace hgraph
 
     engine_time_t TimeSeriesInput::last_modified_time() const {
         return bound() ? std::max(_output->last_modified_time(), _sample_time) : MIN_DT;
+    }
+
+    void IndexedTimeSeriesInput::register_with_nanobind(nb::module_ &m) {
+        nb::class_<IndexedTimeSeriesInput, TimeSeriesInput>(m, "IndexedTimeSeriesInput")
+            .def(
+                "__getitem__", [](const IndexedTimeSeriesInput &self, size_t index) { return self[index]; }, "index"_a)
+            .def(
+                "__iter__",
+                [](const IndexedTimeSeriesInput &self) {
+                    return nb::make_iterator(nb::type<collection_type>(), "iterator", self.begin(), self.end());
+                },
+                nb::keep_alive<0, 1>())
+            .def("__len__", &IndexedTimeSeriesInput::size);
     }
 
 }  // namespace hgraph
