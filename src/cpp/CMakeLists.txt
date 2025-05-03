@@ -24,6 +24,7 @@ set(HGRAPH_SOURCES
         types/time_series_type.cpp
         types/traits.cpp
         types/ts.cpp
+        types/ts_indexed.cpp
         types/tsb.cpp
         types/tsl.cpp
 

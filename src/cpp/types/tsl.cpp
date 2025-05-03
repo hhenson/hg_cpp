@@ -26,11 +26,9 @@ namespace hgraph
     void TimeSeriesListOutput::apply_result(nb::handle value) {
         if (value.is_none()) { return; }
         if (nb::isinstance<nb::tuple>(value) || nb::isinstance<nb::list>(value)) {
-            for (size_t i=0, l=nb::len(value); i<l; ++i) {
+            for (size_t i = 0, l = nb::len(value); i < l; ++i) {
                 const auto &v{value[i]};
-                if (v.is_valid() && !v.is_none()) {
-                    (*this)[i]->apply_result(v);
-                }
+                if (v.is_valid() && !v.is_none()) { (*this)[i]->apply_result(v); }
             }
         } else if (nb::isinstance<nb::dict>(value)) {
             for (auto [key, val] : nb::cast<nb::dict>(value)) {
@@ -41,13 +39,15 @@ namespace hgraph
         }
     }
 
-    IndexedTimeSeriesOutput::iterator TimeSeriesListOutput::begin() { return ts_values().begin(); }
+    IndexedTimeSeriesOutput::value_iterator TimeSeriesListOutput::begin() { return ts_values().begin(); }
 
-    IndexedTimeSeriesOutput::const_iterator TimeSeriesListOutput::begin() const {
+    IndexedTimeSeriesOutput::value_iterator TimeSeriesListOutput::end() { return ts_values().end(); }
+
+    IndexedTimeSeriesOutput::value_const_iterator TimeSeriesListOutput::begin() const {
         return const_cast<TimeSeriesListOutput *>(this)->begin();
     }
 
-    IndexedTimeSeriesOutput::const_iterator TimeSeriesListOutput::end() const {
+    IndexedTimeSeriesOutput::value_const_iterator TimeSeriesListOutput::end() const {
         return const_cast<TimeSeriesListOutput *>(this)->end();
     }
 
@@ -93,8 +93,6 @@ namespace hgraph
         return items_with_constraint([](const TimeSeriesOutput &ts) { return ts.modified(); });
     }
 
-    IndexedTimeSeriesOutput::iterator TimeSeriesListOutput::end() { return ts_values().end(); }
-
     void TimeSeriesListOutput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesListOutput, IndexedTimeSeriesOutput>(m, "TimeSeriesListOutput")
             .def(nb::init<const node_ptr &>(), "owning_node"_a)
@@ -113,7 +111,26 @@ namespace hgraph
             .def("modified_keys", &TimeSeriesListOutput::modified_keys)
             .def("modified_items",
                  static_cast<key_value_collection_type (TimeSeriesListOutput::*)() const>(&TimeSeriesListOutput::modified_items));
+    }
 
+    void TimeSeriesListInput::register_with_nanobind(nb::module_ &m) {
+        nb::class_<TimeSeriesListInput, IndexedTimeSeriesInput>(m, "TimeSeriesListInput")
+            .def(nb::init<const node_ptr &>(), "owning_node"_a)
+            .def(nb::init<const TimeSeriesType::ptr &>(), "parent_input"_a)
+            // .def(
+            //     "__iter__",
+            //     [](const TimeSeriesListInput &self) {
+            //         nb::make_iterator(nb::type<collection_type>(), "iterator", self.begin(), self.end());
+            //     },
+            //     nb::keep_alive<0, 1>())
+            // .def("keys", &TimeSeriesListInput::keys)
+            // .def("items", static_cast<key_value_collection_type (TimeSeriesListInput::*)() const>(&TimeSeriesListInput::items))
+            // .def("valid_keys", &TimeSeriesListInput::valid_keys)
+            // .def("valid_items",
+            //      static_cast<key_value_collection_type (TimeSeriesListInput::*)() const>(&TimeSeriesListInput::valid_items))
+            // .def("modified_keys", &TimeSeriesListInput::modified_keys)
+            // .def("modified_items",
+            //      static_cast<key_value_collection_type (TimeSeriesListInput::*)() const>(&TimeSeriesListInput::modified_items))
         ;
     }
 }  // namespace hgraph

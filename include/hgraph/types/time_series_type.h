@@ -76,7 +76,7 @@ namespace hgraph
         static void register_with_nanobind(nb::module_ &m);
 
       protected:
-        const ptr &_parent_time_series() const;
+        ptr &_parent_time_series() const;
         ptr       &_parent_time_series();
         bool       _has_parent_time_series() const;
         void       _set_parent_time_series(TimeSeriesType *ts);
@@ -144,62 +144,6 @@ namespace hgraph
       private:
         ReferenceCountSubscriber<Notifiable *> _subscribers{};
         engine_time_t                          _last_modified_time{MIN_DT};
-    };
-
-    struct IndexedTimeSeriesOutput : TimeSeriesOutput
-    {
-        using ptr = nb::ref<IndexedTimeSeriesOutput>;
-        using TimeSeriesOutput::TimeSeriesOutput;
-        using collection_type            = std::vector<TimeSeriesOutput::ptr>;
-        using enumerated_collection_type = std::vector<std::pair<size_t, TimeSeriesOutput::ptr>>;
-        using index_collection_type      = std::vector<size_t>;
-        using iterator                   = collection_type::iterator;
-        using const_iterator             = collection_type::const_iterator;
-
-        [[nodiscard]] bool all_valid() const override;
-        void               invalidate() override;
-
-        void copy_from_output(TimeSeriesOutput &output) override;
-
-        void copy_from_input(TimeSeriesInput &input) override;
-
-        [[nodiscard]] TimeSeriesOutput::ptr       &operator[](size_t ndx);
-        [[nodiscard]] const TimeSeriesOutput::ptr &operator[](std::size_t ndx) const;
-
-        // Retrieves valid values
-        [[nodiscard]] collection_type values();
-        [[nodiscard]] collection_type values() const;
-
-        [[nodiscard]] collection_type valid_values();
-        [[nodiscard]] collection_type valid_values() const;
-
-        [[nodiscard]] collection_type modified_values();
-        [[nodiscard]] collection_type modified_values() const;
-
-        [[nodiscard]] size_t size() const;
-
-        void clear() override;
-
-        static void register_with_nanobind(nb::module_ &m);
-
-      protected:
-        [[nodiscard]] std::vector<time_series_output_ptr>       &ts_values();
-        [[nodiscard]] const std::vector<time_series_output_ptr> &ts_values() const;
-
-        void set_outputs(std::vector<time_series_output_ptr> ts_values);
-        // Retrieves index of time-series values that match the constraint provided
-        [[nodiscard]] index_collection_type
-        index_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
-
-        // Retrieves the values that match the constraint function provided.
-        [[nodiscard]] collection_type values_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
-
-        // Retrieves the pair of ndx and value that match the constraints provided.
-        [[nodiscard]] enumerated_collection_type
-        items_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
-
-      private:
-        std::vector<time_series_output_ptr> _ts_values;
     };
 
     struct HGRAPH_EXPORT TimeSeriesInput : TimeSeriesType, Notifiable
@@ -286,26 +230,7 @@ namespace hgraph
         engine_time_t          _notify_time{MIN_DT};
     };
 
-    struct IndexedTimeSeriesInput : TimeSeriesInput
-    {
-        using ptr = nb::ref<IndexedTimeSeriesInput>;
-        using TimeSeriesInput::TimeSeriesInput;
-        using collection_type = std::vector<TimeSeriesInput::ptr>;
-        using iterator        = collection_type::iterator;
-        using const_iterator  = collection_type::const_iterator;
 
-        virtual TimeSeriesInput::ptr       &operator[](size_t ndx)       = 0;
-        virtual const TimeSeriesInput::ptr &operator[](size_t ndx) const = 0;
-
-        virtual iterator       begin()       = 0;
-        virtual const_iterator begin() const = 0;
-        virtual iterator       end()         = 0;
-        virtual const_iterator end() const   = 0;
-
-        virtual size_t size() const = 0;
-
-        static void register_with_nanobind(nb::module_ &m);
-    };
 }  // namespace hgraph
 
 #endif  // TIME_SERIES_TYPE_H

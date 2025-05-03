@@ -3,7 +3,7 @@
 #include <fmt/ranges.h>
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/ref.h>
-#include <hgraph/types/time_series_type.h>
+#include <hgraph/types/ts_indexed.h>
 #include <algorithm>
 
 namespace hgraph
@@ -57,7 +57,7 @@ namespace hgraph
                             std::vector<ptr> items_list;
                             auto             ts_ndx{dynamic_cast<IndexedTimeSeriesInput *>(ts_input.get())};
                             items_list.reserve(ts_ndx->size());
-                            for (auto &ts_ptr : *ts_ndx) {
+                            for (auto &ts_ptr : ts_ndx->values()) {
                                 items_list.emplace_back(dynamic_cast<TimeSeriesReferenceInput *>(ts_ptr.get())->value());
                             }
                             return make(items_list);

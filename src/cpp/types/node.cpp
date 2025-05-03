@@ -751,7 +751,7 @@ namespace hgraph
                     bool any_modified = false;
                     if (signature().time_series_inputs.has_value()) {
                         // This is a bit expensive, but hopefully fast enough
-                        for (const auto &input_ : input()) {
+                        for (const auto &input_ : input().values()) {
                             if (input_->modified() && input_->active()) {
                                 any_modified = true;
                                 break;

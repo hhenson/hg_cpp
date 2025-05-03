@@ -22,7 +22,7 @@ namespace hgraph
             .def("re_parent", static_cast<void (TimeSeriesType::*)(Node::ptr)>(&TimeSeriesType::re_parent));
     }
 
-    const TimeSeriesType::ptr &TimeSeriesType::_parent_time_series() const {
+    TimeSeriesType::ptr &TimeSeriesType::_parent_time_series() const {
         return const_cast<TimeSeriesType *>(this)->_parent_time_series();
     }
 
@@ -72,8 +72,8 @@ namespace hgraph
     const Node &TimeSeriesType::_owning_node() const {
         if (_parent_ts_or_node.has_value()) {
             return std::visit(
-                [](auto &&value) -> const Node & {
-                    using T = std::decay_t<decltype(value)>;  // Get the actual type
+                []<typename T_>(T_ &&value) -> const Node & {
+                    using T = std::decay_t<T_>;  // Get the actual type
                     if constexpr (std::is_same_v<T, TimeSeriesType::ptr>) {
                         return (*value).owning_node();
                     } else if constexpr (std::is_same_v<T, Node::ptr>) {
@@ -97,7 +97,7 @@ namespace hgraph
     const Node &TimeSeriesType::owning_node() const { return _owning_node(); }
 
     TimeSeriesInput::ptr TimeSeriesInput::parent_input() const {
-        return const_cast<TimeSeriesInput *>(static_cast<const TimeSeriesInput *>(_parent_time_series().get()));
+        return static_cast<TimeSeriesInput *>(_parent_time_series().get()); // NOLINT(*-pro-type-static-cast-downcast)
     }
 
     bool TimeSeriesInput::has_parent_input() const { return _has_parent_time_series(); }
@@ -105,8 +105,8 @@ namespace hgraph
     bool TimeSeriesInput::bound() const { return _output.get() != nullptr; }
 
     bool TimeSeriesInput::has_peer() const {
-        // By default, we assume that if there is an output then we are peered.
-        // This is not always True, but is a good general assumption.
+        // By default, we assume that if there is an output, then we are peered.
+        // This is not always True but is a good general assumption.
         return _output.get() != nullptr;
     }
 
@@ -116,8 +116,7 @@ namespace hgraph
 
     bool TimeSeriesInput::bind_output(time_series_output_ptr value) {
         bool peer;
-        auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(value.get());
-        if (ref_output) {  // Is a TimeseriesReferenceOutput
+        if (auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(value.get())) {  // Is a TimeseriesReferenceOutput
             if (ref_output->valid()) { ref_output->value()->bind_input(*this); }
             ref_output->observe_reference(this);
             _reference_output = ref_output;
@@ -166,7 +165,7 @@ namespace hgraph
                                                       : static_cast<Notifiable *>(&owning_node()));
                 if (output()->valid() && output()->modified()) {
                     notify(output()->last_modified_time());
-                    return;  // If the output is modified we do not need to check if sampled
+                    return;  // If the output is modified, we do not need to check if sampled
                 }
             }
 
@@ -225,7 +224,7 @@ namespace hgraph
         return true;
     }
 
-    void TimeSeriesInput::notify(engine_time_t modified_time) {
+    auto TimeSeriesInput::notify(engine_time_t modified_time) -> void { // NOLINT(*-no-recursion)
         if (_notify_time != modified_time) {
             _notify_time = modified_time;
             if (has_parent_input()) {
@@ -243,7 +242,7 @@ namespace hgraph
         _output = nullptr;
     }
 
-    void TimeSeriesInput::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) { notify(modified_time); }
+    void TimeSeriesInput::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) { notify(modified_time); } // NOLINT(*-no-recursion)
 
     void TimeSeriesInput::set_sample_time(engine_time_t sample_time) { _sample_time = sample_time; }
 
@@ -258,7 +257,7 @@ namespace hgraph
     }
 
     TimeSeriesOutput::ptr TimeSeriesOutput::parent_output() const {
-        return const_cast<TimeSeriesOutput *>(static_cast<const TimeSeriesOutput *>(_parent_time_series().get()));
+        return static_cast<TimeSeriesOutput *>(_parent_time_series().get()); // NOLINT(*-pro-type-static-cast-downcast)
     }
 
     bool TimeSeriesOutput::has_parent_output() const { return _has_parent_time_series(); }
@@ -292,7 +291,7 @@ namespace hgraph
         }
     }
 
-    void TimeSeriesOutput::mark_modified(engine_time_t modified_time) {
+    void TimeSeriesOutput::mark_modified(engine_time_t modified_time) { // NOLINT(*-no-recursion)
         if (_last_modified_time < modified_time) {
             _last_modified_time = modified_time;
             if (has_parent_output()) { parent_output()->mark_child_modified(modified_time); }
@@ -300,14 +299,14 @@ namespace hgraph
         }
     }
 
-    void TimeSeriesOutput::mark_child_modified(engine_time_t modified_time) { mark_modified(modified_time); }
+    void TimeSeriesOutput::mark_child_modified(engine_time_t modified_time) { mark_modified(modified_time); } // NOLINT(*-no-recursion)
 
     void TimeSeriesOutput::subscribe(Notifiable *notifiable) { _subscribers.subscribe(notifiable); }
 
     void TimeSeriesOutput::un_subscribe(Notifiable *notifiable) { _subscribers.un_subscribe(notifiable); }
 
-    void TimeSeriesOutput::_notify(engine_time_t modfied_time) {
-        _subscribers.apply([modfied_time](Notifiable *notifiable) { notifiable->notify(modfied_time); });
+    void TimeSeriesOutput::_notify(engine_time_t modified_time) {
+        _subscribers.apply([modified_time](Notifiable *notifiable) { notifiable->notify(modified_time); });
     }
 
     const TimeSeriesOutput &TimeSeriesOutput::_time_series_output() const {
@@ -318,132 +317,6 @@ namespace hgraph
         return *dynamic_cast<TimeSeriesOutput *>(_parent_time_series().get());
     }
 
-    bool IndexedTimeSeriesOutput::all_valid() const {
-        return valid() && std::ranges::all_of(_ts_values, [](const auto &ts) { return ts->valid(); });
-    }
-
-    void IndexedTimeSeriesOutput::invalidate() {
-        if (valid()) {
-            for (auto &v : _ts_values) { v->invalidate(); }
-        }
-        mark_invalid();
-    }
-
-    void IndexedTimeSeriesOutput::copy_from_output(TimeSeriesOutput &output) {
-        if (auto *ndx_output = dynamic_cast<IndexedTimeSeriesOutput *>(&output); ndx_output != nullptr) {
-            if (ndx_output->size() == size()) {
-                for (size_t i = 0; i < _ts_values.size(); ++i) { _ts_values[i]->copy_from_output(*ndx_output->_ts_values[i]); }
-            } else {
-                // We could do a full check, but that should be over-kill each time and in theory the wiring should ensure
-                //  we don't do that, but this should be a quick sanity check.
-                //  Simple validation at this level to ensure they are at least size compatible
-                throw std::runtime_error(std::format("Incorrect shape provided to copy_from_output, expected {} items got {}",
-                                                     size(), ndx_output->size()));
-            }
-        } else {
-            throw std::invalid_argument(std::format("Expected IndexedTimeSeriesOutput, got {}", typeid(output).name()));
-        }
-    }
-
-    void IndexedTimeSeriesOutput::copy_from_input(TimeSeriesInput &input) {
-        if (auto *ndx_inputs = dynamic_cast<IndexedTimeSeriesInput *>(&input); ndx_inputs != nullptr) {
-            if (ndx_inputs->size() == size()) {
-                for (size_t i = 0; i < _ts_values.size(); ++i) { _ts_values[i]->copy_from_input(ndx_inputs[i]); }
-            } else {
-                // Simple validation at this level to ensure they are at least size compatible
-                throw std::runtime_error(std::format("Incorrect shape provided to copy_from_input, expected {} items got {}",
-                                                     size(), ndx_inputs->size()));
-            }
-        } else {
-            throw std::invalid_argument(std::format("Expected TimeSeriesBundleOutput, got {}", typeid(input).name()));
-        }
-    }
-
-    TimeSeriesOutput::ptr &IndexedTimeSeriesOutput::operator[](size_t ndx) { return _ts_values.at(ndx); }
-
-    const TimeSeriesOutput::ptr &IndexedTimeSeriesOutput::operator[](std::size_t ndx) const {
-        return const_cast<IndexedTimeSeriesOutput *>(this)->operator[](ndx);
-    }
-
-    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::values() { return _ts_values; }
-
-    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::values() const {
-        return const_cast<IndexedTimeSeriesOutput *>(this)->values();
-    }
-
-    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::valid_values() {
-        return values_with_constraint([](const TimeSeriesOutput &ts) { return ts.valid(); });
-    }
-
-    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::valid_values() const {
-        return const_cast<IndexedTimeSeriesOutput *>(this)->valid_values();
-    }
-
-    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::modified_values() {
-        return values_with_constraint([](const TimeSeriesOutput &ts) { return ts.modified(); });
-    }
-
-    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::modified_values() const {
-        return const_cast<IndexedTimeSeriesOutput *>(this)->modified_values();
-    }
-
-    size_t IndexedTimeSeriesOutput::size() const { return _ts_values.size(); }
-
-    void IndexedTimeSeriesOutput::clear() {
-        for (auto &v : _ts_values) { v->clear(); }
-    }
-
-    void IndexedTimeSeriesOutput::register_with_nanobind(nb::module_ &m) {
-        nb::class_<IndexedTimeSeriesOutput, TimeSeriesOutput>(m, "IndexedTimeSeriesOutput")
-            .def(
-                "__getitem__", [](const IndexedTimeSeriesOutput &self, size_t idx) { return self[idx]; }, "index"_a)
-            .def("values", static_cast<collection_type (IndexedTimeSeriesOutput::*)() const>(&IndexedTimeSeriesOutput::values))
-            .def("valid_values",
-                 static_cast<collection_type (IndexedTimeSeriesOutput::*)() const>(&IndexedTimeSeriesOutput::valid_values))
-            .def("modified_values",
-                 static_cast<collection_type (IndexedTimeSeriesOutput::*)() const>(&IndexedTimeSeriesOutput::modified_values))
-            .def("__len__", &IndexedTimeSeriesOutput::size)
-            .def("copy_from_output", &IndexedTimeSeriesOutput::copy_from_output, "output"_a)
-            .def("copy_from_input", &IndexedTimeSeriesOutput::copy_from_input, "input"_a);
-    }
-
-    std::vector<time_series_output_ptr>       &IndexedTimeSeriesOutput::ts_values() { return _ts_values; }
-    const std::vector<time_series_output_ptr> &IndexedTimeSeriesOutput::ts_values() const { return _ts_values; }
-
-    void IndexedTimeSeriesOutput::set_outputs(std::vector<time_series_output_ptr> ts_values) { _ts_values = std::move(ts_values); }
-
-    IndexedTimeSeriesOutput::index_collection_type
-    IndexedTimeSeriesOutput::index_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const {
-        index_collection_type result;
-        result.reserve(_ts_values.size());
-        for (size_t i = 0, l = _ts_values.size(); i < l; i++) {
-            auto &ts{_ts_values[i]};
-            if (constraint(*ts)) { result.emplace_back(i); }
-        }
-        return result;
-    }
-
-    IndexedTimeSeriesOutput::collection_type
-    IndexedTimeSeriesOutput::values_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const {
-        collection_type result;
-        result.reserve(_ts_values.size());
-        for (const auto &_ts_value : _ts_values) {
-            auto &ts{_ts_value};
-            if (constraint(*ts)) { result.emplace_back(ts); }
-        }
-        return result;
-    }
-
-    IndexedTimeSeriesOutput::enumerated_collection_type
-    IndexedTimeSeriesOutput::items_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const {
-        enumerated_collection_type result;
-        result.reserve(_ts_values.size());
-        for (size_t i = 0, l = _ts_values.size(); i < l; i++) {
-            auto &ts{_ts_values[i]};
-            if (constraint(*ts)) { result.emplace_back(i, ts); }
-        }
-        return result;
-    }
 
     bool TimeSeriesInput::modified() const { return _output != nullptr && (_output->modified() || sampled()); }
 
@@ -455,17 +328,5 @@ namespace hgraph
         return bound() ? std::max(_output->last_modified_time(), _sample_time) : MIN_DT;
     }
 
-    void IndexedTimeSeriesInput::register_with_nanobind(nb::module_ &m) {
-        nb::class_<IndexedTimeSeriesInput, TimeSeriesInput>(m, "IndexedTimeSeriesInput")
-            .def(
-                "__getitem__", [](const IndexedTimeSeriesInput &self, size_t index) { return self[index]; }, "index"_a)
-            .def(
-                "__iter__",
-                [](const IndexedTimeSeriesInput &self) {
-                    return nb::make_iterator(nb::type<collection_type>(), "iterator", self.begin(), self.end());
-                },
-                nb::keep_alive<0, 1>())
-            .def("__len__", &IndexedTimeSeriesInput::size);
-    }
 
 }  // namespace hgraph

@@ -70,7 +70,7 @@ namespace hgraph
         inputs.reserve(input_builders.size());
         std::ranges::copy(input_builders | std::views::transform([&](auto &builder) { return builder->make_instance(input_); }),
                           std::back_inserter(inputs));
-        input->set_inputs(inputs);
+        input->set_ts_values(inputs);
         return input_;
     }
 }  // namespace hgraph

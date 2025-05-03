@@ -71,7 +71,7 @@ namespace hgraph
         outputs.reserve(output_builders.size());
         std::ranges::copy(output_builders | std::views::transform([&](auto &builder) { return builder->make_instance(output_); }),
                           std::back_inserter(outputs));
-        output->set_outputs(outputs);
+        output->set_ts_values(outputs);
         return output_;
     }
 
