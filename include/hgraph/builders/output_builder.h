@@ -3,9 +3,6 @@
 #define OUTPUT_BUILDER_H
 
 #include <hgraph/hgraph_forward_declarations.h>
-
-#include <hgraph/types/tsb.h>
-
 #include <hgraph/builders/builder.h>
 
 #include <hgraph/types/ref.h>
