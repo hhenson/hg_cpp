@@ -9,7 +9,7 @@
 
 namespace hgraph
 {
- template <typename T_TS>
+    template <typename T_TS>
     concept TimeSeries = std::is_same_v<T_TS, TimeSeriesInput> || std::is_same_v<T_TS, TimeSeriesOutput>;
 
     template <typename T_TS>
@@ -108,8 +108,25 @@ namespace hgraph
     {
         using IndexedTimeSeries<TimeSeriesInput>::IndexedTimeSeries;
 
-        static void register_with_nanobind(nb::module_ &m);
-    };
-}
+        [[nodiscard]] bool modified() const override;
+        [[nodiscard]] bool valid() const override;
 
-#endif //TS_INDEXED_H
+        [[nodiscard]] engine_time_t last_modified_time() const override;
+
+        [[nodiscard]] bool bound() const override;
+
+        [[nodiscard]] bool active() const override;
+        void               make_active() override;
+        void               make_passive() override;
+
+        void set_subscribe_method(bool subscribe_input) override;
+
+        static void register_with_nanobind(nb::module_ &m);
+
+    protected:
+        bool do_bind_output(time_series_output_ptr value) override;
+        void do_un_bind_output() override;
+    };
+}  // namespace hgraph
+
+#endif  // TS_INDEXED_H

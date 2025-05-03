@@ -87,7 +87,7 @@ namespace hgraph
         friend TimeSeriesBundleOutputBuilder;
 
         // Retrieves valid keys
-        [[nodiscard]] std::vector<c_string_ref>
+        [[nodiscard]] key_collection_type
         keys_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
 
         // Retrieves valid items
@@ -141,15 +141,6 @@ namespace hgraph
         TimeSeriesInput::ptr       &operator[](const std::string &key);
         const TimeSeriesInput::ptr &operator[](const std::string &key) const;
 
-
-        [[nodiscard]] bool          modified() const override;
-        [[nodiscard]] bool          valid() const override;
-        [[nodiscard]] engine_time_t last_modified_time() const override;
-        [[nodiscard]] bool          bound() const override;
-        [[nodiscard]] bool          active() const override;
-        void                        make_active() override;
-        void                        make_passive() override;
-
         // Check if a key exists
         bool contains(const std::string &key) const;
 
@@ -158,11 +149,7 @@ namespace hgraph
 
         const TimeSeriesSchema &schema() const;
 
-        void set_subscribe_method(bool subscribe_input) override;
-
       protected:
-        bool do_bind_output(time_series_output_ptr value) override;
-        void do_un_bind_output() override;
         using IndexedTimeSeriesInput::set_ts_values;
         friend TimeSeriesBundleInputBuilder;
 

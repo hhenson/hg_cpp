@@ -117,7 +117,7 @@ namespace hgraph
                                        &TimeSeriesBundleOutput::modified_items));
     }
 
-    std::vector<c_string_ref>
+    TimeSeriesBundleInput::key_collection_type
     TimeSeriesBundleOutput::keys_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const {
         auto                      index_results = index_with_constraint(constraint);
         std::vector<c_string_ref> result;
@@ -250,73 +250,6 @@ namespace hgraph
 
     const TimeSeriesInput::ptr &TimeSeriesBundleInput::operator[](const std::string &key) const {
         return const_cast<TimeSeriesBundleInput *>(this)->operator[](key);
-    }
-
-    bool TimeSeriesBundleInput::modified() const {
-        if (has_peer()) { return TimeSeriesInput::modified(); }
-        return std::ranges::any_of(ts_values(), [](const time_series_input_ptr &ts) { return ts->modified(); });
-    }
-
-    bool TimeSeriesBundleInput::valid() const {
-        if (has_peer()) { return TimeSeriesInput::valid(); }
-        return std::ranges::any_of(ts_values(), [](const time_series_input_ptr &ts) { return ts->valid(); });
-    }
-
-    engine_time_t TimeSeriesBundleInput::last_modified_time() const {
-        if (has_peer()) { return TimeSeriesInput::last_modified_time(); }
-        if (ts_values().empty()) { return MIN_DT; }
-        return std::ranges::max(ts_values() |
-                                std::views::transform([](const time_series_input_ptr &ts) { return ts->last_modified_time(); }));
-    }
-
-    bool TimeSeriesBundleInput::bound() const {
-        return TimeSeriesInput::bound() ||
-               std::ranges::any_of(ts_values(), [](const time_series_input_ptr &ts) { return ts->bound(); });
-    }
-
-    bool TimeSeriesBundleInput::active() const {
-        if (has_peer()) { return TimeSeriesInput::active(); }
-        return std::ranges::any_of(ts_values(), [](const time_series_input_ptr &ts) { return ts->active(); });
-    }
-
-    void TimeSeriesBundleInput::make_active() {
-        if (has_peer()) {
-            TimeSeriesInput::make_active();
-        } else {
-            for (auto &ts : ts_values()) { ts->make_active(); }
-        }
-    }
-
-    void TimeSeriesBundleInput::make_passive() {
-        if (has_peer()) {
-            TimeSeriesInput::make_passive();
-        } else {
-            for (auto &ts : ts_values()) { ts->make_passive(); }
-        }
-    }
-
-    void TimeSeriesBundleInput::set_subscribe_method(bool subscribe_input) {
-        TimeSeriesInput::set_subscribe_method(subscribe_input);
-
-        for (auto &ts : ts_values()) { ts->set_subscribe_method(subscribe_input); }
-    }
-
-    bool TimeSeriesBundleInput::do_bind_output(time_series_output_ptr value) {
-
-        auto output_bundle = dynamic_cast<TimeSeriesBundleOutput *>(value.get());
-        bool peer          = true;
-
-        if (output_bundle) {
-            for (size_t i = 0; i < ts_values().size(); ++i) { peer &= ts_values()[i]->bind_output((*output_bundle)[i]); }
-        }
-
-        TimeSeriesInput::do_bind_output(peer ? value : nullptr);
-        return peer;
-    }
-
-    void TimeSeriesBundleInput::do_un_bind_output() {
-        for (auto &ts : ts_values()) { ts->un_bind_output(); }
-        if (has_peer()) { TimeSeriesInput::do_un_bind_output(); }
     }
 
     bool TimeSeriesBundleInput::contains(const std::string &key) const {
