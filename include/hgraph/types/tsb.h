@@ -87,8 +87,7 @@ namespace hgraph
         }
 
         [[nodiscard]] const TimeSeriesSchema &schema() const { return *_schema; }
-        [[nodiscard]] size_t size() const { return _schema->keys().size(); }
-        [[nodiscard]] bool empty() const { return _schema->keys().empty(); }
+
 
         // Retrieves valid keys
         [[nodiscard]] key_collection_type keys() const { return {_schema->keys().begin(), _schema->keys().end()}; }
@@ -99,11 +98,12 @@ namespace hgraph
             return keys_with_constraint([](const ts_type &ts) -> bool { return ts.modified(); });
         }
 
+        using index_ts_type::size;
         // Retrieves valid items
         [[nodiscard]] key_value_collection_type items() {
             key_value_collection_type result;
-            result.reserve(size());
-            for (size_t i = 0; i < size(); ++i) { result.emplace_back(schema().keys()[i], operator[](i)); }
+            result.reserve(this->size());
+            for (size_t i = 0; i < this->size(); ++i) { result.emplace_back(schema().keys()[i], operator[](i)); }
             return result;
         }
         [[nodiscard]] key_value_collection_type items() const {

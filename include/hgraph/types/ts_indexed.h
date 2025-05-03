@@ -53,6 +53,7 @@ namespace hgraph
         }
 
         [[nodiscard]] size_t size() const { return _ts_values.size(); }
+        [[nodiscard]] bool   empty() const { return _ts_values.empty(); }
 
       protected:
         [[nodiscard]] collection_type       &ts_values() { return _ts_values; }

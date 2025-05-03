@@ -45,7 +45,7 @@ namespace hgraph
     }
 
     void TimeSeriesBundleOutput::register_with_nanobind(nb::module_ &m) {
-        nb::class_<TimeSeriesBundleOutput, TimeSeriesOutput>(m, "TimeSeriesBundleOutput")
+        nb::class_<TimeSeriesBundleOutput, IndexedTimeSeriesOutput>(m, "TimeSeriesBundleOutput")
             .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
             .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a)
             .def("__getitem__",
@@ -67,11 +67,13 @@ namespace hgraph
                  static_cast<key_value_collection_type (TimeSeriesBundleOutput::*)() const>(&TimeSeriesBundleOutput::valid_items))
             .def("modified_keys", &TimeSeriesBundleOutput::modified_keys)
             .def("modified_items", static_cast<key_value_collection_type (TimeSeriesBundleOutput::*)() const>(
-                                       &TimeSeriesBundleOutput::modified_items));
+                                       &TimeSeriesBundleOutput::modified_items))
+            .def_prop_ro("schema", &TimeSeriesBundleOutput::schema);
+        ;
     }
 
     void TimeSeriesBundleInput::register_with_nanobind(nb::module_ &m) {
-        nb::class_<TimeSeriesBundleInput, TimeSeriesInput>(m, "TimeSeriesBundleInput")
+        nb::class_<TimeSeriesBundleInput, IndexedTimeSeriesInput>(m, "TimeSeriesBundleInput")
             .def("__getitem__",
                  [](TimeSeriesBundleInput &self, const std::string &key) {
                      return self[key];  // Use operator[] overload with string
@@ -86,9 +88,12 @@ namespace hgraph
             .def("keys", &TimeSeriesBundleInput::keys)
             .def("items", static_cast<key_value_collection_type (TimeSeriesBundleInput::*)() const>(&TimeSeriesBundleInput::items))
             .def("modified_keys", &TimeSeriesBundleInput::modified_keys)
-            .def("modified_items", static_cast<key_value_collection_type (TimeSeriesBundleInput::*)() const>(&TimeSeriesBundleInput::modified_items))
+            .def("modified_items",
+                 static_cast<key_value_collection_type (TimeSeriesBundleInput::*)() const>(&TimeSeriesBundleInput::modified_items))
             .def("valid_keys", &TimeSeriesBundleInput::valid_keys)
-            .def("valid_items", static_cast<key_value_collection_type (TimeSeriesBundleInput::*)() const>(&TimeSeriesBundleInput::valid_items));
+            .def("valid_items",
+                 static_cast<key_value_collection_type (TimeSeriesBundleInput::*)() const>(&TimeSeriesBundleInput::valid_items))
+            .def_prop_ro("schema", &TimeSeriesBundleInput::schema);
     }
 
 }  // namespace hgraph

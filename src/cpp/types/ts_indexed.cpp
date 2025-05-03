@@ -58,6 +58,7 @@ namespace hgraph
             .def("modified_values",
                  static_cast<collection_type (IndexedTimeSeriesOutput::*)() const>(&IndexedTimeSeriesOutput::modified_values))
             .def("__len__", &IndexedTimeSeriesOutput::size)
+            .def_prop_ro("empty", &IndexedTimeSeriesOutput::empty)
             .def("copy_from_output", &IndexedTimeSeriesOutput::copy_from_output, "output"_a)
             .def("copy_from_input", &IndexedTimeSeriesOutput::copy_from_input, "input"_a);
     }
@@ -120,7 +121,8 @@ namespace hgraph
                  static_cast<collection_type (IndexedTimeSeriesInput::*)() const>(&IndexedTimeSeriesInput::valid_values))
             .def("modified_values",
                  static_cast<collection_type (IndexedTimeSeriesInput::*)() const>(&IndexedTimeSeriesInput::modified_values))
-            .def("__len__", &IndexedTimeSeriesInput::size);
+            .def("__len__", &IndexedTimeSeriesInput::size)
+            .def_prop_ro("empty", &IndexedTimeSeriesInput::empty);
     }
 
     bool IndexedTimeSeriesInput::do_bind_output(time_series_output_ptr value) {
