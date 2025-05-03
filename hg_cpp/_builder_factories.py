@@ -11,6 +11,10 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
         # Unfortunately the approach is really all or nothing, so either we can build it or we can't
         return {
             hgraph.HgTSTypeMetaData: lambda: _ts_input_builder_type_for(value_tp.value_scalar_tp)(),
+            hgraph.HgTSLTypeMetaData: lambda: _hgraph.InputBuilder_TSL(
+                self.make_input_builder(value_tp.value_tp),
+                value_tp.size_tp.py_type.SIZE
+            ),
             hgraph.HgTSBTypeMetaData: lambda: _hgraph.InputBuilder_TSB(
                 # TODO: Cache the schema
                 _hgraph.TimeSeriesSchema(keys=tuple(value_tp.bundle_schema_tp.meta_data_schema.keys()),
@@ -25,6 +29,10 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
     def make_output_builder(self, value_tp: hgraph.HgTimeSeriesTypeMetaData) -> hgraph.TSOutputBuilder:
         return {
             hgraph.HgTSTypeMetaData: lambda: _ts_output_builder_for_tp(value_tp.value_scalar_tp)(),
+            hgraph.HgTSLTypeMetaData: lambda: _hgraph.OutputBuilder_TSL(
+                self.make_output_builder(value_tp.value_tp),
+                value_tp.size_tp.py_type.SIZE
+            ),
             hgraph.HgTSBTypeMetaData: lambda: _hgraph.OutputBuilder_TSB(
                 # TODO: Cache the schema
                 schema=_hgraph.TimSeriesSchema(keys=value_tp.bundle_schema_tp.meta_data_schema.keys(),
