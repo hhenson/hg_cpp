@@ -5,6 +5,7 @@
 #ifndef TS_INDEXED_H
 #define TS_INDEXED_H
 
+#include <algorithm>
 #include <hgraph/types/time_series_type.h>
 
 namespace hgraph
