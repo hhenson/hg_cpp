@@ -36,6 +36,7 @@ namespace hgraph
         using bundle_type = TimeSeriesBundle<T_TS>;
         using ptr         = nb::ref<bundle_type>;
         using typename T_TS::index_ts_type;
+        using typename T_TS::ts_type;
 
         using key_collection_type     = std::vector<c_string_ref>;
         using raw_key_collection_type = std::vector<std::string>;
@@ -43,7 +44,7 @@ namespace hgraph
         using raw_key_const_iterator  = raw_key_collection_type::const_iterator;
         using key_iterator            = key_collection_type::iterator;
         using key_const_iterator      = key_collection_type::const_iterator;
-        using typename T_TS::ts_type;
+
         using key_value_collection_type = std::vector<std::pair<c_string_ref, typename ts_type::ptr>>;
 
         explicit TimeSeriesBundle(const node_ptr &parent, TimeSeriesSchema::ptr schema)

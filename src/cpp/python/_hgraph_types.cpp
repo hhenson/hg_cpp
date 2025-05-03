@@ -25,6 +25,7 @@ void export_types(nb::module_ &m) {
     IndexedTimeSeriesInput::register_with_nanobind(m);
 
     TimeSeriesListOutput::register_with_nanobind(m);
+    TimeSeriesListInput::register_with_nanobind(m);
 
     TimeSeriesBundleInput::register_with_nanobind(m);
     TimeSeriesBundleOutput::register_with_nanobind(m);
