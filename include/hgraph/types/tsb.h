@@ -29,142 +29,172 @@ namespace hgraph
         nb::object               _scalar_type;
     };
 
-    struct TimeSeriesBundleOutput : IndexedTimeSeriesOutput
+    template <typename T_TS>
+        requires IndexedTimeSeriesT<T_TS>
+    struct TimeSeriesBundle : T_TS
     {
-        using ptr = nb::ref<TimeSeriesBundleOutput>;
-        // Define key values and iterator
+        using bundle_type = TimeSeriesBundle<T_TS>;
+        using ptr         = nb::ref<bundle_type>;
+        using typename T_TS::index_ts_type;
+
         using key_collection_type     = std::vector<c_string_ref>;
         using raw_key_collection_type = std::vector<std::string>;
         using raw_key_iterator        = raw_key_collection_type::iterator;
         using raw_key_const_iterator  = raw_key_collection_type::const_iterator;
         using key_iterator            = key_collection_type::iterator;
         using key_const_iterator      = key_collection_type::const_iterator;
-        using key_value_collection_type = std::vector<std::pair<c_string_ref, time_series_output_ptr>>;
+        using typename T_TS::ts_type;
+        using key_value_collection_type = std::vector<std::pair<c_string_ref, typename ts_type::ptr>>;
 
-        explicit TimeSeriesBundleOutput(const node_ptr &parent, TimeSeriesSchema::ptr schema);
-        explicit TimeSeriesBundleOutput(const TimeSeriesType::ptr &parent, TimeSeriesSchema::ptr schema);
-        TimeSeriesBundleOutput(const TimeSeriesBundleOutput &)            = default;
-        TimeSeriesBundleOutput(TimeSeriesBundleOutput &&)                 = default;
-        TimeSeriesBundleOutput &operator=(const TimeSeriesBundleOutput &) = default;
-        TimeSeriesBundleOutput &operator=(TimeSeriesBundleOutput &&)      = default;
-        ~TimeSeriesBundleOutput() override                                = default;
+        explicit TimeSeriesBundle(const node_ptr &parent, TimeSeriesSchema::ptr schema)
+            : T_TS(parent), _schema{std::move(schema)} {}
+        explicit TimeSeriesBundle(const TimeSeriesType::ptr &parent, TimeSeriesSchema::ptr schema)
+            : T_TS(parent), _schema{std::move(schema)} {}
+        TimeSeriesBundle(const TimeSeriesBundle &)            = default;
+        TimeSeriesBundle(TimeSeriesBundle &&)                 = default;
+        TimeSeriesBundle &operator=(const TimeSeriesBundle &) = default;
+        TimeSeriesBundle &operator=(TimeSeriesBundle &&)      = default;
+        ~TimeSeriesBundle() override                          = default;
 
-        [[nodiscard]] nb::object py_value() const override;
+        [[nodiscard]] nb::object py_value() const override {
+            return py_value_with_constraint([](const ts_type &ts) { return ts.valid(); });
+        }
 
-        [[nodiscard]] nb::object py_delta_value() const override;
+        [[nodiscard]] nb::object py_delta_value() const override {
+            return py_value_with_constraint([](const ts_type &ts) { return ts.modified(); });
+        }
 
-        void apply_result(nb::handle value) override;
+        // Default iterator iterates over keys to keep this more consistent with Python (c.f. dict)
+        [[nodiscard]] raw_key_const_iterator begin() const { return _schema->keys().begin(); }
+        [[nodiscard]] raw_key_const_iterator end() const { return _schema->keys().end(); }
 
-        // Begin iterator
-        [[nodiscard]] raw_key_const_iterator begin() const;
-        // End iterator
-        [[nodiscard]] raw_key_const_iterator end() const;
+        using index_ts_type::operator[];
+        [[nodiscard]] ts_type::ptr &operator[](const std::string &key) {
+            // Return the value of the ts_bundle for the schema key instance.
+            auto it{std::ranges::find(_schema->keys(), key)};
+            if (it != _schema->keys().end()) {
+                size_t index{static_cast<size_t>(std::distance(_schema->keys().begin(), it))};
+                return this->operator[](index);
+            }
+            throw std::out_of_range("Key not found in TimeSeriesSchema");
+        }
+        [[nodiscard]] const ts_type::ptr &operator[](const std::string &key) const {
+            return const_cast<bundle_type *>(this)->operator[](key);
+        }
 
-        using IndexedTimeSeriesOutput::operator[];
-        [[nodiscard]] TimeSeriesOutput::ptr       &operator[](const std::string &key);
-        [[nodiscard]] const TimeSeriesOutput::ptr &operator[](const std::string &key) const;
+        [[nodiscard]] bool contains(const std::string &key) const {
+            return std::ranges::find(_schema->keys(), key) != _schema->keys().end();
+        }
 
-        [[nodiscard]] bool contains(const std::string &key) const;
+        [[nodiscard]] const TimeSeriesSchema &schema() const { return *_schema; }
+        [[nodiscard]] size_t size() const { return _schema->keys().size(); }
+        [[nodiscard]] bool empty() const { return _schema->keys().empty(); }
 
         // Retrieves valid keys
-        [[nodiscard]] key_collection_type keys() const;
-        [[nodiscard]] key_collection_type valid_keys() const;
-        [[nodiscard]] key_collection_type modified_keys() const;
+        [[nodiscard]] key_collection_type keys() const { return {_schema->keys().begin(), _schema->keys().end()}; }
+        [[nodiscard]] key_collection_type valid_keys() const {
+            return keys_with_constraint([](const ts_type &ts) -> bool { return ts.valid(); });
+        }
+        [[nodiscard]] key_collection_type modified_keys() const {
+            return keys_with_constraint([](const ts_type &ts) -> bool { return ts.modified(); });
+        }
 
         // Retrieves valid items
-        [[nodiscard]] key_value_collection_type items();
-        [[nodiscard]] key_value_collection_type items() const;
-        [[nodiscard]] key_value_collection_type valid_items();
-        [[nodiscard]] key_value_collection_type valid_items() const;
-        [[nodiscard]] key_value_collection_type modified_items();
-        [[nodiscard]] key_value_collection_type modified_items() const;
-
-        static void register_with_nanobind(nb::module_ &m);
-
-        [[nodiscard]] const TimeSeriesSchema &schema() const;
+        [[nodiscard]] key_value_collection_type items() {
+            key_value_collection_type result;
+            result.reserve(size());
+            for (size_t i = 0; i < size(); ++i) { result.emplace_back(schema().keys()[i], operator[](i)); }
+            return result;
+        }
+        [[nodiscard]] key_value_collection_type items() const {
+            return const_cast<bundle_type *>(this)->items();
+        }
+        [[nodiscard]] key_value_collection_type valid_items() {
+            auto index_result{this->items_with_constraint([](const ts_type &ts) -> bool { return ts.valid(); })};
+            key_value_collection_type result;
+            result.reserve(index_result.size());
+            for (auto &[ndx, ts] : index_result) { result.emplace_back(schema().keys()[ndx], ts); }
+            return result;
+        }
+        [[nodiscard]] key_value_collection_type valid_items() const {
+            return const_cast<bundle_type *>(this)->valid_items();
+        }
+        [[nodiscard]] key_value_collection_type modified_items() {
+            auto index_result{this->items_with_constraint([](const ts_type &ts) -> bool { return ts.modified(); })};
+            key_value_collection_type result;
+            result.reserve(index_result.size());
+            for (auto &[ndx, ts] : index_result) { result.emplace_back(schema().keys()[ndx], ts); }
+            return result;
+        }
+        [[nodiscard]] key_value_collection_type modified_items() const {
+            return const_cast<bundle_type *>(this)->modified_items();
+        }
 
       protected:
-        friend TimeSeriesBundleOutputBuilder;
+        using T_TS::ts_values;
+        using T_TS::index_with_constraint;
 
-        // Retrieves valid keys
+        nb::object py_value_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
+            nb::dict out;
+            for (size_t i = 0, l = ts_values().size(); i < l; ++i) {
+                if (auto ts{ts_values()[i]}; constraint(*ts)) { out[_schema->keys()[i].c_str()] = ts->py_value(); }
+            }
+
+            if (_schema->scalar_type().is_none()) { return out; }
+            return nb::cast<nb::object>(_schema->scalar_type()(**out));
+        }
+
+        // Retrieves keys that match the constraint
         [[nodiscard]] key_collection_type
-        keys_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
+        keys_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
+            auto                      index_results = index_with_constraint(constraint);
+            std::vector<c_string_ref> result;
+            result.reserve(index_results.size());
+            for (auto i : index_results) { result.emplace_back(_schema->keys()[i]); }
+            return result;
+        }
 
-        // Retrieves valid items
+        // Retrieves the items that match the constraint
         [[nodiscard]] key_value_collection_type
-        key_value_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
+        key_value_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
+            auto                      index_results = items_with_constraint(constraint);
+            key_value_collection_type result;
+            result.reserve(index_results.size());
+            for (auto &[ndx, ts] : index_results) { result.emplace_back(_schema->keys()[ndx], ts); }
+            return result;
+        }
 
       private:
         TimeSeriesSchema::ptr _schema;
     };
 
-    struct TimeSeriesBundleInput : IndexedTimeSeriesInput
+    struct TimeSeriesBundleOutput : TimeSeriesBundle<IndexedTimeSeriesOutput>
+    {
+        using ptr = nb::ref<TimeSeriesBundleOutput>;
+        using bundle_type::TimeSeriesBundle;
+
+        void apply_result(nb::handle value) override;
+
+        static void register_with_nanobind(nb::module_ &m);
+
+      protected:
+        using bundle_type::set_ts_values;
+        friend TimeSeriesBundleOutputBuilder;
+
+    };
+
+    struct TimeSeriesBundleInput : TimeSeriesBundle<IndexedTimeSeriesInput>
     {
         using ptr = nb::ref<TimeSeriesBundleInput>;
-        using IndexedTimeSeriesInput::IndexedTimeSeriesInput;
-
-        using key_collection_type     = std::vector<c_string_ref>;
-        using raw_key_collection_type = std::vector<std::string>;
-        using raw_key_iterator        = raw_key_collection_type::iterator;
-        using raw_key_const_iterator  = raw_key_collection_type::const_iterator;
-        using key_iterator            = key_collection_type::iterator;
-        using key_const_iterator      = key_collection_type::const_iterator;
-        using key_value_collection_type = std::vector<std::pair<c_string_ref, time_series_output_ptr>>;
-
-        explicit TimeSeriesBundleInput(const node_ptr &parent, TimeSeriesSchema::ptr schema);
-        explicit TimeSeriesBundleInput(const TimeSeriesType::ptr &parent, TimeSeriesSchema::ptr schema);
-        TimeSeriesBundleInput(const TimeSeriesBundleInput &)            = default;
-        TimeSeriesBundleInput(TimeSeriesBundleInput &&)                 = default;
-        TimeSeriesBundleInput &operator=(const TimeSeriesBundleInput &) = default;
-        TimeSeriesBundleInput &operator=(TimeSeriesBundleInput &&)      = default;
-        ~TimeSeriesBundleInput() override                               = default;
-
-        [[nodiscard]] nb::object py_value() const override;
-        [[nodiscard]] nb::object py_delta_value() const override;
-
-        // Generic iterator is a key iterator
-        raw_key_const_iterator begin() const;
-        raw_key_const_iterator end() const;
-
-        // Retrieves valid keys
-        std::vector<c_string_ref> keys() const;
-        std::vector<c_string_ref> valid_keys() const;
-        std::vector<c_string_ref> modified_keys() const;
-
-        // Retrieves valid items
-        std::vector<std::pair<c_string_ref, time_series_input_ptr>> items() const;
-        std::vector<std::pair<c_string_ref, time_series_input_ptr>> valid_items() const;
-        std::vector<std::pair<c_string_ref, time_series_input_ptr>> modified_items() const;
-
-        // Access elements by key
-        using IndexedTimeSeriesInput::operator[];
-        TimeSeriesInput::ptr       &operator[](const std::string &key);
-        const TimeSeriesInput::ptr &operator[](const std::string &key) const;
-
-        // Check if a key exists
-        bool contains(const std::string &key) const;
+        using bundle_type::TimeSeriesBundle;
 
         // Static method for nanobind registration
         static void register_with_nanobind(nb::module_ &m);
 
-        const TimeSeriesSchema &schema() const;
-
       protected:
-        using IndexedTimeSeriesInput::set_ts_values;
+        using bundle_type::set_ts_values;
         friend TimeSeriesBundleInputBuilder;
 
-        // Retrieves valid keys
-        std::vector<c_string_ref> keys_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const;
-
-        // Retrieves valid items
-        std::vector<std::pair<c_string_ref, time_series_input_ptr>>
-        key_value_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const;
-
-        nb::object py_value_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const;
-
-      private:
-        // Stores the time-series data
-        TimeSeriesSchema::ptr             _schema;
     };
 
 }  // namespace hgraph

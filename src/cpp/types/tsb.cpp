@@ -30,29 +30,10 @@ namespace hgraph
         ;
     }
 
-    TimeSeriesBundleOutput::TimeSeriesBundleOutput(const node_ptr &parent, TimeSeriesSchema::ptr schema)
-        : IndexedTimeSeriesOutput(parent), _schema{std::move(schema)} {}
-
-    TimeSeriesBundleOutput::TimeSeriesBundleOutput(const TimeSeriesType::ptr &parent, TimeSeriesSchema::ptr schema)
-        : IndexedTimeSeriesOutput(parent), _schema{std::move(schema)} {}
-
-    nb::object TimeSeriesBundleOutput::py_value() const {
-        auto out{nb::dict()};
-        for (auto &[key, ts] : valid_items()) { out[key.get().c_str()] = ts->py_value(); }
-        if (_schema->scalar_type().is_none()) { return out; }
-        return nb::cast<nb::object>(_schema->scalar_type()(**out));
-    }
-
-    nb::object TimeSeriesBundleOutput::py_delta_value() const {
-        auto out{nb::dict()};
-        for (auto &[key, ts] : modified_items()) { out[key.get().c_str()] = ts->py_delta_value(); }
-        return out;
-    }
-
     void TimeSeriesBundleOutput::apply_result(nb::handle value) {
         if (value.is_none()) { return; }
-        if (value.is(_schema->scalar_type())) {
-            for (const auto &key : _schema->keys()) {
+        if (value.is(schema().scalar_type())) {
+            for (const auto &key : schema().keys()) {
                 auto v = nb::getattr(value, key.c_str(), nb::none());
                 if (!v.is_none()) { (*this)[key]->apply_result(v); }
             }
@@ -61,34 +42,6 @@ namespace hgraph
                 if (!val.is_none()) { (*this)[nb::cast<std::string>(key)]->apply_result(val); }
             }
         }
-    }
-
-    TimeSeriesBundleOutput::raw_key_const_iterator TimeSeriesBundleOutput::begin() const { return schema().keys().begin(); }
-
-    TimeSeriesBundleOutput::raw_key_const_iterator TimeSeriesBundleOutput::end() const { return schema().keys().end(); }
-
-    TimeSeriesOutput::ptr &TimeSeriesBundleOutput::operator[](const std::string &key) {
-        // Return the value of the ts_bundle for the schema key instance.
-        auto it{std::ranges::find(_schema->keys(), key)};
-        if (it != _schema->keys().end()) {
-            size_t index{static_cast<size_t>(std::distance(_schema->keys().begin(), it))};
-            return (*this)[index];
-        }
-        throw std::out_of_range("Key not found in TimeSeriesSchema");
-    }
-
-    const TimeSeriesOutput::ptr &TimeSeriesBundleOutput::operator[](const std::string &key) const {
-        return const_cast<TimeSeriesBundleOutput *>(this)->operator[](key);
-    }
-
-    const TimeSeriesSchema &TimeSeriesBundleOutput::schema() const { return *_schema; }
-
-    bool TimeSeriesBundleOutput::contains(const std::string &key) const {
-        return std::ranges::find(schema().keys(), key) != schema().keys().end();
-    }
-
-    TimeSeriesBundleOutput::key_collection_type TimeSeriesBundleOutput::keys() const {
-        return {schema().keys().begin(), schema().keys().end()};
     }
 
     void TimeSeriesBundleOutput::register_with_nanobind(nb::module_ &m) {
@@ -117,169 +70,6 @@ namespace hgraph
                                        &TimeSeriesBundleOutput::modified_items));
     }
 
-    TimeSeriesBundleInput::key_collection_type
-    TimeSeriesBundleOutput::keys_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const {
-        auto                      index_results = index_with_constraint(constraint);
-        std::vector<c_string_ref> result;
-        result.reserve(index_results.size());
-        for (auto i : index_results) { result.emplace_back(schema().keys()[i]); }
-        return result;
-    }
-
-    TimeSeriesBundleOutput::key_value_collection_type
-    TimeSeriesBundleOutput::key_value_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const {
-        auto                      index_results = items_with_constraint(constraint);
-        key_value_collection_type result;
-        result.reserve(index_results.size());
-        for (auto &[ndx, ts] : index_results) { result.emplace_back(schema().keys()[ndx], ts); }
-        return result;
-    }
-
-    TimeSeriesBundleInput::TimeSeriesBundleInput(const node_ptr &parent, TimeSeriesSchema::ptr schema)
-        : IndexedTimeSeriesInput(parent), _schema{std::move(schema)} {}
-
-    TimeSeriesBundleInput::TimeSeriesBundleInput(const TimeSeriesType::ptr &parent, TimeSeriesSchema::ptr schema)
-        : IndexedTimeSeriesInput(parent), _schema{std::move(schema)} {}
-
-    // Retrieves valid keys
-    std::vector<c_string_ref> TimeSeriesBundleOutput::valid_keys() const {
-        return keys_with_constraint([](const TimeSeriesOutput &ts) -> bool { return ts.valid(); });
-    }
-
-    std::vector<c_string_ref> TimeSeriesBundleOutput::modified_keys() const {
-        return keys_with_constraint([](const TimeSeriesOutput &ts) -> bool { return ts.modified(); });
-    }
-
-    TimeSeriesBundleOutput::key_value_collection_type TimeSeriesBundleOutput::items() {
-        key_value_collection_type result;
-        result.reserve(size());
-        for (size_t i = 0; i < size(); ++i) { result.emplace_back(schema().keys()[i], operator[](i)); }
-        return result;
-    }
-
-    TimeSeriesBundleOutput::key_value_collection_type TimeSeriesBundleOutput::items() const {
-        return const_cast<TimeSeriesBundleOutput *>(this)->items();
-    }
-
-    // Retrieves valid items
-    TimeSeriesBundleOutput::key_value_collection_type TimeSeriesBundleOutput::valid_items() {
-        auto index_result{items_with_constraint([](const TimeSeriesOutput &ts) -> bool { return ts.valid(); })};
-        key_value_collection_type result;
-        result.reserve(index_result.size());
-        for (auto &[ndx, ts] : index_result) { result.emplace_back(schema().keys()[ndx], ts); }
-        return result;
-    }
-
-    TimeSeriesBundleOutput::key_value_collection_type TimeSeriesBundleOutput::valid_items() const {
-        return const_cast<TimeSeriesBundleOutput *>(this)->valid_items();
-    }
-
-    TimeSeriesBundleOutput::key_value_collection_type TimeSeriesBundleOutput::modified_items() {
-        auto index_result{items_with_constraint([](const TimeSeriesOutput &ts) -> bool { return ts.modified(); })};
-        key_value_collection_type result;
-        result.reserve(index_result.size());
-        for (auto &[ndx, ts] : index_result) { result.emplace_back(schema().keys()[ndx], ts); }
-        return result;
-    }
-
-    TimeSeriesBundleOutput::key_value_collection_type TimeSeriesBundleOutput::modified_items() const {
-        return const_cast<TimeSeriesBundleOutput *>(this)->modified_items();
-    }
-
-    nb::object
-    TimeSeriesBundleInput::py_value_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const {
-        nb::dict v;
-        for (size_t i = 0; i < ts_values().size(); ++i) {
-            const auto &key = _schema->keys()[i].c_str();
-            const auto &ts  = ts_values()[i];
-            if (constraint(*ts)) { v[key] = ts->py_value(); }
-        }
-
-        const auto &s = _schema->scalar_type();
-        if (!s.is_none()) {
-            return s(**v);
-        } else {
-            return v;
-        }
-    }
-
-    nb::object TimeSeriesBundleInput::py_value() const {
-        if (has_peer()) { return TimeSeriesInput::py_value(); }
-        return py_value_with_constraint([](const TimeSeriesInput &ts) { return ts.valid(); });
-    }
-
-    nb::object TimeSeriesBundleInput::py_delta_value() const {
-        if (has_peer()) { return TimeSeriesInput::py_delta_value(); }
-        return py_value_with_constraint([](const TimeSeriesInput &ts) { return ts.modified(); });
-    }
-
-    TimeSeriesBundleInput::raw_key_const_iterator TimeSeriesBundleInput::begin() const { return schema().keys().begin(); }
-
-    TimeSeriesBundleInput::raw_key_const_iterator TimeSeriesBundleInput::end() const { return schema().keys().end(); }
-
-    std::vector<c_string_ref> TimeSeriesBundleInput::keys() const { return {schema().keys().begin(), schema().keys().end()}; }
-
-    std::vector<c_string_ref> TimeSeriesBundleInput::valid_keys() const {
-        return keys_with_constraint([](const TimeSeriesInput &ts) -> bool { return ts.valid(); });
-    }
-
-    std::vector<c_string_ref> TimeSeriesBundleInput::modified_keys() const {
-        return keys_with_constraint([](const TimeSeriesInput &ts) -> bool { return ts.modified(); });
-    }
-
-    std::vector<std::pair<c_string_ref, time_series_input_ptr>> TimeSeriesBundleInput::items() const {
-        return key_value_with_constraint([](const TimeSeriesInput &ts) -> bool { return true; });
-    }
-
-    std::vector<std::pair<c_string_ref, time_series_input_ptr>> TimeSeriesBundleInput::valid_items() const {
-        return key_value_with_constraint([](const TimeSeriesInput &ts) -> bool { return ts.valid(); });
-    }
-
-    std::vector<std::pair<c_string_ref, time_series_input_ptr>> TimeSeriesBundleInput::modified_items() const {
-        return key_value_with_constraint([](const TimeSeriesInput &ts) -> bool { return ts.modified(); });
-    }
-
-    TimeSeriesInput::ptr &TimeSeriesBundleInput::operator[](const std::string &key) {
-        auto it{std::ranges::find(_schema->keys(), key)};
-        if (it != _schema->keys().end()) {
-            size_t index = std::distance(_schema->keys().begin(), it);
-            return ts_values()[index];
-        }
-        throw std::out_of_range("Key not found in TimeSeriesSchema");
-    }
-
-    const TimeSeriesInput::ptr &TimeSeriesBundleInput::operator[](const std::string &key) const {
-        return const_cast<TimeSeriesBundleInput *>(this)->operator[](key);
-    }
-
-    bool TimeSeriesBundleInput::contains(const std::string &key) const {
-        return std::ranges::find(schema().keys(), key) != schema().keys().end();
-    }
-
-    const TimeSeriesSchema &TimeSeriesBundleInput::schema() const { return *_schema; }
-
-    std::vector<c_string_ref>
-    TimeSeriesBundleInput::keys_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const {
-        std::vector<c_string_ref> result;
-        result.reserve(ts_values().size());
-        for (size_t i = 0, l = ts_values().size(); i < l; i++) {
-            auto &ts{ts_values()[i]};
-            if (constraint(*ts)) { result.emplace_back(schema().keys()[i]); }
-        }
-        return result;
-    }
-
-    std::vector<std::pair<c_string_ref, time_series_input_ptr>>
-    TimeSeriesBundleInput::key_value_with_constraint(const std::function<bool(const TimeSeriesInput &)> &constraint) const {
-        std::vector<std::pair<c_string_ref, time_series_input_ptr>> result;
-        result.reserve(ts_values().size());
-        for (size_t i = 0, l = ts_values().size(); i < l; i++) {
-            auto &ts{ts_values()[i]};
-            if (constraint(*ts)) { result.emplace_back(schema().keys()[i], ts); }
-        }
-        return result;
-    }
-
     void TimeSeriesBundleInput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesBundleInput, TimeSeriesInput>(m, "TimeSeriesBundleInput")
             .def("__getitem__",
@@ -294,11 +84,11 @@ namespace hgraph
                 nb::keep_alive<0, 1>())
             .def("__contains__", &TimeSeriesBundleInput::contains)
             .def("keys", &TimeSeriesBundleInput::keys)
-            .def("items", &TimeSeriesBundleInput::items)
+            .def("items", static_cast<key_value_collection_type (TimeSeriesBundleInput::*)() const>(&TimeSeriesBundleInput::items))
             .def("modified_keys", &TimeSeriesBundleInput::modified_keys)
-            .def("modified_items", &TimeSeriesBundleInput::modified_items)
+            .def("modified_items", static_cast<key_value_collection_type (TimeSeriesBundleInput::*)() const>(&TimeSeriesBundleInput::modified_items))
             .def("valid_keys", &TimeSeriesBundleInput::valid_keys)
-            .def("valid_items", &TimeSeriesBundleInput::valid_items);
+            .def("valid_items", static_cast<key_value_collection_type (TimeSeriesBundleInput::*)() const>(&TimeSeriesBundleInput::valid_items));
     }
 
 }  // namespace hgraph
