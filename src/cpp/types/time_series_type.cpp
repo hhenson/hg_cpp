@@ -318,17 +318,131 @@ namespace hgraph
         return *dynamic_cast<TimeSeriesOutput *>(_parent_time_series().get());
     }
 
+    bool IndexedTimeSeriesOutput::all_valid() const {
+        return valid() && std::ranges::all_of(_ts_values, [](const auto &ts) { return ts->valid(); });
+    }
+
+    void IndexedTimeSeriesOutput::invalidate() {
+        if (valid()) {
+            for (auto &v : _ts_values) { v->invalidate(); }
+        }
+        mark_invalid();
+    }
+
+    void IndexedTimeSeriesOutput::copy_from_output(TimeSeriesOutput &output) {
+        if (auto *ndx_output = dynamic_cast<IndexedTimeSeriesOutput *>(&output); ndx_output != nullptr) {
+            if (ndx_output->size() == size()) {
+                for (size_t i = 0; i < _ts_values.size(); ++i) { _ts_values[i]->copy_from_output(*ndx_output->_ts_values[i]); }
+            } else {
+                // We could do a full check, but that should be over-kill each time and in theory the wiring should ensure
+                //  we don't do that, but this should be a quick sanity check.
+                //  Simple validation at this level to ensure they are at least size compatible
+                throw std::runtime_error(std::format("Incorrect shape provided to copy_from_output, expected {} items got {}",
+                                                     size(), ndx_output->size()));
+            }
+        } else {
+            throw std::invalid_argument(std::format("Expected IndexedTimeSeriesOutput, got {}", typeid(output).name()));
+        }
+    }
+
+    void IndexedTimeSeriesOutput::copy_from_input(TimeSeriesInput &input) {
+        if (auto *ndx_inputs = dynamic_cast<IndexedTimeSeriesInput *>(&input); ndx_inputs != nullptr) {
+            if (ndx_inputs->size() == size()) {
+                for (size_t i = 0; i < _ts_values.size(); ++i) { _ts_values[i]->copy_from_input(ndx_inputs[i]); }
+            } else {
+                // Simple validation at this level to ensure they are at least size compatible
+                throw std::runtime_error(std::format("Incorrect shape provided to copy_from_input, expected {} items got {}",
+                                                     size(), ndx_inputs->size()));
+            }
+        } else {
+            throw std::invalid_argument(std::format("Expected TimeSeriesBundleOutput, got {}", typeid(input).name()));
+        }
+    }
+
+    TimeSeriesOutput::ptr &IndexedTimeSeriesOutput::operator[](size_t ndx) { return _ts_values.at(ndx); }
+
+    const TimeSeriesOutput::ptr &IndexedTimeSeriesOutput::operator[](std::size_t ndx) const {
+        return const_cast<IndexedTimeSeriesOutput *>(this)->operator[](ndx);
+    }
+
+    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::values() { return _ts_values; }
+
+    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::values() const {
+        return const_cast<IndexedTimeSeriesOutput *>(this)->values();
+    }
+
+    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::valid_values() {
+        return values_with_constraint([](const TimeSeriesOutput &ts) { return ts.valid(); });
+    }
+
+    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::valid_values() const {
+        return const_cast<IndexedTimeSeriesOutput *>(this)->valid_values();
+    }
+
+    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::modified_values() {
+        return values_with_constraint([](const TimeSeriesOutput &ts) { return ts.modified(); });
+    }
+
+    IndexedTimeSeriesOutput::collection_type IndexedTimeSeriesOutput::modified_values() const {
+        return const_cast<IndexedTimeSeriesOutput *>(this)->modified_values();
+    }
+
+    size_t IndexedTimeSeriesOutput::size() const { return _ts_values.size(); }
+
+    void IndexedTimeSeriesOutput::clear() {
+        for (auto &v : _ts_values) { v->clear(); }
+    }
+
     void IndexedTimeSeriesOutput::register_with_nanobind(nb::module_ &m) {
         nb::class_<IndexedTimeSeriesOutput, TimeSeriesOutput>(m, "IndexedTimeSeriesOutput")
             .def(
                 "__getitem__", [](const IndexedTimeSeriesOutput &self, size_t idx) { return self[idx]; }, "index"_a)
-            .def(
-                "__iter__",
-                [](const IndexedTimeSeriesOutput &self) {
-                    nb::make_iterator(nb::type<collection_type>(), "iterator", self.begin(), self.end());
-                },
-                nb::keep_alive<0, 1>())
-            .def("__len__", &IndexedTimeSeriesOutput::size);
+            .def("values", static_cast<collection_type (IndexedTimeSeriesOutput::*)() const>(&IndexedTimeSeriesOutput::values))
+            .def("valid_values",
+                 static_cast<collection_type (IndexedTimeSeriesOutput::*)() const>(&IndexedTimeSeriesOutput::valid_values))
+            .def("modified_values",
+                 static_cast<collection_type (IndexedTimeSeriesOutput::*)() const>(&IndexedTimeSeriesOutput::modified_values))
+            .def("__len__", &IndexedTimeSeriesOutput::size)
+            .def("copy_from_output", &IndexedTimeSeriesOutput::copy_from_output, "output"_a)
+            .def("copy_from_input", &IndexedTimeSeriesOutput::copy_from_input, "input"_a);
+    }
+
+    std::vector<time_series_output_ptr>       &IndexedTimeSeriesOutput::ts_values() { return _ts_values; }
+    const std::vector<time_series_output_ptr> &IndexedTimeSeriesOutput::ts_values() const { return _ts_values; }
+
+    void IndexedTimeSeriesOutput::set_outputs(std::vector<time_series_output_ptr> ts_values) { _ts_values = std::move(ts_values); }
+
+    IndexedTimeSeriesOutput::index_collection_type
+    IndexedTimeSeriesOutput::index_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const {
+        index_collection_type result;
+        result.reserve(_ts_values.size());
+        for (size_t i = 0, l = _ts_values.size(); i < l; i++) {
+            auto &ts{_ts_values[i]};
+            if (constraint(*ts)) { result.emplace_back(i); }
+        }
+        return result;
+    }
+
+    IndexedTimeSeriesOutput::collection_type
+    IndexedTimeSeriesOutput::values_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const {
+        collection_type result;
+        result.reserve(_ts_values.size());
+        for (const auto &_ts_value : _ts_values) {
+            auto &ts{_ts_value};
+            if (constraint(*ts)) { result.emplace_back(ts); }
+        }
+        return result;
+    }
+
+    IndexedTimeSeriesOutput::enumerated_collection_type
+    IndexedTimeSeriesOutput::items_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const {
+        enumerated_collection_type result;
+        result.reserve(_ts_values.size());
+        for (size_t i = 0, l = _ts_values.size(); i < l; i++) {
+            auto &ts{_ts_values[i]};
+            if (constraint(*ts)) { result.emplace_back(i, ts); }
+        }
+        return result;
     }
 
     bool TimeSeriesInput::modified() const { return _output != nullptr && (_output->modified() || sampled()); }

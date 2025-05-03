@@ -25,6 +25,7 @@ set(HGRAPH_SOURCES
         types/traits.cpp
         types/ts.cpp
         types/tsb.cpp
+        types/tsl.cpp
 
         util/lifecycle.cpp
         util/sender_receiver_state.cpp

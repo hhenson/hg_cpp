@@ -128,6 +128,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/types/traits.h
         include/hgraph/types/ts.h
         include/hgraph/types/tsb.h
+        include/hgraph/types/tsl.h
 
         include/hgraph/python/pyb.h
         include/hgraph/python/pyb_wiring.h

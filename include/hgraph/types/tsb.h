@@ -32,9 +32,15 @@ namespace hgraph
     struct TimeSeriesBundleOutput : IndexedTimeSeriesOutput
     {
         using ptr = nb::ref<TimeSeriesBundleOutput>;
-        // Define an iterator type for the unordered_map
-        using iterator       = std::vector<TimeSeriesOutput::ptr>::iterator;
-        using const_iterator = std::vector<TimeSeriesOutput::ptr>::const_iterator;
+        // Define key values and iterator
+        using key_collection_type     = std::vector<c_string_ref>;
+        using raw_key_collection_type = std::vector<std::string>;
+        using raw_key_iterator        = raw_key_collection_type::iterator;
+        using raw_key_const_iterator  = raw_key_collection_type::const_iterator;
+        using key_iterator            = key_collection_type::iterator;
+        using key_const_iterator      = key_collection_type::const_iterator;
+
+        using key_value_collection_type = std::vector<std::pair<c_string_ref, time_series_output_ptr>>;
 
         explicit TimeSeriesBundleOutput(const node_ptr &parent, TimeSeriesSchema::ptr schema);
         explicit TimeSeriesBundleOutput(const TimeSeriesType::ptr &parent, TimeSeriesSchema::ptr schema);
@@ -51,70 +57,46 @@ namespace hgraph
         void apply_result(nb::handle value) override;
 
         // Begin iterator
-        iterator       begin() override;
-        const_iterator begin() const override;
-
+        [[nodiscard]] raw_key_const_iterator begin() const;
         // End iterator
-        iterator       end() override;
-        const_iterator end() const override;
+        [[nodiscard]] raw_key_const_iterator end() const;
 
-        TimeSeriesOutput::ptr       &operator[](const std::string &key);
-        const TimeSeriesOutput::ptr &operator[](const std::string &key) const;
+        using IndexedTimeSeriesOutput::operator[];
+        [[nodiscard]] TimeSeriesOutput::ptr       &operator[](const std::string &key);
+        [[nodiscard]] const TimeSeriesOutput::ptr &operator[](const std::string &key) const;
 
-        TimeSeriesOutput::ptr       &operator[](std::size_t ndx) override;
-        const TimeSeriesOutput::ptr &operator[](std::size_t ndx) const override;
-
-        [[nodiscard]] bool all_valid() const override;
-
-        void invalidate() override;
-
-        void copy_from_output(TimeSeriesOutput &output) override;
-
-        void copy_from_input(TimeSeriesInput &input) override;
-
-        void clear() override;
+        [[nodiscard]] bool contains(const std::string &key) const;
 
         // Retrieves valid keys
-        std::vector<c_string_ref> keys() const;
-        std::vector<c_string_ref> valid_keys() const;
-        std::vector<c_string_ref> modified_keys() const;
-
-        // Retrieves valid values
-        std::vector<time_series_output_ptr> values() const;
-        std::vector<time_series_output_ptr> valid_values() const;
-        std::vector<time_series_output_ptr> modified_values() const;
+        [[nodiscard]] key_collection_type keys() const;
+        [[nodiscard]] key_collection_type valid_keys() const;
+        [[nodiscard]] key_collection_type modified_keys() const;
 
         // Retrieves valid items
-        std::vector<std::pair<c_string_ref, time_series_output_ptr>> items() const;
-        std::vector<std::pair<c_string_ref, time_series_output_ptr>> valid_items() const;
-        std::vector<std::pair<c_string_ref, time_series_output_ptr>> modified_items() const;
+        [[nodiscard]] key_value_collection_type items();
+        [[nodiscard]] key_value_collection_type items() const;
+        [[nodiscard]] key_value_collection_type valid_items();
+        [[nodiscard]] key_value_collection_type valid_items() const;
+        [[nodiscard]] key_value_collection_type modified_items();
+        [[nodiscard]] key_value_collection_type modified_items() const;
 
         static void register_with_nanobind(nb::module_ &m);
 
-        const TimeSeriesSchema &schema() const;
-
-        bool contains(const std::string &key) const;
-
-        size_t size() const override;
+        [[nodiscard]] const TimeSeriesSchema &schema() const;
 
       protected:
         friend TimeSeriesBundleOutputBuilder;
-        void set_outputs(std::vector<time_series_output_ptr> ts_values);
 
         // Retrieves valid keys
-        std::vector<c_string_ref> keys_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
-
-        // Retrieves valid values
-        std::vector<time_series_output_ptr>
-        values_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
+        [[nodiscard]] std::vector<c_string_ref>
+        keys_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
 
         // Retrieves valid items
-        std::vector<std::pair<c_string_ref, time_series_output_ptr>>
-        items_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
+        [[nodiscard]] key_value_collection_type
+        key_value_with_constraint(const std::function<bool(const TimeSeriesOutput &)> &constraint) const;
 
       private:
-        TimeSeriesSchema::ptr               _schema;
-        std::vector<time_series_output_ptr> _ts_values;
+        TimeSeriesSchema::ptr _schema;
     };
 
     struct TimeSeriesBundleInput : IndexedTimeSeriesInput
