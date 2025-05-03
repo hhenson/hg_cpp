@@ -45,55 +45,63 @@ namespace hgraph
     }
 
     void TimeSeriesBundleOutput::register_with_nanobind(nb::module_ &m) {
-        nb::class_<TimeSeriesBundleOutput, IndexedTimeSeriesOutput>(m, "TimeSeriesBundleOutput")
-            .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
-            .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a)
+        using TimeSeriesBundle_Output = TimeSeriesBundle<IndexedTimeSeriesOutput>;
+
+        nb::class_<TimeSeriesBundle_Output, IndexedTimeSeriesOutput>(m, "TimeSeriesBundle_Output")
             .def("__getitem__",
-                 [](TimeSeriesBundleOutput &self, const std::string &key) -> TimeSeriesOutput::ptr {
+                 [](TimeSeriesBundle_Output &self, const std::string &key) -> TimeSeriesOutput::ptr {
                      return self[key];  // Use operator[] overload with string
                  })
             .def(
                 "__iter__",
-                [](const TimeSeriesBundleOutput &self) {
+                [](const TimeSeriesBundle_Output &self) {
                     nb::make_iterator(nb::type<key_collection_type>(), "iterator", self.begin(), self.end());
                 },
                 nb::keep_alive<0, 1>())
-            .def("__contains__", &TimeSeriesBundleOutput::contains)
-            .def("keys", &TimeSeriesBundleOutput::keys)
+            .def("__contains__", &TimeSeriesBundle_Output::contains)
+            .def("keys", &TimeSeriesBundle_Output::keys)
             .def("items",
-                 static_cast<key_value_collection_type (TimeSeriesBundleOutput::*)() const>(&TimeSeriesBundleOutput::items))
-            .def("valid_keys", &TimeSeriesBundleOutput::valid_keys)
+                 static_cast<key_value_collection_type (TimeSeriesBundle_Output::*)() const>(&TimeSeriesBundle_Output::items))
+            .def("valid_keys", &TimeSeriesBundle_Output::valid_keys)
             .def("valid_items",
-                 static_cast<key_value_collection_type (TimeSeriesBundleOutput::*)() const>(&TimeSeriesBundleOutput::valid_items))
-            .def("modified_keys", &TimeSeriesBundleOutput::modified_keys)
-            .def("modified_items", static_cast<key_value_collection_type (TimeSeriesBundleOutput::*)() const>(
-                                       &TimeSeriesBundleOutput::modified_items))
-            .def_prop_ro("schema", &TimeSeriesBundleOutput::schema);
-        ;
+                 static_cast<key_value_collection_type (TimeSeriesBundle_Output::*)() const>(&TimeSeriesBundle_Output::valid_items))
+            .def("modified_keys", &TimeSeriesBundle_Output::modified_keys)
+            .def("modified_items", static_cast<key_value_collection_type (TimeSeriesBundle_Output::*)() const>(
+                                       &TimeSeriesBundle_Output::modified_items))
+            .def_prop_ro("schema", &TimeSeriesBundle_Output::schema);
+
+        nb::class_<TimeSeriesBundleOutput, IndexedTimeSeriesOutput>(m, "TimeSeriesBundleOutput")
+            .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
+            .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a);
     }
 
     void TimeSeriesBundleInput::register_with_nanobind(nb::module_ &m) {
-        nb::class_<TimeSeriesBundleInput, IndexedTimeSeriesInput>(m, "TimeSeriesBundleInput")
+        using TimeSeriesBundle_Input = TimeSeriesBundle<IndexedTimeSeriesInput>;
+        nb::class_<TimeSeriesBundle_Input, IndexedTimeSeriesInput>(m, "TimeSeriesBundle_Input")
             .def("__getitem__",
-                 [](TimeSeriesBundleInput &self, const std::string &key) {
+                 [](TimeSeriesBundle_Input &self, const std::string &key) {
                      return self[key];  // Use operator[] overload with string
                  })
             .def(
                 "__iter__",
-                [](const TimeSeriesBundleInput &self) {
+                [](const TimeSeriesBundle_Input &self) {
                     nb::make_iterator(nb::type<collection_type>(), "iterator", self.begin(), self.end());
                 },
                 nb::keep_alive<0, 1>())
-            .def("__contains__", &TimeSeriesBundleInput::contains)
-            .def("keys", &TimeSeriesBundleInput::keys)
-            .def("items", static_cast<key_value_collection_type (TimeSeriesBundleInput::*)() const>(&TimeSeriesBundleInput::items))
-            .def("modified_keys", &TimeSeriesBundleInput::modified_keys)
+            .def("__contains__", &TimeSeriesBundle_Input::contains)
+            .def("keys", &TimeSeriesBundle_Input::keys)
+            .def("items", static_cast<key_value_collection_type (TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::items))
+            .def("modified_keys", &TimeSeriesBundle_Input::modified_keys)
             .def("modified_items",
-                 static_cast<key_value_collection_type (TimeSeriesBundleInput::*)() const>(&TimeSeriesBundleInput::modified_items))
-            .def("valid_keys", &TimeSeriesBundleInput::valid_keys)
+                 static_cast<key_value_collection_type (TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::modified_items))
+            .def("valid_keys", &TimeSeriesBundle_Input::valid_keys)
             .def("valid_items",
-                 static_cast<key_value_collection_type (TimeSeriesBundleInput::*)() const>(&TimeSeriesBundleInput::valid_items))
-            .def_prop_ro("schema", &TimeSeriesBundleInput::schema);
+                 static_cast<key_value_collection_type (TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::valid_items))
+            .def_prop_ro("schema", &TimeSeriesBundle_Input::schema);
+
+        nb::class_<TimeSeriesBundleInput, TimeSeriesBundle_Input>(m, "TimeSeriesBundleInput")
+            .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
+            .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a);
     }
 
 }  // namespace hgraph

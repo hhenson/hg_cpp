@@ -49,16 +49,19 @@ namespace hgraph
     }
 
     void IndexedTimeSeriesOutput::register_with_nanobind(nb::module_ &m) {
-        nb::class_<IndexedTimeSeriesOutput, TimeSeriesOutput>(m, "IndexedTimeSeriesOutput")
+        using IndexedTimeSeries_Output = IndexedTimeSeries<TimeSeriesOutput>;
+        nb::class_<IndexedTimeSeries_Output, TimeSeriesOutput>(m, "IndexedTimeSeries_Output")
             .def(
-                "__getitem__", [](const IndexedTimeSeriesOutput &self, size_t idx) { return self[idx]; }, "index"_a)
-            .def("values", static_cast<collection_type (IndexedTimeSeriesOutput::*)() const>(&IndexedTimeSeriesOutput::values))
+                "__getitem__", [](const IndexedTimeSeries_Output &self, size_t idx) { return self[idx]; }, "index"_a)
+            .def("values", static_cast<collection_type (IndexedTimeSeries_Output::*)() const>(&IndexedTimeSeries_Output::values))
             .def("valid_values",
-                 static_cast<collection_type (IndexedTimeSeriesOutput::*)() const>(&IndexedTimeSeriesOutput::valid_values))
+                 static_cast<collection_type (IndexedTimeSeries_Output::*)() const>(&IndexedTimeSeries_Output::valid_values))
             .def("modified_values",
-                 static_cast<collection_type (IndexedTimeSeriesOutput::*)() const>(&IndexedTimeSeriesOutput::modified_values))
-            .def("__len__", &IndexedTimeSeriesOutput::size)
-            .def_prop_ro("empty", &IndexedTimeSeriesOutput::empty)
+                 static_cast<collection_type (IndexedTimeSeries_Output::*)() const>(&IndexedTimeSeries_Output::modified_values))
+            .def("__len__", &IndexedTimeSeries_Output::size)
+            .def_prop_ro("empty", &IndexedTimeSeries_Output::empty);
+
+        nb::class_<IndexedTimeSeriesOutput, IndexedTimeSeries_Output>(m, "IndexedTimeSeriesOutput")
             .def("copy_from_output", &IndexedTimeSeriesOutput::copy_from_output, "output"_a)
             .def("copy_from_input", &IndexedTimeSeriesOutput::copy_from_input, "input"_a);
     }
@@ -113,16 +116,20 @@ namespace hgraph
     }
 
     void IndexedTimeSeriesInput::register_with_nanobind(nb::module_ &m) {
-        nb::class_<IndexedTimeSeriesInput, TimeSeriesInput>(m, "IndexedTimeSeriesInput")
+        using IndexedTimeSeries_Input = IndexedTimeSeries<TimeSeriesInput>;
+
+        nb::class_<IndexedTimeSeries_Input, TimeSeriesInput>(m, "IndexedTimeSeries_Input")
             .def(
-                "__getitem__", [](const IndexedTimeSeriesInput &self, size_t index) { return self[index]; }, "index"_a)
-            .def("values", static_cast<collection_type (IndexedTimeSeriesInput::*)() const>(&IndexedTimeSeriesInput::values))
+                "__getitem__", [](const IndexedTimeSeries_Input &self, size_t index) { return self[index]; }, "index"_a)
+            .def("values", static_cast<collection_type (IndexedTimeSeries_Input::*)() const>(&IndexedTimeSeries_Input::values))
             .def("valid_values",
-                 static_cast<collection_type (IndexedTimeSeriesInput::*)() const>(&IndexedTimeSeriesInput::valid_values))
+                 static_cast<collection_type (IndexedTimeSeries_Input::*)() const>(&IndexedTimeSeries_Input::valid_values))
             .def("modified_values",
-                 static_cast<collection_type (IndexedTimeSeriesInput::*)() const>(&IndexedTimeSeriesInput::modified_values))
-            .def("__len__", &IndexedTimeSeriesInput::size)
-            .def_prop_ro("empty", &IndexedTimeSeriesInput::empty);
+                 static_cast<collection_type (IndexedTimeSeries_Input::*)() const>(&IndexedTimeSeries_Input::modified_values))
+            .def("__len__", &IndexedTimeSeries_Input::size)
+            .def_prop_ro("empty", &IndexedTimeSeries_Input::empty);
+
+        nb::class_<IndexedTimeSeriesInput, IndexedTimeSeries_Input>(m, "IndexedTimeSeriesInput");
     }
 
     bool IndexedTimeSeriesInput::do_bind_output(time_series_output_ptr value) {
