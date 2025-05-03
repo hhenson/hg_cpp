@@ -5,6 +5,7 @@
 #ifndef TSL_H
 #define TSL_H
 
+
 #include <hgraph/types/ts_indexed.h>
 
 namespace hgraph
@@ -92,20 +93,26 @@ namespace hgraph
         using T_TS::ts_values;
     };
 
+    struct TimeSeriesListOutputBuilder;
     struct TimeSeriesListOutput : TimeSeriesList<IndexedTimeSeriesOutput>
     {
         using list_type::TimeSeriesList;
 
-        virtual void apply_result(nb::handle value) override;
+        void apply_result(nb::handle value) override;
 
         static void register_with_nanobind(nb::module_ &m);
+    protected:
+        friend TimeSeriesListOutputBuilder;
     };
 
+    struct TimeSeriesListInputBuilder;
     struct TimeSeriesListInput : TimeSeriesList<IndexedTimeSeriesInput>
     {
         using list_type::TimeSeriesList;
 
         static void register_with_nanobind(nb::module_ &m);
+    protected:
+        friend TimeSeriesListInputBuilder;
     };
 }  // namespace hgraph
 #endif  // TSL_H

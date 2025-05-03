@@ -11,6 +11,7 @@
 #include <hgraph/types/ref.h>
 #include <hgraph/types/ts.h>
 #include <hgraph/types/tsb.h>
+#include <hgraph/types/tsl.h>
 
 namespace hgraph
 {
@@ -63,6 +64,23 @@ namespace hgraph
         time_series_input_ptr make_instance(node_ptr owning_node) const override;
 
         time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
+    };
+
+    struct HGRAPH_EXPORT TimeSeriesListInputBuilder : InputBuilder
+    {
+        using ptr = nb::ref<TimeSeriesListInputBuilder>;
+
+        TimeSeriesListInputBuilder(InputBuilder::ptr input_builder, size_t size);
+
+        time_series_input_ptr make_instance(node_ptr owning_node) const override;
+
+        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
+
+      private:
+        time_series_input_ptr make_and_set_inputs(TimeSeriesListInput *input) const;
+
+        InputBuilder::ptr input_builder;
+        size_t            size;
     };
 
     struct HGRAPH_EXPORT TimeSeriesBundleInputBuilder : InputBuilder

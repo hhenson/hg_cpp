@@ -11,6 +11,7 @@
 #include <hgraph/types/ref.h>
 #include <hgraph/types/ts.h>
 #include <hgraph/types/tsb.h>
+#include <hgraph/types/tsl.h>
 
 namespace hgraph
 {
@@ -51,6 +52,21 @@ namespace hgraph
         time_series_output_ptr make_instance(node_ptr owning_node) const override;
 
         time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
+    };
+
+    struct HGRAPH_EXPORT TimeSeriesListOutputBuilder : OutputBuilder
+    {
+        using ptr = nb::ref<TimeSeriesListOutputBuilder>;
+        TimeSeriesListOutputBuilder(OutputBuilder::ptr output_builder, size_t size);
+
+        time_series_output_ptr make_instance(node_ptr owning_node) const override;
+
+        time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
+
+      private:
+        time_series_output_ptr make_and_set_outputs(TimeSeriesListOutput *output) const;
+        OutputBuilder::ptr     output_builder;
+        size_t                 size;
     };
 
     struct HGRAPH_EXPORT TimeSeriesBundleOutputBuilder : OutputBuilder

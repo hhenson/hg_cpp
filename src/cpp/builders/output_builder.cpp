@@ -38,6 +38,8 @@ namespace hgraph
         nb::class_<OutputBuilder_TS_Object, OutputBuilder>(m, "OutputBuilder_TS_Object").def(nb::init<>());
 
         nb::class_<TimeSeriesRefOutputBuilder, OutputBuilder>(m, "OutputBuilder_TS_Ref").def(nb::init<>());
+        nb::class_<TimeSeriesListOutputBuilder, OutputBuilder>(m, "OutputBuilder_TSL")
+            .def(nb::init<OutputBuilder::ptr, size_t>(), "output_builder"_a, "size"_a);
         nb::class_<TimeSeriesBundleOutputBuilder, OutputBuilder>(m, "OutputBuilder_TSB")
             .def(nb::init<TimeSeriesSchema::ptr, std::vector<OutputBuilder::ptr>>(), "schema"_a, "output_builders"_a);
     }
@@ -51,6 +53,28 @@ namespace hgraph
         auto v{new TimeSeriesReferenceOutput(dynamic_cast_ref<TimeSeriesType>(owning_output))};
         return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
     }
+
+    TimeSeriesListOutputBuilder::TimeSeriesListOutputBuilder(OutputBuilder::ptr output_builder, size_t size)
+        : output_builder{std::move(output_builder)}, size{size} {}
+
+    time_series_output_ptr TimeSeriesListOutputBuilder::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesListOutput(owning_node)};
+        return make_and_set_outputs(v);
+    }
+
+    time_series_output_ptr TimeSeriesListOutputBuilder::make_instance(time_series_output_ptr owning_output) const {
+        auto v{new TimeSeriesListOutput(dynamic_cast_ref<TimeSeriesType>(owning_output))};
+        return make_and_set_outputs(v);
+    }
+
+    time_series_output_ptr TimeSeriesListOutputBuilder::make_and_set_outputs(TimeSeriesListOutput *output) const {
+        std::vector<time_series_output_ptr> outputs;
+        outputs.reserve(size);
+        for (size_t i = 0; i < size; ++i) { outputs.push_back(output_builder->make_instance(output)); }
+        output->set_ts_values(outputs);
+        return output;
+    }
+
     TimeSeriesBundleOutputBuilder::TimeSeriesBundleOutputBuilder(TimeSeriesSchema::ptr           schema,
                                                                  std::vector<OutputBuilder::ptr> output_builders)
         : OutputBuilder(), schema{std::move(schema)}, output_builders{std::move(output_builders)} {}

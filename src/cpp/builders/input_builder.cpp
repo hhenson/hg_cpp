@@ -1,3 +1,5 @@
+#include <hgraph/types/tsl.h>
+
 #include <hgraph/builders/input_builder.h>
 #include <hgraph/python/pyb_wiring.h>
 #include <iostream>
@@ -36,6 +38,8 @@ namespace hgraph
         nb::class_<InputBuilder_TS_Object, InputBuilder>(m, "InputBuilder_TS_Object").def(nb::init<>());
 
         nb::class_<TimeSeriesRefInputBuilder, InputBuilder>(m, "InputBuilder_TS_Ref").def(nb::init<>());
+        nb::class_<TimeSeriesListInputBuilder, InputBuilder>(m, "InputBuilder_TSL")
+            .def(nb::init<ptr, size_t>(), "input_builder"_a, "size"_a);
         nb::class_<TimeSeriesBundleInputBuilder, InputBuilder>(m, "InputBuilder_TSB")
             .def(nb::init<TimeSeriesSchema::ptr, std::vector<ptr>>(), "schema"_a, "input_builders"_a);
     }
@@ -48,6 +52,27 @@ namespace hgraph
     time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(time_series_input_ptr owning_input) const {
         auto v{new TimeSeriesReferenceInput(dynamic_cast_ref<TimeSeriesType>(owning_input))};
         return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
+    }
+
+    TimeSeriesListInputBuilder::TimeSeriesListInputBuilder(InputBuilder::ptr input_builder, size_t size)
+        : input_builder{std::move(input_builder)}, size{size} {}
+
+    time_series_input_ptr TimeSeriesListInputBuilder::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesListInput{owning_node}};
+        return make_and_set_inputs(v);
+    }
+
+    time_series_input_ptr TimeSeriesListInputBuilder::make_instance(time_series_input_ptr owning_input) const {
+        auto v{new TimeSeriesListInput{dynamic_cast_ref<TimeSeriesType>(owning_input)}};
+        return make_and_set_inputs(v);
+    }
+
+    time_series_input_ptr TimeSeriesListInputBuilder::make_and_set_inputs(TimeSeriesListInput *input) const {
+        std::vector<time_series_input_ptr> inputs;
+        inputs.reserve(size);
+        for (size_t i = 0; i < size; ++i) { inputs.push_back(input_builder->make_instance(input)); }
+        input->set_ts_values(inputs);
+        return input;
     }
 
     TimeSeriesBundleInputBuilder::TimeSeriesBundleInputBuilder(TimeSeriesSchema::ptr          schema,
