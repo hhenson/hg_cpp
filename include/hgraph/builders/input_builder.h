@@ -5,8 +5,8 @@
 #ifndef INPUT_BUILDER_H
 #define INPUT_BUILDER_H
 
-#include <hgraph/builders/builder.h>
 #include <hgraph/hgraph_forward_declarations.h>
+#include <hgraph/builders/builder.h>
 
 #include <hgraph/types/ref.h>
 #include <hgraph/types/ts.h>
