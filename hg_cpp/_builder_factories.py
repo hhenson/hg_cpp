@@ -19,7 +19,9 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
                 # TODO: Cache the schema
                 _hgraph.TimeSeriesSchema(
                     keys=tuple(value_tp.bundle_schema_tp.meta_data_schema.keys()),
-                    scalar_type=value_tp.bundle_schema_tp.py_type
+                    scalar_type=tp
+                ) if (tp := value_tp.bundle_schema_tp.py_type.scalar_type()) else _hgraph.TimeSeriesSchema(
+                    keys=tuple(value_tp.bundle_schema_tp.meta_data_schema.keys())
                 ),
                 [self.make_input_builder(tp) for tp in value_tp.bundle_schema_tp.meta_data_schema.values()]
             ),
@@ -39,9 +41,11 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
                 # TODO: Cache the schema
                 schema=_hgraph.TimeSeriesSchema(
                     keys=tuple(value_tp.bundle_schema_tp.meta_data_schema.keys()),
-                    scalar_type=value_tp.bundle_schema_tp.py_type
+                    scalar_type=tp
+                ) if (tp := value_tp.bundle_schema_tp.py_type.scalar_type()) else _hgraph.TimeSeriesSchema(
+                    keys=tuple(value_tp.bundle_schema_tp.meta_data_schema.keys())
                 ),
-                output_builders =[
+                output_builders=[
                     self.make_output_builder(tp) for tp in value_tp.bundle_schema_tp.meta_data_schema.values()
                 ]
             ),

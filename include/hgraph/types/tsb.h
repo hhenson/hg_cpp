@@ -1,9 +1,7 @@
-//
-// Created by Howard Henson on 27/12/2024.
-//
 
 #ifndef TSB_H
 #define TSB_H
+
 #include <hgraph/types/ts_indexed.h>
 
 namespace hgraph
@@ -67,9 +65,11 @@ namespace hgraph
 
         // Default iterator iterates over keys to keep this more consistent with Python (c.f. dict)
         [[nodiscard]] raw_key_const_iterator begin() const { return _schema->keys().begin(); }
+
         [[nodiscard]] raw_key_const_iterator end() const { return _schema->keys().end(); }
 
         using index_ts_type::operator[];
+
         [[nodiscard]] ts_type::ptr &operator[](const std::string &key) {
             // Return the value of the ts_bundle for the schema key instance.
             auto it{std::ranges::find(_schema->keys(), key)};
@@ -79,6 +79,7 @@ namespace hgraph
             }
             throw std::out_of_range("Key not found in TimeSeriesSchema");
         }
+
         [[nodiscard]] const ts_type::ptr &operator[](const std::string &key) const {
             return const_cast<bundle_type *>(this)->operator[](key);
         }
@@ -89,12 +90,13 @@ namespace hgraph
 
         [[nodiscard]] const TimeSeriesSchema &schema() const { return *_schema; }
 
-
         // Retrieves valid keys
         [[nodiscard]] key_collection_type keys() const { return {_schema->keys().begin(), _schema->keys().end()}; }
+
         [[nodiscard]] key_collection_type valid_keys() const {
             return keys_with_constraint([](const ts_type &ts) -> bool { return ts.valid(); });
         }
+
         [[nodiscard]] key_collection_type modified_keys() const {
             return keys_with_constraint([](const ts_type &ts) -> bool { return ts.modified(); });
         }
@@ -107,9 +109,9 @@ namespace hgraph
             for (size_t i = 0; i < this->size(); ++i) { result.emplace_back(schema().keys()[i], operator[](i)); }
             return result;
         }
-        [[nodiscard]] key_value_collection_type items() const {
-            return const_cast<bundle_type *>(this)->items();
-        }
+
+        [[nodiscard]] key_value_collection_type items() const { return const_cast<bundle_type *>(this)->items(); }
+
         [[nodiscard]] key_value_collection_type valid_items() {
             auto index_result{this->items_with_constraint([](const ts_type &ts) -> bool { return ts.valid(); })};
             key_value_collection_type result;
@@ -117,9 +119,9 @@ namespace hgraph
             for (auto &[ndx, ts] : index_result) { result.emplace_back(schema().keys()[ndx], ts); }
             return result;
         }
-        [[nodiscard]] key_value_collection_type valid_items() const {
-            return const_cast<bundle_type *>(this)->valid_items();
-        }
+
+        [[nodiscard]] key_value_collection_type valid_items() const { return const_cast<bundle_type *>(this)->valid_items(); }
+
         [[nodiscard]] key_value_collection_type modified_items() {
             auto index_result{this->items_with_constraint([](const ts_type &ts) -> bool { return ts.modified(); })};
             key_value_collection_type result;
@@ -127,18 +129,20 @@ namespace hgraph
             for (auto &[ndx, ts] : index_result) { result.emplace_back(schema().keys()[ndx], ts); }
             return result;
         }
-        [[nodiscard]] key_value_collection_type modified_items() const {
-            return const_cast<bundle_type *>(this)->modified_items();
-        }
+        [[nodiscard]] key_value_collection_type modified_items() const { return const_cast<bundle_type *>(this)->modified_items(); }
 
       protected:
-        using T_TS::ts_values;
         using T_TS::index_with_constraint;
+        using T_TS::ts_values;
 
         nb::object py_value_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
             nb::dict out;
             for (size_t i = 0, l = ts_values().size(); i < l; ++i) {
-                if (auto ts{ts_values()[i]}; constraint(*ts)) { out[_schema->keys()[i].c_str()] = ts->py_value(); }
+                if (auto ts{ts_values()[i]}; constraint(*ts)) {
+                    out[_schema->keys()[i].c_str()] = ts->py_value();
+                } else {
+                    out[_schema->keys()[i].c_str()] = nb::none();
+                }
             }
 
             if (_schema->scalar_type().is_none()) { return out; }
@@ -146,8 +150,7 @@ namespace hgraph
         }
 
         // Retrieves keys that match the constraint
-        [[nodiscard]] key_collection_type
-        keys_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
+        [[nodiscard]] key_collection_type keys_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
             auto                      index_results = index_with_constraint(constraint);
             std::vector<c_string_ref> result;
             result.reserve(index_results.size());
@@ -181,7 +184,6 @@ namespace hgraph
       protected:
         using bundle_type::set_ts_values;
         friend TimeSeriesBundleOutputBuilder;
-
     };
 
     struct TimeSeriesBundleInput : TimeSeriesBundle<IndexedTimeSeriesInput>
@@ -195,7 +197,6 @@ namespace hgraph
       protected:
         using bundle_type::set_ts_values;
         friend TimeSeriesBundleInputBuilder;
-
     };
 
 }  // namespace hgraph

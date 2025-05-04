@@ -68,7 +68,7 @@ namespace hgraph
             .def("modified_keys", &TimeSeriesBundle_Output::modified_keys)
             .def("modified_items", static_cast<key_value_collection_type (TimeSeriesBundle_Output::*)() const>(
                                        &TimeSeriesBundle_Output::modified_items))
-            .def_prop_ro("schema", &TimeSeriesBundle_Output::schema);
+            .def_prop_ro("__schema__", &TimeSeriesBundle_Output::schema);
 
         nb::class_<TimeSeriesBundleOutput, IndexedTimeSeriesOutput>(m, "TimeSeriesBundleOutput")
             .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
@@ -97,7 +97,7 @@ namespace hgraph
             .def("valid_keys", &TimeSeriesBundle_Input::valid_keys)
             .def("valid_items",
                  static_cast<key_value_collection_type (TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::valid_items))
-            .def_prop_ro("schema", &TimeSeriesBundle_Input::schema);
+            .def_prop_ro("__schema__", &TimeSeriesBundle_Input::schema);
 
         nb::class_<TimeSeriesBundleInput, TimeSeriesBundle_Input>(m, "TimeSeriesBundleInput")
             .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)

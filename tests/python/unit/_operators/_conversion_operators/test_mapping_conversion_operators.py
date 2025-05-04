@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Set, Mapping, Tuple
 
 from hgraph import graph, TS, convert, collect, emit, TSB, Size, TSL, TSD, REMOVE, KeyValue, TimeSeriesSchema
@@ -55,6 +56,8 @@ def test_convert_tsd_to_mapping():
 
 
 def test_convert_tsb_to_mapping():
+
+    @dataclass
     class ABBundle(TimeSeriesSchema):
         a: TS[int]
         b: TS[int]
