@@ -6,15 +6,15 @@
 #define TSS_H
 
 #include <hgraph/python/pyb_wiring.h>
+#include <hgraph/types/feature_extension.h>
 #include <hgraph/types/time_series_type.h>
 #include <unordered_set>
 
 namespace hgraph
 {
 
-    struct SetDelta : nanobind::intrusive_base
+    struct SetDelta
     {
-        using ptr = nb::ref<SetDelta>;
 
         /**
          * Get the elements that were added in this delta
@@ -33,12 +33,11 @@ namespace hgraph
 
     struct SetDelta_Object : SetDelta
     {
-        using ptr = nb::ref<SetDelta_Object>;
 
         SetDelta_Object(nb::object added_elements, nb::object removed_elements);
 
-        [[nodiscard]] virtual nb::object py_added_elements() const;
-        [[nodiscard]] virtual nb::object py_removed_elements() const;
+        [[nodiscard]] nb::object py_added_elements() const override;
+        [[nodiscard]] nb::object py_removed_elements() const override;
 
       private:
         nb::object _added_elements;
@@ -67,9 +66,9 @@ namespace hgraph
 
     template <typename T_TS>
         requires TimeSeriesT<T_TS>
-    class TimeSeriesSet : T_TS
+    struct TimeSeriesSet : T_TS
     {
-      public:
+        using T_TS::T_TS;
         [[nodiscard]] virtual bool              py_contains(const nb::object &item) const    = 0;
         [[nodiscard]] virtual size_t            size() const                                 = 0;
         [[nodiscard]] virtual const nb::object &py_values() const                            = 0;
@@ -77,6 +76,51 @@ namespace hgraph
         [[nodiscard]] virtual bool              py_was_added(const nb::object &item) const   = 0;
         [[nodiscard]] virtual const nb::object &py_removed() const                           = 0;
         [[nodiscard]] virtual bool              py_was_removed(const nb::object &item) const = 0;
+    };
+
+    using TimeSeriesSetOutput = TimeSeriesSet<TimeSeriesOutput>;
+
+    struct TimeSeriesSetInput : TimeSeriesSet<TimeSeriesInput>
+    {
+        using TimeSeriesSet<TimeSeriesInput>::TimeSeriesSet;
+        TimeSeriesSetOutput &set_output() const;
+
+        [[nodiscard]] nb::object        py_value() const override;
+        [[nodiscard]] nb::object        py_delta_value() const override;
+        [[nodiscard]] bool              py_contains(const nb::object &item) const override;
+        [[nodiscard]] size_t            size() const override;
+        [[nodiscard]] const nb::object &py_values() const override;
+        [[nodiscard]] const nb::object &py_added() const override;
+        [[nodiscard]] bool              py_was_added(const nb::object &item) const override;
+        [[nodiscard]] const nb::object &py_removed() const override;
+        [[nodiscard]] bool              py_was_removed(const nb::object &item) const override;
+    };
+
+    struct TimeSeriesSetOutput_Object : TimeSeriesSetOutput
+    {
+        using TimeSeriesSetOutput::TimeSeriesSetOutput;
+
+        [[nodiscard]] nb::object        py_value() const override;
+        [[nodiscard]] nb::object        py_delta_value() const override;
+        void                            apply_result(nb::handle value) override;
+        void                            invalidate() override;
+        void                            copy_from_output(TimeSeriesOutput &output) override;
+        void                            copy_from_input(TimeSeriesInput &input) override;
+        [[nodiscard]] bool              py_contains(const nb::object &item) const override;
+        [[nodiscard]] size_t            size() const override;
+        [[nodiscard]] const nb::object &py_values() const override;
+        [[nodiscard]] const nb::object &py_added() const override;
+        [[nodiscard]] bool              py_was_added(const nb::object &item) const override;
+        [[nodiscard]] const nb::object &py_removed() const override;
+        [[nodiscard]] bool              py_was_removed(const nb::object &item) const override;
+
+      private:
+        nb::set                   _value;
+        nb::set                   _added;
+        nb::set                   _removed;
+        nb::ref<TimeSeriesOutput> _is_empty_ref_output;
+
+        nb::ref<FeatureOutputExtensionObject::ptr> _contains_ref_outputs;
     };
 
     void tss_register_with_nanobind(nb::module_ &m);

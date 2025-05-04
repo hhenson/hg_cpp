@@ -121,6 +121,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/runtime/graph_executor.h
 
         include/hgraph/types/error_type.h
+        include/hgraph/types/feature_extension.h
         include/hgraph/types/graph.h
         include/hgraph/types/node.h
         include/hgraph/types/ref.h

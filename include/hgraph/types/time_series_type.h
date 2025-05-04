@@ -140,6 +140,7 @@ namespace hgraph
         void                    _notify(engine_time_t modified_time);
         const TimeSeriesOutput &_time_series_output() const;
         TimeSeriesOutput       &_time_series_output();
+        void                    _reset_last_modified_time();
 
       private:
         ReferenceCountSubscriber<Notifiable *> _subscribers{};

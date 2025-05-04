@@ -18,6 +18,7 @@ set(HGRAPH_SOURCES
         runtime/graph_executor.cpp
 
         types/error_type.cpp
+        types/feature_extension.cpp
         types/graph.cpp
         types/node.cpp
         types/ref.cpp

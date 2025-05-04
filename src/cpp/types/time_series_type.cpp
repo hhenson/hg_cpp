@@ -97,7 +97,7 @@ namespace hgraph
     const Node &TimeSeriesType::owning_node() const { return _owning_node(); }
 
     TimeSeriesInput::ptr TimeSeriesInput::parent_input() const {
-        return static_cast<TimeSeriesInput *>(_parent_time_series().get()); // NOLINT(*-pro-type-static-cast-downcast)
+        return static_cast<TimeSeriesInput *>(_parent_time_series().get());  // NOLINT(*-pro-type-static-cast-downcast)
     }
 
     bool TimeSeriesInput::has_parent_input() const { return _has_parent_time_series(); }
@@ -224,7 +224,7 @@ namespace hgraph
         return true;
     }
 
-    auto TimeSeriesInput::notify(engine_time_t modified_time) -> void { // NOLINT(*-no-recursion)
+    auto TimeSeriesInput::notify(engine_time_t modified_time) -> void {  // NOLINT(*-no-recursion)
         if (_notify_time != modified_time) {
             _notify_time = modified_time;
             if (has_parent_input()) {
@@ -242,7 +242,9 @@ namespace hgraph
         _output = nullptr;
     }
 
-    void TimeSeriesInput::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) { notify(modified_time); } // NOLINT(*-no-recursion)
+    void TimeSeriesInput::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) {
+        notify(modified_time);
+    }  // NOLINT(*-no-recursion)
 
     void TimeSeriesInput::set_sample_time(engine_time_t sample_time) { _sample_time = sample_time; }
 
@@ -257,7 +259,7 @@ namespace hgraph
     }
 
     TimeSeriesOutput::ptr TimeSeriesOutput::parent_output() const {
-        return static_cast<TimeSeriesOutput *>(_parent_time_series().get()); // NOLINT(*-pro-type-static-cast-downcast)
+        return static_cast<TimeSeriesOutput *>(_parent_time_series().get());  // NOLINT(*-pro-type-static-cast-downcast)
     }
 
     bool TimeSeriesOutput::has_parent_output() const { return _has_parent_time_series(); }
@@ -291,7 +293,7 @@ namespace hgraph
         }
     }
 
-    void TimeSeriesOutput::mark_modified(engine_time_t modified_time) { // NOLINT(*-no-recursion)
+    void TimeSeriesOutput::mark_modified(engine_time_t modified_time) {  // NOLINT(*-no-recursion)
         if (_last_modified_time < modified_time) {
             _last_modified_time = modified_time;
             if (has_parent_output()) { parent_output()->mark_child_modified(modified_time); }
@@ -299,7 +301,9 @@ namespace hgraph
         }
     }
 
-    void TimeSeriesOutput::mark_child_modified(engine_time_t modified_time) { mark_modified(modified_time); } // NOLINT(*-no-recursion)
+    void TimeSeriesOutput::mark_child_modified(engine_time_t modified_time) {
+        mark_modified(modified_time);
+    }  // NOLINT(*-no-recursion)
 
     void TimeSeriesOutput::subscribe(Notifiable *notifiable) { _subscribers.subscribe(notifiable); }
 
@@ -317,6 +321,7 @@ namespace hgraph
         return *dynamic_cast<TimeSeriesOutput *>(_parent_time_series().get());
     }
 
+    void TimeSeriesOutput::_reset_last_modified_time() { _last_modified_time = MIN_DT; }
 
     bool TimeSeriesInput::modified() const { return _output != nullptr && (_output->modified() || sampled()); }
 
@@ -327,6 +332,5 @@ namespace hgraph
     engine_time_t TimeSeriesInput::last_modified_time() const {
         return bound() ? std::max(_output->last_modified_time(), _sample_time) : MIN_DT;
     }
-
 
 }  // namespace hgraph
