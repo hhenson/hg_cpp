@@ -641,7 +641,7 @@ namespace hgraph
              ++i) {
             // Apple does not yet support ranges::contains :(
             auto key{input().schema().keys()[i]};
-            if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) { _kwargs[key.c_str()] = input()[i]; }
+            if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) { _kwargs[key.c_str()] = *input()[i]; }
         }
     }
 

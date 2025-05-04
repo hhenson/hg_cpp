@@ -1,5 +1,3 @@
-#include <hgraph/util/nanobind_utils.h>
-
 #include <algorithm>
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/tsb.h>

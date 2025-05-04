@@ -19,6 +19,7 @@
 #include <nanobind/stl/unordered_set.h>
 #include <nanobind/stl/vector.h>
 #include <nanobind/stl/variant.h>
+#include <hgraph/util/nanobind_utils.h>
 
 
 using namespace nb::literals;

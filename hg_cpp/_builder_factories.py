@@ -35,7 +35,7 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
             ),
             hgraph.HgTSBTypeMetaData: lambda: _hgraph.OutputBuilder_TSB(
                 # TODO: Cache the schema
-                schema=_hgraph.TimSeriesSchema(keys=value_tp.bundle_schema_tp.meta_data_schema.keys(),
+                schema=_hgraph.TimeSeriesSchema(keys=value_tp.bundle_schema_tp.meta_data_schema.keys(),
                                                scalar_type=value_tp.bundle_schema_tp.py_type)
             ),
             hgraph.HgREFTypeMetaData: lambda: _hgraph.OutputBuilder_TS_Ref(

@@ -39,7 +39,7 @@ namespace hgraph
         void invalidate() override { mark_invalid(); }
 
         void copy_from_output(TimeSeriesOutput &output) override {
-            TimeSeriesValueOutput<T> &output_t = dynamic_cast<TimeSeriesValueOutput<T> &>(output);
+            auto &output_t = dynamic_cast<TimeSeriesValueOutput<T> &>(output);
             set_value(output_t._value);
         }
 
