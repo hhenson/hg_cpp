@@ -127,6 +127,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/types/time_series_type.h
         include/hgraph/types/traits.h
         include/hgraph/types/ts.h
+        include/hgraph/types/tss.h
         include/hgraph/types/ts_indexed.h
         include/hgraph/types/tsb.h
         include/hgraph/types/tsl.h

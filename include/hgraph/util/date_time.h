@@ -7,6 +7,37 @@
 
 #include <chrono>
 
+namespace std
+{
+
+    // Specialization for std::chrono::time_point
+    template <class Clock, class Duration> struct hash<std::chrono::time_point<Clock, Duration>>
+    {
+        size_t operator()(const std::chrono::time_point<Clock, Duration> &tp) const noexcept {
+            return std::hash<typename Duration::rep>()(tp.time_since_epoch().count());
+        }
+    };
+
+    // Specialization for std::chrono::duration
+    template <class Rep, class Period> struct hash<std::chrono::duration<Rep, Period>>
+    {
+        size_t operator()(const std::chrono::duration<Rep, Period> &d) const noexcept { return std::hash<Rep>()(d.count()); }
+    };
+
+
+    template <> struct hash<std::chrono::year_month_day>
+    {
+        size_t operator()(const std::chrono::year_month_day &ymd) const noexcept {
+            size_t h1 = std::hash<int>{}(static_cast<int>(ymd.year()));
+            size_t h2 = std::hash<unsigned>{}(static_cast<unsigned>(ymd.month()));
+            size_t h3 = std::hash<unsigned>{}(static_cast<unsigned>(ymd.day()));
+            // Combine hashes (boost::hash_combine-like)
+            return h1 ^ (h2 << 1) ^ (h3 << 2);
+        }
+    };
+
+}  // namespace std
+
 namespace hgraph
 {
 
