@@ -10,8 +10,6 @@
 
 namespace hgraph
 {
-    template <typename T_TS>
-    concept TimeSeriesT = std::is_same_v<T_TS, TimeSeriesInput> || std::is_same_v<T_TS, TimeSeriesOutput>;
 
     template <typename T_TS>
         requires TimeSeriesT<T_TS>

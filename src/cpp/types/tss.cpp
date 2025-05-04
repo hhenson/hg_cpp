@@ -33,10 +33,36 @@ namespace hgraph
             .def(nb::init<const std::unordered_set<engine_time_delta_t> &, const std::unordered_set<engine_time_delta_t> &>(),
                  "added_elements"_a, "removed_elements"_a);
 
-        using SetDelta_object = SetDeltaImpl<nb::object>;
-        nb::class_<SetDelta_object, SetDelta>(m, "SetDelta_object")
-            .def(nb::init<const std::unordered_set<nb::object> &, const std::unordered_set<nb::object> &>(), "added_elements"_a,
-                 "removed_elements"_a);
+        nb::class_<SetDelta_Object, SetDelta>(m, "SetDelta_object")
+            .def(nb::init<const nb::object &, const nb::object &>(), "added_elements"_a, "removed_elements"_a);
     }
 
+    SetDelta_Object::SetDelta_Object(nb::object added_elements, nb::object removed_elements)
+        : _added_elements(std::move(added_elements)), _removed_elements(std::move(removed_elements)) {}
+
+    nb::object SetDelta_Object::py_removed_elements() const { return _removed_elements; }
+
+    nb::object SetDelta_Object::py_added_elements() const { return _added_elements; }
+
+    void tss_register_with_nanobind(nb::module_ &m) {
+        using TSS_IN = TimeSeriesSet<TimeSeriesInput>;
+        nb::class_<TSS_IN, TimeSeriesInput>(m, "TimeSeriesSetInput")
+            .def("__contains__", &TSS_IN::py_contains)
+            .def("__len__", &TSS_IN::size)
+            .def("values", &TSS_IN::py_values)
+            .def("added", &TSS_IN::py_added)
+            .def("removed", &TSS_IN::py_removed)
+            .def("was_added", &TSS_IN::py_was_added)
+            .def("was_removed", &TSS_IN::py_was_removed);
+
+        using TSS_OUT = TimeSeriesSet<TimeSeriesOutput>;
+        nb::class_<TSS_OUT, TimeSeriesOutput>(m, "TimeSeriesSetOutput")
+            .def("__contains__", &TSS_OUT::py_contains)
+            .def("__len__", &TSS_OUT::size)
+            .def("values", &TSS_OUT::py_values)
+            .def("added", &TSS_OUT::py_added)
+            .def("removed", &TSS_OUT::py_removed)
+            .def("was_added", &TSS_OUT::py_was_added)
+            .def("was_removed", &TSS_OUT::py_was_removed);
+    }
 }  // namespace hgraph

@@ -11,6 +11,7 @@
 
 namespace hgraph
 {
+
     struct SetDelta : nanobind::intrusive_base
     {
         using ptr = nb::ref<SetDelta>;
@@ -28,6 +29,20 @@ namespace hgraph
         [[nodiscard]] virtual nb::object py_removed_elements() const = 0;
 
         static void register_with_nanobind(nb::module_ &m);
+    };
+
+    struct SetDelta_Object : SetDelta
+    {
+        using ptr = nb::ref<SetDelta_Object>;
+
+        SetDelta_Object(nb::object added_elements, nb::object removed_elements);
+
+        [[nodiscard]] virtual nb::object py_added_elements() const;
+        [[nodiscard]] virtual nb::object py_removed_elements() const;
+
+      private:
+        nb::object _added_elements;
+        nb::object _removed_elements;
     };
 
     template <typename T> struct SetDeltaImpl : SetDelta
@@ -49,6 +64,23 @@ namespace hgraph
         collection_type _added_elements;
         collection_type _removed_elements;
     };
+
+    template <typename T_TS>
+        requires TimeSeriesT<T_TS>
+    class TimeSeriesSet : T_TS
+    {
+      public:
+        [[nodiscard]] virtual bool              py_contains(const nb::object &item) const    = 0;
+        [[nodiscard]] virtual size_t            size() const                                 = 0;
+        [[nodiscard]] virtual const nb::object &py_values() const                            = 0;
+        [[nodiscard]] virtual const nb::object &py_added() const                             = 0;
+        [[nodiscard]] virtual bool              py_was_added(const nb::object &item) const   = 0;
+        [[nodiscard]] virtual const nb::object &py_removed() const                           = 0;
+        [[nodiscard]] virtual bool              py_was_removed(const nb::object &item) const = 0;
+    };
+
+    void tss_register_with_nanobind(nb::module_ &m);
+
 }  // namespace hgraph
 
 #endif  // TSS_H

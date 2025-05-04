@@ -77,10 +77,10 @@ namespace hgraph
 
       protected:
         ptr &_parent_time_series() const;
-        ptr       &_parent_time_series();
-        bool       _has_parent_time_series() const;
-        void       _set_parent_time_series(TimeSeriesType *ts);
-        bool       has_parent_or_node() const;
+        ptr &_parent_time_series();
+        bool _has_parent_time_series() const;
+        void _set_parent_time_series(TimeSeriesType *ts);
+        bool has_parent_or_node() const;
 
       private:
         using OutputOrNode = std::variant<ptr, Node::ptr>;
@@ -230,6 +230,8 @@ namespace hgraph
         engine_time_t          _notify_time{MIN_DT};
     };
 
+    template <typename T_TS>
+    concept TimeSeriesT = std::is_same_v<T_TS, TimeSeriesInput> || std::is_same_v<T_TS, TimeSeriesOutput>;
 
 }  // namespace hgraph
 
