@@ -27,7 +27,8 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
             ),
             hgraph.HgREFTypeMetaData: lambda: _hgraph.InputBuilder_TS_Ref(
                 #   value_tp=cast(HgREFTypeMetaData, value_tp).value_tp
-            )
+            ),
+            hgraph.HgTSSTypeMetaData: lambda: _hgraph.InputBuilder_TSS_Object(),
         }.get(type(value_tp), lambda: _throw(value_tp))()
 
     def make_output_builder(self, value_tp: hgraph.HgTimeSeriesTypeMetaData) -> hgraph.TSOutputBuilder:
@@ -51,7 +52,8 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
             ),
             hgraph.HgREFTypeMetaData: lambda: _hgraph.OutputBuilder_TS_Ref(
                 #   value_tp=cast(HgREFTypeMetaData, value_tp).value_tp
-            )
+            ),
+            hgraph.HgTSSTypeMetaData: lambda: _hgraph.OutputBuilder_TSS_Object(),
         }.get(type(value_tp), lambda: _throw(value_tp))()
 
 

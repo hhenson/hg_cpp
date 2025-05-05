@@ -1,3 +1,4 @@
+//NOTE: The pyb_wiring import MUST be first
 #include <hgraph/python/pyb_wiring.h>
 #include <hgraph/builders/input_builder.h>
 #include <ranges>
@@ -39,6 +40,8 @@ namespace hgraph
             .def(nb::init<ptr, size_t>(), "input_builder"_a, "size"_a);
         nb::class_<TimeSeriesBundleInputBuilder, InputBuilder>(m, "InputBuilder_TSB")
             .def(nb::init<TimeSeriesSchema::ptr, std::vector<InputBuilder::ptr>>(), "schema"_a, "input_builders"_a);
+
+        nb::class_<TimeSeriesSetInputBuilder, InputBuilder>(m, "InputBuilder_TSS_Object").def(nb::init<>());
     }
 
     time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(node_ptr owning_node) const {
@@ -94,5 +97,15 @@ namespace hgraph
                           std::back_inserter(inputs));
         input->set_ts_values(inputs);
         return input_;
+    }
+
+    time_series_input_ptr TimeSeriesSetInputBuilder::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesSetInput{owning_node}};
+        return v;
+    }
+
+    time_series_input_ptr TimeSeriesSetInputBuilder::make_instance(time_series_input_ptr owning_input) const {
+        auto v{new TimeSeriesSetInput{dynamic_cast_ref<TimeSeriesType>(owning_input)}};
+        return v;
     }
 }  // namespace hgraph

@@ -9,6 +9,7 @@
 #include <hgraph/types/ts.h>
 #include <hgraph/types/tsb.h>
 #include <hgraph/types/tsl.h>
+#include <hgraph/types/tss.h>
 
 namespace hgraph
 {
@@ -78,6 +79,15 @@ namespace hgraph
         time_series_output_ptr          make_and_set_outputs(TimeSeriesBundleOutput *output) const;
         TimeSeriesSchema::ptr           schema;
         std::vector<OutputBuilder::ptr> output_builders;
+    };
+
+    struct HGRAPH_EXPORT TimeSeriesSetOutputBuilder_object : OutputBuilder
+    {
+        using OutputBuilder::OutputBuilder;
+
+        time_series_output_ptr make_instance(node_ptr owning_node) const override;
+
+        time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
     };
 }  // namespace hgraph
 

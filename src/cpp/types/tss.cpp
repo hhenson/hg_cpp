@@ -205,5 +205,7 @@ namespace hgraph
             .def("removed", &TimeSeriesSetOutput::py_removed)
             .def("was_added", &TimeSeriesSetOutput::py_was_added)
             .def("was_removed", &TimeSeriesSetOutput::py_was_removed);
+
+        nb::class_<TimeSeriesSetOutput_Object, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Object");
     }
 }  // namespace hgraph

@@ -6,8 +6,8 @@
 #include <hgraph/types/ts.h>
 #include <hgraph/types/tsb.h>
 #include <hgraph/types/tsl.h>
+#include <hgraph/types/tss.h>
 #include <hgraph/types/node.h>
-#include <hgraph/types/traits.h>
 #include <hgraph/types/graph.h>
 
 void export_types(nb::module_ &m) {
@@ -29,6 +29,9 @@ void export_types(nb::module_ &m) {
 
     TimeSeriesBundleInput::register_with_nanobind(m);
     TimeSeriesBundleOutput::register_with_nanobind(m);
+
+    SetDelta::register_with_nanobind(m);
+    tss_register_with_nanobind(m);
 
     Traits::register_with_nanobind(m);
 

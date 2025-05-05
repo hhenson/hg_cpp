@@ -12,6 +12,7 @@
 #include <hgraph/types/ts.h>
 #include <hgraph/types/tsb.h>
 #include <hgraph/types/tsl.h>
+#include <hgraph/types/tss.h>
 
 namespace hgraph
 {
@@ -97,6 +98,17 @@ namespace hgraph
         time_series_input_ptr          make_and_set_inputs(TimeSeriesBundleInput *input) const;
         TimeSeriesSchema::ptr          schema;
         std::vector<InputBuilder::ptr> input_builders;
+    };
+
+    struct HGRAPH_EXPORT TimeSeriesSetInputBuilder : InputBuilder
+    {
+        using ptr = nb::ref<TimeSeriesSetInputBuilder>;
+        using InputBuilder::InputBuilder;
+
+        time_series_input_ptr make_instance(node_ptr owning_node) const override;
+
+        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
+
     };
 }  // namespace hgraph
 

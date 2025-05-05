@@ -40,6 +40,8 @@ namespace hgraph
             .def(nb::init<OutputBuilder::ptr, size_t>(), "output_builder"_a, "size"_a);
         nb::class_<TimeSeriesBundleOutputBuilder, OutputBuilder>(m, "OutputBuilder_TSB")
             .def(nb::init<TimeSeriesSchema::ptr, std::vector<OutputBuilder::ptr>>(), "schema"_a, "output_builders"_a);
+
+        nb::class_<TimeSeriesSetOutputBuilder_object, OutputBuilder>(m, "OutputBuilder_TSS_Object").def(nb::init<>());
     }
 
     time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(node_ptr owning_node) const {
@@ -95,6 +97,16 @@ namespace hgraph
                           std::back_inserter(outputs));
         output->set_ts_values(outputs);
         return output_;
+    }
+
+    time_series_output_ptr TimeSeriesSetOutputBuilder_object::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesSetOutput_Object{owning_node}};
+        return v;
+    }
+
+    time_series_output_ptr TimeSeriesSetOutputBuilder_object::make_instance(time_series_output_ptr owning_output) const {
+        auto v{new TimeSeriesSetOutput_Object{dynamic_cast_ref<TimeSeriesType>(owning_output)}};
+        return v;
     }
 
 }  // namespace hgraph
