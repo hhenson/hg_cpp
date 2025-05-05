@@ -121,7 +121,7 @@ namespace hgraph
         nb::set                   _removed;
         nb::ref<TimeSeriesOutput> _is_empty_ref_output;
 
-        nb::ref<FeatureOutputExtensionObject::ptr> _contains_ref_outputs;
+        std::unique_ptr<FeatureOutputExtensionObject> _contains_ref_outputs;
     };
 
     void tss_register_with_nanobind(nb::module_ &m);

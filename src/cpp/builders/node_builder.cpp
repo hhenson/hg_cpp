@@ -71,7 +71,8 @@ namespace hgraph
         nb::class_<PythonGeneratorNodeBuilder, BaseNodeBuilder>(m, "PythonGeneratorNodeBuilder")
             .def("__init__",
                  [](PythonGeneratorNodeBuilder *self, const nb::kwargs &kwargs) {
-                     auto signature_ = nb::cast<node_signature_ptr>(kwargs["signature"]);
+                     auto signature_obj = kwargs["signature"];
+                     auto signature_ = nb::cast<node_signature_ptr>(signature_obj);
                      auto scalars_   = nb::cast<nb::dict>(kwargs["scalars"]);
 
                      std::optional<input_builder_ptr> input_builder_ =
