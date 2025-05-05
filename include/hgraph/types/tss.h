@@ -15,6 +15,7 @@ namespace hgraph
 
     struct SetDelta
     {
+        virtual ~SetDelta() = default;
 
         /**
          * Get the elements that were added in this delta
