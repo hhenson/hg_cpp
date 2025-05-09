@@ -186,5 +186,51 @@ template <typename Rep, typename Period>
 class type_caster<std::chrono::duration<Rep, Period>>
   : public duration_caster<std::chrono::duration<Rep, Period>> {};
 
+// Support for date
+template<> class type_caster<std::chrono::year_month_day> {
+public:
+    using type = std::chrono::year_month_day;
+    bool from_python(handle src, uint8_t /*flags*/, cleanup_list*) noexcept {
+        namespace ch = std::chrono;
+
+        if (!src)
+            return false;
+
+        int yy, mon, dd, hh, min, ss, uu;
+        try {
+            if (!unpack_datetime(src.ptr(), &yy, &mon, &dd,
+                                 &hh, &min, &ss, &uu)) {
+                return false;
+            }
+        } catch (python_error& e) {
+            e.discard_as_unraisable(src.ptr());
+            return false;
+        }
+        std::chrono::year_month_day ymd{std::chrono::year{yy}, std::chrono::month{static_cast<unsigned>(mon)}, std::chrono::day{static_cast<unsigned>(dd)}};
+
+        value = ymd;
+        return true;
+    }
+
+    static handle from_cpp(const type& src, rv_policy, cleanup_list*) noexcept {
+        namespace ch = std::chrono;
+
+        int year = static_cast<int>(src.year());
+        unsigned int month = static_cast<unsigned int>(src.month());
+        unsigned int day = static_cast<unsigned int>(src.day());
+
+        return PyDate_FromDate(year,
+                             month,
+                             day);
+    }
+    #if PY_VERSION_HEX < 0x03090000
+        NB_TYPE_CASTER(type, io_name("typing.Union[datetime.datetime, datetime.date, datetime.time]",
+                                     "datetime.datetime"))
+    #else
+        NB_TYPE_CASTER(type, io_name("datetime.datetime | datetime.date | datetime.time",
+                                     "datetime.datetime"))
+    #endif
+};
+
 NAMESPACE_END(detail)
 NAMESPACE_END(NB_NAMESPACE)
