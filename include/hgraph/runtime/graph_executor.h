@@ -2,12 +2,7 @@
 #ifndef GRAPH_EXECUTOR_H
 #define GRAPH_EXECUTOR_H
 
-#include <hgraph/hgraph_export.h>
-#include <hgraph/python/pyb.h>
-#include <hgraph/util/date_time.h>
-#include <nanobind/intrusive/counter.h>
-#include <nanobind/trampoline.h>
-#include <vector>
+#include <hgraph/hgraph_base.h>
 
 namespace hgraph
 {

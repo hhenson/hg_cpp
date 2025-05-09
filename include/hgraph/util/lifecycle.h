@@ -5,9 +5,7 @@
 #ifndef LIFECYCLE_H
 #define LIFECYCLE_H
 
-#include<hgraph/hgraph_export.h>
-#include<hgraph/python/pyb.h>
-#include <nanobind/intrusive/counter.h>
+#include<hgraph/hgraph_base.h>
 
 namespace hgraph {
     struct ComponentLifeCycle;
@@ -69,7 +67,7 @@ namespace hgraph {
      * Since any life-cycle controlled component is likely to reasonably heavy weight, it seems reasonable to make them
      * ref-counting as well. *** May change my mind about this, but for now seems reasonable ***
      */
-    struct HGRAPH_EXPORT ComponentLifeCycle : nanobind::intrusive_base   {
+    struct HGRAPH_EXPORT ComponentLifeCycle : nb::intrusive_base   {
 
         virtual ~ComponentLifeCycle() = default;
 

@@ -1,9 +1,9 @@
 
-#include <fmt/format.h>
-#include <fmt/ranges.h>
-#include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/ref.h>
 #include <hgraph/types/ts_indexed.h>
+#include <hgraph/types/node.h>
+#include <hgraph/types/graph.h>
+
 #include <algorithm>
 
 namespace hgraph

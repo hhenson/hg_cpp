@@ -1,5 +1,6 @@
-#include <hgraph/python/pyb_wiring.h>
 #include <hgraph/builders/output_builder.h>
+#include <hgraph/types/node.h>
+
 #include <ranges>
 #include <utility>
 

@@ -133,14 +133,14 @@ set(HGRAPH_INCLUDES
         include/hgraph/types/tsb.h
         include/hgraph/types/tsl.h
 
-        include/hgraph/python/pyb.h
-        include/hgraph/python/pyb_wiring.h
+        include/hgraph/python/chrono.h
+        include/hgraph/python/hashable.h
+        include/hgraph/python/reference_wrapper.h
 
         include/hgraph/util/date_time.h
         include/hgraph/util/lifecycle.h
         include/hgraph/util/reference_count_subscriber.h
         include/hgraph/util/sender_receiver_state.h
-        include/hgraph/util/nanobind_utils.h
 
         include/hgraph/hgraph_export.h
 )

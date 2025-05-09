@@ -5,11 +5,9 @@
 #ifndef SENDER_RECEIVER_STATE_H
 #define SENDER_RECEIVER_STATE_H
 
-#include <any>
+#include <hgraph/hgraph_base.h>
 #include <deque>
-#include <hgraph/hgraph_forward_declarations.h>
 #include <mutex>
-#include <optional>
 
 namespace hgraph
 {

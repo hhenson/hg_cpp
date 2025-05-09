@@ -1,5 +1,5 @@
 
-#include <hgraph/python/pyb_wiring.h>
+#include <hgraph/types/node.h>
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/tsb.h>
 

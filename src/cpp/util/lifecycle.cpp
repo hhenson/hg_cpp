@@ -1,4 +1,3 @@
-#include <hgraph/python/pyb_wiring.h>
 #include <hgraph/util/lifecycle.h>
 
 namespace hgraph

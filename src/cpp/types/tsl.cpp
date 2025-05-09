@@ -1,7 +1,6 @@
 
-#include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/tsl.h>
-#include <nanobind/make_iterator.h>
+#include <hgraph/types/node.h>
 
 namespace hgraph
 {

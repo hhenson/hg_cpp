@@ -5,9 +5,11 @@
 #ifndef HGRAPH_FORWARD_DECLARATIONS_H
 #define HGRAPH_FORWARD_DECLARATIONS_H
 
+// Just in case this get's imported naked, ensure we have nanobind loaded to get the additional template behaviour from ref.
 #include <functional>
-#include <string>
 #include <nanobind/intrusive/ref.h>
+#include <nanobind/nanobind.h>
+#include <string>
 
 namespace hgraph
 {
@@ -63,7 +65,22 @@ namespace hgraph
     struct TimeSeriesReferenceOutput;
     using time_series_reference_output_ptr = nanobind::ref<TimeSeriesReferenceOutput>;
 
+    struct TimeSeriesListInput;
+    using time_series_list_input_ptr = nanobind::ref<TimeSeriesListInput>;
+
+    struct TimeSeriesListOutput;
+    using time_series_list_output_ptr = nanobind::ref<TimeSeriesListOutput>;
+
+    struct TimeSeriesSetInput;
+    using time_series_set_input_ptr = nanobind::ref<TimeSeriesSetInput>;
+
+    struct TimeSeriesSetOutput;
+    using time_series_set_output_ptr = nanobind::ref<TimeSeriesSetOutput>;
+
     using c_string_ref = std::reference_wrapper<const std::string>;
+
+    template <typename T_TS>
+    concept TimeSeriesT = std::is_same_v<T_TS, TimeSeriesInput> || std::is_same_v<T_TS, TimeSeriesOutput>;
 }  // namespace hgraph
 
 #endif  // HGRAPH_FORWARD_DECLARATIONS_H

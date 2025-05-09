@@ -7,9 +7,8 @@
  * on memory and general performance.
  *
  */
+#include <hgraph/hgraph_base.h>
 
-#include <hgraph/python/pyb_wiring.h>
-#include <nanobind/intrusive/counter.h>
 #include <nanobind/intrusive/counter.inl>
 
 void export_runtime(nb::module_ &);

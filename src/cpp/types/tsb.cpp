@@ -1,7 +1,8 @@
-#include <algorithm>
-#include <hgraph/python/pyb_wiring.h>
+
 #include <hgraph/types/tsb.h>
-#include <nanobind/make_iterator.h>
+#include <hgraph/types/node.h>
+
+#include <algorithm>
 #include <numeric>
 #include <ranges>
 #include <utility>

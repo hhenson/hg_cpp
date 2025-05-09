@@ -1,12 +1,9 @@
 
-#include "hgraph/builders/graph_builder.h"
-
-#include <hgraph/python/pyb_wiring.h>
-
 #include <hgraph/builders/builder.h>
 #include <hgraph/builders/input_builder.h>
 #include <hgraph/builders/output_builder.h>
 #include <hgraph/builders/node_builder.h>
+#include <hgraph/builders/graph_builder.h>
 
 void export_builders(nb::module_ &m) {
     using namespace hgraph;

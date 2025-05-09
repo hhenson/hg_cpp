@@ -1,7 +1,6 @@
 #include <hgraph/runtime/evaluation_context.h>
 
 #include <hgraph/runtime/evaluation_engine.h>
-#include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 
 namespace hgraph

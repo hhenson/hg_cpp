@@ -1,13 +1,11 @@
-#include <hgraph/python/pyb_wiring.h>
-
-#include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
-#include <hgraph/types/traits.h>
 #include <hgraph/types/ts.h>
+#include <hgraph/types/ref.h>
 #include <hgraph/types/tsb.h>
 #include <hgraph/types/tsl.h>
 #include <hgraph/types/tss.h>
 #include <hgraph/types/node.h>
+#include <hgraph/types/traits.h>
 #include <hgraph/types/graph.h>
 
 void export_types(nb::module_ &m) {

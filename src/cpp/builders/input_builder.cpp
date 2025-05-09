@@ -1,6 +1,6 @@
-//NOTE: The pyb_wiring import MUST be first
-#include <hgraph/python/pyb_wiring.h>
 #include <hgraph/builders/input_builder.h>
+#include <hgraph/types/node.h>
+
 #include <ranges>
 #include <utility>
 

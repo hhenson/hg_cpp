@@ -6,9 +6,6 @@
 #define GRAPH_BUILDER_H
 
 #include <hgraph/builders/builder.h>
-#include <hgraph/hgraph_forward_declarations.h>
-
-#include <vector>
 
 namespace hgraph
 {

@@ -5,10 +5,8 @@
 #ifndef TSS_H
 #define TSS_H
 
-#include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/feature_extension.h>
 #include <hgraph/types/time_series_type.h>
-#include <unordered_set>
 
 namespace hgraph
 {
@@ -79,7 +77,10 @@ namespace hgraph
         [[nodiscard]] virtual bool              py_was_removed(const nb::object &item) const = 0;
     };
 
-    using TimeSeriesSetOutput = TimeSeriesSet<TimeSeriesOutput>;
+    struct TimeSeriesSetOutput : TimeSeriesSet<TimeSeriesOutput>
+    {
+        using TimeSeriesSet<TimeSeriesOutput>::TimeSeriesSet;
+    };
 
     struct TimeSeriesSetInput : TimeSeriesSet<TimeSeriesInput>
     {

@@ -5,13 +5,6 @@
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#include <hgraph/hgraph_forward_declarations.h>
-
-#include <hgraph/python/pyb.h>
-#include <hgraph/util/lifecycle.h>
-#include <optional>
-#include <vector>
-
 #include <hgraph/runtime/evaluation_engine.h>
 #include <hgraph/util/sender_receiver_state.h>
 

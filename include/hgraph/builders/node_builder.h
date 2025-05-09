@@ -5,15 +5,6 @@
 #ifndef NODE_BUILDER_H
 #define NODE_BUILDER_H
 
-#include "hgraph/types/node.h"
-
-#include <hgraph/hgraph_forward_declarations.h>
-#include <hgraph/python/pyb.h>
-
-#include <memory>
-#include <optional>
-#include <vector>
-
 #include <hgraph/builders/builder.h>
 
 namespace hgraph

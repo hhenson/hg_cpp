@@ -2,11 +2,7 @@
 #ifndef TIME_SERIES_TYPE_H
 #define TIME_SERIES_TYPE_H
 
-#include <hgraph/hgraph_export.h>
-#include <hgraph/python/pyb.h>
-#include <hgraph/types/graph.h>
-#include <hgraph/types/node.h>
-#include <hgraph/util/date_time.h>
+#include <hgraph/hgraph_base.h>
 #include <hgraph/util/reference_count_subscriber.h>
 #include <variant>
 
@@ -68,7 +64,7 @@ namespace hgraph
         This is used when grafting a time-series input from one node / time-series container to another.
         For example, see use in map implementation.
         */
-        void re_parent(Node::ptr parent);
+        void re_parent(node_ptr parent);
 
         // // Overload for re_parent with TimeSeries
         // virtual void re_parent(TimeSeriesType::ptr parent) = 0;
@@ -83,7 +79,7 @@ namespace hgraph
         bool has_parent_or_node() const;
 
       private:
-        using OutputOrNode = std::variant<ptr, Node::ptr>;
+        using OutputOrNode = std::variant<ptr, node_ptr>;
         std::optional<OutputOrNode> _parent_ts_or_node{};
         const Node                 &_owning_node() const;
     };
@@ -230,9 +226,6 @@ namespace hgraph
         engine_time_t          _sample_time{MIN_DT};
         engine_time_t          _notify_time{MIN_DT};
     };
-
-    template <typename T_TS>
-    concept TimeSeriesT = std::is_same_v<T_TS, TimeSeriesInput> || std::is_same_v<T_TS, TimeSeriesOutput>;
 
 }  // namespace hgraph
 

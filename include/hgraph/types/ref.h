@@ -5,8 +5,6 @@
 #ifndef REF_H
 #define REF_H
 
-#include <hgraph/hgraph_forward_declarations.h>
-#include <hgraph/python/pyb.h>
 #include <hgraph/types/time_series_type.h>
 
 namespace hgraph

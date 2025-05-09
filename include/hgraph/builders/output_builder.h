@@ -2,7 +2,6 @@
 #ifndef OUTPUT_BUILDER_H
 #define OUTPUT_BUILDER_H
 
-#include <hgraph/hgraph_forward_declarations.h>
 #include <hgraph/builders/builder.h>
 
 #include <hgraph/types/ref.h>

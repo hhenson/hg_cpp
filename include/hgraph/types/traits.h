@@ -5,11 +5,7 @@
 #ifndef TRAITS_H
 #define TRAITS_H
 
-#include <any>
-#include <hgraph/python/pyb.h>
-#include <optional>
-#include <string>
-#include <unordered_map>
+#include <hgraph/hgraph_base.h>
 
 namespace hgraph
 {

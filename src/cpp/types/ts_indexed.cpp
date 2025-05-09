@@ -1,9 +1,7 @@
-#include <algorithm>
-#include <hgraph/python/pyb_wiring.h>
 #include <hgraph/types/ts_indexed.h>
-#include <numeric>
+
+#include <algorithm>
 #include <ranges>
-#include <utility>
 
 namespace hgraph
 {

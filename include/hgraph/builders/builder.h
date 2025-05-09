@@ -5,7 +5,7 @@
 #ifndef BUILDER_H
 #define BUILDER_H
 
-#include<hgraph/python/pyb.h>
+#include<hgraph/hgraph_base.h>
 
 namespace hgraph
 {

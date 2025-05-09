@@ -2,20 +2,6 @@
 #ifndef NODE_H
 #define NODE_H
 
-#include <any>
-#include <hgraph/hgraph_export.h>
-#include <hgraph/python/pyb.h>
-#include <optional>
-#include <set>
-#include <stdexcept>
-#include <string>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
-
-#include <hgraph/hgraph_forward_declarations.h>
-#include <hgraph/python/pyb.h>
-#include <hgraph/util/date_time.h>
 #include <hgraph/util/lifecycle.h>
 #include <hgraph/util/reference_count_subscriber.h>
 

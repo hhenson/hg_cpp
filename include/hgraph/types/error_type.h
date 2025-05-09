@@ -5,12 +5,9 @@
 #ifndef ERROR_TYPE_H
 #define ERROR_TYPE_H
 
-#include "hgraph/util/date_time.h"
+#include <hgraph/hgraph_base.h>
 
 #include <exception>
-#include <hgraph/hgraph_export.h>
-#include <hgraph/hgraph_forward_declarations.h>
-#include <hgraph/python/pyb_wiring.h>
 #include <ostream>
 #include <stdexcept>
 

@@ -1,8 +1,6 @@
-#include <algorithm>
-#include <hgraph/python/pyb_wiring.h>
 #include <hgraph/runtime/evaluation_engine.h>
-#include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
+#include <hgraph/types/graph.h>
 
 namespace hgraph
 {
