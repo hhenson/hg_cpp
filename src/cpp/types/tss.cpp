@@ -1,3 +1,4 @@
+#include <hgraph/types/graph.h>
 #include <hgraph/types/tss.h>
 
 namespace hgraph
@@ -42,6 +43,11 @@ namespace hgraph
 
     nb::object SetDelta_Object::py_removed_elements() const { return _removed_elements; }
 
+    void TimeSeriesSetOutput::invalidate() {
+        clear();
+        _reset_last_modified_time();
+    }
+
     TimeSeriesSetOutput &TimeSeriesSetInput::set_output() const { return dynamic_cast<TimeSeriesSetOutput &>(*output()); }
 
     nb::object TimeSeriesSetOutput_Object::py_value() const { return _value; }
@@ -55,6 +61,7 @@ namespace hgraph
     }
 
     void TimeSeriesSetOutput_Object::apply_result(nb::handle value) {
+        if (value.is_none()) { return; }
         try {
             if (nb::isinstance<SetDelta>(value)) {
                 auto delta{nb::cast<SetDelta *>(value)};
@@ -104,9 +111,10 @@ namespace hgraph
         if (_added.size() > 0 || _removed.size() > 0 || !valid()) { mark_modified(); }
     }
 
-    void TimeSeriesSetOutput_Object::invalidate() {
-        clear();
-        _reset_last_modified_time();
+    void TimeSeriesSetOutput_Object::clear() {
+        _added   = nb::set();
+        _removed = nb::set();
+        _value   = nb::set();
     }
 
     void TimeSeriesSetOutput_Object::copy_from_output(TimeSeriesOutput &output) {
@@ -157,13 +165,13 @@ namespace hgraph
 
     size_t TimeSeriesSetOutput_Object::size() const { return _value.size(); }
 
-    const nb::object &TimeSeriesSetOutput_Object::py_values() const { return _value; }
+    const nb::object TimeSeriesSetOutput_Object::py_values() const { return _value; }
 
-    const nb::object &TimeSeriesSetOutput_Object::py_added() const { return _added; }
+    const nb::object TimeSeriesSetOutput_Object::py_added() const { return _added; }
 
     bool TimeSeriesSetOutput_Object::py_was_added(const nb::object &item) const { return _added.contains(item); }
 
-    const nb::object &TimeSeriesSetOutput_Object::py_removed() const { return _removed; }
+    const nb::object TimeSeriesSetOutput_Object::py_removed() const { return _removed; }
 
     bool TimeSeriesSetOutput_Object::py_was_removed(const nb::object &item) const { return _removed.contains(item); }
 
@@ -175,15 +183,83 @@ namespace hgraph
 
     size_t TimeSeriesSetInput::size() const { return set_output().size(); }
 
-    const nb::object &TimeSeriesSetInput::py_values() const { return set_output().py_values(); }
+    const nb::object TimeSeriesSetInput::py_values() const { return set_output().py_values(); }
 
-    const nb::object &TimeSeriesSetInput::py_added() const { return set_output().py_added(); }
+    const nb::object TimeSeriesSetInput::py_added() const {
+        if (has_prev_output()) {
+            // Get current values as a set
+            auto current_values = nb::set(py_values());
+            // Get previous state (old values + removed - added)
+            auto prev_values  = nb::set(prev_output().py_values());
+            auto prev_removed = nb::set(prev_output().py_removed());
+            auto prev_added   = nb::set(prev_output().py_added());
+            auto old_state    = (prev_values | prev_removed) - prev_added;
+            // Added items are current values minus old state
+            return current_values - old_state;
+        } else {
+            return sampled() ? py_values() : set_output().py_added();
+        }
+    }
 
-    bool TimeSeriesSetInput::py_was_added(const nb::object &item) const { return set_output().py_was_added(item); }
+    bool TimeSeriesSetInput::py_was_added(const nb::object &item) const {
+        if (has_prev_output()) {
+            return set_output().py_was_added(item) && !prev_output().py_contains(item);
+        } else if (sampled()) {
+            return py_contains(item);
+        } else {
+            return set_output().py_was_added(item);
+        }
+    }
 
-    const nb::object &TimeSeriesSetInput::py_removed() const { return set_output().py_removed(); }
+    const nb::object TimeSeriesSetInput::py_removed() const {
+        if (has_prev_output()) {
+            auto prev_values    = nb::set(prev_output().py_values());
+            auto prev_removed   = nb::set(prev_output().py_removed());
+            auto prev_added     = nb::set(prev_output().py_added());
+            auto current_values = nb::set(py_values());
 
-    bool TimeSeriesSetInput::py_was_removed(const nb::object &item) const { return set_output().py_was_removed(item); }
+            return (prev_values | prev_removed) - prev_added - current_values;
+        } else if (sampled()) {
+            return nb::set();
+        } else if (has_output()) {
+            return set_output().py_removed();
+        } else {
+            return nb::set();
+        }
+    }
+
+    bool TimeSeriesSetInput::py_was_removed(const nb::object &item) const {
+        if (has_prev_output()) {
+            return prev_output().py_contains(item) && !py_contains(item);
+        } else if (sampled()) {
+            return false;
+        } else {
+            return set_output().py_was_removed(item);
+        }
+    }
+
+    const TimeSeriesSetOutput &TimeSeriesSetInput::prev_output() const { return *_prev_output; }
+
+    bool TimeSeriesSetInput::has_prev_output() const { return _prev_output != nullptr; }
+
+    void TimeSeriesSetInput::reset_prev() { _prev_output = nullptr; }
+
+    bool TimeSeriesSetInput::do_bind_output(TimeSeriesOutput::ptr output) {
+        if (has_output()) {
+            _prev_output = &set_output();
+            // Clean up after the engine cycle is complete
+            owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { reset_prev(); });
+        }
+        return TimeSeriesInput::do_bind_output(output);
+    }
+
+    void TimeSeriesSetInput::do_un_bind_output() {
+        if (has_output()) {
+            _prev_output = &set_output();
+            owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { reset_prev(); });
+        }
+        TimeSeriesInput::do_un_bind_output();
+    }
 
     nb::object SetDelta_Object::py_added_elements() const { return _added_elements; }
 

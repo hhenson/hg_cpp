@@ -68,18 +68,21 @@ namespace hgraph
     struct TimeSeriesSet : T_TS
     {
         using T_TS::T_TS;
-        [[nodiscard]] virtual bool              py_contains(const nb::object &item) const    = 0;
-        [[nodiscard]] virtual size_t            size() const                                 = 0;
-        [[nodiscard]] virtual const nb::object &py_values() const                            = 0;
-        [[nodiscard]] virtual const nb::object &py_added() const                             = 0;
-        [[nodiscard]] virtual bool              py_was_added(const nb::object &item) const   = 0;
-        [[nodiscard]] virtual const nb::object &py_removed() const                           = 0;
-        [[nodiscard]] virtual bool              py_was_removed(const nb::object &item) const = 0;
+        [[nodiscard]] virtual bool             py_contains(const nb::object &item) const    = 0;
+        [[nodiscard]] virtual size_t           size() const                                 = 0;
+        [[nodiscard]] virtual const nb::object py_values() const                            = 0;
+        [[nodiscard]] virtual const nb::object py_added() const                             = 0;
+        [[nodiscard]] virtual bool             py_was_added(const nb::object &item) const   = 0;
+        [[nodiscard]] virtual const nb::object py_removed() const                           = 0;
+        [[nodiscard]] virtual bool             py_was_removed(const nb::object &item) const = 0;
     };
 
     struct TimeSeriesSetOutput : TimeSeriesSet<TimeSeriesOutput>
     {
+        using ptr = nb::ref<TimeSeriesSetOutput>;
         using TimeSeriesSet<TimeSeriesOutput>::TimeSeriesSet;
+
+        void invalidate() override;
     };
 
     struct TimeSeriesSetInput : TimeSeriesSet<TimeSeriesInput>
@@ -87,34 +90,46 @@ namespace hgraph
         using TimeSeriesSet<TimeSeriesInput>::TimeSeriesSet;
         TimeSeriesSetOutput &set_output() const;
 
-        [[nodiscard]] nb::object        py_value() const override;
-        [[nodiscard]] nb::object        py_delta_value() const override;
-        [[nodiscard]] bool              py_contains(const nb::object &item) const override;
-        [[nodiscard]] size_t            size() const override;
-        [[nodiscard]] const nb::object &py_values() const override;
-        [[nodiscard]] const nb::object &py_added() const override;
-        [[nodiscard]] bool              py_was_added(const nb::object &item) const override;
-        [[nodiscard]] const nb::object &py_removed() const override;
-        [[nodiscard]] bool              py_was_removed(const nb::object &item) const override;
+        bool do_bind_output(TimeSeriesOutput::ptr output) override;
+        void do_un_bind_output() override;
+
+        [[nodiscard]] nb::object       py_value() const override;
+        [[nodiscard]] nb::object       py_delta_value() const override;
+        [[nodiscard]] bool             py_contains(const nb::object &item) const override;
+        [[nodiscard]] size_t           size() const override;
+        [[nodiscard]] const nb::object py_values() const override;
+        [[nodiscard]] const nb::object py_added() const override;
+        [[nodiscard]] bool             py_was_added(const nb::object &item) const override;
+        [[nodiscard]] const nb::object py_removed() const override;
+        [[nodiscard]] bool             py_was_removed(const nb::object &item) const override;
+
+        [[nodiscard]] const TimeSeriesSetOutput &prev_output() const;
+        [[nodiscard]] bool                       has_prev_output() const;
+
+      protected:
+        virtual void reset_prev();
+
+      private:
+        TimeSeriesSetOutput::ptr _prev_output;
     };
 
     struct TimeSeriesSetOutput_Object : TimeSeriesSetOutput
     {
         using TimeSeriesSetOutput::TimeSeriesSetOutput;
 
-        [[nodiscard]] nb::object        py_value() const override;
-        [[nodiscard]] nb::object        py_delta_value() const override;
-        void                            apply_result(nb::handle value) override;
-        void                            invalidate() override;
-        void                            copy_from_output(TimeSeriesOutput &output) override;
-        void                            copy_from_input(TimeSeriesInput &input) override;
-        [[nodiscard]] bool              py_contains(const nb::object &item) const override;
-        [[nodiscard]] size_t            size() const override;
-        [[nodiscard]] const nb::object &py_values() const override;
-        [[nodiscard]] const nb::object &py_added() const override;
-        [[nodiscard]] bool              py_was_added(const nb::object &item) const override;
-        [[nodiscard]] const nb::object &py_removed() const override;
-        [[nodiscard]] bool              py_was_removed(const nb::object &item) const override;
+        [[nodiscard]] nb::object       py_value() const override;
+        [[nodiscard]] nb::object       py_delta_value() const override;
+        void                           apply_result(nb::handle value) override;
+        void                           clear() override;
+        void                           copy_from_output(TimeSeriesOutput &output) override;
+        void                           copy_from_input(TimeSeriesInput &input) override;
+        [[nodiscard]] bool             py_contains(const nb::object &item) const override;
+        [[nodiscard]] size_t           size() const override;
+        [[nodiscard]] const nb::object py_values() const override;
+        [[nodiscard]] const nb::object py_added() const override;
+        [[nodiscard]] bool             py_was_added(const nb::object &item) const override;
+        [[nodiscard]] const nb::object py_removed() const override;
+        [[nodiscard]] bool             py_was_removed(const nb::object &item) const override;
 
       private:
         nb::set                   _value;
@@ -124,6 +139,244 @@ namespace hgraph
 
         std::unique_ptr<FeatureOutputExtensionObject> _contains_ref_outputs;
     };
+
+    template <typename T> struct TimeSeriesSetOutput_T : TimeSeriesSetOutput
+    {
+        using element_type    = T;
+        using collection_type = std::unordered_set<T>;
+        using set_delta       = SetDeltaImpl<element_type>;
+
+        using TimeSeriesSetOutput::TimeSeriesSetOutput;
+
+        [[nodiscard]] nb::object py_value() const override { return nb::cast(_value); }
+
+        [[nodiscard]] const collection_type &value() const { return value; }
+
+        [[nodiscard]] nb::object py_delta_value() const override { return nb::cast(delta_value()); }
+
+        [[nodiscard]] set_delta delta_value() const { return set_delta(_added, _removed); }
+
+        void apply_result(nb::handle value) override {
+            if (value.is_none()) { return; }
+
+            if (nb::isinstance<SetDelta>(value)) {
+                auto &delta = nb::cast<SetDelta &>(value);
+                _added      = collection_type();
+                for (const auto &e : delta.py_added_elements()) {
+                    auto v{nb::cast<element_type>(e)};
+                    if (!_value.contains(v)) {
+                        _added.insert(v);
+                        _value.insert(v);
+                    }
+                }
+
+                _removed = collection_type();
+                for (const auto &e : delta.py_removed_elements()) {
+                    auto v{nb::cast<element_type>(e)};
+                    if (_value.contains(v)) {
+                        _removed.insert(v);
+                        _value.erase(v);
+                    }
+                }
+
+                if (std::any_of(_removed.begin(), _removed.end(), [this](const auto &item) { return _added.contains(item); })) {
+                    throw std::runtime_error("Cannot remove and add the same element");
+                }
+            } else {
+                auto removed{nb::module_::import_("hgraph").attr("Removed")};
+                auto input_set = nb::cast<nb::set>(value);
+
+                _added   = collection_type();
+                _removed = collection_type();
+
+                for (const auto &item : input_set) {
+                    if (!nb::isinstance(item, removed)) {
+                        auto e{nb::cast<element_type>(item)};
+                        if (!_value.contains(e)) {
+                            _added.insert(e);
+                            _value.insert(e);
+                        }
+                    } else {
+                        auto e{nb::cast<element_type>(item.attr("item"))};
+                        if (_value.contains(item)) {
+                            if (_added.contains(item)) { throw std::runtime_error("Cannot remove and add the same element"); }
+                            _removed.add(item);
+                            _value.discard(item);
+                        }
+                    }
+                }
+            }
+
+            if (!_added.empty() || !_removed.empty() || !valid()) { mark_modified(); }
+        }
+
+        void clear() override {
+            _value.clear();
+            _added.clear();
+            _removed.clear();
+        }
+
+        void copy_from_output(TimeSeriesOutput &output) override {
+            auto &output_obj = dynamic_cast<TimeSeriesSetOutput_T<T> &>(output);
+
+            _added.clear();
+            _removed.clear();
+
+            // Calculate added elements (elements in output but not in current value)
+            for (const auto &item : output_obj._value) {
+                if (!_value.contains(item)) { _added.insert(item); }
+            }
+
+            // Calculate removed elements (elements in current value but not in output)
+            for (const auto &item : _value) {
+                if (!output_obj._value.contains(item)) { _removed.insert(item); }
+            }
+
+            if (_added.size() > 0 || _removed.size() > 0) {
+                _value = collection_type(output_obj._value);
+                mark_modified();
+            }
+        }
+
+        void copy_from_input(TimeSeriesInput &input) override;
+
+        [[nodiscard]] bool py_contains(const nb::object &item) const override { return contains(nb::cast<element_type>(item)); }
+
+        [[nodiscard]] bool contains(const element_type &item) const { return _value.find(item) != _value.end(); }
+
+        [[nodiscard]] size_t size() const override { return _value.size(); }
+
+        [[nodiscard]] const nb::object py_values() const override { return nb::cast(_value); }
+        [[nodiscard]] collection_type  values() const { return _value; }
+
+        [[nodiscard]] const nb::object       py_added() const override { return nb::cast(_added); }
+        [[nodiscard]] const collection_type &added() const { return _added; }
+
+        [[nodiscard]] bool py_was_added(const nb::object &item) const override { return was_added(nb::cast<element_type>(item)); }
+        [[nodiscard]] bool was_added(const element_type &item) const { return _added.find(item) != _added.end(); }
+
+        [[nodiscard]] const nb::object       py_removed() const override { return nb::cast(_removed); }
+        [[nodiscard]] const collection_type &removed() const { return _removed; }
+
+        [[nodiscard]] bool py_was_removed(const nb::object &item) const override {
+            return was_removed(nb::cast<element_type>(item));
+        }
+        [[nodiscard]] bool was_removed(const element_type &item) const { return _removed.find(item) != _removed.end(); }
+
+      private:
+        collection_type                                       _value;
+        collection_type                                       _added;
+        collection_type                                       _removed;
+        nb::ref<TimeSeriesOutput>                             _is_empty_ref_output;
+        std::unique_ptr<FeatureOutputExtension<element_type>> _contains_ref_outputs;
+    };
+
+    template <typename T> struct TimeSeriesSetInput_T : TimeSeriesSetInput
+    {
+        using TimeSeriesSetInput::TimeSeriesSetInput;
+        using element_type    = T;
+        using collection_type = std::unordered_set<T>;
+        using set_delta       = SetDeltaImpl<element_type>;
+
+        [[nodiscard]] collection_type &value() const { return bound() ? set_output_t().values() : _empty; }
+        [[nodiscard]] set_delta        delta_value() const { return set_delta(added(), removed()); }
+        [[nodiscard]] bool contains(const element_type &item) const { return bound() ? set_output_t().contains(item) : false; }
+        [[nodiscard]] collection_type       &values() const { return value(); }
+        [[nodiscard]] const collection_type &added() const {
+            if (bound()) {
+                if (has_prev_output() && _added.empty()) {
+                    auto &prev = prev_output_t();
+                    // Get the set of elements that would have been present in previous cycle
+                    auto prev_state = prev.values();
+                    prev_state.insert(prev.removed().begin(), prev.removed().end());
+                    for (const auto &item : prev.added()) { prev_state.erase(item); }
+                    // Added elements are those in current values but not in previous state
+                    for (const auto &item : values()) {
+                        if (prev_state.find(item) == prev_state.end()) { _added.insert(item); }
+                    }
+                    return _added;
+                }
+                return sampled() ? values() : set_output_t().added();
+            }
+            return collection_type();
+        }
+
+        [[nodiscard]] bool was_added(const element_type &item) const {
+            if (has_prev_output()) { return set_output_t().was_added(item) && !prev_output_t().contains(item); }
+            if (sampled()) { return contains(item); }
+            return set_output_t().was_added(item);
+        }
+
+        [[nodiscard]] const collection_type &removed() const {
+            if (bound()) {
+                if (has_prev_output() && _removed.empty()) {
+                    auto &prev = prev_output_t();
+                    // Get the set of elements that would have been present in previous cycle
+                    auto prev_state = prev.values();
+                    prev_state.insert(prev.removed().begin(), prev.removed().end());
+                    for (const auto &item : prev.added()) { prev_state.erase(item); }
+                    // Removed elements are those in previous state but not in current values
+                    for (const auto &item : prev_state) {
+                        if (values().find(item) == values().end()) { _removed.insert(item); }
+                    }
+                    return _removed;
+                }
+                return sampled() ? _empty : set_output_t().removed();
+            }
+            return _empty;
+        }
+
+        [[nodiscard]] bool was_removed(const element_type &item) const {
+            if (has_prev_output()) {
+                return prev_output_t().contains(item) && !contains(item);
+            } else if (sampled()) {
+                return false;
+            } else {
+                return set_output_t().was_removed(item);
+            }
+        }
+
+      protected:
+        TimeSeriesSetOutput_T<element_type> &prev_output_t() const {
+            return dynamic_cast<TimeSeriesSetOutput_T<element_type> &>(prev_output());
+        }
+
+        TimeSeriesSetOutput_T<element_type> &set_output_t() const {
+            return dynamic_cast<TimeSeriesSetOutput_T<element_type> &>(*output());
+        }
+
+        void reset_prev() override {
+            TimeSeriesSetInput::reset_prev();
+            _added.clear();
+            _removed.clear();
+        }
+
+        collection_type _empty;
+        collection_type _added;  // Use this when we have a previous bound value
+        collection_type _removed;
+    };
+
+    template <typename T> void TimeSeriesSetOutput_T<T>::copy_from_input(TimeSeriesInput &input) {
+        auto &input_obj = dynamic_cast<TimeSeriesSetInput_T<T> &>(input);
+        _added.clear();
+        _removed.clear();
+
+        // Calculate added elements (elements in output but not in current value)
+        auto value{input_obj.value()};
+        for (const auto &item : value) {
+            if (!_value.contains(item)) { _added.insert(item); }
+        }
+
+        // Calculate removed elements (elements in current value but not in output)
+        for (const auto &item : _value) {
+            if (!value.contains(item)) { _removed.insert(item); }
+        }
+
+        if (_added.size() > 0 || _removed.size() > 0) {
+            _value = collection_type(value);
+            mark_modified();
+        }
+    }
 
     void tss_register_with_nanobind(nb::module_ &m);
 
