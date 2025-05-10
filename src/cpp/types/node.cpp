@@ -476,13 +476,13 @@ namespace hgraph
     void Node::set_input(time_series_bundle_input_ptr value) {
         if (has_input()) { throw std::runtime_error("Input input already set on node: " + _signature->signature()); }
         _input = value;
-        _check_all_valid_inputs.reserve(signature().valid_inputs.has_value() ? signature().valid_inputs->size()
+        _check_valid_inputs.reserve(signature().valid_inputs.has_value() ? signature().valid_inputs->size()
                                                                              : signature().time_series_inputs->size());
         if (signature().valid_inputs.has_value()) {
-            for (const auto &key : std::views::all(*signature().valid_inputs)) { _check_all_valid_inputs.push_back(input()[key]); }
+            for (const auto &key : std::views::all(*signature().valid_inputs)) { _check_valid_inputs.push_back(input()[key]); }
         } else {
             for (const auto &key : std::views::elements<0>(*signature().time_series_inputs)) {
-                _check_all_valid_inputs.push_back(input()[key]);
+                _check_valid_inputs.push_back(input()[key]);
             }
         }
         if (signature().all_valid_inputs.has_value()) {
