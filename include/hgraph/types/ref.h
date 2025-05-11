@@ -86,7 +86,7 @@ namespace hgraph
 
         void set_value(TimeSeriesReference::ptr value);
 
-        void apply_result(nb::handle value) override;
+        void apply_result(nb::object value) override;
 
         // Registers an input as observing the reference value
         void observe_reference(TimeSeriesInput::ptr input_);

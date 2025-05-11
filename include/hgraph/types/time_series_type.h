@@ -98,9 +98,9 @@ namespace hgraph
 
         void re_parent(ptr &parent);
 
-        virtual bool can_apply_result(nb::handle value);
+        virtual bool can_apply_result(nb::object value);
 
-        virtual void apply_result(nb::handle value) = 0;
+        virtual void apply_result(nb::object value) = 0;
 
         [[nodiscard]] bool modified() const override;
 
@@ -118,7 +118,7 @@ namespace hgraph
 
         virtual void mark_modified(engine_time_t modified_time);
 
-        virtual void mark_child_modified(engine_time_t modified_time);
+        virtual void mark_child_modified(TimeSeriesOutput& child, engine_time_t modified_time);
 
         void subscribe(Notifiable *node);
 

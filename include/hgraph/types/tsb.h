@@ -177,7 +177,7 @@ namespace hgraph
         using ptr = nb::ref<TimeSeriesBundleOutput>;
         using bundle_type::TimeSeriesBundle;
 
-        void apply_result(nb::handle value) override;
+        void apply_result(nb::object value) override;
 
         static void register_with_nanobind(nb::module_ &m);
 

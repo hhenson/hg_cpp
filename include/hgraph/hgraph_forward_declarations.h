@@ -44,6 +44,9 @@ namespace hgraph
     struct NodeBuilder;
     using node_builder_ptr = nanobind::ref<NodeBuilder>;
 
+    struct TimeSeriesType;
+    using time_series_type_ptr = nanobind::ref<TimeSeriesType>;
+
     struct TimeSeriesInput;
     using time_series_input_ptr = nanobind::ref<TimeSeriesInput>;
 
@@ -81,6 +84,12 @@ namespace hgraph
 
     template <typename T_TS>
     concept TimeSeriesT = std::is_same_v<T_TS, TimeSeriesInput> || std::is_same_v<T_TS, TimeSeriesOutput>;
+
+    struct OutputBuilder;
+    struct InputBuilder;
+
+    using output_builder_ptr = nanobind::ref<OutputBuilder>;
+    using input_builder_ptr  = nanobind::ref<InputBuilder>;
 }  // namespace hgraph
 
 #endif  // HGRAPH_FORWARD_DECLARATIONS_H

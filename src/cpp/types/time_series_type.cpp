@@ -267,7 +267,7 @@ namespace hgraph
 
     void TimeSeriesOutput::re_parent(ptr &parent) { _set_parent_time_series(parent.get()); }
 
-    bool TimeSeriesOutput::can_apply_result(nb::handle value) { return not modified(); }
+    bool TimeSeriesOutput::can_apply_result(nb::object value) { return not modified(); }
 
     bool TimeSeriesOutput::modified() const { return owning_graph().evaluation_clock().evaluation_time() == _last_modified_time; }
 
@@ -297,12 +297,12 @@ namespace hgraph
     void TimeSeriesOutput::mark_modified(engine_time_t modified_time) {  // NOLINT(*-no-recursion)
         if (_last_modified_time < modified_time) {
             _last_modified_time = modified_time;
-            if (has_parent_output()) { parent_output()->mark_child_modified(modified_time); }
+            if (has_parent_output()) { parent_output()->mark_child_modified(*this, modified_time); }
             _notify(modified_time);
         }
     }
 
-    void TimeSeriesOutput::mark_child_modified(engine_time_t modified_time) {
+    void TimeSeriesOutput::mark_child_modified(TimeSeriesOutput& child, engine_time_t modified_time) {
         mark_modified(modified_time);
     }  // NOLINT(*-no-recursion)
 

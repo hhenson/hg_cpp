@@ -19,7 +19,7 @@ namespace hgraph
 
         [[nodiscard]] nb::object py_delta_value() const override { return modified() ? py_value() : nb::none(); }
 
-        void apply_result(nb::handle value) override {
+        void apply_result(nb::object value) override {
             if (!value.is_valid() || value.is_none()) { return; }
             set_value(nb::cast<T>(value));
         }

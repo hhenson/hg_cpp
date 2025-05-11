@@ -5,7 +5,7 @@
 namespace hgraph
 {
 
-    void TimeSeriesListOutput::apply_result(nb::handle value) {
+    void TimeSeriesListOutput::apply_result(nb::object value) {
         if (value.is_none()) { return; }
         if (nb::isinstance<nb::tuple>(value) || nb::isinstance<nb::list>(value)) {
             for (size_t i = 0, l = nb::len(value); i < l; ++i) {
@@ -14,7 +14,7 @@ namespace hgraph
             }
         } else if (nb::isinstance<nb::dict>(value)) {
             for (auto [key, val] : nb::cast<nb::dict>(value)) {
-                if (val.is_valid() && !val.is_none()) { (*this)[nb::cast<size_t>(key)]->apply_result(val); }
+                if (val.is_valid() && !val.is_none()) { (*this)[nb::cast<size_t>(key)]->apply_result(nb::borrow(val)); }
             }
         } else {
             throw std::runtime_error("Invalid value type for TimeSeriesListOutput");

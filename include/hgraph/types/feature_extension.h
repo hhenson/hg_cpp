@@ -26,6 +26,7 @@ namespace hgraph
         time_series_output_ptr create_or_increment(const T &key, const void *requester);
 
         void update(const T &key);
+        void update(const nb::handle& key);
 
         void release(const T &key, const void *requester);
 
@@ -34,6 +35,8 @@ namespace hgraph
                 for (auto it = begin; it != end; ++it) { update(*it); }
             }
         }
+
+        explicit operator bool() const { return !_outputs.empty(); }
 
       private:
         time_series_output_ptr     owning_output;

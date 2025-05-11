@@ -36,6 +36,10 @@ namespace hgraph
         if (auto it{_outputs.find(key)}; it != _outputs.end()) { value_getter(*owning_output, *(it->second.output), key); }
     }
 
+    template <typename T> void FeatureOutputExtension<T>::update(const nb::handle &key) {
+        update(nb::borrow(key));
+    }
+
     template <typename T> void FeatureOutputExtension<T>::release(const T &key, const void *requester) {
         if (auto it{_outputs.find(key)}; it != _outputs.end()) {
             it->second.requesters.erase(requester);

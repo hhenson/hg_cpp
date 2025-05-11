@@ -101,12 +101,12 @@ namespace hgraph
     }
 
     time_series_output_ptr TimeSeriesSetOutputBuilder_object::make_instance(node_ptr owning_node) const {
-        auto v{new TimeSeriesSetOutput_Object{owning_node}};
+        auto v{new TimeSeriesSetOutput_T<nb::object>{owning_node}};
         return v;
     }
 
     time_series_output_ptr TimeSeriesSetOutputBuilder_object::make_instance(time_series_output_ptr owning_output) const {
-        auto v{new TimeSeriesSetOutput_Object{dynamic_cast_ref<TimeSeriesType>(owning_output)}};
+        auto v{new TimeSeriesSetOutput_T<nb::object>{dynamic_cast_ref<TimeSeriesType>(owning_output)}};
         return v;
     }
 

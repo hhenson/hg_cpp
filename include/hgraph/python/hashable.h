@@ -23,6 +23,14 @@ namespace std
             return static_cast<size_t>(nanobind::hash(obj));
         }
     };
+
+    template <typename T, typename U> struct hash<std::tuple<T *, U *>>
+    {
+        size_t operator()(const std::tuple<T *, U *> &t) const noexcept {
+            return std::hash<T *>()(std::get<0>(t)) ^ (std::hash<U *>()(std::get<1>(t)) << 1);
+        }
+    };
+
 }  // namespace std
 
 #endif //HASHABLE_H

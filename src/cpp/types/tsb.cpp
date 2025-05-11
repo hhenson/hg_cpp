@@ -31,7 +31,7 @@ namespace hgraph
         ;
     }
 
-    void TimeSeriesBundleOutput::apply_result(nb::handle value) {
+    void TimeSeriesBundleOutput::apply_result(nb::object value) {
         if (value.is_none()) { return; }
         if (value.is(schema().scalar_type())) {
             for (const auto &key : schema().keys()) {
@@ -40,7 +40,7 @@ namespace hgraph
             }
         } else {
             for (auto [key, val] : nb::cast<nb::dict>(value)) {
-                if (!val.is_none()) { (*this)[nb::cast<std::string>(key)]->apply_result(val); }
+                if (!val.is_none()) { (*this)[nb::cast<std::string>(key)]->apply_result(nb::borrow(val)); }
             }
         }
     }
