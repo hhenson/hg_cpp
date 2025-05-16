@@ -168,8 +168,8 @@ namespace hgraph
         }
     }
 
-    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::copy_from_output(TimeSeriesOutput &output) {
-        auto &output_obj = dynamic_cast<TimeSeriesSetOutput_T<T_Key> &>(output);
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::copy_from_output(const TimeSeriesOutput &output) {
+        auto &output_obj = dynamic_cast<const TimeSeriesSetOutput_T<T_Key> &>(output);
 
         _added.clear();
         _removed.clear();
@@ -195,8 +195,8 @@ namespace hgraph
         }
     }
 
-    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::copy_from_input(TimeSeriesInput &input) {
-        auto &input_obj = dynamic_cast<TimeSeriesSetInput_T<T_Key> &>(input);
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::copy_from_input(const TimeSeriesInput &input) {
+        auto &input_obj = dynamic_cast<const TimeSeriesSetInput_T<T_Key> &>(input);
 
         _added.clear();
         _removed.clear();
@@ -232,7 +232,11 @@ namespace hgraph
     }
 
     template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::py_contains(const nb::object &item) const {
-        return _value.contains(nb::cast<element_type>(item));
+        return contains(nb::cast<element_type>(item));
+    }
+
+    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::contains(const element_type &item) const {
+        return _value.contains(item);
     }
 
     template <typename T_Key> size_t TimeSeriesSetOutput_T<T_Key>::size() const { return _value.size(); }
@@ -249,7 +253,13 @@ namespace hgraph
             return _py_added;
         }
     }
-    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::has_added() {
+
+    template <typename T_Key>
+    const typename TimeSeriesSetOutput_T<T_Key>::collection_type &TimeSeriesSetOutput_T<T_Key>::added() const {
+        return _added;
+    }
+
+    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::has_added() const {
         if constexpr (!is_py_object) {
             return _added.empty();
         } else {
@@ -258,7 +268,11 @@ namespace hgraph
     }
 
     template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::py_was_added(const nb::object &item) const {
-        return _added.contains(nb::cast<element_type>(item));
+        return was_added(nb::cast<element_type>(item));
+    }
+
+    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::was_added(const element_type &item) const {
+        return _added.contains(item);
     }
 
     template <typename T_Key> const nb::object TimeSeriesSetOutput_T<T_Key>::py_removed() const {
@@ -272,7 +286,12 @@ namespace hgraph
         }
     }
 
-    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::has_removed() {
+    template <typename T_Key>
+    const typename TimeSeriesSetOutput_T<T_Key>::collection_type &TimeSeriesSetOutput_T<T_Key>::removed() const {
+        return _removed;
+    }
+
+    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::has_removed() const {
         if constexpr (!is_py_object) {
             return _removed.empty();
         } else {
@@ -281,12 +300,20 @@ namespace hgraph
     }
 
     template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::py_was_removed(const nb::object &item) const {
-        return _removed.contains(nb::cast<element_type>(item));
+        return was_removed(nb::cast<element_type>(item));
+    }
+
+    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::was_removed(const element_type &item) const {
+        return _removed.contains(item);
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::py_remove(const nb::object &key) {
         if (key.is_none()) { return; }
-        if (py_contains(key)) {
+        remove(nb::cast<element_type>(key));
+    }
+
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::remove(const element_type &key) {
+        if (contains(key)) {
             _remove(nb::cast<element_type>(key));
             mark_modified();
         }
@@ -294,7 +321,11 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::py_add(const nb::object &key) {
         if (key.is_none()) { return; }
-        if (!py_contains(key)) {
+        add(nb::cast<element_type>(key));
+    }
+
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::add(const element_type &key) {
+        if (!contains(key)) {
             _add(nb::cast<element_type>(key));
             mark_modified();
         }

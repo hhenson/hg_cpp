@@ -209,13 +209,13 @@ namespace hgraph
         mark_invalid();
     }
 
-    void TimeSeriesReferenceOutput::copy_from_output(TimeSeriesOutput &output) {
-        auto output_t = dynamic_cast<TimeSeriesReferenceOutput *>(&output);
+    void TimeSeriesReferenceOutput::copy_from_output(const TimeSeriesOutput &output) {
+        auto output_t = dynamic_cast<const TimeSeriesReferenceOutput *>(&output);
         if (output_t) { set_value(output_t->_value); }
     }
 
-    void TimeSeriesReferenceOutput::copy_from_input(TimeSeriesInput &input) {
-        auto input_t = dynamic_cast<TimeSeriesReferenceInput *>(&input);
+    void TimeSeriesReferenceOutput::copy_from_input(const TimeSeriesInput &input) {
+        auto input_t = dynamic_cast<const TimeSeriesReferenceInput *>(&input);
         if (input_t) { set_value(input_t->value()); }
     }
 

@@ -133,19 +133,26 @@ namespace hgraph
         [[nodiscard]] nb::object       py_delta_value() const override;
         void                           apply_result(nb::object value) override;
         void                           clear() override;
-        void                           copy_from_output(TimeSeriesOutput &output) override;
-        void                           copy_from_input(TimeSeriesInput &input) override;
+        void                           copy_from_output(const TimeSeriesOutput &output) override;
+        void                           copy_from_input(const TimeSeriesInput &input) override;
         [[nodiscard]] bool             py_contains(const nb::object &item) const override;
+        [[nodiscard]] bool             contains(const element_type &item) const;
         [[nodiscard]] size_t           size() const override;
         [[nodiscard]] const nb::object py_values() const override;
         [[nodiscard]] const nb::object py_added() const override;
-        [[nodiscard]] bool             has_added();
+        [[nodiscard]] const collection_type &added() const;
+        [[nodiscard]] bool             has_added() const;
         [[nodiscard]] bool             py_was_added(const nb::object &item) const override;
+        [[nodiscard]] bool             was_added(const element_type &item) const;
         [[nodiscard]] const nb::object py_removed() const override;
-        [[nodiscard]] bool             has_removed();
+        [[nodiscard]] const collection_type &removed() const;
+        [[nodiscard]] bool             has_removed() const;
         [[nodiscard]] bool             py_was_removed(const nb::object &item) const override;
+        [[nodiscard]] bool             was_removed(const element_type &item) const;
         void                           py_remove(const nb::object &key) override;
+        void                           remove(const element_type &key);
         void                           py_add(const nb::object &key) override;
+        void                           add(const element_type &key);
         [[nodiscard]] bool             empty() const;
 
       protected:
@@ -308,7 +315,7 @@ namespace hgraph
         using set_delta       = typename TimeSeriesSetOutput_T<T>::set_delta;
 
         [[nodiscard]] const collection_type &value() const { return bound() ? set_output_t().value() : _empty; }
-        [[nodiscard]] set_delta        delta_value() const { return set_delta(added(), removed()); }
+        [[nodiscard]] set_delta              delta_value() const { return set_delta(added(), removed()); }
         [[nodiscard]] bool contains(const element_type &item) const { return bound() ? set_output_t().contains(item) : false; }
         [[nodiscard]] collection_type       &values() const { return value(); }
         [[nodiscard]] const collection_type &added() const {
@@ -331,9 +338,9 @@ namespace hgraph
         }
 
         [[nodiscard]] bool was_added(const element_type &item) const {
-            if (has_prev_output()) { return set_output_t().was_added(item) && !prev_output_t().contains(item); }
+            if (has_prev_output()) { return set_output_t().py_was_added(item) && !prev_output_t().contains(item); }
             if (sampled()) { return contains(item); }
-            return set_output_t().was_added(item);
+            return set_output_t().py_was_added(item);
         }
 
         [[nodiscard]] const collection_type &removed() const {

@@ -100,9 +100,9 @@ namespace hgraph
 
         void invalidate() override;
 
-        void copy_from_output(TimeSeriesOutput &output) override;
+        void copy_from_output(const TimeSeriesOutput &output) override;
 
-        void copy_from_input(TimeSeriesInput &input) override;
+        void copy_from_input(const TimeSeriesInput &input) override;
 
         static void register_with_nanobind(nb::module_ &m);
 

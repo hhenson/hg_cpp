@@ -31,6 +31,17 @@ namespace std
         }
     };
 
+    template <typename T> struct equal_to<nanobind::ref<T>>
+    {
+        size_t operator()(const nanobind::ref<T> &a, const nanobind::ref<T> &b) const noexcept { return a.get() == b.get(); }
+    };
+
+    template <typename T> struct hash<nanobind::ref<T>>
+    {
+        size_t operator()(const nanobind::ref<T> &t) const noexcept {
+            return std::hash<const void *>()(reinterpret_cast<const void *>(t.get()));
+        }
+    };
 }  // namespace std
 
-#endif //HASHABLE_H
+#endif  // HASHABLE_H

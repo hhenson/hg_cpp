@@ -124,9 +124,9 @@ namespace hgraph
 
         void un_subscribe(Notifiable *node);
 
-        virtual void copy_from_output(TimeSeriesOutput &output) = 0;
+        virtual void copy_from_output(const TimeSeriesOutput &output) = 0;
 
-        virtual void copy_from_input(TimeSeriesInput &input) = 0;
+        virtual void copy_from_input(const TimeSeriesInput &input) = 0;
 
         virtual void clear();
 

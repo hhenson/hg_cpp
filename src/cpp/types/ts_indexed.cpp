@@ -12,8 +12,8 @@ namespace hgraph
         mark_invalid();
     }
 
-    void IndexedTimeSeriesOutput::copy_from_output(TimeSeriesOutput &output) {
-        if (auto *ndx_output = dynamic_cast<IndexedTimeSeriesOutput *>(&output); ndx_output != nullptr) {
+    void IndexedTimeSeriesOutput::copy_from_output(const TimeSeriesOutput &output) {
+        if (auto *ndx_output = dynamic_cast<const IndexedTimeSeriesOutput *>(&output); ndx_output != nullptr) {
             if (ndx_output->size() == size()) {
                 for (size_t i = 0; i < ts_values().size(); ++i) { ts_values()[i]->copy_from_output(*ndx_output->ts_values()[i]); }
             } else {
@@ -28,8 +28,8 @@ namespace hgraph
         }
     }
 
-    void IndexedTimeSeriesOutput::copy_from_input(TimeSeriesInput &input) {
-        if (auto *ndx_inputs = dynamic_cast<IndexedTimeSeriesInput *>(&input); ndx_inputs != nullptr) {
+    void IndexedTimeSeriesOutput::copy_from_input(const TimeSeriesInput &input) {
+        if (auto *ndx_inputs = dynamic_cast<const IndexedTimeSeriesInput *>(&input); ndx_inputs != nullptr) {
             if (ndx_inputs->size() == size()) {
                 for (size_t i = 0; i < ts_values().size(); ++i) { ts_values()[i]->copy_from_input(ndx_inputs[i]); }
             } else {
