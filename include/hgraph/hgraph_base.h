@@ -16,6 +16,7 @@
 #include <nanobind/intrusive/ref.h>
 
 #include <hgraph/python/chrono.h>
+#include <hgraph/python/format.h>
 #include <hgraph/python/hashable.h>
 #include <hgraph/python/reference_wrapper.h>
 
