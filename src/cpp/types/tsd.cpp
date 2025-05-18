@@ -100,7 +100,8 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::remove_value(const key_type &key, bool raise_if_not_found) {
         auto it{_ts_values.find(key)};
         if (it == _ts_values.end()) {
-            if (raise_if_not_found) { throw std::runtime_error(std::format("Key '{}' not found in TSD", key)); }
+            //TDOD: Fix the format latter, for now it compiles locally not not on CICD server :(
+            if (raise_if_not_found) { throw std::runtime_error(/*std::format("Key '{}' not found in TSD", key)*/"Key not found in TSD"); }
             return;
         }
         bool was_added = key_set_t().was_added(key);
