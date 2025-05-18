@@ -47,7 +47,9 @@ if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     endif (${CMAKE_SYSTEM_PROCESSOR} STREQUAL "arm64")
 endif (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 
-find_package(spdlog CONFIG REQUIRED)
+#find_package(spdlog CONFIG REQUIRED)
+
+find_package(fmt CONFIG REQUIRED)
 
 find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development)
 include_directories(${Python3_INCLUDE_DIRS})
@@ -62,9 +64,6 @@ include_directories(${NB_DIR}/include)
 message(STATUS "Nanobind DIR: ${NB_DIR}/include")
 #find_package(Boost REQUIRED)
 find_package(Threads)
-
-#find_package(range-v3 CONFIG REQUIRED)
-#include_directories(${range-v3_INCLUDE_DIRS})
 
 find_package(fmt CONFIG REQUIRED)
 #find_package(immer CONFIG REQUIRED)
