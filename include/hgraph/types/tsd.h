@@ -97,8 +97,6 @@ namespace hgraph
         using item_iterator       = typename map_type::iterator;
         using const_item_iterator = typename map_type::const_iterator;
         using key_set_type        = TimeSeriesSetOutput_T<key_type>;
-        using constrained_view =
-            std::ranges::filter_view<std::ranges::ref_view<map_type>, std::function<bool(const typename map_type::value_type &)>>;
         // TODO: Currently we are only exposing simple types and nb::object, so this simple strategy is not overly expensive,
         //  If we start using more complicated native types, we may wish to use a pointer so something to that effect to
         //  Track keys. The values have a light weight reference counting cost to store as value_type so leave for the moment as
@@ -148,7 +146,7 @@ namespace hgraph
         [[nodiscard]] bool         py_was_modified(const nb::object &key) const override;
         [[nodiscard]] bool         was_modified(const key_type &key) const;
 
-        [[nodiscard]] constrained_view valid_items() const;
+        [[nodiscard]] auto valid_items() const;
 
         [[nodiscard]] nb::iterator py_valid_keys() const override;
         [[nodiscard]] nb::iterator py_valid_values() const override;

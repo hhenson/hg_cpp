@@ -274,8 +274,23 @@ namespace hgraph
     }
 
     template <typename T_Key>
-    typename TimeSeriesDictOutput_T<T_Key>::constrained_view TimeSeriesDictOutput_T<T_Key>::valid_items() const {
-        return constrained_view(begin(), end(), [](const auto &item) { return item.second->valid(); });
+    auto TimeSeriesDictOutput_T<T_Key>::valid_items() const {
+        return _ts_values | std::views::filter([](const auto &item) { return item.second->valid(); });
+    }
+
+    template <typename T_Key> nb::iterator TimeSeriesDictOutput_T<T_Key>::py_valid_keys() const {
+        auto valid_items_ = valid_items();
+        return nb::make_key_iterator(nb::type<map_type>(), "ValidKeyIterator", valid_items_.begin(), valid_items_.end());
+    }
+
+    template <typename T_Key> nb::iterator TimeSeriesDictOutput_T<T_Key>::py_valid_values() const {
+        auto valid_items_ = valid_items();
+        return nb::make_value_iterator(nb::type<map_type>(), "ValidValueIterator", valid_items_.begin(), valid_items_.end());
+    }
+
+    template <typename T_Key> nb::iterator TimeSeriesDictOutput_T<T_Key>::py_valid_items() const {
+        auto valid_items_ = valid_items();
+        return nb::make_iterator(nb::type<map_type>(), "ValidItemIterator", valid_items_.begin(), valid_items_.end());
     }
 
     template <typename T_Key>
