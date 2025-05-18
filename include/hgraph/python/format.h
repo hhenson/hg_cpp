@@ -5,7 +5,6 @@
 #ifndef FORMAT_H
 #define FORMAT_H
 
-#include <fmt/base.h>
 #include <format>
 #include <nanobind/nanobind.h>
 

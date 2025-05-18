@@ -97,7 +97,7 @@ namespace hgraph
         _modified_items.insert({_reverse_ts_values.at(value), value});
     }
 
-    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::remove_value(key_type key, bool raise_if_not_found) {
+    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::remove_value(const key_type &key, bool raise_if_not_found) {
         auto it{_ts_values.find(key)};
         if (it == _ts_values.end()) {
             if (raise_if_not_found) { throw std::runtime_error(std::format("Key '{}' not found in TSD", key)); }

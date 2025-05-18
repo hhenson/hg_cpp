@@ -195,7 +195,7 @@ namespace hgraph
 
         void add_added_item(key_type key, value_type value);
         void add_modified_value(value_type value);
-        void remove_value(key_type key, bool raise_if_not_found);
+        void remove_value(const key_type &key, bool raise_if_not_found);
 
       private:
         void _initialise();
