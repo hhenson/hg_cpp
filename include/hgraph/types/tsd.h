@@ -120,7 +120,9 @@ namespace hgraph
         void clear() override;
         void invalidate() override;
         void copy_from_output(const TimeSeriesOutput &output) override;
-        void copy_from_input(const TimeSeriesInput &input) override;
+        void               copy_from_input(const TimeSeriesInput &input) override;
+        [[nodiscard]] bool has_added() const override;
+        [[nodiscard]] bool has_removed() const override;
 
         [[nodiscard]] auto size() const -> size_t override;
 

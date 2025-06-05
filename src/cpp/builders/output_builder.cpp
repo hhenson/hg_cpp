@@ -45,11 +45,32 @@ namespace hgraph
         nb::class_<TimeSeriesSetOutputBuilder, OutputBuilder>(m, "OutputBuilder_TSS");
         nb::class_<TimeSeriesSetOutputBuilder_T<bool>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Bool").def(nb::init<>());
         nb::class_<TimeSeriesSetOutputBuilder_T<int64_t>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Int").def(nb::init<>());
-        nb::class_<TimeSeriesSetOutputBuilder_T<double>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Float").def(nb::init<>());
-        nb::class_<TimeSeriesSetOutputBuilder_T<engine_date_t>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Date").def(nb::init<>());
-        nb::class_<TimeSeriesSetOutputBuilder_T<engine_time_t>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_DateTime").def(nb::init<>());
-        nb::class_<TimeSeriesSetOutputBuilder_T<engine_time_delta_t>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_TimeDelta").def(nb::init<>());
-        nb::class_<TimeSeriesSetOutputBuilder_T<nb::object>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Object").def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder_T<double>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Float")
+            .def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder_T<engine_date_t>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Date")
+            .def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder_T<engine_time_t>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_DateTime")
+            .def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder_T<engine_time_delta_t>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_TimeDelta")
+            .def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder_T<nb::object>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Object")
+            .def(nb::init<>());
+
+        nb::class_<TimeSeriesDictOutputBuilder_T<bool>, TimeSeriesDictOutputBuilder>(m, "OutputBuilder_TSD_Bool")
+            .def(nb::init<output_builder_ptr, output_builder_ptr>(), "ts_builder"_a, "ts_ref_builder"_a);
+        nb::class_<TimeSeriesDictOutputBuilder_T<int64_t>, TimeSeriesDictOutputBuilder>(m, "OutputBuilder_TSD_Int")
+            .def(nb::init<output_builder_ptr, output_builder_ptr>(), "ts_builder"_a, "ts_ref_builder"_a);
+        nb::class_<TimeSeriesDictOutputBuilder_T<double>, TimeSeriesDictOutputBuilder>(m, "OutputBuilder_TSD_Float")
+            .def(nb::init<output_builder_ptr, output_builder_ptr>(), "ts_builder"_a, "ts_ref_builder"_a);
+        nb::class_<TimeSeriesDictOutputBuilder_T<engine_date_t>, TimeSeriesDictOutputBuilder>(m, "OutputBuilder_TSD_Date")
+            .def(nb::init<output_builder_ptr, output_builder_ptr>(), "ts_builder"_a, "ts_ref_builder"_a);
+        nb::class_<TimeSeriesDictOutputBuilder_T<engine_time_t>, TimeSeriesDictOutputBuilder>(m, "OutputBuilder_TSD_DateTime")
+            .def(nb::init<output_builder_ptr, output_builder_ptr>(), "ts_builder"_a, "ts_ref_builder"_a);
+        nb::class_<TimeSeriesDictOutputBuilder_T<engine_time_delta_t>, TimeSeriesDictOutputBuilder>(m,
+                                                                                                    "OutputBuilder_TSD_TimeDelta")
+            .def(nb::init<output_builder_ptr, output_builder_ptr>(), "ts_builder"_a, "ts_ref_builder"_a);
+        nb::class_<TimeSeriesDictOutputBuilder_T<nb::object>, TimeSeriesDictOutputBuilder>(m, "OutputBuilder_TSD_Object")
+            .def(nb::init<output_builder_ptr, output_builder_ptr>(), "ts_builder"_a, "ts_ref_builder"_a);
     }
 
     time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(node_ptr owning_node) const {

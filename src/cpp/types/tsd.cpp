@@ -202,6 +202,12 @@ namespace hgraph
         for (const auto &[k, v] : dict_input) { _get_or_create(k).copy_from_input(*v); }
     }
 
+    template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_added() const { return !_added_items.empty(); }
+
+    template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_removed() const {
+        return !_removed_values.empty();
+    }
+
     template <typename T_Key> size_t TimeSeriesDictOutput_T<T_Key>::size() const { return _ts_values.size(); }
 
     template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::py_contains(const nb::object &item) const {
