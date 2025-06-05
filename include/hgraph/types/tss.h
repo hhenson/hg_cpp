@@ -189,7 +189,7 @@ namespace hgraph
                 if (has_prev_output() && _added.empty()) {
                     auto &prev = prev_output_t();
                     // Get the set of elements that would have been present in previous cycle
-                    auto prev_state = prev.values();
+                    auto prev_state = prev.value();
                     prev_state.insert(prev.removed().begin(), prev.removed().end());
                     for (const auto &item : prev.added()) { prev_state.erase(item); }
                     // Added elements are those in current values but not in previous state
@@ -200,13 +200,14 @@ namespace hgraph
                 }
                 return sampled() ? values() : set_output_t().added();
             }
-            return collection_type();
+            _added.clear();
+            return _added;
         }
 
         [[nodiscard]] bool was_added(const element_type &item) const {
-            if (has_prev_output()) { return set_output_t().py_was_added(item) && !prev_output_t().contains(item); }
+            if (has_prev_output()) { return set_output_t().was_added(item) && !prev_output_t().contains(item); }
             if (sampled()) { return contains(item); }
-            return set_output_t().py_was_added(item);
+            return set_output_t().was_added(item);
         }
 
         [[nodiscard]] const collection_type &removed() const {

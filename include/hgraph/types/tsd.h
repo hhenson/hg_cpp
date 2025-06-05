@@ -86,7 +86,7 @@ namespace hgraph
     struct TimeSeriesDictInput : TimeSeriesDict<TimeSeriesInput>
     {
         using ptr = nb::ref<TimeSeriesDictInput>;
-        using TimeSeriesDict::TimeSeriesDict;
+        using TimeSeriesDict<TimeSeriesInput>::TimeSeriesDict;
     };
 
     template <typename T_Key> struct TimeSeriesDictOutput_T : TimeSeriesDictOutput
@@ -200,7 +200,6 @@ namespace hgraph
         void remove_value(const key_type &key, bool raise_if_not_found);
 
       private:
-        void _initialise();
 
         key_set_type _key_set;
         map_type     _ts_values;
@@ -213,7 +212,7 @@ namespace hgraph
         output_builder_ptr _ts_builder;
         output_builder_ptr _ts_ref_builder;
 
-        FeatureOutputExtension<key_type>      _ref_ts_feature;
+        FeatureOutputExtension<key_type>        _ref_ts_feature;
         std::vector<TSDKeyObserver<key_type> *> _key_observers;
     };
 
@@ -287,6 +286,7 @@ namespace hgraph
 
         [[nodiscard]] bool has_removed() const override;
 
+        [[nodiscard]] const TimeSeriesSet<TimeSeriesInput> &key_set() const override;
 
       protected:
         bool do_bind_output(time_series_output_ptr value) override;
@@ -301,7 +301,7 @@ namespace hgraph
         void clear_key_changes();
 
         TimeSeriesInput &_get_or_create(const key_type &key);
-        void              _create(const key_type &key);
+        void             _create(const key_type &key);
 
         void on_key_added(const key_type &key) override {
             auto &value{_get_or_create(key)};
@@ -310,7 +310,7 @@ namespace hgraph
         }
 
         void on_key_removed(const key_type &key) override {
-            //NOTE: We were tracking the valid state on the removed item. Now we just track the value
+            // NOTE: We were tracking the valid state on the removed item. Now we just track the value
             auto it = _ts_values.find(key);
             if (it == _ts_values.end()) { return; }
 

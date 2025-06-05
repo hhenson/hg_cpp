@@ -51,7 +51,7 @@ namespace hgraph
     };
 
     using FeatureOutputExtensionBool      = FeatureOutputExtension<bool>;
-    using FeatureOutputExtensionInt       = FeatureOutputExtension<int>;
+    using FeatureOutputExtensionInt       = FeatureOutputExtension<int64_t>;
     using FeatureOutputExtensionFloat     = FeatureOutputExtension<double>;
     using FeatureOutputExtensionDate      = FeatureOutputExtension<engine_date_t>;
     using FeatureOutputExtensionDateTime  = FeatureOutputExtension<engine_time_t>;

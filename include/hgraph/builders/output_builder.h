@@ -7,6 +7,7 @@
 #include <hgraph/types/ref.h>
 #include <hgraph/types/ts.h>
 #include <hgraph/types/tsb.h>
+#include <hgraph/types/tsd.h>
 #include <hgraph/types/tsl.h>
 #include <hgraph/types/tss.h>
 
@@ -80,13 +81,47 @@ namespace hgraph
         std::vector<OutputBuilder::ptr> output_builders;
     };
 
-    struct HGRAPH_EXPORT TimeSeriesSetOutputBuilder_object : OutputBuilder
+    struct HGRAPH_EXPORT TimeSeriesSetOutputBuilder : OutputBuilder
     {
         using OutputBuilder::OutputBuilder;
+    };
 
-        time_series_output_ptr make_instance(node_ptr owning_node) const override;
+    template <typename T> struct HGRAPH_EXPORT TimeSeriesSetOutputBuilder_T : TimeSeriesSetOutputBuilder
+    {
+        using TimeSeriesSetOutputBuilder::TimeSeriesSetOutputBuilder;
 
-        time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
+        time_series_output_ptr make_instance(node_ptr owning_node) const override {
+            auto v{new TimeSeriesSetOutput_T<T>(owning_node)};
+            return v;
+        }
+
+        time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override {
+            auto v{new TimeSeriesSetOutput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_output)}};
+            return v;
+        }
+    };
+
+    struct HGRAPH_EXPORT TimeSeriesDictOutputBuilder : OutputBuilder
+    {
+        output_builder_ptr ts_builder;
+        output_builder_ptr ts_ref_builder;
+
+        TimeSeriesDictOutputBuilder(output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder);
+    };
+
+    template <typename T> struct HGRAPH_EXPORT TimeSeriesDictOutputBuilder_T : TimeSeriesDictOutputBuilder
+    {
+        using TimeSeriesDictOutputBuilder::TimeSeriesDictOutputBuilder;
+
+        time_series_output_ptr make_instance(node_ptr owning_node) const override {
+            auto v{new TimeSeriesDictOutput_T<T>(owning_node, ts_builder, ts_ref_builder)};
+            return v;
+        }
+
+        time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override {
+            auto v{new TimeSeriesDictOutput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_output), ts_builder, ts_ref_builder}};
+            return v;
+        }
     };
 }  // namespace hgraph
 

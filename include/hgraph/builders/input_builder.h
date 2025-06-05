@@ -12,6 +12,7 @@
 #include <hgraph/types/tsb.h>
 #include <hgraph/types/tsl.h>
 #include <hgraph/types/tss.h>
+#include <hgraph/types/tsd.h>
 
 namespace hgraph
 {
@@ -104,10 +105,46 @@ namespace hgraph
         using ptr = nb::ref<TimeSeriesSetInputBuilder>;
         using InputBuilder::InputBuilder;
 
-        time_series_input_ptr make_instance(node_ptr owning_node) const override;
+    };
 
-        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
+    template<typename T>
+    struct HGRAPH_EXPORT TimeSeriesSetInputBuilder_T : TimeSeriesSetInputBuilder
+    {
+        using TimeSeriesSetInputBuilder::TimeSeriesSetInputBuilder;
 
+        time_series_input_ptr make_instance(node_ptr owning_node) const override {
+            auto v{new TimeSeriesSetInput_T<T>{owning_node}};
+            return v;
+        }
+
+        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override {
+            auto v{new TimeSeriesSetInput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_input)}};
+            return v;
+        }
+    };
+
+    struct HGRAPH_EXPORT TimeSeriesDictInputBuilder : InputBuilder
+    {
+        using ptr = nb::ref<TimeSeriesDictInputBuilder>;
+        input_builder_ptr ts_builder;
+
+        TimeSeriesDictInputBuilder(input_builder_ptr ts_builder);
+    };
+
+    template<typename T>
+    struct HGRAPH_EXPORT TimeSeriesDictInputBuilder_T : TimeSeriesDictInputBuilder
+    {
+        using TimeSeriesDictInputBuilder::TimeSeriesDictInputBuilder;
+
+        time_series_input_ptr make_instance(node_ptr owning_node) const override {
+            auto v{new TimeSeriesDictInput_T<T>(owning_node, ts_builder)};
+            return v;
+        }
+
+        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override {
+            auto v{new TimeSeriesDictInput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_input), ts_builder}};
+            return v;
+        }
     };
 }  // namespace hgraph
 

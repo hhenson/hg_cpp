@@ -159,12 +159,12 @@ namespace hgraph
 
         // Calculate added elements (elements in output but not in current value)
         for (const auto &item : output_obj._value) {
-            if (!_value.contains(item)) { _add(nb::cast<element_type>(item)); }
+            if (!_value.contains(item)) { _add(item); }
         }
 
         // Calculate removed elements (elements in current value but not in output)
         for (const auto &item : _value) {
-            if (!output_obj._value.contains(item)) { _remove(nb::cast<element_type>(item)); }
+            if (!output_obj._value.contains(item)) { _remove(item); }
         }
 
         if (_added.size() > 0 || _removed.size() > 0) {
@@ -258,7 +258,7 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::remove(const element_type &key) {
         if (contains(key)) {
-            _remove(nb::cast<element_type>(key));
+            _remove(key);
             mark_modified();
         }
     }
@@ -270,7 +270,7 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::add(const element_type &key) {
         if (!contains(key)) {
-            _add(nb::cast<element_type>(key));
+            _add(key);
             mark_modified();
         }
     }
@@ -365,6 +365,22 @@ namespace hgraph
 
     nb::object SetDelta_Object::py_added_elements() const { return _added_elements; }
 
+    template struct TimeSeriesSetInput_T<bool>;
+    template struct TimeSeriesSetInput_T<int64_t>;
+    template struct TimeSeriesSetInput_T<double>;
+    template struct TimeSeriesSetInput_T<engine_date_t>;
+    template struct TimeSeriesSetInput_T<engine_time_t>;
+    template struct TimeSeriesSetInput_T<engine_time_delta_t>;
+    template struct TimeSeriesSetInput_T<nb::object>;
+
+    template struct TimeSeriesSetOutput_T<bool>;
+    template struct TimeSeriesSetOutput_T<int64_t>;
+    template struct TimeSeriesSetOutput_T<double>;
+    template struct TimeSeriesSetOutput_T<engine_date_t>;
+    template struct TimeSeriesSetOutput_T<engine_time_t>;
+    template struct TimeSeriesSetOutput_T<engine_time_delta_t>;
+    template struct TimeSeriesSetOutput_T<nb::object>;
+
     void tss_register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesSetInput, TimeSeriesInput>(m, "TimeSeriesSetInput")
             .def("__contains__", &TimeSeriesSetInput::py_contains)
@@ -375,6 +391,14 @@ namespace hgraph
             .def("was_added", &TimeSeriesSetInput::py_was_added)
             .def("was_removed", &TimeSeriesSetInput::py_was_removed);
 
+        nb::class_<TimeSeriesSetInput_T<bool>, TimeSeriesSetInput>(m, "TimeSeriesSetInput_Bool");
+        nb::class_<TimeSeriesSetInput_T<int64_t>, TimeSeriesSetInput>(m, "TimeSeriesSetInput_Int");
+        nb::class_<TimeSeriesSetInput_T<double>, TimeSeriesSetInput>(m, "TimeSeriesSetInput_Float");
+        nb::class_<TimeSeriesSetInput_T<engine_date_t>, TimeSeriesSetInput>(m, "TimeSeriesSetInput_Date");
+        nb::class_<TimeSeriesSetInput_T<engine_time_t>, TimeSeriesSetInput>(m, "TimeSeriesSetInput_DateTime");
+        nb::class_<TimeSeriesSetInput_T<engine_time_delta_t>, TimeSeriesSetInput>(m, "TimeSeriesSetInput_TimeDelta");
+        nb::class_<TimeSeriesSetInput_T<nb::object>, TimeSeriesSetInput>(m, "TimeSeriesSetInput_object");
+
         nb::class_<TimeSeriesSetOutput, TimeSeriesOutput>(m, "TimeSeriesSetOutput")
             .def("__contains__", &TimeSeriesSetOutput::py_contains)
             .def("__len__", &TimeSeriesSetOutput::size)
@@ -384,6 +408,12 @@ namespace hgraph
             .def("was_added", &TimeSeriesSetOutput::py_was_added)
             .def("was_removed", &TimeSeriesSetOutput::py_was_removed);
 
+        nb::class_<TimeSeriesSetOutput_T<bool>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Bool");
+        nb::class_<TimeSeriesSetOutput_T<int64_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Int");
+        nb::class_<TimeSeriesSetOutput_T<double>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Float");
+        nb::class_<TimeSeriesSetOutput_T<engine_date_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Date");
+        nb::class_<TimeSeriesSetOutput_T<engine_time_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_DateTime");
+        nb::class_<TimeSeriesSetOutput_T<engine_time_delta_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_TimeDelta");
         nb::class_<TimeSeriesSetOutput_T<nb::object>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_object");
     }
 }  // namespace hgraph

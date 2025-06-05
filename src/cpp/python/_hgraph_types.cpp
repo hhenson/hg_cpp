@@ -1,12 +1,15 @@
-#include <hgraph/types/time_series_type.h>
-#include <hgraph/types/ts.h>
+#include "hgraph/types/tsd.h"
+
+#include <hgraph/types/graph.h>
+#include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
+#include <hgraph/types/time_series_type.h>
+#include <hgraph/types/traits.h>
+#include <hgraph/types/ts.h>
 #include <hgraph/types/tsb.h>
 #include <hgraph/types/tsl.h>
 #include <hgraph/types/tss.h>
-#include <hgraph/types/node.h>
-#include <hgraph/types/traits.h>
-#include <hgraph/types/graph.h>
+#include <hgraph/types/tsd.h>
 
 void export_types(nb::module_ &m) {
     using namespace hgraph;
@@ -30,6 +33,8 @@ void export_types(nb::module_ &m) {
 
     SetDelta::register_with_nanobind(m);
     tss_register_with_nanobind(m);
+
+    tsd_register_with_nanobind(m);
 
     Traits::register_with_nanobind(m);
 

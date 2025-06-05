@@ -41,7 +41,37 @@ namespace hgraph
         nb::class_<TimeSeriesBundleInputBuilder, InputBuilder>(m, "InputBuilder_TSB")
             .def(nb::init<TimeSeriesSchema::ptr, std::vector<InputBuilder::ptr>>(), "schema"_a, "input_builders"_a);
 
-        nb::class_<TimeSeriesSetInputBuilder, InputBuilder>(m, "InputBuilder_TSS_Object").def(nb::init<>());
+        nb::class_<TimeSeriesSetInputBuilder, InputBuilder>(m, "InputBuilder_TSS");
+
+        nb::class_<TimeSeriesSetInputBuilder_T<bool>, TimeSeriesSetInputBuilder>(m, "InputBuilder_TSS_Bool").def(nb::init<>());
+        nb::class_<TimeSeriesSetInputBuilder_T<int64_t>, TimeSeriesSetInputBuilder>(m, "InputBuilder_TSS_Int").def(nb::init<>());
+        nb::class_<TimeSeriesSetInputBuilder_T<double>, TimeSeriesSetInputBuilder>(m, "InputBuilder_TSS_Float").def(nb::init<>());
+        nb::class_<TimeSeriesSetInputBuilder_T<engine_date_t>, TimeSeriesSetInputBuilder>(m, "InputBuilder_TSS_Date")
+            .def(nb::init<>());
+        nb::class_<TimeSeriesSetInputBuilder_T<engine_time_t>, TimeSeriesSetInputBuilder>(m, "InputBuilder_TSS_DateTime")
+            .def(nb::init<>());
+        nb::class_<TimeSeriesSetInputBuilder_T<engine_time_delta_t>, TimeSeriesSetInputBuilder>(m, "InputBuilder_TSS_TimeDelta")
+            .def(nb::init<>());
+        nb::class_<TimeSeriesSetInputBuilder_T<nb::object>, TimeSeriesSetInputBuilder>(m, "InputBuilder_TSS_Object")
+            .def(nb::init<>());
+
+        nb::class_<TimeSeriesDictInputBuilder, InputBuilder>(m, "InputBuilder_TSD")
+            .def_ro("ts_builder", &TimeSeriesDictInputBuilder::ts_builder);
+
+        nb::class_<TimeSeriesDictInputBuilder_T<bool>, TimeSeriesDictInputBuilder>(m, "InputBuilder_TSD_Bool")
+            .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
+        nb::class_<TimeSeriesDictInputBuilder_T<int64_t>, TimeSeriesDictInputBuilder>(m, "InputBuilder_TSD_Int")
+            .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
+        nb::class_<TimeSeriesDictInputBuilder_T<double>, TimeSeriesDictInputBuilder>(m, "InputBuilder_TSD_Float")
+            .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
+        nb::class_<TimeSeriesDictInputBuilder_T<engine_date_t>, TimeSeriesDictInputBuilder>(m, "InputBuilder_TSD_Date")
+            .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
+        nb::class_<TimeSeriesDictInputBuilder_T<engine_time_t>, TimeSeriesDictInputBuilder>(m, "InputBuilder_TSD_DateTime")
+            .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
+        nb::class_<TimeSeriesDictInputBuilder_T<engine_time_delta_t>, TimeSeriesDictInputBuilder>(m, "InputBuilder_TSD_TimeDelta")
+            .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
+        nb::class_<TimeSeriesDictInputBuilder_T<nb::object>, TimeSeriesDictInputBuilder>(m, "InputBuilder_TSD_Object")
+            .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
     }
 
     time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(node_ptr owning_node) const {
@@ -99,13 +129,7 @@ namespace hgraph
         return input_;
     }
 
-    time_series_input_ptr TimeSeriesSetInputBuilder::make_instance(node_ptr owning_node) const {
-        auto v{new TimeSeriesSetInput{owning_node}};
-        return v;
-    }
+    TimeSeriesDictInputBuilder::TimeSeriesDictInputBuilder(input_builder_ptr ts_builder)
+        : InputBuilder(), ts_builder{std::move(ts_builder)} {}
 
-    time_series_input_ptr TimeSeriesSetInputBuilder::make_instance(time_series_input_ptr owning_input) const {
-        auto v{new TimeSeriesSetInput{dynamic_cast_ref<TimeSeriesType>(owning_input)}};
-        return v;
-    }
 }  // namespace hgraph

@@ -39,12 +39,12 @@ namespace hgraph
         }
     }
 
-    using FeatureOutputExtensionBool      = FeatureOutputExtension<bool>;
-    using FeatureOutputExtensionInt       = FeatureOutputExtension<int>;
-    using FeatureOutputExtensionFloat     = FeatureOutputExtension<double>;
-    using FeatureOutputExtensionDate      = FeatureOutputExtension<engine_date_t>;
-    using FeatureOutputExtensionDateTime  = FeatureOutputExtension<engine_time_t>;
-    using FeatureOutputExtensionTimeDelta = FeatureOutputExtension<engine_time_delta_t>;
+    template struct FeatureOutputExtension<bool>;
+    template struct FeatureOutputExtension<int64_t>;
+    template struct FeatureOutputExtension<double>;
+    template struct FeatureOutputExtension<engine_date_t>;
+    template struct FeatureOutputExtension<engine_time_t>;
+    template struct FeatureOutputExtension<engine_time_delta_t>;
+    template struct FeatureOutputExtension<nb::object>;
 
-    using FeatureOutputExtensionObject = FeatureOutputExtension<nb::object>;
 }  // namespace hgraph

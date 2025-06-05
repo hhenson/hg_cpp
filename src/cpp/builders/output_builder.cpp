@@ -42,7 +42,14 @@ namespace hgraph
         nb::class_<TimeSeriesBundleOutputBuilder, OutputBuilder>(m, "OutputBuilder_TSB")
             .def(nb::init<TimeSeriesSchema::ptr, std::vector<OutputBuilder::ptr>>(), "schema"_a, "output_builders"_a);
 
-        nb::class_<TimeSeriesSetOutputBuilder_object, OutputBuilder>(m, "OutputBuilder_TSS_Object").def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder, OutputBuilder>(m, "OutputBuilder_TSS");
+        nb::class_<TimeSeriesSetOutputBuilder_T<bool>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Bool").def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder_T<int64_t>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Int").def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder_T<double>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Float").def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder_T<engine_date_t>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Date").def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder_T<engine_time_t>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_DateTime").def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder_T<engine_time_delta_t>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_TimeDelta").def(nb::init<>());
+        nb::class_<TimeSeriesSetOutputBuilder_T<nb::object>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Object").def(nb::init<>());
     }
 
     time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(node_ptr owning_node) const {
@@ -100,14 +107,7 @@ namespace hgraph
         return output_;
     }
 
-    time_series_output_ptr TimeSeriesSetOutputBuilder_object::make_instance(node_ptr owning_node) const {
-        auto v{new TimeSeriesSetOutput_T<nb::object>{owning_node}};
-        return v;
-    }
-
-    time_series_output_ptr TimeSeriesSetOutputBuilder_object::make_instance(time_series_output_ptr owning_output) const {
-        auto v{new TimeSeriesSetOutput_T<nb::object>{dynamic_cast_ref<TimeSeriesType>(owning_output)}};
-        return v;
-    }
+    TimeSeriesDictOutputBuilder::TimeSeriesDictOutputBuilder(output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder)
+        : OutputBuilder(), ts_builder{std::move(ts_builder)}, ts_ref_builder{std::move(ts_ref_builder)} {}
 
 }  // namespace hgraph

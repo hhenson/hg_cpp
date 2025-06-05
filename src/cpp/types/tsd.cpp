@@ -124,17 +124,20 @@ namespace hgraph
     template <typename T_Key>
     TimeSeriesDictOutput_T<T_Key>::TimeSeriesDictOutput_T(const node_ptr &parent, output_builder_ptr ts_builder,
                                                           output_builder_ptr ts_ref_builder)
-        : TimeSeriesDictOutput(parent), _ts_builder{std::move(ts_builder)}, _ts_ref_builder{std::move(ts_ref_builder)} {
-        _initialise();
-    }
+        : TimeSeriesDictOutput(parent), _key_set{this}, _ts_builder{std::move(ts_builder)},
+          _ts_ref_builder{std::move(ts_ref_builder)},
+          _ref_ts_feature{this, _ts_ref_builder, [this](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
+                              ref.apply_result(nb::cast(TimeSeriesReference::make(_ts_values.at(key))));
+                          }, {}} {}
 
     template <typename T_Key>
     TimeSeriesDictOutput_T<T_Key>::TimeSeriesDictOutput_T(const time_series_type_ptr &parent, output_builder_ptr ts_builder,
                                                           output_builder_ptr ts_ref_builder)
-        : TimeSeriesDictOutput(static_cast<const TimeSeriesType::ptr &>(parent)), _ts_builder{std::move(ts_builder)},
-          _ts_ref_builder{std::move(ts_ref_builder)} {
-        _initialise();
-    }
+        : TimeSeriesDictOutput(static_cast<const TimeSeriesType::ptr &>(parent)), _key_set{this},
+          _ts_builder{std::move(ts_builder)}, _ts_ref_builder{std::move(ts_ref_builder)},
+          _ref_ts_feature{this, _ts_ref_builder, [this](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
+                              ref.apply_result(nb::cast(TimeSeriesReference::make(_ts_values.at(key))));
+                          }, {}} {}
 
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_value() const {
         if (_value.size() == 0) {
@@ -423,24 +426,17 @@ namespace hgraph
     const typename TimeSeriesDictOutput_T<T_Key>::key_type &
     TimeSeriesDictOutput_T<T_Key>::key_from_value(TimeSeriesOutput *value) const {
         auto it = _reverse_ts_values.find(value);
-        if (it != _reverse_ts_values.end()) { return *static_cast<const T_Key *>(it->second); }
+        if (it != _reverse_ts_values.end()) { return it->second; }
         throw std::out_of_range("Value not found in TimeSeriesDictOutput");
-    }
-
-    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_initialise() {
-        _ref_ts_feature = FeatureOutputExtension<key_type>(
-            this, _ts_ref_builder, [this](TimeSeriesOutput &ts, TimeSeriesOutput &ref, key_type key) {
-                ref.apply_result(nb::cast(TimeSeriesReference::make(_ts_values.at(key))));
-            });
     }
 
     template <typename T_Key>
     TimeSeriesDictInput_T<T_Key>::TimeSeriesDictInput_T(const node_ptr &parent, input_builder_ptr ts_builder)
-        : TimeSeriesDictInput(parent), _ts_builder{ts_builder} {}
+        : TimeSeriesDictInput(parent), _key_set{this}, _ts_builder{ts_builder} {}
 
     template <typename T_Key>
     TimeSeriesDictInput_T<T_Key>::TimeSeriesDictInput_T(const time_series_type_ptr &parent, input_builder_ptr ts_builder)
-        : TimeSeriesDictInput(parent), _ts_builder{ts_builder} {}
+        : TimeSeriesDictInput(parent), _key_set{this}, _ts_builder{ts_builder} {}
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_peer() const { return _has_peer; }
     template <typename T_Key>
@@ -587,6 +583,10 @@ namespace hgraph
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_removed() const { return !_removed_values.empty(); }
 
+    template <typename T_Key> const TimeSeriesSet<TimeSeriesInput> &TimeSeriesDictInput_T<T_Key>::key_set() const {
+        return key_set_t();
+    }
+
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::was_removed(const key_type &key) const {
         return _removed_values.find(key) != _removed_values.end();
     }
@@ -723,6 +723,38 @@ namespace hgraph
         }
     }
 
+    template struct TimeSeriesDictInput_T<bool>;
+    template struct TimeSeriesDictInput_T<int64_t>;
+    template struct TimeSeriesDictInput_T<double>;
+    template struct TimeSeriesDictInput_T<engine_date_t>;
+    template struct TimeSeriesDictInput_T<engine_time_t>;
+    template struct TimeSeriesDictInput_T<engine_time_delta_t>;
+    template struct TimeSeriesDictInput_T<nb::object>;
+
+    using TSD_Bool      = TimeSeriesDictInput_T<bool>;
+    using TSD_Int       = TimeSeriesDictInput_T<int64_t>;
+    using TSD_Float     = TimeSeriesDictInput_T<double>;
+    using TSD_Date      = TimeSeriesDictInput_T<engine_date_t>;
+    using TSD_DateTime  = TimeSeriesDictInput_T<engine_time_t>;
+    using TSD_TimeDelta = TimeSeriesDictInput_T<engine_time_delta_t>;
+    using TSD_Object    = TimeSeriesDictInput_T<nb::object>;
+
+    template struct TimeSeriesDictOutput_T<bool>;
+    template struct TimeSeriesDictOutput_T<int64_t>;
+    template struct TimeSeriesDictOutput_T<double>;
+    template struct TimeSeriesDictOutput_T<engine_date_t>;
+    template struct TimeSeriesDictOutput_T<engine_time_t>;
+    template struct TimeSeriesDictOutput_T<engine_time_delta_t>;
+    template struct TimeSeriesDictOutput_T<nb::object>;
+
+    using TSD_OUT_Bool      = TimeSeriesDictOutput_T<bool>;
+    using TSD_OUT_Int       = TimeSeriesDictOutput_T<int64_t>;
+    using TSD_OUT_Float     = TimeSeriesDictOutput_T<double>;
+    using TSD_OUT_Date      = TimeSeriesDictOutput_T<engine_date_t>;
+    using TSD_OUT_DateTime  = TimeSeriesDictOutput_T<engine_time_t>;
+    using TSD_OUT_TimeDelta = TimeSeriesDictOutput_T<engine_time_delta_t>;
+    using TSD_OUT_Object    = TimeSeriesDictOutput_T<nb::object>;
+
     void tsd_register_with_nanobind(nb::module_ &m) {
 
         nb::class_<TimeSeriesDictOutput, TimeSeriesOutput>(m, "TimeSeriesDictOutput")
@@ -790,19 +822,20 @@ namespace hgraph
                      &TimeSeriesDictInput::key_set))  // Not sure if this needs to be exposed to python?
             ;
 
-        nb::class_<TimeSeriesDictOutput_T<bool>, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_bool");
-        nb::class_<TimeSeriesDictOutput_T<int64_t>, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_int");
-        nb::class_<TimeSeriesDictOutput_T<double>, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_double");
-        nb::class_<TimeSeriesDictOutput_T<engine_date_t>, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_date");
-        nb::class_<TimeSeriesDictOutput_T<engine_time_t>, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_date_time");
-        nb::class_<TimeSeriesDictOutput_T<engine_time_delta_t>, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_time_delta");
-        nb::class_<TimeSeriesDictOutput_T<nb::object>, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_object");
+        nb::class_<TSD_OUT_Bool, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Bool");
+        nb::class_<TSD_OUT_Int, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Int");
+        nb::class_<TSD_OUT_Float, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Float");
+        nb::class_<TSD_OUT_Date, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Date");
+        nb::class_<TSD_OUT_DateTime, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_DateTime");
+        nb::class_<TSD_OUT_TimeDelta, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_TimeDelta");
+        nb::class_<TSD_OUT_Object, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Object");
 
-        nb::class_<TimeSeriesDictInput_T<bool>, TimeSeriesDictInput>(m, "TimeSeriesDictInput_bool");
-        nb::class_<TimeSeriesDictInput_T<int64_t>, TimeSeriesDictInput>(m, "TimeSeriesDictInput_int");
-        nb::class_<TimeSeriesDictInput_T<double>, TimeSeriesDictInput>(m, "TimeSeriesDictInput_double");
-        nb::class_<TimeSeriesDictInput_T<engine_date_t>, TimeSeriesDictInput>(m, "TimeSeriesDictInput_date");
-        nb::class_<TimeSeriesDictInput_T<engine_time_t>, TimeSeriesDictInput>(m, "TimeSeriesDictInput_date_time");
-        nb::class_<TimeSeriesDictInput_T<nb::object>, TimeSeriesDictInput>(m, "TimeSeriesDictInput_object");
+        nb::class_<TSD_Bool, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Bool");
+        nb::class_<TSD_Int, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Int");
+        nb::class_<TSD_Float, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Float");
+        nb::class_<TSD_Date, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Date");
+        nb::class_<TSD_DateTime, TimeSeriesDictInput>(m, "TimeSeriesDictInput_DateTime");
+        nb::class_<TSD_TimeDelta, TimeSeriesDictInput>(m, "TimeSeriesDictInput_TimeDelta");
+        nb::class_<TSD_Object, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Object");
     }
 }  // namespace hgraph
