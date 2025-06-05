@@ -244,31 +244,49 @@ namespace hgraph
         [[nodiscard]] bool contains(const key_type &item) const;
 
         [[nodiscard]] nb::object py_get_item(const nb::object &item) const override;
+        [[nodiscard]] ts_type   &operator[](const key_type &item) const;
         [[nodiscard]] ts_type   &operator[](const key_type &item);
 
         [[nodiscard]] nb::iterator py_keys() const override;
         [[nodiscard]] nb::iterator py_values() const override;
         [[nodiscard]] nb::iterator py_items() const override;
+
+        [[nodiscard]] const map_type &modified_items() const;
+
         [[nodiscard]] nb::iterator py_modified_keys() const override;
         [[nodiscard]] nb::iterator py_modified_values() const override;
         [[nodiscard]] nb::iterator py_modified_items() const override;
+        [[nodiscard]] bool         py_was_modified(const nb::object &key) const override;
+        [[nodiscard]] bool         was_modified(const key_type &key) const;
+
+        [[nodiscard]] auto valid_items() const;
+
         [[nodiscard]] nb::iterator py_valid_keys() const override;
         [[nodiscard]] nb::iterator py_valid_values() const override;
         [[nodiscard]] nb::iterator py_valid_items() const override;
+
+        [[nodiscard]] const map_type &added_items() const;
+
         [[nodiscard]] nb::iterator py_added_keys() const override;
         [[nodiscard]] nb::iterator py_added_values() const override;
         [[nodiscard]] nb::iterator py_added_items() const override;
+        [[nodiscard]] bool         py_was_added(const nb::object &key) const override;
+        [[nodiscard]] bool         was_added(const key_type &key) const;
+
+        [[nodiscard]] const map_type &removed_items() const;
+
         [[nodiscard]] nb::iterator py_removed_keys() const override;
         [[nodiscard]] nb::iterator py_removed_values() const override;
         [[nodiscard]] nb::iterator py_removed_items() const override;
+        [[nodiscard]] bool         py_was_removed(const nb::object &key) const override;
+        [[nodiscard]] bool         was_removed(const key_type &key) const;
 
         [[nodiscard]] TimeSeriesSet<TimeSeriesInput> &key_set() override;
 
-        [[nodiscard]] bool py_was_modified(const nb::object &key) const override;
         [[nodiscard]] bool has_added() const override;
-        [[nodiscard]] bool py_was_added(const nb::object &key) const override;
+
         [[nodiscard]] bool has_removed() const override;
-        [[nodiscard]] bool py_was_removed(const nb::object &key) const override;
+
 
       protected:
         bool do_bind_output(time_series_output_ptr value) override;
