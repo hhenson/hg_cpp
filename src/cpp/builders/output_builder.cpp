@@ -56,6 +56,8 @@ namespace hgraph
         nb::class_<TimeSeriesSetOutputBuilder_T<nb::object>, TimeSeriesSetOutputBuilder>(m, "OutputBuilder_TSS_Object")
             .def(nb::init<>());
 
+        nb::class_<TimeSeriesDictOutputBuilder, OutputBuilder>(m, "OutputBuilder_TSD");
+
         nb::class_<TimeSeriesDictOutputBuilder_T<bool>, TimeSeriesDictOutputBuilder>(m, "OutputBuilder_TSD_Bool")
             .def(nb::init<output_builder_ptr, output_builder_ptr>(), "ts_builder"_a, "ts_ref_builder"_a);
         nb::class_<TimeSeriesDictOutputBuilder_T<int64_t>, TimeSeriesDictOutputBuilder>(m, "OutputBuilder_TSD_Int")

@@ -28,7 +28,8 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
             hgraph.HgREFTypeMetaData: lambda: _hgraph.InputBuilder_TS_Ref(
                 #   value_tp=cast(HgREFTypeMetaData, value_tp).value_tp
             ),
-            hgraph.HgTSSTypeMetaData: lambda: _hgraph.InputBuilder_TSS_Object(),
+            hgraph.HgTSSTypeMetaData: lambda: _tsd_input_builder_type_for(value_tp.key_tp)(),
+            hgraph.HgTSDTypeMetaData: lambda: _tsd_input_builder_type_for(value_tp.key_tp)(),
         }.get(type(value_tp), lambda: _throw(value_tp))()
 
     def make_output_builder(self, value_tp: hgraph.HgTimeSeriesTypeMetaData) -> hgraph.TSOutputBuilder:
@@ -53,7 +54,7 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
             hgraph.HgREFTypeMetaData: lambda: _hgraph.OutputBuilder_TS_Ref(
                 #   value_tp=cast(HgREFTypeMetaData, value_tp).value_tp
             ),
-            hgraph.HgTSSTypeMetaData: lambda: _hgraph.OutputBuilder_TSS_Object(),
+            hgraph.HgTSSTypeMetaData: lambda: _tss_output_builder_for_tp(value_tp.value_scalar_tp)(),
         }.get(type(value_tp), lambda: _throw(value_tp))()
 
 
@@ -77,3 +78,46 @@ def _ts_output_builder_for_tp(scalar_type: hgraph.HgScalarTypeMetaData) -> hgrap
         datetime: _hgraph.OutputBuilder_TS_DateTime,
         timedelta: _hgraph.OutputBuilder_TS_TimeDelta,
     }.get(scalar_type.py_type, _hgraph.OutputBuilder_TS_Object)
+
+
+def _tss_input_builder_type_for(scalar_type: hgraph.HgScalarTypeMetaData) -> hgraph.TimeSeriesInput:
+    return {
+        bool: _hgraph.InputBuilder_TSS_Bool,
+        int: _hgraph.InputBuilder_TSS_Int,
+        float: _hgraph.InputBuilder_TSS_Float,
+        date: _hgraph.InputBuilder_TSS_Date,
+        datetime: _hgraph.InputBuilder_TSS_DateTime,
+        timedelta: _hgraph.InputBuilder_TSS_TimeDelta,
+    }.get(scalar_type.py_type, _hgraph.InputBuilder_TSS_Object)
+
+
+def _tss_output_builder_for_tp(scalar_type: hgraph.HgScalarTypeMetaData) -> hgraph.TSInputBuilder:
+    return {
+        bool: _hgraph.OutputBuilder_TSS_Bool,
+        int: _hgraph.OutputBuilder_TSS_Int,
+        float: _hgraph.OutputBuilder_TSS_Float,
+        date: _hgraph.OutputBuilder_TSS_Date,
+        datetime: _hgraph.OutputBuilder_TSS_DateTime,
+        timedelta: _hgraph.OutputBuilder_TSS_TimeDelta,
+    }.get(scalar_type.py_type, _hgraph.OutputBuilder_TSS_Object)
+
+def _tsd_input_builder_type_for(scalar_type: hgraph.HgScalarTypeMetaData) -> hgraph.TimeSeriesInput:
+    return {
+        bool: _hgraph.InputBuilder_TSD_Bool,
+        int: _hgraph.InputBuilder_TSD_Int,
+        float: _hgraph.InputBuilder_TSD_Float,
+        date: _hgraph.InputBuilder_TSD_Date,
+        datetime: _hgraph.InputBuilder_TSD_DateTime,
+        timedelta: _hgraph.InputBuilder_TSD_TimeDelta,
+    }.get(scalar_type.py_type, _hgraph.InputBuilder_TSD_Object)
+
+
+def _tsd_output_builder_for_tp(scalar_type: hgraph.HgScalarTypeMetaData) -> hgraph.TSInputBuilder:
+    return {
+        bool: _hgraph.OutputBuilder_TSD_Bool,
+        int: _hgraph.OutputBuilder_TSD_Int,
+        float: _hgraph.OutputBuilder_TSD_Float,
+        date: _hgraph.OutputBuilder_TSD_Date,
+        datetime: _hgraph.OutputBuilder_TSD_DateTime,
+        timedelta: _hgraph.OutputBuilder_TSD_TimeDelta,
+    }.get(scalar_type.py_type, _hgraph.OutputBuilder_TSD_Object)
