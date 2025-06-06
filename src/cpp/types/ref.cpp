@@ -69,7 +69,7 @@ namespace hgraph
                     }
                     return make();
                 },
-                "ts"_a = nb::none(), "items"_a = nb::none());
+                "ts"_a = nb::none(), "from_items"_a = nb::none());
 
         nb::class_<EmptyTimeSeriesReference, TimeSeriesReference>(
             m, "EmptyTimeSeriesReference",
