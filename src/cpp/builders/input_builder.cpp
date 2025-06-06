@@ -1,5 +1,6 @@
 #include <hgraph/builders/input_builder.h>
 #include <hgraph/types/node.h>
+#include <hgraph/types/graph.h>
 
 #include <ranges>
 #include <utility>
