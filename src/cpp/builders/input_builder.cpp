@@ -20,6 +20,8 @@ namespace hgraph
                 "owning_node"_a = nb::none(), "owning_output"_a = nb::none())
             .def("release_instance", &InputBuilder::release_instance);
 
+        nb::class_<TimeSeriesSignalInputBuilder, InputBuilder>(m, "InputBuilder_TS_Signal").def(nb::init<>());
+
         using InputBuilder_TS_Bool      = TimeSeriesValueInputBuilder<bool>;
         using InputBuilder_TS_Int       = TimeSeriesValueInputBuilder<int64_t>;
         using InputBuilder_TS_Float     = TimeSeriesValueInputBuilder<double>;
@@ -73,6 +75,16 @@ namespace hgraph
             .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
         nb::class_<TimeSeriesDictInputBuilder_T<nb::object>, TimeSeriesDictInputBuilder>(m, "InputBuilder_TSD_Object")
             .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
+    }
+
+    time_series_input_ptr TimeSeriesSignalInputBuilder::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesSignalInput(owning_node)};
+        return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
+    }
+
+    time_series_input_ptr TimeSeriesSignalInputBuilder::make_instance(time_series_input_ptr owning_input) const {
+        auto v{new TimeSeriesSignalInput(dynamic_cast_ref<TimeSeriesType>(owning_input))};
+        return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
     }
 
     time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(node_ptr owning_node) const {

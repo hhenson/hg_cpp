@@ -118,41 +118,42 @@ namespace hgraph
 
     template <typename T_Key> struct TimeSeriesSetOutput_T : TimeSeriesSetOutput
     {
-        using element_type       = T_Key;
-        using collection_type    = std::unordered_set<T_Key>;
-        using set_delta          = SetDeltaImpl<element_type>;
+        using element_type    = T_Key;
+        using collection_type = std::unordered_set<T_Key>;
+        using set_delta       = SetDeltaImpl<element_type>;
 
         static constexpr bool is_py_object = std::is_same_v<T_Key, nb::object>;
 
-        using TimeSeriesSetOutput::TimeSeriesSetOutput;
+        explicit TimeSeriesSetOutput_T(const node_ptr &parent);
+        explicit TimeSeriesSetOutput_T(const TimeSeriesType::ptr &parent);
 
         [[nodiscard]] nb::object             py_value() const override;
         [[nodiscard]] const collection_type &value() const { return _value; }
 
-        [[nodiscard]] nb::object       py_delta_value() const override;
-        void                           apply_result(nb::object value) override;
-        void                           clear() override;
-        void                           copy_from_output(const TimeSeriesOutput &output) override;
-        void                           copy_from_input(const TimeSeriesInput &input) override;
-        [[nodiscard]] bool             py_contains(const nb::object &item) const override;
-        [[nodiscard]] bool             contains(const element_type &item) const;
-        [[nodiscard]] size_t           size() const override;
-        [[nodiscard]] const nb::object py_values() const override;
-        [[nodiscard]] const nb::object py_added() const override;
+        [[nodiscard]] nb::object             py_delta_value() const override;
+        void                                 apply_result(nb::object value) override;
+        void                                 clear() override;
+        void                                 copy_from_output(const TimeSeriesOutput &output) override;
+        void                                 copy_from_input(const TimeSeriesInput &input) override;
+        [[nodiscard]] bool                   py_contains(const nb::object &item) const override;
+        [[nodiscard]] bool                   contains(const element_type &item) const;
+        [[nodiscard]] size_t                 size() const override;
+        [[nodiscard]] const nb::object       py_values() const override;
+        [[nodiscard]] const nb::object       py_added() const override;
         [[nodiscard]] const collection_type &added() const;
-        [[nodiscard]] bool             has_added() const;
-        [[nodiscard]] bool             py_was_added(const nb::object &item) const override;
-        [[nodiscard]] bool             was_added(const element_type &item) const;
-        [[nodiscard]] const nb::object py_removed() const override;
+        [[nodiscard]] bool                   has_added() const;
+        [[nodiscard]] bool                   py_was_added(const nb::object &item) const override;
+        [[nodiscard]] bool                   was_added(const element_type &item) const;
+        [[nodiscard]] const nb::object       py_removed() const override;
         [[nodiscard]] const collection_type &removed() const;
-        [[nodiscard]] bool             has_removed() const;
-        [[nodiscard]] bool             py_was_removed(const nb::object &item) const override;
-        [[nodiscard]] bool             was_removed(const element_type &item) const;
-        void                           py_remove(const nb::object &key) override;
-        void                           remove(const element_type &key);
-        void                           py_add(const nb::object &key) override;
-        void                           add(const element_type &key);
-        [[nodiscard]] bool             empty() const;
+        [[nodiscard]] bool                   has_removed() const;
+        [[nodiscard]] bool                   py_was_removed(const nb::object &item) const override;
+        [[nodiscard]] bool                   was_removed(const element_type &item) const;
+        void                                 py_remove(const nb::object &key) override;
+        void                                 remove(const element_type &key);
+        void                                 py_add(const nb::object &key) override;
+        void                                 add(const element_type &key);
+        [[nodiscard]] bool                   empty() const;
 
       protected:
         void _add(const element_type &item);
@@ -160,18 +161,17 @@ namespace hgraph
         void _post_modify();
 
       private:
-        collection_type                                       _value;
-        collection_type                                       _added;
-        collection_type                                       _removed;
-        nb::ref<TimeSeriesValueOutput<bool>>                  _is_empty_ref_output;
-        std::unique_ptr<FeatureOutputExtension<element_type>> _contains_ref_outputs;
+        collection_type                      _value;
+        collection_type                      _added;
+        collection_type                      _removed;
+        nb::ref<TimeSeriesValueOutput<bool>> _is_empty_ref_output;
+        FeatureOutputExtension<element_type> _contains_ref_outputs;
 
         // These are caches and not a key part of the object and could be constructed in a "const" function.
         mutable nb::set _py_value{};
         mutable nb::set _py_added{};
         mutable nb::set _py_removed{};
     };
-
 
     template <typename T> struct TimeSeriesSetInput_T : TimeSeriesSetInput
     {
@@ -213,9 +213,9 @@ namespace hgraph
         [[nodiscard]] const collection_type &removed() const {
             if (bound()) {
                 if (has_prev_output() && _removed.empty()) {
-                    auto &prev {prev_output_t()};
+                    auto &prev{prev_output_t()};
                     // Get the set of elements that would have been present in previous cycle
-                    collection_type prev_state{ prev.value()};
+                    collection_type prev_state{prev.value()};
                     prev_state.insert(prev.removed().begin(), prev.removed().end());
                     for (const auto &item : prev.added()) { prev_state.erase(item); }
                     // Removed elements are those in previous state but not in current values
@@ -255,7 +255,7 @@ namespace hgraph
         }
 
         // These are caches of values
-        collection_type _empty;
+        collection_type         _empty;
         mutable collection_type _added;  // Use this when we have a previous bound value
         mutable collection_type _removed;
     };

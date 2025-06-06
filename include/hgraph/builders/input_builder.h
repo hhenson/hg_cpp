@@ -8,11 +8,12 @@
 #include <hgraph/builders/builder.h>
 
 #include <hgraph/types/ref.h>
+#include <hgraph/types/ts_signal.h>
 #include <hgraph/types/ts.h>
 #include <hgraph/types/tsb.h>
+#include <hgraph/types/tsd.h>
 #include <hgraph/types/tsl.h>
 #include <hgraph/types/tss.h>
-#include <hgraph/types/tsd.h>
 
 namespace hgraph
 {
@@ -40,6 +41,15 @@ namespace hgraph
         virtual void release_instance(time_series_input_ptr item) const {}
 
         static void register_with_nanobind(nb::module_ &m);
+    };
+
+    struct HGRAPH_EXPORT TimeSeriesSignalInputBuilder : InputBuilder
+    {
+        using ptr = nb::ref<TimeSeriesSignalInputBuilder>;
+        using InputBuilder::InputBuilder;
+
+        time_series_input_ptr make_instance(node_ptr owning_node) const override;
+        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
     };
 
     template <typename T> struct HGRAPH_EXPORT TimeSeriesValueInputBuilder : InputBuilder
@@ -104,11 +114,9 @@ namespace hgraph
     {
         using ptr = nb::ref<TimeSeriesSetInputBuilder>;
         using InputBuilder::InputBuilder;
-
     };
 
-    template<typename T>
-    struct HGRAPH_EXPORT TimeSeriesSetInputBuilder_T : TimeSeriesSetInputBuilder
+    template <typename T> struct HGRAPH_EXPORT TimeSeriesSetInputBuilder_T : TimeSeriesSetInputBuilder
     {
         using TimeSeriesSetInputBuilder::TimeSeriesSetInputBuilder;
 
@@ -131,8 +139,7 @@ namespace hgraph
         TimeSeriesDictInputBuilder(input_builder_ptr ts_builder);
     };
 
-    template<typename T>
-    struct HGRAPH_EXPORT TimeSeriesDictInputBuilder_T : TimeSeriesDictInputBuilder
+    template <typename T> struct HGRAPH_EXPORT TimeSeriesDictInputBuilder_T : TimeSeriesDictInputBuilder
     {
         using TimeSeriesDictInputBuilder::TimeSeriesDictInputBuilder;
 

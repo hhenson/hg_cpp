@@ -1,4 +1,6 @@
+#include <hgraph/builders/output_builder.h>
 #include <hgraph/types/graph.h>
+#include <hgraph/types/ts.h>
 #include <hgraph/types/tss.h>
 
 namespace hgraph
@@ -49,6 +51,28 @@ namespace hgraph
     }
 
     TimeSeriesSetOutput &TimeSeriesSetInput::set_output() const { return dynamic_cast<TimeSeriesSetOutput &>(*output()); }
+
+    template <typename T_Key>
+    TimeSeriesSetOutput_T<T_Key>::TimeSeriesSetOutput_T(const node_ptr &parent)
+        : TimeSeriesSetOutput(parent),
+          _contains_ref_outputs{this,
+                                new TimeSeriesValueOutputBuilder<bool>(),
+                                [](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const element_type &key) {
+                                    reinterpret_cast<TimeSeriesValueOutput<bool> &>(ref).set_value(
+                                        reinterpret_cast<const TimeSeriesSetOutput_T<element_type> &>(ts).contains(key));
+                                },
+                                {}} {}
+
+    template <typename T_Key>
+    TimeSeriesSetOutput_T<T_Key>::TimeSeriesSetOutput_T(const TimeSeriesType::ptr &parent)
+        : TimeSeriesSetOutput(parent),
+          _contains_ref_outputs{this,
+                                new TimeSeriesValueOutputBuilder<bool>(),
+                                [](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const element_type &key) {
+                                    reinterpret_cast<TimeSeriesValueOutput<bool> &>(ref).set_value(
+                                        reinterpret_cast<const TimeSeriesSetOutput_T<element_type> &>(ts).contains(key));
+                                },
+                                {}} {}
 
     template <typename T_Key> nb::object TimeSeriesSetOutput_T<T_Key>::py_value() const {
         if (_py_value.size() == 0 and !_value.empty()) {
@@ -134,8 +158,8 @@ namespace hgraph
             } else if (!removed_empty && is_empty) {
                 _is_empty_ref_output->set_value(true);
             }
-            _contains_ref_outputs->update_all(_added.begin(), _added.end());
-            _contains_ref_outputs->update_all(_removed.begin(), _removed.end());
+            _contains_ref_outputs.update_all(_added.begin(), _added.end());
+            _contains_ref_outputs.update_all(_removed.begin(), _removed.end());
         }
     }
 

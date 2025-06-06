@@ -221,7 +221,7 @@ dev = [
 
 [[package]]
 name = "hgraph"
-version = "0.4.60"
+version = "0.4.61"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "black" },
@@ -234,13 +234,14 @@ dependencies = [
     { name = "psutil" },
     { name = "pyarrow" },
     { name = "pycurl" },
+    { name = "pytz" },
     { name = "sortedcontainers" },
     { name = "sqlalchemy" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/db/36/37696d32f6da99738b8fd9f37ac865242ba102a81738c4b590246457c2f1/hgraph-0.4.60.tar.gz", hash = "sha256:772d322fefb4ed802930b53bdeb659361eb063a43d38ea9b70ae2fda3c72bf4d", size = 786438, upload-time = "2025-05-29T06:57:17.132Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/0d/21c8092094b61e0ea77b9ffa0e111dd858afb9f4ea1dfedd9ba951bffdba/hgraph-0.4.61.tar.gz", hash = "sha256:0d522e7acb5398ed3064303588d3473b67ec8dd2006a1898dc78b7a4bcb73bae", size = 786904, upload-time = "2025-06-06T07:58:17.067Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/da/95/7c999e4b68e871c4e2b34ea0cbe4c2d413f12c5a378057eb254ef021f2a9/hgraph-0.4.60-py3-none-any.whl", hash = "sha256:f416083e8c9bee21494e156ddbd7e2a29bac0ebf54896c29ffe5d3fd88d02920", size = 515931, upload-time = "2025-05-29T06:57:14.82Z" },
+    { url = "https://files.pythonhosted.org/packages/22/4c/7d95534929db6fe12b8525c1f4bc9d52f03858260f808379d12b1b852b06/hgraph-0.4.61-py3-none-any.whl", hash = "sha256:7e33b23da023b2f2a1f3c47ad42bb88f51f75f18adaa14f349d2d2bb76b29939", size = 515936, upload-time = "2025-06-06T07:58:14.638Z" },
 ]
 
 [[package]]
@@ -546,6 +547,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3", size = 342432, upload-time = "2024-03-01T18:36:20.211Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/57/56b9bcc3c9c6a792fcbaf139543cee77261f3651ca9da0c93f5c1221264b/python_dateutil-2.9.0.post0-py2.py3-none-any.whl", hash = "sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427", size = 229892, upload-time = "2024-03-01T18:36:18.57Z" },
+]
+
+[[package]]
+name = "pytz"
+version = "2025.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/bf/abbd3cdfb8fbc7fb3d4d38d320f2441b1e7cbe29be4f23797b4a2b5d8aac/pytz-2025.2.tar.gz", hash = "sha256:360b9e3dbb49a209c21ad61809c7fb453643e048b38924c765813546746e81c3", size = 320884, upload-time = "2025-03-25T02:25:00.538Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/81/c4/34e93fe5f5429d7570ec1fa436f1986fb1f00c3e0f43a589fe2bbcd22c3f/pytz-2025.2-py2.py3-none-any.whl", hash = "sha256:5ddf76296dd8c44c26eb8f4b6f35488f3ccbf6fbbd7adee0b7262d43f0ec2f00", size = 509225, upload-time = "2025-03-25T02:24:58.468Z" },
 ]
 
 [[package]]

@@ -10,6 +10,7 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
     def make_input_builder(self, value_tp: hgraph.HgTimeSeriesTypeMetaData) -> hgraph.TSInputBuilder:
         # Unfortunately the approach is really all or nothing, so either we can build it or we can't
         return {
+            hgraph.HgSignalMetaData: lambda: _hgraph.InputBuilder_TS_Signal(),
             hgraph.HgTSTypeMetaData: lambda: _ts_input_builder_type_for(value_tp.value_scalar_tp)(),
             hgraph.HgTSLTypeMetaData: lambda: _hgraph.InputBuilder_TSL(
                 self.make_input_builder(value_tp.value_tp),
@@ -28,8 +29,10 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
             hgraph.HgREFTypeMetaData: lambda: _hgraph.InputBuilder_TS_Ref(
                 #   value_tp=cast(HgREFTypeMetaData, value_tp).value_tp
             ),
-            hgraph.HgTSSTypeMetaData: lambda: _tsd_input_builder_type_for(value_tp.key_tp)(),
-            hgraph.HgTSDTypeMetaData: lambda: _tsd_input_builder_type_for(value_tp.key_tp)(),
+            hgraph.HgTSSTypeMetaData: lambda: _tss_input_builder_type_for(value_tp.value_scalar_tp)(),
+            hgraph.HgTSDTypeMetaData: lambda: _tsd_input_builder_type_for(value_tp.key_tp)(
+                self.make_input_builder(value_tp.value_tp),
+            ),
         }.get(type(value_tp), lambda: _throw(value_tp))()
 
     def make_output_builder(self, value_tp: hgraph.HgTimeSeriesTypeMetaData) -> hgraph.TSOutputBuilder:
@@ -55,6 +58,10 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
                 #   value_tp=cast(HgREFTypeMetaData, value_tp).value_tp
             ),
             hgraph.HgTSSTypeMetaData: lambda: _tss_output_builder_for_tp(value_tp.value_scalar_tp)(),
+            hgraph.HgTSDTypeMetaData: lambda: _tsd_output_builder_for_tp(value_tp.key_tp)(
+                self.make_output_builder(value_tp.value_tp),
+                self.make_output_builder(value_tp.value_tp.as_reference())
+            ),
         }.get(type(value_tp), lambda: _throw(value_tp))()
 
 

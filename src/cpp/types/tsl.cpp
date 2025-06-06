@@ -29,7 +29,7 @@ namespace hgraph
             .def(
                 "__iter__",
                 [](const TimeSeriesListOutput &self) {
-                    nb::make_iterator(nb::type<collection_type>(), "iterator", self.begin(), self.end());
+                    return nb::make_iterator(nb::type<collection_type>(), "iterator", self.begin(), self.end());
                 },
                 nb::keep_alive<0, 1>())
             .def("keys", &TimeSeriesListOutput::keys)
@@ -49,7 +49,7 @@ namespace hgraph
             .def(
                 "__iter__",
                 [](const TimeSeriesListInput &self) {
-                    nb::make_iterator(nb::type<collection_type>(), "iterator", self.begin(), self.end());
+                    return nb::make_iterator(nb::type<collection_type>(), "iterator", self.begin(), self.end());
                 },
                 nb::keep_alive<0, 1>())
             .def("keys", &TimeSeriesListInput::keys)
