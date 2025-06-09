@@ -30,6 +30,8 @@ namespace hgraph
     using sender_receiver_state_ptr = SenderReceiverState *;
 
     struct GraphBuilder;
+    using graph_builder_ptr = nanobind::ref<GraphBuilder>;
+
     struct NodeBuilder;
 
     struct EngineEvaluationClock;

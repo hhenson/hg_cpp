@@ -115,9 +115,13 @@ set(HGRAPH_INCLUDES
         include/hgraph/builders/node_builder.h
         include/hgraph/builders/output_builder.h
 
+        include/hgraph/nodes/map_node.h
+        include/hgraph/nodes/nested_node.h
+
         include/hgraph/runtime/evaluation_context.h
         include/hgraph/runtime/evaluation_engine.h
         include/hgraph/runtime/graph_executor.h
+        include/hgraph/runtime/record_replay.h
 
         include/hgraph/types/error_type.h
         include/hgraph/types/feature_extension.h

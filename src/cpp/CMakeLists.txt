@@ -7,6 +7,9 @@ set(HGRAPH_SOURCES
         builders/node_builder.cpp
         builders/output_builder.cpp
 
+        nodes/map_node.cpp
+        nodes/nested_node.cpp
+
         python/_hgraph_builder.cpp
         python/_hgraph_runtime.cpp
         python/_hgraph_module.cpp
@@ -16,6 +19,7 @@ set(HGRAPH_SOURCES
         runtime/evaluation_context.cpp
         runtime/evaluation_engine.cpp
         runtime/graph_executor.cpp
+        runtime/record_replay.cpp
 
         types/error_type.cpp
         types/feature_extension.cpp
