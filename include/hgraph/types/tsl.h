@@ -42,7 +42,7 @@ namespace hgraph
         }
         virtual nb::object py_delta_value() const override {
             nb::dict result;
-            for (auto &[ndx, ts] : modified_items()) { result[ndx] = ts->py_delta_value(); }
+            for (auto &[ndx, ts] : modified_items()) { result[nb::cast(ndx)] = ts->py_delta_value(); }
             return result;
         }
 

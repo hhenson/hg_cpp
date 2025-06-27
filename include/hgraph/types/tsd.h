@@ -11,8 +11,8 @@
 namespace hgraph
 {
     // TSDKeyObserver: Used to track additions and removals of parent keys.
-    // Since the TSD is dynamic, the inputs associated to an output needs to be updated when a key is added or removed
-    // in order to correctly manage it's internal state.
+    // Since the TSD is dynamic, the inputs associated with an output need to be updated when a key is added or removed
+    // to correctly manage its internal state.
     template <typename K> struct TSDKeyObserver
     {
         // Called when a key is added

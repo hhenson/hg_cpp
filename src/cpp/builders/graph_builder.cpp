@@ -14,15 +14,15 @@ namespace hgraph
     time_series_output_ptr _extract_output(node_ptr node, const std::vector<int64_t> &path) {
         if (path.empty()) { throw std::runtime_error("No path to find an output for"); }
 
-        auto &output = *node->output_ptr();
+        TimeSeriesOutput* output = node->output_ptr();
         for (auto index : path) {
             try {
                 // TODO: We need a single interface to support indexing
                 //  for now we just make it a bundle
-                output = *dynamic_cast<TimeSeriesBundleOutput &>(output)[index];
+                output = (*dynamic_cast<IndexedTimeSeriesOutput *>(output))[index].get();
             } catch (const std::exception &) { throw std::runtime_error("Invalid path index"); }
         }
-        return &output;
+        return output;
     }
 
     time_series_input_ptr _extract_input(node_ptr node, const std::vector<int64_t> &path) {
