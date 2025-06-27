@@ -140,8 +140,6 @@ namespace hgraph
             for (size_t i = 0, l = ts_values().size(); i < l; ++i) {
                 if (auto ts{ts_values()[i]}; constraint(*ts)) {
                     out[_schema->keys()[i].c_str()] = ts->py_value();
-                } else {
-                    out[_schema->keys()[i].c_str()] = nb::none();
                 }
             }
 
