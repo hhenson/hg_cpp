@@ -13,19 +13,27 @@ namespace hgraph
 
     struct SetDelta
     {
+        using ptr = nb::ref<SetDelta>;
+
         virtual ~SetDelta() = default;
 
         /**
          * Get the elements that were added in this delta
          * @return Reference to the set of added elements
          */
-        [[nodiscard]] virtual nb::object py_added_elements() const = 0;
+        [[nodiscard]] virtual nb::object py_added() const = 0;
 
         /**
          * Get the elements that were removed in this delta
          * @return Reference to the set of removed elements
          */
-        [[nodiscard]] virtual nb::object py_removed_elements() const = 0;
+        [[nodiscard]] virtual nb::object py_removed() const = 0;
+
+        [[nodiscard]] virtual nb::object py_type() const = 0;
+
+        [[nodiscard]] virtual bool operator==(const SetDelta &other) const = 0;
+
+        [[nodiscard]] virtual size_t hash() const = 0;
 
         static void register_with_nanobind(nb::module_ &m);
     };
@@ -33,14 +41,18 @@ namespace hgraph
     struct SetDelta_Object : SetDelta
     {
 
-        SetDelta_Object(nb::object added_elements, nb::object removed_elements);
+        SetDelta_Object(nb::object added, nb::object removed, nb::object type);
 
-        [[nodiscard]] nb::object py_added_elements() const override;
-        [[nodiscard]] nb::object py_removed_elements() const override;
+        [[nodiscard]] nb::object py_added() const override;
+        [[nodiscard]] nb::object py_removed() const override;
+        [[nodiscard]] nb::object py_type() const override;
+        [[nodiscard]] bool       operator==(const SetDelta &other) const override;
+        [[nodiscard]] size_t     hash() const override;
 
       private:
-        nb::object _added_elements;
-        nb::object _removed_elements;
+        nb::object _tp;
+        nb::object _added;
+        nb::object _removed;
     };
 
     template <typename T> struct SetDeltaImpl : SetDelta
@@ -49,19 +61,69 @@ namespace hgraph
         using scalar_type     = T;
         using collection_type = std::unordered_set<T>;
 
-        SetDeltaImpl(collection_type added_elements, collection_type removed_elements)
-            : _added_elements(std::move(added_elements)), _removed_elements(std::move(removed_elements)) {}
+        SetDeltaImpl(collection_type added, collection_type removed) : _added(std::move(added)), _removed(std::move(removed)) {}
 
-        [[nodiscard]] nb::object py_added_elements() const override { return nb::cast(_added_elements); }
-        [[nodiscard]] nb::object py_removed_elements() const override { return nb::cast(_removed_elements); }
+        [[nodiscard]] nb::object py_added() const override { return nb::cast(_added); }
+        [[nodiscard]] nb::object py_removed() const override { return nb::cast(_removed); }
 
-        [[nodiscard]] collection_type &added_elements() { return _added_elements; }
-        [[nodiscard]] collection_type &removed_elements() { return _removed_elements; }
+        [[nodiscard]] collection_type &added() { return _added; }
+        [[nodiscard]] collection_type &removed() { return _removed; }
+
+        [[nodiscard]] bool operator==(const SetDelta &other) const override {
+            const auto *other_impl = dynamic_cast<const SetDeltaImpl<T> *>(&other);
+            if (!other_impl) return false;
+            return _added == other_impl->_added && _removed == other_impl->_removed;
+        }
+
+        [[nodiscard]] size_t hash() const override {
+            size_t seed = 0;
+            for (const auto &item : _added) { seed ^= std::hash<T>{}(item) + 0x9e3779b9 + (seed << 6) + (seed >> 2); }
+            for (const auto &item : _removed) { seed ^= std::hash<T>{}(item) + 0x9e3779b9 + (seed << 6) + (seed >> 2); }
+            return seed;
+        }
+
+        [[nodiscard]] nb::object py_type() const override {
+            if constexpr (std::is_same_v<T, bool>) {
+                return nb::borrow(nb::cast(true).type());
+            } else if constexpr (std::is_same_v<T, int64_t>) {
+                return nb::borrow(nb::cast((int64_t)1).type());
+            } else if constexpr (std::is_same_v<T, double>) {
+                return nb::borrow(nb::cast((double)1.0).type());
+            } else if constexpr (std::is_same_v<T, engine_date_t>) {
+                return nb::module_::import_("datetime").attr("date");
+            } else if constexpr (std::is_same_v<T, engine_time_t>) {
+                return nb::module_::import_("datetime").attr("datetime");
+            } else if constexpr (std::is_same_v<T, engine_time_delta_t>) {
+                return nb::module_::import_("datetime").attr("timedelta");
+            } else {
+                throw std::runtime_error("Unknown tp");
+            }
+        }
 
       private:
-        collection_type _added_elements;
-        collection_type _removed_elements;
+        collection_type _added;
+        collection_type _removed;
     };
+
+    template <typename T> SetDelta::ptr make_set_delta(std::unordered_set<T> added, std::unordered_set<T> removed) {
+        return new SetDeltaImpl<T>(std::move(added), std::move(removed));
+    }
+
+    template <> inline SetDelta::ptr make_set_delta(std::unordered_set<nb::object> added, std::unordered_set<nb::object> removed) {
+        nb::object tp;
+        if (!added.empty()) {
+            tp = nb::borrow(*added.begin()->type());
+        } else if (!removed.empty()) {
+            tp = nb::borrow(*removed.begin()->type());
+        } else {
+            tp = nb::borrow(nb::object().type());
+        }
+        nb::set added_set;
+        nb::set removed_set;
+        for (const auto &item : added) { added_set.add(item); }
+        for (const auto &item : removed) { removed_set.add(item); }
+        return new SetDelta_Object(added_set, removed_set, tp);
+    }
 
     template <typename T_TS>
         requires TimeSeriesT<T_TS>
@@ -120,7 +182,7 @@ namespace hgraph
     {
         using element_type    = T_Key;
         using collection_type = std::unordered_set<T_Key>;
-        using set_delta       = SetDeltaImpl<element_type>;
+        using set_delta       = SetDelta::ptr;
 
         static constexpr bool is_py_object = std::is_same_v<T_Key, nb::object>;
 
@@ -181,7 +243,7 @@ namespace hgraph
         using set_delta       = typename TimeSeriesSetOutput_T<T>::set_delta;
 
         [[nodiscard]] const collection_type &value() const { return bound() ? set_output_t().value() : _empty; }
-        [[nodiscard]] set_delta              delta_value() const { return set_delta(added(), removed()); }
+        [[nodiscard]] set_delta              delta_value() const { return make_set_delta<element_type>(added(), removed()); }
         [[nodiscard]] bool contains(const element_type &item) const { return bound() ? set_output_t().contains(item) : false; }
         [[nodiscard]] collection_type       &values() const { return *const_cast<collection_type *>(&value()); }
         [[nodiscard]] const collection_type &added() const {

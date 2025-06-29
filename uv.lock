@@ -209,7 +209,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "hgraph", specifier = ">=0.4.42" }]
+requires-dist = [{ name = "hgraph", specifier = ">=0.4.65" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -221,7 +221,7 @@ dev = [
 
 [[package]]
 name = "hgraph"
-version = "0.4.64"
+version = "0.4.65"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "black" },
@@ -239,9 +239,9 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/98/94b0697e616b2fb8832447f626e5415dd711501c7ccfa9a4f667cda51fa0/hgraph-0.4.64.tar.gz", hash = "sha256:09038ea93e549ff35b0280b517baa103d2153f32170c3f0cc6e25f2c5bc04d94", size = 794683, upload-time = "2025-06-17T17:54:18.3Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ad/e4/9e5c48d1da90e19208644177c624d8cfeca083a70a20fb4782ab6de0545a/hgraph-0.4.65.tar.gz", hash = "sha256:d68c30268a024f3dc852a5cc2e529dc0c44471330afe6ff8b00c9957c1cede7b", size = 798779, upload-time = "2025-06-27T13:54:02.98Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/05/e48730ef3bfcdd6b63f1454d86e2f123052676b922c538391d740c594def/hgraph-0.4.64-py3-none-any.whl", hash = "sha256:f16d85f47841a743ed1fc4a1de0023da4996be64669cd9a25ab1c6d0905bb65e", size = 521512, upload-time = "2025-06-17T17:54:16.151Z" },
+    { url = "https://files.pythonhosted.org/packages/58/ac/a69b30a8620514394ed1fe9a6e82d15319584592a5f5bfdef05079749c81/hgraph-0.4.65-py3-none-any.whl", hash = "sha256:5251bce9757707b5d2436362a7042276864ab843be07e91165e2f1cd6f466cce", size = 522094, upload-time = "2025-06-27T13:54:01.081Z" },
 ]
 
 [[package]]
@@ -604,15 +604,15 @@ wheels = [
 
 [[package]]
 name = "scikit-build-core"
-version = "0.11.4"
+version = "0.11.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging" },
     { name = "pathspec" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/23/f4/b1e4fe9cbfabbfd612f9050cecc794b75aa006d323f599a50be38c5bf4ce/scikit_build_core-0.11.4.tar.gz", hash = "sha256:5b194bbb04092ae327d294b23e4bbffb6181adce4259440a86c9cf6abb8eaa6c", size = 283403, upload-time = "2025-06-01T15:44:15.822Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/3c/57152788a76e38947647e30ded96ad3a623e735c40c6bfd342c0bed1ebd0/scikit_build_core-0.11.5.tar.gz", hash = "sha256:8f0a1edb86cb087876f3c699d2a2682012efd8867b390ed37355f13949d0628e", size = 285500, upload-time = "2025-06-27T04:49:59.03Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/24/994c9e68be81508270b00e32e797add99b445c7bccfb859eeb1634bce5ca/scikit_build_core-0.11.4-py3-none-any.whl", hash = "sha256:0d3e3463c332979a0c07340241b162d6cb0059a7a1bee6465c38ace49d441596", size = 185407, upload-time = "2025-06-01T15:44:13.695Z" },
+    { url = "https://files.pythonhosted.org/packages/45/23/0ffa0df7550ca0535f6e03b9a9ab2bf0495ac62e15fd322544c98321a10c/scikit_build_core-0.11.5-py3-none-any.whl", hash = "sha256:fada727b49f6c34f943bd52773a130bbd1f9b322d751251048ddbe2f4ce92761", size = 185664, upload-time = "2025-06-27T04:49:57.226Z" },
 ]
 
 [[package]]

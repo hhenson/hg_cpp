@@ -1,3 +1,5 @@
+from datetime import date, datetime, timedelta
+
 import _hgraph
 import hgraph
 
@@ -21,8 +23,26 @@ hgraph.GraphEngineFactory.declare(lambda graph, run_mode, observers: _hgraph.Gra
     graph, {hgraph.EvaluationMode.SIMULATION: _hgraph.EvaluationMode.SIMULATION,
             hgraph.EvaluationMode.REAL_TIME: _hgraph.EvaluationMode.REAL_TIME}[run_mode], observers))
 
-#The time-series builder factory.
+# The time-series builder factory.
 hgraph.TimeSeriesBuilderFactory.declare(HgCppFactory())
 
 hgraph._wiring._wiring_node_class.PythonWiringNodeClass.BUILDER_CLASS = _hgraph.PythonNodeBuilder
 hgraph._wiring._wiring_node_class.PythonGeneratorWiringNodeClass.BUILDER_CLASS = _hgraph.PythonGeneratorNodeBuilder
+
+def _create_set_delta(added, removed, tp):
+    sd_tp = {
+        bool: _hgraph.SetDelta_bool,
+        int: _hgraph.SetDelta_int,
+        float: _hgraph.SetDelta_float,
+        date: _hgraph.SetDelta_date,
+        datetime: _hgraph.SetDelta_date_time,
+        timedelta: _hgraph.SetDelta_time_delta,
+    }.get(tp, None)
+    if sd_tp is None:
+        return _hgraph.SetDelta_object(added, removed, tp)
+    return sd_tp(added, removed)
+
+
+hgraph.set_set_delta_factory(
+    _create_set_delta
+)
