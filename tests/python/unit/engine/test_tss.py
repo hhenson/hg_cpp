@@ -1,17 +1,32 @@
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, date, timedelta
 
 import _hgraph
 import pytest
-from hgraph import graph, TS, compute_node, MIN_ST, MIN_TD, SIGNAL, TSS, set_delta
+from hgraph import graph, TS, compute_node, MIN_ST, MIN_TD, SIGNAL, TSS, set_delta, CompoundScalar
 from hgraph.test import eval_node
 
 
+@dataclass(frozen=True)
+class MyCs(CompoundScalar):
+    p1: int
+    p2: float
+
+
 @pytest.mark.parametrize("added,removed,tp,expected", [
-    [frozenset({1, 2}), frozenset(), int, _hgraph.SetDelta_int(frozenset({1, 2}), frozenset())]
+    [frozenset({True}), frozenset({False}), bool, _hgraph.SetDelta_bool(frozenset({True}), frozenset({False}))],
+    [frozenset({1, 2}), frozenset({3}), int, _hgraph.SetDelta_int(frozenset({1, 2}), frozenset({3}))],
+    [frozenset({1.0, 2.0}), frozenset({3.0}), float, _hgraph.SetDelta_float(frozenset({1.0, 2.0}), frozenset({3.0}))],
+    [frozenset({date(2025, 1, 1)}), frozenset(), date, _hgraph.SetDelta_date(frozenset({date(2025, 1, 1)}), frozenset())],
+    [frozenset({datetime(2025, 1, 1)}), frozenset(), datetime, _hgraph.SetDelta_date_time(frozenset({datetime(2025, 1, 1)}), frozenset())],
+    [frozenset({timedelta(1)}), frozenset(), timedelta, _hgraph.SetDelta_time_delta(frozenset({timedelta(1)}), frozenset())],
+    [frozenset({MyCs(p1=1, p2=2.0)}), frozenset(), MyCs, _hgraph.SetDelta_object(frozenset({MyCs(p1=1, p2=2.0)}), frozenset(), MyCs)],
 ])
 def test_set_delta(added, removed, tp, expected):
     sd = set_delta(added, removed, tp)
     assert sd == expected
+    assert sd.tp == tp
+
 
 def test_tss_simple():
     @graph

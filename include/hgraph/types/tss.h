@@ -72,7 +72,9 @@ namespace hgraph
         [[nodiscard]] bool operator==(const SetDelta &other) const override {
             const auto *other_impl = dynamic_cast<const SetDeltaImpl<T> *>(&other);
             if (!other_impl) return false;
-            return _added == other_impl->_added && _removed == other_impl->_removed;
+            auto added{_added == other_impl->_added };
+            auto removed{_removed == other_impl->_removed };
+            return added && removed;
         }
 
         [[nodiscard]] size_t hash() const override {
