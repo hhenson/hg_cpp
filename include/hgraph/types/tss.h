@@ -233,7 +233,7 @@ namespace hgraph
         FeatureOutputExtension<element_type> _contains_ref_outputs;
 
         // These are caches and not a key part of the object and could be constructed in a "const" function.
-        mutable nb::set _py_value{};
+        mutable nb::object _py_value{};
         mutable nb::set _py_added{};
         mutable nb::set _py_removed{};
     };

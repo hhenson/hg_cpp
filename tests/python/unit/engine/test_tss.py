@@ -17,10 +17,14 @@ class MyCs(CompoundScalar):
     [frozenset({True}), frozenset({False}), bool, _hgraph.SetDelta_bool(frozenset({True}), frozenset({False}))],
     [frozenset({1, 2}), frozenset({3}), int, _hgraph.SetDelta_int(frozenset({1, 2}), frozenset({3}))],
     [frozenset({1.0, 2.0}), frozenset({3.0}), float, _hgraph.SetDelta_float(frozenset({1.0, 2.0}), frozenset({3.0}))],
-    [frozenset({date(2025, 1, 1)}), frozenset(), date, _hgraph.SetDelta_date(frozenset({date(2025, 1, 1)}), frozenset())],
-    [frozenset({datetime(2025, 1, 1)}), frozenset(), datetime, _hgraph.SetDelta_date_time(frozenset({datetime(2025, 1, 1)}), frozenset())],
-    [frozenset({timedelta(1)}), frozenset(), timedelta, _hgraph.SetDelta_time_delta(frozenset({timedelta(1)}), frozenset())],
-    [frozenset({MyCs(p1=1, p2=2.0)}), frozenset(), MyCs, _hgraph.SetDelta_object(frozenset({MyCs(p1=1, p2=2.0)}), frozenset(), MyCs)],
+    [frozenset({date(2025, 1, 1)}), frozenset(), date,
+     _hgraph.SetDelta_date(frozenset({date(2025, 1, 1)}), frozenset())],
+    [frozenset({datetime(2025, 1, 1)}), frozenset(), datetime,
+     _hgraph.SetDelta_date_time(frozenset({datetime(2025, 1, 1)}), frozenset())],
+    [frozenset({timedelta(1)}), frozenset(), timedelta,
+     _hgraph.SetDelta_time_delta(frozenset({timedelta(1)}), frozenset())],
+    [frozenset({MyCs(p1=1, p2=2.0)}), frozenset(), MyCs,
+     _hgraph.SetDelta_object(frozenset({MyCs(p1=1, p2=2.0)}), frozenset(), MyCs)],
 ])
 def test_set_delta(added, removed, tp, expected):
     sd = set_delta(added, removed, tp)
@@ -38,10 +42,16 @@ def test_tss_simple():
 
 def test_tss_operations_value():
     @compute_node
-    def g(a: TSS[int]) -> TSS[int]:
+    def g(a: TSS[int]) -> TS[frozenset[int]]:
         return a.value
 
-    assert eval_node(g, [{0:1, 1:1}, {0:2,}, {0:3, 1:3}]) == [{0:1, 1:1}, {0:2, 1:1}, {0:3, 1:3}]
+    actual = eval_node(g, [{1, 2}, {3}, set_delta(removed=frozenset({1, }), tp=int)])
+    print(actual)
+    assert actual == [
+        frozenset({1, 2}),
+        frozenset({1, 2, 3}),
+        frozenset({2, 3}),
+    ]
 
 
 def test_tss_operations_delta_value():
@@ -49,7 +59,13 @@ def test_tss_operations_delta_value():
     def g(a: TSS[int]) -> TSS[int]:
         return a.delta_value
 
-    assert eval_node(g, [{0:1, 1:1}, {0:2}, {1:2}]) == [{0:1, 1:1}, {0:2}, {1:2}]
+    actual = eval_node(g, [{1, 2}, {3}, set_delta(removed=frozenset({1, }), tp=int)])
+    print(actual)
+    assert actual == [
+        set_delta(added=frozenset({1, 2}), removed=frozenset(), tp=int),
+        set_delta(added=frozenset({3}), removed=frozenset(), tp=int),
+        set_delta(added=frozenset(), removed=frozenset({1}), tp=int),
+    ]
 
 
 def test_tss_operations_last_modified_time():
@@ -57,7 +73,7 @@ def test_tss_operations_last_modified_time():
     def g(a: TSS[int]) -> TS[datetime]:
         return a.last_modified_time
 
-    assert eval_node(g, [{0:1, 1:1}, {0:2}, {1:2}]) == [MIN_ST, MIN_ST + MIN_TD, MIN_ST + 2 * MIN_TD]
+    assert eval_node(g, [{0: 1, 1: 1}, {0: 2}, {1: 2}]) == [MIN_ST, MIN_ST + MIN_TD, MIN_ST + 2 * MIN_TD]
 
 
 def test_tss_operations_valid():

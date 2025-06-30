@@ -98,8 +98,10 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::object TimeSeriesSetOutput_T<T_Key>::py_value() const {
-        if (_py_value.size() == 0 and !_value.empty()) {
-            for (const T_Key &item : _value) { _py_value.add(item); }
+        if (_py_value.is_none()) {
+            nb::set v{};
+            for (const T_Key &item : _value) { v.add(item); }
+            _py_value = v;
         }
         return _py_value;
     }
@@ -120,6 +122,11 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::apply_result(nb::object value) {
         if (value.is_none()) { return; }
+        _py_value=nb::none();
+        _py_removed.clear();
+        _py_added.clear();
+        _added.clear();
+        _removed.clear();
         try {
             if (nb::isinstance<SetDelta>(value)) {
                 auto delta{nb::cast<SetDelta *>(value)};
@@ -140,9 +147,6 @@ namespace hgraph
                 }
             } else {
                 auto removed{nb::module_::import_("hgraph").attr("Removed")};
-                _added.clear();
-                _removed.clear();
-
                 auto v = nb::set(value);
                 for (const auto &r : v) {
                     if (!nb::isinstance(r, removed)) {
@@ -186,6 +190,12 @@ namespace hgraph
             _contains_ref_outputs.update_all(_added.begin(), _added.end());
             _contains_ref_outputs.update_all(_removed.begin(), _removed.end());
         }
+        owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() {
+            _added.clear();
+            _removed.clear();
+            _py_added.clear();
+            _py_removed.clear();
+        });
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::clear() {
@@ -193,7 +203,7 @@ namespace hgraph
         _removed.clear();
         _value.clear();
         _is_empty_ref_output->clear();
-        _py_value.clear();
+        _py_value = nb::none();
         _py_added.clear();
         _py_removed.clear();
     }
@@ -204,7 +214,7 @@ namespace hgraph
         _added.clear();
         _removed.clear();
         _is_empty_ref_output->clear();
-        _py_value.clear();
+        _py_value=nb::none();
         _py_added.clear();
         _py_removed.clear();
 
@@ -230,7 +240,7 @@ namespace hgraph
         _added.clear();
         _removed.clear();
         _is_empty_ref_output->clear();
-        _py_value.clear();
+        _py_value=nb::none();
         _py_added.clear();
         _py_removed.clear();
 
