@@ -7,7 +7,7 @@ namespace hgraph
 {
 
     void SetDelta::register_with_nanobind(nb::module_ &m) {
-        nb::class_<SetDelta>(m, "SetDelta")
+        nb::class_<SetDelta, nb::intrusive_base>(m, "SetDelta")
             .def_prop_ro("added", &SetDelta::py_added)
             .def_prop_ro("removed", &SetDelta::py_removed)
             .def_prop_ro("tp", &SetDelta::py_type)
@@ -19,7 +19,7 @@ namespace hgraph
                 [](SetDelta &self) {
                     return nb::str("SetDelta[{}](added={}, removed={})").format(self.py_type(), self.py_added(), self.py_removed());
                 })
-            .def("__eq__", [](SetDelta &self, const SetDelta &other) { return self == other; })
+            .def("__eq__", &SetDelta::operator==)
             .def("__hash__", &SetDelta::hash);
 
         using SetDelta_bool = SetDeltaImpl<bool>;
@@ -59,10 +59,8 @@ namespace hgraph
         if (!other_impl) return false;
         return _added.equal(other_impl->_added) && _removed.equal(other_impl->_removed);
     }
-    
-    size_t SetDelta_Object::hash() const {
-        return nb::hash(_added) ^ nb::hash(_removed);
-    }
+
+    size_t SetDelta_Object::hash() const { return nb::hash(_added) ^ nb::hash(_removed); }
 
     void TimeSeriesSetOutput::invalidate() {
         clear();
@@ -80,7 +78,10 @@ namespace hgraph
                                     reinterpret_cast<TimeSeriesValueOutput<bool> &>(ref).set_value(
                                         reinterpret_cast<const TimeSeriesSetOutput_T<element_type> &>(ts).contains(key));
                                 },
-                                {}} {}
+                                {}} {
+        _is_empty_ref_output =
+            dynamic_cast_ref<TimeSeriesValueOutput<bool>>(TimeSeriesValueOutputBuilder<bool>().make_instance(this));
+    }
 
     template <typename T_Key>
     TimeSeriesSetOutput_T<T_Key>::TimeSeriesSetOutput_T(const TimeSeriesType::ptr &parent)
@@ -91,7 +92,10 @@ namespace hgraph
                                     reinterpret_cast<TimeSeriesValueOutput<bool> &>(ref).set_value(
                                         reinterpret_cast<const TimeSeriesSetOutput_T<element_type> &>(ts).contains(key));
                                 },
-                                {}} {}
+                                {}} {
+        _is_empty_ref_output =
+            dynamic_cast_ref<TimeSeriesValueOutput<bool>>(TimeSeriesValueOutputBuilder<bool>().make_instance(this));
+    }
 
     template <typename T_Key> nb::object TimeSeriesSetOutput_T<T_Key>::py_value() const {
         if (_py_value.size() == 0 and !_value.empty()) {
@@ -106,10 +110,11 @@ namespace hgraph
                 for (const auto &item : _added) { _py_added.add(nb::cast(item)); }
                 for (const auto &item : _removed) { _py_removed.add(nb::cast(item)); }
             }
-
-            return nb::cast(make_set_delta<T_Key>(_added, _removed));
+            auto delta{make_set_delta<T_Key>(_added, _removed)};
+            return nb::cast(delta);
         } else {
-            return nb::cast(make_set_delta<T_Key>({}, {}));
+            auto delta{make_set_delta<T_Key>({}, {})};
+            return nb::cast(delta);
         }
     }
 
@@ -142,7 +147,7 @@ namespace hgraph
                 for (const auto &r : v) {
                     if (!nb::isinstance(r, removed)) {
                         auto k{nb::cast<T_Key>(r)};
-                        if (_value.contains(k)) { _add(k); }
+                        if (!_value.contains(k)) { _add(k); }
                     } else {
                         auto item{nb::cast<T_Key>(r.attr("item"))};
                         if (_value.contains(item)) {
@@ -173,7 +178,7 @@ namespace hgraph
         auto is_empty{empty()};
         if (!added_empty || !removed_empty || !valid()) {
             mark_modified();
-            if (!added_empty && _is_empty_ref_output->value()) {
+            if (!added_empty && _is_empty_ref_output->valid() && _is_empty_ref_output->value()) {
                 _is_empty_ref_output->set_value(false);
             } else if (!removed_empty && is_empty) {
                 _is_empty_ref_output->set_value(true);
@@ -187,6 +192,7 @@ namespace hgraph
         _added.clear();
         _removed.clear();
         _value.clear();
+        _is_empty_ref_output->clear();
         _py_value.clear();
         _py_added.clear();
         _py_removed.clear();
@@ -197,6 +203,7 @@ namespace hgraph
 
         _added.clear();
         _removed.clear();
+        _is_empty_ref_output->clear();
         _py_value.clear();
         _py_added.clear();
         _py_removed.clear();
@@ -222,6 +229,7 @@ namespace hgraph
 
         _added.clear();
         _removed.clear();
+        _is_empty_ref_output->clear();
         _py_value.clear();
         _py_added.clear();
         _py_removed.clear();

@@ -11,7 +11,7 @@
 namespace hgraph
 {
 
-    struct SetDelta
+    struct SetDelta : nb::intrusive_base
     {
         using ptr = nb::ref<SetDelta>;
 
@@ -108,7 +108,8 @@ namespace hgraph
     };
 
     template <typename T> SetDelta::ptr make_set_delta(std::unordered_set<T> added, std::unordered_set<T> removed) {
-        return new SetDeltaImpl<T>(std::move(added), std::move(removed));
+        auto v{new SetDeltaImpl<T>(std::move(added), std::move(removed))};
+        return SetDelta::ptr(v);
     }
 
     template <> inline SetDelta::ptr make_set_delta(std::unordered_set<nb::object> added, std::unordered_set<nb::object> removed) {
