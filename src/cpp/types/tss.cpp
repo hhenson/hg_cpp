@@ -338,6 +338,17 @@ namespace hgraph
     }
 
     template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::empty() const { return _value.empty(); }
+    
+    template <typename T_Key>
+    TimeSeriesValueOutput<bool>::ptr TimeSeriesSetOutput_T<T_Key>::get_contains_output(const nb::object &item,
+                                                                                       const nb::object &requester) {
+        return _contains_ref_outputs.create_or_increment(nb::cast<element_type>(item), static_cast<void *>(requester.ptr()));
+    }
+
+    template <typename T_Key>
+    void TimeSeriesSetOutput_T<T_Key>::release_contains_output(const nb::object &item, const nb::object &requester) {
+        _contains_ref_outputs.release(nb::cast<element_type>(item), static_cast<void *>(requester.ptr()));
+    }
 
     nb::object TimeSeriesSetInput::py_value() const { return output()->py_value(); }
 
@@ -468,7 +479,10 @@ namespace hgraph
             .def("added", &TimeSeriesSetOutput::py_added)
             .def("removed", &TimeSeriesSetOutput::py_removed)
             .def("was_added", &TimeSeriesSetOutput::py_was_added)
-            .def("was_removed", &TimeSeriesSetOutput::py_was_removed);
+            .def("was_removed", &TimeSeriesSetOutput::py_was_removed)
+            .def("get_contains_output", &TimeSeriesSetOutput::get_contains_output)
+            .def("release_contains_output", &TimeSeriesSetOutput::release_contains_output)
+        ;
 
         nb::class_<TimeSeriesSetOutput_T<bool>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Bool");
         nb::class_<TimeSeriesSetOutput_T<int64_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Int");

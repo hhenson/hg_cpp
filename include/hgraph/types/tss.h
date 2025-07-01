@@ -72,8 +72,8 @@ namespace hgraph
         [[nodiscard]] bool operator==(const SetDelta &other) const override {
             const auto *other_impl = dynamic_cast<const SetDeltaImpl<T> *>(&other);
             if (!other_impl) return false;
-            auto added{_added == other_impl->_added };
-            auto removed{_removed == other_impl->_removed };
+            auto added{_added == other_impl->_added};
+            auto removed{_removed == other_impl->_removed};
             return added && removed;
         }
 
@@ -150,6 +150,10 @@ namespace hgraph
         virtual void py_remove(const nb::object &key) = 0;
         virtual void py_add(const nb::object &key)    = 0;
 
+        [[nodiscard]] virtual TimeSeriesValueOutput<bool>::ptr get_contains_output(const nb::object &item,
+                                                                                   const nb::object &requester) = 0;
+        virtual void release_contains_output(const nb::object &item, const nb::object &requester)               = 0;
+
         void invalidate() override;
     };
 
@@ -220,6 +224,10 @@ namespace hgraph
         void                                 add(const element_type &key);
         [[nodiscard]] bool                   empty() const;
 
+        [[nodiscard]] TimeSeriesValueOutput<bool>::ptr get_contains_output(const nb::object &item,
+                                                                           const nb::object &requester) override;
+        void release_contains_output(const nb::object &item, const nb::object &requester) override;
+
       protected:
         void _add(const element_type &item);
         void _remove(const element_type &item);
@@ -234,8 +242,8 @@ namespace hgraph
 
         // These are caches and not a key part of the object and could be constructed in a "const" function.
         mutable nb::object _py_value{};
-        mutable nb::set _py_added{};
-        mutable nb::set _py_removed{};
+        mutable nb::set    _py_added{};
+        mutable nb::set    _py_removed{};
     };
 
     template <typename T> struct TimeSeriesSetInput_T : TimeSeriesSetInput
