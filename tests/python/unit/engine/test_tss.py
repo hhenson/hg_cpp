@@ -3,7 +3,7 @@ from datetime import datetime, date, timedelta
 
 import _hgraph
 import pytest
-from hgraph import graph, TS, compute_node, MIN_ST, MIN_TD, SIGNAL, TSS, set_delta, CompoundScalar
+from hgraph import graph, TS, compute_node, MIN_ST, MIN_TD, SIGNAL, TSS, set_delta, CompoundScalar, contains_
 from hgraph.test import eval_node
 
 
@@ -127,3 +127,12 @@ def test_tss_operations_active():
         return active
 
     assert eval_node(g, [{1}, {2}, {3}, {4}], [True, True, None, True]) == [False, True, None, False]
+
+
+def test_tss_contains():
+
+    @graph
+    def g(a: TSS[int], b: TS[int]) -> TS[bool]:
+        return contains_(a, b)
+
+    assert eval_node(g, [{1, 2}, {3}], [3, None]) == [False, True]
