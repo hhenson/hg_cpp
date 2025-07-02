@@ -1,3 +1,5 @@
+#include "hgraph/types/tsd.h"
+
 #include <hgraph/builders/graph_builder.h>
 #include <hgraph/builders/node_builder.h>
 #include <hgraph/types/graph.h>
@@ -10,16 +12,19 @@ namespace hgraph
 {
     constexpr int64_t ERROR_PATH = -1;  // The path in the wiring edges representing the error output of the node
     constexpr int64_t STATE_PATH = -2;  // The path in the wiring edges representing the recordable state output of the node
+    constexpr int64_t KEY_SET    = -3;  // The path in the wiring edges representing the recordable state output of the node
 
     time_series_output_ptr _extract_output(node_ptr node, const std::vector<int64_t> &path) {
         if (path.empty()) { throw std::runtime_error("No path to find an output for"); }
 
-        TimeSeriesOutput* output = node->output_ptr();
+        TimeSeriesOutput *output = node->output_ptr();
         for (auto index : path) {
             try {
-                // TODO: We need a single interface to support indexing
-                //  for now we just make it a bundle
-                output = (*dynamic_cast<IndexedTimeSeriesOutput *>(output))[index].get();
+                if (index == KEY_SET) {
+                    output = (&dynamic_cast<TimeSeriesDictOutput *>(output)->key_set());
+                } else {
+                    output = (*dynamic_cast<IndexedTimeSeriesOutput *>(output))[index].get();
+                }
             } catch (const std::exception &) { throw std::runtime_error("Invalid path index"); }
         }
         return output;
@@ -31,7 +36,7 @@ namespace hgraph
         auto input = dynamic_cast_ref<TimeSeriesInput>(node->input_ptr());
         for (auto index : path) {
             try {
-                auto indexed_ts{dynamic_cast<IndexedTimeSeriesInput*>(input.get())};
+                auto indexed_ts{dynamic_cast<IndexedTimeSeriesInput *>(input.get())};
                 input = (*indexed_ts)[index];
             } catch (const std::exception &) { throw std::runtime_error("Invalid path index"); }
         }

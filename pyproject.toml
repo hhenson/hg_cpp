@@ -6,7 +6,7 @@ build-backend = "scikit_build_core.build"
 name = "hg_cpp"
 version = "0.0.5"
 dependencies = [
-    "hgraph>=0.4.66"
+    "hgraph>=0.4.67"
 ]
 requires-python = ">=3.12"
 authors = [

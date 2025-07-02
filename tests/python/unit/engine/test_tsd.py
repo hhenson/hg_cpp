@@ -48,7 +48,7 @@ def test_tsd_operations_last_modified_time():
     def g(a: TSD[int, TS[int]]) -> TS[datetime]:
         return a.last_modified_time
 
-    assert eval_node(g, [{1}, {2}, {2}]) == [MIN_ST, MIN_ST + MIN_TD, None]
+    assert eval_node(g, [{0:1}, {0:2}, {1:2}]) == [MIN_ST, MIN_ST + MIN_TD, MIN_ST + 2 * MIN_TD]
 
 
 def test_tsd_operations_valid():
@@ -60,7 +60,7 @@ def test_tsd_operations_valid():
     def c(a: TSD[int, TS[int]], b: SIGNAL) -> TS[bool]:
         return a.valid
 
-    assert eval_node(g, [None, {1}], [True, True]) == [False, True]
+    assert eval_node(g, [None, {0:1}], [True, True]) == [False, True]
 
 
 def test_tsd_operations_all_valid():
@@ -72,7 +72,7 @@ def test_tsd_operations_all_valid():
     def c(a: TSD[int, TS[int]], b: SIGNAL) -> TS[bool]:
         return a.all_valid
 
-    assert eval_node(g, [None, {1}, {2}], [True, True, True]) == [False, True, True]
+    assert eval_node(g, [None, {0: 1}, {1: 2}], [True, True, True]) == [False, True, True]
 
 
 def test_tsd_operations_modified():
@@ -84,7 +84,7 @@ def test_tsd_operations_modified():
     def c(a: TSD[int, TS[int]], b: SIGNAL) -> TS[bool]:
         return a.modified
 
-    assert eval_node(g, [None, {1}, None, {1}], [True, True, None, True]) == [False, True, None, False]
+    assert eval_node(g, [None, {0: 1}, None, {1: 1}], [True, True, None, True]) == [False, True, None, True]
 
 
 def test_tsd_operations_active():
@@ -101,7 +101,7 @@ def test_tsd_operations_active():
             a.make_active()
         return active
 
-    assert eval_node(g, [{1}, {2}, {3}, {4}], [True, True, None, True]) == [False, True, None, False]
+    assert eval_node(g, [{0: 1}, {1: 2}, {0: 3}, {1: 4}], [True, True, None, True]) == [False, True, None, False]
 
 
 def test_tsd_contains():
@@ -109,4 +109,4 @@ def test_tsd_contains():
     def g(a: TSD[int, TS[int]], b: TS[int]) -> TS[bool]:
         return contains_(a, b)
 
-    assert eval_node(g, [{1, 2}, {3}], [3, None]) == [False, True]
+    assert eval_node(g, [{0: 1, 1: 2}, {2: 3}], [2, None]) == [False, True]
