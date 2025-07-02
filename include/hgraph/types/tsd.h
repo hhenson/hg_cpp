@@ -79,8 +79,7 @@ namespace hgraph
         virtual void                   py_release_ref(const nb::object &key, const void *requester)   = 0;
 
       protected:
-        nb::dict _value;
-        nb::dict _delta_value;
+        mutable nb::object _value;
     };
 
     struct TimeSeriesDictInput : TimeSeriesDict<TimeSeriesInput>
@@ -191,7 +190,10 @@ namespace hgraph
         void add_key_observer(TSDKeyObserver<key_type> *observer);
         void remove_key_observer(TSDKeyObserver<key_type> *observer);
 
+        void post_modify() override;
+
       protected:
+        void _post_modify();
         void              clear_on_end_of_evaluation_cycle();
         TimeSeriesOutput &_get_or_create(const key_type &key);
         void              _create(const key_type &key);

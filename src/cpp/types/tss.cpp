@@ -122,7 +122,7 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::apply_result(nb::object value) {
         if (value.is_none()) { return; }
-        _py_value=nb::none();
+        _py_value = nb::none();
         _py_removed.clear();
         _py_added.clear();
         _added.clear();
@@ -214,7 +214,7 @@ namespace hgraph
         _added.clear();
         _removed.clear();
         _is_empty_ref_output->clear();
-        _py_value=nb::none();
+        _py_value = nb::none();
         _py_added.clear();
         _py_removed.clear();
 
@@ -240,7 +240,7 @@ namespace hgraph
         _added.clear();
         _removed.clear();
         _is_empty_ref_output->clear();
-        _py_value=nb::none();
+        _py_value = nb::none();
         _py_added.clear();
         _py_removed.clear();
 
@@ -338,7 +338,7 @@ namespace hgraph
     }
 
     template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::empty() const { return _value.empty(); }
-    
+
     template <typename T_Key>
     TimeSeriesValueOutput<bool>::ptr TimeSeriesSetOutput_T<T_Key>::get_contains_output(const nb::object &item,
                                                                                        const nb::object &requester) {
@@ -349,6 +349,8 @@ namespace hgraph
     void TimeSeriesSetOutput_T<T_Key>::release_contains_output(const nb::object &item, const nb::object &requester) {
         _contains_ref_outputs.release(nb::cast<element_type>(item), static_cast<void *>(requester.ptr()));
     }
+
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::post_modify() { _post_modify(); }
 
     nb::object TimeSeriesSetInput::py_value() const { return output()->py_value(); }
 
@@ -481,8 +483,7 @@ namespace hgraph
             .def("was_added", &TimeSeriesSetOutput::py_was_added)
             .def("was_removed", &TimeSeriesSetOutput::py_was_removed)
             .def("get_contains_output", &TimeSeriesSetOutput::get_contains_output)
-            .def("release_contains_output", &TimeSeriesSetOutput::release_contains_output)
-        ;
+            .def("release_contains_output", &TimeSeriesSetOutput::release_contains_output);
 
         nb::class_<TimeSeriesSetOutput_T<bool>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Bool");
         nb::class_<TimeSeriesSetOutput_T<int64_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Int");

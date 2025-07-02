@@ -5,6 +5,8 @@
 #ifndef TSS_H
 #define TSS_H
 
+#include "tsd.h"
+
 #include <hgraph/types/feature_extension.h>
 #include <hgraph/types/ts.h>
 
@@ -185,6 +187,8 @@ namespace hgraph
         TimeSeriesSetOutput::ptr _prev_output;
     };
 
+    struct TimeSeriesDictOutput;
+
     template <typename T_Key> struct TimeSeriesSetOutput_T : TimeSeriesSetOutput
     {
         using element_type    = T_Key;
@@ -227,6 +231,8 @@ namespace hgraph
         [[nodiscard]] TimeSeriesValueOutput<bool>::ptr get_contains_output(const nb::object &item,
                                                                            const nb::object &requester) override;
         void release_contains_output(const nb::object &item, const nb::object &requester) override;
+
+        void post_modify() override;
 
       protected:
         void _add(const element_type &item);

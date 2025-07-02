@@ -130,6 +130,8 @@ namespace hgraph
 
         virtual void clear();
 
+        virtual void post_modify() {}
+
         static void register_with_nanobind(nb::module_ &m);
 
       protected:

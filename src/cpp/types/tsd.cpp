@@ -1,5 +1,6 @@
 #include <hgraph/builders/input_builder.h>
 #include <hgraph/builders/output_builder.h>
+#include <hgraph/types/constants.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
@@ -15,8 +16,8 @@ namespace hgraph
 
         // For now only support
         if (nb::isinstance<nb::dict>(value)) {
-            auto remove           = nb::module_::import_("hgraph").attr("REMOVE");
-            auto remove_if_exists = nb::module_::import_("hgraph").attr("REMOVE_IF_EXISTS");
+            auto remove{get_remove()};
+            auto remove_if_exists{get_remove_if_exists()};
             for (const auto &[k, v] : nb::cast<nb::dict>(value)) {
                 if (v.is_none()) { continue; }
                 auto k_ = nb::cast<T_Key>(k);
@@ -31,17 +32,14 @@ namespace hgraph
             throw std::runtime_error("TimeSeriesDictOutput::apply_result: Only dictionary inputs are supported");
         }
 
-        if (!has_added() || !has_removed()) {
-            owning_graph().evaluation_engine_api().add_after_evaluation_notification(
-                [this]() { clear_on_end_of_evaluation_cycle(); });
-        }
+        _post_modify();
     }
 
     template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::can_apply_result(nb::object value) {
         if (value.is_none()) { return true; }
         if (!value) { return true; }
 
-        auto remove           = nb::module_::import_("hgraph").attr("REMOVE");
+        auto remove           = get_remove();
         auto remove_if_exists = nb::module_::import_("hgraph").attr("REMOVE_IF_EXISTS");
 
         if (nb::isinstance<nb::dict>(value)) {
@@ -81,8 +79,7 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::mark_modified(engine_time_t modified_time) {
         if (last_modified_time() < modified_time) {
             TimeSeriesDict<TimeSeriesOutput>::mark_modified(modified_time);
-            _value.clear();
-            _delta_value.clear();
+            _value = nb::none();
         }
     }
 
@@ -126,37 +123,46 @@ namespace hgraph
                                                           output_builder_ptr ts_ref_builder)
         : TimeSeriesDictOutput(parent), _key_set{this}, _ts_builder{std::move(ts_builder)},
           _ts_ref_builder{std::move(ts_ref_builder)},
-          _ref_ts_feature{this, _ts_ref_builder, [this](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
+          _ref_ts_feature{this,
+                          _ts_ref_builder,
+                          [this](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
                               ref.apply_result(nb::cast(TimeSeriesReference::make(_ts_values.at(key))));
-                          }, {}} {}
+                          },
+                          {}} {}
 
     template <typename T_Key>
     TimeSeriesDictOutput_T<T_Key>::TimeSeriesDictOutput_T(const time_series_type_ptr &parent, output_builder_ptr ts_builder,
                                                           output_builder_ptr ts_ref_builder)
         : TimeSeriesDictOutput(static_cast<const TimeSeriesType::ptr &>(parent)), _key_set{this},
           _ts_builder{std::move(ts_builder)}, _ts_ref_builder{std::move(ts_ref_builder)},
-          _ref_ts_feature{this, _ts_ref_builder, [this](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
+          _ref_ts_feature{this,
+                          _ts_ref_builder,
+                          [this](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
                               ref.apply_result(nb::cast(TimeSeriesReference::make(_ts_values.at(key))));
-                          }, {}} {}
+                          },
+                          {}} {}
 
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_value() const {
-        if (_value.size() == 0) {
+        if (_value.is_none()) {
+            auto v{nb::dict()};
             for (const auto &[key, value] : _ts_values) {
-                if (value->valid()) { _value[nb::cast(key)] = value->py_value(); }
+                if (value->valid()) { v[nb::cast(key)] = value->py_value(); }
             }
+            _value = v;
         }
         return _value;
     }
 
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_delta_value() const {
-        if (_delta_value.size() == 0) {
-            for (const auto &[key, value] : _modified_items) { _delta_value[nb::cast(key)] = value->py_value(); }
+        auto delta_value{nb::dict()};
+        if (delta_value.size() == 0) {
+            for (const auto &[key, value] : _modified_items) { delta_value[nb::cast(key)] = value->py_value(); }
             if (_removed_values.size() > 0) {
-                auto removed{nb::module_::import_("hgraph").attr("REMOVED")};
-                for (const auto &[key, _] : _removed_values) { _delta_value[nb::cast(key)] = removed; }
+                auto removed{get_remove()};
+                for (const auto &[key, _] : _removed_values) { delta_value[nb::cast(key)] = removed; }
             }
         }
-        return _delta_value;
+        return delta_value;
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::clear() {
@@ -204,9 +210,7 @@ namespace hgraph
 
     template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_added() const { return !_added_items.empty(); }
 
-    template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_removed() const {
-        return !_removed_values.empty();
-    }
+    template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_removed() const { return !_removed_values.empty(); }
 
     template <typename T_Key> size_t TimeSeriesDictOutput_T<T_Key>::size() const { return _ts_values.size(); }
 
@@ -420,7 +424,6 @@ namespace hgraph
         _added_items.clear();
         _modified_items.clear();
         _removed_values.clear();
-        _delta_value.clear();
     }
 
     template <typename T_Key> TimeSeriesOutput &TimeSeriesDictOutput_T<T_Key>::_get_or_create(const key_type &key) {
@@ -760,6 +763,16 @@ namespace hgraph
     using TSD_OUT_DateTime  = TimeSeriesDictOutput_T<engine_time_t>;
     using TSD_OUT_TimeDelta = TimeSeriesDictOutput_T<engine_time_delta_t>;
     using TSD_OUT_Object    = TimeSeriesDictOutput_T<nb::object>;
+
+    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::post_modify() { _post_modify(); }
+
+    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_post_modify() {
+        key_set().post_modify();
+        if (!has_added() || !has_removed()) {
+            owning_graph().evaluation_engine_api().add_after_evaluation_notification(
+                [this]() { clear_on_end_of_evaluation_cycle(); });
+        }
+    }
 
     void tsd_register_with_nanobind(nb::module_ &m) {
 

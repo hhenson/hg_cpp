@@ -123,6 +123,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/runtime/graph_executor.h
         include/hgraph/runtime/record_replay.h
 
+        include/hgraph/types/constants.h
         include/hgraph/types/error_type.h
         include/hgraph/types/feature_extension.h
         include/hgraph/types/graph.h

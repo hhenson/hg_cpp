@@ -21,6 +21,7 @@ set(HGRAPH_SOURCES
         runtime/graph_executor.cpp
         runtime/record_replay.cpp
 
+        types/constants.cpp
         types/error_type.cpp
         types/feature_extension.cpp
         types/graph.cpp
