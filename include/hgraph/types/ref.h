@@ -106,9 +106,10 @@ namespace hgraph
 
         static void register_with_nanobind(nb::module_ &m);
 
-
       private:
-        TimeSeriesReference::ptr              _value;
+        friend struct TimeSeriesReferenceInput;
+        friend struct TimeSeriesReference;
+        TimeSeriesReference::ptr _value;
         // Use a raw pointer as we don't have hash implemented on ptr at the moment,
         // So this is a work arround the code managing this also ensures the pointers are incremented
         // and decremented.
@@ -119,9 +120,6 @@ namespace hgraph
     {
         using ptr = nb::ref<TimeSeriesReferenceInput>;
         using TimeSeriesInput::TimeSeriesInput;
-
-        TimeSeriesReference::ptr value() const;
-        TimeSeriesReference::ptr value();
 
         void start();
 
@@ -141,24 +139,27 @@ namespace hgraph
         void                        make_active() override;
         void                        make_passive() override;
 
+        [[nodiscard]] TimeSeriesReferenceInput::ptr operator[](size_t ndx);
+
+        static void register_with_nanobind(nb::module_ &m);
+
       protected:
         bool do_bind_output(time_series_output_ptr value) override;
         void do_un_bind_output() override;
 
-      public:
-        static void register_with_nanobind(nb::module_ &m);
-      protected:
+        TimeSeriesReferenceOutput *as_reference_output() const;
+        TimeSeriesReferenceOutput *as_reference_output();
+
         void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
 
         std::vector<TimeSeriesReferenceInput::ptr> &items();
 
         const std::vector<TimeSeriesReferenceInput::ptr> &items() const;
 
-        const TimeSeriesReferenceOutput &reference_output() const;
-        TimeSeriesReferenceOutput &reference_output();
-
       private:
-        mutable TimeSeriesReference::ptr _value;
+        friend struct TimeSeriesReferenceOutput;
+        friend struct TimeSeriesReference;
+        mutable TimeSeriesReference::ptr           _value;
         std::vector<TimeSeriesReferenceInput::ptr> _items;
     };
 

@@ -56,11 +56,11 @@ namespace hgraph
         ~TimeSeriesBundle() override                          = default;
 
         [[nodiscard]] nb::object py_value() const override {
-            return py_value_with_constraint([](const ts_type &ts) { return ts.valid(); });
+            return py_value_with_constraint<false>([](const ts_type &ts) { return ts.valid(); });
         }
 
         [[nodiscard]] nb::object py_delta_value() const override {
-            return py_value_with_constraint([](const ts_type &ts) { return ts.modified(); });
+            return py_value_with_constraint<true>([](const ts_type &ts) { return ts.modified(); });
         }
 
         // Default iterator iterates over keys to keep this more consistent with Python (c.f. dict)
@@ -135,15 +135,22 @@ namespace hgraph
         using T_TS::index_with_constraint;
         using T_TS::ts_values;
 
-        nb::object py_value_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
+        template <bool is_delta> nb::object py_value_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
             nb::dict out;
+            auto     include_nones{!_schema->scalar_type().is_none()};
             for (size_t i = 0, l = ts_values().size(); i < l; ++i) {
                 if (auto ts{ts_values()[i]}; constraint(*ts)) {
-                    out[_schema->keys()[i].c_str()] = ts->py_value();
+                    if constexpr (is_delta) {
+                        out[_schema->keys()[i].c_str()] = ts->py_delta_value();
+                    } else {
+                        out[_schema->keys()[i].c_str()] =  ts->py_value();
+                    }
+                } else if (include_nones) {
+                    out[_schema->keys()[i].c_str()] = nb::none();
                 }
             }
 
-            if (_schema->scalar_type().is_none()) { return out; }
+            if (!include_nones) { return out; }
             return nb::cast<nb::object>(_schema->scalar_type()(**out));
         }
 

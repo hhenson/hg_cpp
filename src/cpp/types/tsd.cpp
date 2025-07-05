@@ -156,7 +156,7 @@ namespace hgraph
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_delta_value() const {
         auto delta_value{nb::dict()};
         if (delta_value.size() == 0) {
-            for (const auto &[key, value] : _modified_items) { delta_value[nb::cast(key)] = value->py_value(); }
+            for (const auto &[key, value] : _modified_items) { delta_value[nb::cast(key)] = value->py_delta_value(); }
             if (_removed_values.size() > 0) {
                 auto removed{get_remove()};
                 for (const auto &[key, _] : _removed_values) { delta_value[nb::cast(key)] = removed; }

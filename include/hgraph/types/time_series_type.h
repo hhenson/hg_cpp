@@ -201,6 +201,8 @@ namespace hgraph
 
         virtual void set_subscribe_method(bool subscribe_input);
 
+        [[nodiscard]] time_series_output_ptr reference_output() const;
+
       protected:
         // Derived classes override this to implement specific behaviours
         virtual bool do_bind_output(time_series_output_ptr value);
@@ -219,6 +221,8 @@ namespace hgraph
         [[nodiscard]] bool subscribe_input() const;
 
         [[nodiscard]] bool sampled() const;
+
+        void reset_output();
 
       private:
         time_series_output_ptr _output;

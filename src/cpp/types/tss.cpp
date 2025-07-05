@@ -2,9 +2,25 @@
 #include <hgraph/types/graph.h>
 #include <hgraph/types/ts.h>
 #include <hgraph/types/tss.h>
+#include <hgraph/types/constants.h>
 
 namespace hgraph
 {
+
+    bool SetDelta::operator==(const nb::object &other) const {
+        if (!nb::isinstance(other, get_frozenset()) && !nb::isinstance<nb::set>(other)) return false;
+        nb::set added;
+        nb::set removed;
+        auto REMOVED = get_removed();
+        for (auto i : nb::iter(other)) {
+            if (nb::isinstance(i, REMOVED)) {
+                removed.add(i.attr("item"));
+            } else {
+                added.add(i);
+            }
+        }
+        return  removed.equal(py_removed()) && added.equal(py_added());
+    }
 
     void SetDelta::register_with_nanobind(nb::module_ &m) {
         nb::class_<SetDelta, nb::intrusive_base>(m, "SetDelta")
@@ -19,7 +35,8 @@ namespace hgraph
                 [](SetDelta &self) {
                     return nb::str("SetDelta[{}](added={}, removed={})").format(self.py_type(), self.py_added(), self.py_removed());
                 })
-            .def("__eq__", &SetDelta::operator==)
+            .def("__eq__", static_cast<bool (SetDelta::*)(const SetDelta&) const>(&SetDelta::operator==))
+            .def("__eq__", static_cast<bool (SetDelta::*)(const nb::object&) const>(&SetDelta::operator==))
             .def("__hash__", &SetDelta::hash);
 
         using SetDelta_bool = SetDeltaImpl<bool>;
@@ -146,7 +163,7 @@ namespace hgraph
                     if (_value.contains(k)) { _remove(k); }
                 }
             } else {
-                auto removed{nb::module_::import_("hgraph").attr("Removed")};
+                auto removed{get_removed()};
                 auto v = nb::set(value);
                 for (const auto &r : v) {
                     if (!nb::isinstance(r, removed)) {
@@ -156,7 +173,7 @@ namespace hgraph
                         auto item{nb::cast<T_Key>(r.attr("item"))};
                         if (_value.contains(item)) {
                             if (_added.contains(item)) { throw std::runtime_error("Cannot remove and add the same element"); }
-                            _removed.insert(item);
+                            _remove(item);
                         }
                     }
                 }

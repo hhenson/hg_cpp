@@ -35,6 +35,8 @@ namespace hgraph
 
         [[nodiscard]] virtual bool operator==(const SetDelta &other) const = 0;
 
+        [[nodiscard]] virtual bool operator==(const nb::object &other) const;
+
         [[nodiscard]] virtual size_t hash() const = 0;
 
         static void register_with_nanobind(nb::module_ &m);

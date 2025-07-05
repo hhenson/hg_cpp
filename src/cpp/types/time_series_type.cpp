@@ -206,6 +206,7 @@ namespace hgraph
             .def_prop_ro("bound", &TimeSeriesInput::bound)
             .def_prop_ro("has_peer", &TimeSeriesInput::has_peer)
             .def_prop_ro("output", &TimeSeriesInput::output)
+            .def_prop_ro("reference_output", &TimeSeriesInput::reference_output)
             .def_prop_ro("active", &TimeSeriesInput::active)
             .def("bind_output", &TimeSeriesInput::bind_output, "output"_a)
             .def("un_bind_output", &TimeSeriesInput::un_bind_output)
@@ -257,6 +258,14 @@ namespace hgraph
 
     bool TimeSeriesInput::sampled() const {
         return _sample_time != MIN_DT && _sample_time == owning_graph().evaluation_clock().evaluation_time();
+    }
+
+    time_series_output_ptr TimeSeriesInput::reference_output() const {
+        return _reference_output;
+    }
+
+    void TimeSeriesInput::reset_output() {
+        _output = nullptr;
     }
 
     TimeSeriesOutput::ptr TimeSeriesOutput::parent_output() const {
