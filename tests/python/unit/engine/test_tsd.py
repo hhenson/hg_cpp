@@ -6,7 +6,7 @@ import pytest
 from hgraph import graph, TS, compute_node, MIN_ST, MIN_TD, SIGNAL, TSS, set_delta, CompoundScalar, contains_, TSD, \
     REMOVE
 from hgraph.test import eval_node
-from frozendict import frozendict as fd
+from frozendict import frozendict as fd, frozendict
 
 
 def test_tsd_simple():
@@ -110,3 +110,14 @@ def test_tsd_contains():
         return contains_(a, b)
 
     assert eval_node(g, [{0: 1, 1: 2}, {2: 3}], [2, None]) == [False, True]
+
+
+def test_tsd_modified():
+
+    @compute_node()
+    def c(a: TSD[int, TS[int]]) -> TS[frozendict[int, int]]:
+        #added = list(a.added_items())
+        b = frozendict({k: t.delta_value for k, t in a.modified_items()})
+        return b
+
+    assert eval_node(c, [{0: 1}, {1: 1}]) == [frozendict({0: 1}), frozendict({1: 1})]

@@ -303,6 +303,7 @@ namespace hgraph
 
         void reset_prev();
         void clear_key_changes();
+        void register_clear_key_changes();
 
         TimeSeriesInput &_get_or_create(const key_type &key);
         void             _create(const key_type &key);
@@ -311,6 +312,7 @@ namespace hgraph
             auto &value{_get_or_create(key)};
             if (!has_peer() && active()) { value.make_active(); }
             value.bind_output(&output_t()[key]);
+            register_clear_key_changes();
         }
 
         void on_key_removed(const key_type &key) override {
@@ -319,7 +321,7 @@ namespace hgraph
             if (it == _ts_values.end()) { return; }
 
             if (_removed_values.empty()) {
-                owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { clear_key_changes(); });
+                register_clear_key_changes();
             }
 
             auto value{it->second};
@@ -347,6 +349,7 @@ namespace hgraph
 
         engine_time_t _last_modified_time{MIN_DT};
         bool          _has_peer{false};
+        bool          _clear_key_changes_registered{false};
     };
 
     void tsd_register_with_nanobind(nb::module_ &m);

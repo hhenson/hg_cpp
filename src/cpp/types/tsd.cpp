@@ -90,6 +90,7 @@ namespace hgraph
         _added_items.insert({key, value});
         _ref_ts_feature.update(key);
         for (auto &observer : _key_observers) { observer->on_key_added(key); }
+        add_modified_value(value);
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::add_modified_value(value_type value) {
@@ -633,7 +634,7 @@ namespace hgraph
         TimeSeriesInput::do_bind_output(value);
 
         if (!_ts_values.empty()) {
-            owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { this->clear_key_changes(); });
+            register_clear_key_changes();
         }
 
         for (const auto &key : key_set_t().values()) { on_key_added(key); }
@@ -651,7 +652,7 @@ namespace hgraph
             for (const auto &[key, value] : _ts_values) { _removed_values.insert({key, value}); }
             _ts_values.clear();
             _reverse_ts_values.clear();
-            owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { clear_key_changes(); });
+            register_clear_key_changes();
 
             std::unordered_map<key_type, time_series_input_ptr> to_keep;
             for (auto &[key, value] : _removed_values) {
@@ -694,12 +695,20 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::reset_prev() { _prev_output = nullptr; }
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::clear_key_changes() {
+        _clear_key_changes_registered = false;
         _added_items.clear();
         _modified_items.clear();
         for (auto &[_, value] : _removed_values) {
             if (value->parent_input().get() != this || !has_peer()) { value->un_bind_output(); }
         }
         _removed_values.clear();
+    }
+
+    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::register_clear_key_changes() {
+        if (!_clear_key_changes_registered) {
+            _clear_key_changes_registered = true;
+            owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { clear_key_changes(); });
+        }
     }
 
     template <typename T_Key> TimeSeriesInput &TimeSeriesDictInput_T<T_Key>::_get_or_create(const key_type &key) {
@@ -713,6 +722,8 @@ namespace hgraph
         _ts_values.insert({key, value});
         _reverse_ts_values.insert({value, key});
         _added_items.insert({key, value});
+        _modified_items.insert({key, value});
+        register_clear_key_changes();
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_create(const key_type &key) {
