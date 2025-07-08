@@ -18,6 +18,9 @@ namespace hgraph
         // Called when a key is added
         virtual void on_key_added(const K &key) = 0;
 
+        // Called when a key is modified
+        virtual void on_key_modified(const K &key) = 0;
+
         // Called when a key is removed
         virtual void on_key_removed(const K &key) = 0;
 
@@ -315,14 +318,17 @@ namespace hgraph
             register_clear_key_changes();
         }
 
+        void on_key_modified(const T_Key &key) override {
+            auto it = _ts_values.find(key);
+            if (it == _ts_values.end()) { return; }
+            _modified_items.insert({key, it->second});
+            register_clear_key_changes();
+        }
+
         void on_key_removed(const key_type &key) override {
             // NOTE: We were tracking the valid state on the removed item. Now we just track the value
             auto it = _ts_values.find(key);
             if (it == _ts_values.end()) { return; }
-
-            if (_removed_values.empty()) {
-                register_clear_key_changes();
-            }
 
             auto value{it->second};
 
@@ -332,6 +338,7 @@ namespace hgraph
                 _modified_items.erase(key);
                 _ts_values.erase(it);
             }
+            register_clear_key_changes();
         }
 
       private:

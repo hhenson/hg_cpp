@@ -94,7 +94,9 @@ namespace hgraph
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::add_modified_value(value_type value) {
-        _modified_items.insert({_reverse_ts_values.at(value), value});
+        auto key{_reverse_ts_values.at(value)};
+        _modified_items.insert({key, value});
+        for (auto &observer : _key_observers) { observer->on_key_modified(key); }
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::remove_value(const key_type &key, bool raise_if_not_found) {

@@ -121,3 +121,25 @@ def test_tsd_modified():
         return b
 
     assert eval_node(c, [{0: 1}, {1: 1}]) == [frozendict({0: 1}), frozendict({1: 1})]
+
+def test_tsd_modified_value():
+
+    @compute_node()
+    def c(a: TSD[int, TS[int]]) -> TS[frozendict[int, int]]:
+        #added = list(a.added_items())
+        b = frozendict({k: t.value for k, t in a.modified_items()})
+        return b
+
+    assert eval_node(c, [{0: 1}, {1: 1}, {1: 2}]) == [frozendict({0: 1}), frozendict({1: 1}), frozendict({1: 2})]
+
+
+def test_tsd_added_value():
+
+    @compute_node()
+    def c(a: TSD[int, TS[int]]) -> TS[frozendict[int, int]]:
+        #added = list(a.added_items())
+        b = frozendict({k: t.value for k, t in a.added_items()})
+        return b
+
+    assert eval_node(c, [{0: 1}, {1: 1}]) == [frozendict({0: 1}), frozendict({1: 1})]
+
