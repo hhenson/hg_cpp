@@ -78,7 +78,7 @@ namespace hgraph
             .def_prop_ro("evaluation_mode", &EvaluationEngineApi::evaluation_mode)
             .def_prop_ro("start_time", &EvaluationEngineApi::start_time)
             .def_prop_ro("end_time", &EvaluationEngineApi::end_time)
-            .def_prop_ro("evaluation_clock", &EvaluationEngineApi::evaluation_clock)
+            .def_prop_ro("evaluation_clock", static_cast<const EvaluationClock &(EvaluationEngineApi::*)() const>(&EvaluationEngineApi::evaluation_clock))
             .def("request_engine_stop", &EvaluationEngineApi::request_engine_stop)
             .def_prop_ro("is_stop_requested", &EvaluationEngineApi::is_stop_requested)
             .def("add_before_evaluation_notification", &EvaluationEngineApi::add_before_evaluation_notification, "fn"_a)
@@ -131,10 +131,6 @@ namespace hgraph
     EvaluationClock &EvaluationEngineDelegate::evaluation_clock() { return _evaluation_engine->evaluation_clock(); }
 
     EngineEvaluationClock &EvaluationEngineDelegate::engine_evaluation_clock() {
-        return _evaluation_engine->engine_evaluation_clock();
-    }
-
-    const EngineEvaluationClock &EvaluationEngineDelegate::engine_evaluation_clock() const {
         return _evaluation_engine->engine_evaluation_clock();
     }
 
@@ -400,7 +396,7 @@ namespace hgraph
 
     void EvaluationEngineImpl::dispose() {}
 
-    const EngineEvaluationClock &EvaluationEngineImpl::engine_evaluation_clock() const { return *_clock; }
+    EngineEvaluationClock &EvaluationEngineImpl::engine_evaluation_clock() { return *_clock; }
 
     EvaluationMode EvaluationEngineImpl::evaluation_mode() const { return _run_mode; }
 
@@ -434,8 +430,6 @@ namespace hgraph
             _life_cycle_observers.pop_back();
         }
     }
-
-    EngineEvaluationClock &EvaluationEngineImpl::engine_evaluation_clock() { return *_clock; }
 
     void EvaluationEngineImpl::advance_engine_time() {
 

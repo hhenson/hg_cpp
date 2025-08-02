@@ -12,6 +12,7 @@ namespace hgraph
 {
     struct NestedNode :  Node
     {
+        using ptr = nb::ref<NestedNode>;
         using Node::Node;
 
         engine_time_t last_evaluation_time() const;
@@ -21,6 +22,7 @@ namespace hgraph
         engine_time_t _last_evaluation_time {MIN_DT};
     };
 
+    
 }  // namespace hgraph
 
 #endif  // NESTED_NODE_H

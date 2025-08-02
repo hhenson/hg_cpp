@@ -5,9 +5,9 @@
 #ifndef EVALUATION_ENGINE_H
 #define EVALUATION_ENGINE_H
 
+#include <condition_variable>
 #include <hgraph/runtime/graph_executor.h>
 #include <hgraph/util/lifecycle.h>
-#include <condition_variable>
 
 namespace hgraph
 {
@@ -93,6 +93,8 @@ namespace hgraph
 
         [[nodiscard]] virtual engine_time_t end_time() const = 0;
 
+        const EvaluationClock &evaluation_clock() const { return const_cast<EvaluationEngineApi *>(this)->evaluation_clock(); };
+
         [[nodiscard]] virtual EvaluationClock &evaluation_clock() = 0;
 
         virtual void request_engine_stop() = 0;
@@ -118,7 +120,9 @@ namespace hgraph
 
         virtual EngineEvaluationClock &engine_evaluation_clock() = 0;
 
-        virtual const EngineEvaluationClock &engine_evaluation_clock() const = 0;
+        const EngineEvaluationClock &engine_evaluation_clock() const {
+            return const_cast<EvaluationEngine *>(this)->engine_evaluation_clock();
+        };
 
         virtual void advance_engine_time() = 0;
 
@@ -151,27 +155,27 @@ namespace hgraph
 
     struct NotifyGraphEvaluation
     {
-        NotifyGraphEvaluation(EvaluationEngine& evaluation_engine, const Graph& graph);
+        NotifyGraphEvaluation(EvaluationEngine &evaluation_engine, const Graph &graph);
         ~NotifyGraphEvaluation();
-    private:
-        EvaluationEngine& _evaluation_engine;
-        const Graph& _graph;
+
+      private:
+        EvaluationEngine &_evaluation_engine;
+        const Graph      &_graph;
     };
 
     struct NotifyNodeEvaluation
     {
-        NotifyNodeEvaluation(EvaluationEngine& evaluation_engine, const Node& node);
+        NotifyNodeEvaluation(EvaluationEngine &evaluation_engine, const Node &node);
         ~NotifyNodeEvaluation();
-    private:
-        EvaluationEngine& _evaluation_engine;
-        const Node& _node;
+
+      private:
+        EvaluationEngine &_evaluation_engine;
+        const Node       &_node;
     };
 
     struct HGRAPH_EXPORT EvaluationEngineDelegate : EvaluationEngine
     {
         explicit EvaluationEngineDelegate(ptr api);
-
-
 
         [[nodiscard]] EvaluationMode evaluation_mode() const override;
 
@@ -182,8 +186,6 @@ namespace hgraph
         [[nodiscard]] EvaluationClock &evaluation_clock() override;
 
         EngineEvaluationClock &engine_evaluation_clock() override;
-
-        const EngineEvaluationClock &engine_evaluation_clock() const override;
 
         void request_engine_stop() override;
 
@@ -306,7 +308,7 @@ namespace hgraph
         bool          _ready_to_push;
         engine_time_t _last_time_allowed_push;
 
-        mutable std::mutex              _condition_mutex;
+        mutable std::mutex      _condition_mutex;
         std::condition_variable _push_node_requires_scheduling_condition;
 
         std::set<std::pair<engine_time_t, std::string>>                                     _alarms;
@@ -336,7 +338,6 @@ namespace hgraph
         void                           add_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) override;
         void                           remove_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) override;
         EngineEvaluationClock         &engine_evaluation_clock() override;
-        const EngineEvaluationClock   &engine_evaluation_clock() const override;
         void                           advance_engine_time() override;
         void                           notify_before_evaluation() override;
         void                           notify_after_evaluation() override;
