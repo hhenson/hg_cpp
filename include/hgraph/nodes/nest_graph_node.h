@@ -14,8 +14,8 @@ namespace hgraph
                         int output_node_id);
 
         void                               initialise() override;
-        void                               start() override;
-        void                               stop() override;
+        void                               do_start() override;
+        void                               do_stop() override;
         void                               dispose() override;
         void                               do_eval() override;
         std::unordered_map<int, graph_ptr> nested_graphs();

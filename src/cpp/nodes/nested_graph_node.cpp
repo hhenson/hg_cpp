@@ -51,9 +51,9 @@ namespace hgraph
         wire_graph();
     }
 
-    void NestedGraphNode::start() { start_component(*m_active_graph_); }
+    void NestedGraphNode::do_start() { start_component(*m_active_graph_); }
 
-    void NestedGraphNode::stop() { stop_component(*m_active_graph_); }
+    void NestedGraphNode::do_stop() { stop_component(*m_active_graph_); }
 
     void NestedGraphNode::dispose() {
         dispose_component(*m_active_graph_);
