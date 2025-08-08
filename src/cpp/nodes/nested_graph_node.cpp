@@ -1,9 +1,12 @@
+#include <hgraph/builders/graph_builder.h>
+#include <hgraph/nodes/nested_evaluation_engine.h>
+
 #include <hgraph/nodes/nest_graph_node.h>
 #include <hgraph/runtime/record_replay.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/traits.h>
-
+#include <hgraph/types/tsb.h>
 #include <utility>
 
 namespace hgraph
@@ -26,9 +29,9 @@ namespace hgraph
             for (const auto &[arg, node_ndx] : m_input_node_ids_) {
                 auto node = m_active_graph_->nodes()[node_ndx];
                 node->notify();
-                auto ts = input(arg);
-                node->set_input(node->input().copy_with(node, ts));
-                ts->re_parent(node->input());
+                auto ts = input()[arg];
+                node->set_input(node->input().copy_with(node, {ts}));
+                ts->re_parent(TimeSeriesType::ptr(&node->input()));
             }
         }
     }
@@ -36,32 +39,32 @@ namespace hgraph
     void NestedGraphNode::wire_outputs() {
         if (m_output_node_id_) {
             auto node = m_active_graph_->nodes()[m_output_node_id_];
-            node->set_output(output());
+            node->set_output(&output());
         }
     }
 
     void NestedGraphNode::initialise() {
-        m_active_graph_ = m_nested_graph_builder_->make_instance(node_id(), this, signature()->name());
-        m_active_graph_->set_evaluation_engine(std::make_shared<NestedEvaluationEngine>(
-            graph()->evaluation_engine(), std::make_shared<NestedEngineEvaluationClock>(graph()->engine_evaluation_clock(), this)));
-        m_active_graph_->initialise();
+        m_active_graph_ = m_nested_graph_builder_->make_instance(node_id(), this, signature().name);
+        m_active_graph_->set_evaluation_engine(new NestedEvaluationEngine(
+            &graph().evaluation_engine(), new NestedEngineEvaluationClock(&graph().evaluation_engine_clock(), this)));
+        initialise_component(*m_active_graph_);
         wire_graph();
     }
 
-    void NestedGraphNode::start() { m_active_graph_->start(); }
+    void NestedGraphNode::start() { start_component(*m_active_graph_); }
 
-    void NestedGraphNode::stop() { m_active_graph_->stop(); }
+    void NestedGraphNode::stop() { stop_component(*m_active_graph_); }
 
     void NestedGraphNode::dispose() {
-        m_active_graph_->dispose();
+        dispose_component(*m_active_graph_);
         m_active_graph_ = nullptr;
     }
 
     void NestedGraphNode::do_eval() {
         mark_evaluated();
-        m_active_graph_->evaluation_engine_clock().reset_next_scheduled_evaluation_time();
+        reinterpret_cast<NestedEngineEvaluationClock &>(m_active_graph_->evaluation_engine_clock()).reset_next_scheduled_evaluation_time();
         m_active_graph_->evaluate_graph();
-        m_active_graph_->evaluation_clock().reset_next_scheduled_evaluation_time();
+        reinterpret_cast<NestedEngineEvaluationClock &>(m_active_graph_->evaluation_engine_clock()).reset_next_scheduled_evaluation_time();
     }
 
     std::unordered_map<int, graph_ptr> NestedGraphNode::nested_graphs() {

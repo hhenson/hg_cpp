@@ -8,6 +8,8 @@ set(HGRAPH_SOURCES
         builders/output_builder.cpp
 
         nodes/map_node.cpp
+        nodes/nested_evaluation_engine.cpp
+        nodes/nested_graph_node.cpp
         nodes/nested_node.cpp
 
         python/_hgraph_builder.cpp

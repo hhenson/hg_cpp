@@ -66,6 +66,8 @@ namespace hgraph
         */
         void re_parent(node_ptr parent);
 
+        void re_parent(ptr parent);
+
         // // Overload for re_parent with TimeSeries
         // virtual void re_parent(TimeSeriesType::ptr parent) = 0;
 
@@ -79,9 +81,9 @@ namespace hgraph
         bool has_parent_or_node() const;
 
       private:
-        using OutputOrNode = std::variant<ptr, node_ptr>;
-        std::optional<OutputOrNode> _parent_ts_or_node{};
-        const Node                 &_owning_node() const;
+        using TsOrNode = std::variant<ptr, node_ptr>;
+        std::optional<TsOrNode> _parent_ts_or_node{};
+        const Node             &_owning_node() const;
     };
 
     struct TimeSeriesInput;
@@ -118,7 +120,7 @@ namespace hgraph
 
         virtual void mark_modified(engine_time_t modified_time);
 
-        virtual void mark_child_modified(TimeSeriesOutput& child, engine_time_t modified_time);
+        virtual void mark_child_modified(TimeSeriesOutput &child, engine_time_t modified_time);
 
         void subscribe(Notifiable *node);
 

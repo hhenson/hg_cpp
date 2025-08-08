@@ -69,7 +69,7 @@ namespace hgraph
             .def("modified_keys", &TimeSeriesBundle_Output::modified_keys)
             .def("modified_items", static_cast<key_value_collection_type (TimeSeriesBundle_Output::*)() const>(
                                        &TimeSeriesBundle_Output::modified_items))
-            .def_prop_ro("__schema__", &TimeSeriesBundle_Output::schema);
+            .def_prop_ro("__schema__", static_cast<const TimeSeriesSchema& (TimeSeriesBundle_Output::*)() const>(&TimeSeriesBundle_Output::schema));
 
         nb::class_<TimeSeriesBundleOutput, IndexedTimeSeriesOutput>(m, "TimeSeriesBundleOutput")
             .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
@@ -98,11 +98,18 @@ namespace hgraph
             .def("valid_keys", &TimeSeriesBundle_Input::valid_keys)
             .def("valid_items",
                  static_cast<key_value_collection_type (TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::valid_items))
-            .def_prop_ro("__schema__", &TimeSeriesBundle_Input::schema);
+            .def_prop_ro("__schema__", static_cast<const TimeSeriesSchema& (TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::schema));
 
         nb::class_<TimeSeriesBundleInput, TimeSeriesBundle_Input>(m, "TimeSeriesBundleInput")
             .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
             .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a);
+    }
+
+    TimeSeriesBundleInput::ptr TimeSeriesBundleInput::copy_with(const node_ptr &parent,
+                                                           collection_type ts_values) {
+        auto v {new TimeSeriesBundleInput(parent, TimeSeriesSchema::ptr{&schema()})};
+        v->set_ts_values(ts_values);
+        return v;
     }
 
 }  // namespace hgraph

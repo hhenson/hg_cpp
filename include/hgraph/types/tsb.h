@@ -90,6 +90,8 @@ namespace hgraph
 
         [[nodiscard]] const TimeSeriesSchema &schema() const { return *_schema; }
 
+        [[nodiscard]]  TimeSeriesSchema &schema()  { return *_schema; }
+
         // Retrieves valid keys
         [[nodiscard]] key_collection_type keys() const { return {_schema->keys().begin(), _schema->keys().end()}; }
 
@@ -198,6 +200,11 @@ namespace hgraph
 
         // Static method for nanobind registration
         static void register_with_nanobind(nb::module_ &m);
+
+        // This is used by the nested graph infra to rewrite the stub inputs when we build the nested graphs.
+        // The general pattern in python was copy_with(node, ts=...)
+        // To keep the code in sync for now, will keep this, but there is probably a better way to implement this going forward.
+        ptr copy_with(const node_ptr &parent, collection_type ts_values);
 
       protected:
         using bundle_type::set_ts_values;

@@ -220,6 +220,12 @@ namespace hgraph
         std::string str() const;
 
       protected:
+        void start() override;
+        void stop() override;
+
+        virtual void do_start() = 0;
+        virtual void do_stop() = 0;
+
         virtual void do_eval() = 0;
 
         void _initialise_inputs();
@@ -253,11 +259,10 @@ namespace hgraph
 
       protected:
         void do_eval() override;
-        virtual void do_start();
-        virtual void do_stop();
+        void do_start() override;
+        void do_stop() override;
         void         initialise() override;
         void         start() override;
-        void         stop() override;
         void         dispose() override;
 
         nb::callable _eval_fn;

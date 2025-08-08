@@ -1,14 +1,16 @@
 
+#include <hgraph/types/graph.h>
+#include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
-#include <hgraph/types/node.h>
-#include <hgraph/types/graph.h>
 
 #include <utility>
 
 namespace hgraph
 {
-    void TimeSeriesType::re_parent(Node::ptr parent) { _parent_ts_or_node = parent; }
+    void TimeSeriesType::re_parent(Node::ptr parent) { _parent_ts_or_node = std::move(parent); }
+
+    void TimeSeriesType::re_parent(ptr parent) { _parent_ts_or_node = std::move(parent); }
 
     void TimeSeriesType::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesType, nb::intrusive_base>(m, "TimeSeriesType")
@@ -260,13 +262,9 @@ namespace hgraph
         return _sample_time != MIN_DT && _sample_time == owning_graph().evaluation_clock().evaluation_time();
     }
 
-    time_series_output_ptr TimeSeriesInput::reference_output() const {
-        return _reference_output;
-    }
+    time_series_output_ptr TimeSeriesInput::reference_output() const { return _reference_output; }
 
-    void TimeSeriesInput::reset_output() {
-        _output = nullptr;
-    }
+    void TimeSeriesInput::reset_output() { _output = nullptr; }
 
     TimeSeriesOutput::ptr TimeSeriesOutput::parent_output() const {
         return static_cast<TimeSeriesOutput *>(_parent_time_series().get());  // NOLINT(*-pro-type-static-cast-downcast)
@@ -311,7 +309,7 @@ namespace hgraph
         }
     }
 
-    void TimeSeriesOutput::mark_child_modified(TimeSeriesOutput& child, engine_time_t modified_time) {
+    void TimeSeriesOutput::mark_child_modified(TimeSeriesOutput &child, engine_time_t modified_time) {
         mark_modified(modified_time);
     }  // NOLINT(*-no-recursion)
 

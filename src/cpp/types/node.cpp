@@ -608,6 +608,25 @@ namespace hgraph
         if (signature().label.has_value()) { return fmt::format("{}.{}", signature().wiring_path_name, signature().label.value()); }
         return fmt::format("{}.{}", signature().wiring_path_name, signature().name);
     }
+    void Node::start() {
+        do_start();
+        if (has_scheduler()) {
+            if (scheduler().pop_tag("start") != MIN_DT) {
+                notify();
+                if (!signature().uses_scheduler()) {
+                    _scheduler.reset();
+                }
+            } else {
+                scheduler().advance();
+            }
+        }
+    }
+
+    void Node::stop() {
+        do_stop();
+        if (has_input()) { input().un_bind_output(); }
+        if (has_scheduler()) { scheduler().reset(); }
+    }
 
     BasePythonNode::BasePythonNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
                                    nb::dict scalars, nb::callable eval_fn, nb::callable start_fn, nb::callable stop_fn)
@@ -795,25 +814,8 @@ namespace hgraph
         _initialise_kwargs();
         _initialise_inputs();
         _initialise_state();
-
-        do_start();
-
-        if (has_scheduler()) {
-            auto scheduler_ = scheduler();
-            if (scheduler_.pop_tag("start", MIN_DT) != MIN_DT) {
-                notify();
-                if (!signature().uses_scheduler()) { unset_scheduler(); }
-            } else {
-                scheduler_.advance();
-            }
-        }
-    }
-
-    void BasePythonNode::stop() {
-
-        do_stop();
-        if (has_input()) { input().un_bind_output(); }
-        if (has_scheduler()) { scheduler().reset(); }
+        // Now call parent class
+        Node::start();
     }
 
     void BasePythonNode::dispose() { _kwargs.clear(); }
