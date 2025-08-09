@@ -822,6 +822,10 @@ namespace hgraph
 
     void PushQueueNode::do_eval() {}
 
+    const nb::callable &PythonNode::eval_fn() {
+        return _eval_fn;
+    }
+
     void PushQueueNode::enqueue_message(nb::object message) {
         ++_messages_queued;
         _receiver->enqueue({node_ndx(), std::move(message)});

@@ -154,7 +154,7 @@ namespace hgraph
 
         Node(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars);
 
-        void eval();
+        virtual void eval();
 
         void notify(engine_time_t modified_time) override;
 
@@ -275,7 +275,9 @@ namespace hgraph
     struct PythonNode : BasePythonNode
     {
         using BasePythonNode::BasePythonNode;
-        // So far, nothing to do other than what is already done in the base ndoe.
+        // So far, nothing to do other than what is already done in the base node.
+
+        const nb::callable &eval_fn();
     };
 
     struct PushQueueNode : Node

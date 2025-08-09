@@ -4,31 +4,53 @@
 #define MAP_NODE_H
 
 #include <hgraph/nodes/nested_node.h>
+#include <hgraph/types/tsd.h>
 
 namespace hgraph
 {
+
+    template<typename K> struct TsdMapNode;
+    template<typename K>
+    using tsd_map_node_ptr = nb::ref<TsdMapNode<K>>;
+
+    template <typename K> struct MapNestedEngineEvaluationClock :  NestedEngineEvaluationClock
+    {
+        MapNestedEngineEvaluationClock(EngineEvaluationClock::ptr engine_evaluation_clock, K key,
+                                       tsd_map_node_ptr<K> nested_node);
+
+        void update_next_scheduled_evaluation_time(engine_time_t next_time) override;
+
+      private:
+        K _key;
+    };
+
     template <typename K> struct TsdMapNode : NestedNode
     {
+        static inline std::string KEYS_ARG = "__keys__";
+        static inline std::string _KEY_ARG = "__key_arg__";
+
         TsdMapNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars,
-                graph_builder_ptr nested_graph_builder, const std::unordered_map<std::string, int> &input_node_ids,
-                int output_node_id, const std::unordered_set<std::string> &multiplexed_args, const std::string &key_arg);
+                   graph_builder_ptr nested_graph_builder, const std::unordered_map<std::string, int> &input_node_ids,
+                   int output_node_id, const std::unordered_set<std::string> &multiplexed_args, const std::string &key_arg);
 
         std::unordered_map<K, graph_ptr> &nested_graphs();
 
       protected:
         void initialise() override;
-        void start() override;
-        void stop() override;
+        void do_start() override;
+        void do_stop() override;
         void dispose() override;
-        void do_eval() override;
+        void eval() override;
 
-      private:
+        virtual TimeSeriesDictOutput_T<K> &tsd_output();
+
         void          create_new_graph(const K &key);
         void          remove_graph(const K &key);
         engine_time_t evaluate_graph(const K &key);
         void          un_wire_graph(const K &key, std::shared_ptr<Graph> &graph);
         void          wire_graph(const K &key, std::shared_ptr<Graph> &graph);
 
+      private:
         graph_builder_ptr                    nested_graph_builder_;
         std::unordered_map<std::string, int> input_node_ids_;
         size_t                               output_node_id_;
@@ -40,7 +62,6 @@ namespace hgraph
         int64_t                              count_{1};
         std::string                          recordable_id_;
     };
-
 
 }  // namespace hgraph
 

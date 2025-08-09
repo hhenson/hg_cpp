@@ -7,7 +7,7 @@ set(HGRAPH_SOURCES
         builders/node_builder.cpp
         builders/output_builder.cpp
 
-        nodes/map_node.cpp
+        nodes/tsd_map_node.cpp
         nodes/nested_evaluation_engine.cpp
         nodes/nested_graph_node.cpp
         nodes/nested_node.cpp

@@ -5,8 +5,6 @@
 #ifndef TSS_H
 #define TSS_H
 
-#include "tsd.h"
-
 #include <hgraph/types/feature_extension.h>
 #include <hgraph/types/ts.h>
 

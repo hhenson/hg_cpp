@@ -2,6 +2,8 @@
 #include <hgraph/nodes/nested_node.h>
 #include <hgraph/types/graph.h>
 
+#include <utility>
+
 namespace hgraph
 {
 
@@ -32,7 +34,7 @@ namespace hgraph
     }
 
     NestedEvaluationEngine::NestedEvaluationEngine(EvaluationEngine::ptr engine, EngineEvaluationClock::ptr evaluation_clock)
-        : EvaluationEngineDelegate(engine), _engine_evaluation_clock(evaluation_clock),
+        : EvaluationEngineDelegate(std::move(engine)), _engine_evaluation_clock(evaluation_clock),
           _nested_start_time(evaluation_clock->evaluation_time()) {}
 
     engine_time_t NestedEvaluationEngine::start_time() const { return _nested_start_time; }
