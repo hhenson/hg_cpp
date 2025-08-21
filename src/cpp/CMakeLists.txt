@@ -13,8 +13,9 @@ set(HGRAPH_SOURCES
         nodes/nested_node.cpp
 
         python/_hgraph_builder.cpp
-        python/_hgraph_runtime.cpp
         python/_hgraph_module.cpp
+        python/_hgraph_nodes.cpp
+        python/_hgraph_runtime.cpp
         python/_hgraph_types.cpp
         python/_hgraph_utils.cpp
 

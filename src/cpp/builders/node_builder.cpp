@@ -7,6 +7,8 @@
 #include <hgraph/builders/node_builder.h>
 #include <hgraph/builders/output_builder.h>
 
+#include <hgraph/nodes/tsd_map_node.h>
+
 #include <utility>
 
 namespace hgraph
@@ -55,9 +57,12 @@ namespace hgraph
                      auto start_fn_ = nb::cast<nb::handle>(kwargs["start_fn"]);
                      auto stop_fn_  = nb::cast<nb::handle>(kwargs["stop_fn"]);
 
-                     nb::callable eval_fn = eval_fn_.is_valid() && !eval_fn_.is_none() ? nb::cast<nb::callable>(eval_fn_) : nb::callable{};
-                     nb::callable start_fn = start_fn_.is_valid() && !start_fn_.is_none() ? nb::cast<nb::callable>(start_fn_) : nb::callable{};
-                     nb::callable stop_fn = stop_fn_.is_valid() && !stop_fn_.is_none() ? nb::cast<nb::callable>(stop_fn_) : nb::callable{};
+                     nb::callable eval_fn =
+                         eval_fn_.is_valid() && !eval_fn_.is_none() ? nb::cast<nb::callable>(eval_fn_) : nb::callable{};
+                     nb::callable start_fn =
+                         start_fn_.is_valid() && !start_fn_.is_none() ? nb::cast<nb::callable>(start_fn_) : nb::callable{};
+                     nb::callable stop_fn =
+                         stop_fn_.is_valid() && !stop_fn_.is_none() ? nb::cast<nb::callable>(stop_fn_) : nb::callable{};
 
                      new (self) PythonNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_),
                                                   std::move(output_builder_), std::move(error_builder_),
@@ -72,8 +77,8 @@ namespace hgraph
             .def("__init__",
                  [](PythonGeneratorNodeBuilder *self, const nb::kwargs &kwargs) {
                      auto signature_obj = kwargs["signature"];
-                     auto signature_ = nb::cast<node_signature_ptr>(signature_obj);
-                     auto scalars_   = nb::cast<nb::dict>(kwargs["scalars"]);
+                     auto signature_    = nb::cast<node_signature_ptr>(signature_obj);
+                     auto scalars_      = nb::cast<nb::dict>(kwargs["scalars"]);
 
                      std::optional<input_builder_ptr> input_builder_ =
                          kwargs.contains("input_builder") ? nb::cast<std::optional<input_builder_ptr>>(kwargs["input_builder"])
@@ -141,6 +146,28 @@ namespace hgraph
 
     node_ptr PythonGeneratorNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) const {
         nb::ref<Node> node{new PythonGeneratorNode{node_ndx, owning_graph_id, signature, scalars, eval_fn, {}, {}}};
+        _build_inputs_and_outputs(node);
+        return node;
+    }
+
+    template <typename T>
+    TsdMapNodeBuilder<T>::TsdMapNodeBuilder(node_signature_ptr signature_, nb::dict scalars_,
+                                            std::optional<input_builder_ptr>            input_builder_,
+                                            std::optional<output_builder_ptr>           output_builder_,
+                                            std::optional<output_builder_ptr>           error_builder_,
+                                            std::optional<output_builder_ptr>           recordable_state_builder_,
+                                            graph_builder_ptr                           nested_graph_builder,
+                                            const std::unordered_map<std::string, int> &input_node_ids, int output_node_id,
+                                            const std::unordered_set<std::string> &multiplexed_args, const std::string &key_arg)
+        : BaseNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
+                          std::move(error_builder_), std::move(recordable_state_builder_)),
+          nested_graph_builder(std::move(nested_graph_builder)), input_node_ids(input_node_ids), output_node_id(output_node_id),
+          multiplexed_args(multiplexed_args), key_arg(key_arg) {}
+
+    template <typename T>
+    node_ptr TsdMapNodeBuilder<T>::make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) const {
+        nb::ref<Node> node{new TsdMapNode<T>(node_ndx, owning_graph_id, signature, scalars, nested_graph_builder, input_node_ids,
+                                             output_node_id, multiplexed_args, key_arg)};
         _build_inputs_and_outputs(node);
         return node;
     }

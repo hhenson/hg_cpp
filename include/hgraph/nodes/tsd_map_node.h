@@ -4,10 +4,13 @@
 #define MAP_NODE_H
 
 #include <hgraph/nodes/nested_node.h>
+#include <hgraph/nodes/nested_evaluation_engine.h>
 #include <hgraph/types/tsd.h>
 
 namespace hgraph
 {
+
+    void register_tsd_map_with_nanobind(nb::module_ &m);
 
     template<typename K> struct TsdMapNode;
     template<typename K>

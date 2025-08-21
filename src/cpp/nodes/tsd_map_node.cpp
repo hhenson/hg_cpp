@@ -220,4 +220,8 @@ namespace hgraph
         }
 
     }
+
+    void register_tsd_map_with_nanobind(nb::module_ &m) {
+        //TODO: register all instances of tsd map node here
+    }
 }  // namespace hgraph

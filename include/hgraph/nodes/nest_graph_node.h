@@ -18,7 +18,9 @@ namespace hgraph
         void                               do_stop() override;
         void                               dispose() override;
         void                               do_eval() override;
-        std::unordered_map<int, graph_ptr> nested_graphs();
+        std::unordered_map<int, graph_ptr> nested_graphs() const;
+
+        static void register_with_nanobind(nb::module_ &m);
 
       protected:
         void                                 wire_graph();

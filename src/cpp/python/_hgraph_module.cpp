@@ -15,6 +15,7 @@ void export_runtime(nb::module_ &);
 void export_builders(nb::module_ &);
 void export_types(nb::module_ &);
 void export_utils(nb::module_ &);
+void export_nodes(nb::module_ &);
 
 NB_MODULE(_hgraph, m) {
     nb::set_leak_warnings(false);

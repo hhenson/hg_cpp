@@ -62,12 +62,20 @@ namespace hgraph
 
     void NestedGraphNode::do_eval() {
         mark_evaluated();
-        reinterpret_cast<NestedEngineEvaluationClock &>(m_active_graph_->evaluation_engine_clock()).reset_next_scheduled_evaluation_time();
+        reinterpret_cast<NestedEngineEvaluationClock &>(m_active_graph_->evaluation_engine_clock())
+            .reset_next_scheduled_evaluation_time();
         m_active_graph_->evaluate_graph();
-        reinterpret_cast<NestedEngineEvaluationClock &>(m_active_graph_->evaluation_engine_clock()).reset_next_scheduled_evaluation_time();
+        reinterpret_cast<NestedEngineEvaluationClock &>(m_active_graph_->evaluation_engine_clock())
+            .reset_next_scheduled_evaluation_time();
     }
 
-    std::unordered_map<int, graph_ptr> NestedGraphNode::nested_graphs() {
+    std::unordered_map<int, graph_ptr> NestedGraphNode::nested_graphs() const {
         return m_active_graph_ ? std::unordered_map<int, graph_ptr>{{0, m_active_graph_}} : std::unordered_map<int, graph_ptr>();
+    }
+
+    void NestedGraphNode::register_with_nanobind(nb::module_ &m) {
+        nb::class_<NestedGraphNode, NestedNode>(m, "NestedGraphNode")
+            .def_prop_ro("active_graph", [](NestedGraphNode &self) { return self.m_active_graph_; })
+            .def_prop_ro("nested_graphs", &NestedGraphNode::nested_graphs);
     }
 }  // namespace hgraph
