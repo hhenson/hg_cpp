@@ -149,6 +149,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/util/lifecycle.h
         include/hgraph/util/reference_count_subscriber.h
         include/hgraph/util/sender_receiver_state.h
+        include/hgraph/util/string_utils.h
 
         include/hgraph/hgraph_export.h
 )

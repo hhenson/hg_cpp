@@ -44,14 +44,15 @@ namespace hgraph
         void do_stop() override;
         void dispose() override;
         void eval() override;
+        void do_eval() override {};
 
         virtual TimeSeriesDictOutput_T<K> &tsd_output();
 
         void          create_new_graph(const K &key);
         void          remove_graph(const K &key);
         engine_time_t evaluate_graph(const K &key);
-        void          un_wire_graph(const K &key, std::shared_ptr<Graph> &graph);
-        void          wire_graph(const K &key, std::shared_ptr<Graph> &graph);
+        void          un_wire_graph(const K &key, graph_ptr &graph);
+        void          wire_graph(const K &key, graph_ptr &graph);
 
       private:
         graph_builder_ptr                    nested_graph_builder_;
@@ -64,6 +65,8 @@ namespace hgraph
         std::set<K>                          pending_keys_;
         int64_t                              count_{1};
         std::string                          recordable_id_;
+
+        friend MapNestedEngineEvaluationClock<K>;
     };
 
 }  // namespace hgraph

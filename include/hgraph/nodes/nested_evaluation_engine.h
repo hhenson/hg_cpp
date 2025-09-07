@@ -35,7 +35,7 @@ namespace hgraph
         engine_time_t   _nested_next_scheduled_evaluation_time{MAX_DT};
     };
 
-    struct NestedEvaluationEngine : public EvaluationEngineDelegate
+    struct NestedEvaluationEngine : EvaluationEngineDelegate
     {
         NestedEvaluationEngine(EvaluationEngine::ptr engine, EngineEvaluationClock::ptr evaluation_clock);
 

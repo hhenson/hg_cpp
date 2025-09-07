@@ -42,6 +42,7 @@ set(HGRAPH_SOURCES
 
         util/lifecycle.cpp
         util/sender_receiver_state.cpp
+        util/string_util.cpp
         )
 
 add_definitions(-Dhgraph_EXPORTS)

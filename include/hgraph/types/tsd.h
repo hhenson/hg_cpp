@@ -119,9 +119,9 @@ namespace hgraph
         [[nodiscard]] nb::object py_value() const override;
         [[nodiscard]] nb::object py_delta_value() const override;
 
-        void clear() override;
-        void invalidate() override;
-        void copy_from_output(const TimeSeriesOutput &output) override;
+        void               clear() override;
+        void               invalidate() override;
+        void               copy_from_output(const TimeSeriesOutput &output) override;
         void               copy_from_input(const TimeSeriesInput &input) override;
         [[nodiscard]] bool has_added() const override;
         [[nodiscard]] bool has_removed() const override;
@@ -195,10 +195,11 @@ namespace hgraph
 
         void post_modify() override;
 
-      protected:
-        void _post_modify();
-        void              clear_on_end_of_evaluation_cycle();
         TimeSeriesOutput &_get_or_create(const key_type &key);
+
+      protected:
+        void              _post_modify();
+        void              clear_on_end_of_evaluation_cycle();
         void              _create(const key_type &key);
         const key_type   &key_from_value(TimeSeriesOutput *value) const;
 
@@ -207,7 +208,6 @@ namespace hgraph
         void remove_value(const key_type &key, bool raise_if_not_found);
 
       private:
-
         key_set_type _key_set;
         map_type     _ts_values;
 
@@ -295,22 +295,6 @@ namespace hgraph
 
         [[nodiscard]] const TimeSeriesSet<TimeSeriesInput> &key_set() const override;
 
-      protected:
-        bool do_bind_output(time_series_output_ptr value) override;
-        void do_un_bind_output() override;
-
-        [[nodiscard]] TimeSeriesSetInput_T<key_type>         &key_set_t();
-        [[nodiscard]] const TimeSeriesSetInput_T<key_type>   &key_set_t() const;
-        [[nodiscard]] TimeSeriesDictOutput_T<key_type>       &output_t();
-        [[nodiscard]] const TimeSeriesDictOutput_T<key_type> &output_t() const;
-
-        void reset_prev();
-        void clear_key_changes();
-        void register_clear_key_changes();
-
-        TimeSeriesInput &_get_or_create(const key_type &key);
-        void             _create(const key_type &key);
-
         void on_key_added(const key_type &key) override {
             auto &value{_get_or_create(key)};
             if (!has_peer() && active()) { value.make_active(); }
@@ -340,6 +324,23 @@ namespace hgraph
             }
             register_clear_key_changes();
         }
+
+        TimeSeriesInput &_get_or_create(const key_type &key);
+
+      protected:
+        bool do_bind_output(time_series_output_ptr value) override;
+        void do_un_bind_output() override;
+
+        [[nodiscard]] TimeSeriesSetInput_T<key_type>         &key_set_t();
+        [[nodiscard]] const TimeSeriesSetInput_T<key_type>   &key_set_t() const;
+        [[nodiscard]] TimeSeriesDictOutput_T<key_type>       &output_t();
+        [[nodiscard]] const TimeSeriesDictOutput_T<key_type> &output_t() const;
+
+        void reset_prev();
+        void clear_key_changes();
+        void register_clear_key_changes();
+
+        void _create(const key_type &key);
 
       private:
         key_set_type _key_set;
