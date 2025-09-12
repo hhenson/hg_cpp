@@ -66,25 +66,29 @@ namespace hgraph
         nb::callable eval_fn;
     };
 
-    template <typename T> struct TsdMapNodeBuilder : BaseNodeBuilder
+    struct BaseTsdMapNodeBuilder : BaseNodeBuilder
     {
-        TsdMapNodeBuilder(node_signature_ptr signature_, nb::dict scalars_,
-                          std::optional<input_builder_ptr>            input_builder_            = std::nullopt,
-                          std::optional<output_builder_ptr>           output_builder_           = std::nullopt,
-                          std::optional<output_builder_ptr>           error_builder_            = std::nullopt,
-                          std::optional<output_builder_ptr>           recordable_state_builder_ = std::nullopt,
-                          graph_builder_ptr                           nested_graph_builder      = {},
-                          const std::unordered_map<std::string, int> &input_node_ids = {}, int output_node_id = -1,
-                          const std::unordered_set<std::string> &multiplexed_args = {}, const std::string &key_arg = {});
+        BaseTsdMapNodeBuilder(node_signature_ptr signature_, nb::dict scalars_,
+                              std::optional<input_builder_ptr>            input_builder_            = std::nullopt,
+                              std::optional<output_builder_ptr>           output_builder_           = std::nullopt,
+                              std::optional<output_builder_ptr>           error_builder_            = std::nullopt,
+                              std::optional<output_builder_ptr>           recordable_state_builder_ = std::nullopt,
+                              graph_builder_ptr                           nested_graph_builder      = {},
+                              const std::unordered_map<std::string, int> &input_node_ids = {}, int output_node_id = -1,
+                              const std::unordered_set<std::string> &multiplexed_args = {}, const std::string &key_arg = {});
+
+        graph_builder_ptr                          nested_graph_builder;
+        const std::unordered_map<std::string, int> input_node_ids;
+        int                                        output_node_id;
+        const std::unordered_set<std::string>      multiplexed_args;
+        const std::string                          key_arg;
+    };
+
+    template <typename T> struct TsdMapNodeBuilder : BaseTsdMapNodeBuilder
+    {
+        using BaseTsdMapNodeBuilder::BaseTsdMapNodeBuilder;
 
         node_ptr make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) const override;
-
-      private:
-        graph_builder_ptr                           nested_graph_builder;
-        const std::unordered_map<std::string, int> &input_node_ids;
-        int                                         output_node_id;
-        const std::unordered_set<std::string>      &multiplexed_args;
-        const std::string                          &key_arg;
     };
 
 }  // namespace hgraph
