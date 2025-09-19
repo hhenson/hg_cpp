@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta
 
 import _hgraph
 import hgraph
+from hgraph import TsdMapWiringSignature
 
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.NODE_SIGNATURE = _hgraph.NodeSignature
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.NODE_TYPE_ENUM = _hgraph.NodeTypeEnum
@@ -46,3 +47,24 @@ def _create_set_delta(added, removed, tp):
 hgraph.set_set_delta_factory(
     _create_set_delta
 )
+
+def _create_tsd_map_builder_factory(
+        signature: TsdMapWiringSignature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+        multiplexed_args,
+        key_arg,
+):
+    key_tp = signature.key_tp.py_type
+    builder = {
+        bool: _hgraph.TsdMapNode_bool,
+    }
+
+
+hgraph._wiring._wiring_node_class.TsdMapWiringNodeClass.BUILDER_CLASS = _create_tsd_map_builder_factory

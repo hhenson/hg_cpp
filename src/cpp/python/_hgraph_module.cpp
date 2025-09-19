@@ -39,6 +39,7 @@ NB_MODULE(_hgraph, m) {
     export_types(m);
     export_builders(m);
     export_runtime(m);
+    export_nodes(m);
 }
 
 /*
