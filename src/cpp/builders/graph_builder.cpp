@@ -91,7 +91,9 @@ namespace hgraph
             .def(nb::init<std::vector<node_builder_ptr>, std::vector<Edge>>(), "node_builders"_a, "edges"_a)
             .def("make_instance", &GraphBuilder::make_instance, "graph_id"_a, "parent_node"_a = nullptr, "label"_a = "")
             .def("make_and_connect_nodes", &GraphBuilder::make_and_connect_nodes, "graph_id"_a, "first_node_ndx"_a)
-            .def("release_instance", &GraphBuilder::release_instance, "item"_a);
+            .def("release_instance", &GraphBuilder::release_instance, "item"_a)
+            .def_ro("node_builders", &GraphBuilder::node_builders)
+            .def_ro("edges", &GraphBuilder::edges);
 
         nb::class_<Edge>(m, "Edge")
             .def(nb::init<int64_t, std::vector<int64_t>, int64_t, std::vector<int64_t>>(), "src_node"_a, "output_path"_a,

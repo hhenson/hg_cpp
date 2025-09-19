@@ -30,6 +30,7 @@ hgraph.TimeSeriesBuilderFactory.declare(HgCppFactory())
 hgraph._wiring._wiring_node_class.PythonWiringNodeClass.BUILDER_CLASS = _hgraph.PythonNodeBuilder
 hgraph._wiring._wiring_node_class.PythonGeneratorWiringNodeClass.BUILDER_CLASS = _hgraph.PythonGeneratorNodeBuilder
 
+
 def _create_set_delta(added, removed, tp):
     sd_tp = {
         bool: _hgraph.SetDelta_bool,
@@ -48,6 +49,7 @@ hgraph.set_set_delta_factory(
     _create_set_delta
 )
 
+
 def _create_tsd_map_builder_factory(
         signature: TsdMapWiringSignature,
         scalars,
@@ -58,13 +60,30 @@ def _create_tsd_map_builder_factory(
         nested_graph,
         input_node_ids,
         output_node_id,
-        multiplexed_args,
-        key_arg,
+        multiplexed_args, key_arg,
+        key_tp,
 ):
-    key_tp = signature.key_tp.py_type
-    builder = {
-        bool: _hgraph.TsdMapNode_bool,
-    }
+    key_tp = key_tp.py_type
+    return {
+        bool: _hgraph.TsdMapNodeBuilder_bool,
+        int: _hgraph.TsdMapNodeBuilder_int,
+        float: _hgraph.TsdMapNodeBuilder_float,
+        date: _hgraph.TsdMapNodeBuilder_date,
+        datetime: _hgraph.TsdMapNodeBuilder_date_time,
+        timedelta: _hgraph.TsdMapNodeBuilder_time_delta,
+    }.get(key_tp, _hgraph.TsdMapNodeBuilder_object)(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+        multiplexed_args,
+        "" if key_arg is None else key_arg,
+    )
 
 
 hgraph._wiring._wiring_node_class.TsdMapWiringNodeClass.BUILDER_CLASS = _create_tsd_map_builder_factory
