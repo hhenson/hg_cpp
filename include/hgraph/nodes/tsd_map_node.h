@@ -33,8 +33,8 @@ namespace hgraph
         static inline std::string _KEY_ARG = "__key_arg__";
 
         TsdMapNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars,
-                   graph_builder_ptr nested_graph_builder, const std::unordered_map<std::string, int> &input_node_ids,
-                   int output_node_id, const std::unordered_set<std::string> &multiplexed_args, const std::string &key_arg);
+                   graph_builder_ptr nested_graph_builder, const std::unordered_map<std::string, int64_t> &input_node_ids,
+                   int64_t output_node_id, const std::unordered_set<std::string> &multiplexed_args, const std::string &key_arg);
 
         std::unordered_map<K, graph_ptr> &nested_graphs();
 
@@ -56,7 +56,7 @@ namespace hgraph
 
       private:
         graph_builder_ptr                    nested_graph_builder_;
-        std::unordered_map<std::string, int> input_node_ids_;
+        std::unordered_map<std::string, int64_t> input_node_ids_;
         size_t                               output_node_id_;
         std::unordered_set<std::string>      multiplexed_args_;
         std::string                          key_arg_;

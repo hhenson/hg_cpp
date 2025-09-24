@@ -34,7 +34,7 @@ namespace hgraph
     template <typename K>
     TsdMapNode<K>::TsdMapNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
                               nb::dict scalars, graph_builder_ptr nested_graph_builder,
-                              const std::unordered_map<std::string, int> &input_node_ids, int output_node_id,
+                              const std::unordered_map<std::string, int64_t> &input_node_ids, int64_t output_node_id,
                               const std::unordered_set<std::string> &multiplexed_args, const std::string &key_arg)
         : NestedNode(node_ndx, owning_graph_id, signature, scalars), nested_graph_builder_(nested_graph_builder),
           input_node_ids_(input_node_ids), output_node_id_(output_node_id), multiplexed_args_(multiplexed_args), key_arg_(key_arg) {
