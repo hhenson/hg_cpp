@@ -107,7 +107,7 @@ namespace hgraph
         nb::class_<TsdMapNodeBuilder<bool>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_bool")
             .def(nb::init<node_signature_ptr, nb::dict, std::optional<input_builder_ptr>, std::optional<output_builder_ptr>,
                           std::optional<output_builder_ptr>, std::optional<output_builder_ptr>, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "signature"_a, "scalars"_a, "input_builder"_a, "output_builder"_a, "error_builder"_a, "recordable_state_builder"_a,
                  "nested_graph_builder"_a, "input_node_ids"_a, "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
@@ -115,7 +115,7 @@ namespace hgraph
         nb::class_<TsdMapNodeBuilder<int64_t>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_int")
             .def(nb::init<node_signature_ptr, nb::dict, std::optional<input_builder_ptr>, std::optional<output_builder_ptr>,
                           std::optional<output_builder_ptr>, std::optional<output_builder_ptr>, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "signature"_a, "scalars"_a, "input_builder"_a, "output_builder"_a, "error_builder"_a, "recordable_state_builder"_a,
                  "nested_graph_builder"_a, "input_node_ids"_a, "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
@@ -123,7 +123,7 @@ namespace hgraph
         nb::class_<TsdMapNodeBuilder<double>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_float")
             .def(nb::init<node_signature_ptr, nb::dict, std::optional<input_builder_ptr>, std::optional<output_builder_ptr>,
                           std::optional<output_builder_ptr>, std::optional<output_builder_ptr>, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "signature"_a, "scalars"_a, "input_builder"_a, "output_builder"_a, "error_builder"_a, "recordable_state_builder"_a,
                  "nested_graph_builder"_a, "input_node_ids"_a, "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
@@ -131,7 +131,7 @@ namespace hgraph
         nb::class_<TsdMapNodeBuilder<engine_date_t>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_date")
             .def(nb::init<node_signature_ptr, nb::dict, std::optional<input_builder_ptr>, std::optional<output_builder_ptr>,
                           std::optional<output_builder_ptr>, std::optional<output_builder_ptr>, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "signature"_a, "scalars"_a, "input_builder"_a, "output_builder"_a, "error_builder"_a, "recordable_state_builder"_a,
                  "nested_graph_builder"_a, "input_node_ids"_a, "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
@@ -139,7 +139,7 @@ namespace hgraph
         nb::class_<TsdMapNodeBuilder<engine_time_t>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_date_time")
             .def(nb::init<node_signature_ptr, nb::dict, std::optional<input_builder_ptr>, std::optional<output_builder_ptr>,
                           std::optional<output_builder_ptr>, std::optional<output_builder_ptr>, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "signature"_a, "scalars"_a, "input_builder"_a, "output_builder"_a, "error_builder"_a, "recordable_state_builder"_a,
                  "nested_graph_builder"_a, "input_node_ids"_a, "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
@@ -147,7 +147,7 @@ namespace hgraph
         nb::class_<TsdMapNodeBuilder<engine_time_delta_t>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_time_delta")
             .def(nb::init<node_signature_ptr, nb::dict, std::optional<input_builder_ptr>, std::optional<output_builder_ptr>,
                           std::optional<output_builder_ptr>, std::optional<output_builder_ptr>, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "signature"_a, "scalars"_a, "input_builder"_a, "output_builder"_a, "error_builder"_a, "recordable_state_builder"_a,
                  "nested_graph_builder"_a, "input_node_ids"_a, "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
@@ -155,7 +155,7 @@ namespace hgraph
         nb::class_<TsdMapNodeBuilder<nb::object>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_object")
             .def(nb::init<node_signature_ptr, nb::dict, std::optional<input_builder_ptr>, std::optional<output_builder_ptr>,
                           std::optional<output_builder_ptr>, std::optional<output_builder_ptr>, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "signature"_a, "scalars"_a, "input_builder"_a, "output_builder"_a, "error_builder"_a, "recordable_state_builder"_a,
                  "nested_graph_builder"_a, "input_node_ids"_a, "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
@@ -193,7 +193,7 @@ namespace hgraph
                           std::move(error_builder_), std::move(recordable_state_builder_)),
           eval_fn{std::move(eval_fn)}, start_fn{std::move(start_fn)}, stop_fn{std::move(stop_fn)} {}
 
-    node_ptr PythonNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) const {
+    node_ptr PythonNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
         nb::ref<Node> node{new PythonNode{node_ndx, owning_graph_id, signature, scalars, eval_fn, start_fn, stop_fn}};
 
         _build_inputs_and_outputs(node);
@@ -208,7 +208,7 @@ namespace hgraph
                           std::move(error_builder_), std::nullopt),
           eval_fn{std::move(eval_fn)} {}
 
-    node_ptr PythonGeneratorNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) const {
+    node_ptr PythonGeneratorNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
         nb::ref<Node> node{new PythonGeneratorNode{node_ndx, owning_graph_id, signature, scalars, eval_fn, {}, {}}};
         _build_inputs_and_outputs(node);
         return node;
@@ -218,7 +218,7 @@ namespace hgraph
         node_signature_ptr signature_, nb::dict scalars_, std::optional<input_builder_ptr> input_builder_,
         std::optional<output_builder_ptr> output_builder_, std::optional<output_builder_ptr> error_builder_,
         std::optional<output_builder_ptr> recordable_state_builder_, graph_builder_ptr nested_graph_builder,
-        const std::unordered_map<std::string, int> &input_node_ids, int output_node_id,
+        const std::unordered_map<std::string, int64_t> &input_node_ids, int64_t output_node_id,
         const std::unordered_set<std::string> &multiplexed_args, const std::string &key_arg)
         : BaseNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
                           std::move(error_builder_), std::move(recordable_state_builder_)),
@@ -226,11 +226,37 @@ namespace hgraph
           multiplexed_args(multiplexed_args), key_arg(key_arg) {}
 
     template <typename T>
-    node_ptr TsdMapNodeBuilder<T>::make_instance(const std::vector<int64_t> &owning_graph_id, int node_ndx) const {
+    node_ptr TsdMapNodeBuilder<T>::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
         nb::ref<Node> node{new TsdMapNode<T>(node_ndx, owning_graph_id, signature, scalars, nested_graph_builder, input_node_ids,
                                              output_node_id, multiplexed_args, key_arg)};
         _build_inputs_and_outputs(node);
         return node;
     }
 
+    template <typename T> auto create_tsd_map_node_builder(T *self, const nb::kwargs &kwargs) {
+
+        auto signature_ = nb::cast<node_signature_ptr>(kwargs["signature"]);
+        auto scalars_   = nb::cast<nb::dict>(kwargs["scalars"]);
+
+        std::optional<input_builder_ptr> input_builder_ =
+            kwargs.contains("input_builder") ? nb::cast<std::optional<input_builder_ptr>>(kwargs["input_builder"]) : std::nullopt;
+        std::optional<output_builder_ptr> output_builder_ =
+            kwargs.contains("output_builder") ? nb::cast<std::optional<output_builder_ptr>>(kwargs["output_builder"])
+                                              : std::nullopt;
+        std::optional<output_builder_ptr> error_builder_ =
+            kwargs.contains("error_builder") ? nb::cast<std::optional<output_builder_ptr>>(kwargs["error_builder"]) : std::nullopt;
+        std::optional<output_builder_ptr> recordable_state_builder_ =
+            kwargs.contains("recordable_state_builder")
+                ? nb::cast<std::optional<output_builder_ptr>>(kwargs["recordable_state_builder"])
+                : std::nullopt;
+        auto nested_graph_builder = nb::cast<graph_builder_ptr>(kwargs["nested_graph_builder"]);
+        auto input_node_ids       = nb::cast<std::unordered_map<std::string, int64_t>>(kwargs["input_node_ids"]);
+        auto output_node_id       = nb::cast<int64_t>(kwargs["output_node_id"]);
+        auto multiplexed_args     = nb::cast<std::unordered_set<std::string>>(kwargs["multiplexed_args"]);
+        auto key_arg              = nb::cast<std::string>(kwargs["key_arg"]);
+
+        return new (self) T(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
+                            std::move(error_builder_), std::move(recordable_state_builder_), std::move(nested_graph_builder),
+                            std::move(input_node_ids), std::move(output_node_id), std::move(multiplexed_args), std::move(key_arg));
+    }
 }  // namespace hgraph
