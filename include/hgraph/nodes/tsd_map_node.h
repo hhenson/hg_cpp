@@ -57,7 +57,7 @@ namespace hgraph
       private:
         graph_builder_ptr                    nested_graph_builder_;
         std::unordered_map<std::string, int64_t> input_node_ids_;
-        size_t                               output_node_id_;
+        int64_t                              output_node_id_;
         std::unordered_set<std::string>      multiplexed_args_;
         std::string                          key_arg_;
         std::unordered_map<K, engine_time_t> scheduled_keys_;

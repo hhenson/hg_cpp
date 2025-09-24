@@ -33,7 +33,7 @@ namespace hgraph
         return arg_name;
     }
 
-    std::string BackTrace::level_str(int level) const {
+    std::string BackTrace::level_str(int64_t level) const {
         if (!signature.has_value()) { return ""; }
         std::string              indent(2 * level, ' ');
         std::vector<std::string> filtered_args;

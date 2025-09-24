@@ -54,7 +54,7 @@ namespace hgraph
         BackTrace &operator=(BackTrace &&)      = default;
 
         [[nodiscard]] std::string arg_str(const std::string &arg_name) const;
-        [[nodiscard]] std::string level_str(int level = 0) const;
+        [[nodiscard]] std::string level_str(int64_t level = 0) const;
         [[nodiscard]] std::string to_string() const;
 
         static std::string runtime_path_name(const Node &node, bool use_label = true);

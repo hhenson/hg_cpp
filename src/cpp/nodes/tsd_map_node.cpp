@@ -242,43 +242,43 @@ namespace hgraph
 
         nb::class_<TsdMapNode<bool>, NestedNode>(m, "TsdMapNode_bool")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
                  "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
         nb::class_<TsdMapNode<int64_t>, NestedNode>(m, "TsdMapNode_int")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
                  "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
         nb::class_<TsdMapNode<double>, NestedNode>(m, "TsdMapNode_float")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
                  "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
         nb::class_<TsdMapNode<engine_date_t>, NestedNode>(m, "TsdMapNode_date")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
                  "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
         nb::class_<TsdMapNode<engine_time_t>, NestedNode>(m, "TsdMapNode_datetime")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
                  "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
         nb::class_<TsdMapNode<engine_time_delta_t>, NestedNode>(m, "TsdMapNode_timedelta")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
                  "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
         nb::class_<TsdMapNode<nb::object>, NestedNode>(m, "TsdMapNode_object")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::unordered_map<std::string, int> &, int, const std::unordered_set<std::string> &,
+                          const std::unordered_map<std::string, int64_t> &, int64_t, const std::unordered_set<std::string> &,
                           const std::string &>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
                  "output_node_id"_a, "multiplexed_args"_a, "key_arg"_a);
