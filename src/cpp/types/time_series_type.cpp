@@ -12,6 +12,14 @@ namespace hgraph
 
     void TimeSeriesType::re_parent(ptr parent) { _parent_ts_or_node = std::move(parent); }
 
+    bool TimeSeriesType::is_reference() const {
+        return false;
+    }
+
+    bool TimeSeriesType::has_reference() const {
+        return false;
+    }
+
     void TimeSeriesType::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesType, nb::intrusive_base>(m, "TimeSeriesType")
             .def_prop_ro("owning_node", static_cast<const Node &(TimeSeriesType::*)() const>(&TimeSeriesType::owning_node))

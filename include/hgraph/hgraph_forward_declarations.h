@@ -82,6 +82,9 @@ namespace hgraph
     struct TimeSeriesSetOutput;
     using time_series_set_output_ptr = nanobind::ref<TimeSeriesSetOutput>;
 
+    struct TimeSeriesSchema;
+    using time_series_schema_ptr = nanobind::ref<TimeSeriesSchema>;
+
     using c_string_ref = std::reference_wrapper<const std::string>;
 
     template <typename T_TS>

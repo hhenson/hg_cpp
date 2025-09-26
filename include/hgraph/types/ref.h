@@ -143,6 +143,9 @@ namespace hgraph
 
         static void register_with_nanobind(nb::module_ &m);
 
+        [[nodiscard]] bool is_reference() const override;
+        [[nodiscard]] bool has_reference() const override;
+
       protected:
         bool do_bind_output(time_series_output_ptr value) override;
         void do_un_bind_output() override;

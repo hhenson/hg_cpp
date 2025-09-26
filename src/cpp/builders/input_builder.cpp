@@ -2,6 +2,14 @@
 #include <hgraph/types/node.h>
 #include <hgraph/types/graph.h>
 
+#include <hgraph/types/ref.h>
+#include <hgraph/types/ts_signal.h>
+#include <hgraph/types/ts.h>
+#include <hgraph/types/tsb.h>
+#include <hgraph/types/tsd.h>
+#include <hgraph/types/tsl.h>
+#include <hgraph/types/tss.h>
+
 #include <ranges>
 #include <utility>
 
@@ -145,4 +153,36 @@ namespace hgraph
     TimeSeriesDictInputBuilder::TimeSeriesDictInputBuilder(input_builder_ptr ts_builder)
         : InputBuilder(), ts_builder{std::move(ts_builder)} {}
 
+    template <typename T> time_series_input_ptr TimeSeriesValueInputBuilder<T>::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesValueInput<T>(owning_node)};
+        return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
+    }
+
+    template <typename T>
+    time_series_input_ptr TimeSeriesValueInputBuilder<T>::make_instance(time_series_input_ptr owning_input) const {
+        auto v{new TimeSeriesValueInput<T>(dynamic_cast_ref<TimeSeriesType>(owning_input))};
+        return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
+    }
+
+    template <typename T> time_series_input_ptr TimeSeriesSetInputBuilder_T<T>::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesSetInput_T<T>{owning_node}};
+        return v;
+    }
+
+    template <typename T>
+    time_series_input_ptr TimeSeriesSetInputBuilder_T<T>::make_instance(time_series_input_ptr owning_input) const {
+        auto v{new TimeSeriesSetInput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_input)}};
+        return v;
+    }
+
+    template <typename T> time_series_input_ptr TimeSeriesDictInputBuilder_T<T>::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesDictInput_T<T>(owning_node, ts_builder)};
+        return v;
+    }
+
+    template <typename T>
+    time_series_input_ptr TimeSeriesDictInputBuilder_T<T>::make_instance(time_series_input_ptr owning_input) const {
+        auto v{new TimeSeriesDictInput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_input), ts_builder}};
+        return v;
+    }
 }  // namespace hgraph

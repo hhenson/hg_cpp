@@ -1,3 +1,5 @@
+#include <hgraph/types/time_series_type.h>
+
 #include <hgraph/builders/output_builder.h>
 #include <hgraph/types/feature_extension.h>
 

@@ -51,6 +51,10 @@ namespace hgraph
         [[nodiscard]] size_t size() const { return _ts_values.size(); }
         [[nodiscard]] bool   empty() const { return _ts_values.empty(); }
 
+        [[nodiscard]] bool has_reference() const override {
+            return std::ranges::any_of(_ts_values, [](const auto &ts) { return ts->has_reference(); });
+        }
+
       protected:
         [[nodiscard]] collection_type       &ts_values() { return _ts_values; }
         [[nodiscard]] const collection_type &ts_values() const { return _ts_values; }

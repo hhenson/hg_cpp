@@ -68,6 +68,10 @@ namespace hgraph
 
         void re_parent(ptr parent);
 
+        [[nodiscard]] virtual bool is_reference() const;
+
+        [[nodiscard]] virtual bool has_reference() const;
+
         // // Overload for re_parent with TimeSeries
         // virtual void re_parent(TimeSeriesType::ptr parent) = 0;
 

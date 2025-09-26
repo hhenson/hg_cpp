@@ -7,14 +7,6 @@
 
 #include <hgraph/builders/builder.h>
 
-#include <hgraph/types/ref.h>
-#include <hgraph/types/ts_signal.h>
-#include <hgraph/types/ts.h>
-#include <hgraph/types/tsb.h>
-#include <hgraph/types/tsd.h>
-#include <hgraph/types/tsl.h>
-#include <hgraph/types/tss.h>
-
 namespace hgraph
 {
 
@@ -40,6 +32,8 @@ namespace hgraph
          */
         virtual void release_instance(time_series_input_ptr item) const {}
 
+        virtual bool has_reference() const { return false; }
+
         static void register_with_nanobind(nb::module_ &m);
     };
 
@@ -57,15 +51,9 @@ namespace hgraph
         using ptr = nb::ref<TimeSeriesValueInputBuilder<T>>;
         using InputBuilder::InputBuilder;
 
-        time_series_input_ptr make_instance(node_ptr owning_node) const override {
-            auto v{new TimeSeriesValueInput<T>(owning_node)};
-            return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
-        }
+        time_series_input_ptr make_instance(node_ptr owning_node) const override;
 
-        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override {
-            auto v{new TimeSeriesValueInput<T>(dynamic_cast_ref<TimeSeriesType>(owning_input))};
-            return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
-        }
+        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
     };
 
     struct HGRAPH_EXPORT TimeSeriesRefInputBuilder : InputBuilder
@@ -75,6 +63,8 @@ namespace hgraph
         time_series_input_ptr make_instance(node_ptr owning_node) const override;
 
         time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
+
+        bool has_reference() const override { return true; }
     };
 
     struct HGRAPH_EXPORT TimeSeriesListInputBuilder : InputBuilder
@@ -87,6 +77,8 @@ namespace hgraph
 
         time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
 
+        bool has_reference() const override { return input_builder->has_reference(); }
+
       private:
         time_series_input_ptr make_and_set_inputs(TimeSeriesListInput *input) const;
 
@@ -98,15 +90,19 @@ namespace hgraph
     {
         using ptr = nb::ref<TimeSeriesBundleInputBuilder>;
 
-        TimeSeriesBundleInputBuilder(TimeSeriesSchema::ptr schema, std::vector<InputBuilder::ptr> input_builders);
+        TimeSeriesBundleInputBuilder(time_series_schema_ptr schema, std::vector<InputBuilder::ptr> input_builders);
 
         time_series_input_ptr make_instance(node_ptr owning_node) const override;
 
         time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
 
+        bool has_reference() const override {
+            return std::ranges::any_of(input_builders, [](const auto &builder) { return builder->has_reference(); });
+        }
+
       private:
         time_series_input_ptr          make_and_set_inputs(TimeSeriesBundleInput *input) const;
-        TimeSeriesSchema::ptr          schema;
+        time_series_schema_ptr          schema;
         std::vector<InputBuilder::ptr> input_builders;
     };
 
@@ -120,15 +116,9 @@ namespace hgraph
     {
         using TimeSeriesSetInputBuilder::TimeSeriesSetInputBuilder;
 
-        time_series_input_ptr make_instance(node_ptr owning_node) const override {
-            auto v{new TimeSeriesSetInput_T<T>{owning_node}};
-            return v;
-        }
+        time_series_input_ptr make_instance(node_ptr owning_node) const override;
 
-        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override {
-            auto v{new TimeSeriesSetInput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_input)}};
-            return v;
-        }
+        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
     };
 
     struct HGRAPH_EXPORT TimeSeriesDictInputBuilder : InputBuilder
@@ -136,23 +126,20 @@ namespace hgraph
         using ptr = nb::ref<TimeSeriesDictInputBuilder>;
         input_builder_ptr ts_builder;
 
-        TimeSeriesDictInputBuilder(input_builder_ptr ts_builder);
+        explicit TimeSeriesDictInputBuilder(input_builder_ptr ts_builder);
+
+        bool has_reference() const override { return ts_builder->has_reference(); }
     };
 
     template <typename T> struct HGRAPH_EXPORT TimeSeriesDictInputBuilder_T : TimeSeriesDictInputBuilder
     {
         using TimeSeriesDictInputBuilder::TimeSeriesDictInputBuilder;
 
-        time_series_input_ptr make_instance(node_ptr owning_node) const override {
-            auto v{new TimeSeriesDictInput_T<T>(owning_node, ts_builder)};
-            return v;
-        }
+        time_series_input_ptr make_instance(node_ptr owning_node) const override;
 
-        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override {
-            auto v{new TimeSeriesDictInput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_input), ts_builder}};
-            return v;
-        }
+        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
     };
+
 }  // namespace hgraph
 
 #endif  // INPUT_BUILDER_H

@@ -388,6 +388,10 @@ namespace hgraph
         nb::class_<TimeSeriesReferenceInput, TimeSeriesInput>(m, "TimeSeriesReferenceInput");
     }
 
+    bool TimeSeriesReferenceInput::is_reference() const { return true; }
+
+    bool TimeSeriesReferenceInput::has_reference() const { return true; }
+
     void TimeSeriesReferenceInput::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) {
         _value = nullptr;
         set_sample_time(modified_time);

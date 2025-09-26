@@ -1,6 +1,13 @@
 #include <hgraph/builders/output_builder.h>
 #include <hgraph/types/node.h>
 
+#include <hgraph/types/ref.h>
+#include <hgraph/types/ts.h>
+#include <hgraph/types/tsb.h>
+#include <hgraph/types/tsd.h>
+#include <hgraph/types/tsl.h>
+#include <hgraph/types/tss.h>
+
 #include <ranges>
 #include <utility>
 
@@ -96,6 +103,39 @@ namespace hgraph
     time_series_output_ptr TimeSeriesListOutputBuilder::make_instance(time_series_output_ptr owning_output) const {
         auto v{new TimeSeriesListOutput(dynamic_cast_ref<TimeSeriesType>(owning_output))};
         return make_and_set_outputs(v);
+    }
+
+    template <typename T> time_series_output_ptr TimeSeriesValueOutputBuilder<T>::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesValueOutput<T>(owning_node)};
+        return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
+    }
+
+    template <typename T>
+    time_series_output_ptr TimeSeriesValueOutputBuilder<T>::make_instance(time_series_output_ptr owning_output) const {
+        auto v{new TimeSeriesValueOutput<T>(dynamic_cast_ref<TimeSeriesType>(owning_output))};
+        return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
+    }
+
+    template <typename T> time_series_output_ptr TimeSeriesSetOutputBuilder_T<T>::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesSetOutput_T<T>(owning_node)};
+        return v;
+    }
+
+    template <typename T>
+    time_series_output_ptr TimeSeriesSetOutputBuilder_T<T>::make_instance(time_series_output_ptr owning_output) const {
+        auto v{new TimeSeriesSetOutput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_output)}};
+        return v;
+    }
+
+    template <typename T> time_series_output_ptr TimeSeriesDictOutputBuilder_T<T>::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesDictOutput_T<T>(owning_node, ts_builder, ts_ref_builder)};
+        return v;
+    }
+
+    template <typename T>
+    time_series_output_ptr TimeSeriesDictOutputBuilder_T<T>::make_instance(time_series_output_ptr owning_output) const {
+        auto v{new TimeSeriesDictOutput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_output), ts_builder, ts_ref_builder}};
+        return v;
     }
 
     time_series_output_ptr TimeSeriesListOutputBuilder::make_and_set_outputs(TimeSeriesListOutput *output) const {

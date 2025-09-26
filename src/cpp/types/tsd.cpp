@@ -614,14 +614,14 @@ namespace hgraph
         // TODO: The non-peered case needs some investigation, don't really want to be checking with Python types
         //       to see if this is "Peered" or not
 
-        // if (output->value_type() != this->value_type() &&
-        //     (output->value_type().has_references() || this->value_type().has_references())) {
-        //     peer = false;
-        //     key_set.set_subscribe_method(true);
-        // } else {
-        peer = true;
-        key_set_t().set_subscribe_method(this->subscribe_input());
-        // }
+        if (output_->is_reference() != this->is_reference() &&
+            (output_->has_reference() || this->has_reference())) {
+            peer = false;
+            key_set_t().set_subscribe_method(true);
+        } else {
+            peer = true;
+            key_set_t().set_subscribe_method(this->subscribe_input());
+        }
 
         _has_peer = peer;
 
@@ -635,9 +635,7 @@ namespace hgraph
 
         TimeSeriesInput::do_bind_output(value);
 
-        if (!_ts_values.empty()) {
-            register_clear_key_changes();
-        }
+        if (!_ts_values.empty()) { register_clear_key_changes(); }
 
         for (const auto &key : key_set_t().values()) { on_key_added(key); }
 

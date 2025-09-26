@@ -6,6 +6,8 @@
 #define TSD_H
 
 #include <hgraph/types/tss.h>
+#include <hgraph/builders/input_builder.h>
+#include <hgraph/builders/output_builder.h>
 #include <ranges>
 
 namespace hgraph
@@ -68,6 +70,7 @@ namespace hgraph
 
         [[nodiscard]] virtual TimeSeriesSet<T_TS>       &key_set()       = 0;
         [[nodiscard]] virtual const TimeSeriesSet<T_TS> &key_set() const = 0;
+
     };
 
     struct TimeSeriesDictOutput : TimeSeriesDict<TimeSeriesOutput>
@@ -196,6 +199,10 @@ namespace hgraph
         void post_modify() override;
 
         TimeSeriesOutput &_get_or_create(const key_type &key);
+
+        [[nodiscard]] bool has_reference() const override {
+            return _ts_builder->has_reference();
+        }
 
       protected:
         void              _post_modify();
@@ -326,6 +333,10 @@ namespace hgraph
         }
 
         TimeSeriesInput &_get_or_create(const key_type &key);
+
+        [[nodiscard]] bool has_reference() const override {
+            return _ts_builder->has_reference();
+        }
 
       protected:
         bool do_bind_output(time_series_output_ptr value) override;
