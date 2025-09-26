@@ -53,7 +53,10 @@ namespace hgraph
     }
 
     template <typename K> void TsdMapNode<K>::do_stop() {
-        for (const auto &[k, _] : active_graphs_) { remove_graph(k); }
+        std::vector<K> keys;
+        keys.reserve(active_graphs_.size());
+        for (const auto &[k, _] : active_graphs_) { keys.push_back(k); }
+        for (const auto &k : keys) { remove_graph(k); }
         active_graphs_.clear();
         scheduled_keys_.clear();
         pending_keys_.clear();
@@ -207,7 +210,7 @@ namespace hgraph
                     auto &tsd      = dynamic_cast<TimeSeriesDictInput_T<K> &>(*ts);
                     auto &ts_value = tsd._get_or_create(key);
 
-                    node->set_input(node->input().copy_with(node, {&ts_value}));
+                    node->reset_input(node->input().copy_with(node, {&ts_value}));
                     ts_value.re_parent(TimeSeriesType::ptr(&node->input()));
                 } else {
                     auto ts          = dynamic_cast<TimeSeriesReferenceInput *>(input()[arg].get());

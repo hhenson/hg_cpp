@@ -184,6 +184,7 @@ namespace hgraph
         time_series_bundle_input_ptr input_ptr() const;
 
         void set_input(time_series_bundle_input_ptr value);
+        void reset_input(time_series_bundle_input_ptr value);
 
         TimeSeriesOutput &output();
         time_series_output_ptr output_ptr();
