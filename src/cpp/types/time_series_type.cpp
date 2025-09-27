@@ -274,6 +274,8 @@ namespace hgraph
 
     void TimeSeriesInput::reset_output() { _output = nullptr; }
 
+    void TimeSeriesInput::set_active(bool active) {_active = active;}
+
     TimeSeriesOutput::ptr TimeSeriesOutput::parent_output() const {
         return static_cast<TimeSeriesOutput *>(_parent_time_series().get());  // NOLINT(*-pro-type-static-cast-downcast)
     }

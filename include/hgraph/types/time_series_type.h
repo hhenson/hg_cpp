@@ -232,6 +232,8 @@ namespace hgraph
 
         void reset_output();
 
+        void set_active(bool active);
+
       private:
         time_series_output_ptr _output;
         time_series_output_ptr _reference_output;

@@ -318,6 +318,10 @@ namespace hgraph
 
         [[nodiscard]] bool has_reference() const override;
 
+        void make_active() override;
+
+        void make_passive() override;
+
       protected:
         bool do_bind_output(time_series_output_ptr value) override;
         void do_un_bind_output() override;

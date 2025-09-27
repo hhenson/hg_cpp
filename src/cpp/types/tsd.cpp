@@ -754,9 +754,31 @@ namespace hgraph
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_reference() const { return _ts_builder->has_reference(); }
 
+    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::make_active() {
+        if (active()){return;}
+        if (has_peer()) {
+            TimeSeriesDictInput::make_active();
+        } else {
+            set_active(true);
+            key_set().make_active();
+            for (auto &[_, value] : _ts_values) { value->make_active(); }
+        }
+    }
+
+    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::make_passive() {
+        if (!active()) { return; }
+        if (has_peer()) {
+            TimeSeriesDictInput::make_passive();
+        } else {
+            set_active(false);
+            key_set().make_passive();
+            for (auto &[_, value] : _ts_values) { value->make_passive(); }
+        }
+    }
+
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::_create(const key_type &key) {
         auto value{_ts_builder->make_instance(this)};
-        value->set_subscribe_method(has_peer());
+        value->set_subscribe_method(!has_peer());
         _ts_values.insert({key, value});
         _reverse_ts_values.insert({value, key});
         _added_items.insert({key, value});
