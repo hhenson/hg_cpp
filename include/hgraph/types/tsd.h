@@ -200,9 +200,7 @@ namespace hgraph
 
         TimeSeriesOutput &_get_or_create(const key_type &key);
 
-        [[nodiscard]] bool has_reference() const override {
-            return _ts_builder->has_reference();
-        }
+        [[nodiscard]] bool has_reference() const override;
 
       protected:
         void              _post_modify();
@@ -302,41 +300,15 @@ namespace hgraph
 
         [[nodiscard]] const TimeSeriesSet<TimeSeriesInput> &key_set() const override;
 
-        void on_key_added(const key_type &key) override {
-            auto &value{_get_or_create(key)};
-            if (!has_peer() && active()) { value.make_active(); }
-            value.bind_output(&output_t()[key]);
-            register_clear_key_changes();
-        }
+        void on_key_added(const key_type &key) override;
 
-        void on_key_modified(const T_Key &key) override {
-            auto it = _ts_values.find(key);
-            if (it == _ts_values.end()) { return; }
-            _modified_items.insert({key, it->second});
-            register_clear_key_changes();
-        }
+        void on_key_modified(const T_Key &key) override;
 
-        void on_key_removed(const key_type &key) override {
-            // NOTE: We were tracking the valid state on the removed item. Now we just track the value
-            auto it = _ts_values.find(key);
-            if (it == _ts_values.end()) { return; }
-
-            auto value{it->second};
-
-            if (value->parent_input().get() == this) {
-                if (value->active()) { value->make_passive(); }
-                _removed_values.insert({key, value});
-                _modified_items.erase(key);
-                _ts_values.erase(it);
-            }
-            register_clear_key_changes();
-        }
+        void on_key_removed(const key_type &key) override;
 
         TimeSeriesInput &_get_or_create(const key_type &key);
 
-        [[nodiscard]] bool has_reference() const override {
-            return _ts_builder->has_reference();
-        }
+        [[nodiscard]] bool has_reference() const override;
 
       protected:
         bool do_bind_output(time_series_output_ptr value) override;

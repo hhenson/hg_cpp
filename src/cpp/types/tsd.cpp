@@ -434,6 +434,8 @@ namespace hgraph
         return *_ts_values[key];
     }
 
+    template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_reference() const { return _ts_builder->has_reference(); }
+
     template <typename T_Key>
     const typename TimeSeriesDictOutput_T<T_Key>::key_type &
     TimeSeriesDictOutput_T<T_Key>::key_from_value(TimeSeriesOutput *value) const {
@@ -599,6 +601,36 @@ namespace hgraph
         return key_set_t();
     }
 
+    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::on_key_added(const key_type &key) {
+        auto &value{_get_or_create(key)};
+        if (!has_peer() && active()) { value.make_active(); }
+        value.bind_output(&output_t()[key]);
+        register_clear_key_changes();
+    }
+
+    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::on_key_modified(const T_Key &key) {
+        auto it = _ts_values.find(key);
+        if (it == _ts_values.end()) { return; }
+        _modified_items.insert({key, it->second});
+        register_clear_key_changes();
+    }
+
+    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::on_key_removed(const key_type &key) {
+        // NOTE: We were tracking the valid state on the removed item. Now we just track the value
+        auto it = _ts_values.find(key);
+        if (it == _ts_values.end()) { return; }
+
+        auto value{it->second};
+
+        if (value->parent_input().get() == this) {
+            if (value->active()) { value->make_passive(); }
+            _removed_values.insert({key, value});
+            _modified_items.erase(key);
+            _ts_values.erase(it);
+        }
+        register_clear_key_changes();
+    }
+
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::was_removed(const key_type &key) const {
         return _removed_values.find(key) != _removed_values.end();
     }
@@ -611,8 +643,6 @@ namespace hgraph
         typename TimeSeriesDictOutput_T<T_Key>::ptr output_{dynamic_cast<TimeSeriesDictOutput_T<T_Key> *>(value.get())};
 
         bool peer;
-        // TODO: The non-peered case needs some investigation, don't really want to be checking with Python types
-        //       to see if this is "Peered" or not
 
         if (output_->is_reference() != this->is_reference() &&
             (output_->has_reference() || this->has_reference())) {
@@ -715,6 +745,8 @@ namespace hgraph
         if (_ts_values.find(key) == _ts_values.end()) { _create(key); }
         return *_ts_values[key];
     }
+
+    template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_reference() const { return _ts_builder->has_reference(); }
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::_create(const key_type &key) {
         auto value{_ts_builder->make_instance(this)};
