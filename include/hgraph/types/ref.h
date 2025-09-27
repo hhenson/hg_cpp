@@ -80,6 +80,10 @@ namespace hgraph
 
         ~TimeSeriesReferenceOutput() override;
 
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            return dynamic_cast<TimeSeriesReferenceOutput *>(&other) != nullptr;
+        }
+
         const TimeSeriesReference::ptr &value() const;
 
         TimeSeriesReference::ptr &value();
@@ -120,6 +124,10 @@ namespace hgraph
     {
         using ptr = nb::ref<TimeSeriesReferenceInput>;
         using TimeSeriesInput::TimeSeriesInput;
+
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            return dynamic_cast<TimeSeriesReferenceInput *>(&other) != nullptr;
+        }
 
         void start();
 

@@ -196,6 +196,12 @@ namespace hgraph
         void add_key_observer(TSDKeyObserver<key_type> *observer);
         void remove_key_observer(TSDKeyObserver<key_type> *observer);
 
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            auto other_d = dynamic_cast<TimeSeriesDictOutput_T<key_type> *>(&other);
+            if (!other_d) { return false; }
+            return _ts_builder->is_same_type(*other_d->_ts_builder);
+        }
+
         void post_modify() override;
 
         TimeSeriesOutput &_get_or_create(const key_type &key);
@@ -307,6 +313,12 @@ namespace hgraph
         void on_key_removed(const key_type &key) override;
 
         TimeSeriesInput &_get_or_create(const key_type &key);
+
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            auto other_d = dynamic_cast<TimeSeriesDictInput_T<key_type> *>(&other);
+            if (!other_d) { return false; }
+            return _ts_builder->is_same_type(*other_d->_ts_builder);
+        }
 
         [[nodiscard]] bool has_reference() const override;
 

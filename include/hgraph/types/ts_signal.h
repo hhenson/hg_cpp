@@ -19,6 +19,8 @@ namespace hgraph
 
         [[nodiscard]] nb::object py_delta_value() const override;
 
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override { return true; }
+
         static void register_with_nanobind(nb::module_ &m);
     };
 

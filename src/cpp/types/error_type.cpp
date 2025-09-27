@@ -182,7 +182,7 @@ namespace hgraph
                     }
                 }
             } else if (auto ts_ref{dynamic_cast<const TimeSeriesReferenceInput *>(&input)}; ts_ref != nullptr) {
-                auto value{nb::cast<TimeSeriesInput &>(input.py_value())};
+                auto &value{nb::cast<TimeSeriesInput &>(input.py_value())};
                 if (value.has_output()) {
                     active_inputs.emplace(input_name, BackTrace::capture_back_trace(&value.output()->owning_node(), capture_values, depth - 1));
                 }

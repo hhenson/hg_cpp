@@ -68,6 +68,8 @@ namespace hgraph
 
         void re_parent(ptr parent);
 
+        [[nodiscard]] virtual bool is_same_type(TimeSeriesType &other) const = 0;
+
         [[nodiscard]] virtual bool is_reference() const;
 
         [[nodiscard]] virtual bool has_reference() const;

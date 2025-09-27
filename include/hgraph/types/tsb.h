@@ -186,6 +186,16 @@ namespace hgraph
 
         void apply_result(nb::object value) override;
 
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            auto other_b = dynamic_cast<TimeSeriesBundleOutput *>(&other);
+            if (!other_b) { return false; }
+            if (this->size() != other_b->size()) { return false; }
+            for (size_t i = 0; i < this->size(); ++i) {
+                if (!(*this)[i]->is_same_type(*(*other_b)[i])) { return false; }
+            }
+            return true;
+        }
+
         static void register_with_nanobind(nb::module_ &m);
 
       protected:
@@ -197,6 +207,16 @@ namespace hgraph
     {
         using ptr = nb::ref<TimeSeriesBundleInput>;
         using bundle_type::TimeSeriesBundle;
+
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            auto other_b = dynamic_cast<TimeSeriesBundleInput *>(&other);
+            if (!other_b) { return false; }
+            if (this->size() != other_b->size()) { return false; }
+            for (size_t i = 0; i < this->size(); ++i) {
+                if (!(*this)[i]->is_same_type(*(*other_b)[i])) { return false; }
+            }
+            return true;
+        }
 
         // Static method for nanobind registration
         static void register_with_nanobind(nb::module_ &m);

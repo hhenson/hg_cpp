@@ -55,6 +55,13 @@ namespace hgraph
 
         bool has_reference() const override {return output_builder->has_reference();}
 
+        [[nodiscard]] bool is_same_type(const Builder &other) const override {
+            if (auto other_b = dynamic_cast<const TimeSeriesListOutputBuilder *>(&other)) {
+                return output_builder->is_same_type(*other_b->output_builder);
+            }
+            return false;
+        }
+
       private:
         time_series_output_ptr make_and_set_outputs(TimeSeriesListOutput *output) const;
         OutputBuilder::ptr     output_builder;
@@ -71,6 +78,17 @@ namespace hgraph
 
         bool has_reference() const override {
             return std::ranges::any_of(output_builders, [](const auto &builder) { return builder->has_reference(); });
+        }
+
+        [[nodiscard]] bool is_same_type(const Builder &other) const override {
+            if (auto other_b = dynamic_cast<const TimeSeriesBundleOutputBuilder *>(&other)) {
+                if (output_builders.size() != other_b->output_builders.size()) { return false; }
+                for (size_t i = 0; i < output_builders.size(); ++i) {
+                    if (!output_builders[i]->is_same_type(*other_b->output_builders[i])) { return false; }
+                }
+                return true;
+            }
+            return false;
         }
 
       private:
@@ -110,6 +128,13 @@ namespace hgraph
         time_series_output_ptr make_instance(node_ptr owning_node) const override;
 
         time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
+
+        [[nodiscard]] bool is_same_type(const Builder &other) const override {
+            if (auto other_b = dynamic_cast<const TimeSeriesDictOutputBuilder_T<T> *>(&other)) {
+                return ts_builder->is_same_type(*other_b->ts_builder);
+            }
+            return false;
+        }
     };
 }  // namespace hgraph
 

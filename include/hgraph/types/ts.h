@@ -45,6 +45,10 @@ namespace hgraph
 
         void copy_from_input(const TimeSeriesInput &input) override;
 
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            return dynamic_cast<TimeSeriesValueOutput<T> *>(&other) != nullptr;
+        }
+
       private:
         T _value{};
     };
@@ -59,6 +63,10 @@ namespace hgraph
         }
 
         [[nodiscard]] const T &value() const { return value_output().value(); }
+
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            return dynamic_cast<TimeSeriesValueInput<T> *>(&other) != nullptr;
+        }
     };
 
     template <typename T> void TimeSeriesValueOutput<T>::copy_from_input(const TimeSeriesInput &input) {

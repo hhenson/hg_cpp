@@ -232,6 +232,10 @@ namespace hgraph
                                                                            const nb::object &requester) override;
         void release_contains_output(const nb::object &item, const nb::object &requester) override;
 
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            return dynamic_cast<TimeSeriesSetOutput_T<T_Key> *>(&other) != nullptr;
+        }
+
         void post_modify() override;
 
       protected:
@@ -316,6 +320,10 @@ namespace hgraph
             } else {
                 return set_output_t().was_removed(item);
             }
+        }
+
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            return dynamic_cast<TimeSeriesSetInput_T<T> *>(&other) != nullptr;
         }
 
       protected:

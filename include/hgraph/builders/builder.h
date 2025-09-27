@@ -7,6 +7,8 @@
 
 #include<hgraph/hgraph_base.h>
 
+#include <typeinfo>
+
 namespace hgraph
 {
 
@@ -35,6 +37,13 @@ namespace hgraph
          * Release the item and its resources.
          */
         //virtual void release_instance(ITEM item) = 0;
+
+        /**
+         * Compare this builder with another to determine if they build the same nested structure/type.
+         * Default implementation compares concrete builder types.
+         */
+        [[nodiscard]] virtual bool is_same_type(const Builder &other) const { return typeid(*this) == typeid(other); }
+
         static void register_with_nanobind(nb::module_ &m);
     };
 }

@@ -100,6 +100,17 @@ namespace hgraph
 
         void apply_result(nb::object value) override;
 
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            auto other_list = dynamic_cast<TimeSeriesListOutput *>(&other);
+            if (!other_list) { return false; }
+            // If both have at least one element, compare the element type recursively
+            if (!this->empty() && !other_list->empty()) {
+                return (*this)[0]->is_same_type(*(*other_list)[0]);
+            }
+            // If either is empty, assume element type matches (cannot verify), treat as compatible
+            return true;
+        }
+
         static void register_with_nanobind(nb::module_ &m);
     protected:
         friend TimeSeriesListOutputBuilder;
@@ -109,6 +120,15 @@ namespace hgraph
     struct TimeSeriesListInput : TimeSeriesList<IndexedTimeSeriesInput>
     {
         using list_type::TimeSeriesList;
+
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
+            auto other_list = dynamic_cast<TimeSeriesListInput *>(&other);
+            if (!other_list) { return false; }
+            if (!this->empty() && !other_list->empty()) {
+                return (*this)[0]->is_same_type(*(*other_list)[0]);
+            }
+            return true;
+        }
 
         static void register_with_nanobind(nb::module_ &m);
     protected:
