@@ -314,11 +314,7 @@ namespace hgraph
 
         TimeSeriesInput &_get_or_create(const key_type &key);
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            auto other_d = dynamic_cast<TimeSeriesDictInput_T<key_type> *>(&other);
-            if (!other_d) { return false; }
-            return _ts_builder->is_same_type(*other_d->_ts_builder);
-        }
+        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override;
 
         [[nodiscard]] bool has_reference() const override;
 

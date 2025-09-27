@@ -644,7 +644,7 @@ namespace hgraph
 
         bool peer;
 
-        if (output_->is_reference() != this->is_reference() &&
+        if (!is_same_type(*output_) &&
             (output_->has_reference() || this->has_reference())) {
             peer = false;
             key_set_t().set_subscribe_method(true);
@@ -744,6 +744,12 @@ namespace hgraph
     template <typename T_Key> TimeSeriesInput &TimeSeriesDictInput_T<T_Key>::_get_or_create(const key_type &key) {
         if (_ts_values.find(key) == _ts_values.end()) { _create(key); }
         return *_ts_values[key];
+    }
+
+    template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::is_same_type(TimeSeriesType &other) const {
+        auto other_d = dynamic_cast<TimeSeriesDictInput_T<key_type> *>(&other);
+        if (!other_d) { return false; }
+        return _ts_builder->is_same_type(*other_d->_ts_builder);
     }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_reference() const { return _ts_builder->has_reference(); }
