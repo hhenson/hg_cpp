@@ -151,7 +151,7 @@ def _create_component_node_builder_factory(
     )
 
 
-hgraph._wiring._wiring_node_class.ComponentNodeClass.BUILDER_CLASS = _create_component_node_builder_factory
+hgraph._wiring._wiring_node_class._component_node_class.ComponentNodeClass.BUILDER_CLASS = _create_component_node_builder_factory
 
 
 # Switch Node
@@ -250,7 +250,7 @@ def _create_tsd_non_associative_reduce_node_builder_factory(
     )
 
 
-hgraph._wiring._wiring_node_class.TsdNonAssociativeReduceWiringNodeClass.BUILDER_CLASS = _create_tsd_non_associative_reduce_node_builder_factory
+hgraph._wiring._wiring_node_class._reduce_wiring_node.TsdNonAssociativeReduceWiringNodeClass.BUILDER_CLASS = _create_tsd_non_associative_reduce_node_builder_factory
 
 
 # Mesh Node
