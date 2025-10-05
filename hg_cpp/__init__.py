@@ -123,4 +123,4 @@ def _create_reduce_node_builder_factory(
     )
 
 
-hgraph._wiring._wiring_node_class.ReduceWiringNodeClass.BUILDER_CLASS = _create_reduce_node_builder_factory
+hgraph._wiring._wiring_node_class.TsdReduceWiringNodeClass.BUILDER_CLASS = _create_reduce_node_builder_factory
