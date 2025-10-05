@@ -87,4 +87,40 @@ def _create_tsd_map_builder_factory(
 
 
 hgraph._wiring._wiring_node_class.TsdMapWiringNodeClass.BUILDER_CLASS = _create_tsd_map_builder_factory
-hgraph._wiring._wiring_node_class.ReduceWiringNodeClass.BUILDER_CLASS = _hgraph.ReduceNodeBuilder
+
+
+def _create_reduce_node_builder_factory(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+):
+    # Extract key type from the TSD input (ts parameter)
+    ts_input_type = signature.time_series_inputs['ts']
+    key_tp = ts_input_type.key_tp.py_type
+
+    return {
+        bool: _hgraph.ReduceNodeBuilder_bool,
+        int: _hgraph.ReduceNodeBuilder_int,
+        float: _hgraph.ReduceNodeBuilder_float,
+        date: _hgraph.ReduceNodeBuilder_date,
+        datetime: _hgraph.ReduceNodeBuilder_date_time,
+        timedelta: _hgraph.ReduceNodeBuilder_time_delta,
+    }.get(key_tp, _hgraph.ReduceNodeBuilder_object)(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        None,  # recordable_state_builder
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+    )
+
+
+hgraph._wiring._wiring_node_class.ReduceWiringNodeClass.BUILDER_CLASS = _create_reduce_node_builder_factory
