@@ -472,6 +472,29 @@ namespace hgraph
 
     template <typename T_Key> size_t TimeSeriesDictInput_T<T_Key>::size() const { return _ts_values.size(); }
 
+    template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_value() const {
+        if (has_peer()) { return TimeSeriesInput::py_value(); }
+        auto v{nb::dict()};
+        for (const auto &[key, value] : _ts_values) {
+            if (value->valid()) { v[nb::cast(key)] = value->py_value(); }
+        }
+        return v;
+    }
+
+    template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_delta_value() const {
+        if (has_peer()) { return TimeSeriesInput::py_delta_value(); }
+        auto delta{nb::dict()};
+        // Build from currently modified and valid child inputs to avoid relying solely on observer-tracked state
+        for (const auto &[key, value] : _ts_values) {
+            if (value->modified() && value->valid()) { delta[nb::cast(key)] = value->py_delta_value(); }
+        }
+        if (!_removed_values.empty()) {
+            auto removed{get_remove()};
+            for (const auto &[key, _] : _removed_values) { delta[nb::cast(key)] = removed; }
+        }
+        return delta;
+    }
+
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::py_contains(const nb::object &item) const {
         return contains(nb::cast<T_Key>(item));
     }

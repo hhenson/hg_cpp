@@ -257,6 +257,9 @@ namespace hgraph
 
         [[nodiscard]] size_t size() const override;
 
+        [[nodiscard]] nb::object py_value() const override;
+        [[nodiscard]] nb::object py_delta_value() const override;
+
         [[nodiscard]] bool py_contains(const nb::object &item) const override;
         [[nodiscard]] bool contains(const key_type &item) const;
 
