@@ -18,11 +18,11 @@ namespace hgraph
     template <typename K>
     MapNestedEngineEvaluationClock<K>::MapNestedEngineEvaluationClock(EngineEvaluationClock::ptr engine_evaluation_clock, K key,
                                                                       tsd_map_node_ptr<K> nested_node)
-        : NestedEngineEvaluationClock(engine_evaluation_clock, reinterpret_cast<NestedNode *>(nested_node.get())), _key(key) {}
+        : NestedEngineEvaluationClock(engine_evaluation_clock, static_cast<NestedNode *>(nested_node.get())), _key(key) {}
 
     template <typename K> void MapNestedEngineEvaluationClock<K>::update_next_scheduled_evaluation_time(engine_time_t next_time) {
-        auto node_{reinterpret_cast<TsdMapNode<K> &>(*node())};
-        auto let{node_.last_evaluation_time()};
+        auto &node_{*static_cast<TsdMapNode<K> *>(node().get())};
+        auto  let{node_.last_evaluation_time()};
         if ((let != MIN_DT && let >= next_time) || node_.is_stopping()) { return; }
 
         auto it{node_.scheduled_keys_.find(_key)};
