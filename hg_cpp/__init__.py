@@ -124,3 +124,173 @@ def _create_reduce_node_builder_factory(
 
 
 hgraph._wiring._wiring_node_class.TsdReduceWiringNodeClass.BUILDER_CLASS = _create_reduce_node_builder_factory
+
+
+# Component Node
+def _create_component_node_builder_factory(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+):
+    return _hgraph.ComponentNodeBuilder(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+    )
+
+
+hgraph._wiring._wiring_node_class.ComponentNodeClass.BUILDER_CLASS = _create_component_node_builder_factory
+
+
+# Switch Node
+def _create_switch_node_builder_factory(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph_builders,
+        input_node_ids,
+        output_node_ids,
+        reload_on_ticked,
+):
+    # Extract key type from the switch signature
+    switch_input_type = signature.time_series_inputs.get('__key__', None)
+    if switch_input_type:
+        key_tp = switch_input_type.py_type
+    else:
+        # Fallback to object if key type not found
+        key_tp = object
+
+    return {
+        bool: _hgraph.SwitchNodeBuilder_bool,
+        int: _hgraph.SwitchNodeBuilder_int,
+        float: _hgraph.SwitchNodeBuilder_float,
+        str: _hgraph.SwitchNodeBuilder_str,
+    }.get(key_tp, _hgraph.SwitchNodeBuilder_object)(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph_builders,
+        input_node_ids,
+        output_node_ids,
+        reload_on_ticked,
+    )
+
+
+hgraph._wiring._wiring_node_class.SwitchWiringNodeClass.BUILDER_CLASS = _create_switch_node_builder_factory
+
+
+# Try-Except Node
+def _create_try_except_node_builder_factory(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+):
+    return _hgraph.TryExceptNodeBuilder(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+    )
+
+
+hgraph._wiring._wiring_node_class.TryExceptWiringNodeClass.BUILDER_CLASS = _create_try_except_node_builder_factory
+
+
+# TSD Non-Associative Reduce Node
+def _create_tsd_non_associative_reduce_node_builder_factory(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+):
+    return _hgraph.TsdNonAssociativeReduceNodeBuilder(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+    )
+
+
+hgraph._wiring._wiring_node_class.TsdNonAssociativeReduceWiringNodeClass.BUILDER_CLASS = _create_tsd_non_associative_reduce_node_builder_factory
+
+
+# Mesh Node
+def _create_mesh_node_builder_factory(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+        multiplexed_args,
+        key_arg,
+        context_path,
+):
+    # Extract key type from signature
+    key_input = signature.time_series_inputs.get(key_arg, None)
+    if key_input:
+        key_tp = key_input.value_tp.py_type if hasattr(key_input, 'value_tp') else object
+    else:
+        key_tp = int  # Default to int for mesh nodes
+
+    return {
+        int: _hgraph.MeshNodeBuilder_int,
+    }.get(key_tp, _hgraph.MeshNodeBuilder_object)(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+        multiplexed_args,
+        "" if key_arg is None else key_arg,
+        context_path,
+    )
+
+
+hgraph._wiring._wiring_node_class.MeshWiringNodeClass.BUILDER_CLASS = _create_mesh_node_builder_factory

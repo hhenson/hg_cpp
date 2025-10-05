@@ -8,30 +8,35 @@ namespace hgraph {
 
     template <typename K>
     MeshNode<K>::MeshNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id,
-                          NodeSignature::ptr signature, nb::dict scalars, graph_builder_ptr nested_graph,
-                          const std::unordered_map<std::string, int> &input_node_ids, int output_node_id,
-                          const std::vector<std::string> &multiplexed_args, const std::string &key_arg,
+                          NodeSignature::ptr signature, nb::dict scalars, graph_builder_ptr nested_graph_builder,
+                          const std::unordered_map<std::string, int64_t> &input_node_ids, int64_t output_node_id,
+                          const std::unordered_set<std::string> &multiplexed_args, const std::string &key_arg,
                           const std::string &context_path)
         : TsdMapNode<K>(node_ndx, std::move(owning_graph_id), std::move(signature), std::move(scalars),
-                       std::move(nested_graph), input_node_ids, output_node_id, multiplexed_args, key_arg),
+                       std::move(nested_graph_builder), input_node_ids, output_node_id, multiplexed_args, key_arg),
           full_context_path_(context_path) {}
 
     template <typename K>
     void MeshNode<K>::do_start() {
-        // TODO: Implement context path registration
+        // TODO: Implement
         TsdMapNode<K>::do_start();
     }
 
     template <typename K>
     void MeshNode<K>::do_stop() {
-        // TODO: Implement context path cleanup
+        // TODO: Implement
         TsdMapNode<K>::do_stop();
     }
 
     template <typename K>
-    void MeshNode<K>::do_eval() {
-        // TODO: Implement rank-based scheduling
-        TsdMapNode<K>::do_eval();
+    void MeshNode<K>::eval() {
+        // TODO: Implement
+        TsdMapNode<K>::eval();
+    }
+
+    template <typename K>
+    TimeSeriesDictOutput_T<K> &MeshNode<K>::tsd_output() {
+        return TsdMapNode<K>::tsd_output();
     }
 
     template <typename K>
