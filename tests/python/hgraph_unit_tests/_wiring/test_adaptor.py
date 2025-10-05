@@ -12,7 +12,6 @@ from hgraph import (
     GlobalState,
     sink_node,
     graph,
-    run_graph,
     EvaluationMode,
     schedule,
     count,
@@ -44,7 +43,6 @@ from hgraph import (
     feedback,
 )
 from hgraph._wiring._decorators import GRAPH_SIGNATURE
-from hgraph.nodes import request_id
 from hgraph.nodes._service_utils import write_adaptor_request, adaptor_request, capture_output_node_to_global_state
 from hgraph.test import eval_node
 
@@ -73,7 +71,7 @@ def test_adaptor():
         register_adaptor("test_adaptor", my_adaptor_impl)
         return my_adaptor("test_adaptor", count(schedule(timedelta(milliseconds=10), max_ticks=10)))
 
-    result = run_graph(g, run_mode=EvaluationMode.REAL_TIME, end_time=timedelta(milliseconds=1000))
+    result = evaluate_graph(g, GraphConfiguration(run_mode=EvaluationMode.REAL_TIME, end_time=timedelta(milliseconds=1000)))
 
     assert [x[1] for x in result] == list(range(1, 11))
 
@@ -105,7 +103,7 @@ def test_adaptor_with_parameters():
         a2 = my_adaptor("test_adaptor", True, count(schedule(timedelta(milliseconds=11), max_ticks=10)))
         return combine(a1, a2)
 
-    result = run_graph(g, run_mode=EvaluationMode.REAL_TIME, end_time=timedelta(milliseconds=250))
+    result = evaluate_graph(g, GraphConfiguration(run_mode=EvaluationMode.REAL_TIME, end_time=timedelta(milliseconds=250)))
 
     assert [x[1] for x in result] == list(chain(*zip([{0: x} for x in range(2, 12)], [{1: x} for x in range(1, 11)])))
 
@@ -137,7 +135,7 @@ def test_adaptor_with_impl_parameters():
         a2 = my_adaptor("test_adaptor", ts=count(schedule(timedelta(milliseconds=11), max_ticks=10)))
         return combine(a1, a2)
 
-    result = run_graph(g, run_mode=EvaluationMode.REAL_TIME, end_time=timedelta(milliseconds=250))
+    result = evaluate_graph(g, GraphConfiguration(run_mode=EvaluationMode.REAL_TIME, end_time=timedelta(milliseconds=250)))
 
     assert [x[1] for x in result] == list(chain(*zip([{0: x} for x in range(2, 12)], [{1: x} for x in range(2, 12)])))
 
@@ -265,7 +263,7 @@ def test_adaptor_and_service():
         requests = collect[TSS](count(schedule(timedelta(milliseconds=10), max_ticks=10)))
         return map_(lambda key: my_service("test", key), __keys__=requests)
 
-    result = run_graph(g, run_mode=EvaluationMode.REAL_TIME, end_time=timedelta(milliseconds=250))
+    result = evaluate_graph(g, GraphConfiguration(run_mode=EvaluationMode.REAL_TIME, end_time=timedelta(milliseconds=250)))
 
     assert [x[1] for x in result if x[1]] == [{x: x} for x in list(range(1, 11))]
 
@@ -309,7 +307,7 @@ def test_write_adaptor_request():
         capture_output_node_to_global_state(f"test/foo", out)
         return out
 
-    assert eval_node(g, i=[1, None, 2], x=[True, False, True], __trace__=True) == [
+    assert eval_node(g, i=[1, None, 2], x=[True, False, True]) == [
         {1: True},
         {1: False},
         {1: REMOVE, 2: True},

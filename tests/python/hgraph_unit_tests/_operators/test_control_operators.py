@@ -90,9 +90,19 @@ def test_any_invalid():
 
 
 def test_if_then_else():
-    expected = [None, 2, 6, 3]
+    expected = [None, 2, 6, 3, None]
 
-    assert eval_node(if_then_else, [None, True, False, True], [1, 2, 3], [4, 5, 6]) == expected
+    assert eval_node(if_then_else, [None, True, False, True, True], [1, 2, 3], [4, 5, 6]) == expected
+
+
+def test_if_then_else_nested():
+    @graph
+    def g(b: TS[bool]) -> TS[str]:
+        m1 = const("m1")
+        m2 = const("m2")
+        return if_then_else(const(False), m1, if_then_else(b, m2, m1))
+
+    assert eval_node(g, [False, True]) == ["m1", "m2"]
 
 
 def test_if_cmp():
@@ -287,7 +297,6 @@ def test_race_tsd_of_bundles_switch_bundle_types():
 
     assert eval_node(
         g,
-        __trace__=True,
         ts=[
             {1: {"free": False}, 2: {"free": True}},
             {1: {"a": 0, "cond": False}},
