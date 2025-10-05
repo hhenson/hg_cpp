@@ -11,6 +11,7 @@ set(HGRAPH_SOURCES
         nodes/nested_evaluation_engine.cpp
         nodes/nested_graph_node.cpp
         nodes/nested_node.cpp
+        nodes/reduce_node.cpp
 
         python/_hgraph_builder.cpp
         python/_hgraph_module.cpp

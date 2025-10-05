@@ -87,3 +87,4 @@ def _create_tsd_map_builder_factory(
 
 
 hgraph._wiring._wiring_node_class.TsdMapWiringNodeClass.BUILDER_CLASS = _create_tsd_map_builder_factory
+hgraph._wiring._wiring_node_class.ReduceWiringNodeClass.BUILDER_CLASS = _hgraph.ReduceNodeBuilder

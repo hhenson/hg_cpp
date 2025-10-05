@@ -119,6 +119,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/nodes/nest_graph_node.h
         include/hgraph/nodes/nested_evaluation_engine.h
         include/hgraph/nodes/nested_node.h
+        include/hgraph/nodes/reduce_node.h
 
         include/hgraph/runtime/evaluation_context.h
         include/hgraph/runtime/evaluation_engine.h
