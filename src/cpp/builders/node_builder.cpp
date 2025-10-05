@@ -496,13 +496,13 @@ namespace hgraph
     }
 
     // Explicit template instantiations
-    template class ReduceNodeBuilder<bool>;
-    template class ReduceNodeBuilder<int64_t>;
-    template class ReduceNodeBuilder<double>;
-    template class ReduceNodeBuilder<engine_date_t>;
-    template class ReduceNodeBuilder<engine_time_t>;
-    template class ReduceNodeBuilder<engine_time_delta_t>;
-    template class ReduceNodeBuilder<nb::object>;
+    template struct ReduceNodeBuilder<bool>;
+    template struct ReduceNodeBuilder<int64_t>;
+    template struct ReduceNodeBuilder<double>;
+    template struct ReduceNodeBuilder<engine_date_t>;
+    template struct ReduceNodeBuilder<engine_time_t>;
+    template struct ReduceNodeBuilder<engine_time_delta_t>;
+    template struct ReduceNodeBuilder<nb::object>;
 
     // BaseNestedGraphNodeBuilder implementation
     BaseNestedGraphNodeBuilder::BaseNestedGraphNodeBuilder(
@@ -558,11 +558,11 @@ namespace hgraph
     }
 
     // Explicit template instantiations for SwitchNodeBuilder
-    template class SwitchNodeBuilder<bool>;
-    template class SwitchNodeBuilder<int64_t>;
-    template class SwitchNodeBuilder<double>;
-    template class SwitchNodeBuilder<std::string>;
-    template class SwitchNodeBuilder<nb::object>;
+    template struct SwitchNodeBuilder<bool>;
+    template struct SwitchNodeBuilder<int64_t>;
+    template struct SwitchNodeBuilder<double>;
+    template struct SwitchNodeBuilder<std::string>;
+    template struct SwitchNodeBuilder<nb::object>;
 
     // BaseTsdNonAssociativeReduceNodeBuilder implementation
     BaseTsdNonAssociativeReduceNodeBuilder::BaseTsdNonAssociativeReduceNodeBuilder(
@@ -603,7 +603,7 @@ namespace hgraph
     }
 
     // Explicit template instantiations for MeshNodeBuilder
-    template class MeshNodeBuilder<int64_t>;
-    template class MeshNodeBuilder<nb::object>;
+    template struct MeshNodeBuilder<int64_t>;
+    template struct MeshNodeBuilder<nb::object>;
 
 }  // namespace hgraph

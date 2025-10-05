@@ -100,7 +100,7 @@ namespace hgraph {
     }
 
     template <typename K>
-    void SwitchNode<K>::do_eval() {
+    void SwitchNode<K>::eval() {
         mark_evaluated();
 
         // Get the key input
@@ -113,16 +113,16 @@ namespace hgraph {
         bool key_modified = key_ts->modified();
 
         if (key_modified) {
-            // Extract the key value from the time series
+            // Extract the key value from the input time series
             K new_key;
-            if (auto* typed_key = dynamic_cast<TimeSeriesValueOutput<K>*>(key_ts.get())) {
-                new_key = typed_key->value();
+            if (auto* typed_in = dynamic_cast<TimeSeriesValueInput<K>*>(key_ts.get())) {
+                new_key = typed_in->value();
             } else {
                 // Fallback: try to extract via py_value if not a simple value type
                 try {
                     new_key = nb::cast<K>(key_ts->py_value());
                 } catch (...) {
-                    throw std::runtime_error("Failed to extract key value from time series");
+                    throw std::runtime_error("Failed to extract key value from time series input");
                 }
             }
 
@@ -232,10 +232,10 @@ namespace hgraph {
                 node->notify();
 
                 if (arg == "key") {
-                    // Special handling for key input
-                    // The key should be a const node with the value set
-                    // TODO: Need access to KeyStubEvalFn to set the key value
-                    // For now, skip this special case - the key node is a stub that provides the key
+                    // The key node is a Python stub whose eval function exposes a 'key' attribute.
+                    // Set this to the current active key so the nested graph sees the correct key value.
+                    auto &key_node = dynamic_cast<PythonNode &>(*node);
+                    nb::setattr(key_node.eval_fn(), "key", nb::cast(graph_key));
                 } else {
                     // Regular input - wire using copy_with and re_parent
                     auto ts = input()[arg];
