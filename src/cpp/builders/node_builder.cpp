@@ -156,21 +156,6 @@ namespace hgraph
 
         nb::class_<TsdMapNodeBuilder<nb::object>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_object")
             .def("__init__", [](TsdMapNodeBuilder<nb::object> *self, const nb::args &args) { create_tsd_map_node_builder(self, args); });
-
-        nb::class_<TsdMapNodeBuilder<double>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_float")
-            .def("__init__", [](TsdMapNodeBuilder<double> *self, const nb::args &args) { create_tsd_map_node_builder(self, args); });
-
-        nb::class_<TsdMapNodeBuilder<engine_date_t>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_date")
-            .def("__init__", [](TsdMapNodeBuilder<engine_date_t> *self, const nb::args &args) { create_tsd_map_node_builder(self, args); });
-
-        nb::class_<TsdMapNodeBuilder<engine_time_t>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_date_time")
-            .def("__init__", [](TsdMapNodeBuilder<engine_time_t> *self, const nb::args &args) { create_tsd_map_node_builder(self, args); });
-
-        nb::class_<TsdMapNodeBuilder<engine_time_delta_t>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_time_delta")
-            .def("__init__", [](TsdMapNodeBuilder<engine_time_delta_t> *self, const nb::args &args) { create_tsd_map_node_builder(self, args); });
-
-        nb::class_<TsdMapNodeBuilder<nb::object>, BaseTsdMapNodeBuilder>(m, "TsdMapNodeBuilder_object")
-            .def("__init__", [](TsdMapNodeBuilder<nb::object>* self, const nb::args & args) { create_tsd_map_node_builder(self, args); });
     }
 
     void BaseNodeBuilder::_build_inputs_and_outputs(node_ptr node) const {
