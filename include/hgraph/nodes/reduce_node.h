@@ -13,17 +13,6 @@ namespace hgraph
 
     void register_reduce_node_with_nanobind(nb::module_ &m);
 
-    struct ReduceNode;
-    using reduce_node_ptr = nb::ref<ReduceNode>;
-
-    struct ReduceNestedEngineEvaluationClock : NestedEngineEvaluationClock
-    {
-        ReduceNestedEngineEvaluationClock(EngineEvaluationClock::ptr engine_evaluation_clock,
-                                          reduce_node_ptr nested_node);
-
-        void update_next_scheduled_evaluation_time(engine_time_t next_time) override;
-    };
-
     /**
      * C++ implementation of PythonReduceNodeImpl.
      * This implements TSD reduction using an inverted binary tree with inputs at the leaves
@@ -67,8 +56,6 @@ namespace hgraph
         std::unordered_map<nb::object, std::tuple<int64_t, int64_t>> bound_node_indexes_;
         std::vector<std::tuple<int64_t, int64_t>>          free_node_indexes_;  // List of (ndx, 0(lhs)|1(rhs)) tuples
         graph_ptr                                           nested_graph_;
-
-        friend ReduceNestedEngineEvaluationClock;
     };
 
 }  // namespace hgraph
