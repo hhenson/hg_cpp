@@ -17,14 +17,6 @@
 
 namespace hgraph
 {
-    ReduceNestedEngineEvaluationClock::ReduceNestedEngineEvaluationClock(EngineEvaluationClock::ptr engine_evaluation_clock,
-                                                                          reduce_node_ptr nested_node)
-        : NestedEngineEvaluationClock(engine_evaluation_clock, static_cast<NestedNode *>(nested_node.get())) {}
-
-    void ReduceNestedEngineEvaluationClock::update_next_scheduled_evaluation_time(engine_time_t next_time) {
-        NestedEngineEvaluationClock::update_next_scheduled_evaluation_time(next_time);
-    }
-
     ReduceNode::ReduceNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
                            nb::dict scalars, graph_builder_ptr nested_graph_builder,
                            const std::tuple<int64_t, int64_t> &input_node_ids, int64_t output_node_id)
@@ -42,20 +34,30 @@ namespace hgraph
     void ReduceNode::initialise() {
         nested_graph_->set_evaluation_engine(
             new NestedEvaluationEngine(&graph().evaluation_engine(),
-                                       new ReduceNestedEngineEvaluationClock(&graph().evaluation_engine_clock(), this)));
+                                       new NestedEngineEvaluationClock(&graph().evaluation_engine_clock(), this)));
     }
 
     void ReduceNode::do_start() {
         auto &tsd = dynamic_cast<TimeSeriesDictInput &>(*input()["ts"]);
         if (tsd.valid()) {
-            auto all_keys = tsd.keys();
-            auto added_keys = tsd.added_keys();
-            std::vector<nb::object> existing_keys;
+            // Get all keys via Python iterator
+            std::vector<nb::object> all_keys;
+            for (auto key_obj : tsd.py_keys()) {
+                all_keys.push_back(nb::cast<nb::object>(key_obj));
+            }
 
+            // Get added keys via Python iterator
+            std::vector<nb::object> added_keys_vec;
+            for (auto key_obj : tsd.py_added_keys()) {
+                added_keys_vec.push_back(nb::cast<nb::object>(key_obj));
+            }
+
+            // Find existing keys (not in added)
+            std::vector<nb::object> existing_keys;
             for (const auto &key : all_keys) {
                 bool is_added = false;
-                for (const auto &added_key : added_keys) {
-                    if (nb::cast<std::string>(key) == nb::cast<std::string>(added_key)) {
+                for (const auto &added_key : added_keys_vec) {
+                    if (nb::cast<std::string>(nb::str(key)) == nb::cast<std::string>(nb::str(added_key))) {
                         is_added = true;
                         break;
                     }
@@ -73,11 +75,11 @@ namespace hgraph
         } else {
             grow_tree();
         }
-        nested_graph_->start();
+        start_component(*nested_graph_);
     }
 
     void ReduceNode::do_stop() {
-        nested_graph_->stop();
+        stop_component(*nested_graph_);
     }
 
     void ReduceNode::dispose() {}
@@ -87,9 +89,20 @@ namespace hgraph
 
         auto &tsd = dynamic_cast<TimeSeriesDictInput &>(*input()["ts"]);
 
+        // Collect removed and added keys from iterators
+        std::vector<nb::object> removed_keys_vec;
+        for (auto key_obj : tsd.py_removed_keys()) {
+            removed_keys_vec.push_back(nb::cast<nb::object>(key_obj));
+        }
+
+        std::vector<nb::object> added_keys_vec;
+        for (auto key_obj : tsd.py_added_keys()) {
+            added_keys_vec.push_back(nb::cast<nb::object>(key_obj));
+        }
+
         // Process removals first, then additions
-        remove_nodes(tsd.removed_keys());
-        add_nodes(tsd.added_keys());
+        remove_nodes(removed_keys_vec);
+        add_nodes(added_keys_vec);
 
         // Re-balance the tree if required
         re_balance_nodes();
@@ -103,8 +116,11 @@ namespace hgraph
 
         // Propagate output if changed
         auto last_out = last_output();
-        if (!output().valid() || output().value() != last_out->value()) {
-            output().value(last_out->value());
+        auto &ref_last_out = dynamic_cast<TimeSeriesReferenceOutput &>(*last_out);
+        auto &ref_output = dynamic_cast<TimeSeriesReferenceOutput &>(output());
+
+        if (!output().valid() || ref_output.value() != ref_last_out.value()) {
+            ref_output.set_value(ref_last_out.value());
         }
     }
 
@@ -234,7 +250,13 @@ namespace hgraph
         }
 
         if (nested_graph_->is_started() || nested_graph_->is_starting()) {
-            nested_graph_->start_subgraph(count * node_size(), nested_graph_->nodes().size());
+            // Start the newly added nodes
+            int64_t start_idx = count * node_size();
+            int64_t end_idx = nested_graph_->nodes().size();
+            for (int64_t i = start_idx; i < end_idx; ++i) {
+                auto node = nested_graph_->nodes()[i];
+                start_component(*node.get());
+            }
         }
     }
 
@@ -274,10 +296,11 @@ namespace hgraph
         auto node = nodes[side];
 
         auto &tsd = dynamic_cast<TimeSeriesDictInput &>(*input()["ts"]);
-        auto ts = tsd[key];
+        auto ts = tsd.py_get_item(key);
         auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
         if (inner_input != nullptr) {
-            inner_input->clone_binding(*ts);
+            auto &ts_input = dynamic_cast<TimeSeriesInput &>(*nb::cast<time_series_input_ptr>(ts).get());
+            inner_input->clone_binding(dynamic_cast<TimeSeriesReferenceInput &>(ts_input));
         }
         node->notify();
     }
@@ -287,7 +310,7 @@ namespace hgraph
         auto nodes = get_node(node_id);
         auto node = nodes[side];
 
-        auto zero_ts = dynamic_cast<TimeSeriesInput *>(input()["zero"].get());
+        auto zero_ts = dynamic_cast<TimeSeriesReferenceInput *>(input()["zero"].get());
         auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
         if (inner_input != nullptr && zero_ts != nullptr) {
             inner_input->clone_binding(*zero_ts);
@@ -295,7 +318,7 @@ namespace hgraph
         node->notify();
     }
 
-    int64_t ReduceNode::node_size() const { return nested_graph_builder_->node_builders().size(); }
+    int64_t ReduceNode::node_size() const { return nested_graph_builder_->node_builders.size(); }
 
     int64_t ReduceNode::node_count() const { return nested_graph_->nodes().size() / node_size(); }
 
@@ -308,8 +331,6 @@ namespace hgraph
     }
 
     void register_reduce_node_with_nanobind(nb::module_ &m) {
-        nb::class_<ReduceNestedEngineEvaluationClock, NestedEngineEvaluationClock>(m, "ReduceNestedEngineEvaluationClock");
-
         nb::class_<ReduceNode, NestedNode>(m, "ReduceNode")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
                           const std::tuple<int64_t, int64_t> &, int64_t>(),
