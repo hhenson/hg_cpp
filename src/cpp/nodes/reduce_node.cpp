@@ -17,47 +17,57 @@
 
 namespace hgraph
 {
-    ReduceNode::ReduceNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
-                           nb::dict scalars, graph_builder_ptr nested_graph_builder,
-                           const std::tuple<int64_t, int64_t> &input_node_ids, int64_t output_node_id)
+    // Helper function for key comparison
+    template <typename K> inline bool keys_equal(const K &a, const K &b) { return a == b; }
+
+    // Specialization for nb::object
+    template <> inline bool keys_equal<nb::object>(const nb::object &a, const nb::object &b) {
+        return a.equal(b);
+    }
+
+    template <typename K>
+    ReduceNode<K>::ReduceNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
+                              nb::dict scalars, graph_builder_ptr nested_graph_builder,
+                              const std::tuple<int64_t, int64_t> &input_node_ids, int64_t output_node_id)
         : NestedNode(node_ndx, owning_graph_id, signature, scalars), nested_graph_builder_(nested_graph_builder),
           input_node_ids_(input_node_ids), output_node_id_(output_node_id) {
         nested_graph_ = new Graph(std::vector<int64_t>{node_ndx}, std::vector<node_ptr>{}, this, "", traits_ptr{});
     }
 
-    std::unordered_map<int, graph_ptr> &ReduceNode::nested_graphs() {
+    template <typename K> std::unordered_map<int, graph_ptr> &ReduceNode<K>::nested_graphs() {
         static std::unordered_map<int, graph_ptr> graphs;
         graphs[0] = nested_graph_;
         return graphs;
     }
 
-    void ReduceNode::initialise() {
+    template <typename K> void ReduceNode<K>::initialise() {
         nested_graph_->set_evaluation_engine(
             new NestedEvaluationEngine(&graph().evaluation_engine(),
                                        new NestedEngineEvaluationClock(&graph().evaluation_engine_clock(), this)));
     }
 
-    void ReduceNode::do_start() {
-        auto &tsd = dynamic_cast<TimeSeriesDictInput &>(*input()["ts"]);
+    template <typename K> void ReduceNode<K>::do_start() {
+        auto &tsd = dynamic_cast<TimeSeriesDictInput_T<K> &>(*input()["ts"]);
         if (tsd.valid()) {
-            // Get all keys via Python iterator
-            std::vector<nb::object> all_keys;
-            for (auto key_obj : tsd.py_keys()) {
-                all_keys.push_back(nb::cast<nb::object>(key_obj));
+            // Get all keys
+            std::vector<K> all_keys;
+            for (const auto &[key, _] : tsd) {
+                all_keys.push_back(key);
             }
 
-            // Get added keys via Python iterator
-            std::vector<nb::object> added_keys_vec;
-            for (auto key_obj : tsd.py_added_keys()) {
-                added_keys_vec.push_back(nb::cast<nb::object>(key_obj));
+            // Get added keys
+            std::vector<K> added_keys_vec;
+            const auto &added_items = tsd.added_items();
+            for (const auto &[key, _] : added_items) {
+                added_keys_vec.push_back(key);
             }
 
             // Find existing keys (not in added)
-            std::vector<nb::object> existing_keys;
+            std::vector<K> existing_keys;
             for (const auto &key : all_keys) {
                 bool is_added = false;
                 for (const auto &added_key : added_keys_vec) {
-                    if (nb::cast<std::string>(nb::str(key)) == nb::cast<std::string>(nb::str(added_key))) {
+                    if (keys_equal(key, added_key)) {
                         is_added = true;
                         break;
                     }
@@ -78,26 +88,28 @@ namespace hgraph
         start_component(*nested_graph_);
     }
 
-    void ReduceNode::do_stop() {
+    template <typename K> void ReduceNode<K>::do_stop() {
         stop_component(*nested_graph_);
     }
 
-    void ReduceNode::dispose() {}
+    template <typename K> void ReduceNode<K>::dispose() {}
 
-    void ReduceNode::eval() {
+    template <typename K> void ReduceNode<K>::eval() {
         mark_evaluated();
 
-        auto &tsd = dynamic_cast<TimeSeriesDictInput &>(*input()["ts"]);
+        auto &tsd = dynamic_cast<TimeSeriesDictInput_T<K> &>(*input()["ts"]);
 
-        // Collect removed and added keys from iterators
-        std::vector<nb::object> removed_keys_vec;
-        for (auto key_obj : tsd.py_removed_keys()) {
-            removed_keys_vec.push_back(nb::cast<nb::object>(key_obj));
+        // Collect removed and added keys
+        std::vector<K> removed_keys_vec;
+        const auto &removed_items = tsd.removed_items();
+        for (const auto &[key, _] : removed_items) {
+            removed_keys_vec.push_back(key);
         }
 
-        std::vector<nb::object> added_keys_vec;
-        for (auto key_obj : tsd.py_added_keys()) {
-            added_keys_vec.push_back(nb::cast<nb::object>(key_obj));
+        std::vector<K> added_keys_vec;
+        const auto &added_items = tsd.added_items();
+        for (const auto &[key, _] : added_items) {
+            added_keys_vec.push_back(key);
         }
 
         // Process removals first, then additions
@@ -124,13 +136,13 @@ namespace hgraph
         }
     }
 
-    TimeSeriesOutput::ptr ReduceNode::last_output() {
+    template <typename K> TimeSeriesOutput::ptr ReduceNode<K>::last_output() {
         auto sub_graph = get_node(node_count() - 1);
         auto out_node = sub_graph[output_node_id_];
         return out_node->output_ptr();
     }
 
-    void ReduceNode::add_nodes(const std::vector<nb::object> &keys) {
+    template <typename K> void ReduceNode<K>::add_nodes(const std::vector<K> &keys) {
         for (const auto &key : keys) {
             if (free_node_indexes_.empty()) {
                 grow_tree();
@@ -141,7 +153,7 @@ namespace hgraph
         }
     }
 
-    void ReduceNode::remove_nodes(const std::vector<nb::object> &keys) {
+    template <typename K> void ReduceNode<K>::remove_nodes(const std::vector<K> &keys) {
         for (const auto &key : keys) {
             auto it = bound_node_indexes_.find(key);
             if (it == bound_node_indexes_.end()) {
@@ -168,7 +180,8 @@ namespace hgraph
         }
     }
 
-    void ReduceNode::swap_node(const std::tuple<int64_t, int64_t> &src_ndx, const std::tuple<int64_t, int64_t> &dst_ndx) {
+    template <typename K>
+    void ReduceNode<K>::swap_node(const std::tuple<int64_t, int64_t> &src_ndx, const std::tuple<int64_t, int64_t> &dst_ndx) {
         auto [src_node_id, src_side] = src_ndx;
         auto [dst_node_id, dst_side] = dst_ndx;
 
@@ -188,13 +201,13 @@ namespace hgraph
         dst_node->notify();
     }
 
-    void ReduceNode::re_balance_nodes() {
+    template <typename K> void ReduceNode<K>::re_balance_nodes() {
         if (node_count() > 8 && (free_node_indexes_.size() * 0.75) > bound_node_indexes_.size()) {
             shrink_tree();
         }
     }
 
-    void ReduceNode::grow_tree() {
+    template <typename K> void ReduceNode<K>::grow_tree() {
         int64_t count = node_count();
         int64_t end = 2 * count + 1;
         int64_t top_layer_length = (end + 1) / 4;
@@ -260,7 +273,7 @@ namespace hgraph
         }
     }
 
-    void ReduceNode::shrink_tree() {
+    template <typename K> void ReduceNode<K>::shrink_tree() {
         int64_t capacity = bound_node_indexes_.size() + free_node_indexes_.size();
         if (capacity <= 8) {
             return;
@@ -289,23 +302,22 @@ namespace hgraph
                   [](const auto &a, const auto &b) { return std::get<0>(a) > std::get<0>(b); });
     }
 
-    void ReduceNode::bind_key_to_node(const nb::object &key, const std::tuple<int64_t, int64_t> &ndx) {
+    template <typename K> void ReduceNode<K>::bind_key_to_node(const K &key, const std::tuple<int64_t, int64_t> &ndx) {
         bound_node_indexes_[key] = ndx;
         auto [node_id, side] = ndx;
         auto nodes = get_node(node_id);
         auto node = nodes[side];
 
-        auto &tsd = dynamic_cast<TimeSeriesDictInput &>(*input()["ts"]);
-        auto ts = tsd.py_get_item(key);
+        auto &tsd = dynamic_cast<TimeSeriesDictInput_T<K> &>(*input()["ts"]);
+        auto &ts = tsd[key];
         auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
         if (inner_input != nullptr) {
-            auto &ts_input = dynamic_cast<TimeSeriesInput &>(*nb::cast<time_series_input_ptr>(ts).get());
-            inner_input->clone_binding(dynamic_cast<TimeSeriesReferenceInput &>(ts_input));
+            inner_input->clone_binding(dynamic_cast<TimeSeriesReferenceInput &>(ts));
         }
         node->notify();
     }
 
-    void ReduceNode::zero_node(const std::tuple<int64_t, int64_t> &ndx) {
+    template <typename K> void ReduceNode<K>::zero_node(const std::tuple<int64_t, int64_t> &ndx) {
         auto [node_id, side] = ndx;
         auto nodes = get_node(node_id);
         auto node = nodes[side];
@@ -318,11 +330,11 @@ namespace hgraph
         node->notify();
     }
 
-    int64_t ReduceNode::node_size() const { return nested_graph_builder_->node_builders.size(); }
+    template <typename K> int64_t ReduceNode<K>::node_size() const { return nested_graph_builder_->node_builders.size(); }
 
-    int64_t ReduceNode::node_count() const { return nested_graph_->nodes().size() / node_size(); }
+    template <typename K> int64_t ReduceNode<K>::node_count() const { return nested_graph_->nodes().size() / node_size(); }
 
-    std::vector<node_ptr> ReduceNode::get_node(int64_t ndx) {
+    template <typename K> std::vector<node_ptr> ReduceNode<K>::get_node(int64_t ndx) {
         auto &all_nodes = nested_graph_->nodes();
         int64_t ns = node_size();
         int64_t start = ndx * ns;
@@ -330,8 +342,53 @@ namespace hgraph
         return std::vector<node_ptr>(all_nodes.begin() + start, all_nodes.begin() + end);
     }
 
+    // Explicit template instantiations for supported key types
+    template class ReduceNode<bool>;
+    template class ReduceNode<int64_t>;
+    template class ReduceNode<double>;
+    template class ReduceNode<engine_date_t>;
+    template class ReduceNode<engine_time_t>;
+    template class ReduceNode<engine_time_delta_t>;
+    template class ReduceNode<nb::object>;
+
     void register_reduce_node_with_nanobind(nb::module_ &m) {
-        nb::class_<ReduceNode, NestedNode>(m, "ReduceNode")
+        nb::class_<ReduceNode<bool>, NestedNode>(m, "ReduceNode_bool")
+            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
+                          const std::tuple<int64_t, int64_t> &, int64_t>(),
+                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
+                 "output_node_id"_a);
+
+        nb::class_<ReduceNode<int64_t>, NestedNode>(m, "ReduceNode_int")
+            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
+                          const std::tuple<int64_t, int64_t> &, int64_t>(),
+                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
+                 "output_node_id"_a);
+
+        nb::class_<ReduceNode<double>, NestedNode>(m, "ReduceNode_float")
+            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
+                          const std::tuple<int64_t, int64_t> &, int64_t>(),
+                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
+                 "output_node_id"_a);
+
+        nb::class_<ReduceNode<engine_date_t>, NestedNode>(m, "ReduceNode_date")
+            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
+                          const std::tuple<int64_t, int64_t> &, int64_t>(),
+                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
+                 "output_node_id"_a);
+
+        nb::class_<ReduceNode<engine_time_t>, NestedNode>(m, "ReduceNode_datetime")
+            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
+                          const std::tuple<int64_t, int64_t> &, int64_t>(),
+                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
+                 "output_node_id"_a);
+
+        nb::class_<ReduceNode<engine_time_delta_t>, NestedNode>(m, "ReduceNode_timedelta")
+            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
+                          const std::tuple<int64_t, int64_t> &, int64_t>(),
+                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
+                 "output_node_id"_a);
+
+        nb::class_<ReduceNode<nb::object>, NestedNode>(m, "ReduceNode_object")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
                           const std::tuple<int64_t, int64_t> &, int64_t>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,

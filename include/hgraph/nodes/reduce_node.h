@@ -13,12 +13,16 @@ namespace hgraph
 
     void register_reduce_node_with_nanobind(nb::module_ &m);
 
+    template<typename K> struct ReduceNode;
+    template<typename K>
+    using reduce_node_ptr = nb::ref<ReduceNode<K>>;
+
     /**
      * C++ implementation of PythonReduceNodeImpl.
      * This implements TSD reduction using an inverted binary tree with inputs at the leaves
      * and the result at the root. The inputs bound to the leaves can be moved as nodes come and go.
      */
-    struct ReduceNode : NestedNode
+    template <typename K> struct ReduceNode : NestedNode
     {
         ReduceNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars,
                    graph_builder_ptr nested_graph_builder, const std::tuple<int64_t, int64_t> &input_node_ids,
@@ -36,12 +40,12 @@ namespace hgraph
 
         TimeSeriesOutput::ptr last_output();
 
-        void add_nodes(const std::vector<nb::object> &keys);
-        void remove_nodes(const std::vector<nb::object> &keys);
+        void add_nodes(const std::vector<K> &keys);
+        void remove_nodes(const std::vector<K> &keys);
         void re_balance_nodes();
         void grow_tree();
         void shrink_tree();
-        void bind_key_to_node(const nb::object &key, const std::tuple<int64_t, int64_t> &ndx);
+        void bind_key_to_node(const K &key, const std::tuple<int64_t, int64_t> &ndx);
         void zero_node(const std::tuple<int64_t, int64_t> &ndx);
         void swap_node(const std::tuple<int64_t, int64_t> &src_ndx, const std::tuple<int64_t, int64_t> &dst_ndx);
 
@@ -53,7 +57,7 @@ namespace hgraph
         graph_builder_ptr                                   nested_graph_builder_;
         std::tuple<int64_t, int64_t>                        input_node_ids_;  // LHS index, RHS index
         int64_t                                             output_node_id_;
-        std::unordered_map<nb::object, std::tuple<int64_t, int64_t>> bound_node_indexes_;
+        std::unordered_map<K, std::tuple<int64_t, int64_t>> bound_node_indexes_;
         std::vector<std::tuple<int64_t, int64_t>>          free_node_indexes_;  // List of (ndx, 0(lhs)|1(rhs)) tuples
         graph_ptr                                           nested_graph_;
     };
