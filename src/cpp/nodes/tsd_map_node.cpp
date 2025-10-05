@@ -211,8 +211,7 @@ namespace hgraph
                     auto &ts_value = tsd._get_or_create(key);
 
                     node->reset_input(node->input().copy_with(node, {&ts_value}));
-                    auto &new_input = node->input();
-                    ts_value.re_parent(&new_input);
+                    ts_value.re_parent(node->input_ptr().get());
                 } else {
                     auto ts          = dynamic_cast<TimeSeriesReferenceInput *>(input()[arg].get());
                     auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
