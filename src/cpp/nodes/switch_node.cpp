@@ -67,7 +67,8 @@ namespace hgraph
     }
 
     template <typename K> void SwitchNode<K>::do_start() {
-        key_ts = dynamic_cast<TimeSeriesValueInput<K> *>(input()["key"].get());
+        auto ts{input()["key"].get()};
+        key_ts = dynamic_cast<TimeSeriesValueInput<K> *>(ts);
         if (!key_ts) { throw std::runtime_error("SwitchNode requires a TimeSeriesValueInput<K> for key input, but none found"); }
         // Check if graph has recordable ID trait
         if (has_recordable_id_trait(graph().traits())) {

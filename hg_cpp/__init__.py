@@ -168,12 +168,8 @@ def _create_switch_node_builder_factory(
         recordable_state_builder=None,
 ):
     # Extract key type from the switch signature
-    switch_input_type = signature.time_series_inputs.get('__key__', None)
-    if switch_input_type:
-        key_tp = switch_input_type.py_type
-    else:
-        # Fallback to object if key type not found
-        key_tp = object
+    switch_input_type = signature.time_series_inputs.get('key', None)
+    key_tp = switch_input_type.value_scalar_tp.py_type
 
     return {
         bool: _hgraph.SwitchNodeBuilder_bool,
