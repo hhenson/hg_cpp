@@ -80,6 +80,7 @@ namespace hgraph
                 recordable_id_ = get_fq_recordable_id(graph().traits(), record_replay_id.value());
             }
         }
+        _initialise_inputs();
     }
 
     template <typename K> void SwitchNode<K>::do_stop() {
@@ -195,9 +196,12 @@ namespace hgraph
                     nb::setattr(key_node.eval_fn(), "key", nb::cast(graph_key));
                 } else {
                     // Regular input - clone binding of the reference input into the inner 'ts' input
-                    auto ts          = dynamic_cast<TimeSeriesReferenceInput *>(input()["ts"].get());
+                    auto ts          = input()[arg].get();
                     auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
-                    if (ts != nullptr && inner_input != nullptr) { inner_input->clone_binding(*ts); }
+                    if (ts != nullptr && inner_input != nullptr) {
+                        auto other = dynamic_cast<TimeSeriesReferenceInput *>(ts);
+                        inner_input->clone_binding(*other);
+                    }
                 }
             }
         }
