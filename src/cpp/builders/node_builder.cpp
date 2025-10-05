@@ -365,12 +365,26 @@ namespace hgraph
             .def_ro("output_node_ids", &SwitchNodeBuilder<double>::output_node_ids)
             .def_ro("reload_on_ticked", &SwitchNodeBuilder<double>::reload_on_ticked);
 
-        nb::class_<SwitchNodeBuilder<std::string>, BaseSwitchNodeBuilder>(m, "SwitchNodeBuilder_str")
-            .def("__init__", [](SwitchNodeBuilder<std::string> *self, const nb::args &args) { create_switch_node_builder(self, args); })
-            .def_ro("nested_graph_builders", &SwitchNodeBuilder<std::string>::nested_graph_builders)
-            .def_ro("input_node_ids", &SwitchNodeBuilder<std::string>::input_node_ids)
-            .def_ro("output_node_ids", &SwitchNodeBuilder<std::string>::output_node_ids)
-            .def_ro("reload_on_ticked", &SwitchNodeBuilder<std::string>::reload_on_ticked);
+        nb::class_<SwitchNodeBuilder<engine_date_t>, BaseSwitchNodeBuilder>(m, "SwitchNodeBuilder_date")
+            .def("__init__", [](SwitchNodeBuilder<engine_date_t> *self, const nb::args &args) { create_switch_node_builder(self, args); })
+            .def_ro("nested_graph_builders", &SwitchNodeBuilder<engine_date_t>::nested_graph_builders)
+            .def_ro("input_node_ids", &SwitchNodeBuilder<engine_date_t>::input_node_ids)
+            .def_ro("output_node_ids", &SwitchNodeBuilder<engine_date_t>::output_node_ids)
+            .def_ro("reload_on_ticked", &SwitchNodeBuilder<engine_date_t>::reload_on_ticked);
+
+        nb::class_<SwitchNodeBuilder<engine_time_t>, BaseSwitchNodeBuilder>(m, "SwitchNodeBuilder_date_time")
+            .def("__init__", [](SwitchNodeBuilder<engine_time_t> *self, const nb::args &args) { create_switch_node_builder(self, args); })
+            .def_ro("nested_graph_builders", &SwitchNodeBuilder<engine_time_t>::nested_graph_builders)
+            .def_ro("input_node_ids", &SwitchNodeBuilder<engine_time_t>::input_node_ids)
+            .def_ro("output_node_ids", &SwitchNodeBuilder<engine_time_t>::output_node_ids)
+            .def_ro("reload_on_ticked", &SwitchNodeBuilder<engine_time_t>::reload_on_ticked);
+
+        nb::class_<SwitchNodeBuilder<engine_time_delta_t>, BaseSwitchNodeBuilder>(m, "SwitchNodeBuilder_time_delta")
+            .def("__init__", [](SwitchNodeBuilder<engine_time_delta_t> *self, const nb::args &args) { create_switch_node_builder(self, args); })
+            .def_ro("nested_graph_builders", &SwitchNodeBuilder<engine_time_delta_t>::nested_graph_builders)
+            .def_ro("input_node_ids", &SwitchNodeBuilder<engine_time_delta_t>::input_node_ids)
+            .def_ro("output_node_ids", &SwitchNodeBuilder<engine_time_delta_t>::output_node_ids)
+            .def_ro("reload_on_ticked", &SwitchNodeBuilder<engine_time_delta_t>::reload_on_ticked);
 
         nb::class_<SwitchNodeBuilder<nb::object>, BaseSwitchNodeBuilder>(m, "SwitchNodeBuilder_object")
             .def("__init__", [](SwitchNodeBuilder<nb::object> *self, const nb::args &args) { create_switch_node_builder(self, args); })
@@ -561,7 +575,7 @@ namespace hgraph
     template struct SwitchNodeBuilder<bool>;
     template struct SwitchNodeBuilder<int64_t>;
     template struct SwitchNodeBuilder<double>;
-    template struct SwitchNodeBuilder<std::string>;
+    template struct SwitchNodeBuilder<engine_time_delta_t>;
     template struct SwitchNodeBuilder<nb::object>;
 
     // BaseTsdNonAssociativeReduceNodeBuilder implementation

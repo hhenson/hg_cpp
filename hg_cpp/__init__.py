@@ -179,7 +179,9 @@ def _create_switch_node_builder_factory(
         bool: _hgraph.SwitchNodeBuilder_bool,
         int: _hgraph.SwitchNodeBuilder_int,
         float: _hgraph.SwitchNodeBuilder_float,
-        str: _hgraph.SwitchNodeBuilder_str,
+        date: _hgraph.SwitchNodeBuilder_date,
+        datetime: _hgraph.SwitchNodeBuilder_date_time,
+        timedelta: _hgraph.SwitchNodeBuilder_time_delta,
     }.get(key_tp, _hgraph.SwitchNodeBuilder_object)(
         signature,
         scalars,

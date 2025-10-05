@@ -1,5 +1,9 @@
-#include <hgraph/nodes/switch_node.h>
+#include "hgraph/util/string_utils.h"
+
+#include <fmt/format.h>
+#include <hgraph/builders/graph_builder.h>
 #include <hgraph/nodes/nested_evaluation_engine.h>
+#include <hgraph/nodes/switch_node.h>
 #include <hgraph/runtime/record_replay.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
@@ -7,16 +11,13 @@
 #include <hgraph/types/ts.h>
 #include <hgraph/types/tsb.h>
 #include <hgraph/util/lifecycle.h>
-#include <hgraph/builders/graph_builder.h>
-#include <fmt/format.h>
 
-namespace hgraph {
+namespace hgraph
+{
 
     // Helper to compare keys (special handling for nb::object)
     template <typename K> inline bool keys_equal(const K &a, const K &b) { return a == b; }
-    template <> inline bool keys_equal<nb::object>(const nb::object &a, const nb::object &b) {
-        return a.equal(b);
-    }
+    template <> inline bool           keys_equal<nb::object>(const nb::object &a, const nb::object &b) { return a.equal(b); }
 
     // Helper to get DEFAULT object from Python
     static nb::object get_python_default() {
@@ -25,7 +26,7 @@ namespace hgraph {
             try {
                 // Import DEFAULT from hgraph._types._scalar_types
                 auto scalar_types = nb::module_::import_("hgraph._types._scalar_types");
-                default_obj = scalar_types.attr("DEFAULT");
+                default_obj       = scalar_types.attr("DEFAULT");
             } catch (...) {
                 // If import fails, return an invalid object
                 default_obj = nb::object();
@@ -35,25 +36,22 @@ namespace hgraph {
     }
 
     template <typename K>
-    SwitchNode<K>::SwitchNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id,
-                               NodeSignature::ptr signature, nb::dict scalars,
-                               const std::unordered_map<K, graph_builder_ptr> &nested_graph_builders,
-                               const std::unordered_map<K, std::unordered_map<std::string, int>> &input_node_ids,
-                               const std::unordered_map<K, int> &output_node_ids, bool reload_on_ticked)
+    SwitchNode<K>::SwitchNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
+                              nb::dict scalars, const std::unordered_map<K, graph_builder_ptr> &nested_graph_builders,
+                              const std::unordered_map<K, std::unordered_map<std::string, int>> &input_node_ids,
+                              const std::unordered_map<K, int> &output_node_ids, bool reload_on_ticked)
         : NestedNode(node_ndx, std::move(owning_graph_id), std::move(signature), std::move(scalars)),
-          nested_graph_builders_(nested_graph_builders), input_node_ids_(input_node_ids),
-          output_node_ids_(output_node_ids), reload_on_ticked_(reload_on_ticked) {
-
-        // Extract DEFAULT graph builder if it exists
-        // DEFAULT is a special marker object from hgraph._types._scalar_types
-        // For nb::object template, we can directly look it up
+          nested_graph_builders_(nested_graph_builders), input_node_ids_(input_node_ids), output_node_ids_(output_node_ids),
+          reload_on_ticked_(reload_on_ticked) {
+        // TODO: I don't think this is actuall correct logic, need to work through the default behavior later.
+        //  Extract DEFAULT graph builder if it exists
+        //  DEFAULT is a special marker object from hgraph._types._scalar_types
+        //  For nb::object template, we can directly look it up
         if constexpr (std::is_same_v<K, nb::object>) {
             auto default_marker = get_python_default();
             if (default_marker.is_valid()) {
                 auto it = nested_graph_builders_.find(default_marker);
-                if (it != nested_graph_builders_.end()) {
-                    default_graph_builder_ = it->second;
-                }
+                if (it != nested_graph_builders_.end()) { default_graph_builder_ = it->second; }
             }
         } else {
             // For typed keys (bool, int, string, etc.), DEFAULT is not applicable
@@ -63,14 +61,14 @@ namespace hgraph {
         }
     }
 
-    template <typename K>
-    void SwitchNode<K>::initialise() {
+    template <typename K> void SwitchNode<K>::initialise() {
         // Switch node doesn't create graphs upfront
         // Graphs are created dynamically in do_eval when key changes
     }
 
-    template <typename K>
-    void SwitchNode<K>::do_start() {
+    template <typename K> void SwitchNode<K>::do_start() {
+        key_ts = dynamic_cast<TimeSeriesValueInput<K> *>(input()["key"].get());
+        if (!key_ts) { throw std::runtime_error("SwitchNode requires a TimeSeriesValueInput<K> for key input, but none found"); }
         // Check if graph has recordable ID trait
         if (has_recordable_id_trait(graph().traits())) {
             // NodeSignature::record_replay_id is std::optional<std::string>
@@ -83,15 +81,11 @@ namespace hgraph {
         }
     }
 
-    template <typename K>
-    void SwitchNode<K>::do_stop() {
-        if (active_graph_) {
-            stop_component(*active_graph_);
-        }
+    template <typename K> void SwitchNode<K>::do_stop() {
+        if (active_graph_) { stop_component(*active_graph_); }
     }
 
-    template <typename K>
-    void SwitchNode<K>::dispose() {
+    template <typename K> void SwitchNode<K>::dispose() {
         if (active_graph_) {
             unwire_graph(active_graph_);
             dispose_component(*active_graph_);
@@ -99,84 +93,45 @@ namespace hgraph {
         }
     }
 
-    template <typename K>
-    void SwitchNode<K>::eval() {
+    template <typename K> void SwitchNode<K>::eval() {
         mark_evaluated();
 
-        // Get the key input
-        auto key_ts = input()["key"];
-        if (!key_ts || !key_ts->valid()) {
-            return; // No key input or invalid
+        if (!key_ts->valid()) {
+            return;  // No key input or invalid
         }
 
         // Check if key has been modified
-        bool key_modified = key_ts->modified();
-
-        if (key_modified) {
+        if (key_ts->modified()) {
             // Extract the key value from the input time series
-            K new_key;
-            if (auto* typed_in = dynamic_cast<TimeSeriesValueInput<K>*>(key_ts.get())) {
-                new_key = typed_in->value();
-            } else {
-                // Fallback: try to extract via py_value if not a simple value type
-                try {
-                    new_key = nb::cast<K>(key_ts->py_value());
-                } catch (...) {
-                    throw std::runtime_error("Failed to extract key value from time series input");
-                }
-            }
-
-            bool should_reload = reload_on_ticked_ ||
-                                 !active_key_set_ ||
-                                 !keys_equal(new_key, active_key_);
-
-            if (should_reload) {
-                // Tear down old graph
-                if (active_graph_) {
+            if (reload_on_ticked_ || !active_key_.has_value() || !keys_equal(key_ts->value(), active_key_.value())) {
+                if (active_key_.has_value()) {
                     stop_component(*active_graph_);
                     unwire_graph(active_graph_);
                     dispose_component(*active_graph_);
                     active_graph_ = nullptr;
                 }
-
-                active_key_ = new_key;
-                active_key_set_ = true;
+                active_key_ = key_ts->value();
 
                 // Look up graph builder for this key
                 graph_builder_ptr builder = nullptr;
-                auto it = nested_graph_builders_.find(active_key_);
+                auto              it      = nested_graph_builders_.find(active_key_.value());
                 if (it != nested_graph_builders_.end()) {
                     builder = it->second;
                 } else {
                     builder = default_graph_builder_;
                 }
 
-                if (!builder) {
-                    throw std::runtime_error("No graph defined for key and no default available");
-                }
+                if (!builder) { throw std::runtime_error("No graph defined for key and no default available"); }
 
                 // Create new graph
-                count_++;
+                ++count_;
                 std::vector<int64_t> new_node_id = node_id();
                 new_node_id.push_back(-count_);
-
-                // Convert key to string for label
-                std::string key_str;
-                if constexpr (std::is_same_v<K, std::string>) {
-                    key_str = active_key_;
-                } else if constexpr (std::is_same_v<K, nb::object>) {
-                    key_str = nb::cast<std::string>(nb::str(active_key_));
-                } else {
-                    key_str = std::to_string(active_key_);
-                }
-
-                active_graph_ = builder->make_instance(new_node_id, this, key_str);
+                active_graph_ = builder->make_instance(new_node_id, this, to_string(active_key_.value()));
 
                 // Set up evaluation engine
                 active_graph_->set_evaluation_engine(new NestedEvaluationEngine(
-                    &graph().evaluation_engine(),
-                    new NestedEngineEvaluationClock(&graph().evaluation_engine_clock(), this)
-                ));
+                    &graph().evaluation_engine(), new NestedEngineEvaluationClock(&graph().evaluation_engine_clock(), this)));
 
                 // Initialize and wire the new graph
                 initialise_component(*active_graph_);
@@ -187,18 +142,19 @@ namespace hgraph {
 
         // Evaluate the active graph if it exists
         if (active_graph_) {
-            reinterpret_cast<NestedEngineEvaluationClock &>(active_graph_->evaluation_engine_clock())
+            static_cast<NestedEngineEvaluationClock &>(
+                active_graph_->evaluation_engine_clock())  // NOLINT(*-pro-type-static-cast-downcast)
                 .reset_next_scheduled_evaluation_time();
             active_graph_->evaluate_graph();
-            reinterpret_cast<NestedEngineEvaluationClock &>(active_graph_->evaluation_engine_clock())
+            static_cast<NestedEngineEvaluationClock &>(
+                active_graph_->evaluation_engine_clock())  // NOLINT(*-pro-type-static-cast-downcast)
                 .reset_next_scheduled_evaluation_time();
         }
     }
 
-    template <typename K>
-    void SwitchNode<K>::wire_graph(graph_ptr &graph) {
+    template <typename K> void SwitchNode<K>::wire_graph(graph_ptr &graph) {
         // Determine which graph key to use for lookups
-        K graph_key = active_key_;
+        K graph_key = active_key_.value();
 
         // If active_key not found, try DEFAULT for nb::object
         if (input_node_ids_.find(graph_key) == input_node_ids_.end()) {
@@ -218,7 +174,7 @@ namespace hgraph {
             } else if constexpr (std::is_same_v<K, nb::object>) {
                 key_str = nb::cast<std::string>(nb::str(graph_key));
             } else {
-                key_str = std::to_string(graph_key);
+                key_str = to_string(graph_key);
             }
             std::string full_id = fmt::format("{}[{}]", recordable_id_, key_str);
             set_parent_recordable_id(*graph, full_id);
@@ -237,10 +193,10 @@ namespace hgraph {
                     auto &key_node = dynamic_cast<PythonNode &>(*node);
                     nb::setattr(key_node.eval_fn(), "key", nb::cast(graph_key));
                 } else {
-                    // Regular input - wire using copy_with and re_parent
-                    auto ts = input()[arg];
-                    node->set_input(node->input().copy_with(node, {ts}));
-                    ts->re_parent(TimeSeriesType::ptr(&node->input()));
+                    // Regular input - clone binding of the reference input into the inner 'ts' input
+                    auto ts          = dynamic_cast<TimeSeriesReferenceInput *>(input()["ts"].get());
+                    auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
+                    if (ts != nullptr && inner_input != nullptr) { inner_input->clone_binding(*ts); }
                 }
             }
         }
@@ -248,17 +204,16 @@ namespace hgraph {
         // Wire output
         auto output_id_it = output_node_ids_.find(graph_key);
         if (output_id_it != output_node_ids_.end()) {
-            auto node = graph->nodes()[output_id_it->second];
+            auto node   = graph->nodes()[output_id_it->second];
             old_output_ = node->output_ptr();
             node->set_output(output_ptr());
         }
     }
 
-    template <typename K>
-    void SwitchNode<K>::unwire_graph(graph_ptr &graph) {
+    template <typename K> void SwitchNode<K>::unwire_graph(graph_ptr &graph) {
         if (old_output_) {
             // Determine graph key
-            K graph_key = active_key_;
+            K graph_key = active_key_.value();
 
             // If active_key not found, try DEFAULT for nb::object
             if (output_node_ids_.find(graph_key) == output_node_ids_.end()) {
@@ -279,11 +234,8 @@ namespace hgraph {
         }
     }
 
-    template <typename K>
-    std::unordered_map<int, graph_ptr> SwitchNode<K>::nested_graphs() const {
-        if (active_graph_) {
-            return {{static_cast<int>(count_), active_graph_}};
-        }
+    template <typename K> std::unordered_map<int, graph_ptr> SwitchNode<K>::nested_graphs() const {
+        if (active_graph_) { return {{static_cast<int>(count_), active_graph_}}; }
         return {};
     }
 
@@ -291,7 +243,9 @@ namespace hgraph {
     template struct SwitchNode<bool>;
     template struct SwitchNode<int64_t>;
     template struct SwitchNode<double>;
-    template struct SwitchNode<std::string>;
+    template struct SwitchNode<engine_date_t>;
+    template struct SwitchNode<engine_time_t>;
+    template struct SwitchNode<engine_time_delta_t>;
     template struct SwitchNode<nb::object>;
 
     void register_switch_node_with_nanobind(nb::module_ &m) {
@@ -304,8 +258,14 @@ namespace hgraph {
         nb::class_<SwitchNode<double>, NestedNode>(m, "SwitchNode_float")
             .def_prop_ro("nested_graphs", &SwitchNode<double>::nested_graphs);
 
-        nb::class_<SwitchNode<std::string>, NestedNode>(m, "SwitchNode_str")
-            .def_prop_ro("nested_graphs", &SwitchNode<std::string>::nested_graphs);
+        nb::class_<SwitchNode<engine_date_t>, NestedNode>(m, "SwitchNode_date")
+            .def_prop_ro("nested_graphs", &SwitchNode<engine_date_t>::nested_graphs);
+
+        nb::class_<SwitchNode<engine_time_t>, NestedNode>(m, "SwitchNode_date_time")
+            .def_prop_ro("nested_graphs", &SwitchNode<engine_time_t>::nested_graphs);
+
+        nb::class_<SwitchNode<engine_time_delta_t>, NestedNode>(m, "SwitchNode_time_delta")
+            .def_prop_ro("nested_graphs", &SwitchNode<engine_time_delta_t>::nested_graphs);
 
         nb::class_<SwitchNode<nb::object>, NestedNode>(m, "SwitchNode_object")
             .def_prop_ro("nested_graphs", &SwitchNode<nb::object>::nested_graphs);
