@@ -19,13 +19,15 @@ namespace hgraph
 
         TimeSeriesOutput *output = node->output_ptr();
         for (auto index : path) {
-            try {
-                if (index == KEY_SET) {
-                    output = (&dynamic_cast<TimeSeriesDictOutput *>(output)->key_set());
-                } else {
-                    output = (*dynamic_cast<IndexedTimeSeriesOutput *>(output))[index].get();
-                }
-            } catch (const std::exception &) { throw std::runtime_error("Invalid path index"); }
+            if (index == KEY_SET) {
+                auto tsd_output = dynamic_cast<TimeSeriesDictOutput *>(output);
+                if (!tsd_output) { throw std::runtime_error("Output is not a TSD for KEY_SET access"); }
+                output = &tsd_output->key_set();
+            } else {
+                auto indexed_output = dynamic_cast<IndexedTimeSeriesOutput *>(output);
+                if (!indexed_output) { throw std::runtime_error("Output is not an indexed time series"); }
+                output = (*indexed_output)[index].get();
+            }
         }
         return output;
     }
@@ -35,10 +37,10 @@ namespace hgraph
 
         auto input = dynamic_cast_ref<TimeSeriesInput>(node->input_ptr());
         for (auto index : path) {
-            try {
-                auto indexed_ts{dynamic_cast<IndexedTimeSeriesInput *>(input.get())};
-                input = (*indexed_ts)[index];
-            } catch (const std::exception &) { throw std::runtime_error("Invalid path index"); }
+            auto indexed_ts{dynamic_cast<IndexedTimeSeriesInput *>(input.get())};
+            if (!indexed_ts) { throw std::runtime_error("Input is not an indexed time series"); }
+            if (index >= indexed_ts->size()) { throw std::runtime_error("Invalid path index"); }
+            input = (*indexed_ts)[index];
         }
         return input;
     }
