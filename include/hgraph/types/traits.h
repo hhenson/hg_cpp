@@ -19,6 +19,8 @@ namespace hgraph
 
         void set_traits(nb::kwargs traits);
 
+        void set_trait(const std::string &trait_name, nb::object value) const;
+
         [[nodiscard]] nb::object get_trait(const std::string &trait_name) const;
 
         [[nodiscard]] nb::object get_trait_or(const std::string &trait_name, nb::object def_value) const;

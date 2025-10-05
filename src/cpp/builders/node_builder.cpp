@@ -10,6 +10,12 @@
 
 #include <hgraph/nodes/tsd_map_node.h>
 #include <hgraph/nodes/reduce_node.h>
+#include <hgraph/nodes/nest_graph_node.h>
+#include <hgraph/nodes/component_node.h>
+#include <hgraph/nodes/switch_node.h>
+#include <hgraph/nodes/try_except_node.h>
+#include <hgraph/nodes/non_associative_reduce_node.h>
+#include <hgraph/nodes/mesh_node.h>
 
 #include <utility>
 
@@ -53,6 +59,113 @@ namespace hgraph
         return new (self) T(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
             std::move(error_builder_), std::move(recordable_state_builder_), std::move(nested_graph_builder),
             std::move(input_node_ids), std::move(output_node_id), std::move(multiplexed_args), std::move(key_arg));
+    }
+
+    template <typename T> auto create_nested_graph_node_builder(T *self, const nb::args &args) {
+        // Expected Python signature (positional):
+        // (signature, scalars, input_builder, output_builder, error_builder, recordable_state_builder,
+        //  nested_graph, input_node_ids, output_node_id)
+        if (args.size() != 9) {
+            throw nb::type_error("NestedGraphNodeBuilder expects 9 positional arguments: "
+                                 "(signature, scalars, input_builder, output_builder, error_builder, "
+                                 "recordable_state_builder, nested_graph, input_node_ids, output_node_id)");
+        }
+
+        auto signature_               = nb::cast<node_signature_ptr>(args[0]);
+        auto scalars_                 = nb::cast<nb::dict>(args[1]);
+        std::optional<input_builder_ptr> input_builder_ =
+            args[2].is_none() ? std::nullopt : std::optional<input_builder_ptr>(nb::cast<input_builder_ptr>(args[2]));
+        std::optional<output_builder_ptr> output_builder_ =
+            args[3].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[3]));
+        std::optional<output_builder_ptr> error_builder_ =
+            args[4].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[4]));
+        std::optional<output_builder_ptr> recordable_state_builder_ =
+            args[5].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[5]));
+        auto nested_graph_builder = nb::cast<graph_builder_ptr>(args[6]);
+        auto input_node_ids = nb::cast<std::unordered_map<std::string, int>>(args[7]);
+        auto output_node_id = nb::cast<int>(args[8]);
+
+        return new (self) T(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
+            std::move(error_builder_), std::move(recordable_state_builder_), std::move(nested_graph_builder),
+            std::move(input_node_ids), std::move(output_node_id));
+    }
+
+    template <typename T> auto create_switch_node_builder(T *self, const nb::args &args) {
+        // Expected Python signature (positional):
+        // (signature, scalars, input_builder, output_builder, error_builder, recordable_state_builder,
+        //  nested_graph_builders, input_node_ids, output_node_ids, reload_on_ticked)
+        if (args.size() != 10) {
+            throw nb::type_error("SwitchNodeBuilder expects 10 positional arguments");
+        }
+
+        using K = typename T::key_type;
+
+        auto signature_               = nb::cast<node_signature_ptr>(args[0]);
+        auto scalars_                 = nb::cast<nb::dict>(args[1]);
+        std::optional<input_builder_ptr> input_builder_ =
+            args[2].is_none() ? std::nullopt : std::optional<input_builder_ptr>(nb::cast<input_builder_ptr>(args[2]));
+        std::optional<output_builder_ptr> output_builder_ =
+            args[3].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[3]));
+        std::optional<output_builder_ptr> error_builder_ =
+            args[4].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[4]));
+        std::optional<output_builder_ptr> recordable_state_builder_ =
+            args[5].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[5]));
+
+        // Convert Python dicts to typed C++ maps
+        auto py_nested_graph_builders = nb::cast<nb::dict>(args[6]);
+        std::unordered_map<K, graph_builder_ptr> nested_graph_builders;
+        for (auto item : py_nested_graph_builders) {
+            nested_graph_builders[nb::cast<K>(item.first)] = nb::cast<graph_builder_ptr>(item.second);
+        }
+
+        auto py_input_node_ids = nb::cast<nb::dict>(args[7]);
+        std::unordered_map<K, std::unordered_map<std::string, int>> input_node_ids;
+        for (auto item : py_input_node_ids) {
+            input_node_ids[nb::cast<K>(item.first)] = nb::cast<std::unordered_map<std::string, int>>(item.second);
+        }
+
+        auto py_output_node_ids = nb::cast<nb::dict>(args[8]);
+        std::unordered_map<K, int> output_node_ids;
+        for (auto item : py_output_node_ids) {
+            output_node_ids[nb::cast<K>(item.first)] = nb::cast<int>(item.second);
+        }
+
+        auto reload_on_ticked = nb::cast<bool>(args[9]);
+
+        return new (self) T(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
+            std::move(error_builder_), std::move(recordable_state_builder_), std::move(nested_graph_builders),
+            std::move(input_node_ids), std::move(output_node_ids), reload_on_ticked);
+    }
+
+    template <typename T> auto create_mesh_node_builder(T *self, const nb::args &args) {
+        // Expected Python signature (positional):
+        // (signature, scalars, input_builder, output_builder, error_builder, recordable_state_builder,
+        //  nested_graph, input_node_ids, output_node_id, multiplexed_args, key_arg, context_path)
+        if (args.size() != 12) {
+            throw nb::type_error("MeshNodeBuilder expects 12 positional arguments");
+        }
+
+        auto signature_               = nb::cast<node_signature_ptr>(args[0]);
+        auto scalars_                 = nb::cast<nb::dict>(args[1]);
+        std::optional<input_builder_ptr> input_builder_ =
+            args[2].is_none() ? std::nullopt : std::optional<input_builder_ptr>(nb::cast<input_builder_ptr>(args[2]));
+        std::optional<output_builder_ptr> output_builder_ =
+            args[3].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[3]));
+        std::optional<output_builder_ptr> error_builder_ =
+            args[4].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[4]));
+        std::optional<output_builder_ptr> recordable_state_builder_ =
+            args[5].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[5]));
+        auto nested_graph_builder = nb::cast<graph_builder_ptr>(args[6]);
+        auto input_node_ids = nb::cast<std::unordered_map<std::string, int64_t>>(args[7]);
+        auto output_node_id = nb::cast<int64_t>(args[8]);
+        auto multiplexed_args = nb::cast<std::unordered_set<std::string>>(args[9]);
+        auto key_arg = nb::cast<std::string>(args[10]);
+        auto context_path = nb::cast<std::string>(args[11]);
+
+        return new (self) T(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
+            std::move(error_builder_), std::move(recordable_state_builder_), std::move(nested_graph_builder),
+            std::move(input_node_ids), std::move(output_node_id), std::move(multiplexed_args), std::move(key_arg),
+            std::move(context_path));
     }
 
     template <typename T> auto create_reduce_node_builder(T *self, const nb::args &args) {
@@ -212,6 +325,83 @@ namespace hgraph
 
         nb::class_<ReduceNodeBuilder<nb::object>, BaseReduceNodeBuilder>(m, "ReduceNodeBuilder_object")
             .def("__init__", [](ReduceNodeBuilder<nb::object> *self, const nb::args &args) { create_reduce_node_builder(self, args); });
+
+        // BaseNestedGraphNodeBuilder and its subclasses
+        nb::class_<BaseNestedGraphNodeBuilder, BaseNodeBuilder>(m, "BaseNestedGraphNodeBuilder")
+            .def_ro("nested_graph_builder", &BaseNestedGraphNodeBuilder::nested_graph_builder)
+            .def_ro("input_node_ids", &BaseNestedGraphNodeBuilder::input_node_ids)
+            .def_ro("output_node_id", &BaseNestedGraphNodeBuilder::output_node_id);
+
+        nb::class_<NestedGraphNodeBuilder, BaseNestedGraphNodeBuilder>(m, "NestedGraphNodeBuilder")
+            .def("__init__", [](NestedGraphNodeBuilder *self, const nb::args &args) { create_nested_graph_node_builder(self, args); });
+
+        nb::class_<ComponentNodeBuilder, BaseNestedGraphNodeBuilder>(m, "ComponentNodeBuilder")
+            .def("__init__", [](ComponentNodeBuilder *self, const nb::args &args) { create_nested_graph_node_builder(self, args); });
+
+        nb::class_<TryExceptNodeBuilder, BaseNestedGraphNodeBuilder>(m, "TryExceptNodeBuilder")
+            .def("__init__", [](TryExceptNodeBuilder *self, const nb::args &args) { create_nested_graph_node_builder(self, args); });
+
+        // BaseSwitchNodeBuilder
+        nb::class_<BaseSwitchNodeBuilder, BaseNodeBuilder>(m, "BaseSwitchNodeBuilder");
+
+        nb::class_<SwitchNodeBuilder<bool>, BaseSwitchNodeBuilder>(m, "SwitchNodeBuilder_bool")
+            .def("__init__", [](SwitchNodeBuilder<bool> *self, const nb::args &args) { create_switch_node_builder(self, args); })
+            .def_ro("nested_graph_builders", &SwitchNodeBuilder<bool>::nested_graph_builders)
+            .def_ro("input_node_ids", &SwitchNodeBuilder<bool>::input_node_ids)
+            .def_ro("output_node_ids", &SwitchNodeBuilder<bool>::output_node_ids)
+            .def_ro("reload_on_ticked", &SwitchNodeBuilder<bool>::reload_on_ticked);
+
+        nb::class_<SwitchNodeBuilder<int64_t>, BaseSwitchNodeBuilder>(m, "SwitchNodeBuilder_int")
+            .def("__init__", [](SwitchNodeBuilder<int64_t> *self, const nb::args &args) { create_switch_node_builder(self, args); })
+            .def_ro("nested_graph_builders", &SwitchNodeBuilder<int64_t>::nested_graph_builders)
+            .def_ro("input_node_ids", &SwitchNodeBuilder<int64_t>::input_node_ids)
+            .def_ro("output_node_ids", &SwitchNodeBuilder<int64_t>::output_node_ids)
+            .def_ro("reload_on_ticked", &SwitchNodeBuilder<int64_t>::reload_on_ticked);
+
+        nb::class_<SwitchNodeBuilder<double>, BaseSwitchNodeBuilder>(m, "SwitchNodeBuilder_float")
+            .def("__init__", [](SwitchNodeBuilder<double> *self, const nb::args &args) { create_switch_node_builder(self, args); })
+            .def_ro("nested_graph_builders", &SwitchNodeBuilder<double>::nested_graph_builders)
+            .def_ro("input_node_ids", &SwitchNodeBuilder<double>::input_node_ids)
+            .def_ro("output_node_ids", &SwitchNodeBuilder<double>::output_node_ids)
+            .def_ro("reload_on_ticked", &SwitchNodeBuilder<double>::reload_on_ticked);
+
+        nb::class_<SwitchNodeBuilder<std::string>, BaseSwitchNodeBuilder>(m, "SwitchNodeBuilder_str")
+            .def("__init__", [](SwitchNodeBuilder<std::string> *self, const nb::args &args) { create_switch_node_builder(self, args); })
+            .def_ro("nested_graph_builders", &SwitchNodeBuilder<std::string>::nested_graph_builders)
+            .def_ro("input_node_ids", &SwitchNodeBuilder<std::string>::input_node_ids)
+            .def_ro("output_node_ids", &SwitchNodeBuilder<std::string>::output_node_ids)
+            .def_ro("reload_on_ticked", &SwitchNodeBuilder<std::string>::reload_on_ticked);
+
+        nb::class_<SwitchNodeBuilder<nb::object>, BaseSwitchNodeBuilder>(m, "SwitchNodeBuilder_object")
+            .def("__init__", [](SwitchNodeBuilder<nb::object> *self, const nb::args &args) { create_switch_node_builder(self, args); })
+            .def_ro("nested_graph_builders", &SwitchNodeBuilder<nb::object>::nested_graph_builders)
+            .def_ro("input_node_ids", &SwitchNodeBuilder<nb::object>::input_node_ids)
+            .def_ro("output_node_ids", &SwitchNodeBuilder<nb::object>::output_node_ids)
+            .def_ro("reload_on_ticked", &SwitchNodeBuilder<nb::object>::reload_on_ticked);
+
+        // BaseTsdNonAssociativeReduceNodeBuilder
+        nb::class_<BaseTsdNonAssociativeReduceNodeBuilder, BaseNodeBuilder>(m, "BaseTsdNonAssociativeReduceNodeBuilder")
+            .def_ro("nested_graph_builder", &BaseTsdNonAssociativeReduceNodeBuilder::nested_graph_builder)
+            .def_ro("input_node_ids", &BaseTsdNonAssociativeReduceNodeBuilder::input_node_ids)
+            .def_ro("output_node_id", &BaseTsdNonAssociativeReduceNodeBuilder::output_node_id);
+
+        nb::class_<TsdNonAssociativeReduceNodeBuilder, BaseTsdNonAssociativeReduceNodeBuilder>(m, "TsdNonAssociativeReduceNodeBuilder")
+            .def("__init__", [](TsdNonAssociativeReduceNodeBuilder *self, const nb::args &args) { create_reduce_node_builder(self, args); });
+
+        // BaseMeshNodeBuilder
+        nb::class_<BaseMeshNodeBuilder, BaseNodeBuilder>(m, "BaseMeshNodeBuilder")
+            .def_ro("nested_graph_builder", &BaseMeshNodeBuilder::nested_graph_builder)
+            .def_ro("input_node_ids", &BaseMeshNodeBuilder::input_node_ids)
+            .def_ro("output_node_id", &BaseMeshNodeBuilder::output_node_id)
+            .def_ro("multiplexed_args", &BaseMeshNodeBuilder::multiplexed_args)
+            .def_ro("key_arg", &BaseMeshNodeBuilder::key_arg)
+            .def_ro("context_path", &BaseMeshNodeBuilder::context_path);
+
+        nb::class_<MeshNodeBuilder<int64_t>, BaseMeshNodeBuilder>(m, "MeshNodeBuilder_int")
+            .def("__init__", [](MeshNodeBuilder<int64_t> *self, const nb::args &args) { create_mesh_node_builder(self, args); });
+
+        nb::class_<MeshNodeBuilder<nb::object>, BaseMeshNodeBuilder>(m, "MeshNodeBuilder_object")
+            .def("__init__", [](MeshNodeBuilder<nb::object> *self, const nb::args &args) { create_mesh_node_builder(self, args); });
     }
 
     void BaseNodeBuilder::_build_inputs_and_outputs(node_ptr node) const {
@@ -313,5 +503,107 @@ namespace hgraph
     template class ReduceNodeBuilder<engine_time_t>;
     template class ReduceNodeBuilder<engine_time_delta_t>;
     template class ReduceNodeBuilder<nb::object>;
+
+    // BaseNestedGraphNodeBuilder implementation
+    BaseNestedGraphNodeBuilder::BaseNestedGraphNodeBuilder(
+        node_signature_ptr signature_, nb::dict scalars_, std::optional<input_builder_ptr> input_builder_,
+        std::optional<output_builder_ptr> output_builder_, std::optional<output_builder_ptr> error_builder_,
+        std::optional<output_builder_ptr> recordable_state_builder_, graph_builder_ptr nested_graph_builder,
+        const std::unordered_map<std::string, int> &input_node_ids, int output_node_id)
+        : BaseNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
+                          std::move(error_builder_), std::move(recordable_state_builder_)),
+          nested_graph_builder(std::move(nested_graph_builder)), input_node_ids(input_node_ids), output_node_id(output_node_id) {}
+
+    node_ptr NestedGraphNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
+        nb::ref<Node> node{
+            new NestedGraphNode(node_ndx, owning_graph_id, signature, scalars, nested_graph_builder, input_node_ids, output_node_id)};
+        _build_inputs_and_outputs(node);
+        return node;
+    }
+
+    node_ptr ComponentNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
+        nb::ref<Node> node{
+            new ComponentNode(node_ndx, owning_graph_id, signature, scalars, nested_graph_builder, input_node_ids, output_node_id)};
+        _build_inputs_and_outputs(node);
+        return node;
+    }
+
+    node_ptr TryExceptNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
+        nb::ref<Node> node{
+            new TryExceptNode(node_ndx, owning_graph_id, signature, scalars, nested_graph_builder, input_node_ids, output_node_id)};
+        _build_inputs_and_outputs(node);
+        return node;
+    }
+
+    // SwitchNodeBuilder implementation
+    template<typename K>
+    SwitchNodeBuilder<K>::SwitchNodeBuilder(
+        node_signature_ptr signature_, nb::dict scalars_, std::optional<input_builder_ptr> input_builder_,
+        std::optional<output_builder_ptr> output_builder_, std::optional<output_builder_ptr> error_builder_,
+        std::optional<output_builder_ptr> recordable_state_builder_,
+        const std::unordered_map<K, graph_builder_ptr> &nested_graph_builders,
+        const std::unordered_map<K, std::unordered_map<std::string, int>> &input_node_ids,
+        const std::unordered_map<K, int> &output_node_ids, bool reload_on_ticked)
+        : BaseSwitchNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
+                          std::move(error_builder_), std::move(recordable_state_builder_)),
+          nested_graph_builders(nested_graph_builders), input_node_ids(input_node_ids), output_node_ids(output_node_ids),
+          reload_on_ticked(reload_on_ticked) {}
+
+    template<typename K>
+    node_ptr SwitchNodeBuilder<K>::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
+        nb::ref<Node> node{new SwitchNode<K>(node_ndx, owning_graph_id, signature, scalars, nested_graph_builders, input_node_ids,
+                                          output_node_ids, reload_on_ticked)};
+        _build_inputs_and_outputs(node);
+        return node;
+    }
+
+    // Explicit template instantiations for SwitchNodeBuilder
+    template class SwitchNodeBuilder<bool>;
+    template class SwitchNodeBuilder<int64_t>;
+    template class SwitchNodeBuilder<double>;
+    template class SwitchNodeBuilder<std::string>;
+    template class SwitchNodeBuilder<nb::object>;
+
+    // BaseTsdNonAssociativeReduceNodeBuilder implementation
+    BaseTsdNonAssociativeReduceNodeBuilder::BaseTsdNonAssociativeReduceNodeBuilder(
+        node_signature_ptr signature_, nb::dict scalars_, std::optional<input_builder_ptr> input_builder_,
+        std::optional<output_builder_ptr> output_builder_, std::optional<output_builder_ptr> error_builder_,
+        std::optional<output_builder_ptr> recordable_state_builder_, graph_builder_ptr nested_graph_builder,
+        const std::tuple<int64_t, int64_t> &input_node_ids, int64_t output_node_id)
+        : BaseNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
+                          std::move(error_builder_), std::move(recordable_state_builder_)),
+          nested_graph_builder(std::move(nested_graph_builder)), input_node_ids(input_node_ids), output_node_id(output_node_id) {}
+
+    node_ptr TsdNonAssociativeReduceNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id,
+                                                               int64_t                     node_ndx) const {
+        nb::ref<Node> node{new TsdNonAssociativeReduceNode(node_ndx, owning_graph_id, signature, scalars, nested_graph_builder,
+                                                           input_node_ids, output_node_id)};
+        _build_inputs_and_outputs(node);
+        return node;
+    }
+
+    // BaseMeshNodeBuilder implementation
+    BaseMeshNodeBuilder::BaseMeshNodeBuilder(
+        node_signature_ptr signature_, nb::dict scalars_, std::optional<input_builder_ptr> input_builder_,
+        std::optional<output_builder_ptr> output_builder_, std::optional<output_builder_ptr> error_builder_,
+        std::optional<output_builder_ptr> recordable_state_builder_, graph_builder_ptr nested_graph_builder,
+        const std::unordered_map<std::string, int64_t> &input_node_ids, int64_t output_node_id,
+        const std::unordered_set<std::string> &multiplexed_args, const std::string &key_arg, const std::string &context_path)
+        : BaseNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
+                          std::move(error_builder_), std::move(recordable_state_builder_)),
+          nested_graph_builder(std::move(nested_graph_builder)), input_node_ids(input_node_ids), output_node_id(output_node_id),
+          multiplexed_args(multiplexed_args), key_arg(key_arg), context_path(context_path) {}
+
+    template <typename T>
+    node_ptr MeshNodeBuilder<T>::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
+        nb::ref<Node> node{new MeshNode<T>(node_ndx, owning_graph_id, signature, scalars, nested_graph_builder, input_node_ids,
+                                           output_node_id, multiplexed_args, key_arg, context_path)};
+        _build_inputs_and_outputs(node);
+        return node;
+    }
+
+    // Explicit template instantiations for MeshNodeBuilder
+    template class MeshNodeBuilder<int64_t>;
+    template class MeshNodeBuilder<nb::object>;
 
 }  // namespace hgraph

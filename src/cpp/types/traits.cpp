@@ -7,6 +7,10 @@ namespace hgraph
 
     void Traits::set_traits(nb::kwargs traits) { _traits.update(traits); }
 
+    void Traits::set_trait(const std::string &trait_name, nb::object value) const {
+        const_cast<nb::dict&>(_traits)[trait_name.c_str()] = value;
+    }
+
     nb::object Traits::get_trait(const std::string &trait_name) const { return _traits[trait_name.c_str()]; }
 
     nb::object Traits::get_trait_or(const std::string &trait_name, nb::object def_value) const {

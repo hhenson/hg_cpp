@@ -7,11 +7,16 @@ set(HGRAPH_SOURCES
         builders/node_builder.cpp
         builders/output_builder.cpp
 
-        nodes/tsd_map_node.cpp
+        nodes/component_node.cpp
+        nodes/mesh_node.cpp
         nodes/nested_evaluation_engine.cpp
         nodes/nested_graph_node.cpp
         nodes/nested_node.cpp
+        nodes/non_associative_reduce_node.cpp
         nodes/reduce_node.cpp
+        nodes/switch_node.cpp
+        nodes/try_except_node.cpp
+        nodes/tsd_map_node.cpp
 
         python/_hgraph_builder.cpp
         python/_hgraph_module.cpp
@@ -23,6 +28,7 @@ set(HGRAPH_SOURCES
         runtime/evaluation_context.cpp
         runtime/evaluation_engine.cpp
         runtime/graph_executor.cpp
+        runtime/global_state.cpp
         runtime/record_replay.cpp
 
         types/constants.cpp

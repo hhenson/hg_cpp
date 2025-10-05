@@ -115,15 +115,21 @@ set(HGRAPH_INCLUDES
         include/hgraph/builders/node_builder.h
         include/hgraph/builders/output_builder.h
 
-        include/hgraph/nodes/tsd_map_node.h
+        include/hgraph/nodes/component_node.h
+        include/hgraph/nodes/mesh_node.h
         include/hgraph/nodes/nest_graph_node.h
         include/hgraph/nodes/nested_evaluation_engine.h
         include/hgraph/nodes/nested_node.h
+        include/hgraph/nodes/non_associative_reduce_node.h
         include/hgraph/nodes/reduce_node.h
+        include/hgraph/nodes/switch_node.h
+        include/hgraph/nodes/try_except_node.h
+        include/hgraph/nodes/tsd_map_node.h
 
         include/hgraph/runtime/evaluation_context.h
         include/hgraph/runtime/evaluation_engine.h
         include/hgraph/runtime/graph_executor.h
+        include/hgraph/runtime/global_state.h
         include/hgraph/runtime/record_replay.h
 
         include/hgraph/types/constants.h
