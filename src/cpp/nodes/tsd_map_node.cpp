@@ -48,7 +48,7 @@ namespace hgraph
         auto trait{graph().traits().get_trait_or(RECORDABLE_ID_TRAIT, nb::none())};
         if (!trait.is_none()) {
             auto recordable_id{signature().record_replay_id};
-            recordable_id_ = get_fq_recordable_id(graph().traits(), recordable_id.has_value() ? "map_" : recordable_id.value());
+            recordable_id_ = get_fq_recordable_id(graph().traits(), recordable_id.has_value() ? recordable_id.value() : "map_");
         }
     }
 
@@ -211,7 +211,8 @@ namespace hgraph
                     auto &ts_value = tsd._get_or_create(key);
 
                     node->reset_input(node->input().copy_with(node, {&ts_value}));
-                    ts_value.re_parent(TimeSeriesType::ptr(&node->input()));
+                    auto &new_input = node->input();
+                    ts_value.re_parent(&new_input);
                 } else {
                     auto ts          = dynamic_cast<TimeSeriesReferenceInput *>(input()[arg].get());
                     auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
