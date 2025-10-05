@@ -88,8 +88,8 @@ namespace hgraph
             }
         }
 
-        auto scheduled_keys{std::move(scheduled_keys_)};
-        scheduled_keys_.clear();
+        std::unordered_map<K, engine_time_t> scheduled_keys;
+        std::swap(scheduled_keys, scheduled_keys_);
 
         for (const auto &[k, dt] : scheduled_keys) {
             if (dt < last_evaluation_time()) {
