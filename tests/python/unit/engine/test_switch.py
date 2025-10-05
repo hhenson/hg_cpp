@@ -1,3 +1,4 @@
+import hg_cpp  # Import to register C++ builders
 from hgraph import graph, TS, TSD, switch_
 from hgraph.test import eval_node
 

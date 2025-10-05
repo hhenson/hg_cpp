@@ -249,8 +249,8 @@ namespace hgraph {
         auto output_id_it = output_node_ids_.find(graph_key);
         if (output_id_it != output_node_ids_.end()) {
             auto node = graph->nodes()[output_id_it->second];
-            old_output_ = &node->output();
-            node->set_output(&output());
+            old_output_ = node->output_ptr();
+            node->set_output(output_ptr());
         }
     }
 

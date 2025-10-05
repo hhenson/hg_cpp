@@ -161,11 +161,11 @@ def _create_switch_node_builder_factory(
         input_builder,
         output_builder,
         error_builder,
-        recordable_state_builder,
-        nested_graph_builders,
+        nested_graphs,
         input_node_ids,
-        output_node_ids,
+        output_node_id,
         reload_on_ticked,
+        recordable_state_builder=None,
 ):
     # Extract key type from the switch signature
     switch_input_type = signature.time_series_inputs.get('__key__', None)
@@ -187,9 +187,9 @@ def _create_switch_node_builder_factory(
         output_builder,
         error_builder,
         recordable_state_builder,
-        nested_graph_builders,
+        nested_graphs,
         input_node_ids,
-        output_node_ids,
+        output_node_id,
         reload_on_ticked,
     )
 
