@@ -16,6 +16,7 @@
 #include <hgraph/nodes/try_except_node.h>
 #include <hgraph/nodes/non_associative_reduce_node.h>
 #include <hgraph/nodes/mesh_node.h>
+#include <hgraph/nodes/last_value_pull_node.h>
 
 #include <utility>
 
@@ -416,6 +417,31 @@ namespace hgraph
 
         nb::class_<MeshNodeBuilder<nb::object>, BaseMeshNodeBuilder>(m, "MeshNodeBuilder_object")
             .def("__init__", [](MeshNodeBuilder<nb::object> *self, const nb::args &args) { create_mesh_node_builder(self, args); });
+
+        nb::class_<LastValuePullNodeBuilder, BaseNodeBuilder>(m, "LastValuePullNodeBuilder")
+            .def("__init__",
+                 [](LastValuePullNodeBuilder *self, const nb::kwargs &kwargs) {
+                     auto signature_ = nb::cast<node_signature_ptr>(kwargs["signature"]);
+                     auto scalars_   = nb::cast<nb::dict>(kwargs["scalars"]);
+
+                     std::optional<input_builder_ptr> input_builder_ =
+                         kwargs.contains("input_builder") ? nb::cast<std::optional<input_builder_ptr>>(kwargs["input_builder"])
+                                                          : std::nullopt;
+                     std::optional<output_builder_ptr> output_builder_ =
+                         kwargs.contains("output_builder") ? nb::cast<std::optional<output_builder_ptr>>(kwargs["output_builder"])
+                                                           : std::nullopt;
+                     std::optional<output_builder_ptr> error_builder_ =
+                         kwargs.contains("error_builder") ? nb::cast<std::optional<output_builder_ptr>>(kwargs["error_builder"])
+                                                          : std::nullopt;
+                     std::optional<output_builder_ptr> recordable_state_builder_ =
+                         kwargs.contains("recordable_state_builder")
+                             ? nb::cast<std::optional<output_builder_ptr>>(kwargs["recordable_state_builder"])
+                             : std::nullopt;
+
+                     new (self) LastValuePullNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_),
+                                                  std::move(output_builder_), std::move(error_builder_),
+                                                  std::move(recordable_state_builder_));
+                 });
     }
 
     void BaseNodeBuilder::_build_inputs_and_outputs(node_ptr node) const {
@@ -619,5 +645,11 @@ namespace hgraph
     // Explicit template instantiations for MeshNodeBuilder
     template struct MeshNodeBuilder<int64_t>;
     template struct MeshNodeBuilder<nb::object>;
+
+    node_ptr LastValuePullNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
+        nb::ref<Node> node{new LastValuePullNode{node_ndx, owning_graph_id, signature, scalars}};
+        _build_inputs_and_outputs(node);
+        return node;
+    }
 
 }  // namespace hgraph

@@ -226,6 +226,13 @@ namespace hgraph
         node_ptr make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const override;
     };
 
+    struct LastValuePullNodeBuilder : BaseNodeBuilder
+    {
+        using BaseNodeBuilder::BaseNodeBuilder;
+
+        node_ptr make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const override;
+    };
+
 }  // namespace hgraph
 
 #endif  // NODE_BUILDER_H

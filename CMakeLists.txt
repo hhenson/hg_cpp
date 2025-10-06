@@ -116,6 +116,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/builders/output_builder.h
 
         include/hgraph/nodes/component_node.h
+        include/hgraph/nodes/last_value_pull_node.h
         include/hgraph/nodes/mesh_node.h
         include/hgraph/nodes/nest_graph_node.h
         include/hgraph/nodes/nested_evaluation_engine.h

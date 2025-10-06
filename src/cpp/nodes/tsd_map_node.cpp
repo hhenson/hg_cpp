@@ -230,6 +230,15 @@ namespace hgraph
 
     using TsdMapNode_bool = TsdMapNode<bool>;
 
+    // Explicit template instantiations to ensure symbols are emitted in this TU
+    template struct TsdMapNode<bool>;
+    template struct TsdMapNode<int64_t>;
+    template struct TsdMapNode<double>;
+    template struct TsdMapNode<engine_date_t>;
+    template struct TsdMapNode<engine_time_t>;
+    template struct TsdMapNode<engine_time_delta_t>;
+    template struct TsdMapNode<nb::object>;
+
     void register_tsd_map_with_nanobind(nb::module_ &m) {
         nb::class_<MapNestedEngineEvaluationClock<bool>, NestedEngineEvaluationClock>(m, "MapNestedEngineEvaluationClock_bool");
         nb::class_<MapNestedEngineEvaluationClock<int64_t>, NestedEngineEvaluationClock>(m, "MapNestedEngineEvaluationClock_int");

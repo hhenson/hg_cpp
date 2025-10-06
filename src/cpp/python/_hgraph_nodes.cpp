@@ -9,6 +9,7 @@
 #include <hgraph/nodes/try_except_node.h>
 #include <hgraph/nodes/non_associative_reduce_node.h>
 #include <hgraph/nodes/mesh_node.h>
+#include <hgraph/nodes/last_value_pull_node.h>
 
 void export_nodes(nb::module_ &m) {
     using namespace hgraph;
@@ -26,4 +27,5 @@ void export_nodes(nb::module_ &m) {
     TryExceptNode::register_with_nanobind(m);
     register_non_associative_reduce_node_with_nanobind(m);
     register_mesh_node_with_nanobind(m);
+    LastValuePullNode::register_with_nanobind(m);
 }
