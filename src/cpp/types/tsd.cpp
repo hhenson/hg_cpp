@@ -898,8 +898,12 @@ namespace hgraph
             .def("removed_items", &TimeSeriesDictOutput::py_removed_items)
             .def("was_removed", &TimeSeriesDictOutput::py_was_removed, "key"_a)
             .def_prop_ro("has_removed", &TimeSeriesDictOutput::has_removed)
-            .def("get_ref", &TimeSeriesDictOutput::py_get_ref, "key"_a, "requester"_a)
-            .def("release_ref", &TimeSeriesDictOutput::py_get_ref, "key"_a, "requester"_a)
+            .def("get_ref", [](TimeSeriesDictOutput &self, const nb::object &key, const nb::object &requester) {
+                 return self.py_get_ref(key, requester.ptr());
+             }, "key"_a, "requester"_a)
+            .def("release_ref", [](TimeSeriesDictOutput &self, const nb::object &key, const nb::object &requester) {
+                 self.py_release_ref(key, requester.ptr());
+             }, "key"_a, "requester"_a)
             .def("key_set",
                  static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesOutput>::ts_type> &(TimeSeriesDictOutput::*)() const>(
                      &TimeSeriesDictOutput::key_set))  // Not sure if this needs to be exposed to python?

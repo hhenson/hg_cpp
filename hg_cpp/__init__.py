@@ -17,7 +17,18 @@ hgraph.TimeSeriesReference._BUILDER = _hgraph.TimeSeriesReference.make
 hgraph.TimeSeriesReference._INSTANCE_OF = lambda obj: isinstance(obj, _hgraph.TimeSeriesReference)
 
 hgraph._builder._graph_builder.EDGE_TYPE = _hgraph.Edge
-hgraph.GraphBuilderFactory.declare(_hgraph.GraphBuilder)
+def _make_cpp_graph_builder(node_builders, edges):
+    # Convert Python Edge dataclass instances to C++ _hgraph.Edge
+    cpp_edges = []
+    for e in edges:
+        try:
+            cpp_edges.append(_hgraph.Edge(int(e.src_node), list(e.output_path), int(e.dst_node), list(e.input_path)))
+        except Exception:
+            # If it's already a C++ Edge, keep as-is
+            cpp_edges.append(e)
+    return _hgraph.GraphBuilder(list(node_builders), cpp_edges)
+
+hgraph.GraphBuilderFactory.declare(_make_cpp_graph_builder)
 
 # The graph engine type
 hgraph.GraphEngineFactory.declare(lambda graph, run_mode, observers: _hgraph.GraphExecutorImpl(
@@ -163,7 +174,7 @@ def _create_switch_node_builder_factory(
         error_builder,
         nested_graphs,
         input_node_ids,
-        output_node_id,
+        output_node_ids,
         reload_on_ticked,
         recordable_state_builder=None,
 ):
@@ -187,7 +198,7 @@ def _create_switch_node_builder_factory(
         recordable_state_builder,
         nested_graphs,
         input_node_ids,
-        output_node_id,
+        output_node_ids,
         reload_on_ticked,
     )
 
@@ -293,4 +304,18 @@ def _create_mesh_node_builder_factory(
 
 hgraph._wiring._wiring_node_class.MeshWiringNodeClass.BUILDER_CLASS = _create_mesh_node_builder_factory
 
-hgraph._wiring._wiring_node_class._service_impl_node_class.ServiceImplNodeClass.BUILDER_CLASS = _hgraph.NestedGraphNodeBuilder
+def _service_impl_nested_graph_builder(*, signature, scalars, input_builder, output_builder, error_builder, recordable_state_builder, nested_graph):
+    # Provide empty input mapping and no output node for service impl wrappers
+    return _hgraph.NestedGraphNodeBuilder(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        {},
+        0,
+    )
+
+hgraph._wiring._wiring_node_class._service_impl_node_class.ServiceImplNodeClass.BUILDER_CLASS = _service_impl_nested_graph_builder
