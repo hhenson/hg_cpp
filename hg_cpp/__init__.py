@@ -292,3 +292,5 @@ def _create_mesh_node_builder_factory(
 
 
 hgraph._wiring._wiring_node_class.MeshWiringNodeClass.BUILDER_CLASS = _create_mesh_node_builder_factory
+
+hgraph._wiring._wiring_node_class._service_impl_node_class.ServiceImplNodeClass.BUILDER_CLASS = _hgraph.NestedGraphNodeBuilder
