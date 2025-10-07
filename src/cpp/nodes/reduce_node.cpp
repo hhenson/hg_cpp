@@ -343,13 +343,13 @@ namespace hgraph
     }
 
     // Explicit template instantiations for supported key types
-    template class ReduceNode<bool>;
-    template class ReduceNode<int64_t>;
-    template class ReduceNode<double>;
-    template class ReduceNode<engine_date_t>;
-    template class ReduceNode<engine_time_t>;
-    template class ReduceNode<engine_time_delta_t>;
-    template class ReduceNode<nb::object>;
+    template struct ReduceNode<bool>;
+    template struct ReduceNode<int64_t>;
+    template struct ReduceNode<double>;
+    template struct ReduceNode<engine_date_t>;
+    template struct ReduceNode<engine_time_t>;
+    template struct ReduceNode<engine_time_delta_t>;
+    template struct ReduceNode<nb::object>;
 
     void register_reduce_node_with_nanobind(nb::module_ &m) {
         nb::class_<ReduceNode<bool>, NestedNode>(m, "ReduceNode_bool")

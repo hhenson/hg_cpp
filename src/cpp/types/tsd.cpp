@@ -25,7 +25,7 @@ namespace hgraph
                     if (v.is(remove_if_exists) && !contains(k_)) { continue; }
                     erase(k_);
                 } else {
-                    _get_or_create(k_).apply_result(nb::borrow(v));
+                    operator[](k_).apply_result(nb::borrow(v));
                 }
             }
         } else {
@@ -96,7 +96,6 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::add_modified_value(value_type value) {
         auto key{_reverse_ts_values.at(value)};
         _modified_items.insert({key, value});
-        for (auto &observer : _key_observers) { observer->on_key_modified(key); }
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::remove_value(const key_type &key, bool raise_if_not_found) {
@@ -128,8 +127,14 @@ namespace hgraph
           _ts_ref_builder{std::move(ts_ref_builder)},
           _ref_ts_feature{this,
                           _ts_ref_builder,
-                          [this](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
-                              ref.apply_result(nb::cast(TimeSeriesReference::make(_ts_values.at(key))));
+                          [](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
+                              auto ts_t{dynamic_cast<const TimeSeriesDictOutput_T<T_Key> &>(ts)};
+                              auto &value{
+                                  ts_t[key]
+                              };
+                              auto r{TimeSeriesReference::make(&value)};
+                              auto r_val{nb::cast(r)};
+                              ref.apply_result(r_val);
                           },
                           {}} {}
 
@@ -141,7 +146,7 @@ namespace hgraph
           _ref_ts_feature{this,
                           _ts_ref_builder,
                           [this](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
-                              ref.apply_result(nb::cast(TimeSeriesReference::make(_ts_values.at(key))));
+                              ref.apply_result(nb::cast(TimeSeriesReference::make(&_get_or_create(key))));
                           },
                           {}} {}
 
@@ -238,8 +243,8 @@ namespace hgraph
     }
 
     template <typename T_Key>
-    TimeSeriesDict<TimeSeriesOutput>::ts_type &TimeSeriesDictOutput_T<T_Key>::operator[](const key_type &item) const {
-        return const_cast<TimeSeriesDictOutput_T *>(this)->operator[](item);
+    const TimeSeriesDict<TimeSeriesOutput>::ts_type &TimeSeriesDictOutput_T<T_Key>::operator[](const key_type &item) const {
+        return *_ts_values.at(item);
     }
 
     template <typename T_Key>
@@ -514,7 +519,7 @@ namespace hgraph
 
     template <typename T_Key>
     TimeSeriesDict<TimeSeriesInput>::ts_type &TimeSeriesDictInput_T<T_Key>::operator[](const key_type &item) {
-        return *_ts_values.at(item);
+        return _get_or_create(item);
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_keys() const {
@@ -628,13 +633,6 @@ namespace hgraph
         auto &value{_get_or_create(key)};
         if (!has_peer() && active()) { value.make_active(); }
         value.bind_output(&output_t()[key]);
-        register_clear_key_changes();
-    }
-
-    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::on_key_modified(const T_Key &key) {
-        auto it = _ts_values.find(key);
-        if (it == _ts_values.end()) { return; }
-        _modified_items.insert({key, it->second});
         register_clear_key_changes();
     }
 
@@ -799,6 +797,22 @@ namespace hgraph
         }
     }
 
+    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) {
+        if (_last_modified_time < modified_time) {
+            _last_modified_time = modified_time;
+            _modified_items.clear();  //TODO: Is this required?
+        }
+
+        if (child != &key_set()) {
+            auto it{_reverse_ts_values.find(child)};
+            if (it != _reverse_ts_values.end()) {
+                _modified_items.insert({it->second, child});
+            }
+        }
+
+        TimeSeriesInput::notify_parent(child, modified_time);
+    }
+
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::_create(const key_type &key) {
         auto value{_ts_builder->make_instance(this)};
         value->set_subscribe_method(!has_peer());
@@ -862,7 +876,7 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_post_modify() {
         key_set().post_modify();
-        if (!has_added() || !has_removed()) {
+        if (has_added() || has_removed()) {
             owning_graph().evaluation_engine_api().add_after_evaluation_notification(
                 [this]() { clear_on_end_of_evaluation_cycle(); });
         }

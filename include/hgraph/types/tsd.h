@@ -20,9 +20,6 @@ namespace hgraph
         // Called when a key is added
         virtual void on_key_added(const K &key) = 0;
 
-        // Called when a key is modified
-        virtual void on_key_modified(const K &key) = 0;
-
         // Called when a key is removed
         virtual void on_key_removed(const K &key) = 0;
 
@@ -136,7 +133,7 @@ namespace hgraph
 
         [[nodiscard]] nb::object py_get_item(const nb::object &item) const override;
         [[nodiscard]] ts_type   &operator[](const key_type &item);
-        [[nodiscard]] ts_type   &operator[](const key_type &item) const;
+        [[nodiscard]] const ts_type   &operator[](const key_type &item) const;
 
         [[nodiscard]] const_item_iterator begin() const;
         [[nodiscard]] item_iterator       begin();
@@ -311,8 +308,6 @@ namespace hgraph
 
         void on_key_added(const key_type &key) override;
 
-        void on_key_modified(const T_Key &key) override;
-
         void on_key_removed(const key_type &key) override;
 
         TimeSeriesInput &_get_or_create(const key_type &key);
@@ -326,6 +321,7 @@ namespace hgraph
         void make_passive() override;
 
       protected:
+        void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
         bool do_bind_output(time_series_output_ptr value) override;
         void do_un_bind_output() override;
 
@@ -346,7 +342,7 @@ namespace hgraph
 
         reverse_map _reverse_ts_values;
         map_type    _modified_items;
-        map_type    _added_items;
+        mutable map_type    _added_items;
         map_type    _removed_values;  // This ensures we hold onto the values until we are sure no one needs to reference them.
 
         input_builder_ptr _ts_builder;

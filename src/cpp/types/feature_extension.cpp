@@ -21,11 +21,7 @@ namespace hgraph
 
             auto [inserted_it, success] = _outputs.emplace(key, FeatureOutputRequestTracker(new_output));
 
-            if (initial_value_getter) {
-                (*initial_value_getter)(*owning_output, *new_output, key);
-            } else {
-                value_getter(*owning_output, *new_output, key);
-            }
+            (initial_value_getter ? *initial_value_getter : value_getter)(*owning_output, *new_output, key);
 
             it = inserted_it;
         }
