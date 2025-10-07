@@ -234,7 +234,7 @@ namespace hgraph
 
     template <typename T_Key>
     TimeSeriesDict<TimeSeriesOutput>::ts_type &TimeSeriesDictOutput_T<T_Key>::operator[](const key_type &item) {
-        return *_ts_values.at(item);
+        return _get_or_create(item);
     }
 
     template <typename T_Key>
