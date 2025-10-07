@@ -319,3 +319,6 @@ def _service_impl_nested_graph_builder(*, signature, scalars, input_builder, out
     )
 
 hgraph._wiring._wiring_node_class._service_impl_node_class.ServiceImplNodeClass.BUILDER_CLASS = _service_impl_nested_graph_builder
+
+hgraph._wiring._wiring_node_class._pull_source_node_class.PullSourceWiringNodeClass.BUILDER_CLASS = _hgraph.LastValuePullNodeBuilder
+
