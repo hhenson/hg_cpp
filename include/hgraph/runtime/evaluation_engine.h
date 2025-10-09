@@ -139,6 +139,8 @@ namespace hgraph
         virtual void notify_before_graph_evaluation(const Graph &graph) = 0;
         virtual void notify_after_graph_evaluation(const Graph &graph)  = 0;
 
+        virtual void notify_after_push_nodes_evaluation(const Graph &graph) = 0;
+
         virtual void notify_before_node_evaluation(const Node &node) = 0;
         virtual void notify_after_node_evaluation(const Node &node)  = 0;
 
