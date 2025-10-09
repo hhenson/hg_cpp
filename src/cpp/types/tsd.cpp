@@ -66,7 +66,7 @@ namespace hgraph
     void TimeSeriesDictOutput_T<T_Key>::mark_child_modified(TimeSeriesOutput &child, engine_time_t modified_time) {
         if (last_modified_time() < modified_time) {
             // _last_modified_time is set in mark_modified later
-            // TODO: Is this actually required? and if it is should it also reset added?
+            // Clear modified items to start fresh for the new evaluation cycle
             _modified_items.clear();
         }
 
