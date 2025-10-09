@@ -34,7 +34,7 @@ namespace hgraph
     void TimeSeriesBundleOutput::apply_result(nb::object value) {
         if (value.is_none()) { return; }
         // Check if value is an instance of the scalar type (not just identity check)
-        if (nb::isinstance(value, schema().scalar_type())) {
+        if (!schema().scalar_type().is_none() && nb::isinstance(value, schema().scalar_type())) {
             for (const auto &key : schema().keys()) {
                 auto v = nb::getattr(value, key.c_str(), nb::none());
                 if (!v.is_none()) { (*this)[key]->apply_result(v); }
@@ -53,6 +53,10 @@ namespace hgraph
             .def("__getitem__",
                  [](TimeSeriesBundle_Output &self, const std::string &key) -> TimeSeriesOutput::ptr {
                      return self[key];  // Use operator[] overload with string
+                 })
+            .def("__getitem__",
+                 [](TimeSeriesBundle_Output &self, size_t index) -> TimeSeriesOutput::ptr {
+                     return self[index];  // Use operator[] overload with int
                  })
             .def(
                 "__iter__",
@@ -83,6 +87,10 @@ namespace hgraph
             .def("__getitem__",
                  [](TimeSeriesBundle_Input &self, const std::string &key) {
                      return self[key];  // Use operator[] overload with string
+                 })
+            .def("__getitem__",
+                 [](TimeSeriesBundle_Input &self, size_t index) {
+                     return self[index];  // Use operator[] overload with int
                  })
             .def(
                 "__iter__",
