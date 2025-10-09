@@ -705,8 +705,13 @@ namespace hgraph
 
     void BasePythonNode::do_start() {
         if (_start_fn.is_valid() && !_start_fn.is_none()) {
-            // Get the callable signature parameters
-            nb::tuple params = _start_fn.attr("__code__").attr("co_varnames");
+            // Get the callable signature parameters using inspect.signature
+            // This matches Python's approach: signature(self.start_fn).parameters.keys()
+            // Using __code__.co_varnames includes local variables, not just parameters
+            auto inspect = nb::module_::import_("inspect");
+            auto sig = inspect.attr("signature")(_start_fn);
+            auto params = sig.attr("parameters").attr("keys")();
+
             // Filter kwargs to only include parameters in start_fn signature
             nb::dict filtered_kwargs;
             for (auto k : params) {
@@ -719,10 +724,14 @@ namespace hgraph
 
     void BasePythonNode::do_stop() {
         if (_stop_fn.is_valid() and !_stop_fn.is_none()) {
-            // Get the callable signature parameters
-            nb::tuple params = _stop_fn.attr("__code__").attr("co_varnames");
+            // Get the callable signature parameters using inspect.signature
+            // This matches Python's approach: signature(self.stop_fn).parameters.keys()
+            // Using __code__.co_varnames includes local variables, not just parameters
+            auto inspect = nb::module_::import_("inspect");
+            auto sig = inspect.attr("signature")(_stop_fn);
+            auto params = sig.attr("parameters").attr("keys")();
 
-            // Filter kwargs to only include parameters in start_fn signature
+            // Filter kwargs to only include parameters in stop_fn signature
             nb::dict filtered_kwargs;
             for (auto k : params) {
                 if (_kwargs.contains(k)) { filtered_kwargs[k] = _kwargs[k]; }
