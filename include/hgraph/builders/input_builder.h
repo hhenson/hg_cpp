@@ -81,6 +81,7 @@ namespace hgraph
 
         [[nodiscard]] bool is_same_type(const Builder &other) const override {
             if (auto other_b = dynamic_cast<const TimeSeriesListInputBuilder *>(&other)) {
+                if (size != other_b->size) { return false; }
                 return input_builder->is_same_type(*other_b->input_builder);
             }
             return false;
