@@ -476,6 +476,10 @@ namespace hgraph
         for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_after_graph_evaluation(graph); }
     }
 
+    void EvaluationEngineImpl::notify_after_push_nodes_evaluation(const Graph &graph) {
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_after_graph_push_nodes_evaluation(graph); }
+    }
+
     void EvaluationEngineImpl::notify_before_node_evaluation(const Node &node) {
         for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_before_node_evaluation(node); }
     }
@@ -493,7 +497,7 @@ namespace hgraph
     }
 
     void EvaluationEngineImpl::notify_before_stop_graph(const Graph &graph) {
-        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_before_start_graph(graph); }
+        for (auto &life_cycle_observer : _life_cycle_observers) { life_cycle_observer->on_before_stop_graph(graph); }
     }
 
     void EvaluationEngineImpl::notify_after_stop_graph(const Graph &graph) {
