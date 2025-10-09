@@ -82,7 +82,7 @@ namespace hgraph
             clock.reset_push_node_requires_scheduling();
 
             while (auto value = receiver().dequeue()) {
-                auto [i, message]         = *receiver().dequeue();
+                auto [i, message]         = *value;  // Use the already dequeued value
                 auto                &node = *nodes[i];
                 NotifyNodeEvaluation nne{evaluation_engine(), node};
                 bool                 success = dynamic_cast<PushQueueNode &>(node).apply_message(message);
@@ -92,6 +92,7 @@ namespace hgraph
                     break;
                 }
             }
+            evaluation_engine().notify_after_push_nodes_evaluation(*this);
         }
 
         for (size_t i = push_source_nodes_end(); i < nodes.size(); ++i) {
@@ -99,8 +100,6 @@ namespace hgraph
             auto &node           = *nodes[i];
 
             if (scheduled_time == now) {
-                evaluation_engine().notify_before_node_evaluation(node);
-
                 try {
                     NotifyNodeEvaluation nne{evaluation_engine(), node};
                     node.eval();
