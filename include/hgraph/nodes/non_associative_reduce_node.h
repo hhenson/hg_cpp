@@ -47,9 +47,9 @@ namespace hgraph
       private:
         graph_builder_ptr            nested_graph_builder_;
         std::tuple<int64_t, int64_t> input_node_ids_;  // LHS index, RHS index
-        int64_t                      output_node_id_;
+        [[maybe_unused]] int64_t     output_node_id_;  // TODO: Use in implementation
         graph_ptr                    nested_graph_;
-        int64_t                      cached_node_size_{-1};
+        [[maybe_unused]] int64_t     cached_node_size_{-1};  // TODO: Use in implementation
     };
 
 }  // namespace hgraph
