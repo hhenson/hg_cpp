@@ -93,7 +93,7 @@ namespace hgraph
             auto startStopContext  = StartStopContext(*_graph);
 
             while (clock->evaluation_time() < end_time) { _evaluate(*evaluationEngine); }
-        }
+        }  // StartStopContext destructor runs here and can throw exceptions
     }
 
     void GraphExecutorImpl::register_with_nanobind(nb::module_ &m) {

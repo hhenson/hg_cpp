@@ -67,5 +67,8 @@ namespace hgraph
 
     StartStopContext::StartStopContext(ComponentLifeCycle &component) : _component{component} { start_component(_component); }
 
-    StartStopContext::~StartStopContext() { stop_component(_component); }
+    StartStopContext::~StartStopContext() noexcept(false) {
+        // Match Python's finally block behavior - exceptions are allowed to propagate
+        stop_component(_component);
+    }
 }  // namespace hgraph

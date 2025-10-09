@@ -34,10 +34,11 @@ namespace hgraph {
     /**
      * This will start the component in the constructor and stop in the destructor.
      * This is the closest equivalent to the Python Context Manager.
+     * The destructor allows exceptions to propagate, matching Python's finally block behavior.
      */
     struct StartStopContext {
         StartStopContext(ComponentLifeCycle &component);
-        ~StartStopContext();
+        ~StartStopContext() noexcept(false);  // Allow exceptions to propagate like Python's finally
     private:
         ComponentLifeCycle& _component;
     };
