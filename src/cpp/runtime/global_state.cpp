@@ -6,8 +6,6 @@
 
 namespace hgraph {
 
-    GlobalState::ptr GlobalState::_instance = nullptr;
-
     GlobalState::GlobalState() : _previous(nullptr) {}
 
     GlobalState::GlobalState(const nb::dict& kwargs) : _previous(nullptr) {
@@ -16,34 +14,29 @@ namespace hgraph {
         }
     }
 
-    GlobalState::ptr GlobalState::instance() {
-        if (!_instance) {
-            throw std::runtime_error("No global state is present");
-        }
-        return _instance;
-    }
+    GlobalState* GlobalState::__enter__() {
+        // Replicate Python's GlobalState.__enter__() behavior
+        // This allows C++ GlobalState to be used directly in with statements
 
-    void GlobalState::set_instance(const ptr& instance) {
-        _instance = instance;
-    }
-
-    bool GlobalState::has_instance() {
-        return _instance != nullptr;
-    }
-
-    void GlobalState::reset() {
-        _instance = nullptr;
-    }
-
-    GlobalState::ptr GlobalState::__enter__() {
-        _previous = has_instance() ? instance() : nullptr;
-        set_instance(this);
+        // For now, simplified implementation - just return self
+        // The caller (Python's with statement via set_implementation_class) should
+        // ensure GlobalState.set_instance() is called appropriately
+        _previous = nullptr;
         return this;
     }
 
     void GlobalState::__exit__(const nb::object& exc_type, const nb::object& exc_val, const nb::object& exc_tb) {
-        set_instance(_previous);
+        // Simplified implementation - just clear _previous
+        // The caller (Python's with statement) should handle singleton restoration
         _previous = nullptr;
+    }
+
+    void GlobalState::set_previous(const ptr& previous) {
+        _previous = previous;
+    }
+
+    GlobalState::ptr GlobalState::get_previous() const {
+        return _previous;
     }
 
     GlobalState::value_type GlobalState::get(const std::string& key, const value_type& default_value) const {
@@ -216,15 +209,30 @@ namespace hgraph {
     }
 
     void GlobalState::register_with_nanobind(nb::module_& m) {
-        nb::class_<GlobalState>(m, "GlobalState")
+        auto cls = nb::class_<GlobalState>(m, "GlobalState")
+            // Support zero-arg construction
             .def(nb::init<>())
-            .def(nb::init<const nb::dict&>(), "kwargs"_a = nb::dict())
-            .def_static("instance", &GlobalState::instance)
-            .def_static("set_instance", &GlobalState::set_instance, "instance"_a)
-            .def_static("has_instance", &GlobalState::has_instance)
-            .def_static("reset", &GlobalState::reset)
+            // Support dict construction
+            .def(nb::init<const nb::dict&>())
+            // Support **kwargs construction - custom __init__ that accepts kwargs
+            .def("__init__", [](GlobalState* self, nb::kwargs kwargs) {
+                // First construct the object in-place
+                new (self) GlobalState();
+                // Then populate with kwargs
+                if (kwargs.size() > 0) {
+                    for (auto [key, value] : kwargs) {
+                        self->__setitem__(nb::cast<std::string>(key), nb::cast<nb::object>(value));
+                    }
+                }
+            })
+            // Context manager protocol - minimal implementation
+            // Python's GlobalState class wraps these to add singleton management
             .def("__enter__", &GlobalState::__enter__)
-            .def("__exit__", &GlobalState::__exit__, "exc_type"_a, "exc_val"_a, "exc_tb"_a)
+            .def("__exit__", &GlobalState::__exit__,
+                 "exc_type"_a.none(), "exc_val"_a.none(), "exc_tb"_a.none())
+            // Helper methods for Python to manage nested contexts
+            .def("set_previous", &GlobalState::set_previous, "previous"_a.none())
+            .def("get_previous", &GlobalState::get_previous)
             .def("get", &GlobalState::get, "key"_a, "default"_a = nb::none())
             .def("setdefault", &GlobalState::setdefault, "key"_a, "default"_a)
             .def("__contains__", &GlobalState::__contains__, "key"_a)

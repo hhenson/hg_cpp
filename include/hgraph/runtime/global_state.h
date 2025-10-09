@@ -22,19 +22,17 @@ namespace hgraph {
         using value_type = nb::object;
         using ptr = nb::ref<GlobalState>;
 
-        // Singleton access
-        static ptr instance();
-        static void set_instance(const ptr& instance);
-        static bool has_instance();
-        static void reset();
-
         // Constructor
         GlobalState();
         explicit GlobalState(const nb::dict& kwargs);
 
         // Context manager protocol
-        ptr __enter__();
+        GlobalState* __enter__();
         void __exit__(const nb::object& exc_type, const nb::object& exc_val, const nb::object& exc_tb);
+
+        // Previous instance management for nested contexts
+        void set_previous(const ptr& previous);
+        ptr get_previous() const;
 
         // Dictionary-like interface
         value_type get(const std::string& key, const value_type& default_value = nb::none()) const;
@@ -69,9 +67,7 @@ namespace hgraph {
 
     private:
         std::unordered_map<std::string, value_type> _state;
-        ptr _previous;
-
-        static ptr _instance;
+        ptr _previous;  // Keeps previous instance alive during nested contexts
     };
 
 }  // namespace hgraph
