@@ -32,7 +32,7 @@ namespace hgraph
         }
 
         void set_value(T &&value) {
-            _value = value;
+            _value = std::move(value);
             mark_modified();
         }
 
