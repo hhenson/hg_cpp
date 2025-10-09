@@ -1,5 +1,5 @@
 HG_CPP TODO / Analysis Log
-Updated: 2025-10-09 11:02
+Updated: 2025-10-09 11:40
 Owner: hg_cpp C++ runtime parity effort
 
 Purpose
@@ -33,7 +33,7 @@ B. Missing or Not Evident
 - Type equality across nested containers (e.g., list[dict[TS[int]]]) is only partially checked (e.g., TSL compares first element type when available); needs rigorous parity checks with Python’s schema system.
 
 C. Divergences / Likely Bugs or Behavior Differences
-- TimeSeriesSignalInput::is_same_type returns true unconditionally; may cause mismatched bindings to be accepted.
+- TimeSeriesSignalInput::is_same_type returns true unconditionally; maintained by design for now (acceptable rollback). Risk: may allow mismatched bindings; ensure builder/runtime safeguards and tests.
 - TimeSeriesList is_same_type compares only first element when both non-empty; empty lists treated as compatible, which may mask type mismatches compared to Python schema validation.
 - REF observer set uses raw TimeSeriesInput* with manual lifetime management due to missing hash on ptr — fragile; ensure increments/decrements and de-duplication are correct.
 - TimeSeriesValueOutput<T>::apply_result silently ignores None; may differ from Python where explicit invalidation or delta None semantics are defined.
@@ -79,6 +79,6 @@ Notes/Risks
 - Aligning delta semantics (especially for dict/set) is critical for incremental evaluation correctness.
 
 Next Immediate Steps (suggested for upcoming iteration)
-- Document/validate Signal design (no dedicated Output); tighten is_same_type for signals if needed; ensure nanobind exposure/docs are clear. 
+- Document/validate Signal design (no dedicated Output); keep permissive is_same_type (accept-any) for now; ensure nanobind exposure/docs are clear. 
 - Write focused tests: TS/TSL values and deltas; REF observer lifecycle. 
 - Review and, if needed, adjust TimeSeriesList is_same_type and items()/modified_items() behavior to match Python semantics.
