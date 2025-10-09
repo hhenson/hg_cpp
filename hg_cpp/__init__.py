@@ -174,7 +174,7 @@ def _create_switch_node_builder_factory(
         error_builder,
         nested_graphs,
         input_node_ids,
-        output_node_ids,
+        output_node_id,
         reload_on_ticked,
         recordable_state_builder=None,
 ):
@@ -198,7 +198,7 @@ def _create_switch_node_builder_factory(
         recordable_state_builder,
         nested_graphs,
         input_node_ids,
-        output_node_ids,
+        output_node_id,
         reload_on_ticked,
     )
 
@@ -321,7 +321,3 @@ def _service_impl_nested_graph_builder(*, signature, scalars, input_builder, out
 hgraph._wiring._wiring_node_class._service_impl_node_class.ServiceImplNodeClass.BUILDER_CLASS = _service_impl_nested_graph_builder
 
 hgraph._wiring._wiring_node_class._pull_source_node_class.PythonLastValuePullWiringNodeClass.BUILDER_CLASS = _hgraph.LastValuePullNodeBuilder
-
-# Set C++ GlobalState as the implementation class
-hgraph._runtime._global_state.GlobalState.set_implementation_class(_hgraph.GlobalState)
-
