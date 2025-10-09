@@ -322,3 +322,6 @@ hgraph._wiring._wiring_node_class._service_impl_node_class.ServiceImplNodeClass.
 
 hgraph._wiring._wiring_node_class._pull_source_node_class.PythonLastValuePullWiringNodeClass.BUILDER_CLASS = _hgraph.LastValuePullNodeBuilder
 
+# Set C++ GlobalState as the implementation class
+hgraph._runtime._global_state.GlobalState.set_implementation_class(_hgraph.GlobalState)
+
