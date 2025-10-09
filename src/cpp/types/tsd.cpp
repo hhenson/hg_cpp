@@ -538,20 +538,63 @@ namespace hgraph
 
     template <typename T_Key>
     const typename TimeSeriesDictInput_T<T_Key>::map_type &TimeSeriesDictInput_T<T_Key>::modified_items() const {
-        return _modified_items;
+        // Match Python implementation logic:
+        // if self.has_peer:
+        //     return ((k, self._ts_values[k]) for k in self._output.modified_keys() if k in self._ts_values)
+        // elif self.active:
+        //     if self._last_notified_time == self.owning_graph.evaluation_clock.evaluation_time:
+        //         return self._modified_items
+        //     else:
+        //         return ()
+        // else:
+        //     return ((k, v) for k, v in self.items() if v.modified)
+
+        if (has_peer()) {
+            // Need to rebuild _modified_items from output's modified_keys
+            // This is not ideal but matches Python behavior
+            // Note: This const_cast is needed because we cache the result
+            auto& self = const_cast<TimeSeriesDictInput_T<T_Key>&>(*this);
+            self._modified_items.clear();
+            for (const auto& [key, value] : output_t().modified_items()) {
+                if (_ts_values.find(key) != _ts_values.end()) {
+                    self._modified_items.insert({key, _ts_values.at(key)});
+                }
+            }
+            return _modified_items;
+        } else if (active()) {
+            if (_last_modified_time == owning_graph().evaluation_clock().evaluation_time()) {
+                return _modified_items;
+            } else {
+                // Return empty - use a static empty map
+                static const map_type empty_map;
+                return empty_map;
+            }
+        } else {
+            // Return items where v.modified
+            auto& self = const_cast<TimeSeriesDictInput_T<T_Key>&>(*this);
+            self._modified_items.clear();
+            for (const auto& [key, value] : _ts_values) {
+                if (value->modified()) {
+                    self._modified_items.insert({key, value});
+                }
+            }
+            return _modified_items;
+        }
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_modified_keys() const {
-        return nb::make_key_iterator(nb::type<map_type>(), "ModifiedKeyIterator", _modified_items.begin(), _modified_items.end());
+        const auto& items = modified_items();  // Ensure modified_items is populated first
+        return nb::make_key_iterator(nb::type<map_type>(), "ModifiedKeyIterator", items.begin(), items.end());
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_modified_values() const {
-        return nb::make_value_iterator(nb::type<map_type>(), "ModifiedValueIterator", _modified_items.begin(),
-                                       _modified_items.end());
+        const auto& items = modified_items();  // Ensure modified_items is populated first
+        return nb::make_value_iterator(nb::type<map_type>(), "ModifiedValueIterator", items.begin(), items.end());
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_modified_items() const {
-        return nb::make_iterator(nb::type<map_type>(), "ModifiedItemIterator", _modified_items.begin(), _modified_items.end());
+        const auto& items = modified_items();  // Ensure modified_items is populated first
+        return nb::make_iterator(nb::type<map_type>(), "ModifiedItemIterator", items.begin(), items.end());
     }
 
     template <typename T_Key> TimeSeriesSet<TimeSeriesInput> &TimeSeriesDictInput_T<T_Key>::key_set() { return key_set_t(); }
@@ -750,7 +793,8 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::clear_key_changes() {
         _clear_key_changes_registered = false;
         _added_items.clear();
-        _modified_items.clear();
+        // NOTE: Do NOT clear _modified_items here - it gets cleared at the start of the next tick in notify_parent
+        // This matches the Python implementation where Input's _clear_key_changes only clears _removed_items
         for (auto &[_, value] : _removed_values) {
             if (value->parent_input().get() != this || !has_peer()) { value->un_bind_output(); }
         }
@@ -802,13 +846,13 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) {
         if (_last_modified_time < modified_time) {
             _last_modified_time = modified_time;
-            _modified_items.clear();  //TODO: Is this required?
+            _modified_items.clear();
         }
 
         if (child != &key_set()) {
             auto it{_reverse_ts_values.find(child)};
             if (it != _reverse_ts_values.end()) {
-                _modified_items.insert({it->second, child});
+                _modified_items[it->second] = child;  // Use operator[] instead of insert to ensure update
             }
         }
 
@@ -821,7 +865,8 @@ namespace hgraph
         _ts_values.insert({key, value});
         _reverse_ts_values.insert({value.get(), key});
         _added_items.insert({key, value});
-        _modified_items.insert({key, value});
+        // NOTE: Do NOT add to _modified_items here - it will be added by notify_parent when the child actually modifies
+        // This matches Python behavior where _create only adds to _added_items
         register_clear_key_changes();
     }
 
