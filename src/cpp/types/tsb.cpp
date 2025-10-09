@@ -25,7 +25,7 @@ namespace hgraph
             .def_prop_ro("keys", &TimeSeriesSchema::keys)
             .def_prop_ro("scalar_type", &TimeSeriesSchema::scalar_type)
             .def("__str__", [](const TimeSeriesSchema &self) {
-                if (self.scalar_type().is_valid()) { return nb::str("unnamed:{}").format(self.keys()); }
+                if (!self.scalar_type().is_valid() || self.scalar_type().is_none()) { return nb::str("unnamed:{}").format(self.keys()); }
                 return nb::str("{}{}}").format(self.scalar_type(), self.keys());
             });
         ;
