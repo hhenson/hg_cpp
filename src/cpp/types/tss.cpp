@@ -194,14 +194,17 @@ namespace hgraph
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_post_modify() {
-        auto added_empty{has_added()};
-        auto removed_empty{has_removed()};
+        // Match Python: if self._added or self._removed or not self.valid:
+        //     self.mark_modified()
+        // Note: has_added() returns true if _added is NOT empty
+        auto has_additions{has_added()};
+        auto has_removals{has_removed()};
         auto is_empty{empty()};
-        if (!added_empty || !removed_empty || !valid()) {
+        if (has_additions || has_removals || !valid()) {
             mark_modified();
-            if (!added_empty && _is_empty_ref_output->valid() && _is_empty_ref_output->value()) {
+            if (has_additions && _is_empty_ref_output->valid() && _is_empty_ref_output->value()) {
                 _is_empty_ref_output->set_value(false);
-            } else if (!removed_empty && is_empty) {
+            } else if (has_removals && is_empty) {
                 _is_empty_ref_output->set_value(true);
             }
             _contains_ref_outputs.update_all(_added.begin(), _added.end());
