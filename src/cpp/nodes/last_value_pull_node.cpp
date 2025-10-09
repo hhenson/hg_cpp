@@ -84,7 +84,7 @@ namespace hgraph
                 _delta_value = new_value;
             }
         } catch (const std::exception &e) {
-            std::string type_name = nb::cast<std::string>(nb::str(new_value.type().attr("__name__")));
+            std::string type_name = nb::cast<std::string>(nb::str(nb::handle(new_value.type().attr("__name__"))));
             throw std::runtime_error(
                 std::string("Cannot apply value of type ") + type_name +
                 " to " + repr() + ": " + e.what()
