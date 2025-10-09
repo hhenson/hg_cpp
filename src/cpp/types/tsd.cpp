@@ -70,8 +70,13 @@ namespace hgraph
             _modified_items.clear();
         }
 
-        auto child_ptr{&child};
-        if (child_ptr != &key_set()) { add_modified_value(child_ptr); }
+        if (&child != &key_set()) {
+            // Use reverse map with raw pointer for efficient O(1) lookup
+            auto it = _reverse_ts_values.find(&child);
+            if (it != _reverse_ts_values.end()) {
+                _modified_items.insert({it->second, _ts_values.at(it->second)});
+            }
+        }
 
         TimeSeriesOutput::mark_child_modified(child, modified_time);
     }
@@ -86,16 +91,10 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::add_added_item(key_type key, value_type value) {
         key_set_t().add(key);
         _ts_values.insert({key, value});
-        _reverse_ts_values.insert({value, key});
+        _reverse_ts_values.insert({value.get(), key});  // Store raw pointer for efficient lookup
         _added_items.insert({key, value});
         _ref_ts_feature.update(key);
         for (auto &observer : _key_observers) { observer->on_key_added(key); }
-        add_modified_value(value);
-    }
-
-    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::add_modified_value(value_type value) {
-        auto key{_reverse_ts_values.at(value)};
-        _modified_items.insert({key, value});
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::remove_value(const key_type &key, bool raise_if_not_found) {
@@ -112,7 +111,7 @@ namespace hgraph
         for (auto &observer : _key_observers) { observer->on_key_removed(key); }
         auto item{it->second};
         _ts_values.erase(it);
-        _reverse_ts_values.erase(item);
+        _reverse_ts_values.erase(item.get());  // Erase using raw pointer
         item->clear();
         _modified_items.erase(key);
         if (!was_added) { _removed_values.emplace(key, item); }
@@ -128,13 +127,13 @@ namespace hgraph
           _ref_ts_feature{this,
                           _ts_ref_builder,
                           [](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
-                              auto ts_t{dynamic_cast<const TimeSeriesDictOutput_T<T_Key> &>(ts)};
-                              auto &value{
-                                  ts_t[key]
-                              };
-                              auto r{TimeSeriesReference::make(&value)};
-                              auto r_val{nb::cast(r)};
-                              ref.apply_result(r_val);
+                              auto &ts_t{dynamic_cast<const TimeSeriesDictOutput_T<T_Key> &>(ts)};
+                              auto it = ts_t._ts_values.find(key);
+                              if (it != ts_t._ts_values.end()) {
+                                  auto r{TimeSeriesReference::make(it->second)};
+                                  auto r_val{nb::cast(r)};
+                                  ref.apply_result(r_val);
+                              }
                           },
                           {}} {}
 
@@ -146,7 +145,10 @@ namespace hgraph
           _ref_ts_feature{this,
                           _ts_ref_builder,
                           [this](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
-                              ref.apply_result(nb::cast(TimeSeriesReference::make(&_get_or_create(key))));
+                              auto it = _ts_values.find(key);
+                              if (it != _ts_values.end()) {
+                                  ref.apply_result(nb::cast(TimeSeriesReference::make(it->second)));
+                              }
                           },
                           {}} {}
 
@@ -711,7 +713,7 @@ namespace hgraph
                     // Check for transplanted items, these do not get removed, but can be un-bound
                     value->un_bind_output();
                     _ts_values.insert({key, value});
-                    _reverse_ts_values.insert({value, key});
+                    _reverse_ts_values.insert({value.get(), key});
                 } else {
                     to_keep.insert({key, value});
                 }
@@ -817,7 +819,7 @@ namespace hgraph
         auto value{_ts_builder->make_instance(this)};
         value->set_subscribe_method(!has_peer());
         _ts_values.insert({key, value});
-        _reverse_ts_values.insert({value, key});
+        _reverse_ts_values.insert({value.get(), key});
         _added_items.insert({key, value});
         _modified_items.insert({key, value});
         register_clear_key_changes();

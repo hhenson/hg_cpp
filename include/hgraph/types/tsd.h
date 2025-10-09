@@ -104,7 +104,8 @@ namespace hgraph
         //  If we start using more complicated native types, we may wish to use a pointer so something to that effect to
         //  Track keys. The values have a light weight reference counting cost to store as value_type so leave for the moment as
         //  well.
-        using reverse_map = std::unordered_map<value_type, key_type>;
+        // Use raw pointers for reverse lookup to enable efficient lookup from mark_child_modified
+        using reverse_map = std::unordered_map<TimeSeriesOutput*, key_type>;
 
         explicit TimeSeriesDictOutput_T(const node_ptr &parent, output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder);
         explicit TimeSeriesDictOutput_T(const time_series_type_ptr &parent, output_builder_ptr ts_builder,
@@ -212,7 +213,6 @@ namespace hgraph
         const key_type   &key_from_value(TimeSeriesOutput *value) const;
 
         void add_added_item(key_type key, value_type value);
-        void add_modified_value(value_type value);
         void remove_value(const key_type &key, bool raise_if_not_found);
 
       private:
@@ -239,7 +239,8 @@ namespace hgraph
         using item_iterator       = typename map_type::iterator;
         using const_item_iterator = typename map_type::const_iterator;
         using key_set_type        = TimeSeriesSetInput_T<key_type>;
-        using reverse_map         = std::unordered_map<value_type, key_type>;
+        // Use raw pointers for reverse lookup to enable efficient lookup from notify_parent
+        using reverse_map         = std::unordered_map<TimeSeriesInput*, key_type>;
 
         explicit TimeSeriesDictInput_T(const node_ptr &parent, input_builder_ptr ts_builder);
         explicit TimeSeriesDictInput_T(const time_series_type_ptr &parent, input_builder_ptr ts_builder);
