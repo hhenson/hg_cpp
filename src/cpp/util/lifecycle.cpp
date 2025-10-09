@@ -63,7 +63,10 @@ namespace hgraph
         initialise_component(component);
     }
 
-    InitialiseDisposeContext::~InitialiseDisposeContext() { dispose_component(_component); }
+    InitialiseDisposeContext::~InitialiseDisposeContext() noexcept(false) {
+        // Match Python's finally block behavior - exceptions are allowed to propagate
+        dispose_component(_component);
+    }
 
     StartStopContext::StartStopContext(ComponentLifeCycle &component) : _component{component} { start_component(_component); }
 

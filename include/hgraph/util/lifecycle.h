@@ -23,10 +23,11 @@ namespace hgraph {
     /**
      * This will intialise the component in the constructor and dispose in the destructor.
      * This is the closest equivalent to the Python Context Manager.
+     * The destructor allows exceptions to propagate, matching Python's finally block behavior.
      */
     struct InitialiseDisposeContext {
         InitialiseDisposeContext(ComponentLifeCycle &component);
-        ~InitialiseDisposeContext();
+        ~InitialiseDisposeContext() noexcept(false);  // Allow exceptions to propagate like Python's finally
     private:
         ComponentLifeCycle& _component;
     };
