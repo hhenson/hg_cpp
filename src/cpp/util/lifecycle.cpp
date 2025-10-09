@@ -12,7 +12,11 @@ namespace hgraph
         nb::class_<ComponentLifeCycle, nb::intrusive_base>(m, "ComponentLifeCycle")
             .def_prop_ro("is_started", &ComponentLifeCycle::is_started)
             .def_prop_ro("is_starting", &ComponentLifeCycle::is_starting)
-            .def_prop_ro("is_stopping", &ComponentLifeCycle::is_stopping);
+            .def_prop_ro("is_stopping", &ComponentLifeCycle::is_stopping)
+            .def("initialise", &initialise_component)
+            .def("start", &start_component)
+            .def("stop", &stop_component)
+            .def("dispose", &dispose_component);
 
         m.def("initialise_component", &initialise_component, "component"_a);
         m.def("start_component", &start_component, "component"_a);
