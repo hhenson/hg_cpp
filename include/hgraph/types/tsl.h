@@ -103,12 +103,16 @@ namespace hgraph
         [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
             auto other_list = dynamic_cast<TimeSeriesListOutput *>(&other);
             if (!other_list) { return false; }
-            // If both have at least one element, compare the element type recursively
-            if (!this->empty() && !other_list->empty()) {
-                return (*this)[0]->is_same_type(*(*other_list)[0]);
-            }
-            // If either is empty, assume element type matches (cannot verify), treat as compatible
-            return true;
+            const auto this_size  = this->size();
+            const auto other_size = other_list->size();
+            // If both lists are non-empty, require equal size
+            if (this_size > 0 && other_size > 0 && this_size != other_size) { return false; }
+            // If exactly one list is empty, treat as not the same type (cannot verify element compatibility)
+            if ((this_size == 0) != (other_size == 0)) { return false; }
+            // If both lists are empty, accept as same type (no further info available)
+            if (this_size == 0 && other_size == 0) { return true; }
+            // Both have at least one element (and sizes compatible): compare the element type recursively
+            return (*this)[0]->is_same_type(*(*other_list)[0]);
         }
 
         static void register_with_nanobind(nb::module_ &m);
@@ -124,10 +128,16 @@ namespace hgraph
         [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
             auto other_list = dynamic_cast<TimeSeriesListInput *>(&other);
             if (!other_list) { return false; }
-            if (!this->empty() && !other_list->empty()) {
-                return (*this)[0]->is_same_type(*(*other_list)[0]);
-            }
-            return true;
+            const auto this_size  = this->size();
+            const auto other_size = other_list->size();
+            // If both lists are non-empty, require equal size
+            if (this_size > 0 && other_size > 0 && this_size != other_size) { return false; }
+            // If exactly one list is empty, not same type (cannot verify element compatibility)
+            if ((this_size == 0) != (other_size == 0)) { return false; }
+            // If both empty -> same type
+            if (this_size == 0 && other_size == 0) { return true; }
+            // Both have content and sizes compatible -> compare element type recursively
+            return (*this)[0]->is_same_type(*(*other_list)[0]);
         }
 
         static void register_with_nanobind(nb::module_ &m);
