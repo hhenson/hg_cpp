@@ -219,6 +219,8 @@ namespace hgraph
 
         void notify_after_graph_evaluation(const Graph &graph) override;
 
+        void notify_after_push_nodes_evaluation(const Graph &graph) override;
+
         void notify_before_node_evaluation(const Node &node) override;
 
         void notify_after_node_evaluation(const Node &node) override;
@@ -349,6 +351,7 @@ namespace hgraph
         void                           notify_after_start_node(const Node &node) override;
         void                           notify_before_graph_evaluation(const Graph &graph) override;
         void                           notify_after_graph_evaluation(const Graph &graph) override;
+        void                           notify_after_push_nodes_evaluation(const Graph &graph) override;
         void                           notify_before_node_evaluation(const Node &node) override;
         void                           notify_after_node_evaluation(const Node &node) override;
         void                           notify_before_stop_node(const Node &node) override;

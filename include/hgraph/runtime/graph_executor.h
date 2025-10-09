@@ -29,6 +29,8 @@ namespace hgraph
 
         virtual void on_after_graph_evaluation(const Graph &) {};
 
+        virtual void on_after_graph_push_nodes_evaluation(const Graph &) {};
+
         virtual void on_before_node_evaluation(const Node &) {};
 
         virtual void on_after_node_evaluation(const Node &) {};

@@ -182,6 +182,10 @@ namespace hgraph
         _evaluation_engine->notify_after_graph_evaluation(graph);
     }
 
+    void EvaluationEngineDelegate::notify_after_push_nodes_evaluation(const Graph &graph) {
+        _evaluation_engine->notify_after_push_nodes_evaluation(graph);
+    }
+
     void EvaluationEngineDelegate::notify_before_node_evaluation(const Node &node) {
         _evaluation_engine->notify_before_node_evaluation(node);
     }
