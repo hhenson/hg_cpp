@@ -108,8 +108,11 @@ namespace hgraph
     const TimeSeriesOutput::ptr &BoundTimeSeriesReference::output() const { return _output; }
 
     void BoundTimeSeriesReference::bind_input(TimeSeriesInput &ts_input) const {
-        // TODO: This activate / reactivate logic should really be handled in the input
-        auto reactivate{ts_input.active()};
+        bool reactivate = false;
+        if (ts_input.bound() && !ts_input.has_peer()) {
+            reactivate = ts_input.active();
+            ts_input.un_bind_output();
+        }
         ts_input.bind_output(_output);
         if (reactivate) { ts_input.make_active(); }
     }
@@ -118,7 +121,7 @@ namespace hgraph
 
     bool BoundTimeSeriesReference::is_empty() const { return false; }
 
-    bool BoundTimeSeriesReference::is_valid() const { return true; }
+    bool BoundTimeSeriesReference::is_valid() const { return _output->valid(); }
 
     bool BoundTimeSeriesReference::operator==(const TimeSeriesReferenceOutput &other) const {
         auto bound_time_series_reference{dynamic_cast<const BoundTimeSeriesReference *>(&other)};
@@ -140,14 +143,36 @@ namespace hgraph
         if (indexed_input == nullptr) {
             throw std::runtime_error("UnBoundTimeSeriesReference::bind_input: Expected an IndexedTimeSeriesInput");
         }
-        for (size_t i = 0; i < _items.size(); ++i) { _items[i]->bind_input(*(*indexed_input)[i]); }
+
+        bool reactivate = false;
+        if (ts_input.bound() && ts_input.has_peer()) {
+            reactivate = ts_input.active();
+            ts_input.un_bind_output();
+        }
+
+        for (size_t i = 0; i < _items.size(); ++i) {
+            auto &item = (*indexed_input)[i];
+            if (_items[i] != nullptr) {
+                _items[i]->bind_input(*item);
+            } else if (item->bound()) {
+                item->un_bind_output();
+            }
+        }
+
+        if (reactivate) {
+            ts_input.make_active();
+        }
     }
 
     bool UnBoundTimeSeriesReference::has_output() const { return false; }
 
     bool UnBoundTimeSeriesReference::is_empty() const { return false; }
 
-    bool UnBoundTimeSeriesReference::is_valid() const { return true; }
+    bool UnBoundTimeSeriesReference::is_valid() const {
+        return std::any_of(_items.begin(), _items.end(), [](const auto &item) {
+            return item != nullptr && !item->is_empty();
+        });
+    }
 
     bool UnBoundTimeSeriesReference::operator==(const TimeSeriesReferenceOutput &other) const {
         auto other_{dynamic_cast<const UnBoundTimeSeriesReference *>(&other)};
@@ -246,8 +271,8 @@ namespace hgraph
         if (other.has_output()) {
             bind_output(other.output());
         } else if (!other.items().empty()) {
-            for (size_t i = 0, l{std::min(other.items().size(), _items.size())}; i < l; ++i) {
-                _items[i]->clone_binding(*other.items()[i]);
+            for (size_t i = 0; i < other.items().size(); ++i) {
+                (*this)[i]->clone_binding(*other.items()[i]);
             }
         } else if (other._value != nullptr){
             _value = other._value;
@@ -341,6 +366,7 @@ namespace hgraph
         if (_items.empty()) { _items.reserve(ndx + 1); }
         while (ndx >= _items.size()) {
             auto new_item = new TimeSeriesReferenceInput(this);
+            new_item->set_subscribe_method(true);
             _items.push_back(new_item);
         }
         return _items.at(ndx);
