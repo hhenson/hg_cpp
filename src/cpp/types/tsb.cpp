@@ -33,7 +33,8 @@ namespace hgraph
 
     void TimeSeriesBundleOutput::apply_result(nb::object value) {
         if (value.is_none()) { return; }
-        if (value.is(schema().scalar_type())) {
+        // Check if value is an instance of the scalar type (not just identity check)
+        if (nb::isinstance(value, schema().scalar_type())) {
             for (const auto &key : schema().keys()) {
                 auto v = nb::getattr(value, key.c_str(), nb::none());
                 if (!v.is_none()) { (*this)[key]->apply_result(v); }
