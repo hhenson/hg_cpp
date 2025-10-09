@@ -298,7 +298,7 @@ namespace hgraph
         return _added;
     }
 
-    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::has_added() const { return _added.empty(); }
+    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::has_added() const { return !_added.empty(); }
 
     template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::py_was_added(const nb::object &item) const {
         return was_added(nb::cast<element_type>(item));
@@ -320,7 +320,7 @@ namespace hgraph
         return _removed;
     }
 
-    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::has_removed() const { return _removed.empty(); }
+    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::has_removed() const { return !_removed.empty(); }
 
     template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::py_was_removed(const nb::object &item) const {
         return was_removed(nb::cast<element_type>(item));
