@@ -127,6 +127,8 @@ namespace hgraph
 
     bool TimeSeriesInput::bind_output(time_series_output_ptr value) {
         bool peer;
+        bool was_bound = bound();  // Track if input was previously bound (matches Python behavior)
+
         if (auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(value.get())) {  // Is a TimeseriesReferenceOutput
             if (ref_output->valid()) { ref_output->value()->bind_input(*this); }
             ref_output->observe_reference(this);
@@ -138,7 +140,11 @@ namespace hgraph
             peer = do_bind_output(value);
         }
 
-        if ((owning_node().is_started() || owning_node().is_starting()) && _output && _output->valid()) {
+        // Notify if the node is started/starting and either:
+        // - The input was previously bound (rebinding case), OR
+        // - The new output is valid
+        // This matches the Python implementation: (was_bound or self._output.valid)
+        if ((owning_node().is_started() || owning_node().is_starting()) && _output && (was_bound || _output->valid())) {
             _sample_time = owning_graph().evaluation_clock().evaluation_time();
             if (active()) {
                 notify(_sample_time);
