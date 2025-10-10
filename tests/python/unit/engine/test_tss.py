@@ -1,138 +1,57 @@
-from dataclasses import dataclass
-from datetime import datetime, date, timedelta
-
-import _hgraph
-import pytest
-from hgraph import graph, TS, compute_node, MIN_ST, MIN_TD, SIGNAL, TSS, set_delta, CompoundScalar, contains_
+from hgraph import graph, TS, TSS, compute_node, Removed, contains_, set_delta
+from hgraph import pass_through_node
 from hgraph.test import eval_node
 
 
-@dataclass(frozen=True)
-class MyCs(CompoundScalar):
-    p1: int
-    p2: float
+@compute_node
+def create_tss(key: TS[str], add: TS[bool]) -> TSS[str]:
+    if add.value:
+        return set_delta(added=frozenset([key.value]), removed=frozenset(), tp=str)
+    else:
+        return set_delta(added=frozenset(), removed=frozenset([key.value]), tp=str)
 
 
-@pytest.mark.parametrize("added,removed,tp,expected", [
-    [frozenset({True}), frozenset({False}), bool, _hgraph.SetDelta_bool(frozenset({True}), frozenset({False}))],
-    [frozenset({1, 2}), frozenset({3}), int, _hgraph.SetDelta_int(frozenset({1, 2}), frozenset({3}))],
-    [frozenset({1.0, 2.0}), frozenset({3.0}), float, _hgraph.SetDelta_float(frozenset({1.0, 2.0}), frozenset({3.0}))],
-    [frozenset({date(2025, 1, 1)}), frozenset(), date,
-     _hgraph.SetDelta_date(frozenset({date(2025, 1, 1)}), frozenset())],
-    [frozenset({datetime(2025, 1, 1)}), frozenset(), datetime,
-     _hgraph.SetDelta_date_time(frozenset({datetime(2025, 1, 1)}), frozenset())],
-    [frozenset({timedelta(1)}), frozenset(), timedelta,
-     _hgraph.SetDelta_time_delta(frozenset({timedelta(1)}), frozenset())],
-    [frozenset({MyCs(p1=1, p2=2.0)}), frozenset(), MyCs,
-     _hgraph.SetDelta_object(frozenset({MyCs(p1=1, p2=2.0)}), frozenset(), MyCs)],
-])
-def test_set_delta(added, removed, tp, expected):
-    sd = set_delta(added, removed, tp)
-    assert sd == expected
-    assert sd.tp == tp
-
-
-def test_tss_simple():
-    @graph
-    def g(a: TSS[int]) -> TSS[int]:
-        return a
-
-    assert eval_node(g, [{1, 2, 3}]) == [set_delta(added=frozenset({1, 2, 3}), removed=frozenset(), tp=int)]
-
-
-def test_tss_operations_value():
-    @compute_node
-    def g(a: TSS[int]) -> TS[frozenset[int]]:
-        return a.value
-
-    actual = eval_node(g, [{1, 2}, {3}, set_delta(removed=frozenset({1, }), tp=int)])
-    print(actual)
-    assert actual == [
-        frozenset({1, 2}),
-        frozenset({1, 2, 3}),
-        frozenset({2, 3}),
+def test_tss_strait():
+    assert eval_node(create_tss, key=["a", "a", "b", "a"], add=[True, True, True, False]) == [
+        set_delta(frozenset("a"), frozenset(), tp=str),
+        None,
+        set_delta(frozenset("b"), frozenset(), tp=str),
+        set_delta(frozenset(), frozenset("a"), tp=str),
     ]
 
 
-def test_tss_operations_delta_value():
-    @compute_node
-    def g(a: TSS[int]) -> TSS[int]:
-        return a.delta_value
+def test_tss_pass_through():
 
-    actual = eval_node(g, [{1, 2}, {3}, set_delta(removed=frozenset({1, }), tp=int)])
-    print(actual)
-    assert actual == [
-        set_delta(added=frozenset({1, 2}), removed=frozenset(), tp=int),
-        set_delta(added=frozenset({3}), removed=frozenset(), tp=int),
-        set_delta(added=frozenset(), removed=frozenset({1}), tp=int),
+    @graph
+    def pass_through_test(key: TS[str], add: TS[bool]) -> TSS[str]:
+        tss = create_tss(key, add)
+        return pass_through_node(tss)
+
+    assert eval_node(pass_through_test, key=["a", "b", "a"], add=[True, True, False]) == [
+        set_delta(frozenset("a"), frozenset(), tp=str),
+        set_delta(frozenset("b"), frozenset(), tp=str),
+        set_delta(frozenset(), frozenset("a"), tp=str),
     ]
-
-
-def test_tss_operations_last_modified_time():
-    @compute_node
-    def g(a: TSS[int]) -> TS[datetime]:
-        return a.last_modified_time
-
-    assert eval_node(g, [{1}, {2}, {2}]) == [MIN_ST, MIN_ST + MIN_TD, None]
-
-
-def test_tss_operations_valid():
-    @graph
-    def g(a: TSS[int], b: TS[bool]) -> TS[bool]:
-        return c(a, b)
-
-    @compute_node(active=("b",), valid=("b",))
-    def c(a: TSS[int], b: SIGNAL) -> TS[bool]:
-        return a.valid
-
-    assert eval_node(g, [None, {1}], [True, True]) == [False, True]
-
-
-def test_tss_operations_all_valid():
-    @graph
-    def g(a: TSS[int], b: TS[bool]) -> TS[bool]:
-        return c(a, b)
-
-    @compute_node(active=("b",), valid=("b",))
-    def c(a: TSS[int], b: SIGNAL) -> TS[bool]:
-        return a.all_valid
-
-    assert eval_node(g, [None, {1}, {2}], [True, True, True]) == [False, True, True]
-
-
-def test_tss_operations_modified():
-    @graph
-    def g(a: TSS[int], b: TS[bool]) -> TS[bool]:
-        return c(a, b)
-
-    @compute_node(active=("b",), valid=("b",))
-    def c(a: TSS[int], b: SIGNAL) -> TS[bool]:
-        return a.modified
-
-    assert eval_node(g, [None, {1}, None, {1}], [True, True, None, True]) == [False, True, None, False]
-
-
-def test_tss_operations_active():
-    @graph
-    def g(a: TSS[int], b: TS[bool]) -> TS[bool]:
-        return c(a, b)
-
-    @compute_node(active=("b",), valid=("b",))
-    def c(a: TSS[int], b: SIGNAL) -> TS[bool]:
-        active = a.active
-        if active:
-            a.make_passive()
-        else:
-            a.make_active()
-        return active
-
-    assert eval_node(g, [{1}, {2}, {3}, {4}], [True, True, None, True]) == [False, True, None, False]
 
 
 def test_tss_contains():
 
     @graph
-    def g(a: TSS[int], b: TS[int]) -> TS[bool]:
-        return contains_(a, b)
+    def contains(ts: TSS[int], key: TS[int]) -> TS[bool]:
+        return contains_(ts, key)
 
-    assert eval_node(g, [{1, 2}, {3}], [3, None]) == [False, True]
+    assert eval_node(contains, [{1}, {2}, {Removed(1)}, {}, {3}], [0, 1, None, 3]) == [False, True, False, False, True]
+
+
+def test_tss_empty():
+    @compute_node
+    def empty(s: TS[bool]) -> TSS[int]:
+        return set()
+
+    assert eval_node(empty, [True]) == [set()]
+
+
+def test_set_delta_addition():
+    d = set_delta(added={1, 2, 3}, removed=set(), tp=int)
+    d1 = d + set_delta(added={4, 5}, removed={3}, tp=int)
+    assert d1 == set_delta(added={1, 2, 4, 5}, removed=set(), tp=int)

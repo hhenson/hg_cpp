@@ -71,6 +71,7 @@ def test_subscription_service():
 
     @service_impl(interfaces=my_subs_service)
     def my_subs_service_impl(subscription: TSS[str]) -> TSD[str, TS[str]]:
+        debug_print("subscription", subscription)
         return map_(pass_through_node, __keys__=subscription, __key_arg__="ts")
 
     @graph
