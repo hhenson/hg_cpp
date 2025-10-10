@@ -1,3 +1,4 @@
+import hg_cpp  # Comment this out to use Python instead of C++
 from datetime import datetime, timedelta
 
 from hgraph import graph, TS, compute_node, MIN_ST, MIN_TD, SIGNAL

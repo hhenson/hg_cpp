@@ -1,5 +1,4 @@
-from inspect import signature
-
+import hg_cpp  # Comment this out to use Python instead of C++
 from hgraph import (
     compute_node,
     TS,
@@ -9,7 +8,6 @@ from hgraph import (
     graph,
     TSD,
     Size,
-    with_signature,
     TSB,
     TS_SCHEMA,
     operator,

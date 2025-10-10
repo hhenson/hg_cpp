@@ -1,3 +1,4 @@
+import hg_cpp  # Comment this out to use Python instead of C++
 from dataclasses import dataclass
 from typing import Generic
 
@@ -43,7 +44,7 @@ def create_my_tsb(ts1: TS[int], ts2: TS[str]) -> TSB[MyTsb]:
 
 @compute_node
 def split_my_tsb(tsb: TSB[MyTsb]) -> TS[int]:
-    return tsb.as_schema.p1.delta_value
+    return tsb.p1.delta_value
 
 
 @pytest.mark.parametrize(

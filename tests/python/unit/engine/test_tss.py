@@ -1,3 +1,4 @@
+import hg_cpp  # Comment this out to use Python instead of C++
 from hgraph import graph, TS, TSS, compute_node, Removed, contains_, set_delta
 from hgraph import pass_through_node
 from hgraph.test import eval_node

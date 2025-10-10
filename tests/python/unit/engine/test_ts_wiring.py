@@ -1,3 +1,4 @@
+import hg_cpp  # Comment this out to use Python instead of C++
 import pytest
 
 from hgraph import compute_node, TS, graph, IncorrectTypeBinding

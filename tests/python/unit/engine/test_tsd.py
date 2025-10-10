@@ -1,12 +1,11 @@
-from dataclasses import dataclass
-from datetime import datetime, date, timedelta
+import hg_cpp  # Comment this out to use Python instead of C++
 
-import _hgraph
-import pytest
-from hgraph import graph, TS, compute_node, MIN_ST, MIN_TD, SIGNAL, TSS, set_delta, CompoundScalar, contains_, TSD, \
+from datetime import datetime
+
+from frozendict import frozendict as fd, frozendict
+from hgraph import graph, TS, compute_node, MIN_ST, MIN_TD, SIGNAL, contains_, TSD, \
     REMOVE
 from hgraph.test import eval_node
-from frozendict import frozendict as fd, frozendict
 
 
 def test_tsd_simple():

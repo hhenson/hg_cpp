@@ -1,3 +1,4 @@
+import hg_cpp  # Comment this out to use Python instead of C++
 from hgraph import graph, TS, TSD, reduce
 from hgraph.test import eval_node
 

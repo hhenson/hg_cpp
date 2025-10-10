@@ -1,3 +1,4 @@
+import hg_cpp  # Comment this out to use Python instead of C++
 from dataclasses import dataclass
 
 from hgraph import CompoundScalar, compute_node, TS, graph

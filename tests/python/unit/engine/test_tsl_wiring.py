@@ -1,3 +1,4 @@
+import hg_cpp  # Comment this out to use Python instead of C++
 from hgraph import TS, graph, TSL, Size, SCALAR, compute_node, SIZE, getitem_, const
 from hgraph.nodes import flatten_tsl_values
 from hgraph.test import eval_node

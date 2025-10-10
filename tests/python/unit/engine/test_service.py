@@ -2,6 +2,9 @@ from typing import Type
 
 from frozendict import frozendict
 
+# Ensure C++ runtime is imported before any hgraph imports
+import hg_cpp  # noqa: F401
+
 from hgraph import (
     reference_service,
     TSD,
