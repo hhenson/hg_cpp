@@ -373,10 +373,12 @@ namespace hgraph
     }
 
     bool TimeSeriesReferenceInput::do_bind_output(time_series_output_ptr value) {
-        if (dynamic_cast<TimeSeriesReferenceOutput *>(value.get())) {
+        if (auto ref_out = dynamic_cast<TimeSeriesReferenceOutput *>(value.get())) {
+            // Match Python behavior: bind to a TimeSeriesReferenceOutput as a normal peer
             _value = nullptr;
             return TimeSeriesInput::do_bind_output(value);
         } else {
+            // We are binding directly to a concrete output: wrap it as a reference value
             _value = TimeSeriesReference::make(std::move(value));
             reset_output();
             if (owning_node().is_started()) {

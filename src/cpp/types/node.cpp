@@ -699,8 +699,14 @@ namespace hgraph
         }
     }
     void BasePythonNode::do_eval() {
-        auto out{_eval_fn(**_kwargs)};
-        if (!out.is_none()) { output().apply_result(out); }
+        try {
+            auto out{_eval_fn(**_kwargs)};
+            if (!out.is_none()) { output().apply_result(out); }
+        } catch (nb::python_error &e) {
+            // Restore the original Python exception so it can propagate back to the caller correctly
+            e.restore();
+            throw;  // rethrow to let nanobind translate it back to Python
+        }
     }
 
     void BasePythonNode::do_start() {
