@@ -413,7 +413,10 @@ namespace hgraph
     }
 
     void TimeSeriesReferenceInput::register_with_nanobind(nb::module_ &m) {
-        nb::class_<TimeSeriesReferenceInput, TimeSeriesInput>(m, "TimeSeriesReferenceInput");
+        nb::class_<TimeSeriesReferenceInput, TimeSeriesInput>(m, "TimeSeriesReferenceInput")
+            .def("__getitem__", [](TimeSeriesReferenceInput &self, size_t index) -> TimeSeriesInput::ptr {
+                return TimeSeriesInput::ptr{self[index].get()};
+            });
     }
 
     bool TimeSeriesReferenceInput::is_reference() const { return true; }
