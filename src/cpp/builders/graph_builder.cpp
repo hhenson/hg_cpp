@@ -7,6 +7,7 @@
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/traits.h>
 #include <hgraph/types/tsb.h>
+#include <hgraph/types/ts_signal.h>
 
 namespace hgraph
 {
@@ -36,11 +37,38 @@ namespace hgraph
         if (path.empty()) { throw std::runtime_error("No path to find an input for"); }
 
         auto input = dynamic_cast_ref<TimeSeriesInput>(node->input_ptr());
-        for (auto index : path) {
-            auto indexed_ts{dynamic_cast<IndexedTimeSeriesInput *>(input.get())};
-            if (!indexed_ts) { throw std::runtime_error("Input is not an indexed time series"); }
+
+        // If the input is not indexed, return it directly regardless of path
+        // This handles cases where indexed outputs are bound to non-indexed inputs
+        auto *indexed_ts = dynamic_cast<IndexedTimeSeriesInput *>(input.get());
+        if (!indexed_ts) {
+            return input;
+        }
+
+        for (size_t i = 0; i < path.size(); ++i) {
+            auto index = path[i];
             if (index >= indexed_ts->size()) { throw std::runtime_error("Invalid path index"); }
             input = (*indexed_ts)[index];
+            // Update indexed_ts for next iteration if there are more elements in path
+            if (i + 1 < path.size()) {
+                indexed_ts = dynamic_cast<IndexedTimeSeriesInput *>(input.get());
+                if (!indexed_ts) {
+                    // Check if it's a TimeSeriesSignalInput which supports indexing via operator[]
+                    auto *signal_ts = dynamic_cast<TimeSeriesSignalInput *>(input.get());
+                    if (signal_ts) {
+                        // Continue using the signal's operator[] for remaining path elements
+                        for (++i; i < path.size(); ++i) {
+                            input = (*signal_ts)[path[i]];
+                            signal_ts = dynamic_cast<TimeSeriesSignalInput *>(input.get());
+                            if (!signal_ts) {
+                                throw std::runtime_error("Signal input path extraction failed");
+                            }
+                        }
+                        break;
+                    }
+                    throw std::runtime_error("Input is not an indexed time series");
+                }
+            }
         }
         return input;
     }

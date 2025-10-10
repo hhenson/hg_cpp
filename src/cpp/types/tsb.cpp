@@ -107,7 +107,14 @@ namespace hgraph
             .def("valid_keys", &TimeSeriesBundle_Input::valid_keys)
             .def("valid_items",
                  static_cast<key_value_collection_type (TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::valid_items))
-            .def_prop_ro("__schema__", static_cast<const TimeSeriesSchema& (TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::schema));
+            .def_prop_ro("__schema__", static_cast<const TimeSeriesSchema& (TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::schema))
+            .def("__getattr__",
+                 [](TimeSeriesBundle_Input &self, const std::string &key) -> TimeSeriesInput::ptr {
+                     if (self.contains(key)) {
+                         return self[key];
+                     }
+                     throw nb::attribute_error(("Attribute '" + key + "' not found in TimeSeriesBundle").c_str());
+                 });
 
         nb::class_<TimeSeriesBundleInput, TimeSeriesBundle_Input>(m, "TimeSeriesBundleInput")
             .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
