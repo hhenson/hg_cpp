@@ -29,7 +29,6 @@ set(HGRAPH_SOURCES
         runtime/evaluation_context.cpp
         runtime/evaluation_engine.cpp
         runtime/graph_executor.cpp
-        runtime/global_state.cpp
         runtime/record_replay.cpp
 
         types/constants.cpp

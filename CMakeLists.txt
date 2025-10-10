@@ -130,7 +130,6 @@ set(HGRAPH_INCLUDES
         include/hgraph/runtime/evaluation_context.h
         include/hgraph/runtime/evaluation_engine.h
         include/hgraph/runtime/graph_executor.h
-        include/hgraph/runtime/global_state.h
         include/hgraph/runtime/record_replay.h
 
         include/hgraph/types/constants.h

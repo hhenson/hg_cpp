@@ -3,7 +3,6 @@
  */
 
 #include <hgraph/runtime/evaluation_engine.h>
-#include <hgraph/runtime/global_state.h>
 
 void export_runtime(nb::module_& m) {
     using namespace hgraph;
@@ -24,5 +23,4 @@ void export_runtime(nb::module_& m) {
     EvaluationEngineImpl::register_with_nanobind(m);
     EvaluationEngineDelegate::register_with_nanobind(m);
 
-    //GlobalState::register_with_nanobind(m);
 }
