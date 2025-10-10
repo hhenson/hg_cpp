@@ -153,7 +153,7 @@ namespace hgraph
     void TimeSeriesInput::un_bind_output() {
         if (not bound()) { return; }
         bool was_valid = valid();
-        if (auto ref_output = dynamic_cast_ref<TimeSeriesReferenceOutput>(_output)) {
+        if (auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(_output.get())) {
             ref_output->stop_observing_reference(this);
             _reference_output.reset();
         }
