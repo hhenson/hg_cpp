@@ -1,6 +1,5 @@
 #include <hgraph/nodes/mesh_node.h>
 #include <hgraph/nodes/nested_evaluation_engine.h>
-#include <hgraph/runtime/global_state.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 
