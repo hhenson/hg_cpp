@@ -105,13 +105,9 @@ namespace hgraph
             if (!other_list) { return false; }
             const auto this_size  = this->size();
             const auto other_size = other_list->size();
-            // If both lists are non-empty, require equal size
-            if (this_size > 0 && other_size > 0 && this_size != other_size) { return false; }
-            // If exactly one list is empty, treat as not the same type (cannot verify element compatibility)
-            if ((this_size == 0) != (other_size == 0)) { return false; }
-            // If both lists are empty, accept as same type (no further info available)
-            if (this_size == 0 && other_size == 0) { return true; }
-            // Both have at least one element (and sizes compatible): compare the element type recursively
+            // Be permissive during wiring: if either list has no elements yet, treat as same type
+            if (this_size == 0 || other_size == 0) { return true; }
+            // Otherwise, compare the element type recursively without enforcing equal sizes
             return (*this)[0]->is_same_type(*(*other_list)[0]);
         }
 
@@ -130,13 +126,9 @@ namespace hgraph
             if (!other_list) { return false; }
             const auto this_size  = this->size();
             const auto other_size = other_list->size();
-            // If both lists are non-empty, require equal size
-            if (this_size > 0 && other_size > 0 && this_size != other_size) { return false; }
-            // If exactly one list is empty, not same type (cannot verify element compatibility)
-            if ((this_size == 0) != (other_size == 0)) { return false; }
-            // If both empty -> same type
-            if (this_size == 0 && other_size == 0) { return true; }
-            // Both have content and sizes compatible -> compare element type recursively
+            // Be permissive during wiring: if either list has no elements yet, consider types compatible
+            if (this_size == 0 || other_size == 0) { return true; }
+            // Otherwise compare element type recursively without enforcing size equality
             return (*this)[0]->is_same_type(*(*other_list)[0]);
         }
 
