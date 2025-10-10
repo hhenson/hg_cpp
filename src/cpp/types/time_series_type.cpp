@@ -12,13 +12,9 @@ namespace hgraph
 
     void TimeSeriesType::re_parent(ptr parent) { _parent_ts_or_node = std::move(parent); }
 
-    bool TimeSeriesType::is_reference() const {
-        return false;
-    }
+    bool TimeSeriesType::is_reference() const { return false; }
 
-    bool TimeSeriesType::has_reference() const {
-        return false;
-    }
+    bool TimeSeriesType::has_reference() const { return false; }
 
     void TimeSeriesType::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesType, nb::intrusive_base>(m, "TimeSeriesType")
@@ -130,7 +126,7 @@ namespace hgraph
         bool was_bound = bound();  // Track if input was previously bound (matches Python behavior)
 
         if (auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(value.get())) {  // Is a TimeseriesReferenceOutput
-            if (ref_output->valid()) { ref_output->value()->bind_input(*this); }
+            if (ref_output->value()) { ref_output->value()->bind_input(*this); }
             ref_output->observe_reference(this);
             _reference_output = ref_output;
             peer              = false;
@@ -280,7 +276,7 @@ namespace hgraph
 
     void TimeSeriesInput::reset_output() { _output = nullptr; }
 
-    void TimeSeriesInput::set_active(bool active) {_active = active;}
+    void TimeSeriesInput::set_active(bool active) { _active = active; }
 
     TimeSeriesOutput::ptr TimeSeriesOutput::parent_output() const {
         return static_cast<TimeSeriesOutput *>(_parent_time_series().get());  // NOLINT(*-pro-type-static-cast-downcast)

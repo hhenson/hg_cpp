@@ -139,9 +139,12 @@ namespace hgraph
     const std::vector<TimeSeriesReference::ptr> &UnBoundTimeSeriesReference::items() const { return _items; }
 
     void UnBoundTimeSeriesReference::bind_input(TimeSeriesInput &ts_input) const {
-        IndexedTimeSeriesInput *indexed_input{dynamic_cast<IndexedTimeSeriesInput *>(&ts_input)};
-        if (indexed_input == nullptr) {
-            throw std::runtime_error("UnBoundTimeSeriesReference::bind_input: Expected an IndexedTimeSeriesInput");
+        // Try to cast to TimeSeriesReferenceInput first (for REF[TSB] cases)
+        auto *ref_input = dynamic_cast<TimeSeriesReferenceInput *>(&ts_input);
+        auto *indexed_input = dynamic_cast<IndexedTimeSeriesInput *>(&ts_input);
+
+        if (ref_input == nullptr && indexed_input == nullptr) {
+            throw std::runtime_error("UnBoundTimeSeriesReference::bind_input: Expected an IndexedTimeSeriesInput or TimeSeriesReferenceInput");
         }
 
         bool reactivate = false;
@@ -151,7 +154,8 @@ namespace hgraph
         }
 
         for (size_t i = 0; i < _items.size(); ++i) {
-            auto &item = (*indexed_input)[i];
+            // Get the child input (either from REF or Indexed input)
+            TimeSeriesInput::ptr item = ref_input ? (*ref_input)[i] : (*indexed_input)[i];
             if (_items[i] != nullptr) {
                 _items[i]->bind_input(*item);
             } else if (item->bound()) {
@@ -212,7 +216,9 @@ namespace hgraph
 
     void TimeSeriesReferenceOutput::observe_reference(TimeSeriesInput::ptr input_) {
         auto result{_reference_observers.emplace(input_.get())};
-        if (result.second) { (*result.first)->inc_ref(); }
+        if (result.second) {
+            (*result.first)->inc_ref();
+        }
     }
 
     void TimeSeriesReferenceOutput::stop_observing_reference(TimeSeriesInput::ptr input_) {
@@ -376,6 +382,10 @@ namespace hgraph
         if (auto ref_out = dynamic_cast<TimeSeriesReferenceOutput *>(value.get())) {
             // Match Python behavior: bind to a TimeSeriesReferenceOutput as a normal peer
             _value = nullptr;
+            // Important: REF inputs binding to REF outputs must still call observe_reference
+            // so that when the REF output gets a value, it propagates to this input
+            if (ref_out->value()) { ref_out->value()->bind_input(*this); }
+            ref_out->observe_reference(this);
             return TimeSeriesInput::do_bind_output(value);
         } else {
             // We are binding directly to a concrete output: wrap it as a reference value
