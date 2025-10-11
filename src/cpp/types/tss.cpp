@@ -370,7 +370,7 @@ namespace hgraph
                     }
                 }
 
-                for (const auto &e : removed) {
+                for (const auto &e : nb::iter(removed)) {
                     auto k{nb::cast<T_Key>(e)};
                     if (_added.contains(k)) { throw std::runtime_error("Cannot remove and add the same element"); }
                     if (_value.contains(k)) { _remove(k); }

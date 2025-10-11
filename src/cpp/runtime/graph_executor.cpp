@@ -113,9 +113,30 @@ namespace hgraph
     }
 
     void GraphExecutorImpl::_evaluate(EvaluationEngine &evaluationEngine) {
-        evaluationEngine.notify_before_evaluation();
-        _graph->evaluate_graph();
-        evaluationEngine.notify_after_evaluation();
+        try {
+            evaluationEngine.notify_before_evaluation();
+        } catch (const NodeException &e) {
+            throw nb::builtin_exception(nb::exception_type::runtime_error, e.what());
+        } catch (const std::exception &e) {
+            std::string msg = std::string("Error in notify_before_evaluation: ") + e.what();
+            throw nb::builtin_exception(nb::exception_type::runtime_error, msg.c_str());
+        }
+        try {
+            _graph->evaluate_graph();
+        } catch (const NodeException &e) {
+            throw nb::builtin_exception(nb::exception_type::runtime_error, e.what());
+        } catch (const std::exception &e) {
+            std::string msg = std::string("Graph evaluation failed: ") + e.what();
+            throw nb::builtin_exception(nb::exception_type::runtime_error, msg.c_str());
+        }
+        try {
+            evaluationEngine.notify_after_evaluation();
+        } catch (const NodeException &e) {
+            throw nb::builtin_exception(nb::exception_type::runtime_error, e.what());
+        } catch (const std::exception &e) {
+            std::string msg = std::string("Error in notify_after_evaluation: ") + e.what();
+            throw nb::builtin_exception(nb::exception_type::runtime_error, msg.c_str());
+        }
         evaluationEngine.advance_engine_time();
     }
 

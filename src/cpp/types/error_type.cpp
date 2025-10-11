@@ -128,6 +128,7 @@ namespace hgraph
     }
 
     auto BackTrace::capture_back_trace(const Node *node, bool capture_values, int64_t depth) -> BackTrace {
+        nb::gil_scoped_acquire gil;  // Ensure Python API calls below are protected by the GIL
         std::optional<BacktraceSignature> signature;
         if (node) {
             auto node_sig = node->signature();
@@ -167,6 +168,7 @@ namespace hgraph
 
     auto BackTrace::capture_input(std::unordered_map<std::string, BackTrace> &active_inputs, const TimeSeriesInput &input,
                                   const std::string &input_name, bool capture_values, int64_t depth) -> void {
+        nb::gil_scoped_acquire gil;  // Ensure Python API calls below are protected by the GIL
         if (input.modified()) {
             if (input.bound()) {
                 if (input.has_peer()) {
@@ -217,6 +219,7 @@ namespace hgraph
     NodeException::NodeException(NodeError error) : std::runtime_error(error.to_string()), error{std::move(error)} {}
 
     std::string traceback_to_string(nb::python_error exception) {
+        nb::gil_scoped_acquire gil;  // Ensure we hold the GIL when interacting with Python APIs
         auto trace_back_mod{nb::module_::import_("traceback")};
         auto format_exception{trace_back_mod.attr("format_exception")};
         auto str_list{format_exception(exception.type(), exception.value(), exception.traceback())};
@@ -226,6 +229,7 @@ namespace hgraph
 
     NodeException NodeException::capture_error(const std::exception &e, const Node &node, const std::string &msg) {
         try {
+            nb::gil_scoped_acquire gil;  // Python interaction below needs the GIL
             auto py_err{dynamic_cast<const nb::python_error *>(&e)};
             auto back_trace{BackTrace::capture_back_trace(&node, node.signature().capture_values, node.signature().trace_back_depth)};
             auto stack_trace{py_err == nullptr ? std::string("") : traceback_to_string(*py_err)};

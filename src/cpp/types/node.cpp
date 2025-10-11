@@ -1,9 +1,9 @@
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
+#include <hgraph/types/error_type.h>
 #include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/tsb.h>
-
 #include <ranges>
 #include <sstream>
 
@@ -657,7 +657,10 @@ namespace hgraph
              ++i) {
             // Apple does not yet support ranges::contains :(
             auto key{input().schema().keys()[i]};
-            if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) { _kwargs[key.c_str()] = *input()[i]; }
+            if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) {
+                // Force exposure of inputs as base TimeSeriesInput to avoid double-wrapping as derived classes
+                _kwargs[key.c_str()] = nb::cast<TimeSeriesInput&>(*input()[i]);
+            }
         }
     }
 
@@ -703,9 +706,8 @@ namespace hgraph
             auto out{_eval_fn(**_kwargs)};
             if (!out.is_none()) { output().apply_result(out); }
         } catch (nb::python_error &e) {
-            // Restore the original Python exception so it can propagate back to the caller correctly
-            e.restore();
-            throw;  // rethrow to let nanobind translate it back to Python
+            // Convert Python error into enriched NodeException immediately to ensure readable propagation
+            throw NodeException::capture_error(e, *this, "During Python node evaluation");
         }
     }
 
@@ -813,7 +815,15 @@ namespace hgraph
                     //_error_output->apply_result(nb::cast(e.what()));
                 }
             } else {
-                do_eval();
+                try {
+                    do_eval();
+                } catch (const NodeException &e) {
+                    throw; // already enriched
+                } catch (const std::exception &e) {
+                    throw NodeException::capture_error(e, *this, "During evaluation");
+                } catch (...) {
+                    throw NodeException::capture_error(std::current_exception(), *this, "Unknown error during node evaluation");
+                }
             }
         }
 

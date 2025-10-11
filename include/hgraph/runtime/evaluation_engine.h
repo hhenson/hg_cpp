@@ -168,7 +168,7 @@ namespace hgraph
     struct NotifyNodeEvaluation
     {
         NotifyNodeEvaluation(EvaluationEngine &evaluation_engine, const Node &node);
-        ~NotifyNodeEvaluation();
+        ~NotifyNodeEvaluation() noexcept;
 
       private:
         EvaluationEngine &_evaluation_engine;

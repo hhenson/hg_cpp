@@ -224,9 +224,7 @@ namespace hgraph
 
     void EvaluationEngineDelegate::register_with_nanobind(nb::module_ &m) {
         nb::class_<EvaluationEngineDelegate, EvaluationEngine>(
-            m, "EvaluationEngineDelegate",
-            nb::intrusive_ptr<EvaluationEngineDelegate>(
-                [](EvaluationEngineDelegate *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            m, "EvaluationEngineDelegate")
             .def(nb::init<ptr>());
     }
 
@@ -396,9 +394,7 @@ namespace hgraph
 
     void RealTimeEvaluationClock::register_with_nanobind(nb::module_ &m) {
         nb::class_<RealTimeEvaluationClock, BaseEvaluationClock>(
-            m, "RealTimeEvaluationClock",
-            nb::intrusive_ptr<RealTimeEvaluationClock>(
-                [](RealTimeEvaluationClock *o, PyObject *po) noexcept { o->set_self_py(po); }))
+            m, "RealTimeEvaluationClock")
             .def(nb::init<engine_time_t>())
             .def("set_alarm", &RealTimeEvaluationClock::set_alarm, "alarm_time"_a, "name"_a, "callback"_a)
             .def("cancel_alarm", &RealTimeEvaluationClock::cancel_alarm, "name"_a);

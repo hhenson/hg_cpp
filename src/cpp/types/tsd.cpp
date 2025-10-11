@@ -4,35 +4,56 @@
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
+#include <hgraph/types/error_type.h>
 #include <hgraph/types/tsd.h>
+#include <hgraph/types/time_series_type.h>
 
 namespace hgraph
 {
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::apply_result(nb::object value) {
-        if (!valid()) {
-            key_set().mark_modified();  // Even if we tick an empty set, we still need to mark this as modified
-        }
-
-        // For now only support
-        if (nb::isinstance<nb::dict>(value)) {
-            auto remove{get_remove()};
-            auto remove_if_exists{get_remove_if_exists()};
-            for (const auto &[k, v] : nb::cast<nb::dict>(value)) {
-                if (v.is_none()) { continue; }
-                auto k_ = nb::cast<T_Key>(k);
-                if (v.is(remove) || v.is(remove_if_exists)) {
-                    if (v.is(remove_if_exists) && !contains(k_)) { continue; }
-                    erase(k_);
-                } else {
-                    operator[](k_).apply_result(nb::borrow(v));
-                }
+        // Ensure any Python API interaction occurs under the GIL and protect against exceptions
+        nb::gil_scoped_acquire gil;
+        try {
+            if (!valid()) {
+                key_set().mark_modified();  // Even if we tick an empty set, we still need to mark this as modified
             }
-        } else {
-            throw std::runtime_error("TimeSeriesDictOutput::apply_result: Only dictionary inputs are supported");
-        }
 
-        _post_modify();
+            // For now only support
+            if (nb::isinstance<nb::dict>(value)) {
+                auto remove{get_remove()};
+                auto remove_if_exists{get_remove_if_exists()};
+                for (const auto &[k, v] : nb::cast<nb::dict>(value)) {
+                    if (v.is_none()) { continue; }
+                    auto k_ = nb::cast<T_Key>(k);
+                    if (v.is(remove) || v.is(remove_if_exists)) {
+                        if (v.is(remove_if_exists) && !contains(k_)) { continue; }
+                        erase(k_);
+                    } else {
+                        // Apply to child, but guard to enrich any errors
+                        try {
+                            operator[](k_).apply_result(nb::borrow(v));
+                        } catch (const NodeException &e) {
+                            throw; // already enriched upstream
+                        } catch (const std::exception &e) {
+                            throw std::runtime_error(std::string("Error applying TSD value for key: ") + nb::cast<std::string>(nb::str(k)) + ": " + e.what());
+                        } catch (...) {
+                            throw std::runtime_error("Unknown error applying TSD value");
+                        }
+                    }
+                }
+            } else {
+                throw std::runtime_error("TimeSeriesDictOutput::apply_result: Only dictionary inputs are supported");
+            }
+
+            _post_modify();
+        } catch (const NodeException &e) {
+            throw; // already enriched
+        } catch (const std::exception &e) {
+            throw std::runtime_error(std::string("During TimeSeriesDictOutput_T::apply_result: ") + e.what());
+        } catch (...) {
+            throw std::runtime_error("Unknown error in TimeSeriesDictOutput_T::apply_result");
+        }
     }
 
     template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::can_apply_result(nb::object value) {
@@ -236,7 +257,11 @@ namespace hgraph
         auto KET_SET_ID = nb::module_::import_("hgraph").attr("KEY_SET_ID");
         if (KET_SET_ID.is(item)) { return nb::cast(_key_set); }
         auto k = nb::cast<T_Key>(item);
-        return nb::cast(operator[](k));
+        auto &ts = operator[](k);
+        auto *py = ts.self_py();
+        if (py) return nb::borrow(py);
+        // Prefer wrapping as base type to avoid double-wrapping under different derived bindings
+        return nb::cast(const_cast<TimeSeriesOutput*>(&ts));
     }
 
     template <typename T_Key>
@@ -511,7 +536,11 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_get_item(const nb::object &item) const {
-        return nb::cast(operator[](nb::cast<T_Key>(item)));
+        auto &ts = const_cast<TimeSeriesDictInput_T<T_Key>*>(this)->operator[](nb::cast<T_Key>(item));
+        auto *py = ts.self_py();
+        if (py) return nb::borrow(py);
+        // Prefer wrapping as base type to avoid double-wrapping under different derived bindings
+        return nb::cast(const_cast<TimeSeriesInput*>(&ts));
     }
 
     template <typename T_Key>
@@ -529,56 +558,75 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_values() const {
-        return nb::make_value_iterator(nb::type<map_type>(), "ValueIterator", _ts_values.begin(), _ts_values.end());
+        nb::list lst;
+        for (const auto &kv : _ts_values) {
+            auto *py = kv.second->self_py();
+            if (py) lst.append(nb::borrow(py));
+            else    lst.append(nb::cast(const_cast<TimeSeriesInput*>(kv.second.get())));
+        }
+        return nb::iter(lst);
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_items() const {
-        return nb::make_iterator(nb::type<map_type>(), "ItemIterator", _ts_values.begin(), _ts_values.end());
+        nb::list lst;
+        for (const auto &kv : _ts_values) {
+            auto *py = kv.second->self_py();
+            nb::object v = py ? nb::borrow(py) : nb::cast(const_cast<TimeSeriesInput*>(kv.second.get()));
+            lst.append(nb::make_tuple(nb::cast(kv.first), std::move(v)));
+        }
+        return nb::iter(lst);
     }
 
     template <typename T_Key>
     const typename TimeSeriesDictInput_T<T_Key>::map_type &TimeSeriesDictInput_T<T_Key>::modified_items() const {
-        // Match Python implementation logic:
-        // if self.has_peer:
-        //     return ((k, self._ts_values[k]) for k in self._output.modified_keys() if k in self._ts_values)
-        // elif self.active:
-        //     if self._last_notified_time == self.owning_graph.evaluation_clock.evaluation_time:
-        //         return self._modified_items
-        //     else:
-        //         return ()
-        // else:
-        //     return ((k, v) for k, v in self.items() if v.modified)
+        nb::gil_scoped_acquire gil; // Ensure safe interaction with Python/NB iterators
+        try {
+            // Match Python implementation logic:
+            // if self.has_peer:
+            //     return ((k, self._ts_values[k]) for k in self._output.modified_keys() if k in self._ts_values)
+            // elif self.active:
+            //     if self._last_notified_time == self.owning_graph.evaluation_clock.evaluation_time:
+            //         return self._modified_items
+            //     else:
+            //         return ()
+            // else:
+            //     return ((k, v) for k, v in self.items() if v.modified)
 
-        if (has_peer()) {
-            // Need to rebuild _modified_items from output's modified_keys
-            // This is not ideal but matches Python behavior
-            // Note: This const_cast is needed because we cache the result
-            auto& self = const_cast<TimeSeriesDictInput_T<T_Key>&>(*this);
-            self._modified_items.clear();
-            for (const auto& [key, value] : output_t().modified_items()) {
-                if (_ts_values.find(key) != _ts_values.end()) {
-                    self._modified_items.insert({key, _ts_values.at(key)});
+            if (has_peer()) {
+                // Need to rebuild _modified_items from output's modified_keys
+                // This is not ideal but matches Python behavior
+                // Note: This const_cast is needed because we cache the result
+                auto& self = const_cast<TimeSeriesDictInput_T<T_Key>&>(*this);
+                self._modified_items.clear();
+                for (const auto& [key, value] : output_t().modified_items()) {
+                    if (_ts_values.find(key) != _ts_values.end()) {
+                        self._modified_items.insert({key, _ts_values.at(key)});
+                    }
                 }
-            }
-            return _modified_items;
-        } else if (active()) {
-            if (_last_modified_time == owning_graph().evaluation_clock().evaluation_time()) {
                 return _modified_items;
-            } else {
-                // Return empty - use a static empty map
-                static const map_type empty_map;
-                return empty_map;
-            }
-        } else {
-            // Return items where v.modified
-            auto& self = const_cast<TimeSeriesDictInput_T<T_Key>&>(*this);
-            self._modified_items.clear();
-            for (const auto& [key, value] : _ts_values) {
-                if (value->modified()) {
-                    self._modified_items.insert({key, value});
+            } else if (active()) {
+                if (_last_modified_time == owning_graph().evaluation_clock().evaluation_time()) {
+                    return _modified_items;
+                } else {
+                    // Return empty - use a static empty map
+                    static const map_type empty_map;
+                    return empty_map;
                 }
+            } else {
+                // Return items where v.modified
+                auto& self = const_cast<TimeSeriesDictInput_T<T_Key>&>(*this);
+                self._modified_items.clear();
+                for (const auto& [key, value] : _ts_values) {
+                    if (value->modified()) {
+                        self._modified_items.insert({key, value});
+                    }
+                }
+                return _modified_items;
             }
-            return _modified_items;
+        } catch (const std::exception &e) {
+            throw std::runtime_error(std::string("Error in TSD.modified_items: ") + e.what());
+        } catch (...) {
+            throw std::runtime_error("Unknown error in TSD.modified_items");
         }
     }
 
@@ -588,13 +636,25 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_modified_values() const {
-        const auto& items = modified_items();  // Ensure modified_items is populated first
-        return nb::make_value_iterator(nb::type<map_type>(), "ModifiedValueIterator", items.begin(), items.end());
+        const auto& items = modified_items();
+        nb::list lst;
+        for (const auto &kv : items) {
+            auto *py = kv.second->self_py();
+            if (py) lst.append(nb::borrow(py));
+            else    lst.append(nb::cast(const_cast<TimeSeriesInput*>(kv.second.get())));
+        }
+        return nb::iter(lst);
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_modified_items() const {
-        const auto& items = modified_items();  // Ensure modified_items is populated first
-        return nb::make_iterator(nb::type<map_type>(), "ModifiedItemIterator", items.begin(), items.end());
+        const auto& items = modified_items();
+        nb::list lst;
+        for (const auto &kv : items) {
+            auto *py = kv.second->self_py();
+            nb::object v = py ? nb::borrow(py) : nb::cast(const_cast<TimeSeriesInput*>(kv.second.get()));
+            lst.append(nb::make_tuple(nb::cast(kv.first), std::move(v)));
+        }
+        return nb::iter(lst);
     }
 
     template <typename T_Key> TimeSeriesSet<TimeSeriesInput> &TimeSeriesDictInput_T<T_Key>::key_set() { return key_set_t(); }

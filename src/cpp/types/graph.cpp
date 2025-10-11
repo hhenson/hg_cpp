@@ -84,15 +84,32 @@ namespace hgraph
             while (auto value = receiver().dequeue()) {
                 auto [i, message]         = *value;  // Use the already dequeued value
                 auto                &node = *nodes[i];
-                NotifyNodeEvaluation nne{evaluation_engine(), node};
-                bool                 success = dynamic_cast<PushQueueNode &>(node).apply_message(message);
-                if (!success) {
-                    receiver().enqueue_front({i, message});
-                    clock.mark_push_node_requires_scheduling();
-                    break;
+                try {
+                    NotifyNodeEvaluation nne{evaluation_engine(), node};
+                    bool success = dynamic_cast<PushQueueNode &>(node).apply_message(message);
+                    if (!success) {
+                        receiver().enqueue_front({i, message});
+                        clock.mark_push_node_requires_scheduling();
+                        break;
+                    }
+                } catch (const NodeException &e) {
+                    throw;  // already enriched
+                } catch (const std::exception &e) {
+                    throw NodeException::capture_error(e, node, "During push node message application");
+                } catch (...) {
+                    throw NodeException::capture_error(std::current_exception(), node,
+                                                       "Unknown error during push node message application");
                 }
             }
-            evaluation_engine().notify_after_push_nodes_evaluation(*this);
+            try {
+                evaluation_engine().notify_after_push_nodes_evaluation(*this);
+            } catch (const NodeException &e) {
+                throw; // already enriched
+            } catch (const std::exception &e) {
+                throw std::runtime_error(std::string("Error in notify_after_push_nodes_evaluation: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("Unknown error in notify_after_push_nodes_evaluation");
+            }
         }
 
         for (size_t i = push_source_nodes_end(); i < nodes.size(); ++i) {
@@ -162,18 +179,34 @@ namespace hgraph
     void Graph::start_subgraph(int64_t start, int64_t end) {
         for (auto i = start; i < end; ++i) {
             auto node{_nodes[i]};
-            evaluation_engine().notify_before_start_node(*node);
-            node->start();
-            evaluation_engine().notify_after_start_node(*node);
+            try {
+                evaluation_engine().notify_before_start_node(*node);
+                node->start();
+                evaluation_engine().notify_after_start_node(*node);
+            } catch (const NodeException &e) {
+                throw; // already enriched
+            } catch (const std::exception &e) {
+                throw NodeException::capture_error(e, *node, "During node start");
+            } catch (...) {
+                throw NodeException::capture_error(std::current_exception(), *node, "Unknown error during node start");
+            }
         }
     }
 
     void Graph::stop_subgraph(int64_t start, int64_t end) {
         for (auto i = start; i < end; ++i) {
             auto node{_nodes[i]};
-            evaluation_engine().notify_before_stop_node(*node);
-            node->stop();
-            evaluation_engine().notify_after_stop_node(*node);
+            try {
+                evaluation_engine().notify_before_stop_node(*node);
+                node->stop();
+                evaluation_engine().notify_after_stop_node(*node);
+            } catch (const NodeException &e) {
+                throw; // already enriched
+            } catch (const std::exception &e) {
+                throw NodeException::capture_error(e, *node, "During node stop");
+            } catch (...) {
+                throw NodeException::capture_error(std::current_exception(), *node, "Unknown error during node stop");
+            }
         }
     }
 
