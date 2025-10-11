@@ -87,7 +87,14 @@ namespace hgraph
             m, "UnBoundTimeSeriesReference",
             nb::intrusive_ptr<UnBoundTimeSeriesReference>(
                 [](UnBoundTimeSeriesReference *o, PyObject *po) noexcept { o->set_self_py(po); }))
-            .def_prop_ro("items", &UnBoundTimeSeriesReference::items);
+            .def_prop_ro("items", &UnBoundTimeSeriesReference::items)
+            .def("__getitem__", [](UnBoundTimeSeriesReference &self, size_t index) -> TimeSeriesReference::ptr {
+                const auto &items = self.items();
+                if (index >= items.size()) {
+                    throw std::out_of_range("Index out of range");
+                }
+                return items[index];
+            });
     }
 
     void EmptyTimeSeriesReference::bind_input(TimeSeriesInput &ts_input) const { ts_input.un_bind_output(); }
@@ -216,6 +223,12 @@ namespace hgraph
         for (auto it{_reference_observers.begin()}; it != _reference_observers.end(); ++it) {
             TimeSeriesInput *input{*it};
             _value->bind_input(*input);
+
+            // After binding, notify the input if it's a TimeSeriesReferenceInput
+            auto *ref_input = dynamic_cast<TimeSeriesReferenceInput *>(input);
+            if (ref_input) {
+                ref_input->notify_after_binding();
+            }
         }
     }
 
@@ -296,6 +309,15 @@ namespace hgraph
                 set_sample_time(owning_graph().evaluation_clock().evaluation_time());
                 if (active()) { notify(sample_time()); }
             }
+        }
+    }
+
+    void TimeSeriesReferenceInput::notify_after_binding() {
+        // Clear cached _value since binding has changed
+        _value = nullptr;
+        if (owning_node().is_started() && active()) {
+            set_sample_time(owning_graph().evaluation_clock().evaluation_time());
+            notify(sample_time());
         }
     }
 

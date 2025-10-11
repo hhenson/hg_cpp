@@ -138,6 +138,9 @@ namespace hgraph
         // Duplicate binding of another input
         void clone_binding(const TimeSeriesReferenceInput &other);
 
+        // Notify after binding (used by TimeSeriesReferenceOutput::set_value)
+        void notify_after_binding();
+
         [[nodiscard]] bool          modified() const override;
         [[nodiscard]] bool          valid() const override;
         [[nodiscard]] bool          all_valid() const override;
