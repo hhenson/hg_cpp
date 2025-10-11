@@ -225,17 +225,38 @@ namespace hgraph
     }
 
     NodeException NodeException::capture_error(const std::exception &e, const Node &node, const std::string &msg) {
-        auto py_err{dynamic_cast<const nb::python_error *>(&e)};
-        auto back_trace{BackTrace::capture_back_trace(&node, node.signature().capture_values, node.signature().trace_back_depth)};
-        auto stack_trace{py_err == nullptr ? "" : traceback_to_string(*py_err)};
-        return NodeException{NodeError(node.signature().signature(), node.signature().label.value_or(""),
-                                       node.signature().wiring_path_name, e.what(), stack_trace, back_trace.to_string(), msg)};
+        try {
+            auto py_err{dynamic_cast<const nb::python_error *>(&e)};
+            auto back_trace{BackTrace::capture_back_trace(&node, node.signature().capture_values, node.signature().trace_back_depth)};
+            auto stack_trace{py_err == nullptr ? std::string("") : traceback_to_string(*py_err)};
+            return NodeException{NodeError(node.signature().signature(), node.signature().label.value_or(""),
+                                           node.signature().wiring_path_name, e.what(), stack_trace, back_trace.to_string(), msg)};
+        } catch (const std::exception &inner) {
+            // Never throw from error capture; provide a minimal NodeException
+            return NodeException{NodeError(node.signature().signature(), node.signature().label.value_or(""),
+                                           node.signature().wiring_path_name,
+                                           std::string("Error during exception capture: ") + inner.what() + "; original: " + e.what(),
+                                           "", "", msg)};
+        } catch (...) {
+            return NodeException{NodeError(node.signature().signature(), node.signature().label.value_or(""),
+                                           node.signature().wiring_path_name,
+                                           std::string("Unknown error during exception capture; original: ") + e.what(),
+                                           "", "", msg)};
+        }
     }
 
     NodeException NodeException::capture_error(std::exception_ptr e, const Node &node, const std::string &msg) {
         try {
             rethrow_exception(std::move(e));
-        } catch (exception &e_) { return NodeException::capture_error(e_, node, msg); }
+        } catch (exception &e_) {
+            return NodeException::capture_error(e_, node, msg);
+        } catch (const std::exception &e2) {
+            return NodeException::capture_error(e2, node, msg);
+        } catch (...) {
+            return NodeException{NodeError(node.signature().signature(), node.signature().label.value_or(""),
+                                           node.signature().wiring_path_name,
+                                           "Unknown non-standard exception during node evaluation", "", "", msg)};
+        }
     }
 
     std::ostream &operator<<(std::ostream &os, const NodeError &error) {

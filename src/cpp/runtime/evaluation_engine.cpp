@@ -111,14 +111,30 @@ namespace hgraph
         _evaluation_engine.notify_before_graph_evaluation(_graph);
     }
 
-    NotifyGraphEvaluation::~NotifyGraphEvaluation() { _evaluation_engine.notify_after_graph_evaluation(_graph); }
+    NotifyGraphEvaluation::~NotifyGraphEvaluation() noexcept {
+        try {
+            _evaluation_engine.notify_after_graph_evaluation(_graph);
+        } catch (const std::exception &e) {
+            fprintf(stderr, "Warning: exception during notify_after_graph_evaluation: %s\n", e.what());
+        } catch (...) {
+            fprintf(stderr, "Warning: unknown exception during notify_after_graph_evaluation\n");
+        }
+    }
 
     NotifyNodeEvaluation::NotifyNodeEvaluation(EvaluationEngine &evaluation_engine, const Node &node)
         : _evaluation_engine{evaluation_engine}, _node{node} {
         _evaluation_engine.notify_before_node_evaluation(_node);
     }
 
-    NotifyNodeEvaluation::~NotifyNodeEvaluation() { _evaluation_engine.notify_after_node_evaluation(_node); }
+    NotifyNodeEvaluation::~NotifyNodeEvaluation() noexcept {
+        try {
+            _evaluation_engine.notify_after_node_evaluation(_node);
+        } catch (const std::exception &e) {
+            fprintf(stderr, "Warning: exception during notify_after_node_evaluation: %s\n", e.what());
+        } catch (...) {
+            fprintf(stderr, "Warning: unknown exception during notify_after_node_evaluation\n");
+        }
+    }
 
     EvaluationEngineDelegate::EvaluationEngineDelegate(ptr api) : _evaluation_engine{std::move(api)} {}
 

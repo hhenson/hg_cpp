@@ -27,7 +27,7 @@ namespace hgraph {
      */
     struct InitialiseDisposeContext {
         InitialiseDisposeContext(ComponentLifeCycle &component);
-        ~InitialiseDisposeContext() noexcept(false);  // Allow exceptions to propagate like Python's finally
+        ~InitialiseDisposeContext() noexcept;  // Destructors must not throw; exceptions are reported earlier
     private:
         ComponentLifeCycle& _component;
     };
@@ -39,7 +39,7 @@ namespace hgraph {
      */
     struct StartStopContext {
         StartStopContext(ComponentLifeCycle &component);
-        ~StartStopContext() noexcept(false);  // Allow exceptions to propagate like Python's finally
+        ~StartStopContext() noexcept;  // Destructors must not throw; exceptions are reported earlier
     private:
         ComponentLifeCycle& _component;
     };

@@ -67,15 +67,30 @@ namespace hgraph
         initialise_component(component);
     }
 
-    InitialiseDisposeContext::~InitialiseDisposeContext() noexcept(false) {
-        // Match Python's finally block behavior - exceptions are allowed to propagate
-        dispose_component(_component);
+    InitialiseDisposeContext::~InitialiseDisposeContext() noexcept {
+        // Destructors must not throw. Ensure cleanup happens but never aborts the process.
+        try {
+            dispose_component(_component);
+        } catch (const std::exception &e) {
+            // Swallow exceptions to avoid std::terminate during stack unwinding.
+            // The original operational exceptions should already have been raised during evaluation.
+            // If cleanup fails, emit a warning to stderr to aid debugging without killing the interpreter.
+            fprintf(stderr, "Warning: exception during dispose_component: %s\n", e.what());
+        } catch (...) {
+            fprintf(stderr, "Warning: unknown exception during dispose_component\n");
+        }
     }
 
     StartStopContext::StartStopContext(ComponentLifeCycle &component) : _component{component} { start_component(_component); }
 
-    StartStopContext::~StartStopContext() noexcept(false) {
-        // Match Python's finally block behavior - exceptions are allowed to propagate
-        stop_component(_component);
+    StartStopContext::~StartStopContext() noexcept {
+        // Destructors must not throw. Ensure cleanup happens but never aborts the process.
+        try {
+            stop_component(_component);
+        } catch (const std::exception &e) {
+            fprintf(stderr, "Warning: exception during stop_component: %s\n", e.what());
+        } catch (...) {
+            fprintf(stderr, "Warning: unknown exception during stop_component\n");
+        }
     }
 }  // namespace hgraph

@@ -8,6 +8,7 @@
  *
  */
 #include <hgraph/hgraph_base.h>
+#include <hgraph/types/error_type.h>
 
 #include <nanobind/intrusive/counter.inl>
 
@@ -29,6 +30,15 @@ NB_MODULE(_hgraph, m) {
             nb::gil_scoped_acquire guard;
             Py_DECREF(o);
         });
+
+    // Translate hgraph::NodeException into a Python RuntimeError with a readable message
+    nb::register_exception_translator([](const std::exception_ptr &p, void *) {
+        try {
+            if (p) std::rethrow_exception(p);
+        } catch (const hgraph::NodeException &e) {
+            throw nb::builtin_exception(nb::exception_type::runtime_error, e.what());
+        }
+    }, nullptr);
 
     nb::class_<nb::intrusive_base>(
         m, "intrusive_base",

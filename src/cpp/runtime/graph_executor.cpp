@@ -1,6 +1,7 @@
 #include <hgraph/runtime/graph_executor.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
+#include <hgraph/types/error_type.h>
 
 namespace hgraph
 {
@@ -88,12 +89,21 @@ namespace hgraph
 
         for (const auto &observer : _observers) { evaluationEngine->add_life_cycle_observer(observer); }
 
-        {
-            auto initialiseContext = InitialiseDisposeContext(*_graph);
-            auto startStopContext  = StartStopContext(*_graph);
+        try {
+            {
+                auto initialiseContext = InitialiseDisposeContext(*_graph);
+                auto startStopContext  = StartStopContext(*_graph);
 
-            while (clock->evaluation_time() < end_time) { _evaluate(*evaluationEngine); }
-        }  // StartStopContext destructor runs here and can throw exceptions
+                while (clock->evaluation_time() < end_time) { _evaluate(*evaluationEngine); }
+            } // RAII contexts end here
+        } catch (const NodeException &e) {
+            // Convert to a Python RuntimeError with a readable message
+            throw nb::builtin_exception(nb::exception_type::runtime_error, e.what());
+        } catch (const std::exception &e) {
+            // Provide a clear message for unexpected exceptions
+            std::string msg = std::string("Graph execution failed: ") + e.what();
+            throw nb::builtin_exception(nb::exception_type::runtime_error, msg.c_str());
+        }
     }
 
     void GraphExecutorImpl::register_with_nanobind(nb::module_ &m) {
