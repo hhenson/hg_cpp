@@ -3,6 +3,7 @@
 #include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
 #include <hgraph/types/ts_indexed.h>
+#include <hgraph/types/ts_signal.h>
 
 #include <algorithm>
 
@@ -139,12 +140,13 @@ namespace hgraph
     const std::vector<TimeSeriesReference::ptr> &UnBoundTimeSeriesReference::items() const { return _items; }
 
     void UnBoundTimeSeriesReference::bind_input(TimeSeriesInput &ts_input) const {
-        // Try to cast to TimeSeriesReferenceInput first (for REF[TSB] cases)
+        // Try to cast to supported input types
         auto *ref_input = dynamic_cast<TimeSeriesReferenceInput *>(&ts_input);
         auto *indexed_input = dynamic_cast<IndexedTimeSeriesInput *>(&ts_input);
+        auto *signal_input = dynamic_cast<TimeSeriesSignalInput *>(&ts_input);
 
-        if (ref_input == nullptr && indexed_input == nullptr) {
-            throw std::runtime_error("UnBoundTimeSeriesReference::bind_input: Expected an IndexedTimeSeriesInput or TimeSeriesReferenceInput");
+        if (ref_input == nullptr && indexed_input == nullptr && signal_input == nullptr) {
+            throw std::runtime_error("UnBoundTimeSeriesReference::bind_input: Expected an IndexedTimeSeriesInput, TimeSeriesReferenceInput, or TimeSeriesSignalInput");
         }
 
         bool reactivate = false;
@@ -154,8 +156,16 @@ namespace hgraph
         }
 
         for (size_t i = 0; i < _items.size(); ++i) {
-            // Get the child input (either from REF or Indexed input)
-            TimeSeriesInput::ptr item = ref_input ? (*ref_input)[i] : (*indexed_input)[i];
+            // Get the child input (from REF, Indexed, or Signal input)
+            TimeSeriesInput::ptr item;
+            if (ref_input) {
+                item = (*ref_input)[i];
+            } else if (indexed_input) {
+                item = (*indexed_input)[i];
+            } else if (signal_input) {
+                item = (*signal_input)[i];
+            }
+
             if (_items[i] != nullptr) {
                 _items[i]->bind_input(*item);
             } else if (item->bound()) {
