@@ -593,12 +593,14 @@ namespace hgraph
             //     return ((k, v) for k, v in self.items() if v.modified)
 
             if (has_peer()) {
-                // Need to rebuild _modified_items from output's modified_keys
-                // This is not ideal but matches Python behavior
-                // Note: This const_cast is needed because we cache the result
-                auto& self = const_cast<TimeSeriesDictInput_T<T_Key>&>(*this);
+                auto &self = const_cast<TimeSeriesDictInput_T<T_Key> &>(*this);
+                // If we've already flagged a switch (e.g., after rebinding) this tick, use the cached snapshot
+                if (self._last_modified_time == owning_graph().evaluation_clock().evaluation_time() && !self._modified_items.empty()) {
+                    return _modified_items;
+                }
+                // Otherwise rebuild from output's modified set for this tick
                 self._modified_items.clear();
-                for (const auto& [key, value] : output_t().modified_items()) {
+                for (const auto & [key, value] : output_t().modified_items()) {
                     if (_ts_values.find(key) != _ts_values.end()) {
                         self._modified_items.insert({key, _ts_values.at(key)});
                     }
