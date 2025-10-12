@@ -514,11 +514,28 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_delta_value() const {
-        if (has_peer()) { return TimeSeriesInput::py_delta_value(); }
+        // If we have removed values from rebinding, we need to include them in the delta
+        // even if we have a peer, because the new peer doesn't know about the old keys
+        if (has_peer()) {
+            if (_removed_values.empty()) {
+                return TimeSeriesInput::py_delta_value();
+            } else {
+                // During rebinding, provide the full value of the new output plus REMOVE sentinels for old keys
+                auto delta = nb::cast<nb::dict>(TimeSeriesInput::py_value());  // Get FULL value, not delta
+                auto removed{get_remove()};
+                for (const auto &[key, _] : _removed_values) {
+                    delta[nb::cast(key)] = removed;
+                }
+                return delta;
+            }
+        }
+
         auto delta{nb::dict()};
         // Build from currently modified and valid child inputs to avoid relying solely on observer-tracked state
         for (const auto &[key, value] : _ts_values) {
-            if (value->modified() && value->valid()) { delta[nb::cast(key)] = value->py_delta_value(); }
+            if (value->modified() && value->valid()) {
+                delta[nb::cast(key)] = value->py_delta_value();
+            }
         }
         if (!_removed_values.empty()) {
             auto removed{get_remove()};
@@ -740,7 +757,11 @@ namespace hgraph
         auto &value{_get_or_create(key)};
         if (!has_peer() && active()) { value.make_active(); }
         value.bind_output(&output_t()[key]);
-        register_clear_key_changes();
+        // Only register clear callback if we're not in the middle of rebinding
+        // During rebinding, reset_prev() will handle cleanup
+        if (!_prev_output) {
+            register_clear_key_changes();
+        }
     }
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::on_key_removed(const key_type &key) {
@@ -756,7 +777,11 @@ namespace hgraph
             _modified_items.erase(key);
             _ts_values.erase(it);
         }
-        register_clear_key_changes();
+        // Only register clear callback if we're not in the middle of rebinding
+        // During rebinding, reset_prev() will handle cleanup
+        if (!_prev_output) {
+            register_clear_key_changes();
+        }
     }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::was_removed(const key_type &key) const {
@@ -793,11 +818,34 @@ namespace hgraph
 
         TimeSeriesInput::do_bind_output(value);
 
-        if (!_ts_values.empty()) { register_clear_key_changes(); }
+        // When rebinding, mark keys from prev_output that don't exist in new output as removed
+        // IMPORTANT: Do this BEFORE calling on_key_removed below, which will remove keys from _ts_values
+        if (_prev_output) {
+            for (const auto &key : _prev_output->key_set_t().value()) {
+                if (!output_->contains(key)) {
+                    // Manually add to removed_values without calling on_key_removed (which would register clear callback)
+                    auto it = _ts_values.find(key);
+                    if (it != _ts_values.end()) {
+                        auto value{it->second};
+                        if (value->parent_input().get() == this) {
+                            if (value->active()) { value->make_passive(); }
+                            _removed_values.insert({key, value});
+                            _modified_items.erase(key);
+                            _ts_values.erase(it);
+                        }
+                    }
+                }
+            }
+            // Don't register clear_key_changes during rebinding - the reset_prev callback will handle cleanup
+        }
 
         for (const auto &key : key_set_t().values()) { on_key_added(key); }
 
         for (const auto &key : key_set_t().removed()) { on_key_removed(key); }
+
+        if (!_prev_output && !_ts_values.empty()) {
+            register_clear_key_changes();
+        }
 
         output_->add_key_observer(this);
         return peer;
@@ -850,12 +898,18 @@ namespace hgraph
         return const_cast<TimeSeriesDictInput_T *>(this)->output_t();
     }
 
-    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::reset_prev() { _prev_output = nullptr; }
+    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::reset_prev() {
+        // Clear any pending key changes before resetting prev_output
+        if (!_added_items.empty() || !_removed_values.empty()) {
+            clear_key_changes();
+        }
+        _prev_output = nullptr;
+    }
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::clear_key_changes() {
         _clear_key_changes_registered = false;
         _added_items.clear();
-        // NOTE: Do NOT clear _modified_items here - it gets cleared at the start of the next tick in notify_parent
+        // NOTE: DO NOT clear _modified_items here - it gets cleared at the start of the next tick in notify_parent
         // This matches the Python implementation where Input's _clear_key_changes only clears _removed_items
         for (auto &[_, value] : _removed_values) {
             if (value->parent_input().get() != this || !has_peer()) { value->un_bind_output(); }
@@ -929,7 +983,10 @@ namespace hgraph
         _added_items.insert({key, value});
         // NOTE: Do NOT add to _modified_items here - it will be added by notify_parent when the child actually modifies
         // This matches Python behavior where _create only adds to _added_items
-        register_clear_key_changes();
+        // Only register clear callback if we're not in the middle of rebinding
+        if (!_prev_output) {
+            register_clear_key_changes();
+        }
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_create(const key_type &key) {
