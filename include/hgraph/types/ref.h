@@ -41,7 +41,7 @@ namespace hgraph
 
     struct BoundTimeSeriesReference final : TimeSeriesReference
     {
-        explicit BoundTimeSeriesReference(time_series_output_ptr output);
+        explicit BoundTimeSeriesReference(const time_series_output_ptr& output);
 
         const TimeSeriesOutput::ptr &output() const;
 

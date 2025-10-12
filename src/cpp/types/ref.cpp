@@ -112,7 +112,7 @@ namespace hgraph
 
     std::string EmptyTimeSeriesReference::to_string() const { return "REF[<UnSet>]"; }
 
-    BoundTimeSeriesReference::BoundTimeSeriesReference(time_series_output_ptr output) : _output{std::move(output)} {}
+    BoundTimeSeriesReference::BoundTimeSeriesReference(const time_series_output_ptr& output) : _output{output} {}
 
     const TimeSeriesOutput::ptr &BoundTimeSeriesReference::output() const { return _output; }
 

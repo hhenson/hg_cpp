@@ -229,7 +229,7 @@ namespace hgraph
     bool TimeSeriesInput::do_bind_output(time_series_output_ptr output_) {
         auto active_{active()};
         make_passive();  // Ensure we are unsubscribed from the old output.
-        _output = std::move(output_);
+        _output = output_;
         if (active_) {
             make_active();  // If we were active now subscribe to the new output,
                                   // this is important even if we were not bound previously as this will ensure the new output gets
