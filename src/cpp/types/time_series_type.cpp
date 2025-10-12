@@ -121,19 +121,18 @@ namespace hgraph
 
     bool TimeSeriesInput::has_output() const { return _output.get() != nullptr; }
 
-    bool TimeSeriesInput::bind_output(time_series_output_ptr value) {
+    bool TimeSeriesInput::bind_output(time_series_output_ptr output_) {
         bool peer;
         bool was_bound = bound();  // Track if input was previously bound (matches Python behavior)
 
-        if (auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(value.get())) {  // Is a TimeseriesReferenceOutput
-            if (ref_output->value()) { ref_output->value()->bind_input(*this); }
+        if (auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(output_.get())) {  // Is a TimeseriesReferenceOutput
+            if (ref_output->valid() && ref_output->value()) { ref_output->value()->bind_input(*this); }
             ref_output->observe_reference(this);
             _reference_output = ref_output;
             peer              = false;
         } else {
-            if (value.get() == _output.get()) { return has_peer(); }
-
-            peer = do_bind_output(value);
+            if (output_.get() == _output.get()) { return has_peer(); }
+            peer = do_bind_output(output_);
         }
 
         // Notify if the node is started/starting and either:
@@ -150,6 +149,7 @@ namespace hgraph
 
         return peer;
     }
+
     void TimeSeriesInput::un_bind_output() {
         if (not bound()) { return; }
         bool was_valid = valid();
@@ -197,14 +197,14 @@ namespace hgraph
     }
 
     nb::object TimeSeriesInput::py_value() const {
-        if (has_peer()) {
+        if (_output != nullptr) {
             return _output->py_value();
         } else {
             return nb::none();
         }
     }
     nb::object TimeSeriesInput::py_delta_value() const {
-        if (has_peer()) {
+        if (_output != nullptr) {
             return _output->py_delta_value();
         } else {
             return nb::none();
@@ -226,12 +226,12 @@ namespace hgraph
             .def("make_passive", &TimeSeriesInput::make_passive);
     }
 
-    bool TimeSeriesInput::do_bind_output(time_series_output_ptr value) {
-        bool active = this->active();
-        this->make_passive();  // Ensure we are unsubscribed from the old output.
-        _output = std::move(value);
-        if (active) {
-            this->make_active();  // If we were active now subscribe to the new output,
+    bool TimeSeriesInput::do_bind_output(time_series_output_ptr output_) {
+        auto active_{active()};
+        make_passive();  // Ensure we are unsubscribed from the old output.
+        _output = std::move(output_);
+        if (active_) {
+            make_active();  // If we were active now subscribe to the new output,
                                   // this is important even if we were not bound previously as this will ensure the new output gets
                                   // subscribed to
         }
@@ -272,7 +272,7 @@ namespace hgraph
         return _sample_time != MIN_DT && _sample_time == owning_graph().evaluation_clock().evaluation_time();
     }
 
-    time_series_output_ptr TimeSeriesInput::reference_output() const { return _reference_output; }
+    time_series_reference_output_ptr TimeSeriesInput::reference_output() const { return _reference_output; }
 
     void TimeSeriesInput::reset_output() { _output = nullptr; }
 

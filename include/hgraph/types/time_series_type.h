@@ -185,7 +185,7 @@ namespace hgraph
         [[nodiscard]] virtual bool has_output() const;
 
         // FOR LIBRARY USE ONLY. Binds the output provided to this input.
-        virtual bool bind_output(time_series_output_ptr value);
+        virtual bool bind_output(time_series_output_ptr output_);
 
         // FOR LIBRARY USE ONLY. Unbinds the output from this input.
         virtual void un_bind_output();
@@ -209,11 +209,11 @@ namespace hgraph
 
         virtual void set_subscribe_method(bool subscribe_input);
 
-        [[nodiscard]] time_series_output_ptr reference_output() const;
+        [[nodiscard]] time_series_reference_output_ptr reference_output() const;
 
       protected:
         // Derived classes override this to implement specific behaviours
-        virtual bool do_bind_output(time_series_output_ptr value);
+        virtual bool do_bind_output(time_series_output_ptr output_);
 
         // Derived classes override this to implement specific behaviours
         virtual void do_un_bind_output();
@@ -236,7 +236,7 @@ namespace hgraph
 
       private:
         time_series_output_ptr _output;
-        time_series_output_ptr _reference_output;
+        time_series_reference_output_ptr _reference_output;
         bool                   _subscribe_input{false};
         bool                   _active{false};
         engine_time_t          _sample_time{MIN_DT};
