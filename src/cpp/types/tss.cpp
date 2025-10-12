@@ -1,8 +1,8 @@
 #include <hgraph/builders/output_builder.h>
+#include <hgraph/types/constants.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/ts.h>
 #include <hgraph/types/tss.h>
-#include <hgraph/types/constants.h>
 
 namespace hgraph
 {
@@ -11,7 +11,7 @@ namespace hgraph
         if (!nb::isinstance(other, get_frozenset()) && !nb::isinstance<nb::set>(other)) return false;
         nb::set added;
         nb::set removed;
-        auto REMOVED = get_removed();
+        auto    REMOVED = get_removed();
         for (auto i : nb::iter(other)) {
             if (nb::isinstance(i, REMOVED)) {
                 removed.add(i.attr("item"));
@@ -19,7 +19,7 @@ namespace hgraph
                 added.add(i);
             }
         }
-        return  removed.equal(py_removed()) && added.equal(py_added());
+        return removed.equal(py_removed()) && added.equal(py_added());
     }
 
     void SetDelta::register_with_nanobind(nb::module_ &m) {
@@ -35,197 +35,266 @@ namespace hgraph
                 [](SetDelta &self) {
                     return nb::str("SetDelta[{}](added={}, removed={})").format(self.py_type(), self.py_added(), self.py_removed());
                 })
-            .def("__eq__", static_cast<bool (SetDelta::*)(const SetDelta&) const>(&SetDelta::operator==))
-            .def("__eq__", static_cast<bool (SetDelta::*)(const nb::object&) const>(&SetDelta::operator==))
+            .def("__eq__", static_cast<bool (SetDelta::*)(const SetDelta &) const>(&SetDelta::operator==))
+            .def("__eq__", static_cast<bool (SetDelta::*)(const nb::object &) const>(&SetDelta::operator==))
             .def("__hash__", &SetDelta::hash)
-            .def("__add__", [](SetDelta &self, const SetDelta &other) -> SetDelta::ptr {
-                // Try intrinsic specializations first
-                if (auto *a = dynamic_cast<SetDeltaImpl<int64_t> *>(&self)) {
-                    auto *b = dynamic_cast<const SetDeltaImpl<int64_t> *>(&other);
-                    if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = int64_t; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = a->added(); const SetT &R1 = a->removed();
-                    SetT resA = A1; SetT resR = R1;
-                    const SetT &A2 = const_cast<SetDeltaImpl<int64_t> *>(b)->added();
-                    const SetT &R2 = const_cast<SetDeltaImpl<int64_t> *>(b)->removed();
-                    for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
-                    for (const auto &x : R2) { if (A1.find(x) == A1.end()) resR.insert(x); }
-                    return make_set_delta<int64_t>(std::move(resA), std::move(resR));
-                }
-                if (auto *a = dynamic_cast<SetDeltaImpl<bool> *>(&self)) {
-                    auto *b = dynamic_cast<const SetDeltaImpl<bool> *>(&other);
-                    if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = bool; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = a->added(); const SetT &R1 = a->removed();
-                    SetT resA = A1; SetT resR = R1;
-                    const SetT &A2 = const_cast<SetDeltaImpl<bool> *>(b)->added();
-                    const SetT &R2 = const_cast<SetDeltaImpl<bool> *>(b)->removed();
-                    for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
-                    for (const auto &x : R2) { resR.insert(x); }
-                    return make_set_delta<bool>(std::move(resA), std::move(resR));
-                }
-                if (auto *a = dynamic_cast<SetDeltaImpl<double> *>(&self)) {
-                    auto *b = dynamic_cast<const SetDeltaImpl<double> *>(&other);
-                    if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = double; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = a->added(); const SetT &R1 = a->removed();
-                    SetT resA = A1; SetT resR = R1;
-                    const SetT &A2 = const_cast<SetDeltaImpl<double> *>(b)->added();
-                    const SetT &R2 = const_cast<SetDeltaImpl<double> *>(b)->removed();
-                    for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
-                    for (const auto &x : R2) { resR.insert(x); }
-                    return make_set_delta<double>(std::move(resA), std::move(resR));
-                }
-                if (auto *a = dynamic_cast<SetDeltaImpl<engine_date_t> *>(&self)) {
-                    auto *b = dynamic_cast<const SetDeltaImpl<engine_date_t> *>(&other);
-                    if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = engine_date_t; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = a->added(); const SetT &R1 = a->removed();
-                    SetT resA = A1; SetT resR = R1;
-                    const SetT &A2 = const_cast<SetDeltaImpl<engine_date_t> *>(b)->added();
-                    const SetT &R2 = const_cast<SetDeltaImpl<engine_date_t> *>(b)->removed();
-                    for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
-                    for (const auto &x : R2) { resR.insert(x); }
-                    return make_set_delta<engine_date_t>(std::move(resA), std::move(resR));
-                }
-                if (auto *a = dynamic_cast<SetDeltaImpl<engine_time_t> *>(&self)) {
-                    auto *b = dynamic_cast<const SetDeltaImpl<engine_time_t> *>(&other);
-                    if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = engine_time_t; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = a->added(); const SetT &R1 = a->removed();
-                    SetT resA = A1; SetT resR = R1;
-                    const SetT &A2 = const_cast<SetDeltaImpl<engine_time_t> *>(b)->added();
-                    const SetT &R2 = const_cast<SetDeltaImpl<engine_time_t> *>(b)->removed();
-                    for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
-                    for (const auto &x : R2) { resR.insert(x); }
-                    return make_set_delta<engine_time_t>(std::move(resA), std::move(resR));
-                }
-                if (auto *a = dynamic_cast<SetDeltaImpl<engine_time_delta_t> *>(&self)) {
-                    auto *b = dynamic_cast<const SetDeltaImpl<engine_time_delta_t> *>(&other);
-                    if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = engine_time_delta_t; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = a->added(); const SetT &R1 = a->removed();
-                    SetT resA = A1; SetT resR = R1;
-                    const SetT &A2 = const_cast<SetDeltaImpl<engine_time_delta_t> *>(b)->added();
-                    const SetT &R2 = const_cast<SetDeltaImpl<engine_time_delta_t> *>(b)->removed();
-                    for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
-                    for (const auto &x : R2) { resR.insert(x); }
-                    return make_set_delta<engine_time_delta_t>(std::move(resA), std::move(resR));
-                }
-                // Fallback: object type composition using Python set operations
-                if (auto *a_obj = dynamic_cast<SetDelta_Object *>(&self)) {
-                    auto *b_obj = dynamic_cast<const SetDelta_Object *>(&other);
-                    if (!b_obj) throw nb::type_error("Cannot add SetDelta of different types");
-                    nb::object A1 = a_obj->py_added();
-                    nb::object R1 = a_obj->py_removed();
-                    nb::object A2 = b_obj->py_added();
-                    nb::object R2 = b_obj->py_removed();
-                    // resA = (set(A1) - set(R2)) | set(A2)
-                    nb::object py_set = nb::module_::import_("builtins").attr("set");
-                    nb::object setA1 = py_set(A1);
-                    nb::object setR2 = py_set(R2);
-                    nb::object setA2 = py_set(A2);
-                    nb::object setR1 = py_set(R1);
-                    nb::object resA = setA1.attr("difference")(setR2).attr("union")(setA2);
-                    // resR = (set(R1) - set(A2)) | set(R2)
-                    nb::object resR = setR1.attr("difference")(setA2).attr("union")(setR2);
-                    nb::object frozenset_ = nb::module_::import_("builtins").attr("frozenset");
-                    nb::object resA_f = frozenset_(resA);
-                    nb::object resR_f = frozenset_(resR);
-                    return SetDelta::ptr(new SetDelta_Object(resA_f, resR_f, self.py_type()));
-                }
-                throw nb::type_error("Unsupported SetDelta type for addition");
-            })
+            .def("__add__",
+                 [](SetDelta &self, const SetDelta &other) -> SetDelta::ptr {
+                     // Try intrinsic specializations first
+                     if (auto *a = dynamic_cast<SetDeltaImpl<int64_t> *>(&self)) {
+                         auto *b = dynamic_cast<const SetDeltaImpl<int64_t> *>(&other);
+                         if (!b) throw nb::type_error("Cannot add SetDelta of different types");
+                         using T          = int64_t;
+                         using SetT       = std::unordered_set<T>;
+                         const SetT &A1   = a->added();
+                         const SetT &R1   = a->removed();
+                         SetT        resA = A1;
+                         SetT        resR = R1;
+                         const SetT &A2   = const_cast<SetDeltaImpl<int64_t> *>(b)->added();
+                         const SetT &R2   = const_cast<SetDeltaImpl<int64_t> *>(b)->removed();
+                         for (const auto &x : R2) { resA.erase(x); }
+                         for (const auto &x : A2) {
+                             resR.erase(x);
+                             resA.insert(x);
+                         }
+                         for (const auto &x : R2) {
+                             if (A1.find(x) == A1.end()) resR.insert(x);
+                         }
+                         return make_set_delta<int64_t>(std::move(resA), std::move(resR));
+                     }
+                     if (auto *a = dynamic_cast<SetDeltaImpl<bool> *>(&self)) {
+                         auto *b = dynamic_cast<const SetDeltaImpl<bool> *>(&other);
+                         if (!b) throw nb::type_error("Cannot add SetDelta of different types");
+                         using T          = bool;
+                         using SetT       = std::unordered_set<T>;
+                         const SetT &A1   = a->added();
+                         const SetT &R1   = a->removed();
+                         SetT        resA = A1;
+                         SetT        resR = R1;
+                         const SetT &A2   = const_cast<SetDeltaImpl<bool> *>(b)->added();
+                         const SetT &R2   = const_cast<SetDeltaImpl<bool> *>(b)->removed();
+                         for (const auto &x : R2) { resA.erase(x); }
+                         for (const auto &x : A2) {
+                             resR.erase(x);
+                             resA.insert(x);
+                         }
+                         for (const auto &x : R2) { resR.insert(x); }
+                         return make_set_delta<bool>(std::move(resA), std::move(resR));
+                     }
+                     if (auto *a = dynamic_cast<SetDeltaImpl<double> *>(&self)) {
+                         auto *b = dynamic_cast<const SetDeltaImpl<double> *>(&other);
+                         if (!b) throw nb::type_error("Cannot add SetDelta of different types");
+                         using T          = double;
+                         using SetT       = std::unordered_set<T>;
+                         const SetT &A1   = a->added();
+                         const SetT &R1   = a->removed();
+                         SetT        resA = A1;
+                         SetT        resR = R1;
+                         const SetT &A2   = const_cast<SetDeltaImpl<double> *>(b)->added();
+                         const SetT &R2   = const_cast<SetDeltaImpl<double> *>(b)->removed();
+                         for (const auto &x : R2) { resA.erase(x); }
+                         for (const auto &x : A2) {
+                             resR.erase(x);
+                             resA.insert(x);
+                         }
+                         for (const auto &x : R2) { resR.insert(x); }
+                         return make_set_delta<double>(std::move(resA), std::move(resR));
+                     }
+                     if (auto *a = dynamic_cast<SetDeltaImpl<engine_date_t> *>(&self)) {
+                         auto *b = dynamic_cast<const SetDeltaImpl<engine_date_t> *>(&other);
+                         if (!b) throw nb::type_error("Cannot add SetDelta of different types");
+                         using T          = engine_date_t;
+                         using SetT       = std::unordered_set<T>;
+                         const SetT &A1   = a->added();
+                         const SetT &R1   = a->removed();
+                         SetT        resA = A1;
+                         SetT        resR = R1;
+                         const SetT &A2   = const_cast<SetDeltaImpl<engine_date_t> *>(b)->added();
+                         const SetT &R2   = const_cast<SetDeltaImpl<engine_date_t> *>(b)->removed();
+                         for (const auto &x : R2) { resA.erase(x); }
+                         for (const auto &x : A2) {
+                             resR.erase(x);
+                             resA.insert(x);
+                         }
+                         for (const auto &x : R2) { resR.insert(x); }
+                         return make_set_delta<engine_date_t>(std::move(resA), std::move(resR));
+                     }
+                     if (auto *a = dynamic_cast<SetDeltaImpl<engine_time_t> *>(&self)) {
+                         auto *b = dynamic_cast<const SetDeltaImpl<engine_time_t> *>(&other);
+                         if (!b) throw nb::type_error("Cannot add SetDelta of different types");
+                         using T          = engine_time_t;
+                         using SetT       = std::unordered_set<T>;
+                         const SetT &A1   = a->added();
+                         const SetT &R1   = a->removed();
+                         SetT        resA = A1;
+                         SetT        resR = R1;
+                         const SetT &A2   = const_cast<SetDeltaImpl<engine_time_t> *>(b)->added();
+                         const SetT &R2   = const_cast<SetDeltaImpl<engine_time_t> *>(b)->removed();
+                         for (const auto &x : R2) { resA.erase(x); }
+                         for (const auto &x : A2) {
+                             resR.erase(x);
+                             resA.insert(x);
+                         }
+                         for (const auto &x : R2) { resR.insert(x); }
+                         return make_set_delta<engine_time_t>(std::move(resA), std::move(resR));
+                     }
+                     if (auto *a = dynamic_cast<SetDeltaImpl<engine_time_delta_t> *>(&self)) {
+                         auto *b = dynamic_cast<const SetDeltaImpl<engine_time_delta_t> *>(&other);
+                         if (!b) throw nb::type_error("Cannot add SetDelta of different types");
+                         using T          = engine_time_delta_t;
+                         using SetT       = std::unordered_set<T>;
+                         const SetT &A1   = a->added();
+                         const SetT &R1   = a->removed();
+                         SetT        resA = A1;
+                         SetT        resR = R1;
+                         const SetT &A2   = const_cast<SetDeltaImpl<engine_time_delta_t> *>(b)->added();
+                         const SetT &R2   = const_cast<SetDeltaImpl<engine_time_delta_t> *>(b)->removed();
+                         for (const auto &x : R2) { resA.erase(x); }
+                         for (const auto &x : A2) {
+                             resR.erase(x);
+                             resA.insert(x);
+                         }
+                         for (const auto &x : R2) { resR.insert(x); }
+                         return make_set_delta<engine_time_delta_t>(std::move(resA), std::move(resR));
+                     }
+                     // Fallback: object type composition using Python set operations
+                     if (auto *a_obj = dynamic_cast<SetDelta_Object *>(&self)) {
+                         auto *b_obj = dynamic_cast<const SetDelta_Object *>(&other);
+                         if (!b_obj) throw nb::type_error("Cannot add SetDelta of different types");
+                         nb::object A1 = a_obj->py_added();
+                         nb::object R1 = a_obj->py_removed();
+                         nb::object A2 = b_obj->py_added();
+                         nb::object R2 = b_obj->py_removed();
+                         // resA = (set(A1) - set(R2)) | set(A2)
+                         nb::object py_set = nb::module_::import_("builtins").attr("set");
+                         nb::object setA1  = py_set(A1);
+                         nb::object setR2  = py_set(R2);
+                         nb::object setA2  = py_set(A2);
+                         nb::object setR1  = py_set(R1);
+                         nb::object resA   = setA1.attr("difference")(setR2).attr("union")(setA2);
+                         // resR = (set(R1) - set(A2)) | set(R2)
+                         nb::object resR       = setR1.attr("difference")(setA2).attr("union")(setR2);
+                         nb::object frozenset_ = nb::module_::import_("builtins").attr("frozenset");
+                         nb::object resA_f     = frozenset_(resA);
+                         nb::object resR_f     = frozenset_(resR);
+                         return SetDelta::ptr(new SetDelta_Object(resA_f, resR_f, self.py_type()));
+                     }
+                     throw nb::type_error("Unsupported SetDelta type for addition");
+                 })
             .def("__radd__", [](SetDelta &self, const SetDelta &other) -> SetDelta::ptr {
                 // Compute other + self (reverse order)
                 // Try intrinsic specializations first
                 if (auto *a = dynamic_cast<const SetDeltaImpl<int64_t> *>(&other)) {
                     auto *b = dynamic_cast<SetDeltaImpl<int64_t> *>(&self);
                     if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = int64_t; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = const_cast<SetDeltaImpl<int64_t> *>(a)->added();
-                    const SetT &R1 = const_cast<SetDeltaImpl<int64_t> *>(a)->removed();
-                    const SetT &A2 = b->added();
-                    const SetT &R2 = b->removed();
-                    SetT resA = A1; SetT resR = R1;
+                    using T          = int64_t;
+                    using SetT       = std::unordered_set<T>;
+                    const SetT &A1   = const_cast<SetDeltaImpl<int64_t> *>(a)->added();
+                    const SetT &R1   = const_cast<SetDeltaImpl<int64_t> *>(a)->removed();
+                    const SetT &A2   = b->added();
+                    const SetT &R2   = b->removed();
+                    SetT        resA = A1;
+                    SetT        resR = R1;
                     for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
+                    for (const auto &x : A2) {
+                        resR.erase(x);
+                        resA.insert(x);
+                    }
                     for (const auto &x : R2) { resR.insert(x); }
                     return make_set_delta<int64_t>(std::move(resA), std::move(resR));
                 }
                 if (auto *a = dynamic_cast<const SetDeltaImpl<bool> *>(&other)) {
                     auto *b = dynamic_cast<SetDeltaImpl<bool> *>(&self);
                     if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = bool; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = const_cast<SetDeltaImpl<bool> *>(a)->added();
-                    const SetT &R1 = const_cast<SetDeltaImpl<bool> *>(a)->removed();
-                    const SetT &A2 = b->added();
-                    const SetT &R2 = b->removed();
-                    SetT resA = A1; SetT resR = R1;
+                    using T          = bool;
+                    using SetT       = std::unordered_set<T>;
+                    const SetT &A1   = const_cast<SetDeltaImpl<bool> *>(a)->added();
+                    const SetT &R1   = const_cast<SetDeltaImpl<bool> *>(a)->removed();
+                    const SetT &A2   = b->added();
+                    const SetT &R2   = b->removed();
+                    SetT        resA = A1;
+                    SetT        resR = R1;
                     for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
+                    for (const auto &x : A2) {
+                        resR.erase(x);
+                        resA.insert(x);
+                    }
                     for (const auto &x : R2) { resR.insert(x); }
                     return make_set_delta<bool>(std::move(resA), std::move(resR));
                 }
                 if (auto *a = dynamic_cast<const SetDeltaImpl<double> *>(&other)) {
                     auto *b = dynamic_cast<SetDeltaImpl<double> *>(&self);
                     if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = double; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = const_cast<SetDeltaImpl<double> *>(a)->added();
-                    const SetT &R1 = const_cast<SetDeltaImpl<double> *>(a)->removed();
-                    const SetT &A2 = b->added();
-                    const SetT &R2 = b->removed();
-                    SetT resA = A1; SetT resR = R1;
+                    using T          = double;
+                    using SetT       = std::unordered_set<T>;
+                    const SetT &A1   = const_cast<SetDeltaImpl<double> *>(a)->added();
+                    const SetT &R1   = const_cast<SetDeltaImpl<double> *>(a)->removed();
+                    const SetT &A2   = b->added();
+                    const SetT &R2   = b->removed();
+                    SetT        resA = A1;
+                    SetT        resR = R1;
                     for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
+                    for (const auto &x : A2) {
+                        resR.erase(x);
+                        resA.insert(x);
+                    }
                     for (const auto &x : R2) { resR.insert(x); }
                     return make_set_delta<double>(std::move(resA), std::move(resR));
                 }
                 if (auto *a = dynamic_cast<const SetDeltaImpl<engine_date_t> *>(&other)) {
                     auto *b = dynamic_cast<SetDeltaImpl<engine_date_t> *>(&self);
                     if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = engine_date_t; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = const_cast<SetDeltaImpl<engine_date_t> *>(a)->added();
-                    const SetT &R1 = const_cast<SetDeltaImpl<engine_date_t> *>(a)->removed();
-                    const SetT &A2 = b->added();
-                    const SetT &R2 = b->removed();
-                    SetT resA = A1; SetT resR = R1;
+                    using T          = engine_date_t;
+                    using SetT       = std::unordered_set<T>;
+                    const SetT &A1   = const_cast<SetDeltaImpl<engine_date_t> *>(a)->added();
+                    const SetT &R1   = const_cast<SetDeltaImpl<engine_date_t> *>(a)->removed();
+                    const SetT &A2   = b->added();
+                    const SetT &R2   = b->removed();
+                    SetT        resA = A1;
+                    SetT        resR = R1;
                     for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
+                    for (const auto &x : A2) {
+                        resR.erase(x);
+                        resA.insert(x);
+                    }
                     for (const auto &x : R2) { resR.insert(x); }
                     return make_set_delta<engine_date_t>(std::move(resA), std::move(resR));
                 }
                 if (auto *a = dynamic_cast<const SetDeltaImpl<engine_time_t> *>(&other)) {
                     auto *b = dynamic_cast<SetDeltaImpl<engine_time_t> *>(&self);
                     if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = engine_time_t; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = const_cast<SetDeltaImpl<engine_time_t> *>(a)->added();
-                    const SetT &R1 = const_cast<SetDeltaImpl<engine_time_t> *>(a)->removed();
-                    const SetT &A2 = b->added();
-                    const SetT &R2 = b->removed();
-                    SetT resA = A1; SetT resR = R1;
+                    using T          = engine_time_t;
+                    using SetT       = std::unordered_set<T>;
+                    const SetT &A1   = const_cast<SetDeltaImpl<engine_time_t> *>(a)->added();
+                    const SetT &R1   = const_cast<SetDeltaImpl<engine_time_t> *>(a)->removed();
+                    const SetT &A2   = b->added();
+                    const SetT &R2   = b->removed();
+                    SetT        resA = A1;
+                    SetT        resR = R1;
                     for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
+                    for (const auto &x : A2) {
+                        resR.erase(x);
+                        resA.insert(x);
+                    }
                     for (const auto &x : R2) { resR.insert(x); }
                     return make_set_delta<engine_time_t>(std::move(resA), std::move(resR));
                 }
                 if (auto *a = dynamic_cast<const SetDeltaImpl<engine_time_delta_t> *>(&other)) {
                     auto *b = dynamic_cast<SetDeltaImpl<engine_time_delta_t> *>(&self);
                     if (!b) throw nb::type_error("Cannot add SetDelta of different types");
-                    using T = engine_time_delta_t; using SetT = std::unordered_set<T>;
-                    const SetT &A1 = const_cast<SetDeltaImpl<engine_time_delta_t> *>(a)->added();
-                    const SetT &R1 = const_cast<SetDeltaImpl<engine_time_delta_t> *>(a)->removed();
-                    const SetT &A2 = b->added();
-                    const SetT &R2 = b->removed();
-                    SetT resA = A1; SetT resR = R1;
+                    using T          = engine_time_delta_t;
+                    using SetT       = std::unordered_set<T>;
+                    const SetT &A1   = const_cast<SetDeltaImpl<engine_time_delta_t> *>(a)->added();
+                    const SetT &R1   = const_cast<SetDeltaImpl<engine_time_delta_t> *>(a)->removed();
+                    const SetT &A2   = b->added();
+                    const SetT &R2   = b->removed();
+                    SetT        resA = A1;
+                    SetT        resR = R1;
                     for (const auto &x : R2) { resA.erase(x); }
-                    for (const auto &x : A2) { resR.erase(x); resA.insert(x); }
+                    for (const auto &x : A2) {
+                        resR.erase(x);
+                        resA.insert(x);
+                    }
                     for (const auto &x : R2) { resR.insert(x); }
                     return make_set_delta<engine_time_delta_t>(std::move(resA), std::move(resR));
                 }
@@ -233,20 +302,20 @@ namespace hgraph
                 if (auto *a_obj = dynamic_cast<const SetDelta_Object *>(&other)) {
                     auto *b_obj = dynamic_cast<SetDelta_Object *>(&self);
                     if (!b_obj) throw nb::type_error("Cannot add SetDelta of different types");
-                    nb::object A1 = a_obj->py_added();
-                    nb::object R1 = a_obj->py_removed();
-                    nb::object A2 = b_obj->py_added();
-                    nb::object R2 = b_obj->py_removed();
-                    nb::object py_set = nb::module_::import_("builtins").attr("set");
-                    nb::object setA1 = py_set(A1);
-                    nb::object setR2 = py_set(R2);
-                    nb::object setA2 = py_set(A2);
-                    nb::object setR1 = py_set(R1);
-                    nb::object resA = setA1.attr("difference")(setR2).attr("union")(setA2);
-                    nb::object resR = setR1.attr("difference")(setA2).attr("union")(setR2);
+                    nb::object A1         = a_obj->py_added();
+                    nb::object R1         = a_obj->py_removed();
+                    nb::object A2         = b_obj->py_added();
+                    nb::object R2         = b_obj->py_removed();
+                    nb::object py_set     = nb::module_::import_("builtins").attr("set");
+                    nb::object setA1      = py_set(A1);
+                    nb::object setR2      = py_set(R2);
+                    nb::object setA2      = py_set(A2);
+                    nb::object setR1      = py_set(R1);
+                    nb::object resA       = setA1.attr("difference")(setR2).attr("union")(setA2);
+                    nb::object resR       = setR1.attr("difference")(setA2).attr("union")(setR2);
                     nb::object frozenset_ = nb::module_::import_("builtins").attr("frozenset");
-                    nb::object resA_f = frozenset_(resA);
-                    nb::object resR_f = frozenset_(resR);
+                    nb::object resA_f     = frozenset_(resA);
+                    nb::object resR_f     = frozenset_(resR);
                     return SetDelta::ptr(new SetDelta_Object(resA_f, resR_f, self.py_type()));
                 }
                 throw nb::type_error("Unsupported SetDelta type for addition");
@@ -282,6 +351,7 @@ namespace hgraph
         : _tp{std::move(tp)}, _added(std::move(added)), _removed(std::move(removed)) {}
 
     nb::object SetDelta_Object::py_removed() const { return _removed; }
+
     nb::object SetDelta_Object::py_type() const { return _tp; }
 
     bool SetDelta_Object::operator==(const SetDelta &other) const {
@@ -429,6 +499,30 @@ namespace hgraph
             _py_added.clear();
             _py_removed.clear();
         });
+    }
+
+    template <typename T> nb::object TimeSeriesSetInput_T<T>::py_value() const { return nb::cast(value()); }
+
+    template <typename T> nb::object TimeSeriesSetInput_T<T>::py_delta_value() const { return nb::cast(delta_value()); }
+
+    template <typename T> bool TimeSeriesSetInput_T<T>::py_contains(const nb::object &item) const {
+        return contains(nb::cast<element_type>(item));
+    }
+
+    template <typename T> size_t TimeSeriesSetInput_T<T>::size() const { return value().size(); }
+
+    template <typename T> const nb::object TimeSeriesSetInput_T<T>::py_values() const { return nb::cast(value()); }
+
+    template <typename T> const nb::object TimeSeriesSetInput_T<T>::py_added() const { return nb::cast(added()); }
+
+    template <typename T> bool TimeSeriesSetInput_T<T>::py_was_added(const nb::object &item) const {
+        return was_added(nb::cast<element_type>(item));
+    }
+
+    template <typename T> const nb::object TimeSeriesSetInput_T<T>::py_removed() const { return nb::cast(removed()); }
+
+    template <typename T> bool TimeSeriesSetInput_T<T>::py_was_removed(const nb::object &item) const {
+        return was_removed(nb::cast<element_type>(item));
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::clear() {
@@ -584,16 +678,6 @@ namespace hgraph
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::post_modify() { _post_modify(); }
-
-    nb::object TimeSeriesSetInput::py_value() const { return output()->py_value(); }
-
-    nb::object TimeSeriesSetInput::py_delta_value() const { return output()->py_delta_value(); }
-
-    bool TimeSeriesSetInput::py_contains(const nb::object &item) const { return set_output().py_contains(item); }
-
-    size_t TimeSeriesSetInput::size() const { return set_output().size(); }
-
-    const nb::object TimeSeriesSetInput::py_values() const { return set_output().py_values(); }
 
     const nb::object TimeSeriesSetInput::py_added() const {
         if (has_prev_output()) {
