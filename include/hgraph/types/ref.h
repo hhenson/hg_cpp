@@ -135,11 +135,11 @@ namespace hgraph
 
         [[nodiscard]] nb::object py_delta_value() const override;
 
+        [[nodiscard]] TimeSeriesReference::ptr value() const;
+        void set_value(TimeSeriesReference::ptr value);
+
         // Duplicate binding of another input
         void clone_binding(const TimeSeriesReferenceInput &other);
-
-        // Notify after binding (used by TimeSeriesReferenceOutput::set_value)
-        void notify_after_binding();
 
         [[nodiscard]] bool          modified() const override;
         [[nodiscard]] bool          valid() const override;
@@ -158,7 +158,7 @@ namespace hgraph
         [[nodiscard]] bool has_reference() const override;
 
       protected:
-        bool do_bind_output(time_series_output_ptr value) override;
+        bool do_bind_output(time_series_output_ptr output_) override;
         void do_un_bind_output() override;
 
         TimeSeriesReferenceOutput *as_reference_output() const;

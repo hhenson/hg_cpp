@@ -1,15 +1,15 @@
 
+#include <hgraph/builders/output_builder.h>
+#include <hgraph/types/constants.h>
+#include <hgraph/types/error_type.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
-#include <hgraph/types/error_type.h>
+#include <hgraph/types/ts.h>
 #include <hgraph/types/ts_indexed.h>
 #include <hgraph/types/ts_signal.h>
-#include <hgraph/types/ts.h>
-#include <hgraph/types/tss.h>
 #include <hgraph/types/tsd.h>
-#include <hgraph/types/constants.h>
-#include <hgraph/builders/output_builder.h>
+#include <hgraph/types/tss.h>
 
 #include <algorithm>
 
@@ -87,9 +87,7 @@ namespace hgraph
             .def_prop_ro("items", &UnBoundTimeSeriesReference::items)
             .def("__getitem__", [](UnBoundTimeSeriesReference &self, size_t index) -> TimeSeriesReference::ptr {
                 const auto &items = self.items();
-                if (index >= items.size()) {
-                    throw std::out_of_range("Index out of range");
-                }
+                if (index >= items.size()) { throw std::out_of_range("Index out of range"); }
                 return items[index];
             });
     }
@@ -99,9 +97,7 @@ namespace hgraph
             ts_input.un_bind_output();
         } catch (const std::exception &e) {
             throw std::runtime_error(std::string("Error in EmptyTimeSeriesReference::bind_input: ") + e.what());
-        } catch (...) {
-            throw std::runtime_error("Unknown error in EmptyTimeSeriesReference::bind_input");
-        }
+        } catch (...) { throw std::runtime_error("Unknown error in EmptyTimeSeriesReference::bind_input"); }
     }
 
     bool EmptyTimeSeriesReference::has_output() const { return false; }
@@ -132,9 +128,7 @@ namespace hgraph
             if (reactivate) { ts_input.make_active(); }
         } catch (const std::exception &e) {
             throw std::runtime_error(std::string("Error in BoundTimeSeriesReference::bind_input: ") + e.what());
-        } catch (...) {
-            throw std::runtime_error("Unknown error in BoundTimeSeriesReference::bind_input");
-        }
+        } catch (...) { throw std::runtime_error("Unknown error in BoundTimeSeriesReference::bind_input"); }
     }
 
     bool BoundTimeSeriesReference::has_output() const { return true; }
@@ -160,12 +154,13 @@ namespace hgraph
 
     void UnBoundTimeSeriesReference::bind_input(TimeSeriesInput &ts_input) const {
         // Try to cast to supported input types
-        auto *ref_input = dynamic_cast<TimeSeriesReferenceInput *>(&ts_input);
+        auto *ref_input     = dynamic_cast<TimeSeriesReferenceInput *>(&ts_input);
         auto *indexed_input = dynamic_cast<IndexedTimeSeriesInput *>(&ts_input);
-        auto *signal_input = dynamic_cast<TimeSeriesSignalInput *>(&ts_input);
+        auto *signal_input  = dynamic_cast<TimeSeriesSignalInput *>(&ts_input);
 
         if (ref_input == nullptr && indexed_input == nullptr && signal_input == nullptr) {
-            throw std::runtime_error("UnBoundTimeSeriesReference::bind_input: Expected an IndexedTimeSeriesInput, TimeSeriesReferenceInput, or TimeSeriesSignalInput");
+            throw std::runtime_error("UnBoundTimeSeriesReference::bind_input: Expected an IndexedTimeSeriesInput, "
+                                     "TimeSeriesReferenceInput, or TimeSeriesSignalInput");
         }
 
         bool reactivate = false;
@@ -192,9 +187,7 @@ namespace hgraph
             }
         }
 
-        if (reactivate) {
-            ts_input.make_active();
-        }
+        if (reactivate) { ts_input.make_active(); }
     }
 
     bool UnBoundTimeSeriesReference::has_output() const { return false; }
@@ -202,9 +195,7 @@ namespace hgraph
     bool UnBoundTimeSeriesReference::is_empty() const { return false; }
 
     bool UnBoundTimeSeriesReference::is_valid() const {
-        return std::any_of(_items.begin(), _items.end(), [](const auto &item) {
-            return item != nullptr && !item->is_empty();
-        });
+        return std::any_of(_items.begin(), _items.end(), [](const auto &item) { return item != nullptr && !item->is_empty(); });
     }
 
     bool UnBoundTimeSeriesReference::operator==(const TimeSeriesReferenceOutput &other) const {
@@ -233,31 +224,24 @@ namespace hgraph
         _value = value;
         mark_modified();
         try {
-            for (auto it{_reference_observers.begin()}; it != _reference_observers.end(); ++it) {
-                TimeSeriesInput *input{*it};
-                _value->bind_input(*input);
-            }
+            for (TimeSeriesInput *input : _reference_observers) { _value->bind_input(*input); }
         } catch (const NodeException &e) {
-            throw; // already enriched upstream
+            throw;  // already enriched upstream
         } catch (const std::exception &e) {
             throw std::runtime_error(std::string("During TimeSeriesReferenceOutput::set_value: ") + e.what());
-        } catch (...) {
-            throw std::runtime_error("Unknown error in TimeSeriesReferenceOutput::set_value");
-        }
+        } catch (...) { throw std::runtime_error("Unknown error in TimeSeriesReferenceOutput::set_value"); }
     }
 
     void TimeSeriesReferenceOutput::apply_result(nb::object value) {
         if (value.is_none()) { return; }
         auto v{nb::cast<TimeSeriesReference::ptr>(value)};
-        if (v == nullptr){throw std::runtime_error("Expected TimeSeriesReference");}
+        if (v == nullptr) { throw std::runtime_error("Expected TimeSeriesReference"); }
         set_value(v);
     }
 
     void TimeSeriesReferenceOutput::observe_reference(TimeSeriesInput::ptr input_) {
         auto result{_reference_observers.emplace(input_.get())};
-        if (result.second) {
-            (*result.first)->inc_ref();
-        }
+        if (result.second) { (*result.first)->inc_ref(); }
     }
 
     void TimeSeriesReferenceOutput::stop_observing_reference(TimeSeriesInput::ptr input_) {
@@ -275,18 +259,26 @@ namespace hgraph
     nb::object TimeSeriesReferenceOutput::py_delta_value() const { return py_value(); }
 
     void TimeSeriesReferenceOutput::invalidate() {
-        set_value(TimeSeriesReference::make());
+        _value = nullptr;
         mark_invalid();
     }
 
     void TimeSeriesReferenceOutput::copy_from_output(const TimeSeriesOutput &output) {
         auto output_t = dynamic_cast<const TimeSeriesReferenceOutput *>(&output);
-        if (output_t) { set_value(output_t->_value); }
+        if (output_t) {
+            set_value(output_t->_value);
+        } else {
+            throw std::runtime_error("TimeSeriesReferenceOutput::copy_from_output: Expected TimeSeriesReferenceOutput");
+        }
     }
 
     void TimeSeriesReferenceOutput::copy_from_input(const TimeSeriesInput &input) {
         auto input_t = dynamic_cast<const TimeSeriesReferenceInput *>(&input);
-        if (input_t) { set_value(input_t->_value); }
+        if (input_t) {
+            set_value(input_t->_value);
+        } else {
+            throw std::runtime_error("TimeSeriesReferenceOutput::copy_from_input: Expected TimeSeriesReferenceInput");
+        }
     }
 
     void TimeSeriesReferenceOutput::register_with_nanobind(nb::module_ &m) {
@@ -302,13 +294,11 @@ namespace hgraph
     nb::object TimeSeriesReferenceInput::py_value() const {
         try {
             nb::gil_scoped_acquire gil;
-            auto v{value()};
+            auto                   v{value()};
             return v.get() == nullptr ? nb::none() : nb::cast(v);
         } catch (const std::exception &e) {
             throw std::runtime_error(std::string("Error in TimeSeriesReferenceInput::py_value: ") + e.what());
-        } catch (...) {
-            throw std::runtime_error("Unknown error in TimeSeriesReferenceInput::py_value");
-        }
+        } catch (...) { throw std::runtime_error("Unknown error in TimeSeriesReferenceInput::py_value"); }
     }
 
     nb::object TimeSeriesReferenceInput::py_delta_value() const { return py_value(); }
@@ -328,10 +318,8 @@ namespace hgraph
         if (other.has_output()) {
             bind_output(other.output());
         } else if (!other.items().empty()) {
-            for (size_t i = 0; i < other.items().size(); ++i) {
-                _items[i]->clone_binding(*other.items()[i]);
-            }
-        } else if (other._value != nullptr){
+            for (size_t i = 0; i < other.items().size(); ++i) { _items[i]->clone_binding(*other.items()[i]); }
+        } else if (other._value != nullptr) {
             _value = other._value;
             if (owning_node().is_started()) {
                 set_sample_time(owning_graph().evaluation_clock().evaluation_time());
