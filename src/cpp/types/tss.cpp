@@ -628,7 +628,7 @@ namespace hgraph
             auto prev_added     = nb::set(prev_output().py_added());
             auto current_values = nb::set(py_values());
 
-            return (prev_values | prev_removed) - prev_added - current_values;
+            return ((prev_values | prev_removed) - prev_added) - current_values;
         } else if (sampled()) {
             return nb::set();
         } else if (has_output()) {
