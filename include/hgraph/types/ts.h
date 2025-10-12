@@ -17,7 +17,7 @@ namespace hgraph
 
         [[nodiscard]] nb::object py_value() const override { return valid() ? nb::cast(_value) : nb::none(); }
 
-        [[nodiscard]] nb::object py_delta_value() const override { return modified() ? py_value() : nb::none(); }
+        [[nodiscard]] nb::object py_delta_value() const override { return py_value(); }
 
         void apply_result(nb::object value) override {
             if (!value.is_valid() || value.is_none()) { return; }
