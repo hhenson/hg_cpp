@@ -1,12 +1,12 @@
 #include <hgraph/builders/input_builder.h>
 #include <hgraph/builders/output_builder.h>
 #include <hgraph/types/constants.h>
+#include <hgraph/types/error_type.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
-#include <hgraph/types/error_type.h>
-#include <hgraph/types/tsd.h>
 #include <hgraph/types/time_series_type.h>
+#include <hgraph/types/tsd.h>
 
 namespace hgraph
 {
@@ -34,12 +34,11 @@ namespace hgraph
                         try {
                             operator[](k_).apply_result(nb::borrow(v));
                         } catch (const NodeException &e) {
-                            throw; // already enriched upstream
+                            throw;  // already enriched upstream
                         } catch (const std::exception &e) {
-                            throw std::runtime_error(std::string("Error applying TSD value for key: ") + nb::cast<std::string>(nb::str(k)) + ": " + e.what());
-                        } catch (...) {
-                            throw std::runtime_error("Unknown error applying TSD value");
-                        }
+                            throw std::runtime_error(std::string("Error applying TSD value for key: ") +
+                                                     nb::cast<std::string>(nb::str(k)) + ": " + e.what());
+                        } catch (...) { throw std::runtime_error("Unknown error applying TSD value"); }
                     }
                 }
             } else {
@@ -48,12 +47,10 @@ namespace hgraph
 
             _post_modify();
         } catch (const NodeException &e) {
-            throw; // already enriched
+            throw;  // already enriched
         } catch (const std::exception &e) {
             throw std::runtime_error(std::string("During TimeSeriesDictOutput_T::apply_result: ") + e.what());
-        } catch (...) {
-            throw std::runtime_error("Unknown error in TimeSeriesDictOutput_T::apply_result");
-        }
+        } catch (...) { throw std::runtime_error("Unknown error in TimeSeriesDictOutput_T::apply_result"); }
     }
 
     template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::can_apply_result(nb::object value) {
@@ -94,9 +91,7 @@ namespace hgraph
         if (&child != &key_set()) {
             // Use reverse map with raw pointer for efficient O(1) lookup
             auto it = _reverse_ts_values.find(&child);
-            if (it != _reverse_ts_values.end()) {
-                _modified_items.insert({it->second, _ts_values.at(it->second)});
-            }
+            if (it != _reverse_ts_values.end()) { _modified_items.insert({it->second, _ts_values.at(it->second)}); }
         }
 
         TimeSeriesOutput::mark_child_modified(child, modified_time);
@@ -149,7 +144,7 @@ namespace hgraph
                           _ts_ref_builder,
                           [](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
                               auto &ts_t{dynamic_cast<const TimeSeriesDictOutput_T<T_Key> &>(ts)};
-                              auto it = ts_t._ts_values.find(key);
+                              auto  it = ts_t._ts_values.find(key);
                               if (it != ts_t._ts_values.end()) {
                                   auto r{TimeSeriesReference::make(it->second)};
                                   auto r_val{nb::cast(r)};
@@ -167,9 +162,7 @@ namespace hgraph
                           _ts_ref_builder,
                           [this](const TimeSeriesOutput &ts, TimeSeriesOutput &ref, const key_type &key) {
                               auto it = _ts_values.find(key);
-                              if (it != _ts_values.end()) {
-                                  ref.apply_result(nb::cast(TimeSeriesReference::make(it->second)));
-                              }
+                              if (it != _ts_values.end()) { ref.apply_result(nb::cast(TimeSeriesReference::make(it->second))); }
                           },
                           {}} {}
 
@@ -186,12 +179,12 @@ namespace hgraph
 
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_delta_value() const {
         auto delta_value{nb::dict()};
-        if (delta_value.size() == 0) {
-            for (const auto &[key, value] : _modified_items) { delta_value[nb::cast(key)] = value->py_delta_value(); }
-            if (_removed_values.size() > 0) {
-                auto removed{get_remove()};
-                for (const auto &[key, _] : _removed_values) { delta_value[nb::cast(key)] = removed; }
-            }
+        for (const auto &[key, value] : _modified_items) {
+            if (value->valid()) { delta_value[nb::cast(key)] = value->py_delta_value(); }
+        }
+        if (!_removed_values.empty()) {
+            auto removed{get_remove()};
+            for (const auto &[key, _] : _removed_values) { delta_value[nb::cast(key)] = removed; }
         }
         return delta_value;
     }
@@ -256,12 +249,12 @@ namespace hgraph
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_get_item(const nb::object &item) const {
         auto KET_SET_ID = nb::module_::import_("hgraph").attr("KEY_SET_ID");
         if (KET_SET_ID.is(item)) { return nb::cast(_key_set); }
-        auto k = nb::cast<T_Key>(item);
+        auto  k  = nb::cast<T_Key>(item);
         auto &ts = operator[](k);
         auto *py = ts.self_py();
         if (py) return nb::borrow(py);
         // Prefer wrapping as base type to avoid double-wrapping under different derived bindings
-        return nb::cast(const_cast<TimeSeriesOutput*>(&ts));
+        return nb::cast(const_cast<TimeSeriesOutput *>(&ts));
     }
 
     template <typename T_Key>
@@ -505,12 +498,12 @@ namespace hgraph
     template <typename T_Key> size_t TimeSeriesDictInput_T<T_Key>::size() const { return _ts_values.size(); }
 
     template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_value() const {
-        if (has_peer()) { return TimeSeriesInput::py_value(); }
+        if (has_peer()) { return get_frozendict()(TimeSeriesInput::py_value()); }
         auto v{nb::dict()};
         for (const auto &[key, value] : _ts_values) {
             if (value->valid()) { v[nb::cast(key)] = value->py_value(); }
         }
-        return v;
+        return get_frozendict()(v);
     }
 
     template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_delta_value() const {
@@ -518,30 +511,27 @@ namespace hgraph
         // even if we have a peer, because the new peer doesn't know about the old keys
         if (has_peer()) {
             if (_removed_values.empty()) {
-                return TimeSeriesInput::py_delta_value();
+                return get_frozendict()(TimeSeriesInput::py_delta_value());
             } else {
                 // During rebinding, provide the full value of the new output plus REMOVE sentinels for old keys
                 auto delta = nb::cast<nb::dict>(TimeSeriesInput::py_value());  // Get FULL value, not delta
                 auto removed{get_remove()};
-                for (const auto &[key, _] : _removed_values) {
-                    delta[nb::cast(key)] = removed;
-                }
-                return delta;
+                for (const auto &[key, _] : _removed_values) { delta[nb::cast(key)] = removed; }
+                return get_frozendict()(delta);
             }
         }
 
         auto delta{nb::dict()};
         // Build from currently modified and valid child inputs to avoid relying solely on observer-tracked state
-        for (const auto &[key, value] : _ts_values) {
-            if (value->modified() && value->valid()) {
-                delta[nb::cast(key)] = value->py_delta_value();
-            }
+        const auto &modified = modified_items();
+        for (const auto &[key, value] : modified) {
+            if (value->valid()) { delta[nb::cast(key)] = value->py_delta_value(); }
         }
         if (!_removed_values.empty()) {
             auto removed{get_remove()};
             for (const auto &[key, _] : _removed_values) { delta[nb::cast(key)] = removed; }
         }
-        return delta;
+        return get_frozendict()(delta);
     }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::py_contains(const nb::object &item) const {
@@ -553,11 +543,11 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_get_item(const nb::object &item) const {
-        auto &ts = const_cast<TimeSeriesDictInput_T<T_Key>*>(this)->operator[](nb::cast<T_Key>(item));
+        auto &ts = const_cast<TimeSeriesDictInput_T<T_Key> *>(this)->operator[](nb::cast<T_Key>(item));
         auto *py = ts.self_py();
         if (py) return nb::borrow(py);
         // Prefer wrapping as base type to avoid double-wrapping under different derived bindings
-        return nb::cast(const_cast<TimeSeriesInput*>(&ts));
+        return nb::cast(const_cast<TimeSeriesInput *>(&ts));
     }
 
     template <typename T_Key>
@@ -579,7 +569,8 @@ namespace hgraph
         for (const auto &kv : _ts_values) {
             auto *py = kv.second->self_py();
             if (py) lst.append(nb::borrow(py));
-            else    lst.append(nb::cast(const_cast<TimeSeriesInput*>(kv.second.get())));
+            else
+                lst.append(nb::cast(const_cast<TimeSeriesInput *>(kv.second.get())));
         }
         return nb::iter(lst);
     }
@@ -587,8 +578,8 @@ namespace hgraph
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_items() const {
         nb::list lst;
         for (const auto &kv : _ts_values) {
-            auto *py = kv.second->self_py();
-            nb::object v = py ? nb::borrow(py) : nb::cast(const_cast<TimeSeriesInput*>(kv.second.get()));
+            auto      *py = kv.second->self_py();
+            nb::object v  = py ? nb::borrow(py) : nb::cast(const_cast<TimeSeriesInput *>(kv.second.get()));
             lst.append(nb::make_tuple(nb::cast(kv.first), std::move(v)));
         }
         return nb::iter(lst);
@@ -596,7 +587,7 @@ namespace hgraph
 
     template <typename T_Key>
     const typename TimeSeriesDictInput_T<T_Key>::map_type &TimeSeriesDictInput_T<T_Key>::modified_items() const {
-        nb::gil_scoped_acquire gil; // Ensure safe interaction with Python/NB iterators
+        nb::gil_scoped_acquire gil;  // Ensure safe interaction with Python/NB iterators
         try {
             // Match Python implementation logic:
             // if self.has_peer:
@@ -612,15 +603,14 @@ namespace hgraph
             if (has_peer()) {
                 auto &self = const_cast<TimeSeriesDictInput_T<T_Key> &>(*this);
                 // If we've already flagged a switch (e.g., after rebinding) this tick, use the cached snapshot
-                if (self._last_modified_time == owning_graph().evaluation_clock().evaluation_time() && !self._modified_items.empty()) {
+                if (self._last_modified_time == owning_graph().evaluation_clock().evaluation_time() &&
+                    !self._modified_items.empty()) {
                     return _modified_items;
                 }
                 // Otherwise rebuild from output's modified set for this tick
                 self._modified_items.clear();
-                for (const auto & [key, value] : output_t().modified_items()) {
-                    if (_ts_values.find(key) != _ts_values.end()) {
-                        self._modified_items.insert({key, _ts_values.at(key)});
-                    }
+                for (const auto &[key, value] : output_t().modified_items()) {
+                    if (_ts_values.find(key) != _ts_values.end()) { self._modified_items.insert({key, _ts_values.at(key)}); }
                 }
                 return _modified_items;
             } else if (active()) {
@@ -633,44 +623,41 @@ namespace hgraph
                 }
             } else {
                 // Return items where v.modified
-                auto& self = const_cast<TimeSeriesDictInput_T<T_Key>&>(*this);
+                auto &self = const_cast<TimeSeriesDictInput_T<T_Key> &>(*this);
                 self._modified_items.clear();
-                for (const auto& [key, value] : _ts_values) {
-                    if (value->modified()) {
-                        self._modified_items.insert({key, value});
-                    }
+                for (const auto &[key, value] : _ts_values) {
+                    if (value->modified()) { self._modified_items.insert({key, value}); }
                 }
                 return _modified_items;
             }
         } catch (const std::exception &e) {
             throw std::runtime_error(std::string("Error in TSD.modified_items: ") + e.what());
-        } catch (...) {
-            throw std::runtime_error("Unknown error in TSD.modified_items");
-        }
+        } catch (...) { throw std::runtime_error("Unknown error in TSD.modified_items"); }
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_modified_keys() const {
-        const auto& items = modified_items();  // Ensure modified_items is populated first
+        const auto &items = modified_items();  // Ensure modified_items is populated first
         return nb::make_key_iterator(nb::type<map_type>(), "ModifiedKeyIterator", items.begin(), items.end());
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_modified_values() const {
-        const auto& items = modified_items();
-        nb::list lst;
+        const auto &items = modified_items();
+        nb::list    lst;
         for (const auto &kv : items) {
             auto *py = kv.second->self_py();
             if (py) lst.append(nb::borrow(py));
-            else    lst.append(nb::cast(const_cast<TimeSeriesInput*>(kv.second.get())));
+            else
+                lst.append(nb::cast(const_cast<TimeSeriesInput *>(kv.second.get())));
         }
         return nb::iter(lst);
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_modified_items() const {
-        const auto& items = modified_items();
-        nb::list lst;
+        const auto &items = modified_items();
+        nb::list    lst;
         for (const auto &kv : items) {
-            auto *py = kv.second->self_py();
-            nb::object v = py ? nb::borrow(py) : nb::cast(const_cast<TimeSeriesInput*>(kv.second.get()));
+            auto      *py = kv.second->self_py();
+            nb::object v  = py ? nb::borrow(py) : nb::cast(const_cast<TimeSeriesInput *>(kv.second.get()));
             lst.append(nb::make_tuple(nb::cast(kv.first), std::move(v)));
         }
         return nb::iter(lst);
@@ -759,9 +746,7 @@ namespace hgraph
         value.bind_output(&output_t()[key]);
         // Only register clear callback if we're not in the middle of rebinding
         // During rebinding, reset_prev() will handle cleanup
-        if (!_prev_output) {
-            register_clear_key_changes();
-        }
+        if (!_prev_output) { register_clear_key_changes(); }
     }
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::on_key_removed(const key_type &key) {
@@ -779,9 +764,7 @@ namespace hgraph
         }
         // Only register clear callback if we're not in the middle of rebinding
         // During rebinding, reset_prev() will handle cleanup
-        if (!_prev_output) {
-            register_clear_key_changes();
-        }
+        if (!_prev_output) { register_clear_key_changes(); }
     }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::was_removed(const key_type &key) const {
@@ -797,8 +780,7 @@ namespace hgraph
 
         bool peer;
 
-        if (!is_same_type(*output_) &&
-            (output_->has_reference() || this->has_reference())) {
+        if (!is_same_type(*output_) && (output_->has_reference() || this->has_reference())) {
             peer = false;
             key_set_t().set_subscribe_method(true);
         } else {
@@ -843,9 +825,7 @@ namespace hgraph
 
         for (const auto &key : key_set_t().removed()) { on_key_removed(key); }
 
-        if (!_prev_output && !_ts_values.empty()) {
-            register_clear_key_changes();
-        }
+        if (!_prev_output && !_ts_values.empty()) { register_clear_key_changes(); }
 
         output_->add_key_observer(this);
         return peer;
@@ -900,9 +880,7 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::reset_prev() {
         // Clear any pending key changes before resetting prev_output
-        if (!_added_items.empty() || !_removed_values.empty()) {
-            clear_key_changes();
-        }
+        if (!_added_items.empty() || !_removed_values.empty()) { clear_key_changes(); }
         _prev_output = nullptr;
     }
 
@@ -938,7 +916,7 @@ namespace hgraph
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_reference() const { return _ts_builder->has_reference(); }
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::make_active() {
-        if (active()){return;}
+        if (active()) { return; }
         if (has_peer()) {
             TimeSeriesDictInput::make_active();
         } else {
@@ -959,7 +937,8 @@ namespace hgraph
         }
     }
 
-    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) {
+    template <typename T_Key>
+    void TimeSeriesDictInput_T<T_Key>::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) {
         if (_last_modified_time < modified_time) {
             _last_modified_time = modified_time;
             _modified_items.clear();
@@ -984,9 +963,7 @@ namespace hgraph
         // NOTE: Do NOT add to _modified_items here - it will be added by notify_parent when the child actually modifies
         // This matches Python behavior where _create only adds to _added_items
         // Only register clear callback if we're not in the middle of rebinding
-        if (!_prev_output) {
-            register_clear_key_changes();
-        }
+        if (!_prev_output) { register_clear_key_changes(); }
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_create(const key_type &key) {
@@ -1078,12 +1055,18 @@ namespace hgraph
             .def("removed_items", &TimeSeriesDictOutput::py_removed_items)
             .def("was_removed", &TimeSeriesDictOutput::py_was_removed, "key"_a)
             .def_prop_ro("has_removed", &TimeSeriesDictOutput::has_removed)
-            .def("get_ref", [](TimeSeriesDictOutput &self, const nb::object &key, const nb::object &requester) {
-                 return self.py_get_ref(key, requester.ptr());
-             }, "key"_a, "requester"_a)
-            .def("release_ref", [](TimeSeriesDictOutput &self, const nb::object &key, const nb::object &requester) {
-                 self.py_release_ref(key, requester.ptr());
-             }, "key"_a, "requester"_a)
+            .def(
+                "get_ref",
+                [](TimeSeriesDictOutput &self, const nb::object &key, const nb::object &requester) {
+                    return self.py_get_ref(key, requester.ptr());
+                },
+                "key"_a, "requester"_a)
+            .def(
+                "release_ref",
+                [](TimeSeriesDictOutput &self, const nb::object &key, const nb::object &requester) {
+                    self.py_release_ref(key, requester.ptr());
+                },
+                "key"_a, "requester"_a)
             .def("key_set",
                  static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesOutput>::ts_type> &(TimeSeriesDictOutput::*)() const>(
                      &TimeSeriesDictOutput::key_set))  // Not sure if this needs to be exposed to python?
