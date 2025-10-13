@@ -35,7 +35,10 @@ namespace hgraph
         if (items.empty()) { return make(); }
         std::vector<TimeSeriesReference::ptr> refs;
         refs.reserve(items.size());
-        for (auto item : items) { refs.emplace_back(item->_value); }
+        for (auto item : items) {
+            // Call value() instead of accessing _value directly, so bound items return their output's value
+            refs.emplace_back(item->value());
+        }
         return new UnBoundTimeSeriesReference(refs);
     }
 
