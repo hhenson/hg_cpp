@@ -309,10 +309,10 @@ namespace hgraph
         auto node = nodes[side];
 
         auto &tsd = dynamic_cast<TimeSeriesDictInput_T<K> &>(*input()["ts"]);
-        auto &ts = tsd[key];
+        auto ts = tsd[key];
         auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
         if (inner_input != nullptr) {
-            inner_input->clone_binding(dynamic_cast<TimeSeriesReferenceInput &>(ts));
+            inner_input->clone_binding(dynamic_cast<TimeSeriesReferenceInput &>(*ts));
         }
         node->notify();
     }

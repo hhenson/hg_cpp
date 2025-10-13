@@ -1,4 +1,5 @@
 #include <hgraph/types/ts_indexed.h>
+#include <hgraph/types/graph.h>
 
 #include <algorithm>
 #include <ranges>
@@ -131,6 +132,9 @@ namespace hgraph
     }
 
     bool IndexedTimeSeriesInput::do_bind_output(time_series_output_ptr value) {
+        // Detect rebinding - if we already have an output, we're switching to a new one
+        bool rebinding = has_output();
+
         auto output_bundle = dynamic_cast<IndexedTimeSeriesOutput *>(value.get());
         bool peer          = true;
 
@@ -139,6 +143,12 @@ namespace hgraph
         }
 
         TimeSeriesInput::do_bind_output(peer ? value : nullptr);
+
+        // If rebinding occurred, notify parent so downstream nodes know to evaluate
+        if (rebinding && peer) {
+            notify(owning_graph().evaluation_clock().evaluation_time());
+        }
+
         return peer;
     }
 

@@ -208,10 +208,10 @@ namespace hgraph
                 if (multiplexed_args_.find(arg) != multiplexed_args_.end()) {
                     auto  ts       = static_cast<TimeSeriesInput *>(input()[arg].get());
                     auto &tsd      = dynamic_cast<TimeSeriesDictInput_T<K> &>(*ts);
-                    auto &ts_value = tsd._get_or_create(key);
+                    auto ts_value = tsd.get_or_create(key);
 
-                    node->reset_input(node->input().copy_with(node, {&ts_value}));
-                    ts_value.re_parent(node->input_ptr().get());
+                    node->reset_input(node->input().copy_with(node, {ts_value}));
+                    ts_value->re_parent(node->input_ptr().get());
                 } else {
                     auto ts          = dynamic_cast<TimeSeriesReferenceInput *>(input()[arg].get());
                     auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
