@@ -5,9 +5,9 @@
 #ifndef TSD_H
 #define TSD_H
 
-#include <hgraph/types/tss.h>
 #include <hgraph/builders/input_builder.h>
 #include <hgraph/builders/output_builder.h>
+#include <hgraph/types/tss.h>
 #include <ranges>
 
 namespace hgraph
@@ -67,7 +67,6 @@ namespace hgraph
 
         [[nodiscard]] virtual TimeSeriesSet<T_TS>       &key_set()       = 0;
         [[nodiscard]] virtual const TimeSeriesSet<T_TS> &key_set() const = 0;
-
     };
 
     struct TimeSeriesDictOutput : TimeSeriesDict<TimeSeriesOutput>
@@ -105,7 +104,7 @@ namespace hgraph
         //  Track keys. The values have a light weight reference counting cost to store as value_type so leave for the moment as
         //  well.
         // Use raw pointers for reverse lookup to enable efficient lookup from mark_child_modified
-        using reverse_map = std::unordered_map<TimeSeriesOutput*, key_type>;
+        using reverse_map = std::unordered_map<TimeSeriesOutput *, key_type>;
 
         explicit TimeSeriesDictOutput_T(const node_ptr &parent, output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder);
         explicit TimeSeriesDictOutput_T(const time_series_type_ptr &parent, output_builder_ptr ts_builder,
@@ -132,9 +131,9 @@ namespace hgraph
         [[nodiscard]] bool py_contains(const nb::object &item) const override;
         [[nodiscard]] bool contains(const key_type &item) const;
 
-        [[nodiscard]] nb::object py_get_item(const nb::object &item) const override;
-        [[nodiscard]] ts_type   &operator[](const key_type &item);
-        [[nodiscard]] const ts_type   &operator[](const key_type &item) const;
+        [[nodiscard]] nb::object     py_get_item(const nb::object &item) const override;
+        [[nodiscard]] ts_type       &operator[](const key_type &item);
+        [[nodiscard]] const ts_type &operator[](const key_type &item) const;
 
         [[nodiscard]] const_item_iterator begin() const;
         [[nodiscard]] item_iterator       begin();
@@ -207,10 +206,10 @@ namespace hgraph
         [[nodiscard]] bool has_reference() const override;
 
       protected:
-        void              _post_modify();
-        void              clear_on_end_of_evaluation_cycle();
-        void              _create(const key_type &key);
-        const key_type   &key_from_value(TimeSeriesOutput *value) const;
+        void            _post_modify();
+        void            clear_on_end_of_evaluation_cycle();
+        void            _create(const key_type &key);
+        const key_type &key_from_value(TimeSeriesOutput *value) const;
 
         void add_added_item(key_type key, value_type value);
         void remove_value(const key_type &key, bool raise_if_not_found);
@@ -235,12 +234,15 @@ namespace hgraph
     {
         using key_type            = T_Key;
         using value_type          = time_series_input_ptr;
-        using map_type            = std::unordered_map<key_type, time_series_input_ptr>;
+        using map_type            = std::unordered_map<key_type, value_type>;
+        using removed_map_type    = std::unordered_map<key_type, std::pair<value_type, bool>>;
+        using added_map_type      = std::unordered_map<key_type, value_type>;
+        using modified_map_type   = std::unordered_map<key_type, value_type>;
         using item_iterator       = typename map_type::iterator;
         using const_item_iterator = typename map_type::const_iterator;
         using key_set_type        = TimeSeriesSetInput_T<key_type>;
         // Use raw pointers for reverse lookup to enable efficient lookup from notify_parent
-        using reverse_map         = std::unordered_map<TimeSeriesInput*, key_type>;
+        using reverse_map = std::unordered_map<TimeSeriesInput *, key_type>;
 
         explicit TimeSeriesDictInput_T(const node_ptr &parent, input_builder_ptr ts_builder);
         explicit TimeSeriesDictInput_T(const time_series_type_ptr &parent, input_builder_ptr ts_builder);
@@ -261,9 +263,9 @@ namespace hgraph
         [[nodiscard]] bool py_contains(const nb::object &item) const override;
         [[nodiscard]] bool contains(const key_type &item) const;
 
-        [[nodiscard]] nb::object py_get_item(const nb::object &item) const override;
-        [[nodiscard]] ts_type   &operator[](const key_type &item) const;
-        [[nodiscard]] ts_type   &operator[](const key_type &item);
+        [[nodiscard]] nb::object        py_get_item(const nb::object &item) const override;
+        [[nodiscard]] const value_type &operator[](const key_type &item) const;
+        [[nodiscard]] value_type        operator[](const key_type &item);
 
         [[nodiscard]] nb::iterator py_keys() const override;
         [[nodiscard]] nb::iterator py_values() const override;
@@ -291,7 +293,7 @@ namespace hgraph
         [[nodiscard]] bool         py_was_added(const nb::object &key) const override;
         [[nodiscard]] bool         was_added(const key_type &key) const;
 
-        [[nodiscard]] const map_type &removed_items() const;
+        [[nodiscard]] const removed_map_type &removed_items() const;
 
         [[nodiscard]] nb::iterator py_removed_keys() const override;
         [[nodiscard]] nb::iterator py_removed_values() const override;
@@ -311,7 +313,7 @@ namespace hgraph
 
         void on_key_removed(const key_type &key) override;
 
-        TimeSeriesInput &_get_or_create(const key_type &key);
+        value_type get_or_create(const key_type &key);
 
         [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override;
 
@@ -320,6 +322,10 @@ namespace hgraph
         void make_active() override;
 
         void make_passive() override;
+
+        [[nodiscard]] bool modified() const override;
+
+        [[nodiscard]] engine_time_t last_modified_time() const override;
 
       protected:
         void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
@@ -333,6 +339,7 @@ namespace hgraph
 
         void reset_prev();
         void clear_key_changes();
+        void register_clear_key_changes() const;
         void register_clear_key_changes();
 
         void _create(const key_type &key);
@@ -341,10 +348,12 @@ namespace hgraph
         key_set_type _key_set;
         map_type     _ts_values;
 
-        reverse_map _reverse_ts_values;
-        map_type    _modified_items;
-        mutable map_type    _added_items;
-        map_type    _removed_values;  // This ensures we hold onto the values until we are sure no one needs to reference them.
+        reverse_map      _ts_values_to_key;
+        mutable map_type _valid_items;     // Cache the valid items if called.
+        mutable map_type _modified_items;  // This is cached for performance reasons.
+        mutable map_type _added_items;
+        removed_map_type _removed_values;  // This ensures we hold onto the values until we are sure no one needs to reference them.
+        static inline map_type empty_{};
 
         input_builder_ptr _ts_builder;
 
@@ -352,7 +361,7 @@ namespace hgraph
 
         engine_time_t _last_modified_time{MIN_DT};
         bool          _has_peer{false};
-        bool          _clear_key_changes_registered{false};
+        mutable bool  _clear_key_changes_registered{false};
     };
 
     void tsd_register_with_nanobind(nb::module_ &m);
