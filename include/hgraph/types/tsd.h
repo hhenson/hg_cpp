@@ -39,6 +39,7 @@ namespace hgraph
         // be typed analogues.
         [[nodiscard]] virtual bool       py_contains(const nb::object &item) const = 0;
         [[nodiscard]] virtual nb::object py_get_item(const nb::object &item) const = 0;
+        [[nodiscard]] virtual nb::object py_get_or_create(const nb::object &key) = 0;
 
         [[nodiscard]] virtual nb::iterator py_keys() const   = 0;
         [[nodiscard]] virtual nb::iterator py_values() const = 0;
@@ -132,6 +133,7 @@ namespace hgraph
         [[nodiscard]] bool contains(const key_type &item) const;
 
         [[nodiscard]] nb::object     py_get_item(const nb::object &item) const override;
+        [[nodiscard]] nb::object     py_get_or_create(const nb::object &key) override;
         [[nodiscard]] ts_type       &operator[](const key_type &item);
         [[nodiscard]] const ts_type &operator[](const key_type &item) const;
 
@@ -265,6 +267,7 @@ namespace hgraph
         [[nodiscard]] bool contains(const key_type &item) const;
 
         [[nodiscard]] nb::object        py_get_item(const nb::object &item) const override;
+        [[nodiscard]] nb::object        py_get_or_create(const nb::object &key) override;
         [[nodiscard]] const value_type &operator[](const key_type &item) const;
         [[nodiscard]] value_type        operator[](const key_type &item);
 

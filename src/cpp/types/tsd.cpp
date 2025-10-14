@@ -257,6 +257,11 @@ namespace hgraph
         return nb::cast(const_cast<TimeSeriesOutput *>(&ts));
     }
 
+    template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_get_or_create(const nb::object &key) {
+        auto &ts = _get_or_create(nb::cast<T_Key>(key));
+        return nb::cast(&ts);
+    }
+
     template <typename T_Key>
     TimeSeriesDict<TimeSeriesOutput>::ts_type &TimeSeriesDictOutput_T<T_Key>::operator[](const key_type &item) {
         return _get_or_create(item);
@@ -873,6 +878,11 @@ namespace hgraph
         return _ts_values[key];
     }
 
+    template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_get_or_create(const nb::object &key) {
+        auto ts = get_or_create(nb::cast<T_Key>(key));
+        return nb::cast(ts.get());
+    }
+
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::is_same_type(TimeSeriesType &other) const {
         auto other_d = dynamic_cast<TimeSeriesDictInput_T<key_type> *>(&other);
         if (!other_d) { return false; }
@@ -1012,6 +1022,8 @@ namespace hgraph
             .def("__delitem__", &TimeSeriesDictOutput::py_del_item, "key"_a)
             .def("__len__", &TimeSeriesDictOutput::size)
             .def("pop", &TimeSeriesDictOutput::py_pop, "key"_a, "default"_a = nb::none())
+            .def("get_or_create", &TimeSeriesDictOutput::py_get_or_create, "key"_a)
+            .def("clear", &TimeSeriesDictOutput::clear)
             .def("__iter__", &TimeSeriesDictOutput::py_keys)
             .def("keys", &TimeSeriesDictOutput::py_keys)
             .def("values", &TimeSeriesDictOutput::py_values)

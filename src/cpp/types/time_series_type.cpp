@@ -63,6 +63,9 @@ namespace hgraph
         nb::class_<TimeSeriesOutput, TimeSeriesType>(m, "TimeSeriesOutput")
             .def_prop_ro("parent_output", &TimeSeriesOutput::parent_output)
             .def_prop_ro("has_parent_output", &TimeSeriesOutput::has_parent_output)
+            .def_prop_rw("value",
+                         [](const TimeSeriesOutput &self) { return self.py_value(); },
+                         [](TimeSeriesOutput &self, const nb::object &value) { self.apply_result(value); })
             .def("can_apply_result", &TimeSeriesOutput::can_apply_result)
             .def("apply_result", &TimeSeriesOutput::apply_result)
             .def("invalidate", &TimeSeriesOutput::invalidate)
