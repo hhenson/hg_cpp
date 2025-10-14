@@ -916,7 +916,7 @@ namespace hgraph
             }
         }
 
-        TimeSeriesInput::notify_parent(child, modified_time);
+        TimeSeriesInput::notify_parent(this, modified_time);
     }
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::_create(const key_type &key) {
