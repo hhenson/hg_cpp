@@ -136,7 +136,6 @@ def test_tsd_added_value():
 
     @compute_node()
     def c(a: TSD[int, TS[int]]) -> TS[frozendict[int, int]]:
-        #added = list(a.added_items())
         b = frozendict({k: t.value for k, t in a.added_items()})
         return b
 

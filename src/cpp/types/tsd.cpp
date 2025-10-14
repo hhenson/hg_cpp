@@ -344,6 +344,15 @@ namespace hgraph
 
     template <typename T_Key>
     const typename TimeSeriesDictOutput_T<T_Key>::map_type &TimeSeriesDictOutput_T<T_Key>::added_items() const {
+        // For Output: delegate to key_set.added() like Input does
+        // (Python Output's _added_keys appears to be broken/never populated)
+        _added_items.clear();
+        for (const auto &k : key_set_t().added()) {
+            auto it = _ts_values.find(k);
+            if (it != _ts_values.end()) {
+                _added_items.emplace(k, it->second);
+            }
+        }
         return _added_items;
     }
 
@@ -407,6 +416,11 @@ namespace hgraph
         return _key_set;
     }
 
+    template <typename T_Key>
+    const TimeSeriesSetOutput_T<typename TimeSeriesDictOutput_T<T_Key>::key_type> &TimeSeriesDictOutput_T<T_Key>::key_set_t() const {
+        return _key_set;
+    }
+
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::py_set_item(const nb::object &key, const nb::object &value) {
         auto &ts{operator[](nb::cast<T_Key>(key))};
         ts.apply_result(value);
@@ -450,7 +464,6 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::clear_on_end_of_evaluation_cycle() {
         _added_items.clear();
-        _modified_items.clear();
         _removed_values.clear();
     }
 
@@ -644,20 +657,25 @@ namespace hgraph
         // TODO: Try and ensure that we cache the result where possible
         _added_items.clear();
         const auto &key_set{key_set_t()};
-        for (const auto &k : key_set.added()) { _added_items.emplace(k, _ts_values.at(k)); }
+        for (const auto &k : key_set.added()) {
+            _added_items.emplace(k, _ts_values.at(k));
+        }
         return _added_items;
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_added_keys() const {
-        return nb::make_key_iterator(nb::type<map_type>(), "AddedKeyIterator", _added_items.begin(), _added_items.end());
+        const auto &items = added_items();  // Ensure cache is populated
+        return nb::make_key_iterator(nb::type<map_type>(), "AddedKeyIterator", items.begin(), items.end());
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_added_values() const {
-        return nb::make_value_iterator(nb::type<map_type>(), "AddedValueIterator", _added_items.begin(), _added_items.end());
+        const auto &items = added_items();  // Ensure cache is populated
+        return nb::make_value_iterator(nb::type<map_type>(), "AddedValueIterator", items.begin(), items.end());
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_added_items() const {
-        return nb::make_iterator(nb::type<map_type>(), "AddedItemIterator", _added_items.begin(), _added_items.end());
+        const auto &items = added_items();  // Ensure cache is populated
+        return nb::make_iterator(nb::type<map_type>(), "AddedItemIterator", items.begin(), items.end());
     }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_added() const { return !key_set_t().added().empty(); }
