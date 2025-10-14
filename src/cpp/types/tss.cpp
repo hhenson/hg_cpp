@@ -398,10 +398,10 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::object TimeSeriesSetOutput_T<T_Key>::py_value() const {
-        if (_py_value.is_none()) {
+        if (!_py_value.is_valid() || _py_value.is_none()) {
             nb::set v{};
-            for (const T_Key &item : _value) { v.add(item); }
-            _py_value = v;
+            for (const T_Key &item : _value) { v.add(nb::cast(item)); }
+            _py_value = nb::cast<nb::object>(v);
         }
         return _py_value;
     }
