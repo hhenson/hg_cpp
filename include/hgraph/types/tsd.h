@@ -293,7 +293,7 @@ namespace hgraph
         [[nodiscard]] bool         py_was_added(const nb::object &key) const override;
         [[nodiscard]] bool         was_added(const key_type &key) const;
 
-        [[nodiscard]] const removed_map_type &removed_items() const;
+        [[nodiscard]] const map_type &removed_items() const;
 
         [[nodiscard]] nb::iterator py_removed_keys() const override;
         [[nodiscard]] nb::iterator py_removed_values() const override;
@@ -337,6 +337,9 @@ namespace hgraph
         [[nodiscard]] TimeSeriesDictOutput_T<key_type>       &output_t();
         [[nodiscard]] const TimeSeriesDictOutput_T<key_type> &output_t() const;
 
+        [[nodiscard]] const key_type &key_from_value(TimeSeriesInput *value) const;
+        [[nodiscard]] const key_type &key_from_value(value_type value) const;
+
         void reset_prev();
         void clear_key_changes();
         void register_clear_key_changes() const;
@@ -352,6 +355,7 @@ namespace hgraph
         mutable map_type _valid_items;     // Cache the valid items if called.
         mutable map_type _modified_items;  // This is cached for performance reasons.
         mutable map_type _added_items;
+        mutable map_type _removed_items;
         removed_map_type _removed_values;  // This ensures we hold onto the values until we are sure no one needs to reference them.
         static inline map_type empty_{};
 

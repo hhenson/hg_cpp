@@ -24,6 +24,8 @@ namespace hgraph
     nb::object get_frozenset();
 
     nb::object get_frozendict();
+
+    nb::object get_key_set_id();
 }  // namespace hgraph
 
 #endif  // CONSTANTS_H
