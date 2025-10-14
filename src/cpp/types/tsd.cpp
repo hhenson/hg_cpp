@@ -7,6 +7,7 @@
 #include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/tsd.h>
+#include <hgraph/util/string_utils.h>
 
 namespace hgraph
 {
@@ -27,7 +28,8 @@ namespace hgraph
                     if (v.is_none()) { continue; }
                     auto k_ = nb::cast<T_Key>(k);
                     if (v.is(remove) || v.is(remove_if_exists)) {
-                        if (v.is(remove_if_exists) && !contains(k_)) { continue; }
+                        // Skip removal if key doesn't exist (both REMOVE and REMOVE_IF_EXISTS)
+                        if (!contains(k_)) { continue; }
                         erase(k_);
                     } else {
                         // Apply to child, but guard to enrich any errors
@@ -118,7 +120,8 @@ namespace hgraph
         if (it == _ts_values.end()) {
             // TDOD: Fix the format latter, for now it compiles locally not not on CICD server :(
             if (raise_if_not_found) {
-                throw std::runtime_error(/*std::format("Key '{}' not found in TSD", key)*/ "Key not found in TSD");
+                std::string key_str {to_string(key)};
+                throw std::runtime_error(std::string("Key '") + key_str + "' not found in TSD (in remove_value)");
             }
             return;
         }

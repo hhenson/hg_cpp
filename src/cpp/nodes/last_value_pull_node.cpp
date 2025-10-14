@@ -63,7 +63,20 @@ namespace hgraph
         }
     }
 
-    void LastValuePullNode::copy_from_input(const TimeSeriesOutput &output) {
+    void LastValuePullNode::copy_from_input(const TimeSeriesInput &input) {
+        auto delta = input.py_delta_value();
+
+        if (_delta_value.has_value()) {
+            _delta_value = _delta_combine_fn(_delta_value.value(), delta);
+        } else {
+            _delta_value = delta;
+        }
+
+        // Notify for the next cycle since we're copying the value now
+        notify_next_cycle();
+    }
+
+    void LastValuePullNode::copy_from_output(const TimeSeriesOutput &output) {
         auto delta = output.py_delta_value();
 
         if (_delta_value.has_value()) {
@@ -228,7 +241,8 @@ namespace hgraph
 
     void LastValuePullNode::register_with_nanobind(nb::module_ &m) {
         nb::class_<LastValuePullNode, Node>(m, "LastValuePullNode")
-            .def("copy_from_input", &LastValuePullNode::copy_from_input, "output"_a)
+            .def("copy_from_input", &LastValuePullNode::copy_from_input, "input"_a)
+            .def("copy_from_output", &LastValuePullNode::copy_from_input, "output"_a)
             .def("apply_value", &LastValuePullNode::apply_value, "new_value"_a);
     }
 

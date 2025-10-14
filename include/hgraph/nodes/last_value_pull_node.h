@@ -30,7 +30,8 @@ namespace hgraph
          * Copy a value from an input TimeSeriesOutput
          * This is called when the node needs to pull a value from another output
          */
-        void copy_from_input(const TimeSeriesOutput &output);
+        void copy_from_input(const TimeSeriesInput &input);
+        void copy_from_output(const TimeSeriesOutput &output);
 
         /**
          * Apply a value directly to the node
