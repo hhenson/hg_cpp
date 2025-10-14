@@ -533,12 +533,17 @@ namespace hgraph
         for (const auto &[key, value] : modified) {
             if (value->valid()) { delta[nb::cast(key)] = value->py_delta_value(); }
         }
-        const auto &removed_ = _removed_values;
-        if (!removed_.empty()) {
+        // Use key_set.removed() like Python does - this excludes keys added in the same cycle
+        const auto &removed_keys = key_set_t().removed();
+        if (!removed_keys.empty()) {
             auto removed{get_remove()};
-            for (const auto &[key, _v] : removed_) {
-                const auto &[_, was_valid] = _v;
-                if (was_valid) { delta[nb::cast(key)] = removed; }
+            for (const auto &key : removed_keys) {
+                // Check if the key is in _removed_values and was valid
+                auto it = _removed_values.find(key);
+                if (it != _removed_values.end()) {
+                    const auto &[_, was_valid] = it->second;
+                    if (was_valid) { delta[nb::cast(key)] = removed; }
+                }
             }
         }
         return get_frozendict()(delta);
@@ -709,16 +714,19 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_removed_keys() const {
-        return nb::make_key_iterator(nb::type<map_type>(), "RemovedKeyIterator", _removed_values.begin(), _removed_values.end());
+        auto const& removed_{removed_items()};
+        return nb::make_key_iterator(nb::type<map_type>(), "RemovedKeyIterator", removed_.begin(), removed_.end());
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_removed_values() const {
-        return nb::make_value_iterator(nb::type<map_type>(), "RemovedValueIterator", _removed_values.begin(),
-                                       _removed_values.end());
+        auto const& removed_{removed_items()};
+        return nb::make_value_iterator(nb::type<map_type>(), "RemovedValueIterator", removed_.begin(),
+                                       removed_.end());
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_removed_items() const {
-        return nb::make_iterator(nb::type<map_type>(), "RemovedItemIterator", _removed_values.begin(), _removed_values.end());
+        auto const& removed_{removed_items()};
+        return nb::make_iterator(nb::type<map_type>(), "RemovedItemIterator", removed_.begin(), removed_.end());
     }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_removed() const { return !_removed_values.empty(); }
