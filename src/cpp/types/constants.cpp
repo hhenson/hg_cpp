@@ -36,4 +36,10 @@ namespace hgraph
         return FROZENDICT;
     }
 
+    static nb::object KEY_SET_ID;
+    nb::object get_key_set_id() {
+        if (!KEY_SET_ID.is_valid()) { KEY_SET_ID = nb::module_::import_("hgraph").attr("KEY_SET_ID"); }
+        return KEY_SET_ID;
+    }
+
 }  // namespace hgraph
