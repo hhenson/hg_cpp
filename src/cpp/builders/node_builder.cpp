@@ -477,7 +477,21 @@ namespace hgraph
           eval_fn{std::move(eval_fn)}, start_fn{std::move(start_fn)}, stop_fn{std::move(stop_fn)} {}
 
     node_ptr PythonNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
-        nb::ref<Node> node{new PythonNode{node_ndx, owning_graph_id, signature, scalars, eval_fn, start_fn, stop_fn}};
+        // Copy eval_fn if it's not a plain function (e.g., KeyStubEvalFn instance)
+        // This matches Python: eval_fn=self.eval_fn if isfunction(self.eval_fn) else copy(self.eval_fn)
+        nb::callable eval_fn_to_use = eval_fn;
+
+        // Check if it's a plain Python function using inspect.isfunction
+        auto inspect_module = nb::module_::import_("inspect");
+        bool is_function = nb::cast<bool>(inspect_module.attr("isfunction")(eval_fn));
+
+        if (!is_function) {
+            // Use Python's copy module to create a shallow copy for non-function callables
+            auto copy_module = nb::module_::import_("copy");
+            eval_fn_to_use = nb::cast<nb::callable>(copy_module.attr("copy")(eval_fn));
+        }
+
+        nb::ref<Node> node{new PythonNode{node_ndx, owning_graph_id, signature, scalars, eval_fn_to_use, start_fn, stop_fn}};
 
         _build_inputs_and_outputs(node);
         return node;
