@@ -59,15 +59,27 @@ namespace hgraph
 
     void TimeSeriesOutput::clear() {}
 
+    // Helper function for property setter that accepts None
+    static void set_value_helper(TimeSeriesOutput &self, nb::handle value) {
+        // Convert handle to object - handle can be None
+        if (value.is_none()) {
+            self.invalidate();
+        } else {
+            nb::object obj = nb::cast<nb::object>(value);
+            self.apply_result(obj);
+        }
+    }
+
     void TimeSeriesOutput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesOutput, TimeSeriesType>(m, "TimeSeriesOutput")
             .def_prop_ro("parent_output", &TimeSeriesOutput::parent_output)
             .def_prop_ro("has_parent_output", &TimeSeriesOutput::has_parent_output)
             .def_prop_rw("value",
-                         [](const TimeSeriesOutput &self) { return self.py_value(); },
-                         [](TimeSeriesOutput &self, const nb::object &value) { self.apply_result(value); })
+                         [](const TimeSeriesOutput &self) -> nb::object { return self.py_value(); },
+                         &set_value_helper,
+                         nb::arg("value").none())
             .def("can_apply_result", &TimeSeriesOutput::can_apply_result)
-            .def("apply_result", &TimeSeriesOutput::apply_result, nb::arg("value").none(true))
+            .def("apply_result", &TimeSeriesOutput::apply_result, nb::arg("value").none())
             .def("invalidate", &TimeSeriesOutput::invalidate)
             .def("mark_invalid", &TimeSeriesOutput::mark_invalid)
             .def("mark_modified", static_cast<void (TimeSeriesOutput::*)()>(&TimeSeriesOutput::mark_modified))
