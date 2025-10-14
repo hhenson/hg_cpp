@@ -300,15 +300,17 @@ namespace hgraph
 
         [[nodiscard]] const collection_type &removed() const {
             if (bound()) {
-                if (has_prev_output() && _removed.empty()) {
-                    auto &prev{prev_output_t()};
-                    // Get the set of elements that would have been present in previous cycle
-                    collection_type prev_state{prev.value()};
-                    prev_state.insert(prev.removed().begin(), prev.removed().end());
-                    for (const auto &item : prev.added()) { prev_state.erase(item); }
-                    // Removed elements are those in previous state but not in current values
-                    for (const auto &item : prev_state) {
-                        if (values().find(item) == values().end()) { _removed.insert(item); }
+                if (has_prev_output()) {
+                    if (_removed.empty()) {
+                        auto &prev{prev_output_t()};
+                        // Get the set of elements that would have been present in previous cycle
+                        collection_type prev_state{prev.value()};
+                        prev_state.insert(prev.removed().begin(), prev.removed().end());
+                        for (const auto &item : prev.added()) { prev_state.erase(item); }
+                        // Removed elements are those in previous state but not in current values
+                        for (const auto &item : prev_state) {
+                            if (values().find(item) == values().end()) { _removed.insert(item); }
+                        }
                     }
                     return _removed;
                 }

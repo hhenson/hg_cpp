@@ -538,12 +538,7 @@ namespace hgraph
         if (!removed_keys.empty()) {
             auto removed{get_remove()};
             for (const auto &key : removed_keys) {
-                // Check if the key is in _removed_values and was valid
-                auto it = _removed_values.find(key);
-                if (it != _removed_values.end()) {
-                    const auto &[_, was_valid] = it->second;
-                    if (was_valid) { delta[nb::cast(key)] = removed; }
-                }
+                delta[nb::cast(key)] = removed;
             }
         }
         return get_frozendict()(delta);
