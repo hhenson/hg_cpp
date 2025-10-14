@@ -67,7 +67,7 @@ namespace hgraph
                          [](const TimeSeriesOutput &self) { return self.py_value(); },
                          [](TimeSeriesOutput &self, const nb::object &value) { self.apply_result(value); })
             .def("can_apply_result", &TimeSeriesOutput::can_apply_result)
-            .def("apply_result", &TimeSeriesOutput::apply_result)
+            .def("apply_result", &TimeSeriesOutput::apply_result, nb::arg("value").none(true))
             .def("invalidate", &TimeSeriesOutput::invalidate)
             .def("mark_invalid", &TimeSeriesOutput::mark_invalid)
             .def("mark_modified", static_cast<void (TimeSeriesOutput::*)()>(&TimeSeriesOutput::mark_modified))
