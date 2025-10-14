@@ -1070,7 +1070,7 @@ namespace hgraph
                     self.py_release_ref(key, requester.ptr());
                 },
                 "key"_a, "requester"_a)
-            .def("key_set",
+            .def_prop_ro("key_set",
                  static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesOutput>::ts_type> &(TimeSeriesDictOutput::*)() const>(
                      &TimeSeriesDictOutput::key_set))  // Not sure if this needs to be exposed to python?
             ;
@@ -1106,7 +1106,7 @@ namespace hgraph
             .def("removed_items", &TimeSeriesDictInput::py_removed_items)
             .def("was_removed", &TimeSeriesDictInput::py_was_removed, "key"_a)
             .def_prop_ro("has_removed", &TimeSeriesDictInput::has_removed)
-            .def("key_set",
+            .def_prop_ro("key_set",
                  static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesInput>::ts_type> &(TimeSeriesDictInput::*)() const>(
                      &TimeSeriesDictInput::key_set))  // Not sure if this needs to be exposed to python?
             ;

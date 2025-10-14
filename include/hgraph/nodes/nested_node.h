@@ -15,6 +15,8 @@ namespace hgraph
         using ptr = nb::ref<NestedNode>;
         using Node::Node;
 
+        void start() override;
+
         engine_time_t last_evaluation_time() const;
         void          mark_evaluated();
 
