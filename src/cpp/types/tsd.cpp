@@ -84,7 +84,11 @@ namespace hgraph
 
     template <typename T_Key>
     void TimeSeriesDictOutput_T<T_Key>::mark_child_modified(TimeSeriesOutput &child, engine_time_t modified_time) {
-        if (last_modified_time() < modified_time) {
+        auto parent_eval_time = owning_graph().evaluation_clock().evaluation_time();
+
+        // Only clear modified_items when we're entering a new parent evaluation cycle
+        // Use parent's evaluation time, not the nested graph's time
+        if (last_modified_time() < parent_eval_time) {
             // _last_modified_time is set in mark_modified later
             // Clear modified items to start fresh for the new evaluation cycle
             _modified_items.clear();
@@ -93,7 +97,9 @@ namespace hgraph
         if (&child != &key_set()) {
             // Use reverse map with raw pointer for efficient O(1) lookup
             auto it = _reverse_ts_values.find(&child);
-            if (it != _reverse_ts_values.end()) { _modified_items.insert({it->second, _ts_values.at(it->second)}); }
+            if (it != _reverse_ts_values.end()) {
+                _modified_items.insert({it->second, _ts_values.at(it->second)});
+            }
         }
 
         TimeSeriesOutput::mark_child_modified(child, modified_time);
@@ -769,7 +775,8 @@ namespace hgraph
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::do_bind_output(time_series_output_ptr value) {
         typename TimeSeriesDictOutput_T<T_Key>::ptr output_{dynamic_cast<TimeSeriesDictOutput_T<T_Key> *>(value.get())};
 
-        bool peer{!is_same_type(*output_) && (output_->has_reference() || this->has_reference())};
+        // Peer when types match AND neither has references (matching Python logic)
+        bool peer = is_same_type(*output_) && !output_->has_reference() && !this->has_reference();
 
         if (!peer) {
             key_set_t().set_subscribe_method(true);
