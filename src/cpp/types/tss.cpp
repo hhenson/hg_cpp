@@ -647,7 +647,17 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::remove(const element_type &key) {
         if (contains(key)) {
-            _remove(key);
+            bool was_added = false;
+            if (_added.contains(key)) {
+                _added.erase(key);
+                was_added = true;
+            }
+
+            if (!was_added) {
+                _removed.emplace(key);
+            }
+
+            _value.erase(key);
             mark_modified();
         }
     }
