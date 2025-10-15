@@ -70,12 +70,12 @@ namespace hgraph
         auto &keys = dynamic_cast<TimeSeriesSetInput_T<K> &>(*input()[KEYS_ARG]);
         if (keys.modified()) {
             for (const auto &k : keys.added()) {
+                // There seems to be a case where a set can show a value as added even though it is not.
+                // This protects from accidentally creating duplicate graphs
                 if (active_graphs_.find(k) == active_graphs_.end()) {
                     create_new_graph(k);
-                } else {
-                    throw std::runtime_error(
-                        fmt::format("[{}] Key {} already exists in active graphs", signature().wiring_path_name, to_string(k)));
                 }
+                // If key already exists, skip it (can happen during startup before reset_prev() is called)
             }
             for (const auto &k : keys.removed()) {
                 if (auto it = active_graphs_.find(k); it != active_graphs_.end()) {
