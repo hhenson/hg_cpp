@@ -416,6 +416,10 @@ namespace hgraph
         return _removed_values.find(key) != _removed_values.end();
     }
 
+    template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_key_set() const {
+        return nb::cast(_key_set);
+    }
+
     template <typename T_Key> TimeSeriesSet<TimeSeriesDict<TimeSeriesOutput>::ts_type> &TimeSeriesDictOutput_T<T_Key>::key_set() {
         return key_set_t();
     }
@@ -767,6 +771,9 @@ namespace hgraph
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::was_removed(const key_type &key) const {
         return _removed_values.find(key) != _removed_values.end();
     }
+    template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_key_set() const {
+        return nb::cast(key_set());
+    }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::py_was_removed(const nb::object &key) const {
         return was_removed(nb::cast<T_Key>(key));
@@ -1070,9 +1077,7 @@ namespace hgraph
                     self.py_release_ref(key, requester.ptr());
                 },
                 "key"_a, "requester"_a)
-            .def_prop_ro("key_set",
-                 static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesOutput>::ts_type> &(TimeSeriesDictOutput::*)() const>(
-                     &TimeSeriesDictOutput::key_set))  // Not sure if this needs to be exposed to python?
+            .def_prop_ro("key_set", &TimeSeriesDictOutput::py_key_set)
             ;
 
         nb::class_<TimeSeriesDictInput, TimeSeriesInput>(m, "TimeSeriesDictInput")

@@ -39,7 +39,7 @@ namespace hgraph
         // be typed analogues.
         [[nodiscard]] virtual bool       py_contains(const nb::object &item) const = 0;
         [[nodiscard]] virtual nb::object py_get_item(const nb::object &item) const = 0;
-        [[nodiscard]] virtual nb::object py_get_or_create(const nb::object &key) = 0;
+        [[nodiscard]] virtual nb::object py_get_or_create(const nb::object &key)   = 0;
 
         [[nodiscard]] virtual nb::iterator py_keys() const   = 0;
         [[nodiscard]] virtual nb::iterator py_values() const = 0;
@@ -66,8 +66,9 @@ namespace hgraph
         [[nodiscard]] virtual bool         has_removed() const                         = 0;
         [[nodiscard]] virtual bool         py_was_removed(const nb::object &key) const = 0;
 
-        [[nodiscard]] virtual TimeSeriesSet<T_TS>       &key_set()       = 0;
-        [[nodiscard]] virtual const TimeSeriesSet<T_TS> &key_set() const = 0;
+        [[nodiscard]] virtual nb::object                 py_key_set() const = 0;
+        [[nodiscard]] virtual TimeSeriesSet<T_TS>       &key_set()          = 0;
+        [[nodiscard]] virtual const TimeSeriesSet<T_TS> &key_set() const    = 0;
     };
 
     struct TimeSeriesDictOutput : TimeSeriesDict<TimeSeriesOutput>
@@ -176,6 +177,7 @@ namespace hgraph
         [[nodiscard]] bool         py_was_removed(const nb::object &key) const override;
         [[nodiscard]] bool         was_removed(const key_type &key) const;
 
+        [[nodiscard]] nb::object                             py_key_set() const override;
         [[nodiscard]] TimeSeriesSet<ts_type>                &key_set() override;
         [[nodiscard]] const TimeSeriesSet<ts_type>          &key_set() const override;
         [[nodiscard]] TimeSeriesSetOutput_T<key_type>       &key_set_t();
@@ -221,10 +223,10 @@ namespace hgraph
         key_set_type _key_set;
         map_type     _ts_values;
 
-        reverse_map    _reverse_ts_values;
-        map_type       _modified_items;
-        mutable map_type _added_items;  // mutable because added_items() const builds this cache dynamically
-        map_type       _removed_values;  // This ensures we hold onto the values until we are sure no one needs to reference them.
+        reverse_map      _reverse_ts_values;
+        map_type         _modified_items;
+        mutable map_type _added_items;     // mutable because added_items() const builds this cache dynamically
+        map_type         _removed_values;  // This ensures we hold onto the values until we are sure no one needs to reference them.
 
         output_builder_ptr _ts_builder;
         output_builder_ptr _ts_ref_builder;
@@ -305,6 +307,7 @@ namespace hgraph
         [[nodiscard]] bool         py_was_removed(const nb::object &key) const override;
         [[nodiscard]] bool         was_removed(const key_type &key) const;
 
+        [[nodiscard]] nb::object                      py_key_set() const override;
         [[nodiscard]] TimeSeriesSet<TimeSeriesInput> &key_set() override;
 
         [[nodiscard]] bool has_added() const override;
