@@ -58,6 +58,7 @@ def test_mesh():
 
 
 def test_mesh_2():
+    ...
     @graph
     def perform_op(op_name: TS[str], lhs: TS[float], rhs: TS[float]) -> TS[float]:
         return switch_(

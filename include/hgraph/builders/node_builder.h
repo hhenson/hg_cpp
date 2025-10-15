@@ -113,6 +113,13 @@ namespace hgraph
         node_ptr make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const override;
     };
 
+    struct ContextNodeBuilder : BaseNodeBuilder
+    {
+        using BaseNodeBuilder::BaseNodeBuilder;
+
+        node_ptr make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const override;
+    };
+
     struct BaseNestedGraphNodeBuilder : BaseNodeBuilder
     {
         BaseNestedGraphNodeBuilder(node_signature_ptr signature_, nb::dict scalars_,

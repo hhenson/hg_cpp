@@ -10,6 +10,7 @@ set(HGRAPH_SOURCES
         nodes/component_node.cpp
         nodes/last_value_pull_node.cpp
         nodes/mesh_node.cpp
+        nodes/context_node.cpp
         nodes/nested_evaluation_engine.cpp
         nodes/nested_graph_node.cpp
         nodes/nested_node.cpp

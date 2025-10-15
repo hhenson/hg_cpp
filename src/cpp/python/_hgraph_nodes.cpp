@@ -10,6 +10,7 @@
 #include <hgraph/nodes/non_associative_reduce_node.h>
 #include <hgraph/nodes/mesh_node.h>
 #include <hgraph/nodes/last_value_pull_node.h>
+#include <hgraph/nodes/context_node.h>
 
 void export_nodes(nb::module_ &m) {
     using namespace hgraph;
@@ -28,4 +29,5 @@ void export_nodes(nb::module_ &m) {
     register_non_associative_reduce_node_with_nanobind(m);
     register_mesh_node_with_nanobind(m);
     LastValuePullNode::register_with_nanobind(m);
+    register_context_node_with_nanobind(m);
 }
