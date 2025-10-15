@@ -67,17 +67,19 @@ namespace hgraph
 
         // Set up the reference output and register in GlobalState
         if (GlobalState::has_instance()) {
+            auto tsb_output{dynamic_cast<TimeSeriesBundleOutput &>(this->output())};
             // Get the "out" and "ref" outputs from the output bundle
-            auto &output_bundle = dynamic_cast<TimeSeriesBundleOutput &>(this->output());
-            auto &out_output    = dynamic_cast<TimeSeriesDictOutput_T<K> &>(*output_bundle["out"]);
-            auto &ref_output    = dynamic_cast<TimeSeriesReferenceOutput &>(*output_bundle["ref"]);
+            auto &tsd_output    = dynamic_cast<TimeSeriesDictOutput_T<K> &>(*tsb_output["out"]);
+            auto &ref_output    = dynamic_cast<TimeSeriesReferenceOutput &>(*tsb_output["ref"]);
 
             // Create a TimeSeriesReference from the "out" output and set it on the "ref" output
-            auto reference = TimeSeriesReference::make(time_series_output_ptr(&out_output));
+            auto reference = TimeSeriesReference::make(time_series_output_ptr(&tsd_output));
             ref_output.set_value(reference);
 
             // Store the ref output in GlobalState
             GlobalState::set(full_context_path_, nb::cast(ref_output));
+        } else {
+            throw std::runtime_error("GlobalState instance required for MeshNode");
         }
     }
 
