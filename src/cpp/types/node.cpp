@@ -269,15 +269,16 @@ namespace hgraph
                 : std::nullopt,
             kwargs_.contains("context_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["context_inputs"])
                                                : std::nullopt,
-            kwargs_.contains("injectables")
-                ? nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(kwargs_["injectables"])
+            kwargs_.contains("injectable_inputs")
+                ? nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(kwargs_["injectable_inputs"])
                 : std::nullopt,
-            nb::cast<InjectableTypesEnum>(kwargs_["wiring_path_name"]), nb::cast<bool>(kwargs_["label"]),
-            nb::cast<int64_t>(kwargs_["capture_values"]), nb::cast<std::string>(kwargs_["capture_exception"]),
-            kwargs_.contains("trace_back_depth") ? nb::cast<std::optional<std::string>>(kwargs_["trace_back_depth"]) : std::nullopt,
-            nb::cast<bool>(kwargs_["trace_back_depth"]),
-            kwargs_.contains("trace_back_depth") ? nb::cast<std::optional<std::string>>(kwargs_["trace_back_depth"])
-                                                 : std::nullopt);
+            kwargs_.contains("injectables") ? nb::cast<size_t>(kwargs_["injectables"]) : 0,
+            kwargs_.contains("capture_exception") ? nb::cast<bool>(kwargs_["capture_exception"]) : false,
+            kwargs_.contains("trace_back_depth") ? nb::cast<int64_t>(kwargs_["trace_back_depth"]) : 1,
+            kwargs_.contains("wiring_path_name") ? nb::cast<std::string>(kwargs_["wiring_path_name"]) : "",
+            nb::cast<std::optional<std::string>>(kwargs_["label"]),
+            kwargs_.contains("capture_values") ? nb::cast<bool>(kwargs_["capture_values"]) : false,
+            nb::cast<std::optional<std::string>>(kwargs_["record_replay_id"]));
     }
 
     NodeScheduler::NodeScheduler(Node &node) : _node{node} {}
