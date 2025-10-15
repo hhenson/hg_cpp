@@ -25,6 +25,7 @@ set(HGRAPH_SOURCES
         python/_hgraph_runtime.cpp
         python/_hgraph_types.cpp
         python/_hgraph_utils.cpp
+        python/global_state.cpp
 
         runtime/evaluation_context.cpp
         runtime/evaluation_engine.cpp
