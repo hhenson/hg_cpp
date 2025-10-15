@@ -258,7 +258,7 @@ namespace hgraph
             nb::cast<std::vector<std::string>>(kwargs_["args"]),
             nb::cast<std::optional<std::unordered_map<std::string, nb::object>>>(kwargs_["time_series_inputs"]),
             nb::cast<std::optional<nb::object>>(kwargs_["time_series_output"]),
-            nb::cast<std::optional<nb::kwargs>>(kwargs_["scalars"]),
+            nb::cast<std::optional<nb::dict>>(kwargs_["scalars"]),
             nb::cast<nb::object>(kwargs_["src_location"]),
             nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["active_inputs"]),
             nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["valid_inputs"]),
