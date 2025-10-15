@@ -30,7 +30,8 @@ namespace hgraph
 
         static void register_with_nanobind(nb::module_ &m);
 
-      private:
+      protected:
+        // Protected to allow derived classes (e.g., MeshNestedEngineEvaluationClock) to access
         nested_node_ptr _nested_node;
         engine_time_t   _nested_next_scheduled_evaluation_time{MAX_DT};
     };

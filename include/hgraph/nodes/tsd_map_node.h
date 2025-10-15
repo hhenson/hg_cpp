@@ -54,16 +54,18 @@ namespace hgraph
         void          un_wire_graph(const K &key, graph_ptr &graph);
         void          wire_graph(const K &key, graph_ptr &graph);
 
-      private:
+        // Protected members accessible by derived classes (e.g., MeshNode)
         graph_builder_ptr                    nested_graph_builder_;
+        std::unordered_map<K, graph_ptr>     active_graphs_;
+        std::set<K>                          pending_keys_;
+        int64_t                              count_{1};
+
+      private:
         std::unordered_map<std::string, int64_t> input_node_ids_;
         int64_t                              output_node_id_;
         std::unordered_set<std::string>      multiplexed_args_;
         std::string                          key_arg_;
         std::unordered_map<K, engine_time_t> scheduled_keys_;
-        std::unordered_map<K, graph_ptr>     active_graphs_;
-        std::set<K>                          pending_keys_;
-        int64_t                              count_{1};
         std::string                          recordable_id_;
 
         friend MapNestedEngineEvaluationClock<K>;
