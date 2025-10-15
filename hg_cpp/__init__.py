@@ -285,7 +285,12 @@ def _create_mesh_node_builder_factory(
         key_tp = int  # Default to int for mesh nodes
 
     return {
+        bool: _hgraph.MeshNodeBuilder_bool,
         int: _hgraph.MeshNodeBuilder_int,
+        float: _hgraph.MeshNodeBuilder_float,
+        date: _hgraph.MeshNodeBuilder_date,
+        datetime: _hgraph.MeshNodeBuilder_date_time,
+        timedelta: _hgraph.MeshNodeBuilder_time_delta,
     }.get(key_tp, _hgraph.MeshNodeBuilder_object)(
         signature,
         scalars,

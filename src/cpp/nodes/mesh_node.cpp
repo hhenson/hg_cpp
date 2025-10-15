@@ -315,7 +315,9 @@ namespace hgraph
                     std::string cycle_str;
                     for (size_t i = 0; i < cycle.size(); ++i) {
                         if (i > 0) cycle_str += " -> ";
-                        cycle_str += to_string(cycle[i]);
+                        // Ensure we convert proxy types (like vector<bool>) to actual K before stringifying
+                        K v = static_cast<K>(cycle[i]);
+                        cycle_str += to_string(v);
                     }
                     std::string node_label =
                         this->signature().label.has_value() ? this->signature().label.value() : this->signature().name;
@@ -331,13 +333,29 @@ namespace hgraph
     }
 
     // Template instantiations
+    template struct MeshNode<bool>;
     template struct MeshNode<int64_t>;
+    template struct MeshNode<double>;
+    template struct MeshNode<engine_date_t>;
+    template struct MeshNode<engine_time_t>;
+    template struct MeshNode<engine_time_delta_t>;
     template struct MeshNode<nb::object>;
+
+    template struct MeshNestedEngineEvaluationClock<bool>;
     template struct MeshNestedEngineEvaluationClock<int64_t>;
+    template struct MeshNestedEngineEvaluationClock<double>;
+    template struct MeshNestedEngineEvaluationClock<engine_date_t>;
+    template struct MeshNestedEngineEvaluationClock<engine_time_t>;
+    template struct MeshNestedEngineEvaluationClock<engine_time_delta_t>;
     template struct MeshNestedEngineEvaluationClock<nb::object>;
 
     void register_mesh_node_with_nanobind(nb::module_ &m) {
+        nb::class_<MeshNode<bool>, TsdMapNode<bool>>(m, "MeshNode_bool");
         nb::class_<MeshNode<int64_t>, TsdMapNode<int64_t>>(m, "MeshNode_int");
+        nb::class_<MeshNode<double>, TsdMapNode<double>>(m, "MeshNode_float");
+        nb::class_<MeshNode<engine_date_t>, TsdMapNode<engine_date_t>>(m, "MeshNode_date");
+        nb::class_<MeshNode<engine_time_t>, TsdMapNode<engine_time_t>>(m, "MeshNode_date_time");
+        nb::class_<MeshNode<engine_time_delta_t>, TsdMapNode<engine_time_delta_t>>(m, "MeshNode_time_delta");
         nb::class_<MeshNode<nb::object>, TsdMapNode<nb::object>>(m, "MeshNode_object");
     }
 

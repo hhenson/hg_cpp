@@ -412,8 +412,23 @@ namespace hgraph
             .def_ro("key_arg", &BaseMeshNodeBuilder::key_arg)
             .def_ro("context_path", &BaseMeshNodeBuilder::context_path);
 
+        nb::class_<MeshNodeBuilder<bool>, BaseMeshNodeBuilder>(m, "MeshNodeBuilder_bool")
+            .def("__init__", [](MeshNodeBuilder<bool> *self, const nb::args &args) { create_mesh_node_builder(self, args); });
+
         nb::class_<MeshNodeBuilder<int64_t>, BaseMeshNodeBuilder>(m, "MeshNodeBuilder_int")
             .def("__init__", [](MeshNodeBuilder<int64_t> *self, const nb::args &args) { create_mesh_node_builder(self, args); });
+
+        nb::class_<MeshNodeBuilder<double>, BaseMeshNodeBuilder>(m, "MeshNodeBuilder_float")
+            .def("__init__", [](MeshNodeBuilder<double> *self, const nb::args &args) { create_mesh_node_builder(self, args); });
+
+        nb::class_<MeshNodeBuilder<engine_date_t>, BaseMeshNodeBuilder>(m, "MeshNodeBuilder_date")
+            .def("__init__", [](MeshNodeBuilder<engine_date_t> *self, const nb::args &args) { create_mesh_node_builder(self, args); });
+
+        nb::class_<MeshNodeBuilder<engine_time_t>, BaseMeshNodeBuilder>(m, "MeshNodeBuilder_date_time")
+            .def("__init__", [](MeshNodeBuilder<engine_time_t> *self, const nb::args &args) { create_mesh_node_builder(self, args); });
+
+        nb::class_<MeshNodeBuilder<engine_time_delta_t>, BaseMeshNodeBuilder>(m, "MeshNodeBuilder_time_delta")
+            .def("__init__", [](MeshNodeBuilder<engine_time_delta_t> *self, const nb::args &args) { create_mesh_node_builder(self, args); });
 
         nb::class_<MeshNodeBuilder<nb::object>, BaseMeshNodeBuilder>(m, "MeshNodeBuilder_object")
             .def("__init__", [](MeshNodeBuilder<nb::object> *self, const nb::args &args) { create_mesh_node_builder(self, args); });
@@ -657,7 +672,12 @@ namespace hgraph
     }
 
     // Explicit template instantiations for MeshNodeBuilder
+    template struct MeshNodeBuilder<bool>;
     template struct MeshNodeBuilder<int64_t>;
+    template struct MeshNodeBuilder<double>;
+    template struct MeshNodeBuilder<engine_date_t>;
+    template struct MeshNodeBuilder<engine_time_t>;
+    template struct MeshNodeBuilder<engine_time_delta_t>;
     template struct MeshNodeBuilder<nb::object>;
 
     node_ptr LastValuePullNodeBuilder::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
