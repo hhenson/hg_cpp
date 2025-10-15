@@ -1,3 +1,4 @@
+import hg_cpp  # Comment this out to use Python instead of C++
 from typing import Tuple, Callable
 
 import pytest
