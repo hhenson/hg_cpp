@@ -237,7 +237,9 @@ namespace hgraph
         d["active_inputs"]      = active_inputs;
         d["valid_inputs"]       = valid_inputs;
         d["all_valid_inputs"]   = all_valid_inputs;
+        d["context_inputs"]     = context_inputs;
         d["injectable_inputs"]  = injectable_inputs;
+        d["injectables"]        = injectables;
         d["capture_exception"]  = capture_exception;
         d["trace_back_depth"]   = trace_back_depth;
         d["wiring_path_name"]   = wiring_path_name;
@@ -251,33 +253,24 @@ namespace hgraph
         auto kwargs_ = to_dict();
         for (const auto &item : kwargs) { kwargs_[item.first] = item.second; }
         return new NodeSignature(
-            nb::cast<std::string>(kwargs_["name"]), nb::cast<NodeTypeEnum>(kwargs_["node_type"]),
+            nb::cast<std::string>(kwargs_["name"]),
+            nb::cast<NodeTypeEnum>(kwargs_["node_type"]),
             nb::cast<std::vector<std::string>>(kwargs_["args"]),
-            kwargs_.contains("time_series_inputs")
-                ? nb::cast<std::optional<std::unordered_map<std::string, nb::object>>>(kwargs_["time_series_inputs"])
-                : std::nullopt,
-            kwargs_.contains("time_series_output") ? nb::cast<std::optional<nb::object>>(kwargs_["time_series_output"])
-                                                   : std::nullopt,
-            kwargs_.contains("scalars") ? nb::cast<std::optional<nb::kwargs>>(kwargs_["scalars"]) : std::nullopt,
+            nb::cast<std::optional<std::unordered_map<std::string, nb::object>>>(kwargs_["time_series_inputs"]),
+            nb::cast<std::optional<nb::object>>(kwargs_["time_series_output"]),
+            nb::cast<std::optional<nb::kwargs>>(kwargs_["scalars"]),
             nb::cast<nb::object>(kwargs_["src_location"]),
-            kwargs_.contains("active_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["active_inputs"])
-                                              : std::nullopt,
-            kwargs_.contains("valid_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["valid_inputs"])
-                                             : std::nullopt,
-            kwargs_.contains("all_valid_inputs")
-                ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["all_valid_inputs"])
-                : std::nullopt,
-            kwargs_.contains("context_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["context_inputs"])
-                                               : std::nullopt,
-            kwargs_.contains("injectable_inputs")
-                ? nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(kwargs_["injectable_inputs"])
-                : std::nullopt,
-            kwargs_.contains("injectables") ? nb::cast<size_t>(kwargs_["injectables"]) : 0,
-            kwargs_.contains("capture_exception") ? nb::cast<bool>(kwargs_["capture_exception"]) : false,
-            kwargs_.contains("trace_back_depth") ? nb::cast<int64_t>(kwargs_["trace_back_depth"]) : 1,
-            kwargs_.contains("wiring_path_name") ? nb::cast<std::string>(kwargs_["wiring_path_name"]) : "",
+            nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["active_inputs"]),
+            nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["valid_inputs"]),
+            nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["all_valid_inputs"]),
+            nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["context_inputs"]),
+            nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(kwargs_["injectable_inputs"]),
+            nb::cast<size_t>(kwargs_["injectables"]),
+            nb::cast<bool>(kwargs_["capture_exception"]),
+            nb::cast<int64_t>(kwargs_["trace_back_depth"]),
+            nb::cast<std::string>(kwargs_["wiring_path_name"]),
             nb::cast<std::optional<std::string>>(kwargs_["label"]),
-            kwargs_.contains("capture_values") ? nb::cast<bool>(kwargs_["capture_values"]) : false,
+            nb::cast<bool>(kwargs_["capture_values"]),
             nb::cast<std::optional<std::string>>(kwargs_["record_replay_id"]));
     }
 
