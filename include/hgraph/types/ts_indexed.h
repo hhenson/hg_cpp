@@ -37,8 +37,13 @@ namespace hgraph
         [[nodiscard]] collection_type values() const { return const_cast<index_ts_type *>(this)->values(); }
 
         [[nodiscard]] nb::iterator py_valid_values() const {
-            const auto &valid_ = valid_values();
-            return nb::make_iterator(nb::type<collection_type>(), "ValidValueIterator", valid_.begin(), valid_.end());
+            // Create a Python list from the vector to avoid dangling references
+            auto valid_ = valid_values();
+            nb::list py_list;
+            for (const auto& item : valid_) {
+                py_list.append(item);
+            }
+            return nb::iter(py_list);
         }
 
         [[nodiscard]] collection_type valid_values() {
@@ -47,8 +52,13 @@ namespace hgraph
         [[nodiscard]] collection_type valid_values() const { return const_cast<index_ts_type *>(this)->valid_values(); }
 
         [[nodiscard]] nb::iterator py_modified_values() const {
-            const auto &modified_ = modified_values();
-            return nb::make_iterator(nb::type<collection_type>(), "ModifiedValueIterator", modified_.begin(), modified_.end());
+            // Create a Python list from the vector to avoid dangling references
+            auto modified_ = modified_values();
+            nb::list py_list;
+            for (const auto& item : modified_) {
+                py_list.append(item);
+            }
+            return nb::iter(py_list);
         }
 
         [[nodiscard]] collection_type modified_values() {
