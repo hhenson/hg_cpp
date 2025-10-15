@@ -194,7 +194,8 @@ namespace hgraph {
     template <typename K>
     TimeSeriesDictOutput_T<K> &MeshNode<K>::tsd_output() {
         // Access output bundle's "out" member - output() returns TimeSeriesBundleOutput
-        return dynamic_cast<TimeSeriesDictOutput_T<K> &>(this->output());
+        auto &output_bundle = dynamic_cast<TimeSeriesBundleOutput &>(this->output());
+        return dynamic_cast<TimeSeriesDictOutput_T<K> &>(*output_bundle["out"]);
     }
 
     template <typename K>
