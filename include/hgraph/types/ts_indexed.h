@@ -2,8 +2,8 @@
 #ifndef TS_INDEXED_H
 #define TS_INDEXED_H
 
-#include <hgraph/types/time_series_type.h>
 #include <algorithm>
+#include <hgraph/types/time_series_type.h>
 
 namespace hgraph
 {
@@ -36,17 +36,25 @@ namespace hgraph
         [[nodiscard]] collection_type values() { return _ts_values; }
         [[nodiscard]] collection_type values() const { return const_cast<index_ts_type *>(this)->values(); }
 
+        [[nodiscard]] nb::iterator py_valid_values() const {
+            const auto &valid_ = valid_values();
+            return nb::make_iterator(nb::type<collection_type>(), "ValidValueIterator", valid_.begin(), valid_.end());
+        }
+
         [[nodiscard]] collection_type valid_values() {
             return values_with_constraint([](const T_TS &ts) { return ts.valid(); });
         }
         [[nodiscard]] collection_type valid_values() const { return const_cast<index_ts_type *>(this)->valid_values(); }
 
+        [[nodiscard]] nb::iterator py_modified_values() const {
+            const auto &modified_ = modified_values();
+            return nb::make_iterator(nb::type<collection_type>(), "ModifiedValueIterator", modified_.begin(), modified_.end());
+        }
+
         [[nodiscard]] collection_type modified_values() {
             return values_with_constraint([](const T_TS &ts) { return ts.modified(); });
         }
-        [[nodiscard]] collection_type modified_values() const {
-            return const_cast<index_ts_type *>(this)->modified_values();
-        }
+        [[nodiscard]] collection_type modified_values() const { return const_cast<index_ts_type *>(this)->modified_values(); }
 
         [[nodiscard]] size_t size() const { return _ts_values.size(); }
         [[nodiscard]] bool   empty() const { return _ts_values.empty(); }
@@ -79,7 +87,8 @@ namespace hgraph
             return result;
         }
 
-        [[nodiscard]] enumerated_collection_type items_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
+        [[nodiscard]] enumerated_collection_type
+        items_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
             enumerated_collection_type result;
             result.reserve(_ts_values.size());
             for (size_t i = 0; i < _ts_values.size(); ++i) {

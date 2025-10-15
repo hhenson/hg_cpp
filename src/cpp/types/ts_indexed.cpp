@@ -53,10 +53,8 @@ namespace hgraph
             .def(
                 "__getitem__", [](const IndexedTimeSeries_Output &self, size_t idx) { return self[idx]; }, "index"_a)
             .def("values", static_cast<collection_type (IndexedTimeSeries_Output::*)() const>(&IndexedTimeSeries_Output::values))
-            .def("valid_values",
-                 static_cast<collection_type (IndexedTimeSeries_Output::*)() const>(&IndexedTimeSeries_Output::valid_values))
-            .def("modified_values",
-                 static_cast<collection_type (IndexedTimeSeries_Output::*)() const>(&IndexedTimeSeries_Output::modified_values))
+            .def("valid_values", &IndexedTimeSeries_Output::py_valid_values)
+            .def("modified_values",&IndexedTimeSeries_Output::py_modified_values)
             .def("__len__", &IndexedTimeSeries_Output::size)
             .def_prop_ro("empty", &IndexedTimeSeries_Output::empty);
 
@@ -121,10 +119,8 @@ namespace hgraph
             .def(
                 "__getitem__", [](const IndexedTimeSeries_Input &self, size_t index) { return self[index]; }, "index"_a)
             .def("values", static_cast<collection_type (IndexedTimeSeries_Input::*)() const>(&IndexedTimeSeries_Input::values))
-            .def("valid_values",
-                 static_cast<collection_type (IndexedTimeSeries_Input::*)() const>(&IndexedTimeSeries_Input::valid_values))
-            .def("modified_values",
-                 static_cast<collection_type (IndexedTimeSeries_Input::*)() const>(&IndexedTimeSeries_Input::modified_values))
+            .def("valid_values", &IndexedTimeSeries_Input::py_valid_values)
+            .def("modified_values", &IndexedTimeSeries_Input::py_modified_values)
             .def("__len__", &IndexedTimeSeries_Input::size)
             .def_prop_ro("empty", &IndexedTimeSeries_Input::empty);
 
