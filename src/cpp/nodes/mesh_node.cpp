@@ -71,13 +71,17 @@ namespace hgraph {
         // Set up the reference output and register in GlobalState
         if (GlobalState::has_instance()) {
             try {
-                // Get the "ref" output from the output bundle
+                // Get the "out" and "ref" outputs from the output bundle
                 auto &output_bundle = dynamic_cast<TimeSeriesBundleOutput &>(this->output());
-                auto &ref_output = *output_bundle["ref"];
-                nb::object ref_output_obj = nb::cast(ref_output);
+                auto &out_output = dynamic_cast<TimeSeriesDictOutput_T<K> &>(*output_bundle["out"]);
+                auto &ref_output = dynamic_cast<TimeSeriesReferenceOutput &>(*output_bundle["ref"]);
 
-                // Store the reference in GlobalState
-                GlobalState::set(full_context_path_, ref_output_obj);
+                // Create a TimeSeriesReference from the "out" output and set it on the "ref" output
+                auto reference = TimeSeriesReference::make(time_series_output_ptr(&out_output));
+                ref_output.set_value(reference);
+
+                // Store the ref output in GlobalState
+                GlobalState::set(full_context_path_, nb::cast(ref_output));
             } catch (const nb::python_error& e) {
                 // Log error but don't fail - GlobalState is optional
             }
