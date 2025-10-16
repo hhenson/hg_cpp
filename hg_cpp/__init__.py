@@ -333,5 +333,15 @@ hgraph._wiring._wiring_node_class._service_impl_node_class.ServiceImplNodeClass.
 
 hgraph._wiring._wiring_node_class._pull_source_node_class.PythonLastValuePullWiringNodeClass.BUILDER_CLASS = _hgraph.LastValuePullNodeBuilder
 
-hgraph._wiring._context_wiring.ContextNodeClass.BUILDER_CLASS = _hgraph.ContextNodeBuilder
-hgraph._wiring._context_wiring.ContextNodeClass.CONTEXT_STUB = _hgraph.ContextStubSourceNode
+
+def _context_node_buider(*, signature, scalars, input_builder, output_builder, error_builder, recordable_state_builder, node_type):
+    return _hgraph.ContextNodeBuilder(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+    )
+
+hgraph._wiring._context_wiring.ContextNodeClass.BUILDER_CLASS = _context_node_buider

@@ -791,33 +791,61 @@ namespace hgraph
         }
 
         if (should_eval) {
-            // Handle context inputs
-            if (signature().context_inputs.has_value() && signature().context_inputs->size() > 0) {
-                // TODO: Figure out how to deal with context stacks outside of Python or assume these to be Python only?
-                throw std::runtime_error("Context inputs not yet supported");
+            // Handle context inputs - enter all valid context managers
+            std::vector<nb::object> active_contexts;
+
+            if (signature().context_inputs.has_value() && !signature().context_inputs->empty()) {
+                // Enter all valid context inputs
+                for (const auto& context_key : *signature().context_inputs) {
+                    auto& context_input = input()[context_key];
+                    if (context_input->valid()) {
+                        nb::object context_value = context_input->py_value();
+                        // Call __enter__() on the context manager
+                        context_value.attr("__enter__")();
+                        active_contexts.push_back(context_value);
+                    }
+                }
             }
 
-            // Execute with error handling
-            // It may be worth reviewing how to remove some of these conditionals from this very performance sensitve method.
-            if (_error_output) {
-                try {
-                    do_eval();
-                } catch (const std::exception &e) {
-                    // TODO: Implement proper error capture
-                    // This needs a bit of machinery to be built.
-                    throw std::runtime_error("Can't process error handling yet, error caught: " + std::string(e.what()));
-                    //_error_output->apply_result(nb::cast(e.what()));
+            // Execute with error handling, ensuring contexts are exited via RAII-style cleanup
+            try {
+                // Execute the node evaluation
+                // It may be worth reviewing how to remove some of these conditionals from this very performance sensitve method.
+                if (_error_output) {
+                    try {
+                        do_eval();
+                    } catch (const std::exception &e) {
+                        // TODO: Implement proper error capture
+                        // This needs a bit of machinery to be built.
+                        throw std::runtime_error("Can't process error handling yet, error caught: " + std::string(e.what()));
+                        //_error_output->apply_result(nb::cast(e.what()));
+                    }
+                } else {
+                    try {
+                        do_eval();
+                    } catch (const NodeException &e) {
+                        throw; // already enriched
+                    } catch (const std::exception &e) {
+                        throw NodeException::capture_error(e, *this, "During evaluation");
+                    } catch (...) {
+                        throw NodeException::capture_error(std::current_exception(), *this, "Unknown error during node evaluation");
+                    }
                 }
-            } else {
-                try {
-                    do_eval();
-                } catch (const NodeException &e) {
-                    throw; // already enriched
-                } catch (const std::exception &e) {
-                    throw NodeException::capture_error(e, *this, "During evaluation");
-                } catch (...) {
-                    throw NodeException::capture_error(std::current_exception(), *this, "Unknown error during node evaluation");
+
+                // Exit contexts in reverse order (success case)
+                for (auto it = active_contexts.rbegin(); it != active_contexts.rend(); ++it) {
+                    it->attr("__exit__")(nb::none(), nb::none(), nb::none());
                 }
+            } catch (...) {
+                // Exit contexts in reverse order (exception case)
+                for (auto it = active_contexts.rbegin(); it != active_contexts.rend(); ++it) {
+                    try {
+                        it->attr("__exit__")(nb::none(), nb::none(), nb::none());
+                    } catch (...) {
+                        // Suppress exceptions during cleanup to preserve original exception
+                    }
+                }
+                throw; // Re-throw the original exception
             }
         }
 
