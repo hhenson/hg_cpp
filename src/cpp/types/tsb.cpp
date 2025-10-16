@@ -60,10 +60,14 @@ namespace hgraph
                  })
             .def(
                 "__iter__",
-                [](const TimeSeriesBundle_Output &self) {
-                    nb::make_iterator(nb::type<key_collection_type>(), "iterator", self.begin(), self.end());
-                },
-                nb::keep_alive<0, 1>())
+                [](TimeSeriesBundle_Output &self) {
+                    // Create a Python list of values to iterate over
+                    nb::list values;
+                    for (size_t i = 0; i < self.size(); ++i) {
+                        values.append(self[i]);
+                    }
+                    return values.attr("__iter__")();
+                })
             .def("__contains__", &TimeSeriesBundle_Output::contains)
             .def("keys", &TimeSeriesBundle_Output::keys)
             .def("items",
@@ -94,10 +98,14 @@ namespace hgraph
                  })
             .def(
                 "__iter__",
-                [](const TimeSeriesBundle_Input &self) {
-                    nb::make_iterator(nb::type<collection_type>(), "iterator", self.begin(), self.end());
-                },
-                nb::keep_alive<0, 1>())
+                [](TimeSeriesBundle_Input &self) {
+                    // Create a Python list of values to iterate over
+                    nb::list values;
+                    for (size_t i = 0; i < self.size(); ++i) {
+                        values.append(self[i]);
+                    }
+                    return values.attr("__iter__")();
+                })
             .def("__contains__", &TimeSeriesBundle_Input::contains)
             .def("keys", &TimeSeriesBundle_Input::keys)
             .def("items", static_cast<key_value_collection_type (TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::items))
