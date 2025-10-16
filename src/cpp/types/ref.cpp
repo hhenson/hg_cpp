@@ -244,12 +244,14 @@ namespace hgraph
 
     void TimeSeriesReferenceOutput::observe_reference(TimeSeriesInput::ptr input_) {
         auto result{_reference_observers.emplace(input_.get())};
+        // NOTE: Due to us caching the result, we need to manually incremet the ref count here, this is an exception to the rule
         if (result.second) { (*result.first)->inc_ref(); }
     }
 
     void TimeSeriesReferenceOutput::stop_observing_reference(TimeSeriesInput::ptr input_) {
         auto result{_reference_observers.erase(input_.get())};
         if (result != 0) {
+            // NOTE: We need to ensure that we dec_ref since we manually inc_ref'd the value in observe_reference.
             // Since we have a ptr to the object, the input must have at least one additional
             // reference so we can ignore the dec_ref result here.
             // ReSharper disable once CppExpressionWithoutSideEffects

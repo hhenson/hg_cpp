@@ -423,10 +423,7 @@ namespace hgraph
             kwargs.contains("label") ? nb::cast<std::optional<std::string>>(kwargs["label"]) : this->label,
             kwargs.contains("capture_values") ? nb::cast<bool>(kwargs["capture_values"]) : this->capture_values,
             kwargs.contains("record_replay_id") ? nb::cast<std::optional<std::string>>(kwargs["record_replay_id"]) : this->record_replay_id);
-
-        // Manually increment refcount for the newly created object
-        // This is required because nanobind's intrusive_ptr starts with refcount 0
-        result->inc_ref();
+        // This is returned as a ref-pointer, and it should be automatically ref count increased
         return result;
     }
 
