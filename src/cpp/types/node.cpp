@@ -11,6 +11,7 @@ namespace hgraph
 {
     void node_type_enum_py_register(nb::module_ &m) {
         nb::enum_<NodeTypeEnum>(m, "NodeTypeEnum")
+            .value("NONE", NodeTypeEnum::NONE)
             .value("SOURCE_NODE", NodeTypeEnum::SOURCE_NODE)
             .value("PUSH_SOURCE_NODE", NodeTypeEnum::PUSH_SOURCE_NODE)
             .value("PULL_SOURCE_NODE", NodeTypeEnum::PULL_SOURCE_NODE)

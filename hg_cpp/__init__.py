@@ -17,6 +17,8 @@ hgraph.TimeSeriesReference._BUILDER = _hgraph.TimeSeriesReference.make
 hgraph.TimeSeriesReference._INSTANCE_OF = lambda obj: isinstance(obj, _hgraph.TimeSeriesReference)
 
 hgraph._builder._graph_builder.EDGE_TYPE = _hgraph.Edge
+
+
 def _make_cpp_graph_builder(node_builders, edges):
     # Convert Python Edge dataclass instances to C++ _hgraph.Edge
     cpp_edges = []
@@ -27,6 +29,7 @@ def _make_cpp_graph_builder(node_builders, edges):
             # If it's already a C++ Edge, keep as-is
             cpp_edges.append(e)
     return _hgraph.GraphBuilder(list(node_builders), cpp_edges)
+
 
 hgraph.GraphBuilderFactory.declare(_make_cpp_graph_builder)
 
@@ -278,7 +281,6 @@ def _create_mesh_node_builder_factory(
         key_tp,
         context_path,
 ):
-
     return {
         bool: _hgraph.MeshNodeBuilder_bool,
         int: _hgraph.MeshNodeBuilder_int,
@@ -304,7 +306,9 @@ def _create_mesh_node_builder_factory(
 
 hgraph._wiring._wiring_node_class.MeshWiringNodeClass.BUILDER_CLASS = _create_mesh_node_builder_factory
 
-def _service_impl_nested_graph_builder(*, signature, scalars, input_builder, output_builder, error_builder, recordable_state_builder, nested_graph):
+
+def _service_impl_nested_graph_builder(*, signature, scalars, input_builder, output_builder, error_builder,
+                                       recordable_state_builder, nested_graph):
     # Provide empty input mapping and no output node for service impl wrappers
     return _hgraph.NestedGraphNodeBuilder(
         signature,
@@ -318,19 +322,22 @@ def _service_impl_nested_graph_builder(*, signature, scalars, input_builder, out
         0,
     )
 
+
 hgraph._wiring._wiring_node_class._service_impl_node_class.ServiceImplNodeClass.BUILDER_CLASS = _service_impl_nested_graph_builder
 
 hgraph._wiring._wiring_node_class._pull_source_node_class.PythonLastValuePullWiringNodeClass.BUILDER_CLASS = _hgraph.LastValuePullNodeBuilder
 
 
-def _context_node_buider(*, signature, scalars, input_builder, output_builder, error_builder, recordable_state_builder, node_type):
+def _context_node_buider(*, signature, scalars, input_builder, output_builder, error_builder, recordable_state_builder=None,
+                         **kwargs):
     return _hgraph.ContextNodeBuilder(
-        signature,
-        scalars,
-        input_builder,
-        output_builder,
-        error_builder,
-        recordable_state_builder,
+        signature=signature,
+        scalars=scalars,
+        input_builder=input_builder,
+        output_builder=output_builder,
+        error_builder=error_builder,
+        recordable_state_builder=recordable_state_builder,
     )
+
 
 hgraph._wiring._context_wiring.ContextNodeClass.BUILDER_CLASS = _context_node_buider
