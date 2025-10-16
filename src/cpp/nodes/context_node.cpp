@@ -65,31 +65,30 @@ namespace hgraph
             throw std::runtime_error(fmt::format("Missing shared output for path: {}{}", key, diag));
         }
 
+        // We will capture the reference value and subscribe to the producing output when available
+        TimeSeriesReference::ptr        value_ref = nullptr;
         time_series_reference_output_ptr output_ts = nullptr;
 
         // Case 1: direct TimeSeriesReferenceOutput stored in GlobalState
         if (shared.type().is(nb::type<TimeSeriesReferenceOutput>())) {
             output_ts = nb::cast<time_series_reference_output_ptr>(shared);
-            // Ensure current value is propagated (no-op if already set)
-            output_ts->set_value(output_ts->value());
+            value_ref = output_ts->value();
         }
         // Case 2: TimeSeriesReferenceInput stored in GlobalState
         else if (shared.type().is(nb::type<TimeSeriesReferenceInput>())) {
             auto ref = nb::cast<time_series_reference_input_ptr>(shared);
             if (ref->has_peer()) {
-                // Use the bound peer output
+                // Use the bound peer output (stub remains a reference node)
                 output_ts = dynamic_cast<TimeSeriesReferenceOutput *>(ref->output().get());
-                output_ts->set_value(output_ts->value());
-            } else {
-                // No peer bound: use this node's own reference output and seed it with the input's value
-                output_ts = dynamic_cast<TimeSeriesReferenceOutput *>(output_ptr().get());
-                output_ts->set_value(ref->value());
             }
+            // Always use the value from the REF input (may be empty). Python sets value regardless of peer.
+            value_ref = ref->value();
         } else {
             throw std::runtime_error(
                 fmt::format("Context found an unknown output type bound to {}: {}", key, nb::str(shared.type()).c_str()));
         }
 
+        // Manage subscription if we have a producing output
         if (output_ts.get() != nullptr) {
             bool is_same{_subscribed_output.get() == output_ts.get()};
             if (!is_same) {
@@ -98,6 +97,13 @@ namespace hgraph
                 _subscribed_output = output_ts;
             }
         }
+
+        // Finally, set this node's own REF output to the captured value (may be None)
+        auto my_output = dynamic_cast<TimeSeriesReferenceOutput *>(&output());
+        if (!my_output) {
+            throw std::runtime_error("ContextStubSourceNode: output is not a TimeSeriesReferenceOutput");
+        }
+        my_output->set_value(value_ref);
 
     }
 
