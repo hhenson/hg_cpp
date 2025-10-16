@@ -115,8 +115,11 @@ namespace hgraph
     }
 
     template <typename K> void TsdMapNode<K>::create_new_graph(const K &key) {
+        // Extend parent's node_id with the new instance counter
+        auto child_owning_graph_id = node_id();
+        child_owning_graph_id.push_back(-static_cast<int64_t>(count_++));
         auto graph_{
-            nested_graph_builder_->make_instance(std::vector<int64_t>{node_ndx(), -static_cast<int64_t>(count_++)}, this,
+            nested_graph_builder_->make_instance(child_owning_graph_id, this,
                                                  to_string(key))  // This will come back to haunt me :(
         };
 
