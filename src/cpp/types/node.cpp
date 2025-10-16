@@ -6,6 +6,8 @@
 #include <hgraph/types/tsb.h>
 #include <ranges>
 #include <sstream>
+#include <fmt/format.h>
+#include <cstdlib>
 
 namespace hgraph
 {
@@ -632,7 +634,9 @@ namespace hgraph
             for (const auto &key : std::views::all(*signature().valid_inputs)) { _check_valid_inputs.push_back(input()[key]); }
         } else {
             for (const auto &key : std::views::elements<0>(*signature().time_series_inputs)) {
-                _check_valid_inputs.push_back(input()[key]);
+                // Do not treat context inputs as required by default
+                bool is_context = signature().context_inputs.has_value() && signature().context_inputs->contains(key);
+                if (!is_context) { _check_valid_inputs.push_back(input()[key]); }
             }
         }
         if (signature().all_valid_inputs.has_value()) {
