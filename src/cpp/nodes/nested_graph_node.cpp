@@ -5,8 +5,9 @@
 #include <hgraph/runtime/record_replay.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
-#include <hgraph/types/traits.h>
 #include <hgraph/types/tsb.h>
+#include <hgraph/types/time_series_type.h>
+#include <hgraph/types/ref.h>
 #include <utility>
 
 namespace hgraph
@@ -25,13 +26,22 @@ namespace hgraph
     }
 
     void NestedGraphNode::write_inputs() {
+        // Align with Python's PythonNestedGraphNodeImpl._write_inputs:
+        // For each mapped inner node, notify it, set its input via copy_with(owning_node=node, ts=outer_ts),
+        // then re-parent the outer ts to the inner node's input bundle.
         if (!m_input_node_ids_.empty()) {
             for (const auto &[arg, node_ndx] : m_input_node_ids_) {
                 auto node = m_active_graph_->nodes()[node_ndx];
                 node->notify();
+
+                // Fetch the outer time-series input to be passed into the inner node as its 'ts'
                 auto ts = input()[arg];
-                node->set_input(node->input().copy_with(node, {ts}));
-                ts->re_parent(TimeSeriesType::ptr(&node->input()));
+
+                // Replace the inner node's input with a copy that uses the outer ts and is owned by the inner node
+                node->reset_input(node->input().copy_with(node.get(), {ts.get()}));
+
+                // Re-parent the provided ts so its parent container becomes the inner node's input bundle
+                ts->re_parent(node->input_ptr().get());
             }
         }
     }
@@ -39,7 +49,8 @@ namespace hgraph
     void NestedGraphNode::wire_outputs() {
         if (m_output_node_id_) {
             auto node = m_active_graph_->nodes()[m_output_node_id_];
-            node->set_output(&output());
+            // Align with Python: simply replace the inner node's output with the parent node's output
+            node->set_output(output_ptr());
         }
     }
 
