@@ -155,14 +155,12 @@ namespace hgraph
     }
 
     template <typename K> void SwitchNode<K>::wire_graph(graph_ptr &graph) {
-        // Determine which graph key to use for lookups
+        // Determine which graph key to use for lookups, falling back to DEFAULT when appropriate (Python parity)
         K graph_key = active_key_.value();
-
-        // If active_key not found, try DEFAULT for nb::object
-        if (input_node_ids_.find(graph_key) == input_node_ids_.end()) {
+        if (nested_graph_builders_.find(graph_key) == nested_graph_builders_.end()) {
             if constexpr (std::is_same_v<K, nb::object>) {
                 auto default_marker = get_python_default();
-                if (default_marker.is_valid() && input_node_ids_.find(default_marker) != input_node_ids_.end()) {
+                if (default_marker.is_valid() && nested_graph_builders_.find(default_marker) != nested_graph_builders_.end()) {
                     graph_key = default_marker;
                 }
             }
@@ -182,7 +180,7 @@ namespace hgraph
             set_parent_recordable_id(*graph, full_id);
         }
 
-        // Wire inputs
+        // Wire inputs (exactly as Python: notify each node; set key; clone REF binding for others)
         auto input_ids_it = input_node_ids_.find(graph_key);
         if (input_ids_it != input_node_ids_.end()) {
             for (const auto &[arg, node_ndx] : input_ids_it->second) {
@@ -191,22 +189,24 @@ namespace hgraph
 
                 if (arg == "key") {
                     // The key node is a Python stub whose eval function exposes a 'key' attribute.
-                    // Set this to the current active key so the nested graph sees the correct key value.
                     auto &key_node = dynamic_cast<PythonNode &>(*node);
                     nb::setattr(key_node.eval_fn(), "key", nb::cast(graph_key));
                 } else {
-                    // Regular input - clone binding of the reference input into the inner 'ts' input
-                    auto ts          = input()[arg].get();
-                    auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
-                    if (ts != nullptr && inner_input != nullptr) {
-                        auto other = dynamic_cast<TimeSeriesReferenceInput *>(ts);
-                        inner_input->clone_binding(*other);
+                    // Python expects REF wiring: clone binding from outer REF input to inner REF input 'ts'
+                    auto outer_any = input()[arg].get();
+                    auto inner_any = node->input()["ts"].get();
+                    auto inner_ref = dynamic_cast<TimeSeriesReferenceInput *>(inner_any);
+                    auto outer_ref = dynamic_cast<TimeSeriesReferenceInput *>(outer_any);
+                    if (!inner_ref || !outer_ref) {
+                        throw std::runtime_error(
+                            fmt::format("SwitchNode wire_graph expects REF inputs for arg '{}'", arg));
                     }
+                    inner_ref->clone_binding(*outer_ref);
                 }
             }
         }
 
-        // Wire output
+        // Wire output using the same resolved graph_key
         auto output_id_it = output_node_ids_.find(graph_key);
         if (output_id_it != output_node_ids_.end()) {
             auto node   = graph->nodes()[output_id_it->second];
