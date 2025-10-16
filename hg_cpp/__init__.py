@@ -216,10 +216,10 @@ def _create_try_except_node_builder_factory(
         input_builder,
         output_builder,
         error_builder,
-        recordable_state_builder,
-        nested_graph,
-        input_node_ids,
-        output_node_id,
+        recordable_state_builder=None,
+        nested_graph=None,
+        input_node_ids=None,
+        output_node_id=0,
 ):
     return _hgraph.TryExceptNodeBuilder(
         signature,
