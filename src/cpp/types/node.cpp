@@ -251,28 +251,37 @@ namespace hgraph
     }
 
     NodeSignature::ptr NodeSignature::copy_with(nb::kwargs kwargs) const {
-        auto kwargs_ = to_dict();
-        for (const auto &item : kwargs) { kwargs_[item.first] = item.second; }
-        return new NodeSignature(
-            nb::cast<std::string>(kwargs_["name"]),
-            nb::cast<NodeTypeEnum>(kwargs_["node_type"]),
-            nb::cast<std::vector<std::string>>(kwargs_["args"]),
-            nb::cast<std::optional<std::unordered_map<std::string, nb::object>>>(kwargs_["time_series_inputs"]),
-            nb::cast<std::optional<nb::object>>(kwargs_["time_series_output"]),
-            nb::cast<std::optional<nb::dict>>(kwargs_["scalars"]),
-            nb::cast<nb::object>(kwargs_["src_location"]),
-            nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["active_inputs"]),
-            nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["valid_inputs"]),
-            nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["all_valid_inputs"]),
-            nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs_["context_inputs"]),
-            nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(kwargs_["injectable_inputs"]),
-            nb::cast<size_t>(kwargs_["injectables"]),
-            nb::cast<bool>(kwargs_["capture_exception"]),
-            nb::cast<int64_t>(kwargs_["trace_back_depth"]),
-            nb::cast<std::string>(kwargs_["wiring_path_name"]),
-            nb::cast<std::optional<std::string>>(kwargs_["label"]),
-            nb::cast<bool>(kwargs_["capture_values"]),
-            nb::cast<std::optional<std::string>>(kwargs_["record_replay_id"]));
+        // Get override values from kwargs, otherwise use current values
+        std::string name_val = kwargs.contains("name") ? nb::cast<std::string>(kwargs["name"]) : this->name;
+        NodeTypeEnum node_type_val = kwargs.contains("node_type") ? nb::cast<NodeTypeEnum>(kwargs["node_type"]) : this->node_type;
+        std::vector<std::string> args_val = kwargs.contains("args") ? nb::cast<std::vector<std::string>>(kwargs["args"]) : this->args;
+        std::string wiring_path_name_val = kwargs.contains("wiring_path_name") ? nb::cast<std::string>(kwargs["wiring_path_name"]) : this->wiring_path_name;
+
+        auto* result = new NodeSignature(
+            name_val,
+            node_type_val,
+            args_val,
+            kwargs.contains("time_series_inputs") ? nb::cast<std::optional<std::unordered_map<std::string, nb::object>>>(kwargs["time_series_inputs"]) : this->time_series_inputs,
+            kwargs.contains("time_series_output") ? nb::cast<std::optional<nb::object>>(kwargs["time_series_output"]) : this->time_series_output,
+            kwargs.contains("scalars") ? nb::cast<std::optional<nb::dict>>(kwargs["scalars"]) : this->scalars,
+            kwargs.contains("src_location") ? kwargs["src_location"] : this->src_location,
+            kwargs.contains("active_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["active_inputs"]) : this->active_inputs,
+            kwargs.contains("valid_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["valid_inputs"]) : this->valid_inputs,
+            kwargs.contains("all_valid_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["all_valid_inputs"]) : this->all_valid_inputs,
+            kwargs.contains("context_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["context_inputs"]) : this->context_inputs,
+            kwargs.contains("injectable_inputs") ? nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(kwargs["injectable_inputs"]) : this->injectable_inputs,
+            kwargs.contains("injectables") ? nb::cast<size_t>(kwargs["injectables"]) : this->injectables,
+            kwargs.contains("capture_exception") ? nb::cast<bool>(kwargs["capture_exception"]) : this->capture_exception,
+            kwargs.contains("trace_back_depth") ? nb::cast<int64_t>(kwargs["trace_back_depth"]) : this->trace_back_depth,
+            wiring_path_name_val,
+            kwargs.contains("label") ? nb::cast<std::optional<std::string>>(kwargs["label"]) : this->label,
+            kwargs.contains("capture_values") ? nb::cast<bool>(kwargs["capture_values"]) : this->capture_values,
+            kwargs.contains("record_replay_id") ? nb::cast<std::optional<std::string>>(kwargs["record_replay_id"]) : this->record_replay_id);
+
+        // Manually increment refcount for the newly created object
+        // This is required because nanobind's intrusive_ptr starts with refcount 0
+        result->inc_ref();
+        return result;
     }
 
     NodeScheduler::NodeScheduler(Node &node) : _node{node} {}
