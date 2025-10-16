@@ -18,13 +18,6 @@ hgraph.TimeSeriesReference._INSTANCE_OF = lambda obj: isinstance(obj, _hgraph.Ti
 
 hgraph._builder._graph_builder.EDGE_TYPE = _hgraph.Edge
 def _make_cpp_graph_builder(node_builders, edges):
-    # Enforce C++ builders only; detect and report any Python builders
-    py_builders = [nb for nb in node_builders if not isinstance(nb, _hgraph.NodeBuilder)]
-    if py_builders:
-        # Fallback gracefully to PythonGraphBuilder for mixed sets
-        from hgraph._impl._builder._graph_builder import PythonGraphBuilder
-        return PythonGraphBuilder(tuple(node_builders), tuple(edges))
-
     # Convert Python Edge dataclass instances to C++ _hgraph.Edge
     cpp_edges = []
     for e in edges:
@@ -185,12 +178,18 @@ def _create_switch_node_builder_factory(
         reload_on_ticked,
         recordable_state_builder=None,
 ):
-    # Avoid introspection of signature.time_series_inputs; default to object to ensure compatibility with C++ proxy
-    key_tp = object
+    # Extract key type from the switch signature, by definition of switch, 'key' MUST exist
+    switch_input_type = signature.time_series_inputs['key']
+    key_tp = switch_input_type.value_scalar_tp.py_type
 
-    # Use Python Switch builder to avoid mixed-mode crashes during wiring
-    from hgraph._impl._builder._switch_builder import PythonSwitchNodeBuilder
-    return PythonSwitchNodeBuilder(
+    return {
+        bool: _hgraph.SwitchNodeBuilder_bool,
+        int: _hgraph.SwitchNodeBuilder_int,
+        float: _hgraph.SwitchNodeBuilder_float,
+        date: _hgraph.SwitchNodeBuilder_date,
+        datetime: _hgraph.SwitchNodeBuilder_date_time,
+        timedelta: _hgraph.SwitchNodeBuilder_time_delta,
+    }.get(key_tp, _hgraph.SwitchNodeBuilder_object)(
         signature,
         scalars,
         input_builder,
@@ -276,28 +275,18 @@ def _create_mesh_node_builder_factory(
         output_node_id,
         multiplexed_args,
         key_arg,
+        key_tp,
         context_path,
 ):
-    # Extract key type from signature (defensively)
-    key_tp = int  # reasonable default for mesh keys
-    try:
-        ts = getattr(signature, 'time_series_inputs', None)
-        if ts is not None and key_arg:
-            try:
-                key_input = ts.get(key_arg, None)
-            except Exception:
-                try:
-                    key_input = ts[key_arg]
-                except Exception:
-                    key_input = None
-            if key_input is not None:
-                key_tp = getattr(getattr(key_input, 'value_tp', None), 'py_type', key_tp)
-    except Exception:
-        pass
 
-    # Use Python Mesh builder to avoid mixed-mode crashes during wiring
-    from hgraph._impl._builder._mesh_builder import PythonMeshNodeBuilder
-    return PythonMeshNodeBuilder(
+    return {
+        bool: _hgraph.MeshNodeBuilder_bool,
+        int: _hgraph.MeshNodeBuilder_int,
+        float: _hgraph.MeshNodeBuilder_float,
+        date: _hgraph.MeshNodeBuilder_date,
+        datetime: _hgraph.MeshNodeBuilder_date_time,
+        timedelta: _hgraph.MeshNodeBuilder_time_delta,
+    }.get(key_tp.py_type, _hgraph.MeshNodeBuilder_object)(
         signature,
         scalars,
         input_builder,

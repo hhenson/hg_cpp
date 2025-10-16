@@ -230,7 +230,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "hgraph", extras = ["web", "messaging"], specifier = ">=0.4.86" }]
+requires-dist = [{ name = "hgraph", extras = ["web", "messaging"], specifier = ">=0.4.87" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -242,7 +242,7 @@ dev = [
 
 [[package]]
 name = "hgraph"
-version = "0.4.86"
+version = "0.4.87"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "black" },
@@ -260,9 +260,9 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/49/c9/dc93e2b91b3ed2c6f79c57ef6ddcbaea9d3477491aded44546b941c9bd31/hgraph-0.4.86.tar.gz", hash = "sha256:42826d3eb63ba60657b771364c17cefd318dd2c02e33971fcf12330866db292a", size = 836397, upload-time = "2025-10-15T18:41:42.071Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/77/e7/0fe0e599a8ea984ef0bfd427e2be9620e32829fc31ae30d4db98ba532c56/hgraph-0.4.87.tar.gz", hash = "sha256:f79c9192a0a7146b0b94470f8b2d0accf816ed169be7f3bf00e767acd651dece", size = 836463, upload-time = "2025-10-16T11:20:40.848Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d8/d8/560c867af773b3fac1e76054a7898fc424a897ea2c95845c39a27dba4975/hgraph-0.4.86-py3-none-any.whl", hash = "sha256:0fe7b9eee87965218d069d1e3747e2fb697d37f9bd575d89735dcee3204857d0", size = 535955, upload-time = "2025-10-15T18:41:40.063Z" },
+    { url = "https://files.pythonhosted.org/packages/77/95/a93bea19b921ed49e66e6f15603f3d5743a6ecdc8a63af516b942c756373/hgraph-0.4.87-py3-none-any.whl", hash = "sha256:7d707042c9504946baca0daf392b2b3ec90361856a5eff0c7b8265558f1f6989", size = 536043, upload-time = "2025-10-16T11:20:38.85Z" },
 ]
 
 [package.optional-dependencies]
