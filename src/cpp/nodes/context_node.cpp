@@ -38,11 +38,11 @@ namespace hgraph
         const auto &og  = owning_graph_id();
         int         use = std::max(0, std::min<int>(depth, static_cast<int>(og.size())));
 
-        // Build Python list of prefix ids
+        // Build Python list of prefix ids, then convert to tuple to match Python's tuple formatting
         nb::list py_list;
         for (int i = 0; i < use; ++i) { py_list.append(og[static_cast<size_t>(i)]); }
-        // Python format of owning_graph_id as exposed by nanobind is a list; use list string form to match capture key
-        std::string og_prefix = nb::cast<std::string>(nb::str(py_list));
+        // Convert to tuple to match Python's tuple string format: (1, 2) not [1, 2]
+        std::string og_prefix = nb::cast<std::string>(nb::str(nb::tuple(py_list)));
 
         auto key = fmt::format("context-{}-{}", og_prefix, path_str);
 

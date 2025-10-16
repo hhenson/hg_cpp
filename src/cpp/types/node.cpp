@@ -676,7 +676,14 @@ namespace hgraph
     void Node::register_with_nanobind(nb::module_ &m) {
         nb::class_<Node, ComponentLifeCycle>(m, "Node")
             .def_prop_ro("node_ndx", &Node::node_ndx)
-            .def_prop_ro("owning_graph_id", &Node::owning_graph_id)
+            .def_prop_ro("owning_graph_id", [](const Node &n) {
+                // Convert vector to tuple for Python compatibility
+                // Python code expects owning_graph_id to be a tuple, not a list
+                const auto &vec = n.owning_graph_id();
+                nb::list py_list;
+                for (const auto &id : vec) { py_list.append(id); }
+                return nb::tuple(py_list);
+            })
             .def_prop_ro("node_id", &Node::node_id)
             .def_prop_ro("signature", &Node::signature)
             .def_prop_ro("scalars", &Node::scalars)
