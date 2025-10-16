@@ -108,8 +108,8 @@ namespace hgraph
         // Use raw pointers for reverse lookup to enable efficient lookup from mark_child_modified
         using reverse_map = std::unordered_map<TimeSeriesOutput *, key_type>;
 
-        explicit TimeSeriesDictOutput_T(const node_ptr &parent, output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder);
-        explicit TimeSeriesDictOutput_T(const time_series_type_ptr &parent, output_builder_ptr ts_builder,
+        explicit TimeSeriesDictOutput_T(const node_ptr &parent, nb::ref<key_set_type> key_set, output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder);
+        explicit TimeSeriesDictOutput_T(const time_series_type_ptr &parent, nb::ref<key_set_type> key_set, output_builder_ptr ts_builder,
                                         output_builder_ptr ts_ref_builder);
 
         void apply_result(nb::object value) override;
