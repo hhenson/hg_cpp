@@ -220,7 +220,7 @@ namespace hgraph
         void remove_value(const key_type &key, bool raise_if_not_found);
 
       private:
-        key_set_type _key_set;
+        nb::ref<key_set_type> _key_set;
         map_type     _ts_values;
 
         reverse_map      _reverse_ts_values;
