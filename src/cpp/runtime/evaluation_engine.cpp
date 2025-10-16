@@ -11,7 +11,7 @@ namespace hgraph
     }
 
     void EvaluationClock::register_with_nanobind(nb::module_ &m) {
-        nb::class_<EvaluationClock>(m, "EvaluationClock")
+        nb::class_<EvaluationClock, nb::intrusive_base>(m, "EvaluationClock")
             .def_prop_ro("evaluation_time", &EvaluationClock::evaluation_time)
             .def_prop_ro("now", &EvaluationClock::now)
             .def_prop_ro("next_cycle_evaluation_time", &EvaluationClock::next_cycle_evaluation_time)

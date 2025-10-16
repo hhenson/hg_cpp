@@ -35,7 +35,7 @@ namespace hgraph
     };
 
     void GraphExecutor::register_with_nanobind(nb::module_ &m) {
-        nb::class_<GraphExecutor>(m, "GraphExecutor")
+        nb::class_<GraphExecutor, nb::intrusive_base>(m, "GraphExecutor")
             .def("run_mode", &GraphExecutor::run_mode)
             .def("graph", &GraphExecutor::graph)
             .def("run", &GraphExecutor::run);
@@ -45,7 +45,7 @@ namespace hgraph
             .value("SIMULATION", EvaluationMode::SIMULATION)
             .export_values();
 
-        nb::class_<EvaluationLifeCycleObserver, PyEvaluationLifeCycleObserver>(m, "EvaluationLifeCycleObserver")
+        nb::class_<EvaluationLifeCycleObserver, PyEvaluationLifeCycleObserver, nb::intrusive_base>(m, "EvaluationLifeCycleObserver")
             .def("on_before_start_graph", &EvaluationLifeCycleObserver::on_before_start_graph)
             .def("on_after_start_graph", &EvaluationLifeCycleObserver::on_after_start_graph)
             .def("on_before_start_node", &EvaluationLifeCycleObserver::on_before_start_node)
