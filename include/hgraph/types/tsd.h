@@ -334,6 +334,9 @@ namespace hgraph
 
         [[nodiscard]] engine_time_t last_modified_time() const override;
 
+        // Expose this as this is currently used in at least one Python service test.
+        void _create(const key_type &key);
+
       protected:
         void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
         bool do_bind_output(time_series_output_ptr value) override;
@@ -351,8 +354,6 @@ namespace hgraph
         void clear_key_changes();
         void register_clear_key_changes() const;
         void register_clear_key_changes();
-
-        void _create(const key_type &key);
 
       private:
         key_set_type _key_set;

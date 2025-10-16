@@ -97,9 +97,7 @@ namespace hgraph
         if (&child != &key_set()) {
             // Use reverse map with raw pointer for efficient O(1) lookup
             auto it = _reverse_ts_values.find(&child);
-            if (it != _reverse_ts_values.end()) {
-                _modified_items.insert({it->second, _ts_values.at(it->second)});
-            }
+            if (it != _reverse_ts_values.end()) { _modified_items.insert({it->second, _ts_values.at(it->second)}); }
         }
 
         TimeSeriesOutput::mark_child_modified(child, modified_time);
@@ -126,7 +124,7 @@ namespace hgraph
         if (it == _ts_values.end()) {
             // TDOD: Fix the format latter, for now it compiles locally not not on CICD server :(
             if (raise_if_not_found) {
-                std::string key_str {to_string(key)};
+                std::string key_str{to_string(key)};
                 throw std::runtime_error(std::string("Key '") + key_str + "' not found in TSD (in remove_value)");
             }
             return;
@@ -145,9 +143,9 @@ namespace hgraph
     }
 
     template <typename T_Key>
-    TimeSeriesDictOutput_T<T_Key>::TimeSeriesDictOutput_T(const node_ptr &parent, nb::ref<key_set_type> key_set, output_builder_ptr ts_builder,
-                                                          output_builder_ptr ts_ref_builder)
-        : TimeSeriesDictOutput(parent), _key_set{ std::move(key_set) }, _ts_builder{std::move(ts_builder)},
+    TimeSeriesDictOutput_T<T_Key>::TimeSeriesDictOutput_T(const node_ptr &parent, nb::ref<key_set_type> key_set,
+                                                          output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder)
+        : TimeSeriesDictOutput(parent), _key_set{std::move(key_set)}, _ts_builder{std::move(ts_builder)},
           _ts_ref_builder{std::move(ts_ref_builder)},
           _ref_ts_feature{this,
                           _ts_ref_builder,
@@ -160,12 +158,14 @@ namespace hgraph
                                   ref.apply_result(r_val);
                               }
                           },
-                          {}} { _key_set->TimeSeriesType::re_parent(TimeSeriesType::ptr{this}); }
+                          {}} {
+        _key_set->TimeSeriesType::re_parent(TimeSeriesType::ptr{this});
+    }
 
     template <typename T_Key>
-    TimeSeriesDictOutput_T<T_Key>::TimeSeriesDictOutput_T(const time_series_type_ptr &parent, nb::ref<key_set_type> key_set, output_builder_ptr ts_builder,
-                                                          output_builder_ptr ts_ref_builder)
-        : TimeSeriesDictOutput(static_cast<const TimeSeriesType::ptr &>(parent)), _key_set{ std::move(key_set) },
+    TimeSeriesDictOutput_T<T_Key>::TimeSeriesDictOutput_T(const time_series_type_ptr &parent, nb::ref<key_set_type> key_set,
+                                                          output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder)
+        : TimeSeriesDictOutput(static_cast<const TimeSeriesType::ptr &>(parent)), _key_set{std::move(key_set)},
           _ts_builder{std::move(ts_builder)}, _ts_ref_builder{std::move(ts_ref_builder)},
           _ref_ts_feature{this,
                           _ts_ref_builder,
@@ -173,7 +173,9 @@ namespace hgraph
                               auto it = _ts_values.find(key);
                               if (it != _ts_values.end()) { ref.apply_result(nb::cast(TimeSeriesReference::make(it->second))); }
                           },
-                          {}} { _key_set->TimeSeriesType::re_parent(TimeSeriesType::ptr{this}); }
+                          {}} {
+        _key_set->TimeSeriesType::re_parent(TimeSeriesType::ptr{this});
+    }
 
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_value() const {
         if (_value.is_none()) {
@@ -363,9 +365,7 @@ namespace hgraph
         _added_items.clear();
         for (const auto &k : key_set_t().added()) {
             auto it = _ts_values.find(k);
-            if (it != _ts_values.end()) {
-                _added_items.emplace(k, it->second);
-            }
+            if (it != _ts_values.end()) { _added_items.emplace(k, it->second); }
         }
         return _added_items;
     }
@@ -416,9 +416,7 @@ namespace hgraph
         return _removed_values.find(key) != _removed_values.end();
     }
 
-    template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_key_set() const {
-        return nb::cast(_key_set);
-    }
+    template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_key_set() const { return nb::cast(_key_set); }
 
     template <typename T_Key> TimeSeriesSet<TimeSeriesDict<TimeSeriesOutput>::ts_type> &TimeSeriesDictOutput_T<T_Key>::key_set() {
         return key_set_t();
@@ -435,7 +433,8 @@ namespace hgraph
     }
 
     template <typename T_Key>
-    const TimeSeriesSetOutput_T<typename TimeSeriesDictOutput_T<T_Key>::key_type> &TimeSeriesDictOutput_T<T_Key>::key_set_t() const {
+    const TimeSeriesSetOutput_T<typename TimeSeriesDictOutput_T<T_Key>::key_type> &
+    TimeSeriesDictOutput_T<T_Key>::key_set_t() const {
         return *_key_set;
     }
 
@@ -547,9 +546,7 @@ namespace hgraph
         const auto &removed_keys = key_set_t().removed();
         if (!removed_keys.empty()) {
             auto removed{get_remove()};
-            for (const auto &key : removed_keys) {
-                delta[nb::cast(key)] = removed;
-            }
+            for (const auto &key : removed_keys) { delta[nb::cast(key)] = removed; }
         }
         return get_frozendict()(delta);
     }
@@ -675,9 +672,7 @@ namespace hgraph
         // TODO: Try and ensure that we cache the result where possible
         _added_items.clear();
         const auto &key_set{key_set_t()};
-        for (const auto &k : key_set.added()) {
-            _added_items.emplace(k, _ts_values.at(k));
-        }
+        for (const auto &k : key_set.added()) { _added_items.emplace(k, _ts_values.at(k)); }
         return _added_items;
     }
 
@@ -710,7 +705,7 @@ namespace hgraph
     template <typename T_Key>
     const typename TimeSeriesDictInput_T<T_Key>::map_type &TimeSeriesDictInput_T<T_Key>::removed_items() const {
         _removed_items.clear();
-        for (const auto& key : key_set_t().removed()) {
+        for (const auto &key : key_set_t().removed()) {
             auto it{_removed_values.find(key)};
             if (it == _removed_values.end()) { continue; }
             _removed_items.emplace(key, it->second.first);
@@ -719,18 +714,17 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_removed_keys() const {
-        auto const& removed_{removed_items()};
+        auto const &removed_{removed_items()};
         return nb::make_key_iterator(nb::type<map_type>(), "RemovedKeyIterator", removed_.begin(), removed_.end());
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_removed_values() const {
-        auto const& removed_{removed_items()};
-        return nb::make_value_iterator(nb::type<map_type>(), "RemovedValueIterator", removed_.begin(),
-                                       removed_.end());
+        auto const &removed_{removed_items()};
+        return nb::make_value_iterator(nb::type<map_type>(), "RemovedValueIterator", removed_.begin(), removed_.end());
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_removed_items() const {
-        auto const& removed_{removed_items()};
+        auto const &removed_{removed_items()};
         return nb::make_iterator(nb::type<map_type>(), "RemovedItemIterator", removed_.begin(), removed_.end());
     }
 
@@ -771,9 +765,7 @@ namespace hgraph
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::was_removed(const key_type &key) const {
         return _removed_values.find(key) != _removed_values.end();
     }
-    template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_key_set() const {
-        return nb::cast(key_set());
-    }
+    template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_key_set() const { return nb::cast(key_set()); }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::py_was_removed(const nb::object &key) const {
         return was_removed(nb::cast<T_Key>(key));
@@ -1077,8 +1069,7 @@ namespace hgraph
                     self.py_release_ref(key, requester.ptr());
                 },
                 "key"_a, "requester"_a)
-            .def_prop_ro("key_set", &TimeSeriesDictOutput::py_key_set)
-            ;
+            .def_prop_ro("key_set", &TimeSeriesDictOutput::py_key_set);
 
         nb::class_<TimeSeriesDictInput, TimeSeriesInput>(m, "TimeSeriesDictInput")
             .def("__contains__", &TimeSeriesDictInput::py_contains, "key"_a)
@@ -1111,9 +1102,10 @@ namespace hgraph
             .def("removed_items", &TimeSeriesDictInput::py_removed_items)
             .def("was_removed", &TimeSeriesDictInput::py_was_removed, "key"_a)
             .def_prop_ro("has_removed", &TimeSeriesDictInput::has_removed)
-            .def_prop_ro("key_set",
-                 static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesInput>::ts_type> &(TimeSeriesDictInput::*)() const>(
-                     &TimeSeriesDictInput::key_set))  // Not sure if this needs to be exposed to python?
+            .def_prop_ro(
+                "key_set",
+                static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesInput>::ts_type> &(TimeSeriesDictInput::*)() const>(
+                    &TimeSeriesDictInput::key_set))  // Not sure if this needs to be exposed to python?
             ;
 
         nb::class_<TSD_OUT_Bool, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Bool");
@@ -1124,12 +1116,12 @@ namespace hgraph
         nb::class_<TSD_OUT_TimeDelta, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_TimeDelta");
         nb::class_<TSD_OUT_Object, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Object");
 
-        nb::class_<TSD_Bool, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Bool");
-        nb::class_<TSD_Int, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Int");
-        nb::class_<TSD_Float, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Float");
-        nb::class_<TSD_Date, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Date");
-        nb::class_<TSD_DateTime, TimeSeriesDictInput>(m, "TimeSeriesDictInput_DateTime");
-        nb::class_<TSD_TimeDelta, TimeSeriesDictInput>(m, "TimeSeriesDictInput_TimeDelta");
-        nb::class_<TSD_Object, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Object");
+        nb::class_<TSD_Bool, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Bool").def("_create", &TSD_Bool::_create);
+        nb::class_<TSD_Int, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Int").def("_create", &TSD_Int::_create);
+        nb::class_<TSD_Float, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Float").def("_create", &TSD_Float::_create);
+        nb::class_<TSD_Date, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Date").def("_create", &TSD_Date::_create);
+        nb::class_<TSD_DateTime, TimeSeriesDictInput>(m, "TimeSeriesDictInput_DateTime").def("_create", &TSD_DateTime::_create);
+        nb::class_<TSD_TimeDelta, TimeSeriesDictInput>(m, "TimeSeriesDictInput_TimeDelta").def("_create", &TSD_TimeDelta::_create);
+        nb::class_<TSD_Object, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Object").def("_create", &TSD_Object::_create);
     }
 }  // namespace hgraph
