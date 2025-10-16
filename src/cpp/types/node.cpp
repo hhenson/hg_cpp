@@ -54,7 +54,7 @@ namespace hgraph
           label{std::move(label)}, capture_values{capture_values}, record_replay_id{std::move(record_replay_id)} {}
 
     void NodeSignature::register_with_nanobind(nb::module_ &m) {
-        nb::class_<NodeSignature>(m, "NodeSignature")
+        nb::class_<NodeSignature, intrusive_base>(m, "NodeSignature")
             .def("__init__",
                  [](NodeSignature *self, nb::kwargs kwargs) {
                      new (self) NodeSignature(
@@ -403,7 +403,7 @@ namespace hgraph
         std::vector<std::string> args_val = kwargs.contains("args") ? nb::cast<std::vector<std::string>>(kwargs["args"]) : this->args;
         std::string wiring_path_name_val = kwargs.contains("wiring_path_name") ? nb::cast<std::string>(kwargs["wiring_path_name"]) : this->wiring_path_name;
 
-        auto* result = new NodeSignature(
+        auto* raw = new NodeSignature(
             name_val,
             node_type_val,
             args_val,
@@ -423,8 +423,8 @@ namespace hgraph
             kwargs.contains("label") ? nb::cast<std::optional<std::string>>(kwargs["label"]) : this->label,
             kwargs.contains("capture_values") ? nb::cast<bool>(kwargs["capture_values"]) : this->capture_values,
             kwargs.contains("record_replay_id") ? nb::cast<std::optional<std::string>>(kwargs["record_replay_id"]) : this->record_replay_id);
-        // This is returned as a ref-pointer, and it should be automatically ref count increased
-        return result;
+        // Wrap into a nanobind intrusive ref explicitly to ensure correct refcount semantics
+        return nb::ref<NodeSignature>(raw);
     }
 
     NodeScheduler::NodeScheduler(Node &node) : _node{node} {}

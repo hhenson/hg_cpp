@@ -18,6 +18,32 @@ namespace hgraph
                     std::optional<output_builder_ptr> error_builder_            = std::nullopt,
                     std::optional<output_builder_ptr> recordable_state_builder_ = std::nullopt);
 
+        // Explicitly define move operations to avoid leaving Python-visible instances in a moved-from (null) state.
+        NodeBuilder(NodeBuilder&& other) noexcept
+            : signature(other.signature),
+              scalars(std::move(other.scalars)),
+              input_builder(other.input_builder),
+              output_builder(other.output_builder),
+              error_builder(other.error_builder),
+              recordable_state_builder(other.recordable_state_builder) {}
+
+        NodeBuilder& operator=(NodeBuilder&& other) noexcept {
+            if (this != &other) {
+                // Copy nanobind::ref members (inc_ref) instead of moving them, so both sides stay valid
+                signature = other.signature;
+                scalars = std::move(other.scalars);
+                input_builder = other.input_builder;
+                output_builder = other.output_builder;
+                error_builder = other.error_builder;
+                recordable_state_builder = other.recordable_state_builder;
+            }
+            return *this;
+        }
+
+        // Default copy is fine (nb::ref increases refcount)
+        NodeBuilder(const NodeBuilder&) = default;
+        NodeBuilder& operator=(const NodeBuilder&) = default;
+
         virtual node_ptr make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const = 0;
 
         virtual void release_instance(node_ptr &item) const {};
