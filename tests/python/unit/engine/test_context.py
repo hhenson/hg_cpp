@@ -235,7 +235,9 @@ def test_context_over_switch_inside_map():
 def test_context_not_context_manager():
     @compute_node
     def use_context(ts: TS[bool], context: CONTEXT[TIME_SERIES_TYPE] = REQUIRED["context"]) -> TS[str]:
-        return f"{dict(context.value)} {ts.value}"
+        # Sort dict items to ensure consistent ordering across implementations
+        sorted_dict = "{" + ", ".join(f"{k}: {v}" for k, v in sorted(dict(context.value).items())) + "}"
+        return f"{sorted_dict} {ts.value}"
 
     @graph
     def f(ts: TS[bool]) -> TS[str]:
