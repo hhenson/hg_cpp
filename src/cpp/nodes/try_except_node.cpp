@@ -4,14 +4,22 @@
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/tsb.h>
+#include <hgraph/types/time_series_type.h>
+#include <hgraph/types/ref.h>
 
 namespace hgraph
 {
     void TryExceptNode::wire_outputs() {
         if (m_output_node_id_) {
             auto node = m_active_graph_->nodes()[m_output_node_id_];
-            // Simplified - just wire directly
-            node->set_output(&output());
+            // Python parity: replace the inner node's output with the outer node's 'out' sub-output
+            // If the outer output is a bundle, use its 'out' member; otherwise, wire the outer output directly.
+            if (auto bundle = dynamic_cast<TimeSeriesBundleOutput *>(&output())) {
+                auto out_ts = (*bundle)["out"];  // TimeSeriesOutput::ptr
+                node->set_output(out_ts);
+            } else {
+                node->set_output(output_ptr());
+            }
         }
     }
 
