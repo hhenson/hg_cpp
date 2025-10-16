@@ -138,7 +138,153 @@ namespace hgraph
             .def_prop_ro("is_recordable", &NodeSignature::is_recordable)
 
             .def("to_dict", &NodeSignature::to_dict)
-            .def("copy_with", &NodeSignature::copy_with);
+            .def("copy_with", &NodeSignature::copy_with)
+
+            .def("__str__", [](const NodeSignature &self) {
+                return self.signature();
+            })
+            .def("__repr__", [](const NodeSignature &self) {
+                std::ostringstream oss;
+                oss << "NodeSignature(name='" << self.name << "'";
+                oss << ", node_type=" << static_cast<int>(self.node_type);
+
+                // args
+                oss << ", args=[";
+                for (size_t i = 0; i < self.args.size(); ++i) {
+                    if (i > 0) oss << ", ";
+                    oss << "'" << self.args[i] << "'";
+                }
+                oss << "]";
+
+                // time_series_inputs
+                oss << ", time_series_inputs=";
+                if (self.time_series_inputs.has_value()) {
+                    oss << "{...}";  // dict with " << self.time_series_inputs->size() << " items
+                } else {
+                    oss << "None";
+                }
+
+                // time_series_output
+                oss << ", time_series_output=";
+                if (self.time_series_output.has_value()) {
+                    oss << "<object>";
+                } else {
+                    oss << "None";
+                }
+
+                // scalars
+                oss << ", scalars=";
+                if (self.scalars.has_value()) {
+                    oss << "{...}";
+                } else {
+                    oss << "None";
+                }
+
+                // src_location
+                oss << ", src_location=<object>";
+
+                // active_inputs
+                oss << ", active_inputs=";
+                if (self.active_inputs.has_value()) {
+                    oss << "{";
+                    bool first = true;
+                    for (const auto& inp : *self.active_inputs) {
+                        if (!first) oss << ", ";
+                        oss << "'" << inp << "'";
+                        first = false;
+                    }
+                    oss << "}";
+                } else {
+                    oss << "None";
+                }
+
+                // valid_inputs
+                oss << ", valid_inputs=";
+                if (self.valid_inputs.has_value()) {
+                    oss << "{";
+                    bool first = true;
+                    for (const auto& inp : *self.valid_inputs) {
+                        if (!first) oss << ", ";
+                        oss << "'" << inp << "'";
+                        first = false;
+                    }
+                    oss << "}";
+                } else {
+                    oss << "None";
+                }
+
+                // all_valid_inputs
+                oss << ", all_valid_inputs=";
+                if (self.all_valid_inputs.has_value()) {
+                    oss << "{";
+                    bool first = true;
+                    for (const auto& inp : *self.all_valid_inputs) {
+                        if (!first) oss << ", ";
+                        oss << "'" << inp << "'";
+                        first = false;
+                    }
+                    oss << "}";
+                } else {
+                    oss << "None";
+                }
+
+                // context_inputs
+                oss << ", context_inputs=";
+                if (self.context_inputs.has_value()) {
+                    oss << "{";
+                    bool first = true;
+                    for (const auto& inp : *self.context_inputs) {
+                        if (!first) oss << ", ";
+                        oss << "'" << inp << "'";
+                        first = false;
+                    }
+                    oss << "}";
+                } else {
+                    oss << "None";
+                }
+
+                // injectable_inputs
+                oss << ", injectable_inputs=";
+                if (self.injectable_inputs.has_value()) {
+                    oss << "{...}";  // map with enum values
+                } else {
+                    oss << "None";
+                }
+
+                // injectables
+                oss << ", injectables=" << self.injectables;
+
+                // capture_exception
+                oss << ", capture_exception=" << (self.capture_exception ? "True" : "False");
+
+                // trace_back_depth
+                oss << ", trace_back_depth=" << self.trace_back_depth;
+
+                // wiring_path_name
+                oss << ", wiring_path_name='" << self.wiring_path_name << "'";
+
+                // label
+                oss << ", label=";
+                if (self.label.has_value()) {
+                    oss << "'" << *self.label << "'";
+                } else {
+                    oss << "None";
+                }
+
+                // capture_values
+                oss << ", capture_values=" << (self.capture_values ? "True" : "False");
+
+                // record_replay_id
+                oss << ", record_replay_id=";
+                if (self.record_replay_id.has_value()) {
+                    oss << "'" << *self.record_replay_id << "'";
+                } else {
+                    oss << "None";
+                }
+
+                oss << ")";
+                return oss.str();
+            });
     }
 
     [[nodiscard]] nb::object NodeSignature::get_arg_type(const std::string &arg) const {
