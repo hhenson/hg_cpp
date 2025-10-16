@@ -70,6 +70,8 @@ namespace hgraph
 
     bool IndexedTimeSeriesInput::valid() const {
         if (has_peer()) { return TimeSeriesInput::valid(); }
+        // Empty bundles are considered valid (no invalid items)
+        if (ts_values().empty()) { return true; }
         return std::ranges::any_of(ts_values(), [](const time_series_input_ptr &ts) { return ts->valid(); });
     }
 
