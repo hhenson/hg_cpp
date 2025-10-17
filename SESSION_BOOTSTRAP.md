@@ -791,3 +791,101 @@ Node evaluated before input valid
 ---
 
 *This document should be reviewed at the start of each debugging session to quickly re-establish context.*
+
+
+---
+
+## Port Gap Analysis (line-by-line) — 2025-10-17
+
+This section records a line-by-line pass over core subsystems, comparing the C++ port to the Python reference (reference/hgraph/src/hgraph). It highlights what is implemented, where behavior diverges, and what is still outstanding. The goal is to keep this tightly coupled to files, tests, and concrete behaviors so it can guide next steps.
+
+Scope of this pass
+- Types: TS, TSL, TSS, TSD, TSB, REF, TSW, SIGNAL
+- Builders: input/output + typed variants
+- Nodes: switch, mesh, reduce/non-associative-reduce, tsd_map, try/except, context, nested graph, last_value_pull, component
+- Runtime: graph, evaluation engine, scheduling, clocks
+- Python/C++ bridge and factory registration
+
+Summary highlights
+- TSW implemented and passing tests: tests/python/unit/engine/test_tsw.py (7 tests) — Verified by local build+pytest on 2025-10-17.
+- Broad node coverage exists (switch, mesh, reduce, non-associative reduce, tsd_map, try/except, context, nested, last_value_pull, component) with nanobind registration in src/cpp/python/*.
+- Dict (TSD) and Set (TSS) have delta semantics implemented; parity with Python requires continued vigilance across edge cases.
+- Type compatibility for empty collections and nested schemas still needs a stricter pass to ensure parity with Python schema rules.
+- Engine lifecycle and scheduling largely implemented; nuanced behaviors (force_set, source ordering, clock interactions) should be verified across more tests.
+
+Details by area
+
+1) Time Series Types
+- TS (Scalar)
+  - Files: include/hgraph/types/ts.h, src/cpp/types/ts.cpp
+  - Status: Implemented; py_value, py_delta_value, modified/valid semantics in place.
+  - Risks: None observed in this pass.
+
+- TSL (List)
+  - Files: include/hgraph/types/tsl.h, src/cpp/types/tsl.cpp
+  - Status: Implemented; indexed container behaviors present.
+  - Divergence risk: is_same_type may lean on first-element heuristics; ensure parity with Python when both/one side empty.
+
+- TSS (Set)
+  - Files: include/hgraph/types/tss.h, src/cpp/types/tss.cpp
+  - Status: Implemented with delta tracking (added/removed), iterators and modified views.
+  - Action: Keep cross-checking against Python for ordering/iteration and delta content under complex update patterns.
+
+- TSD (Dict/Map)
+  - Files: include/hgraph/types/tsd.h, src/cpp/types/tsd.cpp
+  - Status: Implemented; rich API for keys/values/items, added/removed/modified tracking, key observers.
+  - Action: Validate edge cases (modifications without presence, erase/pop defaults, reference views) vs Python tests.
+
+- TSB (Bundle)
+  - Files: include/hgraph/types/tsb.h, src/cpp/types/tsb.cpp
+  - Status: Implemented.
+
+- REF (Reference)
+  - Files: include/hgraph/types/ref.h, src/cpp/types/ref.cpp
+  - Status: Implemented with observer management; Python bindings present.
+  - Risk: Observer sets maintain raw pointers; ensure ownership and unregistration are robust to avoid dangling pointers.
+
+- TSW (Fixed-size Window by tick count)
+  - Files: include/hgraph/types/tsw.h, src/cpp/types/tsw.cpp
+  - Status: Implemented; supports size/min_size, removed_value exposure, value_times, first_modified_time, and delta semantics.
+  - Tests: tests/python/unit/engine/test_tsw.py — 7/7 passing as of 2025-10-17 on Debug profile.
+  - Notes: Uses contiguous fast path for arithmetic types in py_value (ndarray view) and copy for rotated/nb::object cases.
+
+- SIGNAL
+  - Files: include/hgraph/types/ts_signal.h, src/cpp/types/ts_signal.cpp
+  - Status: Input-only wrapper by design; no SignalOutput.
+  - Action: Ensure builder selection and runtime semantics match Python expectations.
+
+2) Builders
+- Files: include/hgraph/builders/*.h, src/cpp/builders/*.cpp
+- Status: Input/Output builders registered for all major types (TS/TSL/TSS/TSD/TSB/REF/SIGNAL/TSW).
+- Action: Keep is_same_type strictness in mind for collections with empty values; confirm nanobind constructor signatures and factory routing match Python.
+
+3) Nodes
+- Files: src/cpp/nodes/*.cpp; bindings in src/cpp/python/_hgraph_nodes.cpp
+- Implemented: switch_node.cpp, mesh_node.cpp, reduce_node.cpp, non_associative_reduce_node.cpp, tsd_map_node.cpp, try_except_node.cpp, context_node.cpp, nested_graph_node.cpp, last_value_pull_node.cpp, component_node.cpp
+- Action: Continue cross-running Python unit tests under C++ to surface any semantic mismatches (e.g., mesh dynamics, switch dispatch edge cases, reduce associativity rules).
+
+4) Runtime and Graph Engine
+- Files: src/cpp/runtime/*.cpp, include/hgraph/types/graph.h
+- Status: EvaluationEngine/GraphExecutor present; clocks and scheduling implemented.
+- Action: Validate nuanced behaviors: force_set semantics, source node ordering, engine vs evaluation clocks, record/replay hooks.
+
+5) Python/C++ Bridge
+- Files: src/cpp/python/_hgraph_module.cpp and siblings; hg_cpp/__init__.py, hg_cpp/_builder_factories.py
+- Status: Registration for types/builders/nodes present; Python toggle pattern works across tests.
+- Action: Ensure new types/nodes continue to be exported; verify factory selection logic in hg_cpp/_builder_factories.py for complex/nested types.
+
+Outstanding items and next steps
+- Tighten type compatibility for empty collections and nested schemas to mirror Python schema semantics where required.
+- Continue parity testing for TSD/TSS deltas and iterators under complex updates.
+- Audit REF observer lifecycle to eliminate risks of dangling pointers.
+- Expand runtime scheduling tests to lock down force_set and clock semantics.
+- Maintain TSW enhancements if/when time-window (timedelta) variant is added.
+
+Verification notes
+- Build: cmake --build cmake-build-debug --target _hgraph
+- Tests executed: pytest tests/python/unit/engine/test_tsw.py (7 passed on 2025-10-17)
+- Reference comparisons used: reference/hgraph/src/hgraph (Python), tests in tests/python/unit/engine
+
+End of analysis.
