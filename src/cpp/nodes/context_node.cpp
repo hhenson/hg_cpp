@@ -36,7 +36,28 @@ namespace hgraph
 
         // Slice owning_graph_id by depth and build a Python tuple string to exactly match Python formatting
         const auto &og  = owning_graph_id();
-        int         use = std::max(0, std::min<int>(depth, static_cast<int>(og.size())));
+        // Python semantics: owning_graph_id[:depth]
+        // - If depth is None: use full length
+        // - If depth >= 0: use min(depth, len)
+        // - If depth < 0: use max(0, len + depth)
+        int use;
+        nb::object depth_obj;
+        try {
+            depth_obj = scalars()["depth"];
+        } catch (...) {
+            depth_obj = nb::none();
+        }
+        if (!depth_obj.is_valid() || depth_obj.is_none()) {
+            use = static_cast<int>(og.size());
+        } else {
+            int d = nb::cast<int>(depth_obj);
+            if (d >= 0) {
+                use = std::min<int>(d, static_cast<int>(og.size()));
+            } else {
+                use = static_cast<int>(og.size()) + d;
+                if (use < 0) use = 0;
+            }
+        }
 
         // Build Python list of prefix ids, then convert to tuple to match Python's tuple formatting
         nb::list py_list;

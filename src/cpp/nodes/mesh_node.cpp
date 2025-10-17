@@ -60,12 +60,12 @@ namespace hgraph
                           const std::string &key_arg, const std::string &context_path)
         : TsdMapNode<K>(node_ndx, std::move(owning_graph_id), std::move(signature), std::move(scalars),
                         std::move(nested_graph_builder), input_node_ids, output_node_id, multiplexed_args, key_arg) {
-        // Format node_id (owning_graph_id + node_ndx) as Python tuple to match Python's context key format
-        // Mesh nodes store their context at their node_id level, not owning_graph_id level
+        // Format owning_graph_id as Python tuple to match Python's context key format
+        // Align with Python reference: MeshNode stores context under owning_graph_id (not node_id)
         nb::list py_list;
-        for (const auto &id : this->node_id()) { py_list.append(id); }
-        std::string node_id_str = nb::cast<std::string>(nb::str(nb::tuple(py_list)));
-        full_context_path_ = fmt::format("context-{}-{}", node_id_str, context_path);
+        for (const auto &id : this->owning_graph_id()) { py_list.append(id); }
+        std::string owning_graph_id_str = nb::cast<std::string>(nb::str(nb::tuple(py_list)));
+        full_context_path_ = fmt::format("context-{}-{}", owning_graph_id_str, context_path);
     }
 
     template <typename K> void MeshNode<K>::do_start() {
