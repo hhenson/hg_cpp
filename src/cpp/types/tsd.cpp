@@ -543,10 +543,16 @@ namespace hgraph
             if (value->valid()) { delta[nb::cast(key)] = value->py_delta_value(); }
         }
         // Use key_set.removed() like Python does - this excludes keys added in the same cycle
+        // Only include REMOVE sentinel for keys that were valid before removal
         const auto &removed_keys = key_set_t().removed();
         if (!removed_keys.empty()) {
             auto removed{get_remove()};
-            for (const auto &key : removed_keys) { delta[nb::cast(key)] = removed; }
+            for (const auto &key : removed_keys) {
+                auto it = _removed_values.find(key);
+                if (it != _removed_values.end() && it->second.second) {  // Check was_valid flag
+                    delta[nb::cast(key)] = removed;
+                }
+            }
         }
         return get_frozendict()(delta);
     }
