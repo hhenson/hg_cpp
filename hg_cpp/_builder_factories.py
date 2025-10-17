@@ -15,7 +15,10 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
         return {
             hgraph.HgSignalMetaData: lambda: _hgraph.InputBuilder_TS_Signal(),
             hgraph.HgTSTypeMetaData: lambda: _ts_input_builder_type_for(value_tp.value_scalar_tp)(),
-            hgraph.HgTSWTypeMetaData: lambda: _raise_un_implemented(value_tp),
+            hgraph.HgTSWTypeMetaData: lambda: _tsw_input_builder_type_for(value_tp.value_scalar_tp)(
+                value_tp.size_tp.py_type.SIZE,
+                value_tp.min_size_tp.py_type.SIZE if value_tp.min_size_tp.py_type.FIXED_SIZE else 0
+            ) if getattr(value_tp.size_tp.py_type, 'FIXED_SIZE', True) else _raise_un_implemented(value_tp),
             hgraph.HgTSLTypeMetaData: lambda: _hgraph.InputBuilder_TSL(
                 self.make_input_builder(value_tp.value_tp),
                 value_tp.size_tp.py_type.SIZE
@@ -67,6 +70,10 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
                 self.make_output_builder(value_tp.value_tp),
                 self.make_output_builder(value_tp.value_tp.as_reference())
             ),
+            hgraph.HgTSWTypeMetaData: lambda: _tsw_output_builder_for_tp(value_tp.value_scalar_tp)(
+                value_tp.size_tp.py_type.SIZE,
+                value_tp.min_size_tp.py_type.SIZE if value_tp.min_size_tp.py_type.FIXED_SIZE else 0
+            ) if getattr(value_tp.size_tp.py_type, 'FIXED_SIZE', True) else _raise_un_implemented(value_tp),
         }.get(type(value_tp), lambda: _throw(value_tp))()
 
 
@@ -133,3 +140,47 @@ def _tsd_output_builder_for_tp(scalar_type: hgraph.HgScalarTypeMetaData) -> hgra
         datetime: _hgraph.OutputBuilder_TSD_DateTime,
         timedelta: _hgraph.OutputBuilder_TSD_TimeDelta,
     }.get(scalar_type.py_type, _hgraph.OutputBuilder_TSD_Object)
+
+
+# TSW (TimeSeriesWindow) builders
+# These map scalar types to corresponding C++ builders if available. If not available yet,
+# we raise NotImplementedError via _raise_un_implemented to make the gap explicit during wiring.
+
+def _tsw_input_builder_type_for(scalar_type: hgraph.HgScalarTypeMetaData):
+    tp = scalar_type.py_type
+    mapping = {
+        bool: getattr(_hgraph, 'InputBuilder_TSW_Bool', None),
+        int: getattr(_hgraph, 'InputBuilder_TSW_Int', None),
+        float: getattr(_hgraph, 'InputBuilder_TSW_Float', None),
+        date: getattr(_hgraph, 'InputBuilder_TSW_Date', None),
+        datetime: getattr(_hgraph, 'InputBuilder_TSW_DateTime', None),
+        timedelta: getattr(_hgraph, 'InputBuilder_TSW_TimeDelta', None),
+    }
+    builder_cls = mapping.get(tp, getattr(_hgraph, 'InputBuilder_TSW_Object', None))
+
+    def ctor(size: int, min_size: int):
+        if builder_cls is None:
+            return _raise_un_implemented(f"TSW InputBuilder for type {tp}")
+        return builder_cls(size, min_size)
+
+    return ctor
+
+
+def _tsw_output_builder_for_tp(scalar_type: hgraph.HgScalarTypeMetaData):
+    tp = scalar_type.py_type
+    mapping = {
+        bool: getattr(_hgraph, 'OutputBuilder_TSW_Bool', None),
+        int: getattr(_hgraph, 'OutputBuilder_TSW_Int', None),
+        float: getattr(_hgraph, 'OutputBuilder_TSW_Float', None),
+        date: getattr(_hgraph, 'OutputBuilder_TSW_Date', None),
+        datetime: getattr(_hgraph, 'OutputBuilder_TSW_DateTime', None),
+        timedelta: getattr(_hgraph, 'OutputBuilder_TSW_TimeDelta', None),
+    }
+    builder_cls = mapping.get(tp, getattr(_hgraph, 'OutputBuilder_TSW_Object', None))
+
+    def ctor(size: int, min_size: int):
+        if builder_cls is None:
+            return _raise_un_implemented(f"TSW OutputBuilder for type {tp}")
+        return builder_cls(size, min_size)
+
+    return ctor

@@ -9,6 +9,7 @@
 #include <hgraph/types/tsd.h>
 #include <hgraph/types/tsl.h>
 #include <hgraph/types/tss.h>
+#include <hgraph/types/tsw.h>
 
 #include <ranges>
 #include <utility>
@@ -83,6 +84,23 @@ namespace hgraph
             .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
         nb::class_<TimeSeriesDictInputBuilder_T<nb::object>, TimeSeriesDictInputBuilder>(m, "InputBuilder_TSD_Object")
             .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
+
+        // TSW input builders (fixed-size windows)
+        using InputBuilder_TSW_Bool = TimeSeriesWindowInputBuilder_T<bool>;
+        using InputBuilder_TSW_Int = TimeSeriesWindowInputBuilder_T<int64_t>;
+        using InputBuilder_TSW_Float = TimeSeriesWindowInputBuilder_T<double>;
+        using InputBuilder_TSW_Date = TimeSeriesWindowInputBuilder_T<engine_date_t>;
+        using InputBuilder_TSW_DateTime = TimeSeriesWindowInputBuilder_T<engine_time_t>;
+        using InputBuilder_TSW_TimeDelta = TimeSeriesWindowInputBuilder_T<engine_time_delta_t>;
+        using InputBuilder_TSW_Object = TimeSeriesWindowInputBuilder_T<nb::object>;
+
+        nb::class_<InputBuilder_TSW_Bool, InputBuilder>(m, "InputBuilder_TSW_Bool").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_Int, InputBuilder>(m, "InputBuilder_TSW_Int").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_Float, InputBuilder>(m, "InputBuilder_TSW_Float").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_Date, InputBuilder>(m, "InputBuilder_TSW_Date").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_DateTime, InputBuilder>(m, "InputBuilder_TSW_DateTime").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_TimeDelta, InputBuilder>(m, "InputBuilder_TSW_TimeDelta").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_Object, InputBuilder>(m, "InputBuilder_TSW_Object").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
     }
 
     time_series_input_ptr TimeSeriesSignalInputBuilder::make_instance(node_ptr owning_node) const {
@@ -184,5 +202,18 @@ namespace hgraph
     time_series_input_ptr TimeSeriesDictInputBuilder_T<T>::make_instance(time_series_input_ptr owning_input) const {
         auto v{new TimeSeriesDictInput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_input), ts_builder}};
         return v;
+    }
+
+    // TSW input builder implementations
+    template <typename T>
+    time_series_input_ptr TimeSeriesWindowInputBuilder_T<T>::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesWindowInput<T>(owning_node)};
+        return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
+    }
+
+    template <typename T>
+    time_series_input_ptr TimeSeriesWindowInputBuilder_T<T>::make_instance(time_series_input_ptr owning_input) const {
+        auto v{new TimeSeriesWindowInput<T>(dynamic_cast_ref<TimeSeriesType>(owning_input))};
+        return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
     }
 }  // namespace hgraph

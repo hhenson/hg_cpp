@@ -10,6 +10,7 @@
 #include <hgraph/types/tsl.h>
 #include <hgraph/types/tss.h>
 #include <hgraph/types/tsd.h>
+#include <hgraph/types/tsw.h>
 
 void export_types(nb::module_ &m) {
     using namespace hgraph;
@@ -35,6 +36,7 @@ void export_types(nb::module_ &m) {
     tss_register_with_nanobind(m);
 
     tsd_register_with_nanobind(m);
+    tsw_register_with_nanobind(m);
 
     Traits::register_with_nanobind(m);
 

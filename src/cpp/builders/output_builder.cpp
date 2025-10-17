@@ -7,6 +7,7 @@
 #include <hgraph/types/tsd.h>
 #include <hgraph/types/tsl.h>
 #include <hgraph/types/tss.h>
+#include <hgraph/types/tsw.h>
 
 #include <ranges>
 #include <utility>
@@ -80,6 +81,23 @@ namespace hgraph
             .def(nb::init<output_builder_ptr, output_builder_ptr>(), "ts_builder"_a, "ts_ref_builder"_a);
         nb::class_<TimeSeriesDictOutputBuilder_T<nb::object>, TimeSeriesDictOutputBuilder>(m, "OutputBuilder_TSD_Object")
             .def(nb::init<output_builder_ptr, output_builder_ptr>(), "ts_builder"_a, "ts_ref_builder"_a);
+
+        // TSW output builders (fixed-size windows)
+        using OutputBuilder_TSW_Bool = TimeSeriesWindowOutputBuilder_T<bool>;
+        using OutputBuilder_TSW_Int = TimeSeriesWindowOutputBuilder_T<int64_t>;
+        using OutputBuilder_TSW_Float = TimeSeriesWindowOutputBuilder_T<double>;
+        using OutputBuilder_TSW_Date = TimeSeriesWindowOutputBuilder_T<engine_date_t>;
+        using OutputBuilder_TSW_DateTime = TimeSeriesWindowOutputBuilder_T<engine_time_t>;
+        using OutputBuilder_TSW_TimeDelta = TimeSeriesWindowOutputBuilder_T<engine_time_delta_t>;
+        using OutputBuilder_TSW_Object = TimeSeriesWindowOutputBuilder_T<nb::object>;
+
+        nb::class_<OutputBuilder_TSW_Bool, OutputBuilder>(m, "OutputBuilder_TSW_Bool").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_Int, OutputBuilder>(m, "OutputBuilder_TSW_Int").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_Float, OutputBuilder>(m, "OutputBuilder_TSW_Float").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_Date, OutputBuilder>(m, "OutputBuilder_TSW_Date").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_DateTime, OutputBuilder>(m, "OutputBuilder_TSW_DateTime").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_TimeDelta, OutputBuilder>(m, "OutputBuilder_TSW_TimeDelta").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_Object, OutputBuilder>(m, "OutputBuilder_TSW_Object").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
     }
 
     time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(node_ptr owning_node) const {
@@ -139,6 +157,19 @@ namespace hgraph
         nb::ref<TimeSeriesSetOutput_T<T>> key_set{ new TimeSeriesSetOutput_T<T>(parent_ts) };
         auto v{new TimeSeriesDictOutput_T<T>{parent_ts, key_set, ts_builder, ts_ref_builder}};
         return v;
+    }
+
+    // TSW output builder implementations
+    template <typename T>
+    time_series_output_ptr TimeSeriesWindowOutputBuilder_T<T>::make_instance(node_ptr owning_node) const {
+        auto v{new TimeSeriesFixedWindowOutput<T>(owning_node, size, min_size)};
+        return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
+    }
+
+    template <typename T>
+    time_series_output_ptr TimeSeriesWindowOutputBuilder_T<T>::make_instance(time_series_output_ptr owning_output) const {
+        auto v{new TimeSeriesFixedWindowOutput<T>(dynamic_cast_ref<TimeSeriesType>(owning_output), size, min_size)};
+        return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
     }
 
     time_series_output_ptr TimeSeriesListOutputBuilder::make_and_set_outputs(TimeSeriesListOutput *output) const {

@@ -49,6 +49,7 @@ set(HGRAPH_SOURCES
         types/ts_indexed.cpp
         types/tsb.cpp
         types/tsl.cpp
+        types/tsw.cpp
 
         util/lifecycle.cpp
         util/sender_receiver_state.cpp
