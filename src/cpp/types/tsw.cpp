@@ -8,6 +8,28 @@ namespace hgraph
     // Template method definitions
     template <typename T> nb::object TimeSeriesFixedWindowOutput<T>::py_value() const {
         if (!valid() || _length < _min_size) return nb::none();
+
+        // If the window is contiguous from the start (no rotation), we can expose a dynamic
+        // ndarray view into the internal storage with proper ownership to avoid a copy.
+        if (_start == 0) {
+            size_t len = (_length < _size) ? _length : _size;
+            if (len == 0) return nb::none();
+
+            // Only expose zero-copy ndarray for POD-like types excluding nb::object and vector<bool>.
+            if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
+                using ND = nb::ndarray<nb::numpy, T, nb::ndim<1>>;
+                const T* data_ptr = _buffer.data();
+                // Use the bound C++ instance as the owner to ensure lifetime safety.
+                nb::object owner = nb::cast(const_cast<TimeSeriesFixedWindowOutput<T>*>(this));
+                ND arr((void*) data_ptr, { len }, owner);
+                return nb::cast(arr);
+            }
+            // For nb::object and bool, fall back to a copy-based Python sequence.
+            std::vector<T> out(_buffer.begin(), _buffer.begin() + len);
+            return nb::cast(out);
+        }
+
+        // General path: build ordered view (copy semantics for rotation)
         std::vector<T> out;
         if (_length < _size) {
             out.assign(_buffer.begin(), _buffer.begin() + _length);
@@ -65,7 +87,17 @@ namespace hgraph
     }
 
     template <typename T> nb::object TimeSeriesFixedWindowOutput<T>::py_value_times() const {
-        if (_length < _min_size) return nb::none();
+        if (!valid() || _length < _min_size) return nb::none();
+
+        // Mirror value() semantics: if contiguous from start, return the active portion.
+        if (_start == 0) {
+            size_t len = (_length < _size) ? _length : _size;
+            if (len == 0) return nb::none();
+            std::vector<engine_time_t> out(_times.begin(), _times.begin() + len);
+            return nb::cast(out);
+        }
+
+        // General path: build ordered times (copy semantics for rotation/partial)
         std::vector<engine_time_t> out;
         if (_length < _size) {
             out.assign(_times.begin(), _times.begin() + _length);

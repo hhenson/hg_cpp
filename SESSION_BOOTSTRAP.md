@@ -105,7 +105,7 @@ import hg_cpp  # Comment this out to use Python instead of C++
 | `TSD[K, V]` | Dict/map time-series | ✅ Implemented |
 | `TSB[Schema]` | Bundle time-series | ✅ Implemented |
 | `REF[T]` | Reference time-series | ✅ Implemented |
-| `TSW[T]` | Window time-series | ❌ Not implemented |
+| `TSW[T]` | Window time-series | ✅ Implemented |
 | `SIGNAL` | Signal wrapper | ✅ Implemented (input only) |
 
 ### Node Types
