@@ -4,6 +4,7 @@
 #include <hgraph/nodes/nested_evaluation_engine.h>
 #include <hgraph/python/global_state.h>
 #include <hgraph/python/hashable.h>
+#include <hgraph/python/global_keys.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
@@ -60,12 +61,8 @@ namespace hgraph
                           const std::string &key_arg, const std::string &context_path)
         : TsdMapNode<K>(node_ndx, std::move(owning_graph_id), std::move(signature), std::move(scalars),
                         std::move(nested_graph_builder), input_node_ids, output_node_id, multiplexed_args, key_arg) {
-        // Format owning_graph_id as Python tuple to match Python's context key format
-        // Align with Python reference: MeshNode stores context under owning_graph_id (not node_id)
-        nb::list py_list;
-        for (const auto &id : this->owning_graph_id()) { py_list.append(id); }
-        std::string owning_graph_id_str = nb::cast<std::string>(nb::str(nb::tuple(py_list)));
-        full_context_path_ = fmt::format("context-{}-{}", owning_graph_id_str, context_path);
+        // Build full context key using centralized key builder to match Python format
+        full_context_path_ = keys::context_output_key(this->owning_graph_id(), context_path);
     }
 
     template <typename K> void MeshNode<K>::do_start() {

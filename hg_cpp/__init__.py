@@ -3,10 +3,14 @@ from datetime import date, datetime, timedelta
 import _hgraph
 import hgraph
 from hgraph import TsdMapWiringSignature
+from hgraph._runtime._global_keys import set_output_key_builder
 
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.NODE_SIGNATURE = _hgraph.NodeSignature
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.NODE_TYPE_ENUM = _hgraph.NodeTypeEnum
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.INJECTABLE_TYPES_ENUM = _hgraph.InjectableTypesEnum
+
+# Register the C++ OutputKeyBuilder so Python uses the same key scheme as the C++ runtime
+set_output_key_builder(_hgraph.OutputKeyBuilder())
 
 hgraph._runtime._evaluation_engine.EvaluationMode = _hgraph.EvaluationMode
 hgraph._runtime._evaluation_engine.EvaluationLifeCycleObserver = _hgraph.EvaluationLifeCycleObserver

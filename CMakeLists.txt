@@ -151,6 +151,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/python/chrono.h
         include/hgraph/python/format.h
         include/hgraph/python/global_state.h
+        include/hgraph/python/global_keys.h
         include/hgraph/python/hashable.h
         include/hgraph/python/nb_types_ext.h
         include/hgraph/python/reference_wrapper.h

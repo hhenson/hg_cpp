@@ -3,6 +3,7 @@
 #include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/tsb.h>
+#include <hgraph/python/global_keys.h>
 #include <nanobind/nanobind.h>
 
 namespace hgraph
@@ -59,13 +60,11 @@ namespace hgraph
             }
         }
 
-        // Build Python list of prefix ids, then convert to tuple to match Python's tuple formatting
-        nb::list py_list;
-        for (int i = 0; i < use; ++i) { py_list.append(og[static_cast<size_t>(i)]); }
-        // Convert to tuple to match Python's tuple string format: (1, 2) not [1, 2]
-        std::string og_prefix = nb::cast<std::string>(nb::str(nb::tuple(py_list)));
-
-        auto key = fmt::format("context-{}-{}", og_prefix, path_str);
+        // Build the context key using centralized key builder with the sliced owning_graph_id
+        std::vector<int64_t> og_prefix;
+        og_prefix.reserve(static_cast<size_t>(use));
+        for (int i = 0; i < use; ++i) { og_prefix.push_back(og[static_cast<size_t>(i)]); }
+        auto key = keys::context_output_key(og_prefix, path_str);
 
         // Lookup in GlobalState
         nb::object shared = GlobalState::get(key, nb::none());

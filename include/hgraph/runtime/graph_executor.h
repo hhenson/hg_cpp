@@ -62,6 +62,7 @@ namespace hgraph
         EvaluationMode run_mode() const override;
 
         const Graph &graph() const override;
+        graph_ptr graph_py() const; // returns intrusive handle for Python binding
 
         void run(const engine_time_t &start_time, const engine_time_t &end_time) override;
 

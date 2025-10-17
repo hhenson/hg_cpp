@@ -36,8 +36,11 @@ namespace hgraph
 
     void GraphExecutor::register_with_nanobind(nb::module_ &m) {
         nb::class_<GraphExecutor, nb::intrusive_base>(m, "GraphExecutor")
-            .def("run_mode", &GraphExecutor::run_mode)
-            .def("graph", &GraphExecutor::graph)
+            .def_prop_ro("run_mode", &GraphExecutor::run_mode)
+            .def_prop_ro("graph", [](const GraphExecutor &self) -> nb::ref<Graph> {
+                // Return a borrowed intrusive reference to the underlying Graph held by the executor
+                return nb::ref(const_cast<Graph *>(&self.graph()));
+            })
             .def("run", &GraphExecutor::run);
 
         nb::enum_<EvaluationMode>(m, "EvaluationMode")
@@ -68,6 +71,8 @@ namespace hgraph
 
     const Graph &GraphExecutorImpl::graph() const { return *_graph; }
 
+    graph_ptr GraphExecutorImpl::graph_py() const { return _graph; }
+
     void GraphExecutorImpl::run(const engine_time_t &start_time, const engine_time_t &end_time) {
         if (end_time <= start_time) {
             if (end_time < start_time) {
@@ -91,11 +96,12 @@ namespace hgraph
 
         try {
             {
-                auto initialiseContext = InitialiseDisposeContext(*_graph);
+                // Initialise the graph but do not dispose here; disposal is handled by GraphBuilder.release_instance in Python
+                initialise_component(*_graph);
                 auto startStopContext  = StartStopContext(*_graph);
 
                 while (clock->evaluation_time() < end_time) { _evaluate(*evaluationEngine); }
-            } // RAII contexts end here
+            } // RAII context ends here (stop only)
         } catch (const NodeException &e) {
             // Raise Python hgraph.NodeException constructed from C++ NodeException details
             try {
@@ -131,7 +137,8 @@ namespace hgraph
     void GraphExecutorImpl::register_with_nanobind(nb::module_ &m) {
         nb::class_<GraphExecutorImpl, GraphExecutor>(m, "GraphExecutorImpl")
             .def(nb::init<graph_ptr, EvaluationMode, std::vector<EvaluationLifeCycleObserver::ptr>>(), "graph"_a, "run_mode"_a,
-                 "observers"_a = std::vector<EvaluationLifeCycleObserver::ptr>{});
+                 "observers"_a = std::vector<EvaluationLifeCycleObserver::ptr>{})
+            .def_prop_ro("graph", &GraphExecutorImpl::graph_py);
     }
 
     void GraphExecutorImpl::_evaluate(EvaluationEngine &evaluationEngine) {
