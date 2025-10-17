@@ -356,13 +356,44 @@ namespace hgraph
     template struct MeshNestedEngineEvaluationClock<nb::object>;
 
     void register_mesh_node_with_nanobind(nb::module_ &m) {
-        nb::class_<MeshNode<bool>, TsdMapNode<bool>>(m, "MeshNode_bool");
-        nb::class_<MeshNode<int64_t>, TsdMapNode<int64_t>>(m, "MeshNode_int");
-        nb::class_<MeshNode<double>, TsdMapNode<double>>(m, "MeshNode_float");
-        nb::class_<MeshNode<engine_date_t>, TsdMapNode<engine_date_t>>(m, "MeshNode_date");
-        nb::class_<MeshNode<engine_time_t>, TsdMapNode<engine_time_t>>(m, "MeshNode_date_time");
-        nb::class_<MeshNode<engine_time_delta_t>, TsdMapNode<engine_time_delta_t>>(m, "MeshNode_time_delta");
-        nb::class_<MeshNode<nb::object>, TsdMapNode<nb::object>>(m, "MeshNode_object");
+        // Register MeshNode specializations
+        nb::class_<MeshNode<bool>, TsdMapNode<bool>>(m, "MeshNode_bool")
+            .def("_add_graph_dependency", &MeshNode<bool>::_add_graph_dependency, "key"_a, "depends_on"_a)
+            .def("_remove_graph_dependency", &MeshNode<bool>::_remove_graph_dependency, "key"_a, "depends_on"_a);
+        nb::class_<MeshNode<int64_t>, TsdMapNode<int64_t>>(m, "MeshNode_int")
+            .def("_add_graph_dependency", &MeshNode<int64_t>::_add_graph_dependency, "key"_a, "depends_on"_a)
+            .def("_remove_graph_dependency", &MeshNode<int64_t>::_remove_graph_dependency, "key"_a, "depends_on"_a);
+        nb::class_<MeshNode<double>, TsdMapNode<double>>(m, "MeshNode_float")
+            .def("_add_graph_dependency", &MeshNode<double>::_add_graph_dependency, "key"_a, "depends_on"_a)
+            .def("_remove_graph_dependency", &MeshNode<double>::_remove_graph_dependency, "key"_a, "depends_on"_a);
+        nb::class_<MeshNode<engine_date_t>, TsdMapNode<engine_date_t>>(m, "MeshNode_date")
+            .def("_add_graph_dependency", &MeshNode<engine_date_t>::_add_graph_dependency, "key"_a, "depends_on"_a)
+            .def("_remove_graph_dependency", &MeshNode<engine_date_t>::_remove_graph_dependency, "key"_a, "depends_on"_a);
+        nb::class_<MeshNode<engine_time_t>, TsdMapNode<engine_time_t>>(m, "MeshNode_date_time")
+            .def("_add_graph_dependency", &MeshNode<engine_time_t>::_add_graph_dependency, "key"_a, "depends_on"_a)
+            .def("_remove_graph_dependency", &MeshNode<engine_time_t>::_remove_graph_dependency, "key"_a, "depends_on"_a);
+        nb::class_<MeshNode<engine_time_delta_t>, TsdMapNode<engine_time_delta_t>>(m, "MeshNode_time_delta")
+            .def("_add_graph_dependency", &MeshNode<engine_time_delta_t>::_add_graph_dependency, "key"_a, "depends_on"_a)
+            .def("_remove_graph_dependency", &MeshNode<engine_time_delta_t>::_remove_graph_dependency, "key"_a, "depends_on"_a);
+        nb::class_<MeshNode<nb::object>, TsdMapNode<nb::object>>(m, "MeshNode_object")
+            .def("_add_graph_dependency", &MeshNode<nb::object>::_add_graph_dependency, "key"_a, "depends_on"_a)
+            .def("_remove_graph_dependency", &MeshNode<nb::object>::_remove_graph_dependency, "key"_a, "depends_on"_a);
+
+        // Register MeshNestedEngineEvaluationClock specializations with 'key' property so Python can discover mesh keys
+        nb::class_<MeshNestedEngineEvaluationClock<bool>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_bool")
+            .def_prop_ro("key", &MeshNestedEngineEvaluationClock<bool>::key);
+        nb::class_<MeshNestedEngineEvaluationClock<int64_t>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_int")
+            .def_prop_ro("key", &MeshNestedEngineEvaluationClock<int64_t>::key);
+        nb::class_<MeshNestedEngineEvaluationClock<double>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_float")
+            .def_prop_ro("key", &MeshNestedEngineEvaluationClock<double>::key);
+        nb::class_<MeshNestedEngineEvaluationClock<engine_date_t>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_date")
+            .def_prop_ro("key", &MeshNestedEngineEvaluationClock<engine_date_t>::key);
+        nb::class_<MeshNestedEngineEvaluationClock<engine_time_t>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_date_time")
+            .def_prop_ro("key", &MeshNestedEngineEvaluationClock<engine_time_t>::key);
+        nb::class_<MeshNestedEngineEvaluationClock<engine_time_delta_t>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_time_delta")
+            .def_prop_ro("key", &MeshNestedEngineEvaluationClock<engine_time_delta_t>::key);
+        nb::class_<MeshNestedEngineEvaluationClock<nb::object>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_object")
+            .def_prop_ro("key", &MeshNestedEngineEvaluationClock<nb::object>::key);
     }
 
 }  // namespace hgraph

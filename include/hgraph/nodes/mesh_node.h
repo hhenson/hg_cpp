@@ -39,6 +39,10 @@ namespace hgraph
                  int64_t output_node_id, const std::unordered_set<std::string> &multiplexed_args,
                  const std::string &key_arg, const std::string &context_path);
 
+        // Public wrappers for Python to manage dependencies (mirror Python API)
+        bool _add_graph_dependency(const K &key, const K &depends_on) { return add_graph_dependency(key, depends_on); }
+        void _remove_graph_dependency(const K &key, const K &depends_on) { remove_graph_dependency(key, depends_on); }
+
       protected:
         void do_start() override;
         void do_stop() override;
