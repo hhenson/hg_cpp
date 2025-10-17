@@ -97,9 +97,31 @@ namespace hgraph
                 while (clock->evaluation_time() < end_time) { _evaluate(*evaluationEngine); }
             } // RAII contexts end here
         } catch (const NodeException &e) {
-            // Convert to a Python RuntimeError with a readable message
-            throw nb::builtin_exception(nb::exception_type::runtime_error, e.what());
+            // Raise Python hgraph.NodeException constructed from C++ NodeException details
+            try {
+                nb::object hgraph_mod = nb::module_::import_("hgraph");
+                nb::object py_node_exc_cls = hgraph_mod.attr("NodeException");
+                nb::tuple args = nb::make_tuple(
+                    nb::cast(e.error.signature_name),
+                    nb::cast(e.error.label),
+                    nb::cast(e.error.wiring_path),
+                    nb::cast(e.error.error_msg),
+                    nb::cast(e.error.stack_trace),
+                    nb::cast(e.error.activation_back_trace),
+                    nb::cast(e.error.additional_context)
+                );
+                PyErr_SetObject(py_node_exc_cls.ptr(), args.ptr());
+            } catch (...) {
+                PyErr_SetString(PyExc_RuntimeError, e.what());
+            }
+            throw nb::python_error();
+        } catch (const nb::python_error &e) {
+            throw; // Preserve Python exception raised above
         } catch (const std::exception &e) {
+            // Preserve any active Python exception (e.g., hgraph.NodeException)
+            if (PyErr_Occurred()) {
+                throw nb::python_error();
+            }
             // Provide a clear message for unexpected exceptions
             std::string msg = std::string("Graph execution failed: ") + e.what();
             throw nb::builtin_exception(nb::exception_type::runtime_error, msg.c_str());
@@ -116,23 +138,32 @@ namespace hgraph
         try {
             evaluationEngine.notify_before_evaluation();
         } catch (const NodeException &e) {
-            throw nb::builtin_exception(nb::exception_type::runtime_error, e.what());
+            // Let NodeException propagate to nanobind exception translator
+            throw;
+        } catch (const nb::python_error &e) {
+            throw;
         } catch (const std::exception &e) {
+            if (PyErr_Occurred()) { throw nb::python_error(); }
             std::string msg = std::string("Error in notify_before_evaluation: ") + e.what();
             throw nb::builtin_exception(nb::exception_type::runtime_error, msg.c_str());
         }
         try {
             _graph->evaluate_graph();
         } catch (const NodeException &e) {
-            throw nb::builtin_exception(nb::exception_type::runtime_error, e.what());
+            // Let NodeException propagate to nanobind exception translator
+            throw;
+        } catch (const nb::python_error &e) {
+            throw;
         } catch (const std::exception &e) {
+            if (PyErr_Occurred()) { throw nb::python_error(); }
             std::string msg = std::string("Graph evaluation failed: ") + e.what();
             throw nb::builtin_exception(nb::exception_type::runtime_error, msg.c_str());
         }
         try {
             evaluationEngine.notify_after_evaluation();
         } catch (const NodeException &e) {
-            throw nb::builtin_exception(nb::exception_type::runtime_error, e.what());
+            // Let NodeException propagate to nanobind exception translator
+            throw;
         } catch (const std::exception &e) {
             std::string msg = std::string("Error in notify_after_evaluation: ") + e.what();
             throw nb::builtin_exception(nb::exception_type::runtime_error, msg.c_str());

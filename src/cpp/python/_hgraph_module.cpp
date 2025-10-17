@@ -31,12 +31,31 @@ NB_MODULE(_hgraph, m) {
             Py_DECREF(o);
         });
 
-    // Translate hgraph::NodeException into a Python RuntimeError with a readable message
+    // Translate hgraph::NodeException into the Python hgraph.NodeException to match Python error shape
     nb::register_exception_translator([](const std::exception_ptr &p, void *) {
         try {
             if (p) std::rethrow_exception(p);
         } catch (const hgraph::NodeException &e) {
-            throw nb::builtin_exception(nb::exception_type::runtime_error, e.what());
+            try {
+                // Import Python hgraph.NodeException class
+                nb::object hgraph_mod = nb::module_::import_("hgraph");
+                nb::object py_node_exc_cls = hgraph_mod.attr("NodeException");
+                // Raise Python NodeException by setting the exception type and constructor args
+                nb::tuple args = nb::make_tuple(
+                    nb::cast(e.error.signature_name),
+                    nb::cast(e.error.label),
+                    nb::cast(e.error.wiring_path),
+                    nb::cast(e.error.error_msg),
+                    nb::cast(e.error.stack_trace),
+                    nb::cast(e.error.activation_back_trace),
+                    nb::cast(e.error.additional_context)
+                );
+                PyErr_SetObject(py_node_exc_cls.ptr(), args.ptr());
+            } catch (...) {
+                // Fallback to RuntimeError if anything goes wrong to avoid swallowing the error
+                PyErr_SetString(PyExc_RuntimeError, e.what());
+            }
+            throw nb::python_error();
         }
     }, nullptr);
 
