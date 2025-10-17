@@ -32,7 +32,7 @@ namespace hgraph
 
       protected:
         void do_eval() override {}
-        void wire_graph(graph_ptr &graph);
+        void wire_graph(graph_ptr &graph, bool notify_nodes = true);
         void unwire_graph(graph_ptr &graph);
 
         std::unordered_map<K, graph_builder_ptr>                    nested_graph_builders_;
