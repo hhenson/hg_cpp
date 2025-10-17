@@ -108,7 +108,14 @@ namespace hgraph
 
     template <typename T> void TimeSeriesFixedWindowOutput<T>::copy_from_input(const TimeSeriesInput &input) {
         auto &i = dynamic_cast<const TimeSeriesWindowInput<T> &>(input);
-        this->apply_result(i.output_t().py_value());
+        const auto &src = i.output_t();
+        _buffer   = src._buffer;
+        _times    = src._times;
+        _start    = src._start;
+        _length   = src._length;
+        _size     = src._size;
+        _min_size = src._min_size;
+        mark_modified();
     }
 
     // Registration
