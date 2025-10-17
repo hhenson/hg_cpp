@@ -102,7 +102,17 @@ namespace hgraph
         auto &keys         = dynamic_cast<TimeSeriesSetInput_T<K> &>(*input_bundle[TsdMapNode<K>::KEYS_ARG]);
         if (keys.modified()) {
             for (const auto &k : keys.added()) {
-                if (this->active_graphs_.find(k) == this->active_graphs_.end()) { create_new_graph(k); }
+                if (this->active_graphs_.find(k) == this->active_graphs_.end()) {
+                    create_new_graph(k);
+
+                    // If this key was pending (requested as a dependency), re-rank its dependents
+                    if (this->pending_keys_.count(k) > 0) {
+                        this->pending_keys_.erase(k);
+                        for (const auto &d : active_graphs_dependencies_[k]) {
+                            re_rank(d, k);
+                        }
+                    }
+                }
             }
             for (const auto &k : keys.removed()) {
                 // Only remove if no dependencies
@@ -117,7 +127,9 @@ namespace hgraph
         if (!this->pending_keys_.empty()) {
             for (const auto &k : this->pending_keys_) {
                 create_new_graph(k, 0);
-                for (const auto &d : active_graphs_dependencies_[k]) { re_rank(d, k); }
+                for (const auto &d : active_graphs_dependencies_[k]) {
+                    re_rank(d, k);
+                }
             }
             this->pending_keys_.clear();
         }
