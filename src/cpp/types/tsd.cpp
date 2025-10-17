@@ -235,12 +235,20 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::copy_from_input(const TimeSeriesInput &input) {
         auto &dict_input = dynamic_cast<const TimeSeriesDictInput_T<T_Key> &>(input);
 
+        // Remove keys that are no longer in the input
         std::vector<T_Key> to_remove;
         for (const auto &[k, _] : _ts_values) {
             if (!dict_input.contains(k)) { to_remove.push_back(k); }
         }
         for (const auto &k : to_remove) { erase(k); }
-        for (const auto &[k, v] : dict_input) { _get_or_create(k).copy_from_input(*v); }
+
+        // Copy values from input
+        // Iterate over dict_input but skip removed items (which may still be in _ts_values)
+        for (const auto &[k, v_input] : dict_input) {
+            // Skip if this key has been removed (removed items may still be in _ts_values)
+            if (!v_input || dict_input.was_removed(k)) { continue; }
+            _get_or_create(k).copy_from_input(*v_input);
+        }
     }
 
     template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_added() const { return !_added_items.empty(); }
