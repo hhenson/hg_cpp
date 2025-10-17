@@ -1105,7 +1105,7 @@ namespace hgraph
             .def_prop_ro(
                 "key_set",
                 static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesInput>::ts_type> &(TimeSeriesDictInput::*)() const>(
-                    &TimeSeriesDictInput::key_set))  // Not sure if this needs to be exposed to python?
+                    &TimeSeriesDictInput::key_set))
             ;
 
         nb::class_<TSD_OUT_Bool, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Bool");
@@ -1116,12 +1116,26 @@ namespace hgraph
         nb::class_<TSD_OUT_TimeDelta, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_TimeDelta");
         nb::class_<TSD_OUT_Object, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Object");
 
-        nb::class_<TSD_Bool, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Bool").def("_create", &TSD_Bool::_create);
-        nb::class_<TSD_Int, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Int").def("_create", &TSD_Int::_create);
-        nb::class_<TSD_Float, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Float").def("_create", &TSD_Float::_create);
-        nb::class_<TSD_Date, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Date").def("_create", &TSD_Date::_create);
-        nb::class_<TSD_DateTime, TimeSeriesDictInput>(m, "TimeSeriesDictInput_DateTime").def("_create", &TSD_DateTime::_create);
-        nb::class_<TSD_TimeDelta, TimeSeriesDictInput>(m, "TimeSeriesDictInput_TimeDelta").def("_create", &TSD_TimeDelta::_create);
-        nb::class_<TSD_Object, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Object").def("_create", &TSD_Object::_create);
+        nb::class_<TSD_Bool, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Bool")
+            .def("_create", &TSD_Bool::_create)
+            .def("on_key_removed", &TSD_Bool::on_key_removed);
+        nb::class_<TSD_Int, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Int")
+            .def("_create", &TSD_Int::_create)
+            .def("on_key_removed", &TSD_Int::on_key_removed);
+        nb::class_<TSD_Float, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Float")
+            .def("_create", &TSD_Float::_create)
+            .def("on_key_removed", &TSD_Float::on_key_removed);
+        nb::class_<TSD_Date, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Date")
+            .def("_create", &TSD_Date::_create)
+            .def("on_key_removed", &TSD_Date::on_key_removed);
+        nb::class_<TSD_DateTime, TimeSeriesDictInput>(m, "TimeSeriesDictInput_DateTime")
+            .def("_create", &TSD_DateTime::_create)
+            .def("on_key_removed", &TSD_DateTime::on_key_removed);
+        nb::class_<TSD_TimeDelta, TimeSeriesDictInput>(m, "TimeSeriesDictInput_TimeDelta")
+            .def("_create", &TSD_TimeDelta::_create)
+            .def("on_key_removed", &TSD_TimeDelta::on_key_removed);
+        nb::class_<TSD_Object, TimeSeriesDictInput>(m, "TimeSeriesDictInput_Object")
+            .def("_create", &TSD_Object::_create)
+            .def("on_key_removed", &TSD_Object::on_key_removed);
     }
 }  // namespace hgraph
