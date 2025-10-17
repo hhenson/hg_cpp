@@ -1,10 +1,11 @@
+#include <cstdlib>
 #include <fmt/format.h>
 #include <hgraph/builders/graph_builder.h>
 #include <hgraph/nodes/mesh_node.h>
 #include <hgraph/nodes/nested_evaluation_engine.h>
+#include <hgraph/python/global_keys.h>
 #include <hgraph/python/global_state.h>
 #include <hgraph/python/hashable.h>
-#include <hgraph/python/global_keys.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
@@ -72,8 +73,8 @@ namespace hgraph
         if (GlobalState::has_instance()) {
             auto tsb_output{dynamic_cast<TimeSeriesBundleOutput &>(this->output())};
             // Get the "out" and "ref" outputs from the output bundle
-            auto &tsd_output    = dynamic_cast<TimeSeriesDictOutput_T<K> &>(*tsb_output["out"]);
-            auto &ref_output    = dynamic_cast<TimeSeriesReferenceOutput &>(*tsb_output["ref"]);
+            auto &tsd_output = dynamic_cast<TimeSeriesDictOutput_T<K> &>(*tsb_output["out"]);
+            auto &ref_output = dynamic_cast<TimeSeriesReferenceOutput &>(*tsb_output["ref"]);
 
             // Create a TimeSeriesReference from the "out" output and set it on the "ref" output
             auto reference = TimeSeriesReference::make(time_series_output_ptr(&tsd_output));
@@ -383,13 +384,17 @@ namespace hgraph
             .def_prop_ro("key", &MeshNestedEngineEvaluationClock<int64_t>::key);
         nb::class_<MeshNestedEngineEvaluationClock<double>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_float")
             .def_prop_ro("key", &MeshNestedEngineEvaluationClock<double>::key);
-        nb::class_<MeshNestedEngineEvaluationClock<engine_date_t>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_date")
+        nb::class_<MeshNestedEngineEvaluationClock<engine_date_t>, NestedEngineEvaluationClock>(
+            m, "MeshNestedEngineEvaluationClock_date")
             .def_prop_ro("key", &MeshNestedEngineEvaluationClock<engine_date_t>::key);
-        nb::class_<MeshNestedEngineEvaluationClock<engine_time_t>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_date_time")
+        nb::class_<MeshNestedEngineEvaluationClock<engine_time_t>, NestedEngineEvaluationClock>(
+            m, "MeshNestedEngineEvaluationClock_date_time")
             .def_prop_ro("key", &MeshNestedEngineEvaluationClock<engine_time_t>::key);
-        nb::class_<MeshNestedEngineEvaluationClock<engine_time_delta_t>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_time_delta")
+        nb::class_<MeshNestedEngineEvaluationClock<engine_time_delta_t>, NestedEngineEvaluationClock>(
+            m, "MeshNestedEngineEvaluationClock_time_delta")
             .def_prop_ro("key", &MeshNestedEngineEvaluationClock<engine_time_delta_t>::key);
-        nb::class_<MeshNestedEngineEvaluationClock<nb::object>, NestedEngineEvaluationClock>(m, "MeshNestedEngineEvaluationClock_object")
+        nb::class_<MeshNestedEngineEvaluationClock<nb::object>, NestedEngineEvaluationClock>(
+            m, "MeshNestedEngineEvaluationClock_object")
             .def_prop_ro("key", &MeshNestedEngineEvaluationClock<nb::object>::key);
     }
 
