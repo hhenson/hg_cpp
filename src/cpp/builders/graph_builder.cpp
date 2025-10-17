@@ -125,6 +125,7 @@ namespace hgraph
         nodes.reserve(node_builders.size());
 
         for (size_t i = 0; i < node_builders.size(); ++i) {
+            // Pass graph_id as the node's owning_graph_id (the graph that owns this node)
             nodes.push_back(node_builders[i]->make_instance(graph_id, i + first_node_ndx));
         }
 

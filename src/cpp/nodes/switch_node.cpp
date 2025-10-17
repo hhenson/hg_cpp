@@ -39,26 +39,22 @@ namespace hgraph
     SwitchNode<K>::SwitchNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature,
                               nb::dict scalars, const std::unordered_map<K, graph_builder_ptr> &nested_graph_builders,
                               const std::unordered_map<K, std::unordered_map<std::string, int>> &input_node_ids,
-                              const std::unordered_map<K, int> &output_node_ids, bool reload_on_ticked)
+                              const std::unordered_map<K, int> &output_node_ids, bool reload_on_ticked,
+                              graph_builder_ptr default_graph_builder)
         : NestedNode(node_ndx, std::move(owning_graph_id), std::move(signature), std::move(scalars)),
           nested_graph_builders_(nested_graph_builders), input_node_ids_(input_node_ids), output_node_ids_(output_node_ids),
-          reload_on_ticked_(reload_on_ticked) {
-        // TODO: I don't think this is actuall correct logic, need to work through the default behavior later.
-        //  Extract DEFAULT graph builder if it exists
-        //  DEFAULT is a special marker object from hgraph._types._scalar_types
-        //  For nb::object template, we can directly look it up
+          reload_on_ticked_(reload_on_ticked), default_graph_builder_(std::move(default_graph_builder)) {
+        // For nb::object template, extract DEFAULT from nested_graph_builders if not provided separately
         if constexpr (std::is_same_v<K, nb::object>) {
-            auto default_marker = get_python_default();
-            if (default_marker.is_valid()) {
-                auto it = nested_graph_builders_.find(default_marker);
-                if (it != nested_graph_builders_.end()) { default_graph_builder_ = it->second; }
+            if (!default_graph_builder_) {
+                auto default_marker = get_python_default();
+                if (default_marker.is_valid()) {
+                    auto it = nested_graph_builders_.find(default_marker);
+                    if (it != nested_graph_builders_.end()) { default_graph_builder_ = it->second; }
+                }
             }
-        } else {
-            // For typed keys (bool, int, string, etc.), DEFAULT is not applicable
-            // The Python code would have converted DEFAULT to a typed key or excluded it
-            // So we just store nullptr - no default fallback for typed switches
-            default_graph_builder_ = nullptr;
         }
+        // For typed keys (bool, int, etc.), the default_graph_builder is now passed as a parameter
     }
 
     template <typename K> void SwitchNode<K>::initialise() {

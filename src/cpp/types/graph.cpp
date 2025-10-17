@@ -227,7 +227,7 @@ namespace hgraph
             .def_prop_ro("label", &Graph::label)
             .def_prop_ro("evaluation_engine_api", &Graph::evaluation_engine_api)
             .def_prop_ro("evaluation_clock", static_cast<const EvaluationClock &(Graph::*)() const>(&Graph::evaluation_clock))
-            .def_prop_ro("evaluation_engine_clock", &Graph::evaluation_engine_clock)
+            .def_prop_ro("engine_evaluation_clock", &Graph::evaluation_engine_clock)
             .def_prop_rw("evaluation_engine", &Graph::evaluation_engine, &Graph::set_evaluation_engine)
             .def_prop_ro("push_source_nodes_end", &Graph::push_source_nodes_end)
             .def("schedule_node", static_cast<void (Graph::*)(int64_t, engine_time_t, bool)>(&Graph::schedule_node), "node_ndx"_a,

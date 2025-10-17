@@ -92,6 +92,21 @@ namespace hgraph
             std::move(input_node_ids), std::move(output_node_id));
     }
 
+    // Helper to check if a Python object is the DEFAULT class or an instance of it
+    static bool is_default_marker(const nb::handle &obj) {
+        static nb::object default_class;
+        if (!default_class.is_valid()) {
+            try {
+                auto scalar_types = nb::module_::import_("hgraph._types._scalar_types");
+                default_class     = scalar_types.attr("Default");
+            } catch (...) {
+                return false;
+            }
+        }
+        // Check if it's the class itself or an instance of the class
+        return obj.is(default_class) || nb::isinstance(obj, default_class);
+    }
+
     template <typename T> auto create_switch_node_builder(T *self, const nb::args &args) {
         // Expected Python signature (positional):
         // (signature, scalars, input_builder, output_builder, error_builder, recordable_state_builder,
@@ -114,21 +129,40 @@ namespace hgraph
             args[5].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[5]));
 
         // Convert Python dicts to typed C++ maps
+        // For typed switches (K != nb::object), extract DEFAULT builder separately and skip DEFAULT marker keys in maps
         auto py_nested_graph_builders = nb::cast<nb::dict>(args[6]);
+        graph_builder_ptr default_graph_builder = nullptr;
         std::unordered_map<K, graph_builder_ptr> nested_graph_builders;
         for (auto item : py_nested_graph_builders) {
+            // Extract DEFAULT marker for typed switches
+            if constexpr (!std::is_same_v<K, nb::object>) {
+                if (is_default_marker(item.first)) {
+                    default_graph_builder = nb::cast<graph_builder_ptr>(item.second);
+                    continue;
+                }
+            }
             nested_graph_builders[nb::cast<K>(item.first)] = nb::cast<graph_builder_ptr>(item.second);
         }
 
         auto py_input_node_ids = nb::cast<nb::dict>(args[7]);
         std::unordered_map<K, std::unordered_map<std::string, int>> input_node_ids;
         for (auto item : py_input_node_ids) {
+            if constexpr (!std::is_same_v<K, nb::object>) {
+                if (is_default_marker(item.first)) {
+                    continue;
+                }
+            }
             input_node_ids[nb::cast<K>(item.first)] = nb::cast<std::unordered_map<std::string, int>>(item.second);
         }
 
         auto py_output_node_ids = nb::cast<nb::dict>(args[8]);
         std::unordered_map<K, int> output_node_ids;
         for (auto item : py_output_node_ids) {
+            if constexpr (!std::is_same_v<K, nb::object>) {
+                if (is_default_marker(item.first)) {
+                    continue;
+                }
+            }
             output_node_ids[nb::cast<K>(item.first)] = nb::cast<int>(item.second);
         }
 
@@ -136,7 +170,7 @@ namespace hgraph
 
         return new (self) T(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
             std::move(error_builder_), std::move(recordable_state_builder_), std::move(nested_graph_builders),
-            std::move(input_node_ids), std::move(output_node_ids), reload_on_ticked);
+            std::move(input_node_ids), std::move(output_node_ids), reload_on_ticked, default_graph_builder);
     }
 
     template <typename T> auto create_mesh_node_builder(T *self, const nb::args &args) {
@@ -644,16 +678,17 @@ namespace hgraph
         std::optional<output_builder_ptr> recordable_state_builder_,
         const std::unordered_map<K, graph_builder_ptr> &nested_graph_builders,
         const std::unordered_map<K, std::unordered_map<std::string, int>> &input_node_ids,
-        const std::unordered_map<K, int> &output_node_ids, bool reload_on_ticked)
+        const std::unordered_map<K, int> &output_node_ids, bool reload_on_ticked,
+        graph_builder_ptr default_graph_builder)
         : BaseSwitchNodeBuilder(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
                           std::move(error_builder_), std::move(recordable_state_builder_)),
           nested_graph_builders(nested_graph_builders), input_node_ids(input_node_ids), output_node_ids(output_node_ids),
-          reload_on_ticked(reload_on_ticked) {}
+          reload_on_ticked(reload_on_ticked), default_graph_builder(std::move(default_graph_builder)) {}
 
     template<typename K>
     node_ptr SwitchNodeBuilder<K>::make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const {
         nb::ref<Node> node{new SwitchNode<K>(node_ndx, owning_graph_id, signature, scalars, nested_graph_builders, input_node_ids,
-                                          output_node_ids, reload_on_ticked)};
+                                          output_node_ids, reload_on_ticked, default_graph_builder)};
         _build_inputs_and_outputs(node);
         return node;
     }
