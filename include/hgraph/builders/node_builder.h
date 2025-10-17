@@ -200,7 +200,9 @@ namespace hgraph
                           const std::unordered_map<K, std::unordered_map<std::string, int>> &input_node_ids = {},
                           const std::unordered_map<K, int>                                   &output_node_ids = {},
                           bool                                                               reload_on_ticked = false,
-                          graph_builder_ptr                                                  default_graph_builder = nullptr);
+                          graph_builder_ptr                                                  default_graph_builder = nullptr,
+                          const std::unordered_map<std::string, int>                         &default_input_node_ids = {},
+                          int                                                                default_output_node_id = -1);
 
         node_ptr make_instance(const std::vector<int64_t> &owning_graph_id, int64_t node_ndx) const override;
 
@@ -209,6 +211,8 @@ namespace hgraph
         const std::unordered_map<K, int>                                         output_node_ids;
         bool                                                                     reload_on_ticked;
         graph_builder_ptr                                                        default_graph_builder;
+        const std::unordered_map<std::string, int>                               default_input_node_ids;
+        int                                                                      default_output_node_id;
     };
 
     struct BaseTsdNonAssociativeReduceNodeBuilder : BaseNodeBuilder

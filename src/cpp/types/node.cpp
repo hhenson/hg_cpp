@@ -772,7 +772,8 @@ namespace hgraph
     void Node::start() {
         do_start();
         if (has_scheduler()) {
-            if (scheduler().pop_tag("start") != MIN_DT) {
+            auto pop_result = scheduler().pop_tag("start");
+            if (pop_result != MIN_DT) {
                 notify();
                 if (!signature().uses_scheduler()) {
                     _scheduler.reset();

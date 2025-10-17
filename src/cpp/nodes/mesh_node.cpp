@@ -263,7 +263,8 @@ namespace hgraph
         if (this->active_graphs_.find(depends_on) == this->active_graphs_.end()) {
             // Dependency doesn't exist yet, add to pending
             this->pending_keys_.insert(depends_on);
-            this->graph().schedule_node(this->node_ndx(), this->last_evaluation_time() + MIN_TD);
+            auto schedule_time = this->last_evaluation_time() + MIN_TD;
+            this->graph().schedule_node(this->node_ndx(), schedule_time);
             return false;
         } else {
             return request_re_rank(key, depends_on);

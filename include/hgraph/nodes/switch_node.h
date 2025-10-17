@@ -21,7 +21,9 @@ namespace hgraph
                    const std::unordered_map<K, graph_builder_ptr>                    &nested_graph_builders,
                    const std::unordered_map<K, std::unordered_map<std::string, int>> &input_node_ids,
                    const std::unordered_map<K, int> &output_node_ids, bool reload_on_ticked,
-                   graph_builder_ptr default_graph_builder = nullptr);
+                   graph_builder_ptr default_graph_builder = nullptr,
+                   const std::unordered_map<std::string, int> &default_input_node_ids = {},
+                   int default_output_node_id = -1);
 
         void                               initialise() override;
         void                               do_start() override;
@@ -32,7 +34,7 @@ namespace hgraph
 
       protected:
         void do_eval() override {}
-        void wire_graph(graph_ptr &graph, bool notify_nodes = true);
+        void wire_graph(graph_ptr &graph);
         void unwire_graph(graph_ptr &graph);
 
         std::unordered_map<K, graph_builder_ptr>                    nested_graph_builders_;
@@ -46,6 +48,8 @@ namespace hgraph
         int64_t                count_{0};
         time_series_output_ptr old_output_{nullptr};
         graph_builder_ptr      default_graph_builder_{nullptr};
+        std::unordered_map<std::string, int> default_input_node_ids_;
+        int                    default_output_node_id_{-1};
         std::string            recordable_id_;
     };
 }  // namespace hgraph

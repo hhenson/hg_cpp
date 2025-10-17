@@ -40,10 +40,13 @@ namespace hgraph
                               nb::dict scalars, const std::unordered_map<K, graph_builder_ptr> &nested_graph_builders,
                               const std::unordered_map<K, std::unordered_map<std::string, int>> &input_node_ids,
                               const std::unordered_map<K, int> &output_node_ids, bool reload_on_ticked,
-                              graph_builder_ptr default_graph_builder)
+                              graph_builder_ptr default_graph_builder,
+                              const std::unordered_map<std::string, int> &default_input_node_ids,
+                              int default_output_node_id)
         : NestedNode(node_ndx, std::move(owning_graph_id), std::move(signature), std::move(scalars)),
           nested_graph_builders_(nested_graph_builders), input_node_ids_(input_node_ids), output_node_ids_(output_node_ids),
-          reload_on_ticked_(reload_on_ticked), default_graph_builder_(std::move(default_graph_builder)) {
+          reload_on_ticked_(reload_on_ticked), default_graph_builder_(std::move(default_graph_builder)),
+          default_input_node_ids_(default_input_node_ids), default_output_node_id_(default_output_node_id) {
         // For nb::object template, extract DEFAULT from nested_graph_builders if not provided separately
         if constexpr (std::is_same_v<K, nb::object>) {
             if (!default_graph_builder_) {
@@ -133,9 +136,8 @@ namespace hgraph
 
                 // Initialize and wire the new graph
                 initialise_component(*active_graph_);
-                wire_graph(active_graph_, false);  // Don't notify yet
+                wire_graph(active_graph_);
                 start_component(*active_graph_);
-                wire_graph(active_graph_, true);   // Now notify after start
             }
         }
 
@@ -151,20 +153,21 @@ namespace hgraph
         }
     }
 
-    template <typename K> void SwitchNode<K>::wire_graph(graph_ptr &graph, bool notify_nodes) {
-        // Determine which graph key to use for lookups, falling back to DEFAULT when appropriate (Python parity)
+    template <typename K> void SwitchNode<K>::wire_graph(graph_ptr &graph) {
         K graph_key = active_key_.value();
-        if (nested_graph_builders_.find(graph_key) == nested_graph_builders_.end()) {
-            if constexpr (std::is_same_v<K, nb::object>) {
-                auto default_marker = get_python_default();
-                if (default_marker.is_valid() && nested_graph_builders_.find(default_marker) != nested_graph_builders_.end()) {
-                    graph_key = default_marker;
-                }
-            }
+
+        // Try to find input_node_ids for the specific key, or use default if not found
+        auto input_ids_it = input_node_ids_.find(graph_key);
+        const std::unordered_map<std::string, int> *input_ids_to_use = nullptr;
+
+        if (input_ids_it != input_node_ids_.end()) {
+            input_ids_to_use = &input_ids_it->second;
+        } else if (!default_input_node_ids_.empty()) {
+            input_ids_to_use = &default_input_node_ids_;
         }
 
-        // Set recordable ID if needed (only on first call)
-        if (!notify_nodes && !recordable_id_.empty()) {
+        // Set recordable ID if needed
+        if (!recordable_id_.empty()) {
             std::string key_str;
             if constexpr (std::is_same_v<K, std::string>) {
                 key_str = graph_key;
@@ -178,65 +181,61 @@ namespace hgraph
         }
 
         // Wire inputs (exactly as Python: notify each node; set key; clone REF binding for others)
-        auto input_ids_it = input_node_ids_.find(graph_key);
-        if (input_ids_it != input_node_ids_.end()) {
-            for (const auto &[arg, node_ndx] : input_ids_it->second) {
+        if (input_ids_to_use) {
+            for (const auto &[arg, node_ndx] : *input_ids_to_use) {
                 auto node = graph->nodes()[node_ndx];
+                node->notify();
 
-                if (notify_nodes) {
-                    // Second pass: notify nodes after start
-                    node->notify();
+                if (arg == "key") {
+                    // The key node is a Python stub whose eval function exposes a 'key' attribute.
+                    auto &key_node = dynamic_cast<PythonNode &>(*node);
+                    nb::setattr(key_node.eval_fn(), "key", nb::cast(graph_key));
                 } else {
-                    // First pass: set up bindings before start
-                    if (arg == "key") {
-                        // The key node is a Python stub whose eval function exposes a 'key' attribute.
-                        auto &key_node = dynamic_cast<PythonNode &>(*node);
-                        nb::setattr(key_node.eval_fn(), "key", nb::cast(graph_key));
-                    } else {
-                        // Python expects REF wiring: clone binding from outer REF input to inner REF input 'ts'
-                        auto outer_any = input()[arg].get();
-                        auto inner_any = node->input()["ts"].get();
-                        auto inner_ref = dynamic_cast<TimeSeriesReferenceInput *>(inner_any);
-                        auto outer_ref = dynamic_cast<TimeSeriesReferenceInput *>(outer_any);
-                        if (!inner_ref || !outer_ref) {
-                            throw std::runtime_error(
-                                fmt::format("SwitchNode wire_graph expects REF inputs for arg '{}'", arg));
-                        }
-                        inner_ref->clone_binding(*outer_ref);
+                    // Python expects REF wiring: clone binding from outer REF input to inner REF input 'ts'
+                    auto outer_any = input()[arg].get();
+                    auto inner_any = node->input()["ts"].get();
+                    auto inner_ref = dynamic_cast<TimeSeriesReferenceInput *>(inner_any);
+                    auto outer_ref = dynamic_cast<TimeSeriesReferenceInput *>(outer_any);
+                    if (!inner_ref || !outer_ref) {
+                        throw std::runtime_error(
+                            fmt::format("SwitchNode wire_graph expects REF inputs for arg '{}'", arg));
                     }
+                    inner_ref->clone_binding(*outer_ref);
                 }
             }
         }
 
-        // Wire output using the same resolved graph_key (only on first call)
-        if (!notify_nodes) {
-            auto output_id_it = output_node_ids_.find(graph_key);
-            if (output_id_it != output_node_ids_.end()) {
-                auto node   = graph->nodes()[output_id_it->second];
-                old_output_ = node->output_ptr();
-                node->set_output(output_ptr());
-            }
+        // Wire output using the same resolved graph_key, or use default if not found
+        auto output_id_it = output_node_ids_.find(graph_key);
+        int output_node_id = -1;
+        if (output_id_it != output_node_ids_.end()) {
+            output_node_id = output_id_it->second;
+        } else if (default_output_node_id_ >= 0) {
+            output_node_id = default_output_node_id_;
+        }
+
+        if (output_node_id >= 0) {
+            auto node   = graph->nodes()[output_node_id];
+            old_output_ = node->output_ptr();
+            node->set_output(output_ptr());
         }
     }
 
     template <typename K> void SwitchNode<K>::unwire_graph(graph_ptr &graph) {
         if (old_output_) {
-            // Determine graph key
+            // Find the output node ID, using default if specific key not found
             K graph_key = active_key_.value();
+            auto output_id_it = output_node_ids_.find(graph_key);
+            int output_node_id = -1;
 
-            // If active_key not found, try DEFAULT for nb::object
-            if (output_node_ids_.find(graph_key) == output_node_ids_.end()) {
-                if constexpr (std::is_same_v<K, nb::object>) {
-                    auto default_marker = get_python_default();
-                    if (default_marker.is_valid() && output_node_ids_.find(default_marker) != output_node_ids_.end()) {
-                        graph_key = default_marker;
-                    }
-                }
+            if (output_id_it != output_node_ids_.end()) {
+                output_node_id = output_id_it->second;
+            } else if (default_output_node_id_ >= 0) {
+                output_node_id = default_output_node_id_;
             }
 
-            auto output_id_it = output_node_ids_.find(graph_key);
-            if (output_id_it != output_node_ids_.end()) {
-                auto node = graph->nodes()[output_id_it->second];
+            if (output_node_id >= 0) {
+                auto node = graph->nodes()[output_node_id];
                 node->set_output(old_output_);
                 old_output_ = nullptr;
             }
