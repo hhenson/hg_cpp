@@ -670,7 +670,7 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::add(const element_type &key) {
         if (!contains(key)) {
             _add(key);
-            mark_modified();
+            _post_modify();  // Notify contains outputs and mark as modified
         }
     }
 
