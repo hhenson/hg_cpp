@@ -31,7 +31,7 @@ namespace hgraph
         ;
     }
 
-    void TimeSeriesBundleOutput::set_py_value(nb::object v) {
+    void TimeSeriesBundleOutput::py_set_value(nb::object v) {
         // Python implementation:
         // if v is None: self.invalidate()
         // else if isinstance(v, scalar_type): set each attribute
@@ -96,7 +96,7 @@ namespace hgraph
     void TimeSeriesBundleOutput::apply_result(nb::object value) {
         if (value.is_none()) { return; }
         // Check if value is an instance of the scalar type (not just identity check)
-        set_py_value(value);
+        py_set_value(value);
     }
 
     void TimeSeriesBundleOutput::register_with_nanobind(nb::module_ &m) {
@@ -138,7 +138,7 @@ namespace hgraph
             .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a)
             .def_prop_rw("value",
                          [](const TimeSeriesBundleOutput &self) -> nb::object { return self.py_value(); },
-                         &TimeSeriesBundleOutput::set_py_value);
+                         &TimeSeriesBundleOutput::py_set_value);
     }
 
     void TimeSeriesBundleInput::register_with_nanobind(nb::module_ &m) {

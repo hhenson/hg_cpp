@@ -112,6 +112,7 @@ namespace hgraph
         explicit TimeSeriesDictOutput_T(const time_series_type_ptr &parent, nb::ref<key_set_type> key_set, output_builder_ptr ts_builder,
                                         output_builder_ptr ts_ref_builder);
 
+        void py_set_value(nb::object value) override;
         void apply_result(nb::object value) override;
         bool can_apply_result(nb::object value) override;
 
@@ -198,13 +199,13 @@ namespace hgraph
         void add_key_observer(TSDKeyObserver<key_type> *observer);
         void remove_key_observer(TSDKeyObserver<key_type> *observer);
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            auto other_d = dynamic_cast<TimeSeriesDictOutput_T<key_type> *>(&other);
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            auto other_d = dynamic_cast<const TimeSeriesDictOutput_T<key_type> *>(other);
             if (!other_d) { return false; }
             return _ts_builder->is_same_type(*other_d->_ts_builder);
         }
 
-        void post_modify() override;
+        //void post_modify() override;
 
         TimeSeriesOutput &_get_or_create(const key_type &key);
 
@@ -324,7 +325,7 @@ namespace hgraph
 
         value_type get_or_create(const key_type &key);
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override;
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override;
 
         [[nodiscard]] bool has_reference() const override;
 
@@ -341,7 +342,7 @@ namespace hgraph
 
       protected:
         void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
-        bool do_bind_output(time_series_output_ptr value) override;
+        bool do_bind_output(time_series_output_ptr &value) override;
         void do_un_bind_output(bool unbind_refs = false) override;
 
         [[nodiscard]] TimeSeriesSetInput_T<key_type>         &key_set_t();

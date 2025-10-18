@@ -164,7 +164,7 @@ namespace hgraph
         using TimeSeriesSet<TimeSeriesInput>::TimeSeriesSet;
         TimeSeriesSetOutput &set_output() const;
 
-        bool do_bind_output(TimeSeriesOutput::ptr output) override;
+        bool do_bind_output(TimeSeriesOutput::ptr &output) override;
         void do_un_bind_output(bool unbind_refs = false) override;
 
         [[nodiscard]] const nb::object py_added() const override;
@@ -200,6 +200,7 @@ namespace hgraph
 
         [[nodiscard]] nb::object             py_delta_value() const override;
         [[nodiscard]] bool                   can_apply_result(nb::object value) override;
+        void                                 py_set_value(nb::object value) override;
         void                                 apply_result(nb::object value) override;
         void                                 clear() override;
         void                                 copy_from_output(const TimeSeriesOutput &output) override;
@@ -228,11 +229,11 @@ namespace hgraph
                                                                            const nb::object &requester) override;
         void release_contains_output(const nb::object &item, const nb::object &requester) override;
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            return dynamic_cast<TimeSeriesSetOutput_T<T_Key> *>(&other) != nullptr;
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            return dynamic_cast<const TimeSeriesSetOutput_T<T_Key> *>(other) != nullptr;
         }
 
-        void post_modify() override;
+        //void post_modify() override;
 
       protected:
         void _add(const element_type &item);
@@ -330,8 +331,8 @@ namespace hgraph
             }
         }
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            return dynamic_cast<TimeSeriesSetInput_T<T> *>(&other) != nullptr;
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            return dynamic_cast<const TimeSeriesSetInput_T<T> *>(other) != nullptr;
         }
 
       protected:

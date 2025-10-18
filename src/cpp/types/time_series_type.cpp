@@ -8,37 +8,13 @@
 
 namespace hgraph
 {
-    void TimeSeriesType::re_parent(Node::ptr parent) {
-        // For TimeSeriesInput, we need to handle active state management
-        if (auto input = dynamic_cast<TimeSeriesInput*>(this)) {
-            bool was_active = input->active();
-            if (was_active) {
-                input->make_passive();
-            }
-            _parent_ts_or_node = std::move(parent);
-            if (was_active) {
-                input->make_active();
-            }
-        } else {
-            _parent_ts_or_node = std::move(parent);
-        }
-    }
+    /*
+     * The python code sets the node and unsets the parent_input, we have an optional with a
+     * variant so we just need to set the _parent_ts_or_node property
+     */
+    void TimeSeriesType::re_parent(const Node::ptr &parent) { _parent_ts_or_node = parent; }
 
-    void TimeSeriesType::re_parent(ptr parent) {
-        // For TimeSeriesInput, we need to handle active state management
-        if (auto input = dynamic_cast<TimeSeriesInput*>(this)) {
-            bool was_active = input->active();
-            if (was_active) {
-                input->make_passive();
-            }
-            _parent_ts_or_node = std::move(parent);
-            if (was_active) {
-                input->make_active();
-            }
-        } else {
-            _parent_ts_or_node = std::move(parent);
-        }
-    }
+    void TimeSeriesType::re_parent(const ptr &parent) { _parent_ts_or_node = parent; }
 
     bool TimeSeriesType::is_reference() const { return false; }
 
@@ -54,7 +30,9 @@ namespace hgraph
             .def_prop_ro("valid", &TimeSeriesType::valid)
             .def_prop_ro("all_valid", &TimeSeriesType::all_valid)
             .def_prop_ro("last_modified_time", &TimeSeriesType::last_modified_time)
-            .def("re_parent", static_cast<void (TimeSeriesType::*)(Node::ptr)>(&TimeSeriesType::re_parent));
+            .def("re_parent", static_cast<void (TimeSeriesType::*)(const Node::ptr &)>(&TimeSeriesType::re_parent))
+            .def("re_parent", static_cast<void (TimeSeriesType::*)(const ptr &)>(&TimeSeriesType::re_parent));
+        ;
     }
 
     TimeSeriesType::ptr &TimeSeriesType::_parent_time_series() const {
@@ -87,25 +65,11 @@ namespace hgraph
 
     void TimeSeriesOutput::clear() {}
 
-    // Helper function for property setter that accepts None
-    static void set_value_helper(TimeSeriesOutput &self, nb::handle value) {
-        // Convert handle to object - handle can be None
-        if (value.is_none()) {
-            self.invalidate();
-        } else {
-            nb::object obj = nb::cast<nb::object>(value);
-            self.apply_result(obj);
-        }
-    }
-
     void TimeSeriesOutput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesOutput, TimeSeriesType>(m, "TimeSeriesOutput")
-            .def_prop_ro("parent_output", &TimeSeriesOutput::parent_output)
+            .def_prop_ro("parent_output", static_cast<ptr (TimeSeriesOutput::*)()>(&TimeSeriesOutput::parent_output))
             .def_prop_ro("has_parent_output", &TimeSeriesOutput::has_parent_output)
-            .def_prop_rw("value",
-                         [](const TimeSeriesOutput &self) -> nb::object { return self.py_value(); },
-                         &set_value_helper,
-                         nb::arg("value").none())
+            .def_prop_rw("value", &TimeSeriesOutput::py_value, &TimeSeriesOutput::py_set_value, nb::arg("value").none())
             .def("can_apply_result", &TimeSeriesOutput::can_apply_result)
             .def("apply_result", &TimeSeriesOutput::apply_result, nb::arg("value").none())
             .def("invalidate", &TimeSeriesOutput::invalidate)
@@ -115,8 +79,7 @@ namespace hgraph
             .def("subscribe", &TimeSeriesOutput::subscribe)
             .def("unsubscribe", &TimeSeriesOutput::un_subscribe)
             .def("copy_from_output", &TimeSeriesOutput::copy_from_output)
-            .def("copy_from_input", &TimeSeriesOutput::copy_from_input)
-            .def("re_parent", static_cast<void (TimeSeriesOutput::*)(ptr &)>(&TimeSeriesOutput::re_parent));
+            .def("copy_from_input", &TimeSeriesOutput::copy_from_input);
     }
 
     const Node &TimeSeriesType::_owning_node() const {
@@ -152,12 +115,12 @@ namespace hgraph
 
     bool TimeSeriesInput::has_parent_input() const { return _has_parent_time_series(); }
 
-    bool TimeSeriesInput::bound() const { return _output.get() != nullptr; }
+    bool TimeSeriesInput::bound() const { return _output != nullptr; }
 
     bool TimeSeriesInput::has_peer() const {
         // By default, we assume that if there is an output, then we are peered.
         // This is not always True but is a good general assumption.
-        return _output.get() != nullptr;
+        return _output != nullptr;
     }
 
     time_series_output_ptr TimeSeriesInput::output() const { return _output; }
@@ -170,14 +133,12 @@ namespace hgraph
 
         if (auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(output_.get())) {  // Is a TimeseriesReferenceOutput
             // Match Python behavior: only check if value exists (truthy), bind if it does
-            if (ref_output->valid() && ref_output->value()) {
-                ref_output->value()->bind_input(*this);
-            }
+            if (ref_output->valid() && ref_output->value()) { ref_output->value()->bind_input(*this); }
             ref_output->observe_reference(this);
             _reference_output = ref_output;
             peer              = false;
         } else {
-            if (output_.get() == _output.get()) { return has_peer(); }
+            if (output_ == _output) { return has_peer(); }
             peer = do_bind_output(output_);
         }
 
@@ -185,7 +146,7 @@ namespace hgraph
         // - The input was previously bound (rebinding case), OR
         // - The new output is valid
         // This matches the Python implementation: (was_bound or self._output.valid)
-        if ((owning_node().is_started() || owning_node().is_starting()) && _output && (was_bound || _output->valid())) {
+        if ((owning_node().is_started() || owning_node().is_starting()) && _output.get() && (was_bound || _output->valid())) {
             _sample_time = owning_graph().evaluation_clock().evaluation_time();
             if (active()) {
                 notify(_sample_time);
@@ -223,9 +184,8 @@ namespace hgraph
     void TimeSeriesInput::make_active() {
         if (!_active) {
             _active = true;
-            if (bound()) {
-                output()->subscribe(subscribe_input() ? static_cast<Notifiable *>(this)
-                                                      : static_cast<Notifiable *>(&owning_node()));
+            if (_output != nullptr) {
+                output()->subscribe(this);
                 if (output()->valid() && output()->modified()) {
                     notify(output()->last_modified_time());
                     return;  // If the output is modified, we do not need to check if sampled
@@ -239,9 +199,8 @@ namespace hgraph
     void TimeSeriesInput::make_passive() {
         if (_active) {
             _active = false;
-            if (bound()) {
-                output()->un_subscribe(subscribe_input() ? static_cast<Notifiable *>(this)
-                                                         : static_cast<Notifiable *>(&owning_node()));
+            if (_output != nullptr) {
+                output()->un_subscribe(this);
             }
         }
     }
@@ -276,14 +235,14 @@ namespace hgraph
             .def("make_passive", &TimeSeriesInput::make_passive);
     }
 
-    bool TimeSeriesInput::do_bind_output(time_series_output_ptr output_) {
+    bool TimeSeriesInput::do_bind_output(time_series_output_ptr& output_) {
         auto active_{active()};
         make_passive();  // Ensure we are unsubscribed from the old output.
         _output = output_;
         if (active_) {
             make_active();  // If we were active now subscribe to the new output,
-                                  // this is important even if we were not bound previously as this will ensure the new output gets
-                                  // subscribed to
+                            // this is important even if we were not bound previously as this will ensure the new output gets
+                            // subscribed to
         }
         return true;
     }
@@ -301,7 +260,7 @@ namespace hgraph
 
     void TimeSeriesInput::do_un_bind_output(bool unbind_refs) {
         if (_active) {
-            output()->un_subscribe(subscribe_input() ? static_cast<Notifiable *>(this) : static_cast<Notifiable *>(&owning_node()));
+            output()->un_subscribe(this);
         }
         _output = nullptr;
     }
@@ -331,10 +290,11 @@ namespace hgraph
     TimeSeriesOutput::ptr TimeSeriesOutput::parent_output() const {
         return static_cast<TimeSeriesOutput *>(_parent_time_series().get());  // NOLINT(*-pro-type-static-cast-downcast)
     }
+    TimeSeriesOutput::ptr TimeSeriesOutput::parent_output() {
+        return static_cast<TimeSeriesOutput *>(_parent_time_series().get());  // NOLINT(*-pro-type-static-cast-downcast)
+    }
 
     bool TimeSeriesOutput::has_parent_output() const { return _has_parent_time_series(); }
-
-    void TimeSeriesOutput::re_parent(ptr &parent) { _set_parent_time_series(parent.get()); }
 
     bool TimeSeriesOutput::can_apply_result(nb::object value) { return not modified(); }
 
@@ -375,20 +335,12 @@ namespace hgraph
         mark_modified(modified_time);
     }  // NOLINT(*-no-recursion)
 
-    void TimeSeriesOutput::subscribe(Notifiable *notifiable) { _subscribers.subscribe(notifiable); }
+    void TimeSeriesOutput::subscribe(Notifiable *notifiable) { _subscribers.insert(notifiable); }
 
-    void TimeSeriesOutput::un_subscribe(Notifiable *notifiable) { _subscribers.un_subscribe(notifiable); }
+    void TimeSeriesOutput::un_subscribe(Notifiable *notifiable) { _subscribers.erase(notifiable); }
 
     void TimeSeriesOutput::_notify(engine_time_t modified_time) {
-        _subscribers.apply([modified_time](Notifiable *notifiable) { notifiable->notify(modified_time); });
-    }
-
-    const TimeSeriesOutput &TimeSeriesOutput::_time_series_output() const {
-        return *dynamic_cast<const TimeSeriesOutput *>(_parent_time_series().get());
-    }
-
-    TimeSeriesOutput &TimeSeriesOutput::_time_series_output() {
-        return *dynamic_cast<TimeSeriesOutput *>(_parent_time_series().get());
+        for (auto *subscriber : _subscribers) { subscriber->notify(modified_time); }
     }
 
     void TimeSeriesOutput::_reset_last_modified_time() { _last_modified_time = MIN_DT; }

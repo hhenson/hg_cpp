@@ -55,8 +55,8 @@ namespace hgraph
         }
     }
 
-    template <typename T> void TimeSeriesFixedWindowOutput<T>::apply_result(nb::object value) {
-        if (!value.is_valid() || value.is_none()) return;
+    template <typename T> void TimeSeriesFixedWindowOutput<T>::py_set_value(nb::object value) {
+        if (value.is_none()) { invalidate(); return; }
         try {
             T v = nb::cast<T>(value);
             size_t capacity = _size;
@@ -78,6 +78,11 @@ namespace hgraph
         } catch (const std::exception &e) {
             throw std::runtime_error(std::string("Cannot apply node output: ") + e.what());
         }
+    }
+
+    template <typename T> void TimeSeriesFixedWindowOutput<T>::apply_result(nb::object value) {
+        if (!value.is_valid() || value.is_none()) return;
+        py_set_value(value);
     }
 
     template <typename T> void TimeSeriesFixedWindowOutput<T>::mark_invalid() {

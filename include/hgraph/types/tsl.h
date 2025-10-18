@@ -100,16 +100,18 @@ namespace hgraph
 
         void apply_result(nb::object value) override;
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            auto other_list = dynamic_cast<TimeSeriesListOutput *>(&other);
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            auto other_list = dynamic_cast<const TimeSeriesListOutput *>(other);
             if (!other_list) { return false; }
             const auto this_size  = this->size();
             const auto other_size = other_list->size();
             // Be permissive during wiring: if either list has no elements yet, treat as same type
             if (this_size == 0 || other_size == 0) { return true; }
             // Otherwise, compare the element type recursively without enforcing equal sizes
-            return (*this)[0]->is_same_type(*(*other_list)[0]);
+            return (*this)[0]->is_same_type((*other_list)[0]);
         }
+
+        void py_set_value(nb::object value) override;
 
         static void register_with_nanobind(nb::module_ &m);
     protected:
@@ -121,15 +123,15 @@ namespace hgraph
     {
         using list_type::TimeSeriesList;
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            auto other_list = dynamic_cast<TimeSeriesListInput *>(&other);
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            auto other_list = dynamic_cast<const TimeSeriesListInput *>(other);
             if (!other_list) { return false; }
             const auto this_size  = this->size();
             const auto other_size = other_list->size();
             // Be permissive during wiring: if either list has no elements yet, consider types compatible
             if (this_size == 0 || other_size == 0) { return true; }
             // Otherwise compare element type recursively without enforcing size equality
-            return (*this)[0]->is_same_type(*(*other_list)[0]);
+            return (*this)[0]->is_same_type((*other_list)[0]);
         }
 
         static void register_with_nanobind(nb::module_ &m);

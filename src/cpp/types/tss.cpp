@@ -452,8 +452,7 @@ namespace hgraph
         return !modified();
     }
 
-    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::apply_result(nb::object value) {
-        if (value.is_none()) { return; }
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::py_set_value(nb::object value) {
         _py_value = nb::none();
         _py_removed.clear();
         _py_added.clear();
@@ -496,6 +495,11 @@ namespace hgraph
         } catch (const std::exception &e) { throw std::runtime_error(std::string("Error in apply_result: ") + e.what()); }
 
         _post_modify();
+    }
+
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::apply_result(nb::object value) {
+        if (value.is_none()) { return; }
+        py_set_value(value);
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_add(const element_type &item) {
@@ -732,7 +736,7 @@ namespace hgraph
         _contains_ref_outputs.release(nb::cast<element_type>(item), static_cast<void *>(requester.ptr()));
     }
 
-    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::post_modify() { _post_modify(); }
+    //template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::post_modify() { _post_modify(); }
 
     const nb::object TimeSeriesSetInput::py_added() const {
         if (has_prev_output()) {
@@ -793,7 +797,7 @@ namespace hgraph
 
     void TimeSeriesSetInput::reset_prev() { _prev_output = nullptr; }
 
-    bool TimeSeriesSetInput::do_bind_output(TimeSeriesOutput::ptr output) {
+    bool TimeSeriesSetInput::do_bind_output(TimeSeriesOutput::ptr &output) {
         if (has_output()) {
             _prev_output = &set_output();
             // Clean up after the engine cycle is complete

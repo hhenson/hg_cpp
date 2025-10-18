@@ -1,12 +1,20 @@
 
-#include <hgraph/types/tsl.h>
 #include <hgraph/types/node.h>
+#include <hgraph/types/tsl.h>
 
 namespace hgraph
 {
 
     void TimeSeriesListOutput::apply_result(nb::object value) {
         if (value.is_none()) { return; }
+        py_set_value(value);
+    }
+
+    void TimeSeriesListOutput::py_set_value(nb::object value) {
+        if (value.is_none()) {
+            mark_invalid();
+            return;
+        }
         if (nb::isinstance<nb::tuple>(value) || nb::isinstance<nb::list>(value)) {
             for (size_t i = 0, l = nb::len(value); i < l; ++i) {
                 const auto &v{value[i]};
@@ -20,7 +28,6 @@ namespace hgraph
             throw std::runtime_error("Invalid value type for TimeSeriesListOutput");
         }
     }
-
 
     void TimeSeriesListOutput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesListOutput, IndexedTimeSeriesOutput>(m, "TimeSeriesListOutput")
@@ -59,7 +66,6 @@ namespace hgraph
                  static_cast<enumerated_collection_type (TimeSeriesListInput::*)() const>(&TimeSeriesListInput::valid_items))
             .def("modified_keys", &TimeSeriesListInput::modified_keys)
             .def("modified_items",
-                 static_cast<enumerated_collection_type (TimeSeriesListInput::*)() const>(&TimeSeriesListInput::modified_items))
-        ;
+                 static_cast<enumerated_collection_type (TimeSeriesListInput::*)() const>(&TimeSeriesListInput::modified_items));
     }
 }  // namespace hgraph

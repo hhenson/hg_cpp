@@ -786,7 +786,7 @@ namespace hgraph
 
     void Node::stop() {
         do_stop();
-        if (has_input()) { input().un_bind_output(); }
+        if (has_input()) { input().un_bind_output(false); }
         if (has_scheduler()) { scheduler().reset(); }
     }
 

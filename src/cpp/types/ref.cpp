@@ -97,7 +97,7 @@ namespace hgraph
 
     void EmptyTimeSeriesReference::bind_input(TimeSeriesInput &ts_input) const {
         try {
-            ts_input.un_bind_output();
+            ts_input.un_bind_output(false);
         } catch (const std::exception &e) {
             throw std::runtime_error(std::string("Error in EmptyTimeSeriesReference::bind_input: ") + e.what());
         } catch (...) { throw std::runtime_error("Unknown error in EmptyTimeSeriesReference::bind_input"); }
@@ -115,7 +115,7 @@ namespace hgraph
 
     std::string EmptyTimeSeriesReference::to_string() const { return "REF[<UnSet>]"; }
 
-    BoundTimeSeriesReference::BoundTimeSeriesReference(const time_series_output_ptr& output) : _output{output} {}
+    BoundTimeSeriesReference::BoundTimeSeriesReference(const time_series_output_ptr &output) : _output{output} {}
 
     const TimeSeriesOutput::ptr &BoundTimeSeriesReference::output() const { return _output; }
 
@@ -125,7 +125,7 @@ namespace hgraph
             // Treat inputs previously bound via a reference as bound, so we unbind to generate correct deltas
             if ((ts_input.bound() || ts_input.reference_output().get() != nullptr) && !ts_input.has_peer()) {
                 reactivate = ts_input.active();
-                ts_input.un_bind_output();
+                ts_input.un_bind_output(false);
             }
             ts_input.bind_output(_output);
             if (reactivate) { ts_input.make_active(); }
@@ -169,7 +169,7 @@ namespace hgraph
         bool reactivate = false;
         if (ts_input.bound() && ts_input.has_peer()) {
             reactivate = ts_input.active();
-            ts_input.un_bind_output();
+            ts_input.un_bind_output(false);
         }
 
         for (size_t i = 0; i < _items.size(); ++i) {
@@ -186,7 +186,7 @@ namespace hgraph
             if (_items[i] != nullptr) {
                 _items[i]->bind_input(*item);
             } else if (item->bound()) {
-                item->un_bind_output();
+                item->un_bind_output(false);
             }
         }
 
@@ -223,6 +223,12 @@ namespace hgraph
 
     TimeSeriesReference::ptr &TimeSeriesReferenceOutput::value() { return _value; }
 
+    void TimeSeriesReferenceOutput::py_set_value(nb::object value) {
+        auto v{nb::cast<TimeSeriesReference::ptr>(value)};
+        if (v == nullptr) { throw std::runtime_error("Expected TimeSeriesReference"); }
+        set_value(v);
+    }
+
     void TimeSeriesReferenceOutput::set_value(TimeSeriesReference::ptr value) {
         if (value.get() == nullptr) {
             invalidate();
@@ -241,14 +247,10 @@ namespace hgraph
 
     void TimeSeriesReferenceOutput::apply_result(nb::object value) {
         if (value.is_none()) { return; }
-        auto v{nb::cast<TimeSeriesReference::ptr>(value)};
-        if (v == nullptr) { throw std::runtime_error("Expected TimeSeriesReference"); }
-        set_value(v);
+        py_set_value(value);
     }
 
-    bool TimeSeriesReferenceOutput::can_apply_result(nb::object value) {
-        return !modified();
-    }
+    bool TimeSeriesReferenceOutput::can_apply_result(nb::object value) { return !modified(); }
 
     void TimeSeriesReferenceOutput::observe_reference(TimeSeriesInput::ptr input_) {
         auto result{_reference_observers.emplace(input_.get())};
@@ -267,9 +269,7 @@ namespace hgraph
         }
     }
 
-    void TimeSeriesReferenceOutput::clear() {
-        set_value(TimeSeriesReference::make());
-    }
+    void TimeSeriesReferenceOutput::clear() { set_value(TimeSeriesReference::make()); }
 
     nb::object TimeSeriesReferenceOutput::py_value() const { return nb::cast(_value); }
 
@@ -324,9 +324,7 @@ namespace hgraph
     TimeSeriesReference::ptr TimeSeriesReferenceInput::value() const {
         if (output() != nullptr) {
             auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(output().get());
-            if (ref_output && ref_output->valid()) {
-                return ref_output->value();
-            }
+            if (ref_output && ref_output->valid()) { return ref_output->value(); }
             return nullptr;
         }
         if (_value.get() != nullptr) { return _value; }
@@ -352,9 +350,7 @@ namespace hgraph
         }
     }
 
-    bool TimeSeriesReferenceInput::bound() const {
-        return TimeSeriesInput::bound() || !_items.empty();
-    }
+    bool TimeSeriesReferenceInput::bound() const { return TimeSeriesInput::bound() || !_items.empty(); }
 
     bool TimeSeriesReferenceInput::modified() const {
         if (sampled()) { return true; }
@@ -380,18 +376,12 @@ namespace hgraph
         std::vector<engine_time_t> times;
 
         if (!_items.empty()) {
-            for (const auto &item : _items) {
-                times.push_back(item->last_modified_time());
-            }
+            for (const auto &item : _items) { times.push_back(item->last_modified_time()); }
         }
 
-        if (output() != nullptr) {
-            times.push_back(output()->last_modified_time());
-        }
+        if (output() != nullptr) { times.push_back(output()->last_modified_time()); }
 
-        if (times.empty()) {
-            return sample_time();
-        }
+        if (times.empty()) { return sample_time(); }
 
         return std::max(*std::max_element(times.begin(), times.end()), sample_time());
     }
@@ -429,9 +419,7 @@ namespace hgraph
 
         if (!_items.empty()) {
             for (auto &item : _items) {
-                if (item) {
-                    item->make_active();
-                }
+                if (item) { item->make_active(); }
             }
         }
 
@@ -450,9 +438,7 @@ namespace hgraph
 
         if (!_items.empty()) {
             for (auto &item : _items) {
-                if (item) {
-                    item->make_passive();
-                }
+                if (item) { item->make_passive(); }
             }
         }
     }
@@ -467,8 +453,8 @@ namespace hgraph
         return _items.at(ndx);
     }
 
-    bool TimeSeriesReferenceInput::do_bind_output(time_series_output_ptr output_) {
-        if (dynamic_cast<TimeSeriesReferenceOutput *>(output_.get()) != nullptr) {
+    bool TimeSeriesReferenceInput::do_bind_output(time_series_output_ptr &output_) {
+        if (dynamic_cast<const TimeSeriesReferenceOutput *>(output_.get()) != nullptr) {
             // Match Python behavior: bind to a TimeSeriesReferenceOutput as a normal peer
             _value = nullptr;
             return TimeSeriesInput::do_bind_output(output_);

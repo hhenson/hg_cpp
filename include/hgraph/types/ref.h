@@ -80,13 +80,15 @@ namespace hgraph
 
         ~TimeSeriesReferenceOutput() override;
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            return dynamic_cast<TimeSeriesReferenceOutput *>(&other) != nullptr;
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            return dynamic_cast<const TimeSeriesReferenceOutput *>(other) != nullptr;
         }
 
         const TimeSeriesReference::ptr &value() const;
 
         TimeSeriesReference::ptr &value();
+
+        void py_set_value(nb::object value) override;
 
         void set_value(TimeSeriesReference::ptr value);
 
@@ -130,8 +132,8 @@ namespace hgraph
         using ptr = nb::ref<TimeSeriesReferenceInput>;
         using TimeSeriesInput::TimeSeriesInput;
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            return dynamic_cast<TimeSeriesReferenceInput *>(&other) != nullptr;
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            return dynamic_cast<const TimeSeriesReferenceInput *>(other) != nullptr;
         }
 
         void start();
@@ -164,7 +166,7 @@ namespace hgraph
         [[nodiscard]] bool has_reference() const override;
 
       protected:
-        bool do_bind_output(time_series_output_ptr output_) override;
+        bool do_bind_output(time_series_output_ptr& output_) override;
         void do_un_bind_output(bool unbind_refs = false) override;
 
         TimeSeriesReferenceOutput *as_reference_output() const;

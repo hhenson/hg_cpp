@@ -129,7 +129,7 @@ namespace hgraph
         nb::class_<IndexedTimeSeriesInput, IndexedTimeSeries_Input>(m, "IndexedTimeSeriesInput");
     }
 
-    bool IndexedTimeSeriesInput::do_bind_output(time_series_output_ptr value) {
+    bool IndexedTimeSeriesInput::do_bind_output(time_series_output_ptr &value) {
         // Detect rebinding - if we already have an output, we're switching to a new one
         bool rebinding = has_output();
 
@@ -139,8 +139,8 @@ namespace hgraph
         if (output_bundle) {
             for (size_t i = 0; i < ts_values().size(); ++i) { peer &= ts_values()[i]->bind_output((*output_bundle)[i]); }
         }
-
-        TimeSeriesInput::do_bind_output(peer ? value : nullptr);
+        time_series_output_ptr none {};
+        TimeSeriesInput::do_bind_output(peer ? value : none);
 
         // If rebinding occurred, notify parent so downstream nodes know to evaluate
         if (rebinding && peer) {

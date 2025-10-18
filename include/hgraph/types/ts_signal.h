@@ -20,7 +20,7 @@ namespace hgraph
 
         [[nodiscard]] nb::object py_delta_value() const override;
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override { return true; }
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override { return true; }
 
         // Support for indexing - creates child signals on demand
         // This allows SIGNAL inputs to be bound to indexed outputs like TSB

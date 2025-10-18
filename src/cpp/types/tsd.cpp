@@ -14,45 +14,8 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::apply_result(nb::object value) {
         // Ensure any Python API interaction occurs under the GIL and protect against exceptions
-        nb::gil_scoped_acquire gil;
-        try {
-            if (!valid()) {
-                key_set().mark_modified();  // Even if we tick an empty set, we still need to mark this as modified
-            }
-
-            // For now only support
-            if (nb::isinstance<nb::dict>(value)) {
-                auto remove{get_remove()};
-                auto remove_if_exists{get_remove_if_exists()};
-                for (const auto &[k, v] : nb::cast<nb::dict>(value)) {
-                    if (v.is_none()) { continue; }
-                    auto k_ = nb::cast<T_Key>(k);
-                    if (v.is(remove) || v.is(remove_if_exists)) {
-                        // Skip removal if key doesn't exist (both REMOVE and REMOVE_IF_EXISTS)
-                        if (!contains(k_)) { continue; }
-                        erase(k_);
-                    } else {
-                        // Apply to child, but guard to enrich any errors
-                        try {
-                            operator[](k_).apply_result(nb::borrow(v));
-                        } catch (const NodeException &e) {
-                            throw;  // already enriched upstream
-                        } catch (const std::exception &e) {
-                            throw std::runtime_error(std::string("Error applying TSD value for key: ") +
-                                                     nb::cast<std::string>(nb::str(k)) + ": " + e.what());
-                        } catch (...) { throw std::runtime_error("Unknown error applying TSD value"); }
-                    }
-                }
-            } else {
-                throw std::runtime_error("TimeSeriesDictOutput::apply_result: Only dictionary inputs are supported");
-            }
-
-            _post_modify();
-        } catch (const NodeException &e) {
-            throw;  // already enriched
-        } catch (const std::exception &e) {
-            throw std::runtime_error(std::string("During TimeSeriesDictOutput_T::apply_result: ") + e.what());
-        } catch (...) { throw std::runtime_error("Unknown error in TimeSeriesDictOutput_T::apply_result"); }
+        if (value.is_none()) { return; }
+        py_set_value(value);
     }
 
     template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::can_apply_result(nb::object value) {
@@ -183,6 +146,51 @@ namespace hgraph
                           },
                           {}} {
         _key_set->TimeSeriesType::re_parent(TimeSeriesType::ptr{this});
+    }
+
+    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::py_set_value(nb::object value) {
+        if (value.is_none()) {
+            invalidate();
+            return;
+        }
+        try {
+            if (!valid()) {
+                key_set().mark_modified();  // Even if we tick an empty set, we still need to mark this as modified
+            }
+
+            // For now only support
+            if (nb::isinstance<nb::dict>(value)) {
+                auto remove{get_remove()};
+                auto remove_if_exists{get_remove_if_exists()};
+                for (const auto &[k, v] : nb::cast<nb::dict>(value)) {
+                    if (v.is_none()) { continue; }
+                    auto k_ = nb::cast<T_Key>(k);
+                    if (v.is(remove) || v.is(remove_if_exists)) {
+                        // Skip removal if key doesn't exist (both REMOVE and REMOVE_IF_EXISTS)
+                        if (!contains(k_)) { continue; }
+                        erase(k_);
+                    } else {
+                        // Apply to child, but guard to enrich any errors
+                        try {
+                            operator[](k_).apply_result(nb::borrow(v));
+                        } catch (const NodeException &e) {
+                            throw;  // already enriched upstream
+                        } catch (const std::exception &e) {
+                            throw std::runtime_error(std::string("Error applying TSD value for key: ") +
+                                                     nb::cast<std::string>(nb::str(k)) + ": " + e.what());
+                        } catch (...) { throw std::runtime_error("Unknown error applying TSD value"); }
+                    }
+                }
+            } else {
+                throw std::runtime_error("TimeSeriesDictOutput::apply_result: Only dictionary inputs are supported");
+            }
+
+            _post_modify();
+        } catch (const NodeException &e) {
+            throw;  // already enriched
+        } catch (const std::exception &e) {
+            throw std::runtime_error(std::string("During TimeSeriesDictOutput_T::apply_result: ") + e.what());
+        } catch (...) { throw std::runtime_error("Unknown error in TimeSeriesDictOutput_T::apply_result"); }
     }
 
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_value() const {
@@ -497,23 +505,17 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_dispose() {
         // Release all removed items first
-        for (auto &[_, value] : _removed_values) {
-            _ts_builder->release_instance(value);
-        }
+        for (auto &[_, value] : _removed_values) { _ts_builder->release_instance(value); }
         _removed_values.clear();
 
         // Release all current values
-        for (auto &[_, value] : _ts_values) {
-            _ts_builder->release_instance(value);
-        }
+        for (auto &[_, value] : _ts_values) { _ts_builder->release_instance(value); }
         _ts_values.clear();
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::clear_on_end_of_evaluation_cycle() {
         // Release removed instances before clearing
-        for (auto &[_, value] : _removed_values) {
-            _ts_builder->release_instance(value);
-        }
+        for (auto &[_, value] : _removed_values) { _ts_builder->release_instance(value); }
         _removed_values.clear();
         _added_items.clear();
     }
@@ -778,9 +780,7 @@ namespace hgraph
         auto value{get_or_create(key)};
         // Activate if: (not peered AND this is active) OR value is already active (transplanted input case)
         // v.active can be true if this was a transplanted input
-        if ((!has_peer() && active()) || value->active()) {
-            value->make_active();
-        }
+        if ((!has_peer() && active()) || value->active()) { value->make_active(); }
         value->bind_output(&output_t()[key]);
     }
 
@@ -790,7 +790,7 @@ namespace hgraph
         if (it == _ts_values.end()) { return; }
 
         auto value{it->second};
-        _ts_values.erase(it);  // Remove from _ts_values first
+        _ts_values.erase(it);                  // Remove from _ts_values first
         _ts_values_to_key.erase(value.get());  // Remove from reverse map
 
         register_clear_key_changes();
@@ -802,7 +802,7 @@ namespace hgraph
             _removed_values.insert({key, {value, was_valid}});
             auto it_{_modified_items.find(key)};
             if (it_ != _modified_items.end()) { _modified_items.erase(it_); }
-            if (!has_peer()) { value->un_bind_output(); }
+            if (!has_peer()) { value->un_bind_output(false); }
         } else {
             // This is a transplanted input - put it back and unbind it
             _ts_values.insert({key, value});
@@ -820,11 +820,11 @@ namespace hgraph
         return was_removed(nb::cast<T_Key>(key));
     }
 
-    template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::do_bind_output(time_series_output_ptr value) {
-        typename TimeSeriesDictOutput_T<T_Key>::ptr output_{dynamic_cast<TimeSeriesDictOutput_T<T_Key> *>(value.get())};
+    template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::do_bind_output(time_series_output_ptr &value) {
+        TimeSeriesDictOutput_T<T_Key> *output_{dynamic_cast<TimeSeriesDictOutput_T<T_Key> *>(value.get())};
 
         // Peer when types match AND neither has references (matching Python logic)
-        bool peer = is_same_type(*output_) && !output_->has_reference() && !this->has_reference();
+        bool peer = is_same_type(output_) && !output_->has_reference() && !this->has_reference();
 
         if (!peer) {
             key_set_t().set_subscribe_method(true);
@@ -832,7 +832,8 @@ namespace hgraph
             key_set_t().set_subscribe_method(this->subscribe_input());
         }
 
-        key_set_t().bind_output(&output_->key_set_t());
+        auto *_key_set = const_cast<TimeSeriesOutput *>(static_cast<const TimeSeriesOutput *>(&output_->key_set()));
+        key_set_t().bind_output({_key_set});
 
         if (owning_node().is_started() && has_output()) {
             output_t().remove_key_observer(this);
@@ -877,7 +878,7 @@ namespace hgraph
                 auto &[value, was_valid] = v;
                 if (value->parent_input().get() != this) {
                     // Check for transplanted items, these do not get removed, but can be un-bound
-                    value->un_bind_output();
+                    value->un_bind_output(false);
                     _ts_values.insert({key, value});
                     _ts_values_to_key.insert({value.get(), key});
                 } else {
@@ -888,7 +889,7 @@ namespace hgraph
         }
         // If we are un-binding then the output must exist by definition.
         output_t().remove_key_observer(this);
-        TimeSeriesInput::do_un_bind_output();
+        TimeSeriesInput::do_un_bind_output(false);
     }
 
     template <typename T_Key>
@@ -928,9 +929,7 @@ namespace hgraph
         _clear_key_changes_registered = false;
 
         // Guard against cleared node (matches Python: if self.owning_node is None)
-        if (!has_parent_or_node()) {
-            return;
-        }
+        if (!has_parent_or_node()) { return; }
 
         // Release instances with deferred callback to ensure cleanup happens after all processing
         // This matches Python: add_after_evaluation_notification(lambda b=self._ts_builder, i=v[0]: b.release_instance(i))
@@ -939,13 +938,10 @@ namespace hgraph
             if (it != _removed_values.end()) {
                 auto &[value, was_valid] = it->second;
                 // Capture by value to ensure the lambda has valid references
-                auto builder = _ts_builder;
+                auto builder  = _ts_builder;
                 auto instance = value;
                 owning_graph().evaluation_engine_api().add_after_evaluation_notification(
-                    [builder, instance]() {
-                        builder->release_instance(instance);
-                    }
-                );
+                    [builder, instance]() { builder->release_instance(instance); });
                 value->un_bind_output(true);  // unbind_refs=True
             }
         }
@@ -976,8 +972,8 @@ namespace hgraph
         return nb::cast(ts.get());
     }
 
-    template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::is_same_type(TimeSeriesType &other) const {
-        auto other_d = dynamic_cast<TimeSeriesDictInput_T<key_type> *>(&other);
+    template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::is_same_type(const TimeSeriesType *other) const {
+        auto other_d = dynamic_cast<const TimeSeriesDictInput_T<key_type> *>(other);
         if (!other_d) { return false; }
         return _ts_builder->is_same_type(*other_d->_ts_builder);
     }
@@ -991,9 +987,7 @@ namespace hgraph
             // This is an approximate solution but at this point the information about active state is lost
             for (auto &[_, value] : _ts_values) {
                 // Check if this input was transplanted from another parent
-                if (value->parent_input().get() != this) {
-                    value->make_active();
-                }
+                if (value->parent_input().get() != this) { value->make_active(); }
             }
         } else {
             set_active(true);
@@ -1112,10 +1106,10 @@ namespace hgraph
     using TSD_OUT_TimeDelta = TimeSeriesDictOutput_T<engine_time_delta_t>;
     using TSD_OUT_Object    = TimeSeriesDictOutput_T<nb::object>;
 
-    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::post_modify() { _post_modify(); }
+    // template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::post_modify() { _post_modify(); }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_post_modify() {
-        key_set().post_modify();
+        // key_set_t()._post_modify();
         if (has_added() || has_removed()) {
             owning_graph().evaluation_engine_api().add_after_evaluation_notification(
                 [this]() { clear_on_end_of_evaluation_cycle(); });
@@ -1202,8 +1196,7 @@ namespace hgraph
             .def_prop_ro(
                 "key_set",
                 static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesInput>::ts_type> &(TimeSeriesDictInput::*)() const>(
-                    &TimeSeriesDictInput::key_set))
-            ;
+                    &TimeSeriesDictInput::key_set));
 
         nb::class_<TSD_OUT_Bool, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Bool");
         nb::class_<TSD_OUT_Int, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Int");

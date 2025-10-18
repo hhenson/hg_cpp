@@ -184,17 +184,17 @@ namespace hgraph
         using ptr = nb::ref<TimeSeriesBundleOutput>;
         using bundle_type::TimeSeriesBundle;
 
-        void set_py_value(nb::object value);
+        void py_set_value(nb::object value) override;
         void mark_invalid() override;
         void apply_result(nb::object value) override;
         [[nodiscard]] bool can_apply_result(nb::object value) override;
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            auto other_b = dynamic_cast<TimeSeriesBundleOutput *>(&other);
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            auto other_b = dynamic_cast<const TimeSeriesBundleOutput *>(other);
             if (!other_b) { return false; }
             if (this->size() != other_b->size()) { return false; }
             for (size_t i = 0; i < this->size(); ++i) {
-                if (!(*this)[i]->is_same_type(*(*other_b)[i])) { return false; }
+                if (!(*this)[i]->is_same_type((*other_b)[i])) { return false; }
             }
             return true;
         }
@@ -211,12 +211,12 @@ namespace hgraph
         using ptr = nb::ref<TimeSeriesBundleInput>;
         using bundle_type::TimeSeriesBundle;
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            auto other_b = dynamic_cast<TimeSeriesBundleInput *>(&other);
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            auto other_b = dynamic_cast<const TimeSeriesBundleInput *>(other);
             if (!other_b) { return false; }
             if (this->size() != other_b->size()) { return false; }
             for (size_t i = 0; i < this->size(); ++i) {
-                if (!(*this)[i]->is_same_type(*(*other_b)[i])) { return false; }
+                if (!(*this)[i]->is_same_type((*other_b)[i])) { return false; }
             }
             return true;
         }

@@ -35,6 +35,8 @@ namespace hgraph
 
         [[nodiscard]] nb::object py_delta_value() const override;
 
+        void py_set_value(nb::object value) override;
+
         bool can_apply_result(nb::object) override { return !modified(); }
 
         void apply_result(nb::object value) override;
@@ -59,8 +61,8 @@ namespace hgraph
 
         void copy_from_input(const TimeSeriesInput &input) override;
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            return dynamic_cast<TimeSeriesFixedWindowOutput<T> *>(&other) != nullptr;
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            return dynamic_cast<const TimeSeriesFixedWindowOutput<T> *>(other) != nullptr;
         }
 
         // Extra API to mirror Python TSW
@@ -101,8 +103,8 @@ namespace hgraph
         [[nodiscard]] bool has_removed_value() const { return output_t().has_removed_value(); }
         [[nodiscard]] nb::object removed_value() const { return output_t().has_removed_value() ? nb::cast(output_t().removed_value()) : nb::none(); }
 
-        [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
-            return dynamic_cast<TimeSeriesWindowInput<T> *>(&other) != nullptr;
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            return dynamic_cast<const TimeSeriesWindowInput<T> *>(other) != nullptr;
         }
     };
 
