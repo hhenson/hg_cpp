@@ -65,6 +65,8 @@ namespace hgraph
 
     void TimeSeriesOutput::clear() {}
 
+    void TimeSeriesOutput::invalidate() {mark_invalid();}
+
     void TimeSeriesOutput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesOutput, TimeSeriesType>(m, "TimeSeriesOutput")
             .def_prop_ro("parent_output", static_cast<ptr (TimeSeriesOutput::*)()>(&TimeSeriesOutput::parent_output))

@@ -326,18 +326,18 @@ namespace hgraph
                 if (auto *a_obj = dynamic_cast<const SetDelta_Object *>(&other)) {
                     auto *b_obj = dynamic_cast<SetDelta_Object *>(&self);
                     if (!b_obj) throw nb::type_error("Cannot add SetDelta of different types");
-                    nb::object A1         = a_obj->py_added();
-                    nb::object R1         = a_obj->py_removed();
-                    nb::object A2         = b_obj->py_added();
-                    nb::object R2         = b_obj->py_removed();
+                    nb::object A1 = a_obj->py_added();
+                    nb::object R1 = a_obj->py_removed();
+                    nb::object A2 = b_obj->py_added();
+                    nb::object R2 = b_obj->py_removed();
                     // Python: added = (self.added - other.removed) | other.added
                     // For __radd__ (other + self): resA = (A1 - R2) | A2
-                    nb::object py_set     = nb::module_::import_("builtins").attr("set");
-                    nb::object setA1      = py_set(A1);
-                    nb::object setR2      = py_set(R2);
-                    nb::object setA2      = py_set(A2);
-                    nb::object setR1      = py_set(R1);
-                    nb::object resA       = setA1.attr("difference")(setR2).attr("union")(setA2);
+                    nb::object py_set = nb::module_::import_("builtins").attr("set");
+                    nb::object setA1  = py_set(A1);
+                    nb::object setR2  = py_set(R2);
+                    nb::object setA2  = py_set(A2);
+                    nb::object setR1  = py_set(R1);
+                    nb::object resA   = setA1.attr("difference")(setR2).attr("union")(setA2);
                     // Python: removed = (other.removed - self.added) | (self.removed - other.added)
                     // For __radd__ (other + self): resR = (R2 - A1) | (R1 - A2)
                     nb::object resR       = setR2.attr("difference")(setA1).attr("union")(setR1.attr("difference")(setA2));
@@ -448,9 +448,7 @@ namespace hgraph
         }
     }
 
-    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::can_apply_result(nb::object value) {
-        return !modified();
-    }
+    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::can_apply_result(nb::object value) { return !modified(); }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::py_set_value(nb::object value) {
         _py_value = nb::none();
@@ -690,16 +688,12 @@ namespace hgraph
                 was_added = true;
             }
 
-            if (!was_added) {
-                _removed.emplace(key);
-            }
+            if (!was_added) { _removed.emplace(key); }
 
             _value.erase(key);
             _contains_ref_outputs.update(key);
 
-            if (empty()) {
-                _is_empty_ref_output->set_value(true);
-            }
+            if (empty()) { _is_empty_ref_output->set_value(true); }
 
             mark_modified();
         }
@@ -712,9 +706,7 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::add(const element_type &key) {
         if (!contains(key)) {
-            if (empty()) {
-                _is_empty_ref_output->set_value(false);
-            }
+            if (empty()) { _is_empty_ref_output->set_value(false); }
 
             _add(key);
             _contains_ref_outputs.update(key);
@@ -728,7 +720,8 @@ namespace hgraph
     template <typename T_Key>
     TimeSeriesValueOutput<bool>::ptr TimeSeriesSetOutput_T<T_Key>::get_contains_output(const nb::object &item,
                                                                                        const nb::object &requester) {
-        return _contains_ref_outputs.create_or_increment(nb::cast<element_type>(item), static_cast<void *>(requester.ptr()));
+        return dynamic_cast<TimeSeriesValueOutput<bool> *>(
+            _contains_ref_outputs.create_or_increment(nb::cast<element_type>(item), static_cast<void *>(requester.ptr())).get());
     }
 
     template <typename T_Key>
@@ -736,7 +729,7 @@ namespace hgraph
         _contains_ref_outputs.release(nb::cast<element_type>(item), static_cast<void *>(requester.ptr()));
     }
 
-    //template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::post_modify() { _post_modify(); }
+    // template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::post_modify() { _post_modify(); }
 
     const nb::object TimeSeriesSetInput::py_added() const {
         if (has_prev_output()) {

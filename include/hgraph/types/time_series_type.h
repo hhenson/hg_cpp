@@ -130,7 +130,7 @@ namespace hgraph
         virtual void copy_from_output(const TimeSeriesOutput &output) = 0;
         virtual void copy_from_input(const TimeSeriesInput &input)    = 0;
         virtual void clear();
-        virtual void invalidate() = 0;
+        virtual void invalidate();
         virtual void mark_modified(engine_time_t modified_time);
 
         static void register_with_nanobind(nb::module_ &m);

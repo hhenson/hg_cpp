@@ -12,44 +12,31 @@ namespace hgraph
     template <typename T> struct TimeSeriesValueOutput : TimeSeriesOutput
     {
         using value_type = T;
+        using ptr        = nb::ref<TimeSeriesValueOutput<T>>;
 
         using TimeSeriesOutput::TimeSeriesOutput;
 
-        [[nodiscard]] nb::object py_value() const override { return valid() ? nb::cast(_value) : nb::none(); }
+        [[nodiscard]] nb::object py_value() const override;
 
-        [[nodiscard]] nb::object py_delta_value() const override { return py_value(); }
+        [[nodiscard]] nb::object py_delta_value() const override;
 
         void py_set_value(nb::object value) override;
 
-        void apply_result(nb::object value) override {
-            if (!value.is_valid() || value.is_none()) { return; }
-            py_set_value(value);
-        }
+        void apply_result(nb::object value) override;
 
         const T &value() const { return _value; }
 
-        void set_value(const T &value) {
-            _value = value;
-            mark_modified();
-        }
+        void set_value(const T &value);
 
-        void set_value(T &&value) {
-            _value = std::move(value);
-            mark_modified();
-        }
+        void set_value(T &&value);
 
-        void invalidate() override { mark_invalid(); }
+        void mark_invalid() override;
 
-        void copy_from_output(const TimeSeriesOutput &output) override {
-            auto &output_t = dynamic_cast<const TimeSeriesValueOutput<T> &>(output);
-            set_value(output_t._value);
-        }
+        void copy_from_output(const TimeSeriesOutput &output) override;
 
         void copy_from_input(const TimeSeriesInput &input) override;
 
-        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
-            return dynamic_cast<const TimeSeriesValueOutput<T> *>(other) != nullptr;
-        }
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override;
 
       private:
         T _value{};
@@ -57,32 +44,18 @@ namespace hgraph
 
     template <typename T> struct TimeSeriesValueInput : TimeSeriesInput
     {
+        using value_type = T;
+        using ptr        = nb::ref<TimeSeriesValueInput<T>>;
+
         using TimeSeriesInput::TimeSeriesInput;
 
-        [[nodiscard]] TimeSeriesValueOutput<T>       &value_output() { return dynamic_cast<TimeSeriesValueOutput<T> &>(*output()); }
-        [[nodiscard]] const TimeSeriesValueOutput<T> &value_output() const {
-            return dynamic_cast<TimeSeriesValueOutput<T> &>(*output());
-        }
+        [[nodiscard]] TimeSeriesValueOutput<T>       &value_output();
+        [[nodiscard]] const TimeSeriesValueOutput<T> &value_output() const;
 
-        [[nodiscard]] const T &value() const { return value_output().value(); }
+        [[nodiscard]] const T &value() const;
 
-        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
-            return dynamic_cast<const TimeSeriesValueInput<T> *>(other) != nullptr;
-        }
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override;
     };
-
-    template <typename T> void TimeSeriesValueOutput<T>::py_set_value(nb::object value) {
-        if (value.is_none()) {
-            invalidate();
-            return;
-        }
-        set_value(nb::cast<T>(value));
-    }
-
-    template <typename T> void TimeSeriesValueOutput<T>::copy_from_input(const TimeSeriesInput &input) {
-        const auto &input_t = dynamic_cast<const TimeSeriesValueInput<T> &>(input);
-        set_value(input_t.value());
-    }
 
     void register_ts_with_nanobind(nb::module_ &m);
 }  // namespace hgraph
