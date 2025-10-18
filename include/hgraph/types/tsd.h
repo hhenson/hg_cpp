@@ -212,6 +212,7 @@ namespace hgraph
 
       protected:
         void            _post_modify();
+        void            _dispose();
         void            clear_on_end_of_evaluation_cycle();
         void            _create(const key_type &key);
         const key_type &key_from_value(TimeSeriesOutput *value) const;
@@ -233,6 +234,7 @@ namespace hgraph
 
         FeatureOutputExtension<key_type>        _ref_ts_feature;
         std::vector<TSDKeyObserver<key_type> *> _key_observers;
+        engine_time_t                            _last_cleanup_time{MIN_DT};
     };
 
     template <typename T_Key> struct TimeSeriesDictInput_T : TimeSeriesDictInput, TSDKeyObserver<T_Key>
@@ -340,7 +342,7 @@ namespace hgraph
       protected:
         void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
         bool do_bind_output(time_series_output_ptr value) override;
-        void do_un_bind_output() override;
+        void do_un_bind_output(bool unbind_refs = false) override;
 
         [[nodiscard]] TimeSeriesSetInput_T<key_type>         &key_set_t();
         [[nodiscard]] const TimeSeriesSetInput_T<key_type>   &key_set_t() const;

@@ -150,8 +150,8 @@ namespace hgraph
         return peer;
     }
 
-    void IndexedTimeSeriesInput::do_un_bind_output() {
-        for (auto &ts : ts_values()) { ts->un_bind_output(); }
-        if (has_peer()) { TimeSeriesInput::do_un_bind_output(); }
+    void IndexedTimeSeriesInput::do_un_bind_output(bool unbind_refs) {
+        for (auto &ts : ts_values()) { ts->un_bind_output(unbind_refs); }
+        if (has_peer()) { TimeSeriesInput::do_un_bind_output(unbind_refs); }
     }
 }  // namespace hgraph

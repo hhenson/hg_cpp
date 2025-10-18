@@ -92,11 +92,16 @@ namespace hgraph
 
         void apply_result(nb::object value) override;
 
+        bool can_apply_result(nb::object value) override;
+
         // Registers an input as observing the reference value
         void observe_reference(TimeSeriesInput::ptr input_);
 
         // Unregisters an input as observing the reference value
         void stop_observing_reference(TimeSeriesInput::ptr input_);
+
+        // Clears the reference by setting it to an empty reference
+        void clear() override;
 
         [[nodiscard]] nb::object py_value() const override;
 
@@ -141,12 +146,13 @@ namespace hgraph
         // Duplicate binding of another input
         void clone_binding(const TimeSeriesReferenceInput &other);
 
+        [[nodiscard]] bool          bound() const override;
         [[nodiscard]] bool          modified() const override;
         [[nodiscard]] bool          valid() const override;
         [[nodiscard]] bool          all_valid() const override;
         [[nodiscard]] engine_time_t last_modified_time() const override;
         bool                        bind_output(time_series_output_ptr value) override;
-        void                        un_bind_output() override;
+        void                        un_bind_output(bool unbind_refs = false) override;
         void                        make_active() override;
         void                        make_passive() override;
 
@@ -159,7 +165,7 @@ namespace hgraph
 
       protected:
         bool do_bind_output(time_series_output_ptr output_) override;
-        void do_un_bind_output() override;
+        void do_un_bind_output(bool unbind_refs = false) override;
 
         TimeSeriesReferenceOutput *as_reference_output() const;
         TimeSeriesReferenceOutput *as_reference_output();

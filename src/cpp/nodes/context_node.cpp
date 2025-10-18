@@ -92,7 +92,9 @@ namespace hgraph
         // Case 1: direct TimeSeriesReferenceOutput stored in GlobalState
         if (shared.type().is(nb::type<TimeSeriesReferenceOutput>())) {
             output_ts = nb::cast<time_series_reference_output_ptr>(shared);
-            value_ref = output_ts->value();
+            if (output_ts->valid()) {
+                value_ref = output_ts->value();
+            }
         }
         // Case 2: TimeSeriesReferenceInput stored in GlobalState
         else if (shared.type().is(nb::type<TimeSeriesReferenceInput>())) {

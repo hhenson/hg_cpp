@@ -34,7 +34,7 @@ namespace hgraph
         // Override to propagate to children
         void make_active() override;
         void make_passive() override;
-        void do_un_bind_output() override;
+        void do_un_bind_output(bool unbind_refs = false) override;
 
         static void register_with_nanobind(nb::module_ &m);
 

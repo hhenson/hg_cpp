@@ -184,7 +184,10 @@ namespace hgraph
         using ptr = nb::ref<TimeSeriesBundleOutput>;
         using bundle_type::TimeSeriesBundle;
 
+        void set_py_value(nb::object value);
+        void mark_invalid() override;
         void apply_result(nb::object value) override;
+        [[nodiscard]] bool can_apply_result(nb::object value) override;
 
         [[nodiscard]] bool is_same_type(TimeSeriesType &other) const override {
             auto other_b = dynamic_cast<TimeSeriesBundleOutput *>(&other);

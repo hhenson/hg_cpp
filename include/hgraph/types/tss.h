@@ -165,7 +165,7 @@ namespace hgraph
         TimeSeriesSetOutput &set_output() const;
 
         bool do_bind_output(TimeSeriesOutput::ptr output) override;
-        void do_un_bind_output() override;
+        void do_un_bind_output(bool unbind_refs = false) override;
 
         [[nodiscard]] const nb::object py_added() const override;
         [[nodiscard]] bool             py_was_added(const nb::object &item) const override;
@@ -199,6 +199,7 @@ namespace hgraph
         [[nodiscard]] const collection_type &value() const { return _value; }
 
         [[nodiscard]] nb::object             py_delta_value() const override;
+        [[nodiscard]] bool                   can_apply_result(nb::object value) override;
         void                                 apply_result(nb::object value) override;
         void                                 clear() override;
         void                                 copy_from_output(const TimeSeriesOutput &output) override;

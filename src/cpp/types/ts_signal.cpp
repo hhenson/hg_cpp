@@ -61,10 +61,10 @@ namespace hgraph
         }
     }
 
-    void TimeSeriesSignalInput::do_un_bind_output() {
+    void TimeSeriesSignalInput::do_un_bind_output(bool unbind_refs) {
         if (!_ts_values.empty()) {
             for (auto &item : _ts_values) {
-                item->un_bind_output();
+                item->un_bind_output(unbind_refs);
             }
         }
     }

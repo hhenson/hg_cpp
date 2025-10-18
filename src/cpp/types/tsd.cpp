@@ -140,6 +140,14 @@ namespace hgraph
         if (!was_added) { _removed_values.emplace(key, item); }
 
         _ref_ts_feature.update(key);
+
+        // Schedule cleanup notification only once per evaluation cycle
+        auto et = owning_graph().evaluation_clock().evaluation_time();
+        if (_last_cleanup_time < et) {
+            _last_cleanup_time = et;
+            owning_graph().evaluation_engine_api().add_after_evaluation_notification(
+                [this]() { clear_on_end_of_evaluation_cycle(); });
+        }
     }
 
     template <typename T_Key>
@@ -487,9 +495,27 @@ namespace hgraph
         _ref_ts_feature.release(key, requester);
     }
 
-    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::clear_on_end_of_evaluation_cycle() {
-        _added_items.clear();
+    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_dispose() {
+        // Release all removed items first
+        for (auto &[_, value] : _removed_values) {
+            _ts_builder->release_instance(value);
+        }
         _removed_values.clear();
+
+        // Release all current values
+        for (auto &[_, value] : _ts_values) {
+            _ts_builder->release_instance(value);
+        }
+        _ts_values.clear();
+    }
+
+    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::clear_on_end_of_evaluation_cycle() {
+        // Release removed instances before clearing
+        for (auto &[_, value] : _removed_values) {
+            _ts_builder->release_instance(value);
+        }
+        _removed_values.clear();
+        _added_items.clear();
     }
 
     template <typename T_Key> TimeSeriesOutput &TimeSeriesDictOutput_T<T_Key>::_get_or_create(const key_type &key) {
@@ -750,29 +776,38 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::on_key_added(const key_type &key) {
         auto value{get_or_create(key)};
-        if (!has_peer() && active()) { value->make_active(); }
+        // Activate if: (not peered AND this is active) OR value is already active (transplanted input case)
+        // v.active can be true if this was a transplanted input
+        if ((!has_peer() && active()) || value->active()) {
+            value->make_active();
+        }
         value->bind_output(&output_t()[key]);
     }
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::on_key_removed(const key_type &key) {
-        // NOTE: We were tracking the valid state on the removed item. Now we just track the value
+        // Pop the value from _ts_values first (matching Python: self._ts_values.pop(key, None))
         auto it = _ts_values.find(key);
         if (it == _ts_values.end()) { return; }
 
-        register_clear_key_changes();
         auto value{it->second};
+        _ts_values.erase(it);  // Remove from _ts_values first
+        _ts_values_to_key.erase(value.get());  // Remove from reverse map
+
+        register_clear_key_changes();
         auto was_valid = value->valid();
 
         if (value->parent_input().get() == this) {
+            // This is our own input - deactivate and track for cleanup
             if (value->active()) { value->make_passive(); }
             _removed_values.insert({key, {value, was_valid}});
             auto it_{_modified_items.find(key)};
             if (it_ != _modified_items.end()) { _modified_items.erase(it_); }
             if (!has_peer()) { value->un_bind_output(); }
         } else {
+            // This is a transplanted input - put it back and unbind it
             _ts_values.insert({key, value});
             _ts_values_to_key.insert({value.get(), key});
-            value->un_bind_output();
+            value->un_bind_output(true);  // unbind_refs=True
         }
     }
 
@@ -797,8 +832,6 @@ namespace hgraph
             key_set_t().set_subscribe_method(this->subscribe_input());
         }
 
-        _has_peer = peer;
-
         key_set_t().bind_output(&output_->key_set_t());
 
         if (owning_node().is_started() && has_output()) {
@@ -807,6 +840,16 @@ namespace hgraph
             owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { this->reset_prev(); });
         }
 
+        // This is a copy of the base implementation, however caters for peerage changes
+        // Critical: make_passive() BEFORE changing _has_peer, because make_passive behavior depends on has_peer
+        make_passive();  // Ensure we are unsubscribed from the old output while has_peer has the old value
+
+        // Now update has_peer BEFORE calling base bind, so make_active uses the correct mode
+        _has_peer = peer;
+
+        // Call base implementation which will set _output and call make_active if needed
+        // Note: Base calls make_passive first, but we already did that above with the OLD has_peer
+        // Base then sets _output and calls make_active with the NEW has_peer (which we just set)
         TimeSeriesInput::do_bind_output(value);
 
         if (!_ts_values.empty()) { register_clear_key_changes(); }
@@ -819,8 +862,8 @@ namespace hgraph
         return peer;
     }
 
-    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::do_un_bind_output() {
-        key_set_t().un_bind_output();
+    template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::do_un_bind_output(bool unbind_refs) {
+        key_set_t().un_bind_output(unbind_refs);
 
         if (!_ts_values.empty()) {
             _removed_values.clear();
@@ -883,6 +926,30 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::clear_key_changes() {
         _clear_key_changes_registered = false;
+
+        // Guard against cleared node (matches Python: if self.owning_node is None)
+        if (!has_parent_or_node()) {
+            return;
+        }
+
+        // Release instances with deferred callback to ensure cleanup happens after all processing
+        // This matches Python: add_after_evaluation_notification(lambda b=self._ts_builder, i=v[0]: b.release_instance(i))
+        for (const auto &key : key_set_t().removed()) {
+            auto it = _removed_values.find(key);
+            if (it != _removed_values.end()) {
+                auto &[value, was_valid] = it->second;
+                // Capture by value to ensure the lambda has valid references
+                auto builder = _ts_builder;
+                auto instance = value;
+                owning_graph().evaluation_engine_api().add_after_evaluation_notification(
+                    [builder, instance]() {
+                        builder->release_instance(instance);
+                    }
+                );
+                value->un_bind_output(true);  // unbind_refs=True
+            }
+        }
+
         _removed_values.clear();
     }
 
@@ -920,6 +987,14 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::make_active() {
         if (has_peer()) {
             TimeSeriesDictInput::make_active();
+            // Reactivate transplanted inputs that might have been deactivated in make_passive()
+            // This is an approximate solution but at this point the information about active state is lost
+            for (auto &[_, value] : _ts_values) {
+                // Check if this input was transplanted from another parent
+                if (value->parent_input().get() != this) {
+                    value->make_active();
+                }
+            }
         } else {
             set_active(true);
             key_set().make_active();
@@ -983,6 +1058,14 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_create(const key_type &key) {
         auto value = _ts_builder->make_instance(this);
         add_added_item(key, value);
+
+        // Schedule cleanup notification only once per evaluation cycle
+        auto et = owning_graph().evaluation_clock().evaluation_time();
+        if (_last_cleanup_time < et) {
+            _last_cleanup_time = et;
+            owning_graph().evaluation_engine_api().add_after_evaluation_notification(
+                [this]() { clear_on_end_of_evaluation_cycle(); });
+        }
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::add_key_observer(TSDKeyObserver<key_type> *observer) {

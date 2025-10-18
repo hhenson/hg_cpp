@@ -78,7 +78,9 @@ namespace hgraph
                              resR.erase(x);
                              resA.insert(x);
                          }
-                         for (const auto &x : R2) { resR.insert(x); }
+                         for (const auto &x : R2) {
+                             if (A1.find(x) == A1.end()) resR.insert(x);
+                         }
                          return make_set_delta<bool>(std::move(resA), std::move(resR));
                      }
                      if (auto *a = dynamic_cast<SetDeltaImpl<double> *>(&self)) {
@@ -97,7 +99,9 @@ namespace hgraph
                              resR.erase(x);
                              resA.insert(x);
                          }
-                         for (const auto &x : R2) { resR.insert(x); }
+                         for (const auto &x : R2) {
+                             if (A1.find(x) == A1.end()) resR.insert(x);
+                         }
                          return make_set_delta<double>(std::move(resA), std::move(resR));
                      }
                      if (auto *a = dynamic_cast<SetDeltaImpl<engine_date_t> *>(&self)) {
@@ -116,7 +120,9 @@ namespace hgraph
                              resR.erase(x);
                              resA.insert(x);
                          }
-                         for (const auto &x : R2) { resR.insert(x); }
+                         for (const auto &x : R2) {
+                             if (A1.find(x) == A1.end()) resR.insert(x);
+                         }
                          return make_set_delta<engine_date_t>(std::move(resA), std::move(resR));
                      }
                      if (auto *a = dynamic_cast<SetDeltaImpl<engine_time_t> *>(&self)) {
@@ -135,7 +141,9 @@ namespace hgraph
                              resR.erase(x);
                              resA.insert(x);
                          }
-                         for (const auto &x : R2) { resR.insert(x); }
+                         for (const auto &x : R2) {
+                             if (A1.find(x) == A1.end()) resR.insert(x);
+                         }
                          return make_set_delta<engine_time_t>(std::move(resA), std::move(resR));
                      }
                      if (auto *a = dynamic_cast<SetDeltaImpl<engine_time_delta_t> *>(&self)) {
@@ -154,7 +162,9 @@ namespace hgraph
                              resR.erase(x);
                              resA.insert(x);
                          }
-                         for (const auto &x : R2) { resR.insert(x); }
+                         for (const auto &x : R2) {
+                             if (A1.find(x) == A1.end()) resR.insert(x);
+                         }
                          return make_set_delta<engine_time_delta_t>(std::move(resA), std::move(resR));
                      }
                      // Fallback: object type composition using Python set operations
@@ -165,15 +175,17 @@ namespace hgraph
                          nb::object R1 = a_obj->py_removed();
                          nb::object A2 = b_obj->py_added();
                          nb::object R2 = b_obj->py_removed();
-                         // resA = (set(A1) - set(R2)) | set(A2)
+                         // Python: added = (self.added - other.removed) | other.added
+                         // resA = (A1 - R2) | A2
                          nb::object py_set = nb::module_::import_("builtins").attr("set");
                          nb::object setA1  = py_set(A1);
                          nb::object setR2  = py_set(R2);
                          nb::object setA2  = py_set(A2);
                          nb::object setR1  = py_set(R1);
                          nb::object resA   = setA1.attr("difference")(setR2).attr("union")(setA2);
-                         // resR = (set(R1) - set(A2)) | set(R2)
-                         nb::object resR       = setR1.attr("difference")(setA2).attr("union")(setR2);
+                         // Python: removed = (other.removed - self.added) | (self.removed - other.added)
+                         // resR = (R2 - A1) | (R1 - A2)
+                         nb::object resR       = setR2.attr("difference")(setA1).attr("union")(setR1.attr("difference")(setA2));
                          nb::object frozenset_ = nb::module_::import_("builtins").attr("frozenset");
                          nb::object resA_f     = frozenset_(resA);
                          nb::object resR_f     = frozenset_(resR);
@@ -200,7 +212,9 @@ namespace hgraph
                         resR.erase(x);
                         resA.insert(x);
                     }
-                    for (const auto &x : R2) { resR.insert(x); }
+                    for (const auto &x : R2) {
+                        if (A1.find(x) == A1.end()) resR.insert(x);
+                    }
                     return make_set_delta<int64_t>(std::move(resA), std::move(resR));
                 }
                 if (auto *a = dynamic_cast<const SetDeltaImpl<bool> *>(&other)) {
@@ -219,7 +233,9 @@ namespace hgraph
                         resR.erase(x);
                         resA.insert(x);
                     }
-                    for (const auto &x : R2) { resR.insert(x); }
+                    for (const auto &x : R2) {
+                        if (A1.find(x) == A1.end()) resR.insert(x);
+                    }
                     return make_set_delta<bool>(std::move(resA), std::move(resR));
                 }
                 if (auto *a = dynamic_cast<const SetDeltaImpl<double> *>(&other)) {
@@ -238,7 +254,9 @@ namespace hgraph
                         resR.erase(x);
                         resA.insert(x);
                     }
-                    for (const auto &x : R2) { resR.insert(x); }
+                    for (const auto &x : R2) {
+                        if (A1.find(x) == A1.end()) resR.insert(x);
+                    }
                     return make_set_delta<double>(std::move(resA), std::move(resR));
                 }
                 if (auto *a = dynamic_cast<const SetDeltaImpl<engine_date_t> *>(&other)) {
@@ -257,7 +275,9 @@ namespace hgraph
                         resR.erase(x);
                         resA.insert(x);
                     }
-                    for (const auto &x : R2) { resR.insert(x); }
+                    for (const auto &x : R2) {
+                        if (A1.find(x) == A1.end()) resR.insert(x);
+                    }
                     return make_set_delta<engine_date_t>(std::move(resA), std::move(resR));
                 }
                 if (auto *a = dynamic_cast<const SetDeltaImpl<engine_time_t> *>(&other)) {
@@ -276,7 +296,9 @@ namespace hgraph
                         resR.erase(x);
                         resA.insert(x);
                     }
-                    for (const auto &x : R2) { resR.insert(x); }
+                    for (const auto &x : R2) {
+                        if (A1.find(x) == A1.end()) resR.insert(x);
+                    }
                     return make_set_delta<engine_time_t>(std::move(resA), std::move(resR));
                 }
                 if (auto *a = dynamic_cast<const SetDeltaImpl<engine_time_delta_t> *>(&other)) {
@@ -295,7 +317,9 @@ namespace hgraph
                         resR.erase(x);
                         resA.insert(x);
                     }
-                    for (const auto &x : R2) { resR.insert(x); }
+                    for (const auto &x : R2) {
+                        if (A1.find(x) == A1.end()) resR.insert(x);
+                    }
                     return make_set_delta<engine_time_delta_t>(std::move(resA), std::move(resR));
                 }
                 // Fallback: object type composition using Python set operations
@@ -306,13 +330,17 @@ namespace hgraph
                     nb::object R1         = a_obj->py_removed();
                     nb::object A2         = b_obj->py_added();
                     nb::object R2         = b_obj->py_removed();
+                    // Python: added = (self.added - other.removed) | other.added
+                    // For __radd__ (other + self): resA = (A1 - R2) | A2
                     nb::object py_set     = nb::module_::import_("builtins").attr("set");
                     nb::object setA1      = py_set(A1);
                     nb::object setR2      = py_set(R2);
                     nb::object setA2      = py_set(A2);
                     nb::object setR1      = py_set(R1);
                     nb::object resA       = setA1.attr("difference")(setR2).attr("union")(setA2);
-                    nb::object resR       = setR1.attr("difference")(setA2).attr("union")(setR2);
+                    // Python: removed = (other.removed - self.added) | (self.removed - other.added)
+                    // For __radd__ (other + self): resR = (R2 - A1) | (R1 - A2)
+                    nb::object resR       = setR2.attr("difference")(setA1).attr("union")(setR1.attr("difference")(setA2));
                     nb::object frozenset_ = nb::module_::import_("builtins").attr("frozenset");
                     nb::object resA_f     = frozenset_(resA);
                     nb::object resR_f     = frozenset_(resR);
@@ -420,6 +448,10 @@ namespace hgraph
         }
     }
 
+    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::can_apply_result(nb::object value) {
+        return !modified();
+    }
+
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::apply_result(nb::object value) {
         if (value.is_none()) { return; }
         _py_value = nb::none();
@@ -469,6 +501,7 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_add(const element_type &item) {
         _value.emplace(item);
         _added.emplace(item);
+        _removed.erase(item);
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_remove(const element_type &item) {
@@ -658,6 +691,12 @@ namespace hgraph
             }
 
             _value.erase(key);
+            _contains_ref_outputs.update(key);
+
+            if (empty()) {
+                _is_empty_ref_output->set_value(true);
+            }
+
             mark_modified();
         }
     }
@@ -669,8 +708,14 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::add(const element_type &key) {
         if (!contains(key)) {
+            if (empty()) {
+                _is_empty_ref_output->set_value(false);
+            }
+
             _add(key);
-            _post_modify();  // Notify contains outputs and mark as modified
+            _contains_ref_outputs.update(key);
+
+            mark_modified();
         }
     }
 
@@ -757,12 +802,12 @@ namespace hgraph
         return TimeSeriesInput::do_bind_output(output);
     }
 
-    void TimeSeriesSetInput::do_un_bind_output() {
+    void TimeSeriesSetInput::do_un_bind_output(bool unbind_refs) {
         if (has_output()) {
             _prev_output = &set_output();
             owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { reset_prev(); });
         }
-        TimeSeriesInput::do_un_bind_output();
+        TimeSeriesInput::do_un_bind_output(unbind_refs);
     }
 
     nb::object SetDelta_Object::py_added() const { return _added; }

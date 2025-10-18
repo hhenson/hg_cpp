@@ -31,6 +31,68 @@ namespace hgraph
         ;
     }
 
+    void TimeSeriesBundleOutput::set_py_value(nb::object v) {
+        // Python implementation:
+        // if v is None: self.invalidate()
+        // else if isinstance(v, scalar_type): set each attribute
+        // else: iterate dict and set values
+        if (v.is_none()) {
+            invalidate();
+        } else {
+            if (!schema().scalar_type().is_none() && nb::isinstance(v, schema().scalar_type())) {
+                // Scalar type: iterate schema keys and get attributes
+                for (const auto &key : schema().keys()) {
+                    auto attr = nb::getattr(v, key.c_str(), nb::none());
+                    if (!attr.is_none()) {
+                        (*this)[key]->apply_result(attr);
+                    }
+                }
+            } else {
+                // Dict-like: iterate items
+                for (auto [key, val] : nb::cast<nb::dict>(v)) {
+                    if (!val.is_none()) {
+                        (*this)[nb::cast<std::string>(key)]->apply_result(nb::borrow(val));
+                    }
+                }
+            }
+        }
+    }
+
+    void TimeSeriesBundleOutput::mark_invalid() {
+        // Python: super().mark_invalid() then children mark_invalid()
+        if (valid()) {
+            TimeSeriesOutput::mark_invalid();  // Call parent FIRST
+            for (auto &v : ts_values()) {
+                v->mark_invalid();
+            }
+        }
+    }
+
+    bool TimeSeriesBundleOutput::can_apply_result(nb::object result) {
+        // Python implementation:
+        // if result is None: return True
+        // if type(result) is scalar_type: return self.modified
+        // else: check each child can_apply_result
+        if (result.is_none()) {
+            return true;
+        }
+
+        if (!schema().scalar_type().is_none() && nb::isinstance(result, schema().scalar_type())) {
+            // If it's a scalar type, we can apply if this bundle is modified
+            return modified();
+        } else {
+            // For dict-like results, check each child
+            for (auto [key, val] : nb::cast<nb::dict>(result)) {
+                if (!val.is_none()) {
+                    if (!(*this)[nb::cast<std::string>(key)]->can_apply_result(nb::borrow(val))) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
     void TimeSeriesBundleOutput::apply_result(nb::object value) {
         if (value.is_none()) { return; }
         // Check if value is an instance of the scalar type (not just identity check)
@@ -82,7 +144,10 @@ namespace hgraph
 
         nb::class_<TimeSeriesBundleOutput, IndexedTimeSeriesOutput>(m, "TimeSeriesBundleOutput")
             .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
-            .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a);
+            .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a)
+            .def_prop_rw("value",
+                         [](const TimeSeriesBundleOutput &self) -> nb::object { return self.py_value(); },
+                         &TimeSeriesBundleOutput::set_py_value);
     }
 
     void TimeSeriesBundleInput::register_with_nanobind(nb::module_ &m) {

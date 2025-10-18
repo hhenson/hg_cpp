@@ -147,7 +147,7 @@ namespace hgraph
 
       protected:
         bool do_bind_output(time_series_output_ptr value) override;
-        void do_un_bind_output() override;
+        void do_un_bind_output(bool unbind_refs = false) override;
     };
 
     template <typename T_TS>

@@ -8,9 +8,37 @@
 
 namespace hgraph
 {
-    void TimeSeriesType::re_parent(Node::ptr parent) { _parent_ts_or_node = std::move(parent); }
+    void TimeSeriesType::re_parent(Node::ptr parent) {
+        // For TimeSeriesInput, we need to handle active state management
+        if (auto input = dynamic_cast<TimeSeriesInput*>(this)) {
+            bool was_active = input->active();
+            if (was_active) {
+                input->make_passive();
+            }
+            _parent_ts_or_node = std::move(parent);
+            if (was_active) {
+                input->make_active();
+            }
+        } else {
+            _parent_ts_or_node = std::move(parent);
+        }
+    }
 
-    void TimeSeriesType::re_parent(ptr parent) { _parent_ts_or_node = std::move(parent); }
+    void TimeSeriesType::re_parent(ptr parent) {
+        // For TimeSeriesInput, we need to handle active state management
+        if (auto input = dynamic_cast<TimeSeriesInput*>(this)) {
+            bool was_active = input->active();
+            if (was_active) {
+                input->make_passive();
+            }
+            _parent_ts_or_node = std::move(parent);
+            if (was_active) {
+                input->make_active();
+            }
+        } else {
+            _parent_ts_or_node = std::move(parent);
+        }
+    }
 
     bool TimeSeriesType::is_reference() const { return false; }
 
@@ -141,7 +169,10 @@ namespace hgraph
         bool was_bound = bound();  // Track if input was previously bound (matches Python behavior)
 
         if (auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(output_.get())) {  // Is a TimeseriesReferenceOutput
-            if (ref_output->valid() && ref_output->value()) { ref_output->value()->bind_input(*this); }
+            // Match Python behavior: only check if value exists (truthy), bind if it does
+            if (ref_output->valid() && ref_output->value()) {
+                ref_output->value()->bind_input(*this);
+            }
             ref_output->observe_reference(this);
             _reference_output = ref_output;
             peer              = false;
@@ -165,20 +196,24 @@ namespace hgraph
         return peer;
     }
 
-    void TimeSeriesInput::un_bind_output() {
-        if (not bound()) { return; }
+    void TimeSeriesInput::un_bind_output(bool unbind_refs) {
         bool was_valid = valid();
-        if (auto ref_output = dynamic_cast<TimeSeriesReferenceOutput *>(_output.get())) {
-            ref_output->stop_observing_reference(this);
+
+        // Handle reference output unbinding conditionally based on unbind_refs parameter
+        if (unbind_refs && _reference_output) {
+            _reference_output->stop_observing_reference(this);
             _reference_output.reset();
         }
-        do_un_bind_output();
 
-        if (owning_node().is_started() && was_valid) {
-            _sample_time = owning_graph().evaluation_clock().evaluation_time();
-            if (active()) {
-                // Notify as the state of the node has changed from bound to un_bound
-                owning_node().notify(_sample_time);
+        if (bound()) {
+            do_un_bind_output(unbind_refs);
+
+            if (owning_node().is_started() && was_valid) {
+                _sample_time = owning_graph().evaluation_clock().evaluation_time();
+                if (active()) {
+                    // Notify as the state of the node has changed from bound to un_bound
+                    owning_node().notify(_sample_time);
+                }
             }
         }
     }
@@ -236,7 +271,7 @@ namespace hgraph
             .def_prop_ro("reference_output", &TimeSeriesInput::reference_output)
             .def_prop_ro("active", &TimeSeriesInput::active)
             .def("bind_output", &TimeSeriesInput::bind_output, "output"_a)
-            .def("un_bind_output", &TimeSeriesInput::un_bind_output)
+            .def("un_bind_output", &TimeSeriesInput::un_bind_output, "unbind_refs"_a = false)
             .def("make_active", &TimeSeriesInput::make_active)
             .def("make_passive", &TimeSeriesInput::make_passive);
     }
@@ -264,7 +299,7 @@ namespace hgraph
         }
     }
 
-    void TimeSeriesInput::do_un_bind_output() {
+    void TimeSeriesInput::do_un_bind_output(bool unbind_refs) {
         if (_active) {
             output()->un_subscribe(subscribe_input() ? static_cast<Notifiable *>(this) : static_cast<Notifiable *>(&owning_node()));
         }

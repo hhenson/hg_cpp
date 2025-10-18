@@ -188,7 +188,7 @@ namespace hgraph
         virtual bool bind_output(time_series_output_ptr output_);
 
         // FOR LIBRARY USE ONLY. Unbinds the output from this input.
-        virtual void un_bind_output();
+        virtual void un_bind_output(bool unbind_refs = false);
 
         // An active input will cause the node it is associated with to be scheduled when the value
         // the input represents is modified. Returns True if this input is active.
@@ -216,7 +216,7 @@ namespace hgraph
         virtual bool do_bind_output(time_series_output_ptr output_);
 
         // Derived classes override this to implement specific behaviours
-        virtual void do_un_bind_output();
+        virtual void do_un_bind_output(bool unbind_refs = false);
 
         void notify(engine_time_t modified_time) override;
 
