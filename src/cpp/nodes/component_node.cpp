@@ -43,19 +43,19 @@ namespace hgraph
     }
 
     void ComponentNode::do_start() {
-        if (m_active_graph_) {
+        if (m_active_graph_ != nullptr) {
             start_component(*m_active_graph_);
         }
     }
 
     void ComponentNode::do_stop() {
-        if (m_active_graph_) {
+        if (m_active_graph_ != nullptr) {
             stop_component(*m_active_graph_);
         }
     }
 
     void ComponentNode::dispose() {
-        if (m_active_graph_) {
+        if (m_active_graph_ != nullptr) {
             dispose_component(*m_active_graph_);
             m_active_graph_ = nullptr;
         }

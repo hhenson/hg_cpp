@@ -49,7 +49,7 @@ namespace hgraph
           default_input_node_ids_(default_input_node_ids), default_output_node_id_(default_output_node_id) {
         // For nb::object template, extract DEFAULT from nested_graph_builders if not provided separately
         if constexpr (std::is_same_v<K, nb::object>) {
-            if (!default_graph_builder_) {
+            if (default_graph_builder_ == nullptr) {
                 auto default_marker = get_python_default();
                 if (default_marker.is_valid()) {
                     auto it = nested_graph_builders_.find(default_marker);
@@ -83,18 +83,18 @@ namespace hgraph
     }
 
     template <typename K> void SwitchNode<K>::do_stop() {
-        if (active_graph_) { stop_component(*active_graph_); }
+        if (active_graph_ != nullptr) { stop_component(*active_graph_); }
     }
 
     template <typename K> void SwitchNode<K>::dispose() {
-        if (active_graph_) {
+        if (active_graph_ != nullptr) {
             dispose_component(*active_graph_);
             // Release the graph back to the builder pool
             if (active_key_.has_value()) {
                 auto it = nested_graph_builders_.find(active_key_.value());
                 if (it != nested_graph_builders_.end()) {
                     it->second->release_instance(active_graph_);
-                } else if (default_graph_builder_) {
+                } else if (default_graph_builder_ != nullptr) {
                     default_graph_builder_->release_instance(active_graph_);
                 }
             }
@@ -132,7 +132,7 @@ namespace hgraph
                             auto it = builders.find(old_key);
                             if (it != builders.end()) {
                                 it->second->release_instance(graph_to_dispose);
-                            } else if (default_builder) {
+                            } else if (default_builder != nullptr) {
                                 default_builder->release_instance(graph_to_dispose);
                             }
                         });
@@ -149,7 +149,7 @@ namespace hgraph
                     builder = default_graph_builder_;
                 }
 
-                if (!builder) { throw std::runtime_error("No graph defined for key and no default available"); }
+                if (builder == nullptr) { throw std::runtime_error("No graph defined for key and no default available"); }
 
                 // Create new graph
                 ++count_;
@@ -169,13 +169,13 @@ namespace hgraph
         }
 
         // Evaluate the active graph if it exists
-        if (active_graph_) {
+        if (active_graph_ != nullptr) {
             static_cast<NestedEngineEvaluationClock &>(
                 active_graph_->evaluation_engine_clock())  // NOLINT(*-pro-type-static-cast-downcast)
                 .reset_next_scheduled_evaluation_time();
             active_graph_->evaluate_graph();
             // Reset output to None if graph was switched and output wasn't modified
-            if (graph_reset_ && output_ptr() && !output_ptr()->modified()) {
+            if (graph_reset_ && output_ptr() != nullptr && !output_ptr()->modified()) {
                 output_ptr()->invalidate();
             }
             static_cast<NestedEngineEvaluationClock &>(
@@ -253,7 +253,7 @@ namespace hgraph
     }
 
     template <typename K> void SwitchNode<K>::unwire_graph(graph_ptr &graph) {
-        if (old_output_) {
+        if (old_output_ != nullptr) {
             // Find the output node ID, using default if specific key not found
             K graph_key = active_key_.value();
             auto output_id_it = output_node_ids_.find(graph_key);
@@ -274,7 +274,7 @@ namespace hgraph
     }
 
     template <typename K> std::unordered_map<int, graph_ptr> SwitchNode<K>::nested_graphs() const {
-        if (active_graph_) { return {{static_cast<int>(count_), active_graph_}}; }
+        if (active_graph_ != nullptr) { return {{static_cast<int>(count_), active_graph_}}; }
         return {};
     }
 

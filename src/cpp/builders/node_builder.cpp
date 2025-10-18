@@ -525,22 +525,22 @@ namespace hgraph
     }
 
     void BaseNodeBuilder::_build_inputs_and_outputs(node_ptr node) const {
-        if (input_builder) {
+        if (input_builder.has_value()) {
             auto ts_input = (*input_builder)->make_instance(node);
             node->set_input(dynamic_cast_ref<TimeSeriesBundleInput>(ts_input));
         }
 
-        if (output_builder) {
+        if (output_builder.has_value()) {
             auto ts_output = (*output_builder)->make_instance(node);
             node->set_output(ts_output);
         }
 
-        if (error_builder) {
+        if (error_builder.has_value()) {
             auto ts_error_output = (*error_builder)->make_instance(node);
             node->set_error_output(ts_error_output);
         }
 
-        if (recordable_state_builder) {
+        if (recordable_state_builder.has_value()) {
             auto ts_recordable_state = (*recordable_state_builder)->make_instance(node);
             node->set_recordable_state(dynamic_cast_ref<TimeSeriesBundleOutput>(ts_recordable_state));
         }
