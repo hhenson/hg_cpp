@@ -328,6 +328,31 @@ def _service_impl_nested_graph_builder(*, signature, scalars, input_builder, out
 
 
 hgraph._wiring._wiring_node_class._service_impl_node_class.ServiceImplNodeClass.BUILDER_CLASS = _service_impl_nested_graph_builder
+# Adaptor implementation nodes use the same nested-graph builder pattern
+from hgraph._wiring._wiring_node_class import _adaptor_impl_node_class as _ai
+from hgraph._wiring._wiring_node_class import _service_adaptor_impl_node_class as _sai
+from hgraph._wiring._wiring_node_class import _python_wiring_node_classes as _pwc
+
+_ai.AdaptorImplNodeClass.BUILDER_CLASS = _service_impl_nested_graph_builder
+_sai.ServiceAdaptorImplNodeClass.BUILDER_CLASS = _service_impl_nested_graph_builder
+
+# Python push-queue nodes should use the C++ PythonNodeBuilder via a thin adapter to fill defaults
+
+def _create_python_push_queue_builder(*, signature, scalars, input_builder, output_builder, error_builder, eval_fn, **kwargs):
+    # recordable_state_builder not used for push-queue; start/stop not applicable
+    return _hgraph.PythonNodeBuilder(
+        signature=signature,
+        scalars=scalars,
+        input_builder=input_builder,
+        output_builder=output_builder,
+        error_builder=error_builder,
+        recordable_state_builder=None,
+        eval_fn=eval_fn,
+        start_fn=None,
+        stop_fn=None,
+    )
+
+_pwc.PythonPushQueueWiringNodeClass.BUILDER_CLASS = _create_python_push_queue_builder
 
 hgraph._wiring._wiring_node_class._pull_source_node_class.PythonLastValuePullWiringNodeClass.BUILDER_CLASS = _hgraph.LastValuePullNodeBuilder
 

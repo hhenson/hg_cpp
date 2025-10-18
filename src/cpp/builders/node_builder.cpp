@@ -571,6 +571,15 @@ namespace hgraph
             eval_fn_to_use = nb::cast<nb::callable>(copy_module.attr("copy")(eval_fn));
         }
 
+        // If this is a push-queue node, build a PushQueueNode so the runtime can receive external messages
+        if (signature->is_push_source_node()) {
+            nb::ref<Node> node{new PushQueueNode{node_ndx, owning_graph_id, signature, scalars}};
+            _build_inputs_and_outputs(node);
+            // Provide the eval function so the node can expose a sender in start()
+            dynamic_cast<PushQueueNode &>(*node).set_eval_fn(eval_fn_to_use);
+            return node;
+        }
+
         nb::ref<Node> node{new PythonNode{node_ndx, owning_graph_id, signature, scalars, eval_fn_to_use, start_fn, stop_fn}};
 
         _build_inputs_and_outputs(node);

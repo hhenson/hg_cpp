@@ -285,6 +285,8 @@ namespace hgraph
     {
         using Node::Node;
 
+        void set_eval_fn(nb::callable fn) { _eval_fn = std::move(fn); }
+
         void enqueue_message(nb::object message);
 
         [[nodiscard]] bool apply_message(nb::object message);
@@ -295,6 +297,10 @@ namespace hgraph
 
       protected:
         void do_eval() override;
+        void do_start() override {}
+        void do_stop() override {}
+        void initialise() override {}
+        void dispose() override {}
         void start() override;
 
       private:
@@ -302,6 +308,8 @@ namespace hgraph
         int64_t                   _messages_queued{0};
         int64_t                   _messages_dequeued{0};
         bool                      _elide{false};
+        bool                      _batch{false};
+        nb::callable              _eval_fn;
     };
 
     struct PythonGeneratorNode : BasePythonNode

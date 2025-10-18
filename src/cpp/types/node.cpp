@@ -1061,6 +1061,21 @@ namespace hgraph
     void PushQueueNode::start() {
         _receiver = &graph().receiver();
         _elide    = scalars().contains("elide") ? nb::cast<bool>(scalars()["elide"]) : false;
+        _batch    = scalars().contains("batch") ? nb::cast<bool>(scalars()["batch"]) : false;
+        
+        // If an eval function was provided (from push_queue decorator), call it with a sender and scalar kwargs
+        if (_eval_fn.is_valid() && !_eval_fn.is_none()) {
+            // Create a Python-callable sender that enqueues messages into this node
+            nb::object sender = nb::cpp_function([this](nb::object m) {
+                this->enqueue_message(std::move(m));
+            });
+            // Call eval_fn(sender, **scalars)
+            try {
+                _eval_fn(sender, **scalars());
+            } catch (nb::python_error &e) {
+                throw NodeException::capture_error(e, *this, "During push-queue start");
+            }
+        }
     }
 
     void PythonGeneratorNode::do_eval() {
@@ -1073,11 +1088,24 @@ namespace hgraph
             auto time = nb::cast<nb::object>(tpl[0]);
             out       = nb::cast<nb::object>(tpl[1]);
 
-            if (time.type().is(nb::type<engine_time_delta_t>())) {
-                next_time = et + nb::cast<engine_time_delta_t>(time);
-                break;
+            // Robustly handle either a timedelta (duration) or a datetime (time_point)
+            bool handled = false;
+            try {
+                // Try as duration (e.g., datetime.timedelta)
+                auto delta = nb::cast<engine_time_delta_t>(time);
+                next_time = et + delta;
+                handled = true;
+            } catch (...) {
+                // Not a duration, try as absolute time (e.g., datetime)
             }
-            next_time = nb::cast<engine_time_t>(time);
+            if (!handled) {
+                try {
+                    next_time = nb::cast<engine_time_t>(time);
+                } catch (...) {
+                    // As a last resort, treat unknown types as immediate (break)
+                    next_time = et;
+                }
+            }
             if (next_time >= et) { break; }
         }
 
