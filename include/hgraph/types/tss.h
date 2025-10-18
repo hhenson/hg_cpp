@@ -31,11 +31,9 @@ namespace hgraph
 
         [[nodiscard]] virtual nb::object py_type() const = 0;
 
-        [[nodiscard]] virtual bool operator==(const SetDelta &other) const = 0;
-
-        [[nodiscard]] virtual bool operator==(const nb::object &other) const;
-
         [[nodiscard]] virtual size_t hash() const = 0;
+
+        [[nodiscard]] bool eq(const nb::object &other) const;
 
         static void register_with_nanobind(nb::module_ &m);
     };
@@ -48,7 +46,8 @@ namespace hgraph
         [[nodiscard]] nb::object py_added() const override;
         [[nodiscard]] nb::object py_removed() const override;
         [[nodiscard]] nb::object py_type() const override;
-        [[nodiscard]] bool       operator==(const SetDelta &other) const override;
+        [[nodiscard]] bool operator==(const SetDelta_Object &other) const;
+        [[nodiscard]] nb::ref<SetDelta_Object> operator+(const SetDelta_Object &other) const;
         [[nodiscard]] size_t     hash() const override;
 
       private:
@@ -63,46 +62,21 @@ namespace hgraph
         using scalar_type     = T;
         using collection_type = std::unordered_set<T>;
 
-        SetDeltaImpl(collection_type added, collection_type removed) : _added(std::move(added)), _removed(std::move(removed)) {}
+        SetDeltaImpl(collection_type added, collection_type removed);
 
-        [[nodiscard]] nb::object py_added() const override { return nb::cast(_added); }
-        [[nodiscard]] nb::object py_removed() const override { return nb::cast(_removed); }
+        [[nodiscard]] nb::object py_added() const override;
+        [[nodiscard]] nb::object py_removed() const override;
 
-        [[nodiscard]] collection_type &added() { return _added; }
-        [[nodiscard]] collection_type &removed() { return _removed; }
+        [[nodiscard]] collection_type &added();
+        [[nodiscard]] collection_type &removed();
 
-        [[nodiscard]] bool operator==(const SetDelta &other) const override {
-            const auto *other_impl = dynamic_cast<const SetDeltaImpl<T> *>(&other);
-            if (!other_impl) return false;
-            auto added{_added == other_impl->_added};
-            auto removed{_removed == other_impl->_removed};
-            return added && removed;
-        }
+        [[nodiscard]] bool operator==(const SetDeltaImpl<T> &other) const;
 
-        [[nodiscard]] size_t hash() const override {
-            size_t seed = 0;
-            for (const auto &item : _added) { seed ^= std::hash<T>{}(item) + 0x9e3779b9 + (seed << 6) + (seed >> 2); }
-            for (const auto &item : _removed) { seed ^= std::hash<T>{}(item) + 0x9e3779b9 + (seed << 6) + (seed >> 2); }
-            return seed;
-        }
+        [[nodiscard]] size_t hash() const override;
 
-        [[nodiscard]] nb::object py_type() const override {
-            if constexpr (std::is_same_v<T, bool>) {
-                return nb::borrow(nb::cast(true).type());
-            } else if constexpr (std::is_same_v<T, int64_t>) {
-                return nb::borrow(nb::cast((int64_t)1).type());
-            } else if constexpr (std::is_same_v<T, double>) {
-                return nb::borrow(nb::cast((double)1.0).type());
-            } else if constexpr (std::is_same_v<T, engine_date_t>) {
-                return nb::module_::import_("datetime").attr("date");
-            } else if constexpr (std::is_same_v<T, engine_time_t>) {
-                return nb::module_::import_("datetime").attr("datetime");
-            } else if constexpr (std::is_same_v<T, engine_time_delta_t>) {
-                return nb::module_::import_("datetime").attr("timedelta");
-            } else {
-                throw std::runtime_error("Unknown tp");
-            }
-        }
+        [[nodiscard]] nb::ref<SetDeltaImpl<T>> operator+(const SetDeltaImpl<T> &other) const;
+
+        [[nodiscard]] nb::object py_type() const override;
 
       private:
         collection_type _added;
@@ -121,7 +95,7 @@ namespace hgraph
         } else if (!removed.empty()) {
             tp = nb::borrow(*removed.begin()->type());
         } else {
-            tp = nb::borrow(nb::object().type());
+            tp = nb::borrow(nb::type<nb::object>());
         }
         nb::set added_set;
         nb::set removed_set;

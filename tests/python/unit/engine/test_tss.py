@@ -52,7 +52,20 @@ def test_tss_empty():
     assert eval_node(empty, [True]) == [set()]
 
 
+def test_tss_empty_str():
+    @compute_node
+    def empty(s: TS[str]) -> TSS[str]:
+        return set()
+
+    assert eval_node(empty, ["True"]) == [set()]
+
+
 def test_set_delta_addition():
     d = set_delta(added={1, 2, 3}, removed=set(), tp=int)
     d1 = d + set_delta(added={4, 5}, removed={3}, tp=int)
     assert d1 == set_delta(added={1, 2, 4, 5}, removed=set(), tp=int)
+
+def test_set_delta_addition_str():
+    d = set_delta(added={'1', '2', '3'}, removed=set(), tp=str)
+    d1 = d + set_delta(added={'4', '5'}, removed={'3'}, tp=str)
+    assert d1 == set_delta(added={'1', '2', '4', '5'}, removed=set(), tp=str)
