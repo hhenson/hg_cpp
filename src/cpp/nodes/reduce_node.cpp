@@ -191,11 +191,18 @@ namespace hgraph
         auto src_node = src_nodes[src_side];
         auto dst_node = dst_nodes[dst_side];
 
+        // Get the old inputs before swapping
         auto src_input = src_node->input()["ts"];
         auto dst_input = dst_node->input()["ts"];
 
+        // Swap the inputs by creating new input bundles
         src_node->reset_input(src_node->input().copy_with(src_node.get(), {dst_input.get()}));
         dst_node->reset_input(dst_node->input().copy_with(dst_node.get(), {src_input.get()}));
+
+        // Re-parent the inputs to their new parent bundles (CRITICAL FIX - Python lines 159-160)
+        // Cast to TimeSeriesType::ptr for re_parent
+        dst_input->re_parent(TimeSeriesType::ptr(src_node->input_ptr().get()));
+        src_input->re_parent(TimeSeriesType::ptr(dst_node->input_ptr().get()));
 
         src_node->notify();
         dst_node->notify();
@@ -310,10 +317,21 @@ namespace hgraph
 
         auto &tsd = dynamic_cast<TimeSeriesDictInput_T<K> &>(*input()["ts"]);
         auto ts = tsd[key];
-        auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
-        if (inner_input != nullptr) {
-            inner_input->clone_binding(dynamic_cast<TimeSeriesReferenceInput &>(*ts));
-        }
+
+        // Create new input bundle with the ts (Python line 198)
+        node->reset_input(node->input().copy_with(node.get(), {ts.get()}));
+
+        // Re-parent the ts to the node's input (CRITICAL FIX - Python line 200)
+        // Cast to TimeSeriesType::ptr for re_parent
+        ts->re_parent(TimeSeriesType::ptr(node->input_ptr().get()));
+
+        // Make the time series active (CRITICAL FIX - Python line 201)
+        ts->make_active();
+
+        // Track that this input is bound to a key (CRITICAL FIX - Python line 202)
+        auto inner_input = node->input()["ts"].get();
+        bound_to_key_flags_.insert(inner_input);
+
         node->notify();
     }
 
@@ -322,11 +340,41 @@ namespace hgraph
         auto nodes = get_node(node_id);
         auto node = nodes[side];
 
-        auto zero_ts = dynamic_cast<TimeSeriesReferenceInput *>(input()["zero"].get());
-        auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
-        if (inner_input != nullptr && zero_ts != nullptr) {
-            inner_input->clone_binding(*zero_ts);
+        auto inner_input = node->input()["ts"];
+
+        // Check if this input was bound to a key (CRITICAL FIX - Python line 214)
+        bool was_bound_to_key = bound_to_key_flags_.find(inner_input.get()) != bound_to_key_flags_.end();
+
+        if (was_bound_to_key) {
+            // Re-parent back to the TSD for cleanup (CRITICAL FIX - Python line 215)
+            // Cast to TimeSeriesType::ptr for re_parent
+            inner_input->re_parent(TimeSeriesType::ptr(input()["ts"].get()));
+
+            // Create a new empty reference input (Python lines 216-218)
+            auto new_ref_input = new TimeSeriesReferenceInput(node.get());
+            node->reset_input(node->input().copy_with(node.get(), {new_ref_input}));
+
+            // Re-parent the new input to the node's input bundle (Python line 219)
+            // Cast to TimeSeriesType::ptr for re_parent
+            new_ref_input->re_parent(TimeSeriesType::ptr(node->input_ptr().get()));
+
+            // Clone binding from zero (Python line 220)
+            auto zero_ts = dynamic_cast<TimeSeriesReferenceInput *>(input()["zero"].get());
+            if (zero_ts != nullptr) {
+                new_ref_input->clone_binding(*zero_ts);
+            }
+
+            // Remove from bound_to_key tracking
+            bound_to_key_flags_.erase(inner_input.get());
+        } else {
+            // Simple clone binding (CRITICAL FIX - Python line 222)
+            auto zero_ts = dynamic_cast<TimeSeriesReferenceInput *>(input()["zero"].get());
+            auto inner_ref = dynamic_cast<TimeSeriesReferenceInput *>(inner_input.get());
+            if (inner_ref != nullptr && zero_ts != nullptr) {
+                inner_ref->clone_binding(*zero_ts);
+            }
         }
+
         node->notify();
     }
 

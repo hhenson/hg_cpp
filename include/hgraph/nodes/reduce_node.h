@@ -60,6 +60,10 @@ namespace hgraph
         std::unordered_map<K, std::tuple<int64_t, int64_t>> bound_node_indexes_;
         std::vector<std::tuple<int64_t, int64_t>>          free_node_indexes_;  // List of (ndx, 0(lhs)|1(rhs)) tuples
         graph_ptr                                           nested_graph_;
+
+        // Track which inputs are bound to keys (vs bound to zero)
+        // Key is the pointer address of the TimeSeriesReferenceInput
+        std::unordered_set<TimeSeriesInput*>               bound_to_key_flags_;
     };
 
 }  // namespace hgraph

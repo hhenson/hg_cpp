@@ -51,6 +51,7 @@ namespace hgraph
         std::unordered_map<std::string, int> default_input_node_ids_;
         int                    default_output_node_id_{-1};
         std::string            recordable_id_;
+        bool                   graph_reset_{false};
     };
 }  // namespace hgraph
 

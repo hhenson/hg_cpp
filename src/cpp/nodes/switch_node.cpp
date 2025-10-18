@@ -88,8 +88,16 @@ namespace hgraph
 
     template <typename K> void SwitchNode<K>::dispose() {
         if (active_graph_) {
-            unwire_graph(active_graph_);
             dispose_component(*active_graph_);
+            // Release the graph back to the builder pool
+            if (active_key_.has_value()) {
+                auto it = nested_graph_builders_.find(active_key_.value());
+                if (it != nested_graph_builders_.end()) {
+                    it->second->release_instance(active_graph_);
+                } else if (default_graph_builder_) {
+                    default_graph_builder_->release_instance(active_graph_);
+                }
+            }
             active_graph_ = nullptr;
         }
     }
@@ -101,14 +109,33 @@ namespace hgraph
             return;  // No key input or invalid
         }
 
+        // Track if we're switching graphs
+        graph_reset_ = false;
+
         // Check if key has been modified
         if (key_ts->modified()) {
             // Extract the key value from the input time series
             if (reload_on_ticked_ || !active_key_.has_value() || !keys_equal(key_ts->value(), active_key_.value())) {
                 if (active_key_.has_value()) {
+                    graph_reset_ = true;
                     stop_component(*active_graph_);
                     unwire_graph(active_graph_);
-                    dispose_component(*active_graph_);
+                    // Schedule deferred disposal via lambda capture
+                    K old_key = active_key_.value();
+                    graph_ptr graph_to_dispose = active_graph_;
+                    // Capture the nested_graph_builders and default_graph_builder by value for the lambda
+                    auto builders = nested_graph_builders_;
+                    auto default_builder = default_graph_builder_;
+                    graph().evaluation_engine().add_before_evaluation_notification(
+                        [graph_to_dispose, old_key, builders, default_builder]() mutable {
+                            dispose_component(*graph_to_dispose);
+                            auto it = builders.find(old_key);
+                            if (it != builders.end()) {
+                                it->second->release_instance(graph_to_dispose);
+                            } else if (default_builder) {
+                                default_builder->release_instance(graph_to_dispose);
+                            }
+                        });
                     active_graph_ = nullptr;
                 }
                 active_key_ = key_ts->value();
@@ -147,6 +174,10 @@ namespace hgraph
                 active_graph_->evaluation_engine_clock())  // NOLINT(*-pro-type-static-cast-downcast)
                 .reset_next_scheduled_evaluation_time();
             active_graph_->evaluate_graph();
+            // Reset output to None if graph was switched and output wasn't modified
+            if (graph_reset_ && output_ptr() && !output_ptr()->modified()) {
+                output_ptr()->invalidate();
+            }
             static_cast<NestedEngineEvaluationClock &>(
                 active_graph_->evaluation_engine_clock())  // NOLINT(*-pro-type-static-cast-downcast)
                 .reset_next_scheduled_evaluation_time();
