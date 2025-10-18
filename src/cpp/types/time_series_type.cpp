@@ -273,10 +273,6 @@ namespace hgraph
 
     engine_time_t TimeSeriesInput::sample_time() const { return _sample_time; }
 
-    void TimeSeriesInput::set_subscribe_method(bool subscribe_input) { _subscribe_input = subscribe_input; }
-
-    bool TimeSeriesInput::subscribe_input() const { return _subscribe_input; }
-
     bool TimeSeriesInput::sampled() const {
         return _sample_time != MIN_DT && _sample_time == owning_graph().evaluation_clock().evaluation_time();
     }

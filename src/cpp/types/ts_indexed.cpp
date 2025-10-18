@@ -108,12 +108,6 @@ namespace hgraph
         }
     }
 
-    void IndexedTimeSeriesInput::set_subscribe_method(bool subscribe_input) {
-        TimeSeriesInput::set_subscribe_method(subscribe_input);
-
-        for (auto &ts : ts_values()) { ts->set_subscribe_method(subscribe_input); }
-    }
-
     void IndexedTimeSeriesInput::register_with_nanobind(nb::module_ &m) {
         using IndexedTimeSeries_Input = IndexedTimeSeries<TimeSeriesInput>;
 

@@ -141,8 +141,6 @@ namespace hgraph
         void               make_active() override;
         void               make_passive() override;
 
-        void set_subscribe_method(bool subscribe_input) override;
-
         static void register_with_nanobind(nb::module_ &m);
 
       protected:

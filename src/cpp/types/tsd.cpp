@@ -826,12 +826,6 @@ namespace hgraph
         // Peer when types match AND neither has references (matching Python logic)
         bool peer = is_same_type(output_) && !output_->has_reference() && !this->has_reference();
 
-        if (!peer) {
-            key_set_t().set_subscribe_method(true);
-        } else {
-            key_set_t().set_subscribe_method(this->subscribe_input());
-        }
-
         auto *_key_set = const_cast<TimeSeriesOutput *>(static_cast<const TimeSeriesOutput *>(&output_->key_set()));
         key_set_t().bind_output({_key_set});
 
@@ -1044,7 +1038,6 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::_create(const key_type &key) {
         auto item{_ts_builder->make_instance(this)};
-        item->set_subscribe_method(!has_peer());
         _ts_values.insert({key, item});
         _ts_values_to_key.insert({item.get(), key});
     }

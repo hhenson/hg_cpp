@@ -184,13 +184,10 @@ namespace hgraph
         [[nodiscard]] bool          all_valid() const override;
         [[nodiscard]] engine_time_t last_modified_time() const override;
 
-        virtual void set_subscribe_method(bool subscribe_input);
+        [[nodiscard]] time_series_reference_output_ptr reference_output() const;
 
         static void register_with_nanobind(nb::module_ &m);
 
-
-
-        [[nodiscard]] time_series_reference_output_ptr reference_output() const;
 
       protected:
         // Derived classes override this to implement specific behaviours
@@ -207,8 +204,6 @@ namespace hgraph
 
         [[nodiscard]] engine_time_t sample_time() const;
 
-        [[nodiscard]] bool subscribe_input() const;
-
         [[nodiscard]] bool sampled() const;
 
         void reset_output();
@@ -218,7 +213,6 @@ namespace hgraph
       private:
         time_series_output_ptr           _output;
         time_series_reference_output_ptr _reference_output;
-        bool                             _subscribe_input{false};
         bool                             _active{false};
         engine_time_t                    _sample_time{MIN_DT};
         engine_time_t                    _notify_time{MIN_DT};

@@ -447,7 +447,6 @@ namespace hgraph
         if (_items.empty()) { _items.reserve(ndx + 1); }
         while (ndx >= _items.size()) {
             auto new_item = new TimeSeriesReferenceInput(this);
-            new_item->set_subscribe_method(true);
             _items.push_back(new_item);
         }
         return _items.at(ndx);
