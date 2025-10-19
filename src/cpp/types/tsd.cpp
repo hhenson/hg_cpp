@@ -586,8 +586,8 @@ namespace hgraph
         if (!removed_keys.empty()) {
             auto removed{get_remove()};
             for (const auto &key : removed_keys) {
-                auto it = _removed_values.find(key);
-                if (it != _removed_values.end() && it->second.second) {  // Check was_valid flag
+                auto it = _removed_items.find(key);
+                if (it != _removed_items.end() && it->second.second) {  // Check was_valid flag
                     delta[nb::cast(key)] = removed;
                 }
             }
@@ -637,14 +637,14 @@ namespace hgraph
         // we currently clean the cache without checking if it is valid.
         if (sampled()) {
             // Return all valid items when sampled
-            _modified_items.clear();
-            for (const auto &[key, value] : valid_items()) { _modified_items.emplace(key, value); }
+            _modified_items_cache.clear();
+            for (const auto &[key, value] : valid_items()) { _modified_items_cache.emplace(key, value); }
         } else if (has_peer()) {
             // When peered, only return items that are modified in the output
-            _modified_items.clear();
+            _modified_items_cache.clear();
             for (const auto &[key, _] : output_t().modified_items()) {
                 auto it = _ts_values.find(key);
-                if (it != _ts_values.end()) { _modified_items.emplace(key, it->second); }
+                if (it != _ts_values.end()) { _modified_items_cache.emplace(key, it->second); }
             }
         } else if (active()) {
             // When active but not sampled or peered, only return cached modified items
@@ -655,10 +655,10 @@ namespace hgraph
         } else {
             // When not active, return all modified items
             for (const auto &[key, value] : _ts_values) {
-                if (value->modified()) { _modified_items.emplace(key, value); }
+                if (value->modified()) { _modified_items_cache.emplace(key, value); }
             }
         }
-        return _modified_items;
+        return _modified_items_cache;
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_modified_keys() const {
@@ -689,11 +689,11 @@ namespace hgraph
 
     template <typename T_Key> auto TimeSeriesDictInput_T<T_Key>::valid_items() const {
         // TODO: look into maintaining this cached.
-        _valid_items.clear();
+        _valid_items_cache.clear();
         for (const auto &item : _ts_values | std::views::filter([](const auto &item) { return item.second->valid(); })) {
-            _valid_items.insert(item);
+            _valid_items_cache.insert(item);
         }
-        return _valid_items;
+        return _valid_items_cache;
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_valid_keys() const {
@@ -714,10 +714,10 @@ namespace hgraph
     template <typename T_Key>
     const typename TimeSeriesDictInput_T<T_Key>::map_type &TimeSeriesDictInput_T<T_Key>::added_items() const {
         // TODO: Try and ensure that we cache the result where possible
-        _added_items.clear();
+        _added_items_cache.clear();
         const auto &key_set{key_set_t()};
-        for (const auto &k : key_set.added()) { _added_items.emplace(k, _ts_values.at(k)); }
-        return _added_items;
+        for (const auto &k : key_set.added()) { _added_items_cache.emplace(k, _ts_values.at(k)); }
+        return _added_items_cache;
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_added_keys() const {
@@ -748,13 +748,13 @@ namespace hgraph
 
     template <typename T_Key>
     const typename TimeSeriesDictInput_T<T_Key>::map_type &TimeSeriesDictInput_T<T_Key>::removed_items() const {
-        _removed_items.clear();
+        _removed_item_cache.clear();
         for (const auto &key : key_set_t().removed()) {
-            auto it{_removed_values.find(key)};
-            if (it == _removed_values.end()) { continue; }
-            _removed_items.emplace(key, it->second.first);
+            auto it{_removed_items.find(key)};
+            if (it == _removed_items.end()) { continue; }
+            _removed_item_cache.emplace(key, it->second.first);
         }
-        return _removed_items;
+        return _removed_item_cache;
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_removed_keys() const {
@@ -772,7 +772,7 @@ namespace hgraph
         return nb::make_iterator(nb::type<map_type>(), "RemovedItemIterator", removed_.begin(), removed_.end());
     }
 
-    template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_removed() const { return !_removed_values.empty(); }
+    template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_removed() const { return !_removed_items.empty(); }
 
     template <typename T_Key> const TimeSeriesSet<TimeSeriesInput> &TimeSeriesDictInput_T<T_Key>::key_set() const {
         return key_set_t();
@@ -801,9 +801,9 @@ namespace hgraph
         if (value->parent_input().get() == this) {
             // This is our own input - deactivate and track for cleanup
             if (value->active()) { value->make_passive(); }
-            _removed_values.insert({key, {value, was_valid}});
-            auto it_{_modified_items.find(key)};
-            if (it_ != _modified_items.end()) { _modified_items.erase(it_); }
+            _removed_items.insert({key, {value, was_valid}});
+            auto it_{_modified_items_cache.find(key)};
+            if (it_ != _modified_items_cache.end()) { _modified_items_cache.erase(it_); }
             if (!has_peer()) { value->un_bind_output(false); }
         } else {
             // This is a transplanted input - put it back and unbind it
@@ -814,7 +814,7 @@ namespace hgraph
     }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::was_removed(const key_type &key) const {
-        return _removed_values.find(key) != _removed_values.end();
+        return _removed_items.find(key) != _removed_items.end();
     }
     template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_key_set() const { return nb::cast(key_set()); }
 
@@ -863,14 +863,14 @@ namespace hgraph
         key_set_t().un_bind_output(unbind_refs);
 
         if (!_ts_values.empty()) {
-            _removed_values.clear();
-            for (const auto &[key, value] : _ts_values) { _removed_values.insert({key, {value, value->valid()}}); }
+            _removed_items.clear();
+            for (const auto &[key, value] : _ts_values) { _removed_items.insert({key, {value, value->valid()}}); }
             _ts_values.clear();
             _ts_values_to_key.clear();
             register_clear_key_changes();
 
             removed_map_type to_keep;
-            for (auto &[key, v] : _removed_values) {
+            for (auto &[key, v] : _removed_items) {
                 auto &[value, was_valid] = v;
                 if (value->parent_input().get() != this) {
                     // Check for transplanted items, these do not get removed, but can be un-bound
@@ -881,7 +881,7 @@ namespace hgraph
                     to_keep.insert({key, {value, was_valid}});
                 }
             }
-            _removed_values = std::move(to_keep);
+            _removed_items = std::move(to_keep);
         }
         // If we are un-binding then the output must exist by definition.
         output_t().remove_key_observer(this);
@@ -930,8 +930,8 @@ namespace hgraph
         // Release instances with deferred callback to ensure cleanup happens after all processing
         // This matches Python: add_after_evaluation_notification(lambda b=self._ts_builder, i=v[0]: b.release_instance(i))
         for (const auto &key : key_set_t().removed()) {
-            auto it = _removed_values.find(key);
-            if (it != _removed_values.end()) {
+            auto it = _removed_items.find(key);
+            if (it != _removed_items.end()) {
                 auto &[value, was_valid] = it->second;
                 // Capture by value to ensure the lambda has valid references
                 auto builder  = _ts_builder;
@@ -942,7 +942,7 @@ namespace hgraph
             }
         }
 
-        _removed_values.clear();
+        _removed_items.clear();
     }
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::register_clear_key_changes() const {
@@ -1025,13 +1025,13 @@ namespace hgraph
     void TimeSeriesDictInput_T<T_Key>::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) {
         if (_last_modified_time < modified_time) {
             _last_modified_time = modified_time;
-            _modified_items.clear();
+            _modified_items_cache.clear();
         }
 
         if (child != &key_set_t()) {
             auto it{_ts_values_to_key.find(child)};
             if (it != _ts_values_to_key.end()) {
-                _modified_items[it->second] = child;  // Use operator[] instead of insert to ensure update
+                _modified_items_cache[it->second] = child;  // Use operator[] instead of insert to ensure update
             }
         }
 

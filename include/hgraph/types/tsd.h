@@ -365,11 +365,11 @@ namespace hgraph
         map_type         _ts_values;
 
         reverse_map      _ts_values_to_key;
-        mutable map_type _valid_items;     // Cache the valid items if called.
-        mutable map_type _modified_items;  // This is cached for performance reasons.
-        mutable map_type _added_items;
-        mutable map_type _removed_items;
-        removed_map_type _removed_values;  // This ensures we hold onto the values until we are sure no one needs to reference them.
+        mutable map_type _valid_items_cache;     // Cache the valid items if called.
+        mutable map_type _modified_items_cache;  // This is cached for performance reasons.
+        mutable map_type _added_items_cache;
+        mutable map_type _removed_item_cache;
+        removed_map_type _removed_items;  // This ensures we hold onto the values until we are sure no one needs to reference them.
         static inline map_type empty_{};
 
         input_builder_ptr _ts_builder;

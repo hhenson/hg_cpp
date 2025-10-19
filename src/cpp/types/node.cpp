@@ -748,7 +748,7 @@ namespace hgraph
         }
         oss << ", " << _node_ndx << "]" << signature().name << "(";
 
-        auto obj_to_type = [&](const nb::object &obj) { return obj.is_none() ? none_str : nb::cast<std::string>(obj); };
+        auto obj_to_type = [&](const nb::object &obj) { return obj.is_none() ? none_str : nb::cast<std::string>(nb::str(obj)); };
 
         first = true;
         for (const auto &arg : signature().args) {

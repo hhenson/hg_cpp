@@ -119,19 +119,15 @@ namespace hgraph
 
     const TimeSeriesOutput::ptr &BoundTimeSeriesReference::output() const { return _output; }
 
-    void BoundTimeSeriesReference::bind_input(TimeSeriesInput &ts_input) const {
-        try {
-            bool reactivate = false;
-            // Treat inputs previously bound via a reference as bound, so we unbind to generate correct deltas
-            if ((ts_input.bound() || ts_input.reference_output().get() != nullptr) && !ts_input.has_peer()) {
-                reactivate = ts_input.active();
-                ts_input.un_bind_output(false);
-            }
-            ts_input.bind_output(_output);
-            if (reactivate) { ts_input.make_active(); }
-        } catch (const std::exception &e) {
-            throw std::runtime_error(std::string("Error in BoundTimeSeriesReference::bind_input: ") + e.what());
-        } catch (...) { throw std::runtime_error("Unknown error in BoundTimeSeriesReference::bind_input"); }
+    void BoundTimeSeriesReference::bind_input(TimeSeriesInput &input_) const {
+        bool reactivate = false;
+        // Treat inputs previously bound via a reference as bound, so we unbind to generate correct deltas
+        if (input_.bound() && !input_.has_peer()) {
+            reactivate = input_.active();
+            input_.un_bind_output(false);
+        }
+        input_.bind_output(_output);
+        if (reactivate) { input_.make_active(); }
     }
 
     bool BoundTimeSeriesReference::has_output() const { return true; }
@@ -142,7 +138,7 @@ namespace hgraph
 
     bool BoundTimeSeriesReference::operator==(const TimeSeriesReferenceOutput &other) const {
         auto bound_time_series_reference{dynamic_cast<const BoundTimeSeriesReference *>(&other)};
-        return bound_time_series_reference != nullptr && bound_time_series_reference->output().get() == _output.get();
+        return bound_time_series_reference != nullptr && bound_time_series_reference->output() == _output;
     }
 
     std::string BoundTimeSeriesReference::to_string() const {
@@ -155,11 +151,11 @@ namespace hgraph
 
     const std::vector<TimeSeriesReference::ptr> &UnBoundTimeSeriesReference::items() const { return _items; }
 
-    void UnBoundTimeSeriesReference::bind_input(TimeSeriesInput &ts_input) const {
+    void UnBoundTimeSeriesReference::bind_input(TimeSeriesInput &input_) const {
         // Try to cast to supported input types
-        auto *ref_input     = dynamic_cast<TimeSeriesReferenceInput *>(&ts_input);
-        auto *indexed_input = dynamic_cast<IndexedTimeSeriesInput *>(&ts_input);
-        auto *signal_input  = dynamic_cast<TimeSeriesSignalInput *>(&ts_input);
+        auto *ref_input     = dynamic_cast<TimeSeriesReferenceInput *>(&input_);
+        auto *indexed_input = dynamic_cast<IndexedTimeSeriesInput *>(&input_);
+        auto *signal_input  = dynamic_cast<TimeSeriesSignalInput *>(&input_);
 
         if (ref_input == nullptr && indexed_input == nullptr && signal_input == nullptr) {
             throw std::runtime_error("UnBoundTimeSeriesReference::bind_input: Expected an IndexedTimeSeriesInput, "
@@ -167,9 +163,9 @@ namespace hgraph
         }
 
         bool reactivate = false;
-        if (ts_input.bound() && ts_input.has_peer()) {
-            reactivate = ts_input.active();
-            ts_input.un_bind_output(false);
+        if (input_.bound() && input_.has_peer()) {
+            reactivate = input_.active();
+            input_.un_bind_output(false);
         }
 
         for (size_t i = 0; i < _items.size(); ++i) {
@@ -183,14 +179,15 @@ namespace hgraph
                 item = (*signal_input)[i];
             }
 
-            if (_items[i] != nullptr) {
-                _items[i]->bind_input(*item);
+            auto &r{_items[i]};
+            if (r != nullptr) {
+                r->bind_input(*item);
             } else if (item->bound()) {
                 item->un_bind_output(false);
             }
         }
 
-        if (reactivate) { ts_input.make_active(); }
+        if (reactivate) { input_.make_active(); }
     }
 
     bool UnBoundTimeSeriesReference::has_output() const { return false; }
@@ -206,6 +203,8 @@ namespace hgraph
         return other_ != nullptr && other_->_items == _items;
     }
 
+    const TimeSeriesReference::ptr &UnBoundTimeSeriesReference::operator[](size_t ndx) { return _items.at(ndx); }
+
     std::string UnBoundTimeSeriesReference::to_string() const {
         std::vector<std::string> string_items;
         string_items.reserve(_items.size());
@@ -218,6 +217,7 @@ namespace hgraph
         // holding references to TimeSeriesInputs
         for (auto ref : _reference_observers) { ref->dec_ref(); }
     }
+
     bool TimeSeriesReferenceOutput::is_same_type(const TimeSeriesType *other) const {
         return dynamic_cast<const TimeSeriesReferenceOutput *>(other) != nullptr;
     }
@@ -304,9 +304,9 @@ namespace hgraph
                  "Register an input as observing this reference value")
             .def("stop_observing_reference", &TimeSeriesReferenceOutput::stop_observing_reference, "input"_a,
                  "Unregister an input from observing this reference value")
-            .def_prop_ro("reference_observers_count", [](const TimeSeriesReferenceOutput &self) {
-                return self._reference_observers.size();
-            }, "Number of inputs observing this reference value")
+            .def_prop_ro(
+                "reference_observers_count", [](const TimeSeriesReferenceOutput &self) { return self._reference_observers.size(); },
+                "Number of inputs observing this reference value")
             .def("clear", &TimeSeriesReferenceOutput::clear);
     }
 
@@ -485,7 +485,9 @@ namespace hgraph
     TimeSeriesReferenceOutput *TimeSeriesReferenceInput::output_t() {
         auto _output{output().get()};
         auto _result{dynamic_cast<TimeSeriesReferenceOutput *>(_output)};
-        if (_result == nullptr) { throw std::runtime_error("TimeSeriesReferenceInput::output_t: Expected TimeSeriesReferenceOutput*"); }
+        if (_result == nullptr) {
+            throw std::runtime_error("TimeSeriesReferenceInput::output_t: Expected TimeSeriesReferenceOutput*");
+        }
         return _result;
     }
 

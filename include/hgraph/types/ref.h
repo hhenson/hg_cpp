@@ -45,7 +45,7 @@ namespace hgraph
 
         const TimeSeriesOutput::ptr &output() const;
 
-        void        bind_input(TimeSeriesInput &ts_input) const override;
+        void        bind_input(TimeSeriesInput &input_) const override;
         bool        has_output() const override;
         bool        is_empty() const override;
         bool        is_valid() const override;
@@ -62,12 +62,12 @@ namespace hgraph
 
         const std::vector<ptr> &items() const;
 
-        void bind_input(TimeSeriesInput &ts_input) const override;
+        void bind_input(TimeSeriesInput &input_) const override;
         bool has_output() const override;
         bool is_empty() const override;
         bool is_valid() const override;
         bool operator==(const TimeSeriesReferenceOutput &other) const override;
-
+        const ptr& operator[](size_t ndx);
         std::string to_string() const override;
 
       private:
