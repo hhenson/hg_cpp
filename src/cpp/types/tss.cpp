@@ -359,8 +359,9 @@ namespace hgraph
         return contains(nb::cast<element_type>(item));
     }
 
-    template <typename T> size_t TimeSeriesSetInput_T<T>::size() const { return value().size(); }
-    template <typename T> bool   TimeSeriesSetInput_T<T>::empty() const { return value().empty(); }
+    template <typename T> size_t TimeSeriesSetInput_T<T>::size() const { return has_output() ? set_output_t().size() : 0; }
+
+    template <typename T> bool TimeSeriesSetInput_T<T>::empty() const { return value().empty(); }
 
     template <typename T> const nb::object TimeSeriesSetInput_T<T>::py_values() const { return nb::cast(value()); }
 
@@ -374,6 +375,106 @@ namespace hgraph
 
     template <typename T> bool TimeSeriesSetInput_T<T>::py_was_removed(const nb::object &item) const {
         return was_removed(nb::cast<element_type>(item));
+    }
+
+    template <typename T> const typename TimeSeriesSetInput_T<T>::collection_type &TimeSeriesSetInput_T<T>::value() const {
+        return bound() ? set_output_t().value() : _empty;
+    }
+
+    template <typename T> typename TimeSeriesSetInput_T<T>::set_delta_ptr TimeSeriesSetInput_T<T>::delta_value() const {
+        return make_set_delta<element_type>(added(), removed());
+    }
+
+    template <typename T> bool TimeSeriesSetInput_T<T>::contains(const element_type &item) const {
+        return has_output() ? set_output_t().contains(item) : false;
+    }
+
+    template <typename T> const typename TimeSeriesSetInput_T<T>::collection_type &TimeSeriesSetInput_T<T>::values() const {
+        return value();
+    }
+
+    template <typename T> const typename TimeSeriesSetInput_T<T>::collection_type &TimeSeriesSetInput_T<T>::added() const {
+        // The added results are cached, we will clear out the results at the end of the cycle.
+        if (!_added.empty()) { return _added; }
+
+        // If we have a previous output, then we need to do some work to compute the effect _added
+        if (has_prev_output()) {
+            // Get all elements from current values
+            auto &prev         = prev_output_t().value();
+            auto &prev_added   = prev_output_t().added();
+            auto &prev_removed = prev_output_t().removed();
+            for (const auto &item : values()) {
+                // Only add if not in previous state
+                // (prev values + removed - added)
+                bool was_in_prev = prev.contains(item) || (prev_removed.contains(item) && !prev_added.contains(item));
+                if (!was_in_prev) { _added.insert(item); }
+            }
+            if (!_added.empty()) { _add_reset_prev(); }
+            return _added;
+        }
+
+        if (has_output()) { return sampled() ? values() : set_output_t().added(); }
+
+        _added.clear();
+        return _added;
+    }
+
+    template <typename T> bool TimeSeriesSetInput_T<T>::was_added(const element_type &item) const {
+        if (has_prev_output()) { return set_output_t().was_added(item) && !prev_output_t().contains(item); }
+        if (sampled()) { return contains(item); }
+        return set_output_t().was_added(item);
+    }
+
+    template <typename T> const typename TimeSeriesSetInput_T<T>::collection_type &TimeSeriesSetInput_T<T>::removed() const {
+        if (!_removed.empty()) { return _removed; }
+
+        if (has_prev_output()) {
+            auto &prev         = prev_output_t().value();
+            auto &prev_added   = prev_output_t().added();
+            auto &prev_removed = prev_output_t().removed();
+            auto &value        = values();
+            // Calculate removed elements as:
+            // (previous_values union previous_removed) minus previous_added minus current_values
+            collection_type prev_state;
+            prev_state.insert(prev.begin(), prev.end());
+            prev_state.insert(prev_removed.begin(), prev_removed.end());
+            for (const auto &item : prev_added) { prev_state.erase(item); }
+            for (const auto &item : prev_state) {
+                if (!value.contains(item)) { _removed.insert(item); }
+            }
+            if (!_removed.empty()) { _add_reset_prev(); }
+            return _removed;
+        }
+
+        if (has_output()) { return set_output_t().removed(); }
+
+        return _empty;
+    }
+
+    template <typename T> bool TimeSeriesSetInput_T<T>::was_removed(const element_type &item) const {
+        if (has_prev_output()) { return prev_output_t().contains(item) && !contains(item); }
+        if (sampled()) { return false; }
+        return has_output() ? set_output_t().was_removed(item) : false;
+    }
+
+    template <typename T> bool TimeSeriesSetInput_T<T>::is_same_type(const TimeSeriesType *other) const {
+        return dynamic_cast<const TimeSeriesSetInput_T<T> *>(other) != nullptr;
+    }
+
+    template <typename T>
+    const TimeSeriesSetOutput_T<typename TimeSeriesSetInput_T<T>::element_type> &TimeSeriesSetInput_T<T>::prev_output_t() const {
+        return reinterpret_cast<const TimeSeriesSetOutput_T<element_type> &>(prev_output());
+    }
+
+    template <typename T>
+    const TimeSeriesSetOutput_T<typename TimeSeriesSetInput_T<T>::element_type> &TimeSeriesSetInput_T<T>::set_output_t() const {
+        return reinterpret_cast<const TimeSeriesSetOutput_T<element_type> &>(*output());
+    }
+
+    template <typename T> void TimeSeriesSetInput_T<T>::reset_prev() {
+        TimeSeriesSetInput::reset_prev();
+        _added.clear();
+        _removed.clear();
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::clear() {
@@ -426,7 +527,7 @@ namespace hgraph
 
         // Calculate added elements (elements in output but not in current value)
         const auto &value = input_obj.value();
-        for (const auto &item : value ){
+        for (const auto &item : value) {
             if (!_value.contains(item)) { _add(item); }
         }
 
@@ -618,13 +719,26 @@ namespace hgraph
 
     bool TimeSeriesSetInput::has_prev_output() const { return _prev_output != nullptr; }
 
-    void TimeSeriesSetInput::reset_prev() { _prev_output = nullptr; }
+    void TimeSeriesSetInput::reset_prev() {
+        _pending_reset_prev = false;
+        _prev_output        = nullptr;
+    }
+
+    void TimeSeriesSetInput::_add_reset_prev() const {
+        // A cheat but should be OK
+        if (_pending_reset_prev) { return; }
+        _pending_reset_prev = true;
+        auto self           = const_cast<TimeSeriesSetInput *>(this);
+        const_cast<Graph &>(owning_graph()).evaluation_engine_api().add_after_evaluation_notification([self]() {
+            self->reset_prev();
+        });
+    }
 
     bool TimeSeriesSetInput::do_bind_output(TimeSeriesOutput::ptr &output) {
         if (has_output()) {
             _prev_output = &set_output();
             // Clean up after the engine cycle is complete
-            owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { reset_prev(); });
+            _add_reset_prev();
         }
         return TimeSeriesInput::do_bind_output(output);
     }
@@ -632,7 +746,7 @@ namespace hgraph
     void TimeSeriesSetInput::do_un_bind_output(bool unbind_refs) {
         if (has_output()) {
             _prev_output = &set_output();
-            owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { reset_prev(); });
+            _add_reset_prev();
         }
         TimeSeriesInput::do_un_bind_output(unbind_refs);
     }

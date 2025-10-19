@@ -150,9 +150,11 @@ namespace hgraph
 
       protected:
         virtual void reset_prev();
+        void _add_reset_prev() const;
 
       private:
         TimeSeriesSetOutput::ptr _prev_output;
+        mutable bool _pending_reset_prev{false};
     };
 
     struct TimeSeriesDictOutput;
@@ -192,7 +194,6 @@ namespace hgraph
         [[nodiscard]] bool contains(const element_type &item) const;
 
         [[nodiscard]] size_t size() const override;
-
 
         [[nodiscard]] const nb::object py_values() const override;
 
@@ -259,96 +260,38 @@ namespace hgraph
         [[nodiscard]] bool             py_contains(const nb::object &item) const override;
         [[nodiscard]] size_t           size() const override;
         [[nodiscard]] bool             empty() const override;
+
         [[nodiscard]] const nb::object py_values() const override;
         [[nodiscard]] const nb::object py_added() const override;
+
         [[nodiscard]] bool             py_was_added(const nb::object &item) const override;
         [[nodiscard]] const nb::object py_removed() const override;
         [[nodiscard]] bool             py_was_removed(const nb::object &item) const override;
 
-        [[nodiscard]] const collection_type &value() const { return bound() ? set_output_t().value() : _empty; }
-        [[nodiscard]] set_delta_ptr          delta_value() const { return make_set_delta<element_type>(added(), removed()); }
-        [[nodiscard]] bool contains(const element_type &item) const { return bound() ? set_output_t().contains(item) : false; }
-        [[nodiscard]] collection_type       &values() const { return *const_cast<collection_type *>(&value()); }
-        [[nodiscard]] const collection_type &added() const {
-            if (bound()) {
-                if (has_prev_output() && _added.empty()) {
-                    auto &prev = prev_output_t();
-                    // Get the set of elements that would have been present in previous cycle
-                    auto prev_state = prev.value();
-                    prev_state.insert(prev.removed().begin(), prev.removed().end());
-                    for (const auto &item : prev.added()) { prev_state.erase(item); }
-                    // Added elements are those in current values but not in previous state
-                    for (const auto &item : values()) {
-                        if (prev_state.find(item) == prev_state.end()) { _added.insert(item); }
-                    }
-                    return _added;
-                }
-                return sampled() ? values() : set_output_t().added();
-            }
-            _added.clear();
-            return _added;
-        }
+        [[nodiscard]] const collection_type &value() const;
+        [[nodiscard]] set_delta_ptr          delta_value() const;
+        [[nodiscard]] bool                   contains(const element_type &item) const;
+        [[nodiscard]] const collection_type &values() const;
 
-        [[nodiscard]] bool was_added(const element_type &item) const {
-            if (has_prev_output()) { return set_output_t().was_added(item) && !prev_output_t().contains(item); }
-            if (sampled()) { return contains(item); }
-            return set_output_t().was_added(item);
-        }
+        [[nodiscard]] const collection_type &added() const;
 
-        [[nodiscard]] const collection_type &removed() const {
-            if (bound()) {
-                if (has_prev_output()) {
-                    if (_removed.empty()) {
-                        auto &prev{prev_output_t()};
-                        // Get the set of elements that would have been present in previous cycle
-                        collection_type prev_state{prev.value()};
-                        prev_state.insert(prev.removed().begin(), prev.removed().end());
-                        for (const auto &item : prev.added()) { prev_state.erase(item); }
-                        // Removed elements are those in previous state but not in current values
-                        for (const auto &item : prev_state) {
-                            if (values().find(item) == values().end()) { _removed.insert(item); }
-                        }
-                    }
-                    return _removed;
-                }
-                return sampled() ? _empty : set_output_t().removed();
-            }
-            return _empty;
-        }
+        [[nodiscard]] bool was_added(const element_type &item) const;
 
-        [[nodiscard]] bool was_removed(const element_type &item) const {
-            if (has_prev_output()) {
-                return prev_output_t().contains(item) && !contains(item);
-            } else if (sampled()) {
-                return false;
-            } else {
-                return set_output_t().was_removed(item);
-            }
-        }
+        [[nodiscard]] const collection_type &removed() const;
 
-        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
-            return dynamic_cast<const TimeSeriesSetInput_T<T> *>(other) != nullptr;
-        }
+        [[nodiscard]] bool was_removed(const element_type &item) const;
+
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override;
 
       protected:
-        const TimeSeriesSetOutput_T<element_type> &prev_output_t() const {
-            return reinterpret_cast<const TimeSeriesSetOutput_T<element_type> &>(prev_output());
-        }
-
-        const TimeSeriesSetOutput_T<element_type> &set_output_t() const {
-            return reinterpret_cast<const TimeSeriesSetOutput_T<element_type> &>(*output());
-        }
-
-        void reset_prev() override {
-            TimeSeriesSetInput::reset_prev();
-            _added.clear();
-            _removed.clear();
-        }
+        const TimeSeriesSetOutput_T<element_type> &prev_output_t() const;
+        const TimeSeriesSetOutput_T<element_type> &set_output_t() const;
+        void reset_prev() override;
 
         // These are caches of values
-        collection_type         _empty;
-        mutable collection_type _added;  // Use this when we have a previous bound value
-        mutable collection_type _removed;
+        collection_type         _empty{};
+        mutable collection_type _added{};  // Use this when we have a previous bound value
+        mutable collection_type _removed{};
     };
 
     void tss_register_with_nanobind(nb::module_ &m);
