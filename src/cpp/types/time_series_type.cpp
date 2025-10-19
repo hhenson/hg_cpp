@@ -163,7 +163,7 @@ namespace hgraph
         bool was_valid = valid();
 
         // Handle reference output unbinding conditionally based on unbind_refs parameter
-        if (unbind_refs && _reference_output == nullptr) {
+        if (unbind_refs && _reference_output != nullptr) {
             _reference_output->stop_observing_reference(this);
             _reference_output.reset();
         }

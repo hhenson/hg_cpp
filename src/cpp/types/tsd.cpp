@@ -537,11 +537,13 @@ namespace hgraph
 
     template <typename T_Key>
     TimeSeriesDictInput_T<T_Key>::TimeSeriesDictInput_T(const node_ptr &parent, input_builder_ptr ts_builder)
-        : TimeSeriesDictInput(parent), _key_set{this}, _ts_builder{ts_builder} {}
+        : TimeSeriesDictInput(parent), _key_set{new typename TimeSeriesDictInput_T<T_Key>::key_set_type{this}},
+          _ts_builder{ts_builder} {}
 
     template <typename T_Key>
     TimeSeriesDictInput_T<T_Key>::TimeSeriesDictInput_T(const time_series_type_ptr &parent, input_builder_ptr ts_builder)
-        : TimeSeriesDictInput(parent), _key_set{this}, _ts_builder{ts_builder} {}
+        : TimeSeriesDictInput(parent), _key_set{new typename TimeSeriesDictInput_T<T_Key>::key_set_type{this}},
+          _ts_builder{ts_builder} {}
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_peer() const { return _has_peer; }
     template <typename T_Key>
@@ -888,7 +890,7 @@ namespace hgraph
 
     template <typename T_Key>
     TimeSeriesSetInput_T<typename TimeSeriesDictInput_T<T_Key>::key_type> &TimeSeriesDictInput_T<T_Key>::key_set_t() {
-        return _key_set;
+        return *_key_set;
     }
 
     template <typename T_Key>

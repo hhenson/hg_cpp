@@ -1,3 +1,5 @@
+#include "hgraph/types/node.h"
+
 #include <hgraph/builders/output_builder.h>
 #include <hgraph/types/constants.h>
 #include <hgraph/types/graph.h>
@@ -96,7 +98,7 @@ namespace hgraph
     template struct SetDelta_T<engine_time_delta_t>;
     template struct SetDelta_T<nb::object>;
 
-    bool eq(const SetDelta& self, const nb::object &other) {
+    bool eq(const SetDelta &self, const nb::object &other) {
         if (!nb::isinstance<nb::iterable>(other)) { return false; }
         auto added   = nb::cast<nb::frozenset>(self.py_added());
         auto removed = nb::cast<nb::frozenset>(self.py_removed());
@@ -178,6 +180,7 @@ namespace hgraph
                                                        TimeSeriesValueOutputBuilder<bool>().make_instance(this))} {}
 
     TimeSeriesValueOutput<bool>::ptr &TimeSeriesSetOutput::is_empty_output() {
+        if (!_is_empty_ref_output->valid()) { _is_empty_ref_output->set_value(empty()); }
         return _is_empty_ref_output;
     }
 
@@ -214,11 +217,18 @@ namespace hgraph
         if (!_py_value.is_valid() || _py_value.is_none()) {
             nb::set v{};
             for (const T_Key &item : _value) { v.add(nb::cast(item)); }
-            _py_value = nb::cast<nb::object>(v);
+            _py_value = nb::frozenset(v);
         }
         return _py_value;
     }
+    template <typename T_Key>
+    const typename TimeSeriesSetOutput_T<T_Key>::collection_type &TimeSeriesSetOutput_T<T_Key>::value() const {
+        return _value;
+    }
 
+    // This form of the set_value requires:
+    // added is a disjoint set versus the current value
+    // removed is sub-set of the current value
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::set_value(collection_type added, collection_type removed) {
         for (const auto &item : removed) { _value.erase(item); }
         for (const auto &item : added) { _value.emplace(item); }
@@ -227,12 +237,27 @@ namespace hgraph
         _post_modify();
     }
 
-    template <typename T_Key> void  TimeSeriesSetOutput_T<T_Key>::set_value(const nb::object &value) {
+    // This is to deal with an object value, there are two scenarios, one is getting a setdelta,
+    // the other is an iterable.
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::set_value(const nb::object &value) {
         if (nb::isinstance<SetDelta_T<T_Key>>(value)) {
             set_value(nb::cast<SetDelta_T<T_Key>>(value));
+        } else if (nb::isinstance<nb::frozenset>(value)) {
+            auto            v = nb::frozenset(value);
+            collection_type added;
+            collection_type to_remove;
+            for (const auto &e : nb::iter(v)) {
+                auto k = nb::cast<T_Key>(e);
+                if (!_value.contains(k)) { added.insert(k); }
+            }
+            for (const auto &k : _value) {
+                if (!v.contains(k)) { to_remove.insert(k); }
+            }
+            set_value(std::move(added), std::move(to_remove));
         } else {
-            auto            removed = get_removed();
-            auto            v       = nb::set(value);
+            auto removed = get_removed();
+            auto v       = nb::iter(value);
+
             collection_type added;
             collection_type to_remove;
 
@@ -248,13 +273,11 @@ namespace hgraph
                     }
                 }
             }
-
             set_value(std::move(added), std::move(to_remove));
         }
     }
 
-    template <typename T_Key>
-    void TimeSeriesSetOutput_T<T_Key>::set_value(const SetDelta_T<T_Key> &delta) {
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::set_value(const SetDelta_T<T_Key> &delta) {
         collection_type added;
         collection_type removed;
         added.reserve(delta.added().size());
@@ -269,69 +292,27 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::object TimeSeriesSetOutput_T<T_Key>::py_delta_value() const {
-        if (modified()) {
-            if ((!_added.empty() || !_removed.empty()) && (_py_added.size() == 0 && _py_removed.size() == 0)) {
-                for (const auto &item : _added) { _py_added.add(nb::cast(item)); }
-                for (const auto &item : _removed) { _py_removed.add(nb::cast(item)); }
-            }
-            auto delta{make_set_delta<T_Key>(_added, _removed)};
-            return nb::cast(delta);
-        } else {
-            auto delta{make_set_delta<T_Key>({}, {})};
-            return nb::cast(delta);
-        }
+        return nb::cast(make_set_delta<T_Key>(_added, _removed));
     }
 
-    template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::can_apply_result(nb::object value) { return !modified(); }
-
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::py_set_value(nb::object value) {
-        _py_value = nb::none();
-        _py_removed.clear();
-        _py_added.clear();
-        _added.clear();
-        _removed.clear();
-        try {
-            if (nb::isinstance<SetDelta>(value)) {
-                auto delta{nb::cast<SetDelta *>(value)};
-                auto added   = delta->py_added();
-                auto removed = delta->py_removed();
-
-                if (added.is_valid() && !added.is_none()) {
-                    for (const auto &e : nb::iter(added)) {
-                        auto k{nb::cast<T_Key>(e)};
-                        if (!_value.contains(k)) { _add(k); }
-                    }
-                }
-
-                for (const auto &e : nb::iter(removed)) {
-                    auto k{nb::cast<T_Key>(e)};
-                    if (_added.contains(k)) { throw std::runtime_error("Cannot remove and add the same element"); }
-                    if (_value.contains(k)) { _remove(k); }
-                }
-            } else {
-                auto removed{get_removed()};
-                auto v = nb::set(value);
-                for (const auto &r : v) {
-                    if (!nb::isinstance(r, removed)) {
-                        auto k{nb::cast<T_Key>(r)};
-                        if (!_value.contains(k)) { _add(k); }
-                    } else {
-                        auto item{nb::cast<T_Key>(r.attr("item"))};
-                        if (_value.contains(item)) {
-                            if (_added.contains(item)) { throw std::runtime_error("Cannot remove and add the same element"); }
-                            _remove(item);
-                        }
-                    }
-                }
-            }
-        } catch (const std::exception &e) { throw std::runtime_error(std::string("Error in apply_result: ") + e.what()); }
-
-        _post_modify();
+        if (value.is_none()) {
+            invalidate();
+        } else {
+            set_value(value);
+        }
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::apply_result(nb::object value) {
         if (value.is_none()) { return; }
         py_set_value(value);
+    }
+
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::mark_modified(engine_time_t modified_time) {
+        TimeSeriesSetOutput::mark_modified(modified_time);
+        if (has_parent_or_node()) {
+            owning_node().graph().evaluation_engine_api().add_after_evaluation_notification([this]() { this->_reset(); });
+        }
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_add(const element_type &item) {
@@ -346,28 +327,28 @@ namespace hgraph
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_post_modify() {
-        // Match Python: if self._added or self._removed or not self.valid:
-        //     self.mark_modified()
-        // Note: has_added() returns true if _added is NOT empty
-        auto has_additions{has_added()};
-        auto has_removals{has_removed()};
-        auto is_empty{empty()};
-        if (has_additions || has_removals || !valid()) {
+        // We get here after setting the value, so we can overload this to reset the caches.
+        _py_value.reset();
+        _py_removed.reset();
+        _py_added.reset();
+
+        if (_added.size() > 0 || _removed.size() > 0 || !valid()) {
             mark_modified();
-            if (has_additions && is_empty_output()->valid() && is_empty_output()->value()) {
+            if (_added.size() > 0 && is_empty_output()->valid() && is_empty_output()->value()) {
                 is_empty_output()->set_value(false);
-            } else if (has_removals && is_empty) {
+            } else if (_removed.size() > 0 && empty()) {
                 is_empty_output()->set_value(true);
             }
             _contains_ref_outputs.update_all(_added.begin(), _added.end());
             _contains_ref_outputs.update_all(_removed.begin(), _removed.end());
         }
-        owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() {
-            _added.clear();
-            _removed.clear();
-            _py_added.clear();
-            _py_removed.clear();
-        });
+    }
+
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_reset() {
+        _added.clear();
+        _removed.clear();
+        _py_added.reset();
+        _py_removed.reset();
     }
 
     template <typename T> nb::object TimeSeriesSetInput_T<T>::py_value() const { return nb::cast(value()); }
@@ -379,6 +360,7 @@ namespace hgraph
     }
 
     template <typename T> size_t TimeSeriesSetInput_T<T>::size() const { return value().size(); }
+    template <typename T> bool   TimeSeriesSetInput_T<T>::empty() const { return value().empty(); }
 
     template <typename T> const nb::object TimeSeriesSetInput_T<T>::py_values() const { return nb::cast(value()); }
 
@@ -395,13 +377,20 @@ namespace hgraph
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::clear() {
-        _added.clear();
         _removed.clear();
+        _removed.reserve(_value.size());
+        for (const auto &item : _value) {
+            if (!_added.contains(item)) { _removed.emplace(item); }
+        }
+        _added.clear();
+        _contains_ref_outputs.update_all(_value.begin(), _value.end());
         _value.clear();
-        is_empty_output()->clear();
-        _py_value = nb::none();
-        _py_added.clear();
-        _py_removed.clear();
+        is_empty_output()->set_value(true);
+        // Clear the caches
+        _py_value.reset();
+        _py_added.reset();
+        _py_removed.reset();
+        mark_modified();
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::copy_from_output(const TimeSeriesOutput &output) {
@@ -409,10 +398,6 @@ namespace hgraph
 
         _added.clear();
         _removed.clear();
-        is_empty_output()->clear();
-        _py_value = nb::none();
-        _py_added.clear();
-        _py_removed.clear();
 
         // Calculate added elements (elements in output but not in current value)
         for (const auto &item : output_obj._value) {
@@ -424,8 +409,11 @@ namespace hgraph
             if (!output_obj._value.contains(item)) { _remove(item); }
         }
 
-        if (_added.size() > 0 || _removed.size() > 0) {
-            _value = collection_type(output_obj._value);
+        if (_added.size() > 0 || _removed.size() > 0 || !valid()) {
+            _value = output_obj._value;
+            is_empty_output()->set_value(empty());
+            _contains_ref_outputs.update_all(_added.begin(), _added.end());
+            _contains_ref_outputs.update_all(_removed.begin(), _removed.end());
             mark_modified();
         }
     }
@@ -435,22 +423,25 @@ namespace hgraph
 
         _added.clear();
         _removed.clear();
-        is_empty_output()->clear();
-        _py_value = nb::none();
-        _py_added.clear();
-        _py_removed.clear();
 
-        auto input_value{input_obj.value()};
-        // Calculate added elements (elements in input but not in current value)
-        for (const auto &item : input_value) {
+        // Calculate added elements (elements in output but not in current value)
+        const auto &value = input_obj.value();
+        for (const auto &item : value ){
             if (!_value.contains(item)) { _add(item); }
         }
 
+        // Calculate removed elements (elements in current value but not in output)
         for (const auto &item : _value) {
-            if (!input_value.contains(item)) { _remove(item); }
+            if (!value.contains(item)) { _remove(item); }
         }
 
-        if (_added.size() > 0 || _removed.size() > 0) { mark_modified(); }
+        if (_added.size() > 0 || _removed.size() > 0 || !valid()) {
+            _value = value;
+            is_empty_output()->set_value(empty());
+            _contains_ref_outputs.update_all(_added.begin(), _added.end());
+            _contains_ref_outputs.update_all(_removed.begin(), _removed.end());
+            mark_modified();
+        }
     }
 
     template <typename T_Key> bool TimeSeriesSetOutput_T<T_Key>::py_contains(const nb::object &item) const {
@@ -466,8 +457,10 @@ namespace hgraph
     template <typename T_Key> const nb::object TimeSeriesSetOutput_T<T_Key>::py_values() const { return py_value(); }
 
     template <typename T_Key> const nb::object TimeSeriesSetOutput_T<T_Key>::py_added() const {
-        if (_py_added.size() == 0 && !_added.empty()) {
-            for (const auto &item : _added) { _py_added.add(nb::cast(item)); }
+        if (!_py_added.is_valid()) {
+            nb::set added{};
+            for (const auto &item : _added) { added.add(nb::cast(item)); }
+            _py_added = nb::frozenset(added);
         }
         return _py_added;
     }
@@ -488,8 +481,10 @@ namespace hgraph
     }
 
     template <typename T_Key> const nb::object TimeSeriesSetOutput_T<T_Key>::py_removed() const {
-        if (_py_removed.size() == 0 && !_removed.empty()) {
-            for (const auto &item : _removed) { _py_removed.add(nb::cast(item)); }
+        if (!_py_removed.is_valid()) {
+            nb::set removed{};
+            for (const auto &item : _removed) { removed.add(nb::cast(item)); }
+            _py_removed = nb::frozenset(removed);
         }
         return _py_removed;
     }
@@ -522,9 +517,12 @@ namespace hgraph
                 was_added = true;
             }
 
-            if (!was_added) { _removed.emplace(key); }
+            if (was_added) {
+                _value.erase(key);
+            } else {
+                _remove(key);
+            }
 
-            _value.erase(key);
             _contains_ref_outputs.update(key);
 
             if (empty()) { is_empty_output()->set_value(true); }
@@ -541,10 +539,8 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::add(const element_type &key) {
         if (!contains(key)) {
             if (empty()) { is_empty_output()->set_value(false); }
-
             _add(key);
             _contains_ref_outputs.update(key);
-
             mark_modified();
         }
     }

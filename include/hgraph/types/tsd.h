@@ -108,9 +108,10 @@ namespace hgraph
         // Use raw pointers for reverse lookup to enable efficient lookup from mark_child_modified
         using reverse_map = std::unordered_map<TimeSeriesOutput *, key_type>;
 
-        explicit TimeSeriesDictOutput_T(const node_ptr &parent, nb::ref<key_set_type> key_set, output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder);
-        explicit TimeSeriesDictOutput_T(const time_series_type_ptr &parent, nb::ref<key_set_type> key_set, output_builder_ptr ts_builder,
+        explicit TimeSeriesDictOutput_T(const node_ptr &parent, nb::ref<key_set_type> key_set, output_builder_ptr ts_builder,
                                         output_builder_ptr ts_ref_builder);
+        explicit TimeSeriesDictOutput_T(const time_series_type_ptr &parent, nb::ref<key_set_type> key_set,
+                                        output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder);
 
         void py_set_value(nb::object value) override;
         void apply_result(nb::object value) override;
@@ -205,7 +206,7 @@ namespace hgraph
             return _ts_builder->is_same_type(*other_d->_ts_builder);
         }
 
-        //void post_modify() override;
+        // void post_modify() override;
 
         TimeSeriesOutput &_get_or_create(const key_type &key);
 
@@ -223,7 +224,7 @@ namespace hgraph
 
       private:
         nb::ref<key_set_type> _key_set;
-        map_type     _ts_values;
+        map_type              _ts_values;
 
         reverse_map      _reverse_ts_values;
         map_type         _modified_items;
@@ -235,7 +236,7 @@ namespace hgraph
 
         FeatureOutputExtension<key_type>        _ref_ts_feature;
         std::vector<TSDKeyObserver<key_type> *> _key_observers;
-        engine_time_t                            _last_cleanup_time{MIN_DT};
+        engine_time_t                           _last_cleanup_time{MIN_DT};
     };
 
     template <typename T_Key> struct TimeSeriesDictInput_T : TimeSeriesDictInput, TSDKeyObserver<T_Key>
@@ -249,6 +250,7 @@ namespace hgraph
         using item_iterator       = typename map_type::iterator;
         using const_item_iterator = typename map_type::const_iterator;
         using key_set_type        = TimeSeriesSetInput_T<key_type>;
+        using key_set_type_ptr    = nb::ref<key_set_type>;
         // Use raw pointers for reverse lookup to enable efficient lookup from notify_parent
         using reverse_map = std::unordered_map<TimeSeriesInput *, key_type>;
 
@@ -359,8 +361,8 @@ namespace hgraph
         void register_clear_key_changes();
 
       private:
-        key_set_type _key_set;
-        map_type     _ts_values;
+        key_set_type_ptr _key_set;
+        map_type         _ts_values;
 
         reverse_map      _ts_values_to_key;
         mutable map_type _valid_items;     // Cache the valid items if called.

@@ -6,9 +6,9 @@
 #define TSS_H
 
 #include <hgraph/python/hashable.h>
+#include <hgraph/types/constants.h>
 #include <hgraph/types/feature_extension.h>
 #include <hgraph/types/ts.h>
-#include <hgraph/types/constants.h>
 
 namespace hgraph
 {
@@ -102,6 +102,7 @@ namespace hgraph
         using T_TS::T_TS;
         [[nodiscard]] virtual bool             py_contains(const nb::object &item) const    = 0;
         [[nodiscard]] virtual size_t           size() const                                 = 0;
+        [[nodiscard]] virtual bool             empty() const                                = 0;
         [[nodiscard]] virtual const nb::object py_values() const                            = 0;
         [[nodiscard]] virtual const nb::object py_added() const                             = 0;
         [[nodiscard]] virtual bool             py_was_added(const nb::object &item) const   = 0;
@@ -169,7 +170,7 @@ namespace hgraph
         explicit TimeSeriesSetOutput_T(const TimeSeriesType::ptr &parent);
 
         [[nodiscard]] nb::object             py_value() const override;
-        [[nodiscard]] const collection_type &value() const { return _value; }
+        [[nodiscard]] const collection_type &value() const;
 
         void set_value(collection_type added, collection_type removed);
 
@@ -177,22 +178,32 @@ namespace hgraph
 
         void set_value(const nb::object &delta);
 
-        [[nodiscard]] nb::object             py_delta_value() const override;
-        [[nodiscard]] bool                   can_apply_result(nb::object value) override;
-        void                                 py_set_value(nb::object value) override;
-        void                                 apply_result(nb::object value) override;
-        void                                 clear() override;
-        void                                 copy_from_output(const TimeSeriesOutput &output) override;
-        void                                 copy_from_input(const TimeSeriesInput &input) override;
-        [[nodiscard]] bool                   py_contains(const nb::object &item) const override;
-        [[nodiscard]] bool                   contains(const element_type &item) const;
-        [[nodiscard]] size_t                 size() const override;
-        [[nodiscard]] const nb::object       py_values() const override;
+        [[nodiscard]] nb::object py_delta_value() const override;
+
+        void py_set_value(nb::object value) override;
+        void apply_result(nb::object value) override;
+
+        void clear() override;
+
+        void copy_from_output(const TimeSeriesOutput &output) override;
+        void copy_from_input(const TimeSeriesInput &input) override;
+
+        [[nodiscard]] bool py_contains(const nb::object &item) const override;
+        [[nodiscard]] bool contains(const element_type &item) const;
+
+        [[nodiscard]] size_t size() const override;
+
+
+        [[nodiscard]] const nb::object py_values() const override;
+
         [[nodiscard]] const nb::object       py_added() const override;
         [[nodiscard]] const collection_type &added() const;
         [[nodiscard]] bool                   has_added() const;
         [[nodiscard]] bool                   py_was_added(const nb::object &item) const override;
         [[nodiscard]] bool                   was_added(const element_type &item) const;
+        void                                 py_add(const nb::object &key) override;
+        void                                 add(const element_type &key);
+
         [[nodiscard]] const nb::object       py_removed() const override;
         [[nodiscard]] const collection_type &removed() const;
         [[nodiscard]] bool                   has_removed() const;
@@ -200,9 +211,8 @@ namespace hgraph
         [[nodiscard]] bool                   was_removed(const element_type &item) const;
         void                                 py_remove(const nb::object &key) override;
         void                                 remove(const element_type &key);
-        void                                 py_add(const nb::object &key) override;
-        void                                 add(const element_type &key);
-        [[nodiscard]] bool                   empty() const;
+
+        [[nodiscard]] bool empty() const override;
 
         [[nodiscard]] TimeSeriesValueOutput<bool>::ptr get_contains_output(const nb::object &item,
                                                                            const nb::object &requester) override;
@@ -212,12 +222,16 @@ namespace hgraph
             return dynamic_cast<const TimeSeriesSetOutput_T<T_Key> *>(other) != nullptr;
         }
 
+        using TimeSeriesOutput::mark_modified;
+        void mark_modified(engine_time_t modified_time) override;
+
         // void post_modify() override;
 
       protected:
         void _add(const element_type &item);
         void _remove(const element_type &item);
         void _post_modify();
+        void _reset();
 
       private:
         collection_type                      _value;
@@ -226,9 +240,9 @@ namespace hgraph
         FeatureOutputExtension<element_type> _contains_ref_outputs;
 
         // These are caches and not a key part of the object and could be constructed in a "const" function.
-        mutable nb::object _py_value{};
-        mutable nb::set    _py_added{};
-        mutable nb::set    _py_removed{};
+        mutable nb::frozenset _py_value{};
+        mutable nb::frozenset _py_added{};
+        mutable nb::frozenset _py_removed{};
     };
 
     template <typename T> struct TimeSeriesSetInput_T : TimeSeriesSetInput
@@ -239,10 +253,12 @@ namespace hgraph
         using set_delta       = typename TimeSeriesSetOutput_T<T>::set_delta;
         using set_delta_ptr   = nb::ref<typename TimeSeriesSetOutput_T<T>::set_delta>;
 
-        [[nodiscard]] nb::object       py_value() const override;
-        [[nodiscard]] nb::object       py_delta_value() const override;
+        [[nodiscard]] nb::object py_value() const override;
+        [[nodiscard]] nb::object py_delta_value() const override;
+
         [[nodiscard]] bool             py_contains(const nb::object &item) const override;
         [[nodiscard]] size_t           size() const override;
+        [[nodiscard]] bool             empty() const override;
         [[nodiscard]] const nb::object py_values() const override;
         [[nodiscard]] const nb::object py_added() const override;
         [[nodiscard]] bool             py_was_added(const nb::object &item) const override;
