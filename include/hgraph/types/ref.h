@@ -41,7 +41,7 @@ namespace hgraph
 
     struct BoundTimeSeriesReference final : TimeSeriesReference
     {
-        explicit BoundTimeSeriesReference(const time_series_output_ptr& output);
+        explicit BoundTimeSeriesReference(const time_series_output_ptr &output);
 
         const TimeSeriesOutput::ptr &output() const;
 
@@ -80,9 +80,7 @@ namespace hgraph
 
         ~TimeSeriesReferenceOutput() override;
 
-        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
-            return dynamic_cast<const TimeSeriesReferenceOutput *>(other) != nullptr;
-        }
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override;
 
         const TimeSeriesReference::ptr &value() const;
 
@@ -143,7 +141,6 @@ namespace hgraph
         [[nodiscard]] nb::object py_delta_value() const override;
 
         [[nodiscard]] TimeSeriesReference::ptr value() const;
-        void set_value(TimeSeriesReference::ptr value);
 
         // Duplicate binding of another input
         void clone_binding(const TimeSeriesReferenceInput &other);
@@ -153,8 +150,10 @@ namespace hgraph
         [[nodiscard]] bool          valid() const override;
         [[nodiscard]] bool          all_valid() const override;
         [[nodiscard]] engine_time_t last_modified_time() const override;
+
         bool                        bind_output(time_series_output_ptr value) override;
-        void                        un_bind_output(bool unbind_refs = false) override;
+        void                        un_bind_output(bool unbind_refs) override;
+
         void                        make_active() override;
         void                        make_passive() override;
 
@@ -166,11 +165,12 @@ namespace hgraph
         [[nodiscard]] bool has_reference() const override;
 
       protected:
-        bool do_bind_output(time_series_output_ptr& output_) override;
-        void do_un_bind_output(bool unbind_refs = false) override;
 
-        TimeSeriesReferenceOutput *as_reference_output() const;
-        TimeSeriesReferenceOutput *as_reference_output();
+        bool do_bind_output(time_series_output_ptr &output_) override;
+        void do_un_bind_output(bool unbind_refs) override;
+
+        TimeSeriesReferenceOutput *output_t() const;
+        TimeSeriesReferenceOutput *output_t();
 
         void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
 
@@ -181,8 +181,9 @@ namespace hgraph
       private:
         friend struct TimeSeriesReferenceOutput;
         friend struct TimeSeriesReference;
-        mutable TimeSeriesReference::ptr           _value;
-        std::vector<TimeSeriesReferenceInput::ptr> _items;
+        mutable TimeSeriesReference::ptr                          _value;
+        std::optional<std::vector<TimeSeriesReferenceInput::ptr>> _items;
+        static inline std::vector<TimeSeriesReferenceInput::ptr> empty_items{};
     };
 
 }  // namespace hgraph
