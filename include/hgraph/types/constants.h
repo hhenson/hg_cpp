@@ -26,6 +26,11 @@ namespace hgraph
     nb::object get_frozendict();
 
     nb::object get_key_set_id();
+
+    /**
+     * Builtins.object cached accessor
+     */
+    nb::object get_object();
 }  // namespace hgraph
 
 #endif  // CONSTANTS_H

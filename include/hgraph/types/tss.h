@@ -8,6 +8,7 @@
 #include <hgraph/python/hashable.h>
 #include <hgraph/types/feature_extension.h>
 #include <hgraph/types/ts.h>
+#include <hgraph/types/constants.h>
 
 namespace hgraph
 {
@@ -89,7 +90,7 @@ namespace hgraph
         } else if (!removed.empty()) {
             tp = nb::borrow(*removed.begin()->type());
         } else {
-            tp = nb::module_::import_("builtins").attr("object");
+            tp = get_object();
         }
         return new SetDelta_T<nb::object>(added, removed, tp);
     }

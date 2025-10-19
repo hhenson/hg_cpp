@@ -42,4 +42,10 @@ namespace hgraph
         return KEY_SET_ID;
     }
 
+    static nb::object OBJECT;
+    nb::object get_object() {
+        if (!OBJECT.is_valid()) { OBJECT = nb::module_::import_("builtins").attr("object"); }
+        return OBJECT;
+    }
+
 }  // namespace hgraph
