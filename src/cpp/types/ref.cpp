@@ -300,7 +300,13 @@ namespace hgraph
 
     void TimeSeriesReferenceOutput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesReferenceOutput, TimeSeriesOutput>(m, "TimeSeriesReferenceOutput")
-            .def_prop_ro("reference_observers", [](TimeSeriesReferenceOutput &self) { return self._value.get(); })
+            .def("observe_reference", &TimeSeriesReferenceOutput::observe_reference, "input"_a,
+                 "Register an input as observing this reference value")
+            .def("stop_observing_reference", &TimeSeriesReferenceOutput::stop_observing_reference, "input"_a,
+                 "Unregister an input from observing this reference value")
+            .def_prop_ro("reference_observers_count", [](const TimeSeriesReferenceOutput &self) {
+                return self._reference_observers.size();
+            }, "Number of inputs observing this reference value")
             .def("clear", &TimeSeriesReferenceOutput::clear);
     }
 
@@ -367,7 +373,7 @@ namespace hgraph
         un_bind_output(false);
         if (other.has_output()) {
             bind_output(other.output());
-        } else if (!other._items.has_value()) {
+        } else if (other._items.has_value()) {
             for (size_t i = 0; i < other._items->size(); ++i) { (*this)[i]->clone_binding(*(*other._items)[i]); }
         } else if (other._value != nullptr) {
             _value = other._value;
@@ -466,7 +472,7 @@ namespace hgraph
             // TODO: Do we need to notify here? Should we notify only if the input is active?
             set_sample_time(owning_node().is_started() ? owning_graph().evaluation_clock().evaluation_time() : MIN_ST);
         }
-        if (!_items.has_value()) {
+        if (_items.has_value()) {
             for (auto &item : *_items) { item->un_bind_output(unbind_refs); }
             _items.reset();
         }
@@ -485,6 +491,10 @@ namespace hgraph
 
     void TimeSeriesReferenceInput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesReferenceInput, TimeSeriesInput>(m, "TimeSeriesReferenceInput")
+            .def("bind_output", &TimeSeriesReferenceInput::bind_output, "output"_a,
+                 "Bind this reference input to an output or wrap a concrete output as a reference")
+            .def("un_bind_output", &TimeSeriesReferenceInput::un_bind_output, "unbind_refs"_a = false,
+                 "Unbind this reference input; optionally unbind nested references")
             .def("__getitem__", [](TimeSeriesReferenceInput &self, size_t index) -> TimeSeriesInput::ptr {
                 return TimeSeriesInput::ptr{self[index].get()};
             });
