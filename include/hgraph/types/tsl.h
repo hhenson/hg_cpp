@@ -29,22 +29,8 @@ namespace hgraph
         using index_ts_type::size;
         using T_TS::T_TS;
 
-        virtual nb::object py_value() const override {
-            nb::list result;
-            for (const auto &ts : this->ts_values()) {
-                if (ts->valid()) {
-                    result.append(ts->py_value());
-                } else {
-                    result.append(nb::none());
-                }
-            }
-            return nb::tuple(result);
-        }
-        virtual nb::object py_delta_value() const override {
-            nb::dict result;
-            for (auto &[ndx, ts] : modified_items()) { result[nb::cast(ndx)] = ts->py_delta_value(); }
-            return result;
-        }
+        [[nodiscard]] nb::object py_value() const override;
+        [[nodiscard]] nb::object py_delta_value() const override;
 
         value_iterator       begin() { return ts_values().begin(); }
         value_const_iterator begin() const { return const_cast<list_type *>(this)->begin(); }
@@ -52,41 +38,19 @@ namespace hgraph
         value_const_iterator end() const { return const_cast<list_type *>(this)->end(); }
 
         // Retrieves valid keys
-        [[nodiscard]] index_collection_type keys() const {
-            index_collection_type result;
-            result.reserve(size());
-            for (size_t i = 0; i < size(); ++i) { result.push_back(i); }
-            return result;
-        }
-        [[nodiscard]] index_collection_type valid_keys() const {
-            return index_with_constraint([](const ts_type &ts) { return ts.valid(); });
-        }
-        [[nodiscard]] index_collection_type modified_keys() const {
-            return index_with_constraint([](const ts_type &ts) { return ts.modified(); });
-        }
+        [[nodiscard]] index_collection_type keys() const;
+        [[nodiscard]] index_collection_type valid_keys() const;
+        [[nodiscard]] index_collection_type modified_keys() const;
 
         // Retrieves valid items
-        [[nodiscard]] enumerated_collection_type items() {
-            enumerated_collection_type result;
-            result.reserve(size());
-            for (size_t i = 0; i < size(); ++i) { result.push_back({i, ts_values()[i]}); }
-            return result;
-        }
-        [[nodiscard]] enumerated_collection_type items() const {
-            return const_cast<list_type *>(this)->items();
-        }
-        [[nodiscard]] enumerated_collection_type valid_items() {
-            return this->items_with_constraint([](const ts_type &ts) { return ts.valid(); });
-        }
-        [[nodiscard]] enumerated_collection_type valid_items() const {
-            return const_cast<list_type *>(this)->valid_items();
-        }
-        [[nodiscard]] enumerated_collection_type modified_items() {
-            return this->items_with_constraint([](const ts_type &ts) { return ts.modified(); });
-        }
-        [[nodiscard]] enumerated_collection_type modified_items() const {
-            return const_cast<list_type *>(this)->modified_items();
-        }
+        [[nodiscard]] enumerated_collection_type items();
+        [[nodiscard]] enumerated_collection_type items() const;
+
+        [[nodiscard]] enumerated_collection_type valid_items();
+        [[nodiscard]] enumerated_collection_type valid_items() const;
+
+        [[nodiscard]] enumerated_collection_type modified_items();
+        [[nodiscard]] enumerated_collection_type modified_items() const;
 
       protected:
         using T_TS::index_with_constraint;
@@ -100,16 +64,7 @@ namespace hgraph
 
         void apply_result(nb::object value) override;
 
-        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
-            auto other_list = dynamic_cast<const TimeSeriesListOutput *>(other);
-            if (!other_list) { return false; }
-            const auto this_size  = this->size();
-            const auto other_size = other_list->size();
-            // Be permissive during wiring: if either list has no elements yet, treat as same type
-            if (this_size == 0 || other_size == 0) { return true; }
-            // Otherwise, compare the element type recursively without enforcing equal sizes
-            return (*this)[0]->is_same_type((*other_list)[0]);
-        }
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override;
 
         void py_set_value(nb::object value) override;
 
@@ -123,16 +78,7 @@ namespace hgraph
     {
         using list_type::TimeSeriesList;
 
-        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
-            auto other_list = dynamic_cast<const TimeSeriesListInput *>(other);
-            if (!other_list) { return false; }
-            const auto this_size  = this->size();
-            const auto other_size = other_list->size();
-            // Be permissive during wiring: if either list has no elements yet, consider types compatible
-            if (this_size == 0 || other_size == 0) { return true; }
-            // Otherwise compare element type recursively without enforcing size equality
-            return (*this)[0]->is_same_type((*other_list)[0]);
-        }
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override;
 
         static void register_with_nanobind(nb::module_ &m);
     protected:
