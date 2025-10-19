@@ -1,5 +1,5 @@
-#include <hgraph/types/ts_indexed.h>
 #include <hgraph/types/graph.h>
+#include <hgraph/types/ts_indexed.h>
 
 #include <algorithm>
 #include <ranges>
@@ -54,7 +54,7 @@ namespace hgraph
                 "__getitem__", [](const IndexedTimeSeries_Output &self, size_t idx) { return self[idx]; }, "index"_a)
             .def("values", static_cast<collection_type (IndexedTimeSeries_Output::*)() const>(&IndexedTimeSeries_Output::values))
             .def("valid_values", &IndexedTimeSeries_Output::py_valid_values)
-            .def("modified_values",&IndexedTimeSeries_Output::py_modified_values)
+            .def("modified_values", &IndexedTimeSeries_Output::py_modified_values)
             .def("__len__", &IndexedTimeSeries_Output::size)
             .def_prop_ro("empty", &IndexedTimeSeries_Output::empty);
 
@@ -65,6 +65,7 @@ namespace hgraph
 
     bool IndexedTimeSeriesInput::modified() const {
         if (has_peer()) { return TimeSeriesInput::modified(); }
+        if (ts_values().empty()) { return false; }
         return std::ranges::any_of(ts_values(), [](const time_series_input_ptr &ts) { return ts->modified(); });
     }
 
@@ -89,6 +90,7 @@ namespace hgraph
 
     bool IndexedTimeSeriesInput::active() const {
         if (has_peer()) { return TimeSeriesInput::active(); }
+        if (ts_values().empty()) { return false; }
         return std::ranges::any_of(ts_values(), [](const time_series_input_ptr &ts) { return ts->active(); });
     }
 
@@ -124,23 +126,16 @@ namespace hgraph
     }
 
     bool IndexedTimeSeriesInput::do_bind_output(time_series_output_ptr &value) {
-        // Detect rebinding - if we already have an output, we're switching to a new one
-        bool rebinding = has_output();
-
         auto output_bundle = dynamic_cast<IndexedTimeSeriesOutput *>(value.get());
-        bool peer          = true;
-
-        if (output_bundle) {
-            for (size_t i = 0; i < ts_values().size(); ++i) { peer &= ts_values()[i]->bind_output((*output_bundle)[i]); }
+        if (output_bundle == nullptr) {
+            throw std::runtime_error("IndexedTimeSeriesInput::do_bind_output: Expected IndexedTimeSeriesOutput");
         }
-        time_series_output_ptr none {};
+
+        bool peer = true;
+        for (size_t i = 0; i < ts_values().size(); ++i) { peer &= ts_values()[i]->bind_output((*output_bundle)[i]); }
+
+        time_series_output_ptr none{};
         TimeSeriesInput::do_bind_output(peer ? value : none);
-
-        // If rebinding occurred, notify parent so downstream nodes know to evaluate
-        if (rebinding && peer) {
-            notify(owning_graph().evaluation_clock().evaluation_time());
-        }
-
         return peer;
     }
 

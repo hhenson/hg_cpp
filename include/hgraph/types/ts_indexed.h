@@ -25,6 +25,7 @@ namespace hgraph
         using ts_type::valid;
 
         [[nodiscard]] bool all_valid() const override {
+            if (empty()) { return true; }
             return valid() && std::ranges::all_of(_ts_values, [](const auto &ts) { return ts->valid(); });
         }
 
@@ -49,6 +50,7 @@ namespace hgraph
         [[nodiscard]] collection_type valid_values() {
             return values_with_constraint([](const T_TS &ts) { return ts.valid(); });
         }
+
         [[nodiscard]] collection_type valid_values() const { return const_cast<index_ts_type *>(this)->valid_values(); }
 
         [[nodiscard]] nb::iterator py_modified_values() const {
@@ -64,9 +66,11 @@ namespace hgraph
         [[nodiscard]] collection_type modified_values() {
             return values_with_constraint([](const T_TS &ts) { return ts.modified(); });
         }
+
         [[nodiscard]] collection_type modified_values() const { return const_cast<index_ts_type *>(this)->modified_values(); }
 
         [[nodiscard]] size_t size() const { return _ts_values.size(); }
+
         [[nodiscard]] bool   empty() const { return _ts_values.empty(); }
 
         [[nodiscard]] bool has_reference() const override {
@@ -145,7 +149,7 @@ namespace hgraph
 
       protected:
         bool do_bind_output(time_series_output_ptr& value) override;
-        void do_un_bind_output(bool unbind_refs = false) override;
+        void do_un_bind_output(bool unbind_refs) override;
     };
 
     template <typename T_TS>
