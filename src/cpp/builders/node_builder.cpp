@@ -16,6 +16,7 @@
 #include <hgraph/nodes/try_except_node.h>
 #include <hgraph/nodes/non_associative_reduce_node.h>
 #include <hgraph/nodes/mesh_node.h>
+#include <hgraph/nodes/python_generator_node.h>
 #include <hgraph/nodes/last_value_pull_node.h>
 #include <hgraph/nodes/context_node.h>
 

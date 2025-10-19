@@ -122,6 +122,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/nodes/nested_evaluation_engine.h
         include/hgraph/nodes/nested_node.h
         include/hgraph/nodes/non_associative_reduce_node.h
+        include/hgraph/nodes/python_generator_node.h
         include/hgraph/nodes/reduce_node.h
         include/hgraph/nodes/switch_node.h
         include/hgraph/nodes/try_except_node.h

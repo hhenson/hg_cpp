@@ -312,16 +312,6 @@ namespace hgraph
         nb::callable              _eval_fn;
     };
 
-    struct PythonGeneratorNode : BasePythonNode
-    {
-        using BasePythonNode::BasePythonNode;
-        nb::iterator generator{};
-        nb::object   next_value{};
-
-      protected:
-        void do_eval() override;
-        void start() override;
-    };
 }  // namespace hgraph
 
 #endif  // NODE_H

@@ -89,7 +89,7 @@ namespace hgraph
         } else if (!removed.empty()) {
             tp = nb::borrow(*removed.begin()->type());
         } else {
-            tp = nb::borrow(nb::type<nb::object>());
+            tp = nb::module_::import_("builtins").attr("object");
         }
         return new SetDelta_T<nb::object>(added, removed, tp);
     }

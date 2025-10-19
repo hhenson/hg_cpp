@@ -96,6 +96,22 @@ namespace hgraph
     template struct SetDelta_T<engine_time_delta_t>;
     template struct SetDelta_T<nb::object>;
 
+    bool eq(const SetDelta& self, const nb::object &other) {
+        if (!nb::isinstance<nb::iterable>(other)) { return false; }
+        auto added   = nb::cast<nb::frozenset>(self.py_added());
+        auto removed = nb::cast<nb::frozenset>(self.py_removed());
+        if (nb::len(other) != nb::len(added) + nb::len(removed)) { return false; }
+        auto REMOVED = get_removed();
+        for (auto i : nb::iter(other)) {
+            if (nb::isinstance(i, REMOVED)) {
+                if (!removed.contains(i.attr("item"))) return false;
+            } else {
+                if (!added.contains(i)) return false;
+            }
+        }
+        return true;
+    }
+
     void SetDelta::register_with_nanobind(nb::module_ &m) {
         nb::class_<SetDelta, nb::intrusive_base>(m, "SetDelta")
             .def_prop_ro("added", &SetDelta::py_added)
@@ -110,7 +126,7 @@ namespace hgraph
                     return nb::str("SetDelta[{}](added={}, removed={})").format(self.py_type(), self.py_added(), self.py_removed());
                 })
             .def("__eq__", &SetDelta::operator==)
-            .def("__eq__", [](const SetDelta &, nb::object) { return false; })
+            .def("__eq__", eq)
             .def("__hash__", &SetDelta::hash);
 
         using SetDelta_bool = SetDelta_T<bool>;

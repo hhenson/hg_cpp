@@ -15,6 +15,7 @@ set(HGRAPH_SOURCES
         nodes/nested_graph_node.cpp
         nodes/nested_node.cpp
         nodes/non_associative_reduce_node.cpp
+        nodes/python_generator_node.cpp
         nodes/reduce_node.cpp
         nodes/switch_node.cpp
         nodes/try_except_node.cpp

@@ -1,13 +1,13 @@
+#include <cstdlib>
+#include <fmt/format.h>
+#include <hgraph/types/error_type.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
-#include <hgraph/types/error_type.h>
 #include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/tsb.h>
 #include <ranges>
 #include <sstream>
-#include <fmt/format.h>
-#include <cstdlib>
 
 namespace hgraph
 {
@@ -142,9 +142,7 @@ namespace hgraph
             .def("to_dict", &NodeSignature::to_dict)
             .def("copy_with", &NodeSignature::copy_with)
 
-            .def("__str__", [](const NodeSignature &self) {
-                return self.signature();
-            })
+            .def("__str__", [](const NodeSignature &self) { return self.signature(); })
             .def("__repr__", [](const NodeSignature &self) {
                 std::ostringstream oss;
                 oss << "NodeSignature(name='" << self.name << "'";
@@ -190,7 +188,7 @@ namespace hgraph
                 if (self.active_inputs.has_value()) {
                     oss << "{";
                     bool first = true;
-                    for (const auto& inp : *self.active_inputs) {
+                    for (const auto &inp : *self.active_inputs) {
                         if (!first) oss << ", ";
                         oss << "'" << inp << "'";
                         first = false;
@@ -205,7 +203,7 @@ namespace hgraph
                 if (self.valid_inputs.has_value()) {
                     oss << "{";
                     bool first = true;
-                    for (const auto& inp : *self.valid_inputs) {
+                    for (const auto &inp : *self.valid_inputs) {
                         if (!first) oss << ", ";
                         oss << "'" << inp << "'";
                         first = false;
@@ -220,7 +218,7 @@ namespace hgraph
                 if (self.all_valid_inputs.has_value()) {
                     oss << "{";
                     bool first = true;
-                    for (const auto& inp : *self.all_valid_inputs) {
+                    for (const auto &inp : *self.all_valid_inputs) {
                         if (!first) oss << ", ";
                         oss << "'" << inp << "'";
                         first = false;
@@ -235,7 +233,7 @@ namespace hgraph
                 if (self.context_inputs.has_value()) {
                     oss << "{";
                     bool first = true;
-                    for (const auto& inp : *self.context_inputs) {
+                    for (const auto &inp : *self.context_inputs) {
                         if (!first) oss << ", ";
                         oss << "'" << inp << "'";
                         first = false;
@@ -400,31 +398,41 @@ namespace hgraph
 
     NodeSignature::ptr NodeSignature::copy_with(nb::kwargs kwargs) const {
         // Get override values from kwargs, otherwise use current values
-        std::string name_val = kwargs.contains("name") ? nb::cast<std::string>(kwargs["name"]) : this->name;
+        std::string  name_val      = kwargs.contains("name") ? nb::cast<std::string>(kwargs["name"]) : this->name;
         NodeTypeEnum node_type_val = kwargs.contains("node_type") ? nb::cast<NodeTypeEnum>(kwargs["node_type"]) : this->node_type;
-        std::vector<std::string> args_val = kwargs.contains("args") ? nb::cast<std::vector<std::string>>(kwargs["args"]) : this->args;
-        std::string wiring_path_name_val = kwargs.contains("wiring_path_name") ? nb::cast<std::string>(kwargs["wiring_path_name"]) : this->wiring_path_name;
+        std::vector<std::string> args_val =
+            kwargs.contains("args") ? nb::cast<std::vector<std::string>>(kwargs["args"]) : this->args;
+        std::string wiring_path_name_val =
+            kwargs.contains("wiring_path_name") ? nb::cast<std::string>(kwargs["wiring_path_name"]) : this->wiring_path_name;
 
-        auto* raw = new NodeSignature(
-            name_val,
-            node_type_val,
-            args_val,
-            kwargs.contains("time_series_inputs") ? nb::cast<std::optional<std::unordered_map<std::string, nb::object>>>(kwargs["time_series_inputs"]) : this->time_series_inputs,
-            kwargs.contains("time_series_output") ? nb::cast<std::optional<nb::object>>(kwargs["time_series_output"]) : this->time_series_output,
+        auto *raw = new NodeSignature(
+            name_val, node_type_val, args_val,
+            kwargs.contains("time_series_inputs")
+                ? nb::cast<std::optional<std::unordered_map<std::string, nb::object>>>(kwargs["time_series_inputs"])
+                : this->time_series_inputs,
+            kwargs.contains("time_series_output") ? nb::cast<std::optional<nb::object>>(kwargs["time_series_output"])
+                                                  : this->time_series_output,
             kwargs.contains("scalars") ? nb::cast<std::optional<nb::dict>>(kwargs["scalars"]) : this->scalars,
             kwargs.contains("src_location") ? kwargs["src_location"] : this->src_location,
-            kwargs.contains("active_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["active_inputs"]) : this->active_inputs,
-            kwargs.contains("valid_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["valid_inputs"]) : this->valid_inputs,
-            kwargs.contains("all_valid_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["all_valid_inputs"]) : this->all_valid_inputs,
-            kwargs.contains("context_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["context_inputs"]) : this->context_inputs,
-            kwargs.contains("injectable_inputs") ? nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(kwargs["injectable_inputs"]) : this->injectable_inputs,
+            kwargs.contains("active_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["active_inputs"])
+                                             : this->active_inputs,
+            kwargs.contains("valid_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["valid_inputs"])
+                                            : this->valid_inputs,
+            kwargs.contains("all_valid_inputs")
+                ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["all_valid_inputs"])
+                : this->all_valid_inputs,
+            kwargs.contains("context_inputs") ? nb::cast<std::optional<std::unordered_set<std::string>>>(kwargs["context_inputs"])
+                                              : this->context_inputs,
+            kwargs.contains("injectable_inputs")
+                ? nb::cast<std::optional<std::unordered_map<std::string, InjectableTypesEnum>>>(kwargs["injectable_inputs"])
+                : this->injectable_inputs,
             kwargs.contains("injectables") ? nb::cast<size_t>(kwargs["injectables"]) : this->injectables,
             kwargs.contains("capture_exception") ? nb::cast<bool>(kwargs["capture_exception"]) : this->capture_exception,
             kwargs.contains("trace_back_depth") ? nb::cast<int64_t>(kwargs["trace_back_depth"]) : this->trace_back_depth,
-            wiring_path_name_val,
-            kwargs.contains("label") ? nb::cast<std::optional<std::string>>(kwargs["label"]) : this->label,
+            wiring_path_name_val, kwargs.contains("label") ? nb::cast<std::optional<std::string>>(kwargs["label"]) : this->label,
             kwargs.contains("capture_values") ? nb::cast<bool>(kwargs["capture_values"]) : this->capture_values,
-            kwargs.contains("record_replay_id") ? nb::cast<std::optional<std::string>>(kwargs["record_replay_id"]) : this->record_replay_id);
+            kwargs.contains("record_replay_id") ? nb::cast<std::optional<std::string>>(kwargs["record_replay_id"])
+                                                : this->record_replay_id);
         // Wrap into a nanobind intrusive ref explicitly to ensure correct refcount semantics
         return nb::ref<NodeSignature>(raw);
     }
@@ -629,7 +637,7 @@ namespace hgraph
     void Node::reset_input(time_series_bundle_input_ptr value) {
         _input = std::move(value);
         _check_valid_inputs.reserve(signature().valid_inputs.has_value() ? signature().valid_inputs->size()
-                                                                             : signature().time_series_inputs->size());
+                                                                         : signature().time_series_inputs->size());
         if (signature().valid_inputs.has_value()) {
             for (const auto &key : std::views::all(*signature().valid_inputs)) { _check_valid_inputs.push_back(input()[key]); }
         } else {
@@ -676,14 +684,15 @@ namespace hgraph
     void Node::register_with_nanobind(nb::module_ &m) {
         nb::class_<Node, ComponentLifeCycle>(m, "Node")
             .def_prop_ro("node_ndx", &Node::node_ndx)
-            .def_prop_ro("owning_graph_id", [](const Node &n) {
-                // Convert vector to tuple for Python compatibility
-                // Python code expects owning_graph_id to be a tuple, not a list
-                const auto &vec = n.owning_graph_id();
-                nb::list py_list;
-                for (const auto &id : vec) { py_list.append(id); }
-                return nb::tuple(py_list);
-            })
+            .def_prop_ro("owning_graph_id",
+                         [](const Node &n) {
+                             // Convert vector to tuple for Python compatibility
+                             // Python code expects owning_graph_id to be a tuple, not a list
+                             const auto &vec = n.owning_graph_id();
+                             nb::list    py_list;
+                             for (const auto &id : vec) { py_list.append(id); }
+                             return nb::tuple(py_list);
+                         })
             .def_prop_ro("node_id", &Node::node_id)
             .def_prop_ro("signature", &Node::signature)
             .def_prop_ro("scalars", &Node::scalars)
@@ -719,7 +728,7 @@ namespace hgraph
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, nb::callable, nb::callable, nb::callable>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "eval_fn"_a = nb::none(), "start_fn"_a = nb::none(),
                  "stop_fn"_a = nb::none());
-        nb::class_<PythonGeneratorNode, BasePythonNode>(m, "PythonGeneratorNode");
+
     }
 
     bool Node::has_input() const { return _input.get() != nullptr; }
@@ -747,8 +756,8 @@ namespace hgraph
             oss << arg << ": " << obj_to_type(signature().get_arg_type(arg));
             if (!signature().time_series_inputs->contains(arg)) {
                 nb::handle key_handle{_scalars[arg.c_str()]};
-                nb::str s{nb::str(key_handle)};
-                size_t length{nb::len(s)};
+                nb::str    s{nb::str(key_handle)};
+                size_t     length{nb::len(s)};
                 if (length > 8) { s = nb::str("{}...").format(s[nb::slice(0, 8)]); }
                 oss << "=" << s.c_str();
             }
@@ -775,9 +784,7 @@ namespace hgraph
             auto pop_result = scheduler().pop_tag("start");
             if (pop_result != MIN_DT) {
                 notify();
-                if (!signature().uses_scheduler()) {
-                    _scheduler.reset();
-                }
+                if (!signature().uses_scheduler()) { _scheduler.reset(); }
             } else {
                 scheduler().advance();
             }
@@ -818,7 +825,7 @@ namespace hgraph
             auto key{input().schema().keys()[i]};
             if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) {
                 // Force exposure of inputs as base TimeSeriesInput to avoid double-wrapping as derived classes
-                _kwargs[key.c_str()] = nb::cast<TimeSeriesInput&>(*input()[i]);
+                _kwargs[key.c_str()] = nb::cast<TimeSeriesInput &>(*input()[i]);
             }
         }
     }
@@ -876,8 +883,8 @@ namespace hgraph
             // This matches Python's approach: signature(self.start_fn).parameters.keys()
             // Using __code__.co_varnames includes local variables, not just parameters
             auto inspect = nb::module_::import_("inspect");
-            auto sig = inspect.attr("signature")(_start_fn);
-            auto params = sig.attr("parameters").attr("keys")();
+            auto sig     = inspect.attr("signature")(_start_fn);
+            auto params  = sig.attr("parameters").attr("keys")();
 
             // Filter kwargs to only include parameters in start_fn signature
             nb::dict filtered_kwargs;
@@ -895,8 +902,8 @@ namespace hgraph
             // This matches Python's approach: signature(self.stop_fn).parameters.keys()
             // Using __code__.co_varnames includes local variables, not just parameters
             auto inspect = nb::module_::import_("inspect");
-            auto sig = inspect.attr("signature")(_stop_fn);
-            auto params = sig.attr("parameters").attr("keys")();
+            auto sig     = inspect.attr("signature")(_stop_fn);
+            auto params  = sig.attr("parameters").attr("keys")();
 
             // Filter kwargs to only include parameters in stop_fn signature
             nb::dict filtered_kwargs;
@@ -961,8 +968,8 @@ namespace hgraph
 
             if (signature().context_inputs.has_value() && !signature().context_inputs->empty()) {
                 // Enter all valid context inputs
-                for (const auto& context_key : *signature().context_inputs) {
-                    auto& context_input = input()[context_key];
+                for (const auto &context_key : *signature().context_inputs) {
+                    auto &context_input = input()[context_key];
                     if (context_input->valid()) {
                         nb::object context_value = context_input->py_value();
                         // Call __enter__() on the context manager
@@ -989,7 +996,7 @@ namespace hgraph
                     try {
                         do_eval();
                     } catch (const NodeException &e) {
-                        throw; // already enriched
+                        throw;  // already enriched
                     } catch (const std::exception &e) {
                         throw NodeException::capture_error(e, *this, "During evaluation");
                     } catch (...) {
@@ -1010,7 +1017,7 @@ namespace hgraph
                         // Suppress exceptions during cleanup to preserve original exception
                     }
                 }
-                throw; // Re-throw the original exception
+                throw;  // Re-throw the original exception
             }
         }
 
@@ -1037,9 +1044,7 @@ namespace hgraph
 
     void PushQueueNode::do_eval() {}
 
-    const nb::callable &PythonNode::eval_fn() {
-        return _eval_fn;
-    }
+    const nb::callable &PythonNode::eval_fn() { return _eval_fn; }
 
     void PushQueueNode::enqueue_message(nb::object message) {
         ++_messages_queued;
@@ -1062,79 +1067,17 @@ namespace hgraph
         _receiver = &graph().receiver();
         _elide    = scalars().contains("elide") ? nb::cast<bool>(scalars()["elide"]) : false;
         _batch    = scalars().contains("batch") ? nb::cast<bool>(scalars()["batch"]) : false;
-        
+
         // If an eval function was provided (from push_queue decorator), call it with a sender and scalar kwargs
         if (_eval_fn.is_valid() && !_eval_fn.is_none()) {
             // Create a Python-callable sender that enqueues messages into this node
-            nb::object sender = nb::cpp_function([this](nb::object m) {
-                this->enqueue_message(std::move(m));
-            });
+            nb::object sender = nb::cpp_function([this](nb::object m) { this->enqueue_message(std::move(m)); });
             // Call eval_fn(sender, **scalars)
             try {
                 _eval_fn(sender, **scalars());
-            } catch (nb::python_error &e) {
-                throw NodeException::capture_error(e, *this, "During push-queue start");
-            }
+            } catch (nb::python_error &e) { throw NodeException::capture_error(e, *this, "During push-queue start"); }
         }
     }
 
-    void PythonGeneratorNode::do_eval() {
-        auto       et = graph().evaluation_clock().evaluation_time();
-        auto       next_time{MIN_DT};
-        auto       sentinel{nb::iterator::sentinel()};
-        nb::object out;
-        for (nb::iterator v = ++generator; v != sentinel; ++v) {  // Returns NULL if there are no new values
-            auto tpl = *v;
-            auto time = nb::cast<nb::object>(tpl[0]);
-            out       = nb::cast<nb::object>(tpl[1]);
-
-            // Robustly handle either a timedelta (duration) or a datetime (time_point)
-            bool handled = false;
-            try {
-                // Try as duration (e.g., datetime.timedelta)
-                auto delta = nb::cast<engine_time_delta_t>(time);
-                next_time = et + delta;
-                handled = true;
-            } catch (...) {
-                // Not a duration, try as absolute time (e.g., datetime)
-            }
-            if (!handled) {
-                try {
-                    next_time = nb::cast<engine_time_t>(time);
-                } catch (...) {
-                    // As a last resort, treat unknown types as immediate (break)
-                    next_time = et;
-                }
-            }
-            if (next_time >= et) { break; }
-        }
-
-        if (next_time > MIN_DT && next_time <= et) {
-            if (output().last_modified_time() == next_time) {
-                throw std::runtime_error(
-                    fmt::format("Duplicate time produced by generator: [{:%FT%T%z}] - {}", next_time, nb::str(out).c_str()));
-            }
-            output().apply_result(out);
-            next_value = nb::none();
-            do_eval();  // We are going to apply now! Prepare next step
-            return;
-        }
-
-        if (next_value.is_valid() && !next_value.is_none()) {
-            output().apply_result(next_value);
-            next_value = nb::none();
-        }
-
-        if (next_time != MIN_DT) {
-            next_value = out;
-            graph().schedule_node(node_ndx(), next_time);
-        }
-    }
-
-    void PythonGeneratorNode::start() {
-        BasePythonNode::_initialise_kwargs();
-        generator = nb::cast<nb::iterator>(_eval_fn(**_kwargs));
-        graph().schedule_node(node_ndx(), graph().evaluation_clock().evaluation_time());
-    }
 
 }  // namespace hgraph

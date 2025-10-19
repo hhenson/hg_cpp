@@ -11,6 +11,7 @@
 #include <hgraph/nodes/mesh_node.h>
 #include <hgraph/nodes/last_value_pull_node.h>
 #include <hgraph/nodes/context_node.h>
+#include <hgraph/nodes/python_generator_node.h>
 
 void export_nodes(nb::module_ &m) {
     using namespace hgraph;
@@ -23,6 +24,7 @@ void export_nodes(nb::module_ &m) {
     register_tsd_map_with_nanobind(m);
     register_reduce_node_with_nanobind(m);
 
+    PythonGeneratorNode::register_with_nanobind(m);
     ComponentNode::register_with_nanobind(m);
     register_switch_node_with_nanobind(m);
     TryExceptNode::register_with_nanobind(m);
