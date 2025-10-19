@@ -7,59 +7,46 @@
 namespace hgraph
 {
 
-    SetDelta_Object::SetDelta_Object(nb::object added, nb::object removed, nb::object tp)
-        : _tp{std::move(tp)}, _added(nb::frozenset(added)), _removed(nb::frozenset(removed)) {}
-
-    nb::object SetDelta_Object::py_removed() const { return _removed; }
-
-    nb::object SetDelta_Object::py_type() const { return _tp; }
-    bool       SetDelta_Object::operator==(const SetDelta_Object &other) const {
-        if (!_tp.is(other._tp)) return false;
-        return _added.equal(other._added) && _removed.equal(other._removed);
-    }
-
-    nb::ref<SetDelta_Object> SetDelta_Object::operator+(const SetDelta_Object &other) const {
-        if (!_tp.is(other._tp)) throw std::runtime_error("Cannot add SetDelta_Object with different types");
-
-        nb::frozenset added{_added - other._removed};
-
-        nb::frozenset removed{other._removed - _added};
-        nb::frozenset removed2{_removed - other._added};
-
-        return new SetDelta_Object(added.attr("union")(other._added), removed.attr("union")(removed2), _tp);
-    }
-
-    size_t SetDelta_Object::hash() const { return nb::hash(_added) ^ nb::hash(_removed); }
-
     template <typename T>
-    SetDeltaImpl<T>::SetDeltaImpl(collection_type added, collection_type removed)
+    template <typename U>
+        requires(!std::is_same_v<U, nb::object>)
+    SetDelta_T<T>::SetDelta_T(collection_type added, collection_type removed)
         : _added(std::move(added)), _removed(std::move(removed)) {}
 
-    template <typename T> nb::object SetDeltaImpl<T>::py_added() const { return nb::frozenset(nb::cast(_added)); }
+    template <typename T>
+    template <typename U>
+        requires(std::is_same_v<U, nb::object>)
+    SetDelta_T<T>::SetDelta_T(collection_type added, collection_type removed, nb::object tp)
+        : _added(std::move(added)), _removed(std::move(removed)), _tp(std::move(tp)) {}
 
-    template <typename T> nb::object SetDeltaImpl<T>::py_removed() const { return nb::frozenset(nb::cast(_removed)); }
+    template <typename T> nb::object SetDelta_T<T>::py_added() const { return nb::frozenset(nb::cast(_added)); }
 
-    template <typename T> typename SetDeltaImpl<T>::collection_type &SetDeltaImpl<T>::added() { return _added; }
+    template <typename T> nb::object SetDelta_T<T>::py_removed() const { return nb::frozenset(nb::cast(_removed)); }
 
-    template <typename T> typename SetDeltaImpl<T>::collection_type &SetDeltaImpl<T>::removed() { return _removed; }
+    template <typename T> const typename SetDelta_T<T>::collection_type &SetDelta_T<T>::added() const { return _added; }
 
-    template <typename T> bool SetDeltaImpl<T>::operator==(const SetDeltaImpl<T> &other) const {
-        const auto *other_impl = dynamic_cast<const SetDeltaImpl<T> *>(&other);
+    template <typename T> const typename SetDelta_T<T>::collection_type &SetDelta_T<T>::removed() const { return _removed; }
+
+    template <typename T> bool SetDelta_T<T>::operator==(const SetDelta &other) const {
+        const auto *other_impl = dynamic_cast<const SetDelta_T<T> *>(&other);
         if (!other_impl) return false;
+        return operator==(*other_impl);
+    }
 
-        auto added{_added == other_impl->_added};
-        auto removed{_removed == other_impl->_removed};
+    template <typename T> bool SetDelta_T<T>::operator==(const SetDelta_T<T> &other) const {
+        auto added{_added == other.added()};
+        auto removed{_removed == other.removed()};
         return added && removed;
     }
 
-    template <typename T> size_t SetDeltaImpl<T>::hash() const {
+    template <typename T> size_t SetDelta_T<T>::hash() const {
         size_t seed = 0;
         for (const auto &item : _added) { seed ^= std::hash<T>{}(item) + 0x9e3779b9 + (seed << 6) + (seed >> 2); }
         for (const auto &item : _removed) { seed ^= std::hash<T>{}(item) + 0x9e3779b9 + (seed << 6) + (seed >> 2); }
         return seed;
     }
 
-    template <typename T> nb::ref<SetDeltaImpl<T>> SetDeltaImpl<T>::operator+(const SetDeltaImpl<T> &other) const {
+    template <typename T> nb::ref<SetDelta_T<T>> SetDelta_T<T>::operator+(const SetDelta_T<T> &other) const {
         collection_type added{};
         added.insert(_added.begin(), _added.end());
         for (auto it = other._removed.begin(); it != other._removed.end(); ++it) added.erase(*it);
@@ -74,10 +61,14 @@ namespace hgraph
         for (auto it = other._added.begin(); it != other._added.end(); ++it) removed2.erase(*it);
         for (auto it = removed2.begin(); it != removed2.end(); ++it) removed.insert(*it);
 
-        return new SetDeltaImpl<T>(std::move(added), std::move(removed));
+        if constexpr (std::is_same_v<T, nb::object>) {
+            return new SetDelta_T<nb::object>(std::move(added), std::move(removed), _tp);
+        } else {
+            return new SetDelta_T<T>(std::move(added), std::move(removed));
+        }
     }
 
-    template <typename T> nb::object SetDeltaImpl<T>::py_type() const {
+    template <typename T> nb::object SetDelta_T<T>::py_type() const {
         if constexpr (std::is_same_v<T, bool>) {
             return nb::borrow(nb::cast(true).type());
         } else if constexpr (std::is_same_v<T, int64_t>) {
@@ -90,33 +81,20 @@ namespace hgraph
             return nb::module_::import_("datetime").attr("datetime");
         } else if constexpr (std::is_same_v<T, engine_time_delta_t>) {
             return nb::module_::import_("datetime").attr("timedelta");
+        } else if constexpr (std::is_same_v<T, nb::object>) {
+            return _tp;
         } else {
             throw std::runtime_error("Unknown tp");
         }
     }
 
-    template struct SetDeltaImpl<bool>;
-    template struct SetDeltaImpl<int64_t>;
-    template struct SetDeltaImpl<double>;
-    template struct SetDeltaImpl<engine_date_t>;
-    template struct SetDeltaImpl<engine_time_t>;
-    template struct SetDeltaImpl<engine_time_delta_t>;
-
-    bool SetDelta::eq(const nb::object &other) const {
-        if (!nb::isinstance<nb::iterable>(other)) { return false; }
-        auto added   = nb::cast<nb::frozenset>(py_added());
-        auto removed = nb::cast<nb::frozenset>(py_removed());
-        if (nb::len(other) != nb::len(added) + nb::len(removed)) { return false; }
-        auto REMOVED = get_removed();
-        for (auto i : nb::iter(other)) {
-            if (nb::isinstance(i, REMOVED)) {
-                if (!removed.contains(i.attr("item"))) return false;
-            } else {
-                if (!added.contains(i)) return false;
-            }
-        }
-        return true;
-    }
+    template struct SetDelta_T<bool>;
+    template struct SetDelta_T<int64_t>;
+    template struct SetDelta_T<double>;
+    template struct SetDelta_T<engine_date_t>;
+    template struct SetDelta_T<engine_time_t>;
+    template struct SetDelta_T<engine_time_delta_t>;
+    template struct SetDelta_T<nb::object>;
 
     void SetDelta::register_with_nanobind(nb::module_ &m) {
         nb::class_<SetDelta, nb::intrusive_base>(m, "SetDelta")
@@ -131,56 +109,60 @@ namespace hgraph
                 [](SetDelta &self) {
                     return nb::str("SetDelta[{}](added={}, removed={})").format(self.py_type(), self.py_added(), self.py_removed());
                 })
-            .def("__eq__", [](const SetDelta &) { return false; })
+            .def("__eq__", &SetDelta::operator==)
+            .def("__eq__", [](const SetDelta &, nb::object) { return false; })
             .def("__hash__", &SetDelta::hash);
 
-        using SetDelta_bool = SetDeltaImpl<bool>;
+        using SetDelta_bool = SetDelta_T<bool>;
         nb::class_<SetDelta_bool, SetDelta>(m, "SetDelta_bool")
             .def(nb::init<const std::unordered_set<bool> &, const std::unordered_set<bool> &>(), "added"_a, "removed"_a)
-            .def("__add__", &SetDelta_bool::operator+)
-            .def("__eq__", &SetDelta_bool::operator==)
-            .def("__eq__", &SetDelta_bool::eq);
+            .def("__add__", &SetDelta_bool::operator+);
 
-        using SetDelta_int = SetDeltaImpl<int64_t>;
+        using SetDelta_int = SetDelta_T<int64_t>;
         nb::class_<SetDelta_int, SetDelta>(m, "SetDelta_int")
             .def(nb::init<const std::unordered_set<int64_t> &, const std::unordered_set<int64_t> &>(), "added"_a, "removed"_a)
-            .def("__add__", &SetDelta_int::operator+)
-            .def("__eq__", &SetDelta_int::operator==)
-            .def("__eq__", &SetDelta_int::eq);
+            .def("__add__", &SetDelta_int::operator+);
         ;
-        using SetDelta_float = SetDeltaImpl<double>;
+        using SetDelta_float = SetDelta_T<double>;
         nb::class_<SetDelta_float, SetDelta>(m, "SetDelta_float")
             .def(nb::init<const std::unordered_set<double> &, const std::unordered_set<double> &>(), "added"_a, "removed"_a)
-            .def("__add__", &SetDelta_float::operator+)
-            .def("__eq__", &SetDelta_float::operator==)
-            .def("__eq__", &SetDelta_float::eq);
-        using SetDelta_date = SetDeltaImpl<engine_date_t>;
+            .def("__add__", &SetDelta_float::operator+);
+
+        using SetDelta_date = SetDelta_T<engine_date_t>;
         nb::class_<SetDelta_date, SetDelta>(m, "SetDelta_date")
             .def(nb::init<const std::unordered_set<engine_date_t> &, const std::unordered_set<engine_date_t> &>(), "added"_a,
                  "removed"_a)
-            .def("__add__", &SetDelta_date::operator+)
-            .def("__eq__", &SetDelta_date::operator==)
-            .def("__eq__", &SetDelta_date::eq);
-        using SetDelta_date_time = SetDeltaImpl<engine_time_t>;
+            .def("__add__", &SetDelta_date::operator+);
+
+        using SetDelta_date_time = SetDelta_T<engine_time_t>;
         nb::class_<SetDelta_date_time, SetDelta>(m, "SetDelta_date_time")
             .def(nb::init<const std::unordered_set<engine_time_t> &, const std::unordered_set<engine_time_t> &>(), "added"_a,
                  "removed"_a)
-            .def("__add__", &SetDelta_date_time::operator+)
-            .def("__eq__", &SetDelta_date_time::operator==)
-            .def("__eq__", &SetDelta_date_time::eq);
-        using SetDelta_time_delta = SetDeltaImpl<engine_time_delta_t>;
+            .def("__add__", &SetDelta_date_time::operator+);
+
+        using SetDelta_time_delta = SetDelta_T<engine_time_delta_t>;
         nb::class_<SetDelta_time_delta, SetDelta>(m, "SetDelta_time_delta")
             .def(nb::init<const std::unordered_set<engine_time_delta_t> &, const std::unordered_set<engine_time_delta_t> &>(),
                  "added"_a, "removed"_a)
-            .def("__add__", &SetDelta_time_delta::operator+)
-            .def("__eq__", &SetDelta_time_delta::operator==)
-            .def("__eq__", &SetDelta_time_delta::eq);
+            .def("__add__", &SetDelta_time_delta::operator+);
 
-        nb::class_<SetDelta_Object, SetDelta>(m, "SetDelta_object")
-            .def(nb::init<nb::object, nb::object, nb::object>(), "added"_a, "removed"_a, "tp"_a)
-            .def("__eq__", &SetDelta_Object::operator==)
-            .def("__eq__", &SetDelta_Object::eq)
-            .def("__add__", &SetDelta_Object::operator+);
+        using SetDelta_object = SetDelta_T<nb::object>;
+        nb::class_<SetDelta_object, SetDelta>(m, "SetDelta_object")
+            .def(nb::init<const std::unordered_set<nb::object> &, const std::unordered_set<nb::object> &, nb::object>(), "added"_a,
+                 "removed"_a, "tp"_a)
+            .def("__add__", &SetDelta_object::operator+);
+    }
+
+    TimeSeriesSetOutput::TimeSeriesSetOutput(const node_ptr &parent)
+        : TimeSeriesSet<TimeSeriesOutput>(parent), _is_empty_ref_output{dynamic_cast_ref<TimeSeriesValueOutput<bool>>(
+                                                       TimeSeriesValueOutputBuilder<bool>().make_instance(this))} {}
+
+    TimeSeriesSetOutput::TimeSeriesSetOutput(const TimeSeriesType::ptr &parent)
+        : TimeSeriesSet<TimeSeriesOutput>(parent), _is_empty_ref_output{dynamic_cast_ref<TimeSeriesValueOutput<bool>>(
+                                                       TimeSeriesValueOutputBuilder<bool>().make_instance(this))} {}
+
+    TimeSeriesValueOutput<bool>::ptr &TimeSeriesSetOutput::is_empty_output() {
+        return _is_empty_ref_output;
     }
 
     void TimeSeriesSetOutput::invalidate() {
@@ -199,10 +181,7 @@ namespace hgraph
                                     reinterpret_cast<TimeSeriesValueOutput<bool> &>(ref).set_value(
                                         reinterpret_cast<const TimeSeriesSetOutput_T<element_type> &>(ts).contains(key));
                                 },
-                                {}} {
-        _is_empty_ref_output =
-            dynamic_cast_ref<TimeSeriesValueOutput<bool>>(TimeSeriesValueOutputBuilder<bool>().make_instance(this));
-    }
+                                {}} {}
 
     template <typename T_Key>
     TimeSeriesSetOutput_T<T_Key>::TimeSeriesSetOutput_T(const TimeSeriesType::ptr &parent)
@@ -213,10 +192,7 @@ namespace hgraph
                                     reinterpret_cast<TimeSeriesValueOutput<bool> &>(ref).set_value(
                                         reinterpret_cast<const TimeSeriesSetOutput_T<element_type> &>(ts).contains(key));
                                 },
-                                {}} {
-        _is_empty_ref_output =
-            dynamic_cast_ref<TimeSeriesValueOutput<bool>>(TimeSeriesValueOutputBuilder<bool>().make_instance(this));
-    }
+                                {}} {}
 
     template <typename T_Key> nb::object TimeSeriesSetOutput_T<T_Key>::py_value() const {
         if (!_py_value.is_valid() || _py_value.is_none()) {
@@ -225,6 +201,55 @@ namespace hgraph
             _py_value = nb::cast<nb::object>(v);
         }
         return _py_value;
+    }
+
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::set_value(collection_type added, collection_type removed) {
+        for (const auto &item : removed) { _value.erase(item); }
+        for (const auto &item : added) { _value.emplace(item); }
+        _added   = std::move(added);
+        _removed = std::move(removed);
+        _post_modify();
+    }
+
+    template <typename T_Key> void  TimeSeriesSetOutput_T<T_Key>::set_value(const nb::object &value) {
+        if (nb::isinstance<SetDelta_T<T_Key>>(value)) {
+            set_value(nb::cast<SetDelta_T<T_Key>>(value));
+        } else {
+            auto            removed = get_removed();
+            auto            v       = nb::set(value);
+            collection_type added;
+            collection_type to_remove;
+
+            for (const auto &r : v) {
+                if (!nb::isinstance(r, removed)) {
+                    auto k = nb::cast<T_Key>(r);
+                    if (!_value.contains(k)) { added.insert(k); }
+                } else {
+                    auto item = nb::cast<T_Key>(r.attr("item"));
+                    if (_value.contains(item)) {
+                        if (added.contains(item)) { throw std::runtime_error("Cannot remove and add the same element"); }
+                        to_remove.insert(item);
+                    }
+                }
+            }
+
+            set_value(std::move(added), std::move(to_remove));
+        }
+    }
+
+    template <typename T_Key>
+    void TimeSeriesSetOutput_T<T_Key>::set_value(const SetDelta_T<T_Key> &delta) {
+        collection_type added;
+        collection_type removed;
+        added.reserve(delta.added().size());
+        removed.reserve(delta.removed().size());
+        for (const auto &item : delta.added()) {
+            if (!_value.contains(item)) { added.insert(item); }
+        }
+        for (const auto &item : delta.removed()) {
+            if (_value.contains(item)) { removed.insert(item); }
+        }
+        set_value(std::move(added), std::move(removed));
     }
 
     template <typename T_Key> nb::object TimeSeriesSetOutput_T<T_Key>::py_delta_value() const {
@@ -313,10 +338,10 @@ namespace hgraph
         auto is_empty{empty()};
         if (has_additions || has_removals || !valid()) {
             mark_modified();
-            if (has_additions && _is_empty_ref_output->valid() && _is_empty_ref_output->value()) {
-                _is_empty_ref_output->set_value(false);
+            if (has_additions && is_empty_output()->valid() && is_empty_output()->value()) {
+                is_empty_output()->set_value(false);
             } else if (has_removals && is_empty) {
-                _is_empty_ref_output->set_value(true);
+                is_empty_output()->set_value(true);
             }
             _contains_ref_outputs.update_all(_added.begin(), _added.end());
             _contains_ref_outputs.update_all(_removed.begin(), _removed.end());
@@ -357,7 +382,7 @@ namespace hgraph
         _added.clear();
         _removed.clear();
         _value.clear();
-        _is_empty_ref_output->clear();
+        is_empty_output()->clear();
         _py_value = nb::none();
         _py_added.clear();
         _py_removed.clear();
@@ -368,7 +393,7 @@ namespace hgraph
 
         _added.clear();
         _removed.clear();
-        _is_empty_ref_output->clear();
+        is_empty_output()->clear();
         _py_value = nb::none();
         _py_added.clear();
         _py_removed.clear();
@@ -394,7 +419,7 @@ namespace hgraph
 
         _added.clear();
         _removed.clear();
-        _is_empty_ref_output->clear();
+        is_empty_output()->clear();
         _py_value = nb::none();
         _py_added.clear();
         _py_removed.clear();
@@ -486,7 +511,7 @@ namespace hgraph
             _value.erase(key);
             _contains_ref_outputs.update(key);
 
-            if (empty()) { _is_empty_ref_output->set_value(true); }
+            if (empty()) { is_empty_output()->set_value(true); }
 
             mark_modified();
         }
@@ -499,7 +524,7 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::add(const element_type &key) {
         if (!contains(key)) {
-            if (empty()) { _is_empty_ref_output->set_value(false); }
+            if (empty()) { is_empty_output()->set_value(false); }
 
             _add(key);
             _contains_ref_outputs.update(key);
@@ -599,8 +624,6 @@ namespace hgraph
         }
         TimeSeriesInput::do_un_bind_output(unbind_refs);
     }
-
-    nb::object SetDelta_Object::py_added() const { return _added; }
 
     template struct TimeSeriesSetInput_T<bool>;
     template struct TimeSeriesSetInput_T<int64_t>;

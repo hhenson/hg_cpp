@@ -6,6 +6,14 @@
 #define HASHABLE_H
 
 #include <nanobind/nanobind.h>
+#include <nanobind/intrusive/ref.h>
+#include <functional>
+
+namespace nanobind {
+    inline bool operator==(const object& a, const object& b) noexcept {
+        return a.equal(b);
+    }
+}
 
 namespace std
 {
