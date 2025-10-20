@@ -343,7 +343,7 @@ namespace hgraph
 
     void TimeSeriesOutput::_reset_last_modified_time() { _last_modified_time = MIN_DT; }
 
-    bool TimeSeriesInput::modified() const { return (_output != nullptr && _output->modified()) || sampled(); }
+    bool TimeSeriesInput::modified() const { return _output != nullptr && (_output->modified() || sampled()); }
 
     bool TimeSeriesInput::valid() const { return bound() && _output != nullptr && _output->valid(); }
 

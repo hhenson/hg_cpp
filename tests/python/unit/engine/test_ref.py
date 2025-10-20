@@ -34,28 +34,7 @@ def test_ref():
 
 def test_route_ref():
 
-    @sink_node(valid=tuple())
-    def c(t: REF[TS[int]], f: REF[TS[int]]):
-        print(f"True: {t.last_modified_time}: {t.value} - {t.valid}, False: {f.last_modified_time}: {f.value} - {f.valid}")
-
-    @sink_node(valid=tuple())
-    def c1(t: TS[int], f: TS[int]):
-        print(f"True: {t.last_modified_time}: {t.value} - {t.valid}, False: {f.last_modified_time}: {f.value} - {f.valid}")
-
-    @sink_node()
-    def c3(ts: TSB[BoolResult[TS[int]]]):
-        print(f"ts: {ts}")
-
-    @graph
-    def g(condition: TS[bool], ts: TS[int]) -> TSB[BoolResult[TS[int]]]:
-        out = if_(condition, ts)
-        c(out.true, out.false)
-        c1(out.true, out.false)
-        c3(out)
-        debug_print("out",out)
-        return out
-
-    assert eval_node(g, condition=[True, None, False, None], ts=[1, 2, None, 4]) == [
+    assert eval_node(if_[TIME_SERIES_TYPE : TS[int]], condition=[True, None, False, None], ts=[1, 2, None, 4]) == [
         {"true": 1},
         {"true": 2},
         {"false": 2},
