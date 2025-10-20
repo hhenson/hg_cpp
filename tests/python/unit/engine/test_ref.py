@@ -17,7 +17,7 @@ from hgraph import (
     K,
     KEYABLE_SCALAR,
     if_,
-    TSB,
+    TSB, debug_print, sink_node, BoolResult,
 )
 from hgraph._impl._operators._tss_operators import contains_tss
 from hgraph.test import eval_node
@@ -29,11 +29,33 @@ def create_ref(ts: REF[TIME_SERIES_TYPE]) -> REF[TIME_SERIES_TYPE]:
 
 
 def test_ref():
-    assert eval_node(create_ref[TIME_SERIES_TYPE : TS[int]], ts=[1, 2]) == [1, 2]
+    assert eval_node(create_ref[TS[int]], ts=[1, 2]) == [1, 2]
 
 
 def test_route_ref():
-    assert eval_node(if_[TIME_SERIES_TYPE : TS[int]], condition=[True, None, False, None], ts=[1, 2, None, 4]) == [
+
+    @sink_node(valid=tuple())
+    def c(t: REF[TS[int]], f: REF[TS[int]]):
+        print(f"True: {t.last_modified_time}: {t.value} - {t.valid}, False: {f.last_modified_time}: {f.value} - {f.valid}")
+
+    @sink_node(valid=tuple())
+    def c1(t: TS[int], f: TS[int]):
+        print(f"True: {t.last_modified_time}: {t.value} - {t.valid}, False: {f.last_modified_time}: {f.value} - {f.valid}")
+
+    @sink_node()
+    def c3(ts: TSB[BoolResult[TS[int]]]):
+        print(f"ts: {ts}")
+
+    @graph
+    def g(condition: TS[bool], ts: TS[int]) -> TSB[BoolResult[TS[int]]]:
+        out = if_(condition, ts)
+        c(out.true, out.false)
+        c1(out.true, out.false)
+        c3(out)
+        debug_print("out",out)
+        return out
+
+    assert eval_node(g, condition=[True, None, False, None], ts=[1, 2, None, 4]) == [
         {"true": 1},
         {"true": 2},
         {"false": 2},
