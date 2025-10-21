@@ -13,6 +13,7 @@ namespace hgraph
         while (index >= _ts_values.size()) {
             // Create child with this as parent - child will notify parent, parent notifies node
             auto new_item = new TimeSeriesSignalInput(TimeSeriesType::ptr{this});
+            if (active()){new_item->make_active();}
             _ts_values.push_back(new_item);
         }
         return _ts_values[index].get();
