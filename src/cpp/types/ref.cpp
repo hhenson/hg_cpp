@@ -436,6 +436,7 @@ namespace hgraph
         auto sz{_items->size()};
         while (index >= sz) {
             auto new_item = new TimeSeriesReferenceInput(this);
+            if (active()){new_item->make_active();}
             _items->push_back(new_item);
             ++sz;
         }
