@@ -62,12 +62,12 @@ namespace hgraph
 
         const std::vector<ptr> &items() const;
 
-        void bind_input(TimeSeriesInput &input_) const override;
-        bool has_output() const override;
-        bool is_empty() const override;
-        bool is_valid() const override;
-        bool operator==(const TimeSeriesReferenceOutput &other) const override;
-        const ptr& operator[](size_t ndx);
+        void        bind_input(TimeSeriesInput &input_) const override;
+        bool        has_output() const override;
+        bool        is_empty() const override;
+        bool        is_valid() const override;
+        bool        operator==(const TimeSeriesReferenceOutput &other) const override;
+        const ptr  &operator[](size_t ndx);
         std::string to_string() const override;
 
       private:
@@ -115,6 +115,10 @@ namespace hgraph
 
         static void register_with_nanobind(nb::module_ &m);
 
+      protected:
+        [[nodiscard]] bool has_value() const;
+        void               reset_value();
+
       private:
         friend struct TimeSeriesReferenceInput;
         friend struct TimeSeriesReference;
@@ -151,13 +155,13 @@ namespace hgraph
         [[nodiscard]] bool          all_valid() const override;
         [[nodiscard]] engine_time_t last_modified_time() const override;
 
-        bool                        bind_output(time_series_output_ptr value) override;
-        void                        un_bind_output(bool unbind_refs) override;
+        bool bind_output(time_series_output_ptr value) override;
+        void un_bind_output(bool unbind_refs) override;
 
-        void                        make_active() override;
-        void                        make_passive() override;
+        void make_active() override;
+        void make_passive() override;
 
-        [[nodiscard]] TimeSeriesInput *get_input(size_t index) override;
+        [[nodiscard]] TimeSeriesInput          *get_input(size_t index) override;
         [[nodiscard]] TimeSeriesReferenceInput *get_ref_input(size_t index);
 
         static void register_with_nanobind(nb::module_ &m);
@@ -166,7 +170,6 @@ namespace hgraph
         [[nodiscard]] bool has_reference() const override;
 
       protected:
-
         bool do_bind_output(time_series_output_ptr &output_) override;
         void do_un_bind_output(bool unbind_refs) override;
 
@@ -179,12 +182,15 @@ namespace hgraph
 
         const std::vector<TimeSeriesReferenceInput::ptr> &items() const;
 
+        [[nodiscard]] bool has_value() const;
+        void               reset_value();
+
       private:
         friend struct TimeSeriesReferenceOutput;
         friend struct TimeSeriesReference;
         mutable TimeSeriesReference::ptr                          _value;
         std::optional<std::vector<TimeSeriesReferenceInput::ptr>> _items;
-        static inline std::vector<TimeSeriesReferenceInput::ptr> empty_items{};
+        static inline std::vector<TimeSeriesReferenceInput::ptr>  empty_items{};
     };
 
 }  // namespace hgraph

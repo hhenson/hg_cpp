@@ -13,7 +13,7 @@ namespace hgraph
         while (index >= _ts_values.size()) {
             // Create child with this as parent - child will notify parent, parent notifies node
             auto new_item = new TimeSeriesSignalInput(TimeSeriesType::ptr{this});
-            if (active()){new_item->make_active();}
+            if (active()) { new_item->make_active(); }
             _ts_values.push_back(new_item);
         }
         return _ts_values[index].get();
@@ -43,6 +43,7 @@ namespace hgraph
     }
 
     void TimeSeriesSignalInput::make_active() {
+        if (active()) { return; }
         TimeSeriesInput::make_active();
         if (!_ts_values.empty()) {
             for (auto &item : _ts_values) { item->make_active(); }
@@ -50,6 +51,7 @@ namespace hgraph
     }
 
     void TimeSeriesSignalInput::make_passive() {
+        if (!active()) { return; }
         TimeSeriesInput::make_passive();
         if (!_ts_values.empty()) {
             for (auto &item : _ts_values) { item->make_passive(); }
