@@ -186,12 +186,14 @@ namespace hgraph
 
         [[nodiscard]] time_series_reference_output_ptr reference_output() const;
 
-        static void register_with_nanobind(nb::module_ &m);
+        [[nodiscard]] const TimeSeriesInput *get_input(size_t index) const;
+        [[nodiscard]] virtual TimeSeriesInput       *get_input(size_t index);
 
+        static void register_with_nanobind(nb::module_ &m);
 
       protected:
         // Derived classes override this to implement specific behaviours
-        virtual bool do_bind_output(time_series_output_ptr& output_);
+        virtual bool do_bind_output(time_series_output_ptr &output_);
 
         // Derived classes override this to implement specific behaviours
         virtual void do_un_bind_output(bool unbind_refs);

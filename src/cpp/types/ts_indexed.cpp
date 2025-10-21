@@ -110,6 +110,10 @@ namespace hgraph
         }
     }
 
+    TimeSeriesInput *IndexedTimeSeriesInput::get_input(size_t index) {
+        return (*this)[index].get();
+    }
+
     void IndexedTimeSeriesInput::register_with_nanobind(nb::module_ &m) {
         using IndexedTimeSeries_Input = IndexedTimeSeries<TimeSeriesInput>;
 

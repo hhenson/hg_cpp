@@ -145,6 +145,8 @@ namespace hgraph
         void               make_active() override;
         void               make_passive() override;
 
+        [[nodiscard]] TimeSeriesInput *get_input(size_t index) override;
+
         static void register_with_nanobind(nb::module_ &m);
 
       protected:

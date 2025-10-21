@@ -37,76 +37,10 @@ namespace hgraph
     time_series_input_ptr _extract_input(node_ptr node, const std::vector<int64_t> &path) {
         if (path.empty()) { throw std::runtime_error("No path to find an input for"); }
 
-        auto input = dynamic_cast_ref<TimeSeriesInput>(node->input_ptr());
+        auto input = dynamic_cast<TimeSeriesInput *>(node->input_ptr().get());
 
-        // If the input is not indexed, return it directly regardless of path
-        // This handles cases where indexed outputs are bound to non-indexed inputs
-        auto *indexed_ts = dynamic_cast<IndexedTimeSeriesInput *>(input.get());
-        if (!indexed_ts) {
-            return input;
-        }
-
-        for (size_t i = 0; i < path.size(); ++i) {
-            auto index = path[i];
-
-            // Check what type of input we currently have
-            if (indexed_ts && index < indexed_ts->size()) {
-                input = (*indexed_ts)[index];
-            } else {
-                throw std::runtime_error("Invalid path index");
-            }
-
-            // If we're not at the end of the path, determine how to continue
-            if (i + 1 < path.size()) {
-                // Try IndexedTimeSeriesInput first
-                indexed_ts = dynamic_cast<IndexedTimeSeriesInput *>(input.get());
-                if (indexed_ts) {
-                    continue; // Continue with indexed extraction
-                }
-
-                // Try TimeSeriesReferenceInput (REF)
-                auto *ref_ts = dynamic_cast<TimeSeriesReferenceInput *>(input.get());
-                if (ref_ts) {
-                    // Extract remaining path elements through REF
-                    for (++i; i < path.size(); ++i) {
-                        input = (*ref_ts)[path[i]];
-                        ref_ts = dynamic_cast<TimeSeriesReferenceInput *>(input.get());
-                        if (!ref_ts) {
-                            // Got non-REF, check what type
-                            indexed_ts = dynamic_cast<IndexedTimeSeriesInput *>(input.get());
-                            if (indexed_ts && i + 1 < path.size()) {
-                                // Have more path and got indexed type, continue outer loop
-                                --i; // Decrement so outer loop increment brings us to current i
-                                break;
-                            }
-                            auto *signal_ts = dynamic_cast<TimeSeriesSignalInput *>(input.get());
-                            if (signal_ts && i + 1 < path.size()) {
-                                // Extract remaining through signal
-                                for (++i; i < path.size(); ++i) {
-                                    input = (*signal_ts)[path[i]];
-                                }
-                            }
-                            return input;
-                        }
-                    }
-                    return input;
-                }
-
-                // Try TimeSeriesSignalInput
-                auto *signal_ts = dynamic_cast<TimeSeriesSignalInput *>(input.get());
-                if (signal_ts) {
-                    for (++i; i < path.size(); ++i) {
-                        input = (*signal_ts)[path[i]];
-                        signal_ts = dynamic_cast<TimeSeriesSignalInput *>(input.get());
-                        if (!signal_ts) {
-                            throw std::runtime_error("Signal input path extraction failed");
-                        }
-                    }
-                    return input;
-                }
-
-                throw std::runtime_error("Input is not an indexed time series");
-            }
+        for (const auto &ndx : path) {
+            input = input->get_input(ndx);
         }
         return input;
     }

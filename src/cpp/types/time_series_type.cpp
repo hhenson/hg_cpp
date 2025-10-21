@@ -65,7 +65,7 @@ namespace hgraph
 
     void TimeSeriesOutput::clear() {}
 
-    void TimeSeriesOutput::invalidate() {mark_invalid();}
+    void TimeSeriesOutput::invalidate() { mark_invalid(); }
 
     void TimeSeriesOutput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesOutput, TimeSeriesType>(m, "TimeSeriesOutput")
@@ -201,9 +201,7 @@ namespace hgraph
     void TimeSeriesInput::make_passive() {
         if (_active) {
             _active = false;
-            if (_output != nullptr) {
-                output()->un_subscribe(this);
-            }
+            if (_output != nullptr) { output()->un_subscribe(this); }
         }
     }
 
@@ -237,7 +235,7 @@ namespace hgraph
             .def("make_passive", &TimeSeriesInput::make_passive);
     }
 
-    bool TimeSeriesInput::do_bind_output(time_series_output_ptr& output_) {
+    bool TimeSeriesInput::do_bind_output(time_series_output_ptr &output_) {
         auto active_{active()};
         make_passive();  // Ensure we are unsubscribed from the old output.
         _output = output_;
@@ -261,9 +259,7 @@ namespace hgraph
     }
 
     void TimeSeriesInput::do_un_bind_output(bool unbind_refs) {
-        if (_active) {
-            output()->un_subscribe(this);
-        }
+        if (_active) { output()->un_subscribe(this); }
         _output = nullptr;
     }
 
@@ -280,6 +276,12 @@ namespace hgraph
     }
 
     time_series_reference_output_ptr TimeSeriesInput::reference_output() const { return _reference_output; }
+
+    const TimeSeriesInput *TimeSeriesInput::get_input(size_t index) const {
+        return const_cast<TimeSeriesInput *>(this)->get_input(index);
+    }
+
+    TimeSeriesInput *TimeSeriesInput::get_input(size_t index) { throw std::runtime_error("TimeSeriesInput [] not supported"); }
 
     void TimeSeriesInput::reset_output() { _output = nullptr; }
 

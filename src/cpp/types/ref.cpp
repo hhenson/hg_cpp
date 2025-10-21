@@ -153,14 +153,6 @@ namespace hgraph
 
     void UnBoundTimeSeriesReference::bind_input(TimeSeriesInput &input_) const {
         // Try to cast to supported input types
-        auto *ref_input     = dynamic_cast<TimeSeriesReferenceInput *>(&input_);
-        auto *indexed_input = dynamic_cast<IndexedTimeSeriesInput *>(&input_);
-        auto *signal_input  = dynamic_cast<TimeSeriesSignalInput *>(&input_);
-
-        if (ref_input == nullptr && indexed_input == nullptr && signal_input == nullptr) {
-            throw std::runtime_error("UnBoundTimeSeriesReference::bind_input: Expected an IndexedTimeSeriesInput, "
-                                     "TimeSeriesReferenceInput, or TimeSeriesSignalInput");
-        }
 
         bool reactivate = false;
         if (input_.bound() && input_.has_peer()) {
@@ -170,14 +162,7 @@ namespace hgraph
 
         for (size_t i = 0; i < _items.size(); ++i) {
             // Get the child input (from REF, Indexed, or Signal input)
-            TimeSeriesInput::ptr item;
-            if (ref_input) {
-                item = (*ref_input)[i];
-            } else if (indexed_input) {
-                item = (*indexed_input)[i];
-            } else if (signal_input) {
-                item = (*signal_input)[i];
-            }
+            TimeSeriesInput * item{input_.get_input(i)};
 
             auto &r{_items[i]};
             if (r != nullptr) {
@@ -374,7 +359,7 @@ namespace hgraph
         if (other.has_output()) {
             bind_output(other.output());
         } else if (other._items.has_value()) {
-            for (size_t i = 0; i < other._items->size(); ++i) { (*this)[i]->clone_binding(*(*other._items)[i]); }
+            for (size_t i = 0; i < other._items->size(); ++i) { this->get_ref_input(i)->clone_binding(*(*other._items)[i]); }
         } else if (other._value != nullptr) {
             _value = other._value;
             if (owning_node().is_started()) {
@@ -437,14 +422,20 @@ namespace hgraph
         }
     }
 
-    TimeSeriesReferenceInput::ptr TimeSeriesReferenceInput::operator[](size_t ndx) {
+    TimeSeriesInput *TimeSeriesReferenceInput::get_input(size_t index) {
+        return get_ref_input(index);
+    }
+
+    TimeSeriesReferenceInput *TimeSeriesReferenceInput::get_ref_input(size_t index) {
         if (!_items.has_value()) { _items = {}; }
-        _items->reserve(ndx + 1);
-        while (ndx >= _items->size()) {
+        _items->reserve(index + 1);
+        auto sz{_items->size()};
+        while (index >= sz) {
             auto new_item = new TimeSeriesReferenceInput(this);
             _items->push_back(new_item);
+            ++sz;
         }
-        return _items->at(ndx);
+        return (*_items)[index].get();
     }
 
     bool TimeSeriesReferenceInput::do_bind_output(time_series_output_ptr &output_) {
@@ -498,7 +489,7 @@ namespace hgraph
             .def("un_bind_output", &TimeSeriesReferenceInput::un_bind_output, "unbind_refs"_a = false,
                  "Unbind this reference input; optionally unbind nested references")
             .def("__getitem__", [](TimeSeriesReferenceInput &self, size_t index) -> TimeSeriesInput::ptr {
-                return TimeSeriesInput::ptr{self[index].get()};
+                return TimeSeriesInput::ptr{self.get_input(index)};
             });
     }
 

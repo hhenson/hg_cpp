@@ -22,9 +22,7 @@ namespace hgraph
 
         [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override { return true; }
 
-        // Support for indexing - creates child signals on demand
-        // This allows SIGNAL inputs to be bound to indexed outputs like TSB
-        TimeSeriesInput::ptr operator[](size_t index);
+        [[nodiscard]] TimeSeriesInput *get_input(size_t index) override;
 
         // Override to aggregate from children like Python implementation
         [[nodiscard]] bool valid() const override;
