@@ -427,7 +427,7 @@ namespace hgraph
     }
 
     TimeSeriesReferenceInput *TimeSeriesReferenceInput::get_ref_input(size_t index) {
-        if (!_items.has_value()) { _items = {}; }
+        if (!_items.has_value()) { _items = std::vector<TimeSeriesReferenceInput::ptr>{}; }
         _items->reserve(index + 1);
         auto sz{_items->size()};
         while (index >= sz) {
