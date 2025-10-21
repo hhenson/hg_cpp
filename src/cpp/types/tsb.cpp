@@ -366,6 +366,9 @@ namespace hgraph
     TimeSeriesBundleInput::ptr TimeSeriesBundleInput::copy_with(const node_ptr &parent, collection_type ts_values) {
         auto v{new TimeSeriesBundleInput(parent, TimeSeriesSchema::ptr{&schema()})};
         v->set_ts_values(ts_values);
+        // Not sure if this may be required, but doing this did not fix anything so leaving it out as the Python code does not
+        // Currently use this.
+        // if (active()){v->make_active();}
         return v;
     }
 
