@@ -190,7 +190,6 @@ namespace hgraph
         [[nodiscard]] virtual TimeSeriesInput       *get_input(size_t index);
 
         static void register_with_nanobind(nb::module_ &m);
-
       protected:
         // Derived classes override this to implement specific behaviours
         virtual bool do_bind_output(time_series_output_ptr &output_);
@@ -209,7 +208,7 @@ namespace hgraph
         [[nodiscard]] bool sampled() const;
 
         void reset_output();
-
+        void set_output(time_series_output_ptr output);
         void set_active(bool active);
 
       private:

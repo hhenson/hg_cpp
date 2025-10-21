@@ -368,7 +368,7 @@ namespace hgraph
         key_set_type_ptr _key_set;
         map_type         _ts_values;
 
-        reverse_map      _ts_values_to_key;
+        reverse_map      _ts_values_to_keys;
         mutable map_type _valid_items_cache;     // Cache the valid items if called.
         mutable map_type _modified_items_cache;  // This is cached for performance reasons.
         mutable map_type _added_items_cache;

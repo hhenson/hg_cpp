@@ -112,7 +112,8 @@ namespace hgraph
     }
 
     template <typename T_Key>
-    TimeSeriesDictOutput_T<T_Key>::TimeSeriesDictOutput_T(const node_ptr &parent, output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder)
+    TimeSeriesDictOutput_T<T_Key>::TimeSeriesDictOutput_T(const node_ptr &parent, output_builder_ptr ts_builder,
+                                                          output_builder_ptr ts_ref_builder)
         : TimeSeriesDictOutput(parent), _key_set{new TimeSeriesSetOutput_T<T_Key>(this)}, _ts_builder{std::move(ts_builder)},
           _ts_ref_builder{std::move(ts_ref_builder)},
           _ref_ts_feature{this,
@@ -131,7 +132,8 @@ namespace hgraph
     }
 
     template <typename T_Key>
-    TimeSeriesDictOutput_T<T_Key>::TimeSeriesDictOutput_T(const time_series_type_ptr &parent, output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder)
+    TimeSeriesDictOutput_T<T_Key>::TimeSeriesDictOutput_T(const time_series_type_ptr &parent, output_builder_ptr ts_builder,
+                                                          output_builder_ptr ts_ref_builder)
         : TimeSeriesDictOutput(static_cast<const TimeSeriesType::ptr &>(parent)), _key_set{new TimeSeriesSetOutput_T<T_Key>(this)},
           _ts_builder{std::move(ts_builder)}, _ts_ref_builder{std::move(ts_ref_builder)},
           _ref_ts_feature{this,
@@ -538,6 +540,7 @@ namespace hgraph
           _ts_builder{ts_builder} {}
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::has_peer() const { return _has_peer; }
+
     template <typename T_Key>
     typename TimeSeriesDictInput_T<T_Key>::const_item_iterator TimeSeriesDictInput_T<T_Key>::begin() const {
         return const_cast<TimeSeriesDictInput_T *>(this)->begin();
@@ -800,8 +803,8 @@ namespace hgraph
         if (it == _ts_values.end()) { return; }
 
         auto value{it->second};
-        _ts_values.erase(it);                  // Remove from _ts_values first
-        _ts_values_to_key.erase(value.get());  // Remove from reverse map
+        _ts_values.erase(it);                   // Remove from _ts_values first
+        _ts_values_to_keys.erase(value.get());  // Remove from reverse map
 
         register_clear_key_changes();
         auto was_valid = value->valid();
@@ -816,7 +819,7 @@ namespace hgraph
         } else {
             // This is a transplanted input - put it back and unbind it
             _ts_values.insert({key, value});
-            _ts_values_to_key.insert({value.get(), key});
+            _ts_values_to_keys.insert({value.get(), key});
             value->un_bind_output(true);  // unbind_refs=True
         }
     }
@@ -831,13 +834,13 @@ namespace hgraph
     }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::do_bind_output(time_series_output_ptr &value) {
-        TimeSeriesDictOutput_T<T_Key> *output_{dynamic_cast<TimeSeriesDictOutput_T<T_Key> *>(value.get())};
+        auto *value_output{dynamic_cast<TimeSeriesDictOutput_T<T_Key> *>(value.get())};
 
         // Peer when types match AND neither has references (matching Python logic)
-        bool peer = is_same_type(output_) && !output_->has_reference() && !this->has_reference();
+        bool  peer = (is_same_type(value_output) || !(value_output->has_reference() || this->has_reference()));
+        auto *output_key_set{&value_output->key_set_t()};
 
-        auto *_key_set = const_cast<TimeSeriesOutput *>(static_cast<const TimeSeriesOutput *>(&output_->key_set()));
-        key_set_t().bind_output({_key_set});
+        key_set_t().bind_output(output_key_set);
 
         if (owning_node().is_started() && has_output()) {
             output_t().remove_key_observer(this);
@@ -845,12 +848,12 @@ namespace hgraph
             owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { this->reset_prev(); });
         }
 
-        // This is a copy of the base implementation, however caters for peerage changes
-        // Critical: make_passive() BEFORE changing _has_peer, because make_passive behavior depends on has_peer
+        auto active_{active()};
         make_passive();  // Ensure we are unsubscribed from the old output while has_peer has the old value
-
-        // Now update has_peer BEFORE calling base bind, so make_active uses the correct mode
+        set_output(value_output);
         _has_peer = peer;
+
+        if (active_) { make_active(); }
 
         // Call base implementation which will set _output and call make_active if needed
         // Note: Base calls make_passive first, but we already did that above with the OLD has_peer
@@ -863,7 +866,7 @@ namespace hgraph
 
         for (const auto &key : key_set_t().removed()) { on_key_removed(key); }
 
-        output_->add_key_observer(this);
+        value_output->add_key_observer(this);
         return peer;
     }
 
@@ -874,26 +877,30 @@ namespace hgraph
             _removed_items.clear();
             for (const auto &[key, value] : _ts_values) { _removed_items.insert({key, {value, value->valid()}}); }
             _ts_values.clear();
-            _ts_values_to_key.clear();
+            _ts_values_to_keys.clear();
             register_clear_key_changes();
 
-            removed_map_type to_keep;
+            removed_map_type to_keep{};
             for (auto &[key, v] : _removed_items) {
                 auto &[value, was_valid] = v;
                 if (value->parent_input().get() != this) {
                     // Check for transplanted items, these do not get removed, but can be un-bound
-                    value->un_bind_output(false);
+                    value->un_bind_output(unbind_refs);
                     _ts_values.insert({key, value});
-                    _ts_values_to_key.insert({value.get(), key});
+                    _ts_values_to_keys.insert({value.get(), key});
                 } else {
                     to_keep.insert({key, {value, was_valid}});
                 }
             }
-            _removed_items = std::move(to_keep);
+            std::swap(_removed_items, to_keep);
         }
         // If we are un-binding then the output must exist by definition.
         output_t().remove_key_observer(this);
-        TimeSeriesInput::do_un_bind_output(false);
+        if( has_peer() ){
+            TimeSeriesInput::do_un_bind_output(unbind_refs);
+        } else {
+            reset_output();
+        }
     }
 
     template <typename T_Key>
@@ -919,7 +926,7 @@ namespace hgraph
     template <typename T_Key>
     const typename TimeSeriesDictInput_T<T_Key>::key_type &
     TimeSeriesDictInput_T<T_Key>::key_from_value(TimeSeriesInput *value) const {
-        return _ts_values_to_key.at(value);
+        return _ts_values_to_keys.at(value);
     }
 
     template <typename T_Key>
@@ -1037,8 +1044,8 @@ namespace hgraph
         }
 
         if (child != &key_set_t()) {
-            auto it{_ts_values_to_key.find(child)};
-            if (it != _ts_values_to_key.end()) {
+            auto it{_ts_values_to_keys.find(child)};
+            if (it != _ts_values_to_keys.end()) {
                 _modified_items_cache[it->second] = child;  // Use operator[] instead of insert to ensure update
             }
         }
@@ -1049,7 +1056,7 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::_create(const key_type &key) {
         auto item{_ts_builder->make_instance(this)};
         _ts_values.insert({key, item});
-        _ts_values_to_key.insert({item.get(), key});
+        _ts_values_to_keys.insert({item.get(), key});
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_create(const key_type &key) {

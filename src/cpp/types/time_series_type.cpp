@@ -285,6 +285,8 @@ namespace hgraph
 
     void TimeSeriesInput::reset_output() { _output = nullptr; }
 
+    void TimeSeriesInput::set_output(time_series_output_ptr output) {_output = std::move(output);}
+
     void TimeSeriesInput::set_active(bool active) { _active = active; }
 
     TimeSeriesOutput::ptr TimeSeriesOutput::parent_output() const {
