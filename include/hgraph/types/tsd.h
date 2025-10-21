@@ -37,9 +37,16 @@ namespace hgraph
 
         // Create a set of Python-based API, for non-object-based instances there will
         // be typed analogues.
-        [[nodiscard]] virtual bool       py_contains(const nb::object &item) const = 0;
-        [[nodiscard]] virtual nb::object py_get_item(const nb::object &item) const = 0;
-        [[nodiscard]] virtual nb::object py_get_or_create(const nb::object &key)   = 0;
+        [[nodiscard]] virtual nb::object   py_get_item(const nb::object &item) const                             = 0;
+        [[nodiscard]] virtual nb::object   py_get(const nb::object &item, const nb::object &default_value) const = 0;
+        [[nodiscard]] virtual nb::object   py_get_or_create(const nb::object &key)                               = 0;
+        virtual void                       py_create(const nb::object &item)                                     = 0;
+        [[nodiscard]] virtual nb::iterator py_iter()                                                             = 0;
+        [[nodiscard]] virtual bool         py_contains(const nb::object &item) const                             = 0;
+
+        [[nodiscard]] virtual nb::object                 py_key_set() const = 0;
+        [[nodiscard]] virtual TimeSeriesSet<T_TS>       &key_set()          = 0;
+        [[nodiscard]] virtual const TimeSeriesSet<T_TS> &key_set() const    = 0;
 
         [[nodiscard]] virtual nb::iterator py_keys() const   = 0;
         [[nodiscard]] virtual nb::iterator py_values() const = 0;
@@ -65,10 +72,6 @@ namespace hgraph
         [[nodiscard]] virtual nb::iterator py_removed_items() const                    = 0;
         [[nodiscard]] virtual bool         has_removed() const                         = 0;
         [[nodiscard]] virtual bool         py_was_removed(const nb::object &key) const = 0;
-
-        [[nodiscard]] virtual nb::object                 py_key_set() const = 0;
-        [[nodiscard]] virtual TimeSeriesSet<T_TS>       &key_set()          = 0;
-        [[nodiscard]] virtual const TimeSeriesSet<T_TS> &key_set() const    = 0;
     };
 
     struct TimeSeriesDictOutput : TimeSeriesDict<TimeSeriesOutput>
@@ -76,14 +79,11 @@ namespace hgraph
         using ptr = nb::ref<TimeSeriesDictOutput>;
         using TimeSeriesDict::TimeSeriesDict;
 
-        virtual void                   py_set_item(const nb::object &key, const nb::object &value)    = 0;
-        virtual void                   py_del_item(const nb::object &key)                             = 0;
-        virtual nb::object             py_pop(const nb::object &key, const nb::object &default_value) = 0;
-        virtual time_series_output_ptr py_get_ref(const nb::object &key, const void *requester)       = 0;
-        virtual void                   py_release_ref(const nb::object &key, const void *requester)   = 0;
-
-      protected:
-        mutable nb::object _value;
+        virtual void       py_set_item(const nb::object &key, const nb::object &value)        = 0;
+        virtual void       py_del_item(const nb::object &key)                                 = 0;
+        virtual nb::object py_pop(const nb::object &key, const nb::object &default_value)     = 0;
+        virtual nb::object py_get_ref(const nb::object &key, const nb::object &requester)     = 0;
+        virtual void       py_release_ref(const nb::object &key, const nb::object &requester) = 0;
     };
 
     struct TimeSeriesDictInput : TimeSeriesDict<TimeSeriesInput>
@@ -97,6 +97,7 @@ namespace hgraph
         using ptr                 = nb::ref<TimeSeriesDictOutput_T>;
         using key_type            = T_Key;
         using value_type          = time_series_output_ptr;
+        using k_set_type          = std::unordered_set<key_type>;
         using map_type            = std::unordered_map<key_type, value_type>;
         using item_iterator       = typename map_type::iterator;
         using const_item_iterator = typename map_type::const_iterator;
@@ -115,13 +116,17 @@ namespace hgraph
 
         void py_set_value(nb::object value) override;
         void apply_result(nb::object value) override;
-        bool can_apply_result(nb::object value) override;
+        bool can_apply_result(nb::object result) override;
+
+        [[nodiscard]] nb::object   py_get(const nb::object &item, const nb::object &default_value) const override;
+        void                       py_create(const nb::object &item) override;
+        [[nodiscard]] nb::iterator py_iter() override;
 
         void mark_child_modified(TimeSeriesOutput &child, engine_time_t modified_time) override;
-        void mark_modified(engine_time_t modified_time) override;
 
-        [[nodiscard]] nb::object py_value() const override;
-        [[nodiscard]] nb::object py_delta_value() const override;
+        [[nodiscard]] const map_type &value() const;
+        [[nodiscard]] nb::object      py_value() const override;
+        [[nodiscard]] nb::object      py_delta_value() const override;
 
         void               clear() override;
         void               invalidate() override;
@@ -163,7 +168,7 @@ namespace hgraph
         [[nodiscard]] nb::iterator py_valid_values() const override;
         [[nodiscard]] nb::iterator py_valid_items() const override;
 
-        [[nodiscard]] const map_type &added_items() const;
+        [[nodiscard]] const k_set_type &added_keys() const;
 
         [[nodiscard]] nb::iterator py_added_keys() const override;
         [[nodiscard]] nb::iterator py_added_values() const override;
@@ -192,19 +197,15 @@ namespace hgraph
 
         nb::object py_pop(const nb::object &key, const nb::object &default_value) override;
 
-        time_series_output_ptr py_get_ref(const nb::object &key, const void *requester) override;
-        void                   py_release_ref(const nb::object &key, const void *requester) override;
+        nb::object             py_get_ref(const nb::object &key, const nb::object &requester) override;
+        void                   py_release_ref(const nb::object &key, const nb::object &requester) override;
         time_series_output_ptr get_ref(const key_type &key, const void *requester);
         void                   release_ref(const key_type &key, const void *requester);
 
         void add_key_observer(TSDKeyObserver<key_type> *observer);
         void remove_key_observer(TSDKeyObserver<key_type> *observer);
 
-        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
-            auto other_d = dynamic_cast<const TimeSeriesDictOutput_T<key_type> *>(other);
-            if (!other_d) { return false; }
-            return _ts_builder->is_same_type(*other_d->_ts_builder);
-        }
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override;
 
         // void post_modify() override;
 
@@ -213,23 +214,21 @@ namespace hgraph
         [[nodiscard]] bool has_reference() const override;
 
       protected:
-        void            _post_modify();
         void            _dispose();
-        void            clear_on_end_of_evaluation_cycle();
+        void            _clear_key_changes();
         void            _create(const key_type &key);
         const key_type &key_from_value(TimeSeriesOutput *value) const;
 
-        void add_added_item(key_type key, value_type value);
         void remove_value(const key_type &key, bool raise_if_not_found);
 
       private:
         nb::ref<key_set_type> _key_set;
         map_type              _ts_values;
 
-        reverse_map      _reverse_ts_values;
-        map_type         _modified_items;
-        mutable map_type _added_items;     // mutable because added_items() const builds this cache dynamically
-        map_type         _removed_values;  // This ensures we hold onto the values until we are sure no one needs to reference them.
+        reverse_map _ts_values_to_keys;
+        map_type    _modified_items;
+        k_set_type  _added_keys;
+        map_type    _removed_items;  // This ensures we hold onto the values until we are sure no one needs to reference them.
 
         output_builder_ptr _ts_builder;
         output_builder_ptr _ts_ref_builder;
@@ -237,6 +236,7 @@ namespace hgraph
         FeatureOutputExtension<key_type>        _ref_ts_feature;
         std::vector<TSDKeyObserver<key_type> *> _key_observers;
         engine_time_t                           _last_cleanup_time{MIN_DT};
+        static inline map_type                  _empty;
     };
 
     template <typename T_Key> struct TimeSeriesDictInput_T : TimeSeriesDictInput, TSDKeyObserver<T_Key>
@@ -267,11 +267,16 @@ namespace hgraph
 
         [[nodiscard]] size_t size() const override;
 
+        [[nodiscard]] const map_type &value() const;
         [[nodiscard]] nb::object py_value() const override;
         [[nodiscard]] nb::object py_delta_value() const override;
 
         [[nodiscard]] bool py_contains(const nb::object &item) const override;
         [[nodiscard]] bool contains(const key_type &item) const;
+
+        [[nodiscard]] nb::object   py_get(const nb::object &item, const nb::object &default_value) const override;
+        void                       py_create(const nb::object &item) override;
+        [[nodiscard]] nb::iterator py_iter() override;
 
         [[nodiscard]] nb::object        py_get_item(const nb::object &item) const override;
         [[nodiscard]] nb::object        py_get_or_create(const nb::object &key) override;
@@ -342,15 +347,15 @@ namespace hgraph
         // Expose this as this is currently used in at least one Python service test.
         void _create(const key_type &key);
 
-      protected:
-        void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
-        bool do_bind_output(time_series_output_ptr &value) override;
-        void do_un_bind_output(bool unbind_refs = false) override;
-
         [[nodiscard]] TimeSeriesSetInput_T<key_type>         &key_set_t();
         [[nodiscard]] const TimeSeriesSetInput_T<key_type>   &key_set_t() const;
         [[nodiscard]] TimeSeriesDictOutput_T<key_type>       &output_t();
         [[nodiscard]] const TimeSeriesDictOutput_T<key_type> &output_t() const;
+
+      protected:
+        void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
+        bool do_bind_output(time_series_output_ptr &value) override;
+        void do_un_bind_output(bool unbind_refs = false) override;
 
         [[nodiscard]] const key_type &key_from_value(TimeSeriesInput *value) const;
         [[nodiscard]] const key_type &key_from_value(value_type value) const;
