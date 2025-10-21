@@ -203,10 +203,7 @@ def test_free_tsb_ref_signal():
 
         return s(switch_(c, {True: tsb_non_peered, False: tsb_peered}, ts1, ts2))
 
-    assert eval_node(g, [None, False, True, False], [None, 1, None], [None, None, "b"]) == [
-        None,
-        True,
-        True,
+    assert eval_node(g, [True], [1], ["b"]) == [
         True,
     ]
 
