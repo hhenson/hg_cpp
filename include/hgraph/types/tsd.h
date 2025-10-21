@@ -109,10 +109,9 @@ namespace hgraph
         // Use raw pointers for reverse lookup to enable efficient lookup from mark_child_modified
         using reverse_map = std::unordered_map<TimeSeriesOutput *, key_type>;
 
-        explicit TimeSeriesDictOutput_T(const node_ptr &parent, nb::ref<key_set_type> key_set, output_builder_ptr ts_builder,
+        explicit TimeSeriesDictOutput_T(const node_ptr &parent, output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder);
+        explicit TimeSeriesDictOutput_T(const time_series_type_ptr &parent, output_builder_ptr ts_builder,
                                         output_builder_ptr ts_ref_builder);
-        explicit TimeSeriesDictOutput_T(const time_series_type_ptr &parent, nb::ref<key_set_type> key_set,
-                                        output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder);
 
         void py_set_value(nb::object value) override;
         void apply_result(nb::object value) override;
@@ -268,8 +267,8 @@ namespace hgraph
         [[nodiscard]] size_t size() const override;
 
         [[nodiscard]] const map_type &value() const;
-        [[nodiscard]] nb::object py_value() const override;
-        [[nodiscard]] nb::object py_delta_value() const override;
+        [[nodiscard]] nb::object      py_value() const override;
+        [[nodiscard]] nb::object      py_delta_value() const override;
 
         [[nodiscard]] bool py_contains(const nb::object &item) const override;
         [[nodiscard]] bool contains(const key_type &item) const;

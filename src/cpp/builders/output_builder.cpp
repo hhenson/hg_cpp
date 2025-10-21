@@ -146,16 +146,14 @@ namespace hgraph
     }
 
     template <typename T> time_series_output_ptr TimeSeriesDictOutputBuilder_T<T>::make_instance(node_ptr owning_node) const {
-        nb::ref<TimeSeriesSetOutput_T<T>> key_set{ new TimeSeriesSetOutput_T<T>(owning_node) };
-        auto v{new TimeSeriesDictOutput_T<T>(owning_node, key_set, ts_builder, ts_ref_builder)};
+        auto v{new TimeSeriesDictOutput_T<T>(owning_node, ts_builder, ts_ref_builder)};
         return v;
     }
 
     template <typename T>
     time_series_output_ptr TimeSeriesDictOutputBuilder_T<T>::make_instance(time_series_output_ptr owning_output) const {
         auto parent_ts = dynamic_cast_ref<TimeSeriesType>(owning_output);
-        nb::ref<TimeSeriesSetOutput_T<T>> key_set{ new TimeSeriesSetOutput_T<T>(parent_ts) };
-        auto v{new TimeSeriesDictOutput_T<T>{parent_ts, key_set, ts_builder, ts_ref_builder}};
+        auto v{new TimeSeriesDictOutput_T<T>{parent_ts, ts_builder, ts_ref_builder}};
         return v;
     }
 
