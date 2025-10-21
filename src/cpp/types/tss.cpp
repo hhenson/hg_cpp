@@ -406,7 +406,7 @@ namespace hgraph
             for (const auto &item : values()) {
                 // Only add if not in previous state
                 // (prev values + removed - added)
-                bool was_in_prev = prev.contains(item) || (prev_removed.contains(item) && !prev_added.contains(item));
+                bool was_in_prev = (prev.contains(item) || prev_removed.contains(item)) && !prev_added.contains(item);
                 if (!was_in_prev) { _added.insert(item); }
             }
             if (!_added.empty()) { _add_reset_prev(); }
