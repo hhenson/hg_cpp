@@ -579,14 +579,11 @@ namespace hgraph
         for (const auto &[key, value] : modified) {
             if (value->valid()) { delta[nb::cast(key)] = value->py_delta_value(); }
         }
-        // Use key_set.removed() like Python does - this excludes keys added in the same cycle
-        // Only include REMOVE sentinel for keys that were valid before removal
-        const auto &removed_keys = key_set_t().removed();
-        if (!removed_keys.empty()) {
+        const auto& removed_{removed_items()};
+        if (!removed_.empty()) {
             auto removed{get_remove()};
-            for (const auto &key : removed_keys) {
-                auto it = _removed_items.find(key);
-                if (it != _removed_items.end() && it->second.second) {  // Check was_valid flag
+            for (const auto &[key, _] : removed_) {
+                if (was_removed_valid(key)) {  // Check was_valid flag
                     delta[nb::cast(key)] = removed;
                 }
             }
@@ -643,36 +640,31 @@ namespace hgraph
 
     template <typename T_Key>
     const typename TimeSeriesDictInput_T<T_Key>::map_type &TimeSeriesDictInput_T<T_Key>::modified_items() const {
-        // This will compute a cached value or use an already computed cached value.
-        // TODO: Would like to review this logic to see if there is an improvement that can be made to the cases where
-        // we currently clean the cache without checking if it is valid.
+        _modified_items_cache.clear();
         if (sampled()) {
             // Return all valid items when sampled
-            auto &mutable_modified_items = const_cast<map_type &>(_modified_items);
-            mutable_modified_items.clear();
-            for (const auto &[key, value] : valid_items()) { mutable_modified_items.emplace(key, value); }
+            for (const auto &[key, value] : valid_items()) { _modified_items_cache.emplace(key, value); }
         } else if (has_peer()) {
             // When peered, only return items that are modified in the output
-            auto &mutable_modified_items = const_cast<map_type &>(_modified_items);
-            mutable_modified_items.clear();
             for (const auto &[key, _] : output_t().modified_items()) {
                 auto it = _ts_values.find(key);
-                if (it != _ts_values.end()) { mutable_modified_items.emplace(key, it->second); }
+                if (it != _ts_values.end()) { _modified_items_cache.emplace(key, it->second); }
             }
         } else if (active()) {
             // When active but not sampled or peered, only return cached modified items
             // during the current evaluation cycle
-            if (last_modified_time() != owning_graph().evaluation_clock().evaluation_time()) {
+            if (last_modified_time() == owning_graph().evaluation_clock().evaluation_time()) {
+                return _modified_items;
+            } else {
                 return empty_;  // Return empty set if not in current cycle
             }
         } else {
             // When not active, return all modified items
-            auto &mutable_modified_items = const_cast<map_type &>(_modified_items);
             for (const auto &[key, value] : _ts_values) {
-                if (value->modified()) { mutable_modified_items.emplace(key, value); }
+                if (value->modified()) { _modified_items_cache.emplace(key, value); }
             }
         }
-        return _modified_items;
+        return _modified_items_cache;
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_modified_keys() const {
@@ -765,7 +757,12 @@ namespace hgraph
         _removed_item_cache.clear();
         for (const auto &key : key_set_t().removed()) {
             auto it{_removed_items.find(key)};
-            if (it == _removed_items.end()) { continue; }
+            if (it == _removed_items.end()) {
+                // This really should not occur!
+                throw std::runtime_error("Removed item not found in removed_cache");
+                //continue;
+            }
+            // Python does a search inside of _ts_values to find a deleted key, but this seems rather odd to me.
             _removed_item_cache.emplace(key, it->second.first);
         }
         return _removed_item_cache;
@@ -932,6 +929,11 @@ namespace hgraph
     template <typename T_Key>
     const typename TimeSeriesDictInput_T<T_Key>::key_type &TimeSeriesDictInput_T<T_Key>::key_from_value(value_type value) const {
         return key_from_value(value.get());
+    }
+    template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::was_removed_valid(const key_type &key) const {
+        auto it = _removed_items.find(key);
+        if (it == _removed_items.end()) { return false; }
+        return it->second.second;
     }
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::reset_prev() { _prev_output = nullptr; }

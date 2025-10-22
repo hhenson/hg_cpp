@@ -359,6 +359,8 @@ namespace hgraph
         [[nodiscard]] const key_type &key_from_value(TimeSeriesInput *value) const;
         [[nodiscard]] const key_type &key_from_value(value_type value) const;
 
+        [[nodiscard]] bool was_removed_valid(const key_type &key) const;
+
         void reset_prev();
         void clear_key_changes();
         void register_clear_key_changes() const;
@@ -370,7 +372,8 @@ namespace hgraph
 
         reverse_map      _ts_values_to_keys;
         mutable map_type _valid_items_cache;     // Cache the valid items if called.
-        map_type _modified_items;  // This is cached for performance reasons.
+        map_type         _modified_items;        // This is cached for performance reasons.
+        mutable map_type _modified_items_cache;  // This is cached for performance reasons.
         mutable map_type _added_items_cache;
         mutable map_type _removed_item_cache;
         removed_map_type _removed_items;  // This ensures we hold onto the values until we are sure no one needs to reference them.
