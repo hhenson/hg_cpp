@@ -370,7 +370,7 @@ namespace hgraph
 
         reverse_map      _ts_values_to_keys;
         mutable map_type _valid_items_cache;     // Cache the valid items if called.
-        mutable map_type _modified_items_cache;  // This is cached for performance reasons.
+        map_type _modified_items;  // This is cached for performance reasons.
         mutable map_type _added_items_cache;
         mutable map_type _removed_item_cache;
         removed_map_type _removed_items;  // This ensures we hold onto the values until we are sure no one needs to reference them.

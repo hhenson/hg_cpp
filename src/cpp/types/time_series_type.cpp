@@ -59,6 +59,15 @@ namespace hgraph
 
     bool TimeSeriesType::has_parent_or_node() const { return _parent_ts_or_node.has_value(); }
 
+    bool TimeSeriesType::has_owning_node() const {
+        if (_parent_ts_or_node.has_value()) {
+            if (std::holds_alternative<Node::ptr>(*_parent_ts_or_node)){return true;}
+            return std::get<ptr>(*_parent_ts_or_node)->has_owning_node();
+        } else {
+            return false;
+        }
+    }
+
     Graph &TimeSeriesType::owning_graph() { return owning_node().graph(); }
 
     const Graph &TimeSeriesType::owning_graph() const { return owning_node().graph(); }

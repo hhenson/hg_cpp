@@ -92,6 +92,7 @@ namespace hgraph
         bool _has_parent_time_series() const;
         void _set_parent_time_series(TimeSeriesType *ts);
         bool has_parent_or_node() const;
+        bool has_owning_node() const;
 
       private:
         using TsOrNode = std::variant<ptr, node_ptr>;

@@ -648,14 +648,16 @@ namespace hgraph
         // we currently clean the cache without checking if it is valid.
         if (sampled()) {
             // Return all valid items when sampled
-            _modified_items_cache.clear();
-            for (const auto &[key, value] : valid_items()) { _modified_items_cache.emplace(key, value); }
+            auto &mutable_modified_items = const_cast<map_type &>(_modified_items);
+            mutable_modified_items.clear();
+            for (const auto &[key, value] : valid_items()) { mutable_modified_items.emplace(key, value); }
         } else if (has_peer()) {
             // When peered, only return items that are modified in the output
-            _modified_items_cache.clear();
+            auto &mutable_modified_items = const_cast<map_type &>(_modified_items);
+            mutable_modified_items.clear();
             for (const auto &[key, _] : output_t().modified_items()) {
                 auto it = _ts_values.find(key);
-                if (it != _ts_values.end()) { _modified_items_cache.emplace(key, it->second); }
+                if (it != _ts_values.end()) { mutable_modified_items.emplace(key, it->second); }
             }
         } else if (active()) {
             // When active but not sampled or peered, only return cached modified items
@@ -665,11 +667,12 @@ namespace hgraph
             }
         } else {
             // When not active, return all modified items
+            auto &mutable_modified_items = const_cast<map_type &>(_modified_items);
             for (const auto &[key, value] : _ts_values) {
-                if (value->modified()) { _modified_items_cache.emplace(key, value); }
+                if (value->modified()) { mutable_modified_items.emplace(key, value); }
             }
         }
-        return _modified_items_cache;
+        return _modified_items;
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictInput_T<T_Key>::py_modified_keys() const {
@@ -791,9 +794,6 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::on_key_added(const key_type &key) {
         auto value{get_or_create(key)};
-        // Activate if: (not peered AND this is active) OR value is already active (transplanted input case)
-        // v.active can be true if this was a transplanted input
-        if ((!has_peer() && active()) || value->active()) { value->make_active(); }
         value->bind_output(&output_t()[key]);
     }
 
@@ -813,9 +813,9 @@ namespace hgraph
             // This is our own input - deactivate and track for cleanup
             if (value->active()) { value->make_passive(); }
             _removed_items.insert({key, {value, was_valid}});
-            auto it_{_modified_items_cache.find(key)};
-            if (it_ != _modified_items_cache.end()) { _modified_items_cache.erase(it_); }
-            if (!has_peer()) { value->un_bind_output(false); }
+            auto it_{_modified_items.find(key)};
+            if (it_ != _modified_items.end()) { _modified_items.erase(it_); }
+            //if (!has_peer()) { value->un_bind_output(false); }
         } else {
             // This is a transplanted input - put it back and unbind it
             _ts_values.insert({key, value});
@@ -940,21 +940,18 @@ namespace hgraph
         _clear_key_changes_registered = false;
 
         // Guard against cleared node (matches Python: if self.owning_node is None)
-        if (!has_parent_or_node()) { return; }
+        if (!has_owning_node()) { return; }
 
         // Release instances with deferred callback to ensure cleanup happens after all processing
-        // This matches Python: add_after_evaluation_notification(lambda b=self._ts_builder, i=v[0]: b.release_instance(i))
-        for (const auto &key : key_set_t().removed()) {
-            auto it = _removed_items.find(key);
-            if (it != _removed_items.end()) {
-                auto &[value, was_valid] = it->second;
-                // Capture by value to ensure the lambda has valid references
-                auto builder  = _ts_builder;
-                auto instance = value;
-                owning_graph().evaluation_engine_api().add_after_evaluation_notification(
-                    [builder, instance]() { builder->release_instance(instance); });
-                value->un_bind_output(true);  // unbind_refs=True
-            }
+        // Could this fall foul of clean-up ordering? Since key-set-removed could have already been cleaned up.
+        for (auto &[key, value_pair] : _removed_items) {
+            auto &[value, was_valid] = value_pair;
+            // Capture by value to ensure the lambda has valid references
+            auto builder  = _ts_builder;
+            auto instance = value;
+            owning_graph().evaluation_engine_api().add_after_evaluation_notification(
+                [builder, instance]() { builder->release_instance(instance); });
+            value->un_bind_output(true);
         }
 
         _removed_items.clear();
@@ -1040,13 +1037,16 @@ namespace hgraph
     void TimeSeriesDictInput_T<T_Key>::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) {
         if (_last_modified_time < modified_time) {
             _last_modified_time = modified_time;
-            _modified_items_cache.clear();
+            _modified_items.clear();
         }
 
-        if (child != &key_set_t()) {
+        if (child != &key_set_t()) {  // Child is not the key-set instance
             auto it{_ts_values_to_keys.find(child)};
             if (it != _ts_values_to_keys.end()) {
-                _modified_items_cache[it->second] = child;  // Use operator[] instead of insert to ensure update
+                _modified_items[it->second] = child;  // Use operator[] instead of insert to ensure update
+            } else {
+                // If we cannot find the child there is a bug, lets rather catch this condition
+                throw nb::key_error("Child not found in _ts_values_to_keys");
             }
         }
 
@@ -1055,6 +1055,9 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::_create(const key_type &key) {
         auto item{_ts_builder->make_instance(this)};
+        if (has_peer() and active()) {
+            item->make_active();
+        }
         _ts_values.insert({key, item});
         _ts_values_to_keys.insert({item.get(), key});
     }
