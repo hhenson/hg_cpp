@@ -113,6 +113,9 @@ namespace hgraph
 
         void copy_from_input(const TimeSeriesInput &input) override;
 
+        [[nodiscard]] bool is_reference() const override;
+        [[nodiscard]] bool has_reference() const override;
+
         static void register_with_nanobind(nb::module_ &m);
 
       protected:

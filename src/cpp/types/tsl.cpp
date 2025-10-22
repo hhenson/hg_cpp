@@ -86,6 +86,12 @@ namespace hgraph
         return const_cast<list_type *>(this)->modified_items();
     }
 
+    template <typename T_TS>
+        requires IndexedTimeSeriesT<T_TS>
+    bool TimeSeriesList<T_TS>::has_reference() const {
+        if (size() == 0) { return false; } else { return ts_values()[0]->has_reference(); }
+    }
+
     void TimeSeriesListOutput::apply_result(nb::object value) {
         if (value.is_none()) { return; }
         py_set_value(value);

@@ -52,6 +52,8 @@ namespace hgraph
         [[nodiscard]] enumerated_collection_type modified_items();
         [[nodiscard]] enumerated_collection_type modified_items() const;
 
+        [[nodiscard]] bool has_reference() const override;
+
       protected:
         using T_TS::index_with_constraint;
         using T_TS::ts_values;

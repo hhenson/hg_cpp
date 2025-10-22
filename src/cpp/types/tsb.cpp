@@ -165,6 +165,12 @@ namespace hgraph
 
     template <typename T_TS>
         requires IndexedTimeSeriesT<T_TS>
+    bool TimeSeriesBundle<T_TS>::has_reference() const {
+        return std::any_of(ts_values().begin(), ts_values().end(), [](const ts_type::ptr &ts) { return ts->has_reference(); });
+    }
+
+    template <typename T_TS>
+        requires IndexedTimeSeriesT<T_TS>
     template <bool is_delta>
     nb::object TimeSeriesBundle<T_TS>::py_value_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
         nb::dict out;

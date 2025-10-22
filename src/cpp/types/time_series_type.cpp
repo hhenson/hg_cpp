@@ -31,8 +31,9 @@ namespace hgraph
             .def_prop_ro("all_valid", &TimeSeriesType::all_valid)
             .def_prop_ro("last_modified_time", &TimeSeriesType::last_modified_time)
             .def("re_parent", static_cast<void (TimeSeriesType::*)(const Node::ptr &)>(&TimeSeriesType::re_parent))
-            .def("re_parent", static_cast<void (TimeSeriesType::*)(const ptr &)>(&TimeSeriesType::re_parent));
-        ;
+            .def("re_parent", static_cast<void (TimeSeriesType::*)(const ptr &)>(&TimeSeriesType::re_parent))
+            .def("is_reference", &TimeSeriesType::is_reference)
+            .def("has_reference", &TimeSeriesType::has_reference);
     }
 
     TimeSeriesType::ptr &TimeSeriesType::_parent_time_series() const {
@@ -61,7 +62,7 @@ namespace hgraph
 
     bool TimeSeriesType::has_owning_node() const {
         if (_parent_ts_or_node.has_value()) {
-            if (std::holds_alternative<Node::ptr>(*_parent_ts_or_node)){return true;}
+            if (std::holds_alternative<Node::ptr>(*_parent_ts_or_node)) { return true; }
             return std::get<ptr>(*_parent_ts_or_node)->has_owning_node();
         } else {
             return false;
@@ -294,7 +295,7 @@ namespace hgraph
 
     void TimeSeriesInput::reset_output() { _output = nullptr; }
 
-    void TimeSeriesInput::set_output(time_series_output_ptr output) {_output = std::move(output);}
+    void TimeSeriesInput::set_output(time_series_output_ptr output) { _output = std::move(output); }
 
     void TimeSeriesInput::set_active(bool active) { _active = active; }
 

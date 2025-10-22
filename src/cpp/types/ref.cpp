@@ -162,7 +162,7 @@ namespace hgraph
 
         for (size_t i = 0; i < _items.size(); ++i) {
             // Get the child input (from REF, Indexed, or Signal input)
-            TimeSeriesInput * item{input_.get_input(i)};
+            TimeSeriesInput *item{input_.get_input(i)};
 
             auto &r{_items[i]};
             if (r != nullptr) {
@@ -278,6 +278,9 @@ namespace hgraph
             throw std::runtime_error("TimeSeriesReferenceOutput::copy_from_input: Expected TimeSeriesReferenceInput");
         }
     }
+    bool TimeSeriesReferenceOutput::is_reference() const { return true; }
+
+    bool TimeSeriesReferenceOutput::has_reference() const { return true; }
 
     void TimeSeriesReferenceOutput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesReferenceOutput, TimeSeriesOutput>(m, "TimeSeriesReferenceOutput")
@@ -291,13 +294,9 @@ namespace hgraph
             .def("clear", &TimeSeriesReferenceOutput::clear);
     }
 
-    bool TimeSeriesReferenceOutput::has_value() const {
-        return _value != nullptr;
-    }
+    bool TimeSeriesReferenceOutput::has_value() const { return _value != nullptr; }
 
-    void TimeSeriesReferenceOutput::reset_value() {
-        _value = nullptr;
-    }
+    void TimeSeriesReferenceOutput::reset_value() { _value = nullptr; }
 
     void TimeSeriesReferenceInput::start() {
         set_sample_time(owning_graph().evaluation_clock().evaluation_time());
@@ -343,7 +342,7 @@ namespace hgraph
     bool TimeSeriesReferenceInput::all_valid() const {
         return (_items.has_value() && !_items->empty() &&
                 std::all_of(_items->begin(), _items->end(), [](const auto &item) { return item->all_valid(); })) ||
-               has_value()|| TimeSeriesInput::all_valid();
+               has_value() || TimeSeriesInput::all_valid();
     }
 
     engine_time_t TimeSeriesReferenceInput::last_modified_time() const {
@@ -426,9 +425,7 @@ namespace hgraph
         }
     }
 
-    TimeSeriesInput *TimeSeriesReferenceInput::get_input(size_t index) {
-        return get_ref_input(index);
-    }
+    TimeSeriesInput *TimeSeriesReferenceInput::get_input(size_t index) { return get_ref_input(index); }
 
     TimeSeriesReferenceInput *TimeSeriesReferenceInput::get_ref_input(size_t index) {
         if (!_items.has_value()) { _items = std::vector<TimeSeriesReferenceInput::ptr>{}; }
@@ -436,7 +433,7 @@ namespace hgraph
         auto sz{_items->size()};
         while (index >= sz) {
             auto new_item = new TimeSeriesReferenceInput(this);
-            if (active()){new_item->make_active();}
+            if (active()) { new_item->make_active(); }
             _items->push_back(new_item);
             ++sz;
         }
@@ -516,12 +513,8 @@ namespace hgraph
         return _items.has_value() ? *_items : empty_items;
     }
 
-    bool TimeSeriesReferenceInput::has_value() const {
-        return _value != nullptr;
-    }
+    bool TimeSeriesReferenceInput::has_value() const { return _value != nullptr; }
 
-    void TimeSeriesReferenceInput::reset_value() {
-        _value = nullptr;
-    }
+    void TimeSeriesReferenceInput::reset_value() { _value = nullptr; }
 
 }  // namespace hgraph
