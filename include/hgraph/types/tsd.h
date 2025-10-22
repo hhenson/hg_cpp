@@ -354,7 +354,7 @@ namespace hgraph
       protected:
         void notify_parent(TimeSeriesInput *child, engine_time_t modified_time) override;
         bool do_bind_output(time_series_output_ptr &value) override;
-        void do_un_bind_output(bool unbind_refs = false) override;
+        void do_un_bind_output(bool unbind_refs) override;
 
         [[nodiscard]] const key_type &key_from_value(TimeSeriesInput *value) const;
         [[nodiscard]] const key_type &key_from_value(value_type value) const;
