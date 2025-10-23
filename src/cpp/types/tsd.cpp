@@ -9,6 +9,7 @@
 #include <hgraph/types/tsd.h>
 #include <hgraph/util/string_utils.h>
 
+#include <fmt/format.h>
 #include <nanobind/nanobind.h>
 
 namespace hgraph
@@ -31,7 +32,7 @@ namespace hgraph
                       : nb::hasattr(result, "items")   ? nb::iter(nb::getattr(result, "items")())
                                                        : nb::iter(result));
         for (const auto &pair : items) {
-            auto k = pair[0];
+            auto k  = pair[0];
             auto v_ = pair[1];
             if (v_.is_none()) { continue; }
             auto k_ = nb::cast<T_Key>(k);
@@ -68,9 +69,15 @@ namespace hgraph
 
         if (&child != &key_set()) {
             auto it = _ts_values_to_keys.find(&child);
-            // This is slightly different to the Python code, in Python it inserts the supplied child
-            // Here we re-look up the value from the key
-            if (it != _ts_values_to_keys.end()) { _modified_items[it->second] =_ts_values.at(it->second); }
+            if (it != _ts_values_to_keys.end()) {
+
+                auto v{_ts_values.find(it->second)};
+                if (v != _ts_values.end()) {
+                    _modified_items[it->second] = v->second;
+                } else {
+                    fmt::print("[TSDOut][mark_child_modified] Missing value for key: {}\n", to_string(it->second));
+                }
+            }
         }
 
         TimeSeriesOutput::mark_child_modified(child, modified_time);
@@ -581,7 +588,7 @@ namespace hgraph
         for (const auto &[key, value] : modified) {
             if (value->valid()) { delta[nb::cast(key)] = value->py_delta_value(); }
         }
-        const auto& removed_{removed_items()};
+        const auto &removed_{removed_items()};
         if (!removed_.empty()) {
             auto removed{get_remove()};
             for (const auto &[key, _] : removed_) {
@@ -731,7 +738,7 @@ namespace hgraph
             if (it != _ts_values.end()) {
                 _added_items_cache.emplace(k, it->second);
             } else {
-                //TODO: print out error message as this should never happen
+                // TODO: print out error message as this should never happen
             }
         }
         return _added_items_cache;
@@ -771,7 +778,7 @@ namespace hgraph
             if (it == _removed_items.end()) {
                 // This really should not occur!
                 throw std::runtime_error("Removed item not found in removed_cache");
-                //continue;
+                // continue;
             }
             // Python does a search inside of _ts_values to find a deleted key, but this seems rather odd to me.
             _removed_item_cache.emplace(key, it->second.first);
@@ -823,7 +830,7 @@ namespace hgraph
             _removed_items.insert({key, {value, was_valid}});
             auto it_{_modified_items.find(key)};
             if (it_ != _modified_items.end()) { _modified_items.erase(it_); }
-            //if (!has_peer()) { value->un_bind_output(false); }
+            // if (!has_peer()) { value->un_bind_output(false); }
         } else {
             // This is a transplanted input - put it back and unbind it
             _ts_values.insert({key, value});
@@ -904,7 +911,7 @@ namespace hgraph
         }
         // If we are un-binding then the output must exist by definition.
         output_t().remove_key_observer(this);
-        if( has_peer() ){
+        if (has_peer()) {
             TimeSeriesInput::do_un_bind_output(unbind_refs);
         } else {
             reset_output();
@@ -1072,9 +1079,7 @@ namespace hgraph
         auto item{_ts_builder->make_instance(this)};
         // For non-peered inputs that are active, make the newly created item active too
         // This ensures proper notification chain for fast non-peer TSD scenarios
-        if (!has_peer() and active()) {
-            item->make_active();
-        }
+        if (!has_peer() and active()) { item->make_active(); }
         _ts_values.insert({key, item});
         _ts_values_to_keys.insert({item.get(), key});
     }
