@@ -1059,7 +1059,9 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::_create(const key_type &key) {
         auto item{_ts_builder->make_instance(this)};
-        if (has_peer() and active()) {
+        // For non-peered inputs that are active, make the newly created item active too
+        // This ensures proper notification chain for fast non-peer TSD scenarios
+        if (!has_peer() and active()) {
             item->make_active();
         }
         _ts_values.insert({key, item});
