@@ -20,7 +20,7 @@ namespace hgraph
 
     void InputBuilder::release_instance(time_series_input_ptr item) const {
         // We can't detect if we are escaping from an error condition or not, so change these to just log issues
-        if(item->output() == nullptr ) {
+        if(item->has_output()) {
             fmt::print("Input instance still has an output reference when released, this is a bug.");
         }
         item->reset_parent_or_node();
