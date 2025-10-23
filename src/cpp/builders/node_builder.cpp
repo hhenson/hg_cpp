@@ -32,6 +32,23 @@ namespace hgraph
           output_builder(std::move(output_builder_)), error_builder(std::move(error_builder_)),
           recordable_state_builder(std::move(recordable_state_builder_)) {}
 
+    NodeBuilder::NodeBuilder(NodeBuilder &&other) noexcept
+        : signature(other.signature), scalars(std::move(other.scalars)), input_builder(other.input_builder),
+          output_builder(other.output_builder), error_builder(other.error_builder),
+          recordable_state_builder(other.recordable_state_builder) {}
+    NodeBuilder &NodeBuilder::operator=(NodeBuilder &&other) noexcept {
+        if (this != &other) {
+            // Copy nanobind::ref members (inc_ref) instead of moving them, so both sides stay valid
+            signature                = other.signature;
+            scalars                  = std::move(other.scalars);
+            input_builder            = other.input_builder;
+            output_builder           = other.output_builder;
+            error_builder            = other.error_builder;
+            recordable_state_builder = other.recordable_state_builder;
+        }
+        return *this;
+    }
+
     template <typename T> auto create_tsd_map_node_builder(T *self, const nb::args &args) {
         // Expected Python signature (positional):
         // (signature, scalars, input_builder, output_builder, error_builder, recordable_state_builder,
@@ -237,6 +254,14 @@ namespace hgraph
         return new (self) T(std::move(signature_), std::move(scalars_), std::move(input_builder_), std::move(output_builder_),
             std::move(error_builder_), std::move(recordable_state_builder_), std::move(nested_graph_builder),
             std::move(input_node_ids_tuple), std::move(output_node_id));
+    }
+
+    void NodeBuilder::release_instance(node_ptr &item) const {
+        if (input_builder) { (*input_builder)->release_instance(item->input_ptr().get()); }
+        if (output_builder) { (*output_builder)->release_instance(item->output_ptr().get()); }
+        if (error_builder) { (*error_builder)->release_instance(item->error_output_ptr().get()); }
+        if (recordable_state_builder) { (*recordable_state_builder)->release_instance(item->recordable_state_ptr().get()); }
+        dispose_component(*item.get());
     }
 
     void NodeBuilder::register_with_nanobind(nb::module_ &m) {

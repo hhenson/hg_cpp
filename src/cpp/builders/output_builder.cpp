@@ -19,12 +19,11 @@ namespace hgraph
         // We can't check if we are in an error condition, nanobind should raise the python error into a C++
         // one, and then the state is gone, I think. Anyhow, if this is an issue, we can look into this later.
         if (item->_subscribers.size() != 0) {
-            std::string msg = "Output instance still has subscribers when released, this is a bug.\n";
-            msg += "Output belongs to node: " + (item->has_owning_node() ? item->owning_node().signature().name : "null") + "\n";
-            msg += "Subscriber count: " + std::to_string(item->_subscribers.size());
-            throw std::runtime_error(msg);
+            fmt::print("Output instance still has subscribers when released, this is a bug.\nOutput belongs to node: "
+                       "{}\nSubscriber count: {}",
+                       (item->has_owning_node() ? item->owning_node().signature().name : "null"),
+                       std::to_string(item->_subscribers.size()));
         }
-
         item->reset_parent_or_node();
     }
 
@@ -96,21 +95,28 @@ namespace hgraph
             .def(nb::init<output_builder_ptr, output_builder_ptr>(), "ts_builder"_a, "ts_ref_builder"_a);
 
         // TSW output builders (fixed-size windows)
-        using OutputBuilder_TSW_Bool = TimeSeriesWindowOutputBuilder_T<bool>;
-        using OutputBuilder_TSW_Int = TimeSeriesWindowOutputBuilder_T<int64_t>;
-        using OutputBuilder_TSW_Float = TimeSeriesWindowOutputBuilder_T<double>;
-        using OutputBuilder_TSW_Date = TimeSeriesWindowOutputBuilder_T<engine_date_t>;
-        using OutputBuilder_TSW_DateTime = TimeSeriesWindowOutputBuilder_T<engine_time_t>;
+        using OutputBuilder_TSW_Bool      = TimeSeriesWindowOutputBuilder_T<bool>;
+        using OutputBuilder_TSW_Int       = TimeSeriesWindowOutputBuilder_T<int64_t>;
+        using OutputBuilder_TSW_Float     = TimeSeriesWindowOutputBuilder_T<double>;
+        using OutputBuilder_TSW_Date      = TimeSeriesWindowOutputBuilder_T<engine_date_t>;
+        using OutputBuilder_TSW_DateTime  = TimeSeriesWindowOutputBuilder_T<engine_time_t>;
         using OutputBuilder_TSW_TimeDelta = TimeSeriesWindowOutputBuilder_T<engine_time_delta_t>;
-        using OutputBuilder_TSW_Object = TimeSeriesWindowOutputBuilder_T<nb::object>;
+        using OutputBuilder_TSW_Object    = TimeSeriesWindowOutputBuilder_T<nb::object>;
 
-        nb::class_<OutputBuilder_TSW_Bool, OutputBuilder>(m, "OutputBuilder_TSW_Bool").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<OutputBuilder_TSW_Int, OutputBuilder>(m, "OutputBuilder_TSW_Int").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<OutputBuilder_TSW_Float, OutputBuilder>(m, "OutputBuilder_TSW_Float").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<OutputBuilder_TSW_Date, OutputBuilder>(m, "OutputBuilder_TSW_Date").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<OutputBuilder_TSW_DateTime, OutputBuilder>(m, "OutputBuilder_TSW_DateTime").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<OutputBuilder_TSW_TimeDelta, OutputBuilder>(m, "OutputBuilder_TSW_TimeDelta").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<OutputBuilder_TSW_Object, OutputBuilder>(m, "OutputBuilder_TSW_Object").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_Bool, OutputBuilder>(m, "OutputBuilder_TSW_Bool")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_Int, OutputBuilder>(m, "OutputBuilder_TSW_Int")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_Float, OutputBuilder>(m, "OutputBuilder_TSW_Float")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_Date, OutputBuilder>(m, "OutputBuilder_TSW_Date")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_DateTime, OutputBuilder>(m, "OutputBuilder_TSW_DateTime")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_TimeDelta, OutputBuilder>(m, "OutputBuilder_TSW_TimeDelta")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<OutputBuilder_TSW_Object, OutputBuilder>(m, "OutputBuilder_TSW_Object")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
     }
 
     time_series_output_ptr TimeSeriesRefOutputBuilder::make_instance(node_ptr owning_node) const {
@@ -181,7 +187,7 @@ namespace hgraph
         auto v{new TimeSeriesDictOutput_T<T>{parent_ts, ts_builder, ts_ref_builder}};
         return v;
     }
-    
+
     template <typename T> bool TimeSeriesDictOutputBuilder_T<T>::is_same_type(const Builder &other) const {
         if (auto other_b = dynamic_cast<const TimeSeriesDictOutputBuilder_T<T> *>(&other)) {
             return ts_builder->is_same_type(*other_b->ts_builder);
@@ -199,8 +205,7 @@ namespace hgraph
         : size(size), min_size(min_size) {}
 
     // TSW output builder implementations
-    template <typename T>
-    time_series_output_ptr TimeSeriesWindowOutputBuilder_T<T>::make_instance(node_ptr owning_node) const {
+    template <typename T> time_series_output_ptr TimeSeriesWindowOutputBuilder_T<T>::make_instance(node_ptr owning_node) const {
         auto v{new TimeSeriesFixedWindowOutput<T>(owning_node, size, min_size)};
         return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
     }
@@ -260,7 +265,7 @@ namespace hgraph
         auto v{new TimeSeriesBundleOutput(dynamic_cast_ref<TimeSeriesType>(owning_output), schema)};
         return make_and_set_outputs(v);
     }
-    
+
     bool TimeSeriesBundleOutputBuilder::has_reference() const {
         return std::ranges::any_of(output_builders, [](const auto &builder) { return builder->has_reference(); });
     }

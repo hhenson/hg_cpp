@@ -1,3 +1,4 @@
+#include <fmt/format.h>
 #include <hgraph/builders/input_builder.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
@@ -18,7 +19,10 @@ namespace hgraph
 {
 
     void InputBuilder::release_instance(time_series_input_ptr item) const {
-        assert(item->output() == nullptr && "Input instance still has an output reference when released, this is a bug.");
+        // We can't detect if we are escaping from an error condition or not, so change these to just log issues
+        if(item->output() == nullptr ) {
+            fmt::print("Input instance still has an output reference when released, this is a bug.");
+        }
         item->reset_parent_or_node();
     }
 
