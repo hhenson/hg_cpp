@@ -22,14 +22,6 @@ namespace hgraph
     }
 
     void ContextStubSourceNode::do_eval() {
-        // Build the global state key: "context-<owning_graph_id prefix>-<path>"
-        // depth indicates how many elements of owning_graph_id to include
-        int depth = 0;
-        try {
-            nb::object d = scalars()["depth"];  // may be None
-            if (d.is_valid() && !d.is_none()) { depth = nb::cast<int>(d); }
-        } catch (...) { depth = 0; }
-
         std::string path_str;
         try {
             path_str = nb::cast<std::string>(scalars()["path"]);

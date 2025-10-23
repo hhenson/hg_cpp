@@ -92,6 +92,9 @@ namespace hgraph
         using TimeSeriesDict<TimeSeriesInput>::TimeSeriesDict;
     };
 
+    template <typename T_Key>
+    using TSDOutBuilder =  struct TimeSeriesDictOutputBuilder_T<T_Key>;
+
     template <typename T_Key> struct TimeSeriesDictOutput_T : TimeSeriesDictOutput
     {
         using ptr                 = nb::ref<TimeSeriesDictOutput_T>;
@@ -213,6 +216,8 @@ namespace hgraph
         [[nodiscard]] bool has_reference() const override;
 
       protected:
+        friend TSDOutBuilder<T_Key>;
+
         void            _dispose();
         void            _clear_key_changes();
         void            _create(const key_type &key);

@@ -15,6 +15,19 @@
 namespace hgraph
 {
 
+    void OutputBuilder::release_instance(time_series_output_ptr item) const {
+        // We can't check if we are in an error condition, nanobind should raise the python error into a C++
+        // one, and then the state is gone, I think. Anyhow, if this is an issue, we can look into this later.
+        if (item->_subscribers.size() != 0) {
+            std::string msg = "Output instance still has subscribers when released, this is a bug.\n";
+            msg += "Output belongs to node: " + (item->has_owning_node() ? item->owning_node().signature().name : "null") + "\n";
+            msg += "Subscriber count: " + std::to_string(item->_subscribers.size());
+            throw std::runtime_error(msg);
+        }
+
+        item->reset_parent_or_node();
+    }
+
     void OutputBuilder::register_with_nanobind(nb::module_ &m) {
 
         nb::class_<OutputBuilder, Builder>(m, "OutputBuilder")
@@ -134,6 +147,12 @@ namespace hgraph
         return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
     }
 
+    template <typename T> void TimeSeriesValueOutputBuilder<T>::release_instance(time_series_output_ptr item) const {
+        OutputBuilder::release_instance(item);
+        auto ts = dynamic_cast<TimeSeriesValueOutput<T> *>(item.get());
+        if (ts) { ts->reset_value(); }
+    }
+
     template <typename T> time_series_output_ptr TimeSeriesSetOutputBuilder_T<T>::make_instance(node_ptr owning_node) const {
         auto v{new TimeSeriesSetOutput_T<T>(owning_node)};
         return v;
@@ -143,6 +162,12 @@ namespace hgraph
     time_series_output_ptr TimeSeriesSetOutputBuilder_T<T>::make_instance(time_series_output_ptr owning_output) const {
         auto v{new TimeSeriesSetOutput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_output)}};
         return v;
+    }
+
+    template <typename T> void TimeSeriesSetOutputBuilder_T<T>::release_instance(time_series_output_ptr item) const {
+        TimeSeriesSetOutputBuilder::release_instance(item);
+        auto set = dynamic_cast<TimeSeriesSetOutput_T<T> *>(item.get());
+        if (set) { set->_reset_value(); }
     }
 
     template <typename T> time_series_output_ptr TimeSeriesDictOutputBuilder_T<T>::make_instance(node_ptr owning_node) const {
@@ -156,6 +181,22 @@ namespace hgraph
         auto v{new TimeSeriesDictOutput_T<T>{parent_ts, ts_builder, ts_ref_builder}};
         return v;
     }
+    
+    template <typename T> bool TimeSeriesDictOutputBuilder_T<T>::is_same_type(const Builder &other) const {
+        if (auto other_b = dynamic_cast<const TimeSeriesDictOutputBuilder_T<T> *>(&other)) {
+            return ts_builder->is_same_type(*other_b->ts_builder);
+        }
+        return false;
+    }
+
+    template <typename T> void TimeSeriesDictOutputBuilder_T<T>::release_instance(time_series_output_ptr item) const {
+        if (auto dict = dynamic_cast<TimeSeriesDictOutput_T<T> *>(item.get())) { dict->_dispose(); }
+        OutputBuilder::release_instance(item);
+    }
+
+    template <typename T>
+    TimeSeriesWindowOutputBuilder_T<T>::TimeSeriesWindowOutputBuilder_T(size_t size, size_t min_size)
+        : size(size), min_size(min_size) {}
 
     // TSW output builder implementations
     template <typename T>
@@ -168,6 +209,34 @@ namespace hgraph
     time_series_output_ptr TimeSeriesWindowOutputBuilder_T<T>::make_instance(time_series_output_ptr owning_output) const {
         auto v{new TimeSeriesFixedWindowOutput<T>(dynamic_cast_ref<TimeSeriesType>(owning_output), size, min_size)};
         return time_series_output_ptr{static_cast<TimeSeriesOutput *>(v)};
+    }
+
+    template <typename T> bool TimeSeriesWindowOutputBuilder_T<T>::is_same_type(const Builder &other) const {
+        if (auto other_b = dynamic_cast<const TimeSeriesWindowOutputBuilder_T<T> *>(&other)) {
+            return size == other_b->size && min_size == other_b->min_size;
+        }
+        return false;
+    }
+
+    template <typename T> void TimeSeriesWindowOutputBuilder_T<T>::release_instance(time_series_output_ptr item) const {
+        OutputBuilder::release_instance(item);
+        auto ts = dynamic_cast<TimeSeriesFixedWindowOutput<T> *>(item.get());
+        if (ts) { ts->reset_value(); }
+    }
+
+    bool TimeSeriesListOutputBuilder::is_same_type(const Builder &other) const {
+        if (auto other_b = dynamic_cast<const TimeSeriesListOutputBuilder *>(&other)) {
+            return output_builder->is_same_type(*other_b->output_builder);
+        }
+        return false;
+    }
+
+    void TimeSeriesListOutputBuilder::release_instance(time_series_output_ptr item) const {
+        OutputBuilder::release_instance(item);
+        auto list = dynamic_cast<TimeSeriesListOutput *>(item.get());
+        if (list) {
+            for (auto &value : list->ts_values()) { output_builder->release_instance(value); }
+        }
     }
 
     time_series_output_ptr TimeSeriesListOutputBuilder::make_and_set_outputs(TimeSeriesListOutput *output) const {
@@ -190,6 +259,30 @@ namespace hgraph
     time_series_output_ptr TimeSeriesBundleOutputBuilder::make_instance(time_series_output_ptr owning_output) const {
         auto v{new TimeSeriesBundleOutput(dynamic_cast_ref<TimeSeriesType>(owning_output), schema)};
         return make_and_set_outputs(v);
+    }
+    
+    bool TimeSeriesBundleOutputBuilder::has_reference() const {
+        return std::ranges::any_of(output_builders, [](const auto &builder) { return builder->has_reference(); });
+    }
+
+    bool TimeSeriesBundleOutputBuilder::is_same_type(const Builder &other) const {
+        if (auto other_b = dynamic_cast<const TimeSeriesBundleOutputBuilder *>(&other)) {
+            if (output_builders.size() != other_b->output_builders.size()) { return false; }
+            for (size_t i = 0; i < output_builders.size(); ++i) {
+                if (!output_builders[i]->is_same_type(*other_b->output_builders[i])) { return false; }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    void TimeSeriesBundleOutputBuilder::release_instance(time_series_output_ptr item) const {
+        OutputBuilder::release_instance(item);
+        auto bundle = dynamic_cast<TimeSeriesBundleOutput *>(item.get());
+        if (bundle) {
+            auto &outputs = bundle->ts_values();
+            for (size_t i = 0; i < output_builders.size(); ++i) { output_builders[i]->release_instance(outputs[i]); }
+        }
     }
 
     time_series_output_ptr TimeSeriesBundleOutputBuilder::make_and_set_outputs(TimeSeriesBundleOutput *output) const {

@@ -56,6 +56,10 @@ namespace hgraph
         return dynamic_cast<const TimeSeriesValueOutput<T> *>(other) != nullptr;
     }
 
+    template <typename T> void TimeSeriesValueOutput<T>::reset_value() {
+        _value = {};
+    }
+
     template <typename T> TimeSeriesValueOutput<T> &TimeSeriesValueInput<T>::value_output() {
         return dynamic_cast<TimeSeriesValueOutput<T> &>(*output());
     }

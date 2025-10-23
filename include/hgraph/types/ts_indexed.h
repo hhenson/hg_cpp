@@ -82,6 +82,7 @@ namespace hgraph
 
       protected:
         [[nodiscard]] collection_type       &ts_values() { return _ts_values; }
+
         [[nodiscard]] const collection_type &ts_values() const { return _ts_values; }
 
         void set_ts_values(collection_type ts_values) { _ts_values = std::move(ts_values); }

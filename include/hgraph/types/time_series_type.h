@@ -108,7 +108,7 @@ namespace hgraph
     };
 
     struct TimeSeriesInput;
-
+    struct OutputBuilder;
     struct HGRAPH_EXPORT TimeSeriesOutput : TimeSeriesType
     {
         using ptr = nb::ref<TimeSeriesOutput>;
@@ -143,6 +143,7 @@ namespace hgraph
         void _reset_last_modified_time();
 
       private:
+        friend OutputBuilder;
         // I think we can change this to not reference count if we track the inputs, this should be one-to-one
         std::unordered_set<Notifiable *> _subscribers{};
         engine_time_t                    _last_modified_time{MIN_DT};

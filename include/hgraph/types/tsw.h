@@ -73,6 +73,14 @@ namespace hgraph
 
         [[nodiscard]] size_t len() const { return _length; }
 
+        void reset_value() {
+            auto b{std::vector<T>()};
+            std::swap(_buffer, b);
+            auto t{std::vector<engine_time_t>()};
+            std::swap(_times, t);
+            _removed_value.reset();
+        }
+
       private:
         std::vector<T>          _buffer{};
         std::vector<engine_time_t> _times{};

@@ -17,9 +17,9 @@ namespace hgraph
 
         virtual time_series_output_ptr make_instance(time_series_output_ptr owning_output) const = 0;
 
-        virtual void release_instance(time_series_output_ptr item) const {};
+        virtual void release_instance(time_series_output_ptr item) const;
 
-        virtual bool has_reference() const {return false;}
+        virtual bool has_reference() const { return false; }
 
         static void register_with_nanobind(nb::module_ &m);
     };
@@ -31,6 +31,8 @@ namespace hgraph
         time_series_output_ptr make_instance(node_ptr owning_node) const override;
 
         time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
+
+        void release_instance(time_series_output_ptr item) const override;
     };
 
     struct HGRAPH_EXPORT TimeSeriesRefOutputBuilder : OutputBuilder
@@ -41,7 +43,7 @@ namespace hgraph
 
         time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
 
-        bool has_reference() const override {return true;}
+        bool has_reference() const override { return true; }
     };
 
     struct HGRAPH_EXPORT TimeSeriesListOutputBuilder : OutputBuilder
@@ -53,14 +55,11 @@ namespace hgraph
 
         time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
 
-        bool has_reference() const override {return output_builder->has_reference();}
+        bool has_reference() const override { return output_builder->has_reference(); }
 
-        [[nodiscard]] bool is_same_type(const Builder &other) const override {
-            if (auto other_b = dynamic_cast<const TimeSeriesListOutputBuilder *>(&other)) {
-                return output_builder->is_same_type(*other_b->output_builder);
-            }
-            return false;
-        }
+        [[nodiscard]] bool is_same_type(const Builder &other) const override;
+
+        void release_instance(time_series_output_ptr item) const override;
 
       private:
         time_series_output_ptr make_and_set_outputs(TimeSeriesListOutput *output) const;
@@ -76,24 +75,15 @@ namespace hgraph
 
         time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
 
-        bool has_reference() const override {
-            return std::ranges::any_of(output_builders, [](const auto &builder) { return builder->has_reference(); });
-        }
+        bool has_reference() const override;
 
-        [[nodiscard]] bool is_same_type(const Builder &other) const override {
-            if (auto other_b = dynamic_cast<const TimeSeriesBundleOutputBuilder *>(&other)) {
-                if (output_builders.size() != other_b->output_builders.size()) { return false; }
-                for (size_t i = 0; i < output_builders.size(); ++i) {
-                    if (!output_builders[i]->is_same_type(*other_b->output_builders[i])) { return false; }
-                }
-                return true;
-            }
-            return false;
-        }
+        [[nodiscard]] bool is_same_type(const Builder &other) const override;
+
+        void release_instance(time_series_output_ptr item) const override;
 
       private:
         time_series_output_ptr          make_and_set_outputs(TimeSeriesBundleOutput *output) const;
-        time_series_schema_ptr           schema;
+        time_series_schema_ptr          schema;
         std::vector<OutputBuilder::ptr> output_builders;
     };
 
@@ -109,6 +99,8 @@ namespace hgraph
         time_series_output_ptr make_instance(node_ptr owning_node) const override;
 
         time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
+
+        void release_instance(time_series_output_ptr item) const override;
     };
 
     // TimeSeriesWindow (TSW) output builder for fixed-size windows
@@ -118,18 +110,15 @@ namespace hgraph
         size_t size;
         size_t min_size;
 
-        TimeSeriesWindowOutputBuilder_T(size_t size, size_t min_size) : size(size), min_size(min_size) {}
+        TimeSeriesWindowOutputBuilder_T(size_t size, size_t min_size);
 
         time_series_output_ptr make_instance(node_ptr owning_node) const override;
 
         time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
 
-        [[nodiscard]] bool is_same_type(const Builder &other) const override {
-            if (auto other_b = dynamic_cast<const TimeSeriesWindowOutputBuilder_T<T> *>(&other)) {
-                return size == other_b->size && min_size == other_b->min_size;
-            }
-            return false;
-        }
+        [[nodiscard]] bool is_same_type(const Builder &other) const override;
+
+        void release_instance(time_series_output_ptr item) const override;
     };
 
     struct HGRAPH_EXPORT TimeSeriesDictOutputBuilder : OutputBuilder
@@ -139,7 +128,7 @@ namespace hgraph
 
         TimeSeriesDictOutputBuilder(output_builder_ptr ts_builder, output_builder_ptr ts_ref_builder);
 
-        bool has_reference() const override {return ts_builder->has_reference();}
+        bool has_reference() const override { return ts_builder->has_reference(); }
     };
 
     template <typename T> struct HGRAPH_EXPORT TimeSeriesDictOutputBuilder_T : TimeSeriesDictOutputBuilder
@@ -150,12 +139,9 @@ namespace hgraph
 
         time_series_output_ptr make_instance(time_series_output_ptr owning_output) const override;
 
-        [[nodiscard]] bool is_same_type(const Builder &other) const override {
-            if (auto other_b = dynamic_cast<const TimeSeriesDictOutputBuilder_T<T> *>(&other)) {
-                return ts_builder->is_same_type(*other_b->ts_builder);
-            }
-            return false;
-        }
+        [[nodiscard]] bool is_same_type(const Builder &other) const override;
+
+        void release_instance(time_series_output_ptr item) const override;
     };
 }  // namespace hgraph
 

@@ -351,6 +351,16 @@ namespace hgraph
         _py_removed.reset();
     }
 
+    template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_reset_value() {
+        _reset();
+        auto a{collection_type{}};
+        std::swap(a, _value);
+        auto b{collection_type{}};
+        std::swap(b, _added);
+        auto c{collection_type{}};
+        std::swap(c, _removed);
+    }
+
     template <typename T> nb::object TimeSeriesSetInput_T<T>::py_value() const { return nb::cast(value()); }
 
     template <typename T> nb::object TimeSeriesSetInput_T<T>::py_delta_value() const { return nb::cast(delta_value()); }

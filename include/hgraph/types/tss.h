@@ -159,6 +159,7 @@ namespace hgraph
 
     struct TimeSeriesDictOutput;
 
+
     template <typename T_Key> struct TimeSeriesSetOutput_T : TimeSeriesSetOutput
     {
         using element_type    = T_Key;
@@ -228,7 +229,10 @@ namespace hgraph
 
         // void post_modify() override;
 
+        void _reset_value();
+
       protected:
+
         void _add(const element_type &item);
         void _remove(const element_type &item);
         void _post_modify();

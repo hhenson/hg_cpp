@@ -38,6 +38,7 @@ namespace hgraph
 
         [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override;
 
+        void reset_value();
       private:
         T _value{};
     };
