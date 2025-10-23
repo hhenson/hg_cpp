@@ -68,7 +68,7 @@ namespace hgraph
             auto it = _ts_values_to_keys.find(&child);
             // This is slightly different to the Python code, in Python it inserts the supplied child
             // Here we re-look up the value from the key
-            if (it != _ts_values_to_keys.end()) { _modified_items.insert({it->second, _ts_values.at(it->second)}); }
+            if (it != _ts_values_to_keys.end()) { _modified_items[it->second] =_ts_values.at(it->second); }
         }
 
         TimeSeriesOutput::mark_child_modified(child, modified_time);
