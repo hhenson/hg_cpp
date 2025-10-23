@@ -67,6 +67,7 @@ namespace hgraph
     void NestedGraphNode::do_stop() { stop_component(*m_active_graph_); }
 
     void NestedGraphNode::dispose() {
+        if (m_active_graph_ == nullptr) {return;}
         dispose_component(*m_active_graph_);
         m_active_graph_ = nullptr;
     }
