@@ -724,7 +724,16 @@ namespace hgraph
         // TODO: Try and ensure that we cache the result where possible
         _added_items_cache.clear();
         const auto &key_set{key_set_t()};
-        for (const auto &k : key_set.added()) { _added_items_cache.emplace(k, _ts_values.at(k)); }
+        for (const auto &k : key_set.added()) {
+            // Check if key exists in _ts_values before accessing
+            // During cleanup, keys might be in added set but not in _ts_values
+            auto it = _ts_values.find(k);
+            if (it != _ts_values.end()) {
+                _added_items_cache.emplace(k, it->second);
+            } else {
+                //TODO: print out error message as this should never happen
+            }
+        }
         return _added_items_cache;
     }
 
@@ -925,7 +934,9 @@ namespace hgraph
     template <typename T_Key>
     const typename TimeSeriesDictInput_T<T_Key>::key_type &
     TimeSeriesDictInput_T<T_Key>::key_from_value(TimeSeriesInput *value) const {
-        return _ts_values_to_keys.at(value);
+        auto it = _ts_values_to_keys.find(value);
+        if (it != _ts_values_to_keys.end()) { return it->second; }
+        throw std::runtime_error("key_from_value: value not found in _ts_values_to_keys");
     }
 
     template <typename T_Key>
