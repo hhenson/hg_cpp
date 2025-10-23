@@ -100,14 +100,14 @@ namespace hgraph
     struct TimeSeriesSet : T_TS
     {
         using T_TS::T_TS;
-        [[nodiscard]] virtual bool             py_contains(const nb::object &item) const    = 0;
-        [[nodiscard]] virtual size_t           size() const                                 = 0;
-        [[nodiscard]] virtual bool             empty() const                                = 0;
-        [[nodiscard]] virtual const nb::object py_values() const                            = 0;
-        [[nodiscard]] virtual const nb::object py_added() const                             = 0;
-        [[nodiscard]] virtual bool             py_was_added(const nb::object &item) const   = 0;
-        [[nodiscard]] virtual const nb::object py_removed() const                           = 0;
-        [[nodiscard]] virtual bool             py_was_removed(const nb::object &item) const = 0;
+        [[nodiscard]] virtual bool       py_contains(const nb::object &item) const    = 0;
+        [[nodiscard]] virtual size_t     size() const                                 = 0;
+        [[nodiscard]] virtual bool       empty() const                                = 0;
+        [[nodiscard]] virtual nb::object py_values() const                            = 0;
+        [[nodiscard]] virtual nb::object py_added() const                             = 0;
+        [[nodiscard]] virtual bool       py_was_added(const nb::object &item) const   = 0;
+        [[nodiscard]] virtual nb::object py_removed() const                           = 0;
+        [[nodiscard]] virtual bool       py_was_removed(const nb::object &item) const = 0;
     };
 
     struct TimeSeriesSetOutput : TimeSeriesSet<TimeSeriesOutput>
@@ -138,23 +138,23 @@ namespace hgraph
         TimeSeriesSetOutput &set_output() const;
 
         bool do_bind_output(TimeSeriesOutput::ptr &output) override;
-        void do_un_bind_output(bool unbind_refs = false) override;
+        void do_un_bind_output(bool unbind_refs) override;
 
-        [[nodiscard]] const nb::object py_added() const override;
-        [[nodiscard]] bool             py_was_added(const nb::object &item) const override;
-        [[nodiscard]] const nb::object py_removed() const override;
-        [[nodiscard]] bool             py_was_removed(const nb::object &item) const override;
+        [[nodiscard]] nb::object py_added() const override;
+        [[nodiscard]] bool       py_was_added(const nb::object &item) const override;
+        [[nodiscard]] nb::object py_removed() const override;
+        [[nodiscard]] bool       py_was_removed(const nb::object &item) const override;
 
         [[nodiscard]] const TimeSeriesSetOutput &prev_output() const;
         [[nodiscard]] bool                       has_prev_output() const;
 
       protected:
         virtual void reset_prev();
-        void _add_reset_prev() const;
+        void         _add_reset_prev() const;
 
       private:
         TimeSeriesSetOutput::ptr _prev_output;
-        mutable bool _pending_reset_prev{false};
+        mutable bool             _pending_reset_prev{false};
     };
 
     struct TimeSeriesDictOutput;
@@ -195,9 +195,9 @@ namespace hgraph
 
         [[nodiscard]] size_t size() const override;
 
-        [[nodiscard]] const nb::object py_values() const override;
+        [[nodiscard]] nb::object py_values() const override;
 
-        [[nodiscard]] const nb::object       py_added() const override;
+        [[nodiscard]] nb::object             py_added() const override;
         [[nodiscard]] const collection_type &added() const;
         [[nodiscard]] bool                   has_added() const;
         [[nodiscard]] bool                   py_was_added(const nb::object &item) const override;
@@ -205,7 +205,7 @@ namespace hgraph
         void                                 py_add(const nb::object &key) override;
         void                                 add(const element_type &key);
 
-        [[nodiscard]] const nb::object       py_removed() const override;
+        [[nodiscard]] nb::object             py_removed() const override;
         [[nodiscard]] const collection_type &removed() const;
         [[nodiscard]] bool                   has_removed() const;
         [[nodiscard]] bool                   py_was_removed(const nb::object &item) const override;
@@ -257,16 +257,16 @@ namespace hgraph
         [[nodiscard]] nb::object py_value() const override;
         [[nodiscard]] nb::object py_delta_value() const override;
 
-        [[nodiscard]] bool             py_contains(const nb::object &item) const override;
-        [[nodiscard]] size_t           size() const override;
-        [[nodiscard]] bool             empty() const override;
+        [[nodiscard]] bool   py_contains(const nb::object &item) const override;
+        [[nodiscard]] size_t size() const override;
+        [[nodiscard]] bool   empty() const override;
 
-        [[nodiscard]] const nb::object py_values() const override;
-        [[nodiscard]] const nb::object py_added() const override;
+        [[nodiscard]] nb::object py_values() const override;
+        [[nodiscard]] nb::object py_added() const override;
 
-        [[nodiscard]] bool             py_was_added(const nb::object &item) const override;
-        [[nodiscard]] const nb::object py_removed() const override;
-        [[nodiscard]] bool             py_was_removed(const nb::object &item) const override;
+        [[nodiscard]] bool       py_was_added(const nb::object &item) const override;
+        [[nodiscard]] nb::object py_removed() const override;
+        [[nodiscard]] bool       py_was_removed(const nb::object &item) const override;
 
         [[nodiscard]] const collection_type &value() const;
         [[nodiscard]] set_delta_ptr          delta_value() const;
@@ -286,7 +286,7 @@ namespace hgraph
       protected:
         const TimeSeriesSetOutput_T<element_type> &prev_output_t() const;
         const TimeSeriesSetOutput_T<element_type> &set_output_t() const;
-        void reset_prev() override;
+        void                                       reset_prev() override;
 
         // These are caches of values
         collection_type         _empty{};

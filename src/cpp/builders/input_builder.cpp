@@ -1,10 +1,10 @@
 #include <hgraph/builders/input_builder.h>
-#include <hgraph/types/node.h>
 #include <hgraph/types/graph.h>
+#include <hgraph/types/node.h>
 
 #include <hgraph/types/ref.h>
-#include <hgraph/types/ts_signal.h>
 #include <hgraph/types/ts.h>
+#include <hgraph/types/ts_signal.h>
 #include <hgraph/types/tsb.h>
 #include <hgraph/types/tsd.h>
 #include <hgraph/types/tsl.h>
@@ -16,6 +16,11 @@
 
 namespace hgraph
 {
+
+    void InputBuilder::release_instance(time_series_input_ptr item) const {
+        assert(item->output() == nullptr && "Input instance still has an output reference when released, this is a bug.");
+        item->reset_parent_or_node();
+    }
 
     void InputBuilder::register_with_nanobind(nb::module_ &m) {
         nb::class_<InputBuilder, Builder>(m, "InputBuilder")
@@ -86,21 +91,28 @@ namespace hgraph
             .def(nb::init<input_builder_ptr>(), "ts_builder"_a);
 
         // TSW input builders (fixed-size windows)
-        using InputBuilder_TSW_Bool = TimeSeriesWindowInputBuilder_T<bool>;
-        using InputBuilder_TSW_Int = TimeSeriesWindowInputBuilder_T<int64_t>;
-        using InputBuilder_TSW_Float = TimeSeriesWindowInputBuilder_T<double>;
-        using InputBuilder_TSW_Date = TimeSeriesWindowInputBuilder_T<engine_date_t>;
-        using InputBuilder_TSW_DateTime = TimeSeriesWindowInputBuilder_T<engine_time_t>;
+        using InputBuilder_TSW_Bool      = TimeSeriesWindowInputBuilder_T<bool>;
+        using InputBuilder_TSW_Int       = TimeSeriesWindowInputBuilder_T<int64_t>;
+        using InputBuilder_TSW_Float     = TimeSeriesWindowInputBuilder_T<double>;
+        using InputBuilder_TSW_Date      = TimeSeriesWindowInputBuilder_T<engine_date_t>;
+        using InputBuilder_TSW_DateTime  = TimeSeriesWindowInputBuilder_T<engine_time_t>;
         using InputBuilder_TSW_TimeDelta = TimeSeriesWindowInputBuilder_T<engine_time_delta_t>;
-        using InputBuilder_TSW_Object = TimeSeriesWindowInputBuilder_T<nb::object>;
+        using InputBuilder_TSW_Object    = TimeSeriesWindowInputBuilder_T<nb::object>;
 
-        nb::class_<InputBuilder_TSW_Bool, InputBuilder>(m, "InputBuilder_TSW_Bool").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<InputBuilder_TSW_Int, InputBuilder>(m, "InputBuilder_TSW_Int").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<InputBuilder_TSW_Float, InputBuilder>(m, "InputBuilder_TSW_Float").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<InputBuilder_TSW_Date, InputBuilder>(m, "InputBuilder_TSW_Date").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<InputBuilder_TSW_DateTime, InputBuilder>(m, "InputBuilder_TSW_DateTime").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<InputBuilder_TSW_TimeDelta, InputBuilder>(m, "InputBuilder_TSW_TimeDelta").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
-        nb::class_<InputBuilder_TSW_Object, InputBuilder>(m, "InputBuilder_TSW_Object").def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_Bool, InputBuilder>(m, "InputBuilder_TSW_Bool")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_Int, InputBuilder>(m, "InputBuilder_TSW_Int")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_Float, InputBuilder>(m, "InputBuilder_TSW_Float")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_Date, InputBuilder>(m, "InputBuilder_TSW_Date")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_DateTime, InputBuilder>(m, "InputBuilder_TSW_DateTime")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_TimeDelta, InputBuilder>(m, "InputBuilder_TSW_TimeDelta")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
+        nb::class_<InputBuilder_TSW_Object, InputBuilder>(m, "InputBuilder_TSW_Object")
+            .def(nb::init<size_t, size_t>(), "size"_a, "min_size"_a);
     }
 
     time_series_input_ptr TimeSeriesSignalInputBuilder::make_instance(node_ptr owning_node) const {
@@ -111,6 +123,17 @@ namespace hgraph
     time_series_input_ptr TimeSeriesSignalInputBuilder::make_instance(time_series_input_ptr owning_input) const {
         auto v{new TimeSeriesSignalInput(dynamic_cast_ref<TimeSeriesType>(owning_input))};
         return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
+    }
+
+    void TimeSeriesSignalInputBuilder::release_instance(time_series_input_ptr item) const {
+        release_instance(dynamic_cast<TimeSeriesSignalInput *>(item.get()));
+    }
+
+    void TimeSeriesSignalInputBuilder::release_instance(TimeSeriesSignalInput *signal_input) const {
+        if (signal_input == nullptr) { return; }
+        InputBuilder::release_instance(signal_input);
+        if (signal_input->_ts_values.empty()) { return; }
+        for (auto &ts_value : signal_input->_ts_values) { release_instance(ts_value.get()); }
     }
 
     time_series_input_ptr TimeSeriesRefInputBuilder::make_instance(node_ptr owning_node) const {
@@ -135,6 +158,21 @@ namespace hgraph
         auto v{new TimeSeriesListInput{dynamic_cast_ref<TimeSeriesType>(owning_input)}};
         return make_and_set_inputs(v);
     }
+    bool TimeSeriesListInputBuilder::has_reference() const { return input_builder->has_reference(); }
+    bool TimeSeriesListInputBuilder::is_same_type(const Builder &other) const {
+        if (auto other_b = dynamic_cast<const TimeSeriesListInputBuilder *>(&other)) {
+            if (size != other_b->size) { return false; }
+            return input_builder->is_same_type(*other_b->input_builder);
+        }
+        return false;
+    }
+
+    void TimeSeriesListInputBuilder::release_instance(time_series_input_ptr item) const {
+        InputBuilder::release_instance(item);
+        auto list = dynamic_cast<TimeSeriesListInput *>(item.get());
+        if (list == nullptr) { return; }
+        for (auto &value : list->_ts_values) { input_builder->release_instance(value); }
+    }
 
     time_series_input_ptr TimeSeriesListInputBuilder::make_and_set_inputs(TimeSeriesListInput *input) const {
         std::vector<time_series_input_ptr> inputs;
@@ -157,6 +195,26 @@ namespace hgraph
         auto v{new TimeSeriesBundleInput{dynamic_cast_ref<TimeSeriesType>(owning_input), schema}};
         return make_and_set_inputs(v);
     }
+    bool TimeSeriesBundleInputBuilder::has_reference() const {
+        return std::ranges::any_of(input_builders, [](const auto &builder) { return builder->has_reference(); });
+    }
+    bool TimeSeriesBundleInputBuilder::is_same_type(const Builder &other) const {
+        if (auto other_b = dynamic_cast<const TimeSeriesBundleInputBuilder *>(&other)) {
+            if (input_builders.size() != other_b->input_builders.size()) { return false; }
+            for (size_t i = 0; i < input_builders.size(); ++i) {
+                if (!input_builders[i]->is_same_type(*other_b->input_builders[i])) { return false; }
+            }
+            return true;
+        }
+        return false;
+    }
+    
+    void TimeSeriesBundleInputBuilder::release_instance(time_series_input_ptr item) const {
+        InputBuilder::release_instance(item);
+        auto bundle = dynamic_cast<TimeSeriesBundleInput *>(item.get());
+        if (bundle == nullptr) { return; }
+        for (size_t i = 0; i < input_builders.size(); ++i) { input_builders[i]->release_instance(bundle->_ts_values[i]); }
+    }
 
     time_series_input_ptr TimeSeriesBundleInputBuilder::make_and_set_inputs(TimeSeriesBundleInput *input) const {
         std::vector<time_series_input_ptr> inputs;
@@ -170,6 +228,7 @@ namespace hgraph
 
     TimeSeriesDictInputBuilder::TimeSeriesDictInputBuilder(input_builder_ptr ts_builder)
         : InputBuilder(), ts_builder{std::move(ts_builder)} {}
+
 
     template <typename T> time_series_input_ptr TimeSeriesValueInputBuilder<T>::make_instance(node_ptr owning_node) const {
         auto v{new TimeSeriesValueInput<T>(owning_node)};
@@ -203,10 +262,22 @@ namespace hgraph
         auto v{new TimeSeriesDictInput_T<T>{dynamic_cast_ref<TimeSeriesType>(owning_input), ts_builder}};
         return v;
     }
+    template <typename T> bool TimeSeriesDictInputBuilder_T<T>::is_same_type(const Builder &other) const {
+        if (auto other_b = dynamic_cast<const TimeSeriesDictInputBuilder_T<T> *>(&other)) {
+            return ts_builder->is_same_type(*other_b->ts_builder);
+        }
+        return false;
+    }
+
+    template <typename T> void TimeSeriesDictInputBuilder_T<T>::release_instance(time_series_input_ptr item) const {
+        InputBuilder::release_instance(item);
+        auto dict = dynamic_cast<TimeSeriesDictInput_T<T> *>(item.get());
+        if (dict == nullptr) { return; }
+        for (auto &value : dict->_ts_values) { ts_builder->release_instance(value.second); }
+    }
 
     // TSW input builder implementations
-    template <typename T>
-    time_series_input_ptr TimeSeriesWindowInputBuilder_T<T>::make_instance(node_ptr owning_node) const {
+    template <typename T> time_series_input_ptr TimeSeriesWindowInputBuilder_T<T>::make_instance(node_ptr owning_node) const {
         auto v{new TimeSeriesWindowInput<T>(owning_node)};
         return time_series_input_ptr{static_cast<TimeSeriesInput *>(v)};
     }

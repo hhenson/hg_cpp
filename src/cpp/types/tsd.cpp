@@ -76,6 +76,7 @@ namespace hgraph
                     _modified_items[it->second] = v->second;
                 } else {
                     fmt::print("[TSDOut][mark_child_modified] Missing value for key: {}\n", to_string(it->second));
+                    return;
                 }
             }
         }

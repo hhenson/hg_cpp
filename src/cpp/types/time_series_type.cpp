@@ -20,6 +20,8 @@ namespace hgraph
 
     bool TimeSeriesType::has_reference() const { return false; }
 
+    void TimeSeriesType::reset_parent_or_node() {_parent_ts_or_node.reset();}
+
     void TimeSeriesType::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesType, nb::intrusive_base>(m, "TimeSeriesType")
             .def_prop_ro("owning_node", static_cast<const Node &(TimeSeriesType::*)() const>(&TimeSeriesType::owning_node))
@@ -292,6 +294,7 @@ namespace hgraph
     }
 
     TimeSeriesInput *TimeSeriesInput::get_input(size_t index) { throw std::runtime_error("TimeSeriesInput [] not supported"); }
+
 
     void TimeSeriesInput::reset_output() { _output = nullptr; }
 

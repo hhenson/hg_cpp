@@ -10,6 +10,7 @@
 namespace hgraph
 {
 
+    struct TimeSeriesSignalInputBuilder;
 
     struct TimeSeriesSignalInput : TimeSeriesInput
     {
@@ -37,6 +38,7 @@ namespace hgraph
         static void register_with_nanobind(nb::module_ &m);
 
     private:
+        friend TimeSeriesSignalInputBuilder;
         mutable std::vector<ptr> _ts_values;  // Lazily created child signals
     };
 

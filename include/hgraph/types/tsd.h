@@ -238,6 +238,9 @@ namespace hgraph
         static inline map_type                  _empty;
     };
 
+    template <typename T_Key>
+    using TSD_Builder =  struct TimeSeriesDictInputBuilder_T<T_Key>;
+
     template <typename T_Key> struct TimeSeriesDictInput_T : TimeSeriesDictInput, TSDKeyObserver<T_Key>
     {
         using key_type            = T_Key;
@@ -367,6 +370,8 @@ namespace hgraph
         void register_clear_key_changes();
 
       private:
+        friend TSD_Builder<T_Key>;
+
         key_set_type_ptr _key_set;
         map_type         _ts_values;
 

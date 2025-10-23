@@ -30,13 +30,14 @@ namespace hgraph
          * Release an instance of the input type.
          * By default, do nothing.
          */
-        virtual void release_instance(time_series_input_ptr item) const {}
+        virtual void release_instance(time_series_input_ptr item) const;
 
         virtual bool has_reference() const { return false; }
 
         static void register_with_nanobind(nb::module_ &m);
     };
 
+    struct TimeSeriesSignalInput;
     struct HGRAPH_EXPORT TimeSeriesSignalInputBuilder : InputBuilder
     {
         using ptr = nb::ref<TimeSeriesSignalInputBuilder>;
@@ -44,6 +45,9 @@ namespace hgraph
 
         time_series_input_ptr make_instance(node_ptr owning_node) const override;
         time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
+
+        void release_instance(time_series_input_ptr item) const override;
+        void release_instance(TimeSeriesSignalInput* item) const;
     };
 
     template <typename T> struct HGRAPH_EXPORT TimeSeriesValueInputBuilder : InputBuilder
@@ -77,15 +81,11 @@ namespace hgraph
 
         time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
 
-        bool has_reference() const override { return input_builder->has_reference(); }
+        bool has_reference() const override;
 
-        [[nodiscard]] bool is_same_type(const Builder &other) const override {
-            if (auto other_b = dynamic_cast<const TimeSeriesListInputBuilder *>(&other)) {
-                if (size != other_b->size) { return false; }
-                return input_builder->is_same_type(*other_b->input_builder);
-            }
-            return false;
-        }
+        [[nodiscard]] bool is_same_type(const Builder &other) const override;
+
+        void release_instance(time_series_input_ptr item) const override;
 
       private:
         time_series_input_ptr make_and_set_inputs(TimeSeriesListInput *input) const;
@@ -104,20 +104,11 @@ namespace hgraph
 
         time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
 
-        bool has_reference() const override {
-            return std::ranges::any_of(input_builders, [](const auto &builder) { return builder->has_reference(); });
-        }
+        bool has_reference() const override;
 
-        [[nodiscard]] bool is_same_type(const Builder &other) const override {
-            if (auto other_b = dynamic_cast<const TimeSeriesBundleInputBuilder *>(&other)) {
-                if (input_builders.size() != other_b->input_builders.size()) { return false; }
-                for (size_t i = 0; i < input_builders.size(); ++i) {
-                    if (!input_builders[i]->is_same_type(*other_b->input_builders[i])) { return false; }
-                }
-                return true;
-            }
-            return false;
-        }
+        [[nodiscard]] bool is_same_type(const Builder &other) const override;
+
+        void release_instance(time_series_input_ptr item) const override;
 
       private:
         time_series_input_ptr          make_and_set_inputs(TimeSeriesBundleInput *input) const;
@@ -179,12 +170,10 @@ namespace hgraph
 
         time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
 
-        [[nodiscard]] bool is_same_type(const Builder &other) const override {
-            if (auto other_b = dynamic_cast<const TimeSeriesDictInputBuilder_T<T> *>(&other)) {
-                return ts_builder->is_same_type(*other_b->ts_builder);
-            }
-            return false;
-        }
+        [[nodiscard]] bool is_same_type(const Builder &other) const override;
+
+        void release_instance(time_series_input_ptr item) const override;
+
     };
 
 }  // namespace hgraph

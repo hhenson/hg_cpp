@@ -78,6 +78,8 @@ namespace hgraph
 
         [[nodiscard]] virtual bool has_reference() const;
 
+        void reset_parent_or_node();
+
         // // Overload for re_parent with TimeSeries
         // virtual void re_parent(TimeSeriesType::ptr parent) = 0;
 
@@ -187,10 +189,11 @@ namespace hgraph
 
         [[nodiscard]] time_series_reference_output_ptr reference_output() const;
 
-        [[nodiscard]] const TimeSeriesInput *get_input(size_t index) const;
-        [[nodiscard]] virtual TimeSeriesInput       *get_input(size_t index);
+        [[nodiscard]] const TimeSeriesInput   *get_input(size_t index) const;
+        [[nodiscard]] virtual TimeSeriesInput *get_input(size_t index);
 
         static void register_with_nanobind(nb::module_ &m);
+
       protected:
         // Derived classes override this to implement specific behaviours
         virtual bool do_bind_output(time_series_output_ptr &output_);

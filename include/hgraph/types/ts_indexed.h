@@ -8,6 +8,9 @@
 namespace hgraph
 {
 
+    struct TimeSeriesBundleInputBuilder;
+    struct TimeSeriesListInputBuilder;
+
     template <typename T_TS>
         requires TimeSeriesT<T_TS>
     struct IndexedTimeSeries : T_TS
@@ -112,6 +115,8 @@ namespace hgraph
         }
 
       private:
+        friend TimeSeriesBundleInputBuilder;
+        friend TimeSeriesListInputBuilder;
         collection_type _ts_values;
     };
 
