@@ -30,7 +30,9 @@ namespace hgraph
         auto items = (nb::isinstance<nb::dict>(result) ? nb::iter(nb::cast<nb::dict>(result).items())
                       : nb::hasattr(result, "items")   ? nb::iter(nb::getattr(result, "items")())
                                                        : nb::iter(result));
-        for (const auto &[k, v_] : nb::cast<nb::dict>(result)) {
+        for (const auto &pair : items) {
+            auto k = pair[0];
+            auto v_ = pair[1];
             if (v_.is_none()) { continue; }
             auto k_ = nb::cast<T_Key>(k);
             if (v_.is(remove) || v_.is(remove_if_exists)) {
