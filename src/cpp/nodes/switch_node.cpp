@@ -88,15 +88,8 @@ namespace hgraph
 
     template <typename K> void SwitchNode<K>::dispose() {
         if (active_graph_ != nullptr) {
-            // Release the graph back to the builder pool (which will call dispose)
-            if (active_key_.has_value()) {
-                auto it = nested_graph_builders_.find(active_key_.value());
-                if (it != nested_graph_builders_.end()) {
-                    it->second->release_instance(active_graph_);
-                } else if (default_graph_builder_ != nullptr) {
-                    default_graph_builder_->release_instance(active_graph_);
-                }
-            }
+            active_graph_builder_->release_instance(active_graph_);
+            active_graph_builder_ = nullptr;
             active_graph_ = nullptr;
         }
     }
@@ -120,41 +113,32 @@ namespace hgraph
                     stop_component(*active_graph_);
                     unwire_graph(active_graph_);
                     // Schedule deferred disposal via lambda capture
-                    K old_key = active_key_.value();
                     graph_ptr graph_to_dispose = active_graph_;
                     // Capture the nested_graph_builders and default_graph_builder by value for the lambda
-                    auto builders = nested_graph_builders_;
-                    auto default_builder = default_graph_builder_;
+                    auto builder = active_graph_builder_;
                     graph().evaluation_engine().add_before_evaluation_notification(
-                        [graph_to_dispose, old_key, builders, default_builder]() mutable {
+                        [graph_to_dispose, builder]() mutable {
                             // release_instance will call dispose_component
-                            auto it = builders.find(old_key);
-                            if (it != builders.end()) {
-                                it->second->release_instance(graph_to_dispose);
-                            } else if (default_builder != nullptr) {
-                                default_builder->release_instance(graph_to_dispose);
-                            }
+                            builder->release_instance(graph_to_dispose);
                         });
                     active_graph_ = nullptr;
+                    active_graph_builder_ = nullptr;
                 }
                 active_key_ = key_ts->value();
-
-                // Look up graph builder for this key
-                graph_builder_ptr builder = nullptr;
                 auto              it      = nested_graph_builders_.find(active_key_.value());
                 if (it != nested_graph_builders_.end()) {
-                    builder = it->second;
+                    active_graph_builder_ = it->second;
                 } else {
-                    builder = default_graph_builder_;
+                    active_graph_builder_ = default_graph_builder_;
                 }
 
-                if (builder == nullptr) { throw std::runtime_error("No graph defined for key and no default available"); }
+                if (active_graph_builder_ == nullptr) { throw std::runtime_error("No graph defined for key and no default available"); }
 
                 // Create new graph
                 ++count_;
                 std::vector<int64_t> new_node_id = node_id();
                 new_node_id.push_back(-count_);
-                active_graph_ = builder->make_instance(new_node_id, this, to_string(active_key_.value()));
+                active_graph_ = active_graph_builder_->make_instance(new_node_id, this, to_string(active_key_.value()));
 
                 // Set up evaluation engine
                 active_graph_->set_evaluation_engine(new NestedEvaluationEngine(

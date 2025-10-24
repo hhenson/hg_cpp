@@ -44,6 +44,7 @@ namespace hgraph
 
         bool                   reload_on_ticked_;
         graph_ptr              active_graph_{};
+        graph_builder_ptr      active_graph_builder_{};
         std::optional<K>       active_key_{};
         int64_t                count_{0};
         time_series_output_ptr old_output_{nullptr};
