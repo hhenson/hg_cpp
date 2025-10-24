@@ -45,9 +45,8 @@ namespace hgraph
     TimeSeriesType::ptr &TimeSeriesType::_parent_time_series() {
         if (_parent_ts_or_node.has_value()) {
             return std::get<ptr>(_parent_ts_or_node.value());
-        } else {
-            throw std::runtime_error("No parent output present");
         }
+        return null_ptr;
     }
 
     bool TimeSeriesType::_has_parent_time_series() const {

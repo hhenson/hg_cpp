@@ -85,6 +85,7 @@ namespace hgraph
 
         static void register_with_nanobind(nb::module_ &m);
 
+        static inline time_series_type_ptr null_ptr{};
       protected:
         /*
          * Used to manage access to the parent/node variant.
