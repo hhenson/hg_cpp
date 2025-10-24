@@ -88,8 +88,7 @@ namespace hgraph
 
     template <typename K> void SwitchNode<K>::dispose() {
         if (active_graph_ != nullptr) {
-            dispose_component(*active_graph_);
-            // Release the graph back to the builder pool
+            // Release the graph back to the builder pool (which will call dispose)
             if (active_key_.has_value()) {
                 auto it = nested_graph_builders_.find(active_key_.value());
                 if (it != nested_graph_builders_.end()) {
@@ -128,7 +127,7 @@ namespace hgraph
                     auto default_builder = default_graph_builder_;
                     graph().evaluation_engine().add_before_evaluation_notification(
                         [graph_to_dispose, old_key, builders, default_builder]() mutable {
-                            dispose_component(*graph_to_dispose);
+                            // release_instance will call dispose_component
                             auto it = builders.find(old_key);
                             if (it != builders.end()) {
                                 it->second->release_instance(graph_to_dispose);

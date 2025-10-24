@@ -68,7 +68,8 @@ namespace hgraph
 
     void NestedGraphNode::dispose() {
         if (m_active_graph_ == nullptr) {return;}
-        dispose_component(*m_active_graph_);
+        // Release the graph back to the builder pool (which will call the dispose life-cycle)
+        m_nested_graph_builder_->release_instance(m_active_graph_);
         m_active_graph_ = nullptr;
     }
 

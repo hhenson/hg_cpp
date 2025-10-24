@@ -154,7 +154,8 @@ namespace hgraph
 
         un_wire_graph(key, graph);
         stop_component(*graph);
-        dispose_component(*graph);
+        // Release the graph back to the builder pool (which will call dispose)
+        nested_graph_builder_->release_instance(graph);
     }
 
     template <typename K> engine_time_t TsdMapNode<K>::evaluate_graph(const K &key) {
