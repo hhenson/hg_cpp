@@ -79,17 +79,22 @@ class ContextManager
         }
 
         ~ContextManager() {
+            std::exception_ptr first_error;
             for (auto it = contexts_.rbegin(); it != contexts_.rend(); ++it) {
                 try {
                     it->attr("__exit__")(nb::none(), nb::none(), nb::none());
-                } catch (...) {
-                    // Suppress exceptions during cleanup
+                } catch (const nb::python_error &e) {
+                    if (!first_error) { first_error = std::current_exception(); }
+                } catch (const std::exception &e) {
+                    if (!first_error) { first_error = std::current_exception(); }
                 }
             }
+            if (first_error) { std::rethrow_exception(first_error); }
         }
 
       private:
         std::vector<nb::object> contexts_;
+        std::exception_ptr cached_error_;
     };
 
     void BasePythonNode::do_eval() {
