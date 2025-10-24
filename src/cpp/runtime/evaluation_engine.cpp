@@ -465,8 +465,18 @@ namespace hgraph
     }
 
     void EvaluationEngineImpl::notify_after_evaluation() {
-        for (auto it = _after_evaluation_notification.rbegin(); it != _after_evaluation_notification.rend(); ++it) { (*it)(); }
+        // Copy the callback list and clear the original, matching Python's behavior.
+        // This prevents iterator invalidation if callbacks add more callbacks.
+        auto todo = std::move(_after_evaluation_notification);
         _after_evaluation_notification.clear();
+
+        for (auto it = todo.rbegin(); it != todo.rend(); ++it) {
+            (*it)();
+            // If new notifications were added during callback execution, process them recursively
+            if (!_after_evaluation_notification.empty()) {
+                notify_after_evaluation();
+            }
+        }
     }
 
     void EvaluationEngineImpl::notify_before_start_graph(const Graph &graph) {
