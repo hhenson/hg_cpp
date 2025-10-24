@@ -17,6 +17,7 @@
 #include <hgraph/nodes/non_associative_reduce_node.h>
 #include <hgraph/nodes/mesh_node.h>
 #include <hgraph/nodes/python_generator_node.h>
+#include <hgraph/nodes/python_node.h>
 #include <hgraph/nodes/last_value_pull_node.h>
 #include <hgraph/nodes/context_node.h>
 
@@ -741,6 +742,8 @@ namespace hgraph
     template struct SwitchNodeBuilder<bool>;
     template struct SwitchNodeBuilder<int64_t>;
     template struct SwitchNodeBuilder<double>;
+    template struct SwitchNodeBuilder<engine_date_t>;
+    template struct SwitchNodeBuilder<engine_time_t>;
     template struct SwitchNodeBuilder<engine_time_delta_t>;
     template struct SwitchNodeBuilder<nb::object>;
 

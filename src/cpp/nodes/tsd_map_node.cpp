@@ -1,6 +1,7 @@
 #include "hgraph/types/tss.h"
 
 #include <hgraph/builders/graph_builder.h>
+#include <hgraph/nodes/python_node.h>
 #include <hgraph/nodes/nested_evaluation_engine.h>
 #include <hgraph/nodes/tsd_map_node.h>
 #include <hgraph/runtime/record_replay.h>

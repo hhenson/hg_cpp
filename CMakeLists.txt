@@ -115,12 +115,14 @@ set(HGRAPH_INCLUDES
         include/hgraph/builders/node_builder.h
         include/hgraph/builders/output_builder.h
 
+        include/hgraph/nodes/base_python_node.h
         include/hgraph/nodes/component_node.h
         include/hgraph/nodes/last_value_pull_node.h
         include/hgraph/nodes/mesh_node.h
         include/hgraph/nodes/nest_graph_node.h
         include/hgraph/nodes/nested_evaluation_engine.h
         include/hgraph/nodes/nested_node.h
+        include/hgraph/nodes/python_node.h
         include/hgraph/nodes/non_associative_reduce_node.h
         include/hgraph/nodes/python_generator_node.h
         include/hgraph/nodes/reduce_node.h

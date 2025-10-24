@@ -5,7 +5,7 @@
 #ifndef HGRAPH_CPP_ENGINE_PYTHON_GENERATOR_NODE_H
 #define HGRAPH_CPP_ENGINE_PYTHON_GENERATOR_NODE_H
 
-#include <hgraph/types/node.h>
+#include <hgraph/nodes/base_python_node.h>
 
 namespace hgraph
 {

@@ -252,37 +252,6 @@ namespace hgraph
         std::vector<nb::ref<TimeSeriesInput>> _check_all_valid_inputs;
     };
 
-    struct BasePythonNode : Node
-    {
-        BasePythonNode(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars,
-                       nb::callable eval_fn, nb::callable start_fn, nb::callable stop_fn);
-
-        void _initialise_kwargs();
-
-        void _initialise_state();
-
-      protected:
-        void do_eval() override;
-        void do_start() override;
-        void do_stop() override;
-        void initialise() override;
-        void start() override;
-        void dispose() override;
-
-        nb::callable _eval_fn;
-        nb::callable _start_fn;
-        nb::callable _stop_fn;
-
-        nb::kwargs _kwargs;
-    };
-
-    struct PythonNode : BasePythonNode
-    {
-        using BasePythonNode::BasePythonNode;
-        // So far, nothing to do other than what is already done in the base node.
-
-        const nb::callable &eval_fn();
-    };
 
     struct PushQueueNode : Node
     {

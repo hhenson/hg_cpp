@@ -7,6 +7,7 @@ set(HGRAPH_SOURCES
         builders/node_builder.cpp
         builders/output_builder.cpp
 
+        nodes/base_python_node.cpp
         nodes/component_node.cpp
         nodes/last_value_pull_node.cpp
         nodes/mesh_node.cpp
@@ -16,6 +17,7 @@ set(HGRAPH_SOURCES
         nodes/nested_node.cpp
         nodes/non_associative_reduce_node.cpp
         nodes/python_generator_node.cpp
+        nodes/python_node.cpp
         nodes/reduce_node.cpp
         nodes/switch_node.cpp
         nodes/try_except_node.cpp

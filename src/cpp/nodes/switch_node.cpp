@@ -2,6 +2,7 @@
 
 #include <fmt/format.h>
 #include <hgraph/builders/graph_builder.h>
+#include <hgraph/nodes/python_node.h>
 #include <hgraph/nodes/nested_evaluation_engine.h>
 #include <hgraph/nodes/switch_node.h>
 #include <hgraph/runtime/record_replay.h>
