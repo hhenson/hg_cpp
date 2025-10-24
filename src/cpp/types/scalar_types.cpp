@@ -16,7 +16,8 @@ namespace hgraph
             first = false;
             result += key + "=";
             if (d.contains(key.c_str())) {
-                result += nb::cast<std::string>(nb::str(d[key.c_str()]));
+                nb::object value = d[key.c_str()];
+                result += nb::cast<std::string>(nb::str(value));
             } else {
                 result += "None";
             }
