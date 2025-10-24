@@ -59,7 +59,7 @@ namespace hgraph
                     if (not ts.is_none()) {
                         if (nb::isinstance<TimeSeriesOutput>(ts)) return make(nb::cast<TimeSeriesOutput::ptr>(ts));
                         if (nb::isinstance<TimeSeriesReferenceInput>(ts))
-                            return nb::cast<TimeSeriesReferenceInput::ptr>(ts)->_value;
+                            return nb::cast<TimeSeriesReferenceInput::ptr>(ts)->value();
                         if (nb::isinstance<TimeSeriesInput>(ts)) {
                             auto ts_input = nb::cast<TimeSeriesInput::ptr>(ts);
                             if (ts_input->has_peer()) return make(ts_input->output());
@@ -68,7 +68,8 @@ namespace hgraph
                             auto             ts_ndx{dynamic_cast<IndexedTimeSeriesInput *>(ts_input.get())};
                             items_list.reserve(ts_ndx->size());
                             for (auto &ts_ptr : ts_ndx->values()) {
-                                items_list.emplace_back(dynamic_cast<TimeSeriesReferenceInput *>(ts_ptr.get())->_value);
+                                auto ref_input{dynamic_cast<TimeSeriesReferenceInput *>(ts_ptr.get())};
+                                items_list.emplace_back(ref_input ? ref_input->value() : nullptr);
                             }
                             return make(items_list);
                         }
