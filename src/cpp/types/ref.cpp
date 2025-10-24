@@ -198,12 +198,6 @@ namespace hgraph
         return fmt::format("REF[{}]", fmt::join(string_items, ", "));
     }
 
-    TimeSeriesReferenceOutput::~TimeSeriesReferenceOutput() {
-        // Stop a potential memory leak if this goes away whilst
-        // holding references to TimeSeriesInputs
-        for (auto ref : _reference_observers) { ref->dec_ref(); }
-    }
-
     bool TimeSeriesReferenceOutput::is_same_type(const TimeSeriesType *other) const {
         return dynamic_cast<const TimeSeriesReferenceOutput *>(other) != nullptr;
     }
@@ -224,7 +218,7 @@ namespace hgraph
     void TimeSeriesReferenceOutput::set_value(TimeSeriesReference::ptr value) {
         _value = value;
         mark_modified();
-        for (TimeSeriesInput *input : _reference_observers) { _value->bind_input(*input); }
+        for (auto input : _reference_observers) { _value->bind_input(*input); }
     }
 
     void TimeSeriesReferenceOutput::apply_result(nb::object value) {
@@ -235,20 +229,11 @@ namespace hgraph
     bool TimeSeriesReferenceOutput::can_apply_result(nb::object value) { return !modified(); }
 
     void TimeSeriesReferenceOutput::observe_reference(TimeSeriesInput::ptr input_) {
-        auto result{_reference_observers.emplace(input_.get())};
-        // NOTE: Due to us caching the result, we need to manually incremet the ref count here, this is an exception to the rule
-        if (result.second) { (*result.first)->inc_ref(); }
+        _reference_observers.emplace(input_);
     }
 
     void TimeSeriesReferenceOutput::stop_observing_reference(TimeSeriesInput::ptr input_) {
-        auto result{_reference_observers.erase(input_.get())};
-        if (result != 0) {
-            // NOTE: We need to ensure that we dec_ref since we manually inc_ref'd the value in observe_reference.
-            // Since we have a ptr to the object, the input must have at least one additional
-            // reference so we can ignore the dec_ref result here.
-            // ReSharper disable once CppExpressionWithoutSideEffects
-            input_->dec_ref();
-        }
+        _reference_observers.erase(input_);
     }
 
     void TimeSeriesReferenceOutput::clear() { set_value(TimeSeriesReference::make()); }
