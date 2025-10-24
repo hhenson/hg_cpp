@@ -115,6 +115,7 @@ namespace hgraph
 
         // Schedule cleanup notification only once per evaluation cycle
         auto et = owning_graph().evaluation_clock().evaluation_time();
+
         if (_last_cleanup_time < et) {
             _last_cleanup_time = et;
             owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { _clear_key_changes(); });
@@ -861,6 +862,7 @@ namespace hgraph
         if (owning_node().is_started() && has_output()) {
             output_t().remove_key_observer(this);
             _prev_output = {&output_t()};
+            // TODO: check this will not enter again
             owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { this->reset_prev(); });
         }
 
