@@ -18,6 +18,7 @@ set(HGRAPH_SOURCES
         nodes/non_associative_reduce_node.cpp
         nodes/python_generator_node.cpp
         nodes/python_node.cpp
+        nodes/push_queue_node.cpp
         nodes/reduce_node.cpp
         nodes/switch_node.cpp
         nodes/try_except_node.cpp

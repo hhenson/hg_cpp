@@ -125,6 +125,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/nodes/python_node.h
         include/hgraph/nodes/non_associative_reduce_node.h
         include/hgraph/nodes/python_generator_node.h
+        include/hgraph/nodes/push_queue_node.h
         include/hgraph/nodes/reduce_node.h
         include/hgraph/nodes/switch_node.h
         include/hgraph/nodes/try_except_node.h

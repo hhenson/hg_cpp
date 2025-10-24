@@ -252,38 +252,6 @@ namespace hgraph
         std::vector<nb::ref<TimeSeriesInput>> _check_all_valid_inputs;
     };
 
-
-    struct PushQueueNode : Node
-    {
-        using Node::Node;
-
-        void set_eval_fn(nb::callable fn) { _eval_fn = std::move(fn); }
-
-        void enqueue_message(nb::object message);
-
-        [[nodiscard]] bool apply_message(nb::object message);
-
-        int64_t messages_in_queue() const;
-
-        void set_receiver(sender_receiver_state_ptr value);
-
-      protected:
-        void do_eval() override;
-        void do_start() override {}
-        void do_stop() override {}
-        void initialise() override {}
-        void dispose() override {}
-        void start() override;
-
-      private:
-        sender_receiver_state_ptr _receiver;
-        int64_t                   _messages_queued{0};
-        int64_t                   _messages_dequeued{0};
-        bool                      _elide{false};
-        bool                      _batch{false};
-        nb::callable              _eval_fn;
-    };
-
 }  // namespace hgraph
 
 #endif  // NODE_H

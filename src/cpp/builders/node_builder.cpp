@@ -18,6 +18,7 @@
 #include <hgraph/nodes/mesh_node.h>
 #include <hgraph/nodes/python_generator_node.h>
 #include <hgraph/nodes/python_node.h>
+#include <hgraph/nodes/push_queue_node.h>
 #include <hgraph/nodes/last_value_pull_node.h>
 #include <hgraph/nodes/context_node.h>
 

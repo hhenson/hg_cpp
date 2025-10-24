@@ -1,4 +1,5 @@
 #include <hgraph/builders/graph_builder.h>
+#include <hgraph/nodes/push_queue_node.h>
 #include <hgraph/runtime/evaluation_engine.h>
 #include <hgraph/types/error_type.h>
 #include <hgraph/types/graph.h>
