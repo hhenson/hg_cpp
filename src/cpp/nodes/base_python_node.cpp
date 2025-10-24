@@ -62,46 +62,42 @@ namespace hgraph
         }
     }
 
-    void BasePythonNode::do_eval() {
-        // Handle context inputs - enter all valid context managers
-        std::vector<nb::object> active_contexts;
-
-        if (signature().context_inputs.has_value() && !signature().context_inputs->empty()) {
-            // Enter all valid context inputs
-            active_contexts.reserve(signature().context_inputs->size());
-            for (const auto &context_key : *signature().context_inputs) {
-                if (input()[context_key]->valid()) {
-                    nb::object context_value = input()[context_key]->py_value();
-                    // ReSharper disable once CppExpressionWithoutSideEffects
-                    context_value.attr("__enter__")();  // MOVE TO PYTHON NODE
-                    active_contexts.push_back(context_value);
+class ContextManager
+    {
+      public:
+        explicit ContextManager(BasePythonNode &node) {
+            if (node.signature().context_inputs.has_value() && !node.signature().context_inputs->empty()) {
+                contexts_.reserve(node.signature().context_inputs->size());
+                for (const auto &context_key : *node.signature().context_inputs) {
+                    if (node.input()[context_key]->valid()) {
+                        nb::object context_value = node.input()[context_key]->py_value();
+                        context_value.attr("__enter__")();
+                        contexts_.push_back(context_value);
+                    }
                 }
             }
         }
-        try {
-            try {
-                auto out{_eval_fn(**_kwargs)};
-                if (!out.is_none()) { output().apply_result(out); }
-            } catch (nb::python_error &e) {
-                // Convert Python error into enriched NodeException immediately to ensure readable propagation
-                throw NodeException::capture_error(e, *this, "During Python node evaluation");
-            }
-            // Exit contexts in reverse order (success case)
-            for (auto it = active_contexts.rbegin(); it != active_contexts.rend(); ++it) {
-                it->attr("__exit__")(nb::none(), nb::none(), nb::none());
-            }
-        } catch (...) {
-            // Exit contexts in reverse order (exception case)
-            for (auto it = active_contexts.rbegin(); it != active_contexts.rend(); ++it) {
+
+        ~ContextManager() {
+            for (auto it = contexts_.rbegin(); it != contexts_.rend(); ++it) {
                 try {
                     it->attr("__exit__")(nb::none(), nb::none(), nb::none());
                 } catch (...) {
-                    // Suppress exceptions during cleanup to preserve original exception
+                    // Suppress exceptions during cleanup
                 }
             }
-
-            throw;  // Re-throw the original exception
         }
+
+      private:
+        std::vector<nb::object> contexts_;
+    };
+
+    void BasePythonNode::do_eval() {
+        ContextManager context_manager(*this);
+        try {
+            auto out{_eval_fn(**_kwargs)};
+            if (!out.is_none()) { output().apply_result(out); }
+        } catch (nb::python_error &e) { throw NodeException::capture_error(e, *this, "During Python node evaluation"); }
     }
 
     void BasePythonNode::do_start() {
