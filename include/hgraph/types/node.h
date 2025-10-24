@@ -119,7 +119,7 @@ namespace hgraph
     {
         using ptr = nanobind::ref<NodeScheduler>;
 
-        explicit NodeScheduler(Node &node);
+        explicit NodeScheduler(node_ptr node);
 
         [[nodiscard]] engine_time_t next_scheduled_time() const;
         [[nodiscard]] bool          requires_scheduling() const;
@@ -141,7 +141,8 @@ namespace hgraph
         void _on_alarm(engine_time_t when, std::string tag);
 
       private:
-        Node                                           &_node;
+        // Use a node_ptr to ensure that we retain a reference if this escapes the expected scope.
+        node_ptr                                        _node;
         std::set<std::pair<engine_time_t, std::string>> _scheduled_events;
         std::unordered_map<std::string, engine_time_t>  _tags;
         std::unordered_map<std::string, engine_time_t>  _alarm_tags;
@@ -178,7 +179,7 @@ namespace hgraph
 
         void set_graph(graph_ptr value);
 
-        TimeSeriesBundleInput &input();
+        TimeSeriesBundleInput       &input();
         const TimeSeriesBundleInput &input() const;
         time_series_bundle_input_ptr input_ptr();
         time_series_bundle_input_ptr input_ptr() const;
@@ -186,12 +187,12 @@ namespace hgraph
         void set_input(time_series_bundle_input_ptr value);
         void reset_input(time_series_bundle_input_ptr value);
 
-        TimeSeriesOutput &output();
+        TimeSeriesOutput      &output();
         time_series_output_ptr output_ptr();
 
         void set_output(time_series_output_ptr value);
 
-        TimeSeriesBundleOutput &recordable_state();
+        TimeSeriesBundleOutput       &recordable_state();
         time_series_bundle_output_ptr recordable_state_ptr();
 
         void set_recordable_state(time_series_bundle_output_ptr value);
@@ -202,7 +203,7 @@ namespace hgraph
         bool           has_scheduler() const;
         void           unset_scheduler();
 
-        TimeSeriesOutput &error_output();
+        TimeSeriesOutput      &error_output();
         time_series_output_ptr error_output_ptr();
 
         void set_error_output(time_series_output_ptr value);
@@ -225,7 +226,7 @@ namespace hgraph
         void stop() override;
 
         virtual void do_start() = 0;
-        virtual void do_stop() = 0;
+        virtual void do_stop()  = 0;
 
         virtual void do_eval() = 0;
 
@@ -245,8 +246,10 @@ namespace hgraph
         // I am not a fan of this approach to managing the start inputs, but for now keep consistent with current code base in
         // Python.
         std::vector<nb::ref<TimeSeriesReferenceInput>> _start_inputs;
-        std::vector<nb::ref<TimeSeriesInput>>          _check_valid_inputs;
-        std::vector<nb::ref<TimeSeriesInput>>          _check_all_valid_inputs;
+
+        // Cache for these calculated values.
+        std::vector<nb::ref<TimeSeriesInput>> _check_valid_inputs;
+        std::vector<nb::ref<TimeSeriesInput>> _check_all_valid_inputs;
     };
 
     struct BasePythonNode : Node
@@ -262,9 +265,9 @@ namespace hgraph
         void do_eval() override;
         void do_start() override;
         void do_stop() override;
-        void         initialise() override;
-        void         start() override;
-        void         dispose() override;
+        void initialise() override;
+        void start() override;
+        void dispose() override;
 
         nb::callable _eval_fn;
         nb::callable _start_fn;

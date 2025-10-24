@@ -3,6 +3,8 @@
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
+#include <hgraph/types/schema_type.h>
+#include <hgraph/types/scalar_types.h>
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/traits.h>
 #include <hgraph/types/ts.h>
@@ -14,6 +16,11 @@
 
 void export_types(nb::module_ &m) {
     using namespace hgraph;
+
+    // Schema and scalar types (must come before time series types that use them)
+    AbstractSchema::register_with_nanobind(m);
+    CompoundScalar::register_with_nanobind(m);
+    PythonCompoundScalar::register_with_nanobind(m);
 
     TimeSeriesType::register_with_nanobind(m);
     TimeSeriesOutput::register_with_nanobind(m);

@@ -139,6 +139,8 @@ set(HGRAPH_INCLUDES
         include/hgraph/types/graph.h
         include/hgraph/types/node.h
         include/hgraph/types/ref.h
+        include/hgraph/types/scalar_types.h
+        include/hgraph/types/schema_type.h
         include/hgraph/types/time_series_type.h
         include/hgraph/types/traits.h
         include/hgraph/types/ts.h

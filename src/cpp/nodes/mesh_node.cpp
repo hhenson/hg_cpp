@@ -265,7 +265,8 @@ namespace hgraph
                                                    [&key](const auto &pair) { return std::equal_to<K>()(pair.first, key); }),
                                     re_rank_requests_.end());
 
-            dispose_component(*graph);
+            // NOTE: Do not call dispose or release_instance here. The graph is managed by nanobind
+            // and will be cleaned up when its reference count reaches zero.
         }
     }
 

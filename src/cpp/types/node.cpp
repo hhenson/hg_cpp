@@ -437,7 +437,7 @@ namespace hgraph
         return nb::ref<NodeSignature>(raw);
     }
 
-    NodeScheduler::NodeScheduler(Node &node) : _node{node} {}
+    NodeScheduler::NodeScheduler(node_ptr node) : _node{node} {}
 
     engine_time_t NodeScheduler::next_scheduled_time() const {
         return !_scheduled_events.empty() ? (*_scheduled_events.begin()).first : MIN_DT;
@@ -448,7 +448,8 @@ namespace hgraph
     bool NodeScheduler::is_scheduled() const { return !_scheduled_events.empty() || !_alarm_tags.empty(); }
 
     bool NodeScheduler::is_scheduled_node() const {
-        return !_scheduled_events.empty() && _scheduled_events.begin()->first == _node.graph().evaluation_clock().evaluation_time();
+        return !_scheduled_events.empty() &&
+               _scheduled_events.begin()->first == _node->graph().evaluation_clock().evaluation_time();
     }
 
     bool NodeScheduler::has_tag(const std::string &tag) const { return _tags.contains(tag); }
@@ -475,7 +476,7 @@ namespace hgraph
         }
 
         if (on_wall_clock) {
-            auto clock{dynamic_cast<RealTimeEvaluationClock *>(&_node.graph().evaluation_clock())};
+            auto clock{dynamic_cast<RealTimeEvaluationClock *>(&_node->graph().evaluation_clock())};
             if (clock) {
                 if (!tag.has_value()) { throw std::runtime_error("Can't schedule an alarm without a tag"); }
                 auto        tag_{tag.value()};
@@ -486,8 +487,8 @@ namespace hgraph
             }
         }
 
-        auto is_started{_node.is_started()};
-        auto now_{is_scheduled_node() ? _node.graph().evaluation_clock().evaluation_time() : MIN_DT};
+        auto is_started{_node->is_started()};
+        auto now_{is_scheduled_node() ? _node->graph().evaluation_clock().evaluation_time() : MIN_DT};
         if (when > now_) {
             _tags[tag.value_or("")] = when;
             auto current_first      = !_scheduled_events.empty() ? _scheduled_events.begin()->first : MAX_DT;
@@ -495,13 +496,13 @@ namespace hgraph
             auto next_{next_scheduled_time()};
             if (is_started && current_first > next_) {
                 bool force_set{original_time.has_value() && original_time.value() < when};
-                _node.graph().schedule_node(_node.node_ndx(), next_, force_set);
+                _node->graph().schedule_node(_node->node_ndx(), next_, force_set);
             }
         }
     }
 
     void NodeScheduler::schedule(engine_time_delta_t when, std::optional<std::string> tag, bool on_wall_clock) {
-        auto when_{_node.graph().evaluation_clock().evaluation_time() + when};
+        auto when_{_node->graph().evaluation_clock().evaluation_time() + when};
         schedule(when_, std::move(tag), on_wall_clock);
     }
 
@@ -520,7 +521,7 @@ namespace hgraph
     void NodeScheduler::reset() {
         _scheduled_events.clear();
         _tags.clear();
-        auto real_time_clock = dynamic_cast<RealTimeEvaluationClock *>(&_node.graph().evaluation_clock());
+        auto real_time_clock = dynamic_cast<RealTimeEvaluationClock *>(&_node->graph().evaluation_clock());
         if (real_time_clock) {
             for (const auto &alarm : _alarm_tags) { real_time_clock->cancel_alarm(alarm.first); }
             _alarm_tags.clear();
@@ -531,12 +532,12 @@ namespace hgraph
 
     void NodeScheduler::advance() {
         if (_scheduled_events.empty()) { return; }
-        auto until = _node.graph().evaluation_clock().evaluation_time();
+        auto until = _node->graph().evaluation_clock().evaluation_time();
         // Note: empty string is considered smallest in std::string comparison,
         // so upper_bound will correctly find elements <= until regardless of tag value
         _scheduled_events.erase(_scheduled_events.begin(), _scheduled_events.upper_bound({until, VERY_LARGE_STRING}));
 
-        if (!_scheduled_events.empty()) { _node.graph().schedule_node(_node.node_ndx(), _scheduled_events.begin()->first); }
+        if (!_scheduled_events.empty()) { _node->graph().schedule_node(_node->node_ndx(), _scheduled_events.begin()->first); }
     }
 
     void NodeScheduler::register_with_nanobind(nb::module_ &m) {
@@ -575,7 +576,7 @@ namespace hgraph
         std::string alarm_tag = fmt::format("{}:{}", reinterpret_cast<std::uintptr_t>(this), tag);
         _alarm_tags.erase(alarm_tag);
         _scheduled_events.insert({when, tag});
-        _node.graph().schedule_node(_node.node_ndx(), when);
+        _node->graph().schedule_node(_node->node_ndx(), when);
     }
 
     Node::Node(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars)
@@ -666,7 +667,7 @@ namespace hgraph
     bool Node::has_recordable_state() const { return _recordable_state.get() != nullptr; }
 
     NodeScheduler &Node::scheduler() {
-        if (_scheduler.get() == nullptr) { _scheduler = new NodeScheduler(*this); }
+        if (_scheduler.get() == nullptr) { _scheduler = new NodeScheduler(this); }
         return *_scheduler;
     }
 
@@ -728,7 +729,6 @@ namespace hgraph
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, nb::callable, nb::callable, nb::callable>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "eval_fn"_a = nb::none(), "start_fn"_a = nb::none(),
                  "stop_fn"_a = nb::none());
-
     }
 
     bool Node::has_input() const { return _input.get() != nullptr; }
@@ -778,6 +778,7 @@ namespace hgraph
         if (signature().label.has_value()) { return fmt::format("{}.{}", signature().wiring_path_name, signature().label.value()); }
         return fmt::format("{}.{}", signature().wiring_path_name, signature().name);
     }
+
     void Node::start() {
         do_start();
         if (has_scheduler()) {
@@ -827,7 +828,7 @@ namespace hgraph
                 // Force exposure of inputs as base TimeSeriesInput to avoid double-wrapping as derived classes
                 // This fixes a strange bug, but is potentially risky if the user holds a reference to this (which should
                 // technically never actually happen)
-                _kwargs[key.c_str()] = nb::cast(static_cast<TimeSeriesInput*>(input()[i].get()), nb::rv_policy::reference);
+                _kwargs[key.c_str()] = nb::cast(static_cast<TimeSeriesInput *>(input()[i].get()), nb::rv_policy::reference);
             }
         }
     }
@@ -837,10 +838,11 @@ namespace hgraph
             for (auto &start_input : _start_inputs) {
                 start_input->start();  // Assuming start_input is some time series type with a start method
             }
+            auto active_inputs{*signature().active_inputs};
             for (size_t i = 0; i < signature().time_series_inputs->size(); ++i) {
                 // Apple does not yet support ranges::contains :(
-                if (!signature().active_inputs || (std::ranges::find(*signature().active_inputs, signature().args[i]) !=
-                                                   std::ranges::end(*signature().active_inputs))) {
+                if (!signature().active_inputs ||
+                    (std::ranges::find(active_inputs, signature().args[i]) != std::ranges::end(active_inputs))) {
                     input()[i]->make_active();  // Assuming `make_active` is a method of the `TimeSeriesInput` type
                 }
             }
@@ -925,42 +927,17 @@ namespace hgraph
         if (has_input()) {
 
             // Check validity of required inputs
-            for (const auto &input_ : _check_valid_inputs) {
-                if (!input_->valid()) {
-                    should_eval = false;
-                    break;
-                }
-            }
+            should_eval = std::ranges::all_of(_check_valid_inputs, [](const auto &input_) { return input_->valid(); });
 
-            if (should_eval) {
-                // Check all_valid inputs
-                if (signature().all_valid_inputs.has_value()) {
-                    for (const auto &input_ : _check_all_valid_inputs) {
-                        if (!input_->all_valid()) {
-                            should_eval = false;
-                            break;
-                        }
-                    }
-                }
+            if (should_eval && signature().all_valid_inputs.has_value()) {
+                should_eval = std::ranges::all_of(_check_all_valid_inputs, [](const auto &input_) { return input_->all_valid(); });
             }
 
             // Check scheduler state
-            if (should_eval && _signature->uses_scheduler()) {
-                // It is possible that this was scheduled and then unscheduled, in which case we should ensure
-                // that at least on input was modified to make the call
-                if (!scheduled) {
-                    bool any_modified = false;
-                    if (signature().time_series_inputs.has_value()) {
-                        // This is a bit expensive, but hopefully fast enough
-                        for (const auto &input_ : input().values()) {
-                            if (input_->modified() && input_->active()) {
-                                any_modified = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (!any_modified) { should_eval = false; }
-                }
+            if (should_eval && _signature->uses_scheduler() && !scheduled) {
+                should_eval = !signature().time_series_inputs.has_value() ||
+                              std::ranges::any_of(input().values(),
+                                                  [](const auto &input_) { return input_->modified() && input_->active(); });
             }
         }
 
@@ -970,11 +947,11 @@ namespace hgraph
 
             if (signature().context_inputs.has_value() && !signature().context_inputs->empty()) {
                 // Enter all valid context inputs
+                active_contexts.reserve(signature().context_inputs->size());
                 for (const auto &context_key : *signature().context_inputs) {
-                    auto &context_input = input()[context_key];
-                    if (context_input->valid()) {
-                        nb::object context_value = context_input->py_value();
-                        // Call __enter__() on the context manager
+                    if (input()[context_key]->valid()) {
+                        nb::object context_value = input()[context_key]->py_value();
+                        // ReSharper disable once CppExpressionWithoutSideEffects
                         context_value.attr("__enter__")();
                         active_contexts.push_back(context_value);
                     }
@@ -1080,6 +1057,5 @@ namespace hgraph
             } catch (nb::python_error &e) { throw NodeException::capture_error(e, *this, "During push-queue start"); }
         }
     }
-
 
 }  // namespace hgraph

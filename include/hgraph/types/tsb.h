@@ -2,6 +2,7 @@
 #ifndef TSB_H
 #define TSB_H
 
+#include <hgraph/types/schema_type.h>
 #include <hgraph/types/ts_indexed.h>
 
 namespace hgraph
@@ -10,21 +11,35 @@ namespace hgraph
     struct TimeSeriesBundleOutputBuilder;
     struct TimeSeriesBundleInputBuilder;
 
-    struct TimeSeriesSchema : nb::intrusive_base
+    /**
+     * TimeSeriesSchema - Schema for time-series bundles
+     *
+     * In Python, this extends AbstractSchema and provides schema information
+     * for TSB (TimeSeriesBundle) types. It can be created from:
+     * 1. A list of keys (property names)
+     * 2. A CompoundScalar type (converted via from_scalar_schema)
+     *
+     * The C++ version maintains the same inheritance hierarchy.
+     */
+    struct TimeSeriesSchema : AbstractSchema
     {
         using ptr = nb::ref<TimeSeriesSchema>;
 
         explicit TimeSeriesSchema(std::vector<std::string> keys);
         explicit TimeSeriesSchema(std::vector<std::string> keys, nb::object type);
 
-        const std::vector<std::string> &keys() const;
-        const nb::object               &scalar_type() const;
+        // Override from AbstractSchema
+        [[nodiscard]] const std::vector<std::string> &keys() const override;
+        [[nodiscard]] nb::object get_value(const std::string &key) const override;
+
+        // TimeSeriesSchema-specific method
+        [[nodiscard]] const nb::object &scalar_type() const;
 
         static void register_with_nanobind(nb::module_ &m);
 
       private:
         std::vector<std::string> _keys;
-        nb::object               _scalar_type;
+        nb::object _scalar_type;
     };
 
     template <typename T_TS>
