@@ -78,8 +78,6 @@ namespace hgraph
     {
         using TimeSeriesOutput::TimeSeriesOutput;
 
-        ~TimeSeriesReferenceOutput() override;
-
         [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override;
 
         const TimeSeriesReference::ptr &value() const;
@@ -129,7 +127,7 @@ namespace hgraph
         // Use a raw pointer as we don't have hash implemented on ptr at the moment,
         // So this is a work arround the code managing this also ensures the pointers are incremented
         // and decremented.
-        std::unordered_set<TimeSeriesInput *> _reference_observers;
+        std::unordered_set<TimeSeriesInput::ptr> _reference_observers;
     };
 
     struct TimeSeriesReferenceInput : TimeSeriesInput
