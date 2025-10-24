@@ -387,7 +387,7 @@ namespace hgraph
         bool was_valid = valid();
         do_un_bind_output(unbind_refs);
 
-        if (owning_node().is_started() && was_valid) {
+        if (has_owning_node() && owning_node().is_started() && was_valid) {
             set_sample_time(owning_graph().evaluation_clock().evaluation_time());
             if (active()) {
                 // Notify as the state of the node has changed from bound to unbound
