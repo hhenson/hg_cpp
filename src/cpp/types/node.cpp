@@ -795,9 +795,17 @@ namespace hgraph
     }
 
     void Node::stop() {
-        do_stop();
-        if (has_input()) { input().un_bind_output(false); }
-        if (has_scheduler()) { scheduler().reset(); }
+        // RAII guard to ensure cleanup happens even if do_stop() throws
+        struct Cleanup
+        {
+            Node *node;
+            ~Cleanup() {
+                if (node->has_input()) { node->input().un_bind_output(true); }
+                if (node->has_scheduler()) { node->scheduler().reset(); }
+            }
+        } cleanup{this};
+
+        do_stop();  // Will still clean up if this throws
     }
 
 
