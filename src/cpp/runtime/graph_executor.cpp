@@ -95,13 +95,11 @@ namespace hgraph
         for (const auto &observer : _observers) { evaluationEngine->add_life_cycle_observer(observer); }
 
         try {
-            {
                 // Initialise the graph but do not dispose here; disposal is handled by GraphBuilder.release_instance in Python
                 initialise_component(*_graph);
                 auto startStopContext  = StartStopContext(*_graph);
 
                 while (clock->evaluation_time() < end_time) { _evaluate(*evaluationEngine); }
-            } // RAII context ends here (stop only)
         } catch (const NodeException &e) {
             // Raise Python hgraph.NodeException constructed from C++ NodeException details
             try {
