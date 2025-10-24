@@ -460,8 +460,17 @@ namespace hgraph
     }
 
     void EvaluationEngineImpl::notify_before_evaluation() {
-        for (auto &notification_receiver : _before_evaluation_notification) { notification_receiver(); }
+        // Copy the callback list and clear the original to prevent iterator invalidation
+        auto todo = std::move(_before_evaluation_notification);
         _before_evaluation_notification.clear();
+
+        for (auto &notification_receiver : todo) {
+            notification_receiver();
+            // If new notifications were added during callback execution, process them recursively
+            if (!_before_evaluation_notification.empty()) {
+                notify_before_evaluation();
+            }
+        }
     }
 
     void EvaluationEngineImpl::notify_after_evaluation() {
