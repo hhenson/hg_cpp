@@ -34,7 +34,7 @@ namespace hgraph
                 // Force exposure of inputs as base TimeSeriesInput to avoid double-wrapping as derived classes
                 // This fixes a strange bug, but is potentially risky if the user holds a reference to this (which should
                 // technically never actually happen)
-                _kwargs[key.c_str()] = nb::cast(static_cast<TimeSeriesInput *>(input()[i].get()), nb::rv_policy::reference);
+                _kwargs[key.c_str()] = nb::cast(static_cast<TimeSeriesInput *>(input()[i]));
             }
         }
     }
