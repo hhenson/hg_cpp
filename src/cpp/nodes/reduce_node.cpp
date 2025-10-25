@@ -124,26 +124,25 @@ namespace hgraph
 
     template <typename K> void ReduceNode<K>::remove_nodes(const std::unordered_set<K> &keys) {
         for (const auto &key : keys) {
-            auto it = bound_node_indexes_.find(key);
-            if (it == bound_node_indexes_.end()) { continue; }
+            if (auto it = bound_node_indexes_.find(key); it != bound_node_indexes_.end()) {
+                auto ndx = it->second;
+                bound_node_indexes_.erase(it);
 
-            auto ndx = it->second;
-            bound_node_indexes_.erase(it);
+                if (!bound_node_indexes_.empty()) {
+                    // Find the largest bound index (comparing entire tuple lexicographically)
+                    auto max_it =
+                        std::max_element(bound_node_indexes_.begin(), bound_node_indexes_.end(),
+                                         [](const auto &a, const auto &b) { return a.second < b.second; });
 
-            if (!bound_node_indexes_.empty()) {
-                // Find the largest bound index
-                auto max_it =
-                    std::max_element(bound_node_indexes_.begin(), bound_node_indexes_.end(),
-                                     [](const auto &a, const auto &b) { return std::get<0>(a.second) < std::get<0>(b.second); });
-
-                if (std::get<0>(max_it->second) > std::get<0>(ndx)) {
-                    swap_node(ndx, max_it->second);
-                    bound_node_indexes_[max_it->first] = ndx;
-                    ndx                                = max_it->second;
+                    if (std::get<0>(max_it->second) > std::get<0>(ndx)) {
+                        swap_node(ndx, max_it->second);
+                        bound_node_indexes_[max_it->first] = ndx;
+                        ndx                                = max_it->second;
+                    }
                 }
+                free_node_indexes_.push_back(ndx);
+                zero_node(ndx);
             }
-            free_node_indexes_.push_back(ndx);
-            zero_node(ndx);
         }
     }
 
