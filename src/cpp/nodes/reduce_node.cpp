@@ -58,7 +58,7 @@ namespace hgraph
         if (tsd->valid()) {
             // Get all keys
             std::unordered_set<K> keys;
-            const auto    &key_set{tsd->key_set_t()};
+            const auto           &key_set{tsd->key_set_t()};
             for (const auto &key : key_set.value()) {
                 if (key_set.was_added(key)) { keys.insert(key); }
             }
@@ -130,9 +130,8 @@ namespace hgraph
 
                 if (!bound_node_indexes_.empty()) {
                     // Find the largest bound index (comparing entire tuple lexicographically)
-                    auto max_it =
-                        std::max_element(bound_node_indexes_.begin(), bound_node_indexes_.end(),
-                                         [](const auto &a, const auto &b) { return a.second < b.second; });
+                    auto max_it = std::max_element(bound_node_indexes_.begin(), bound_node_indexes_.end(),
+                                                   [](const auto &a, const auto &b) { return a.second < b.second; });
 
                     if (std::get<0>(max_it->second) > std::get<0>(ndx)) {
                         swap_node(ndx, max_it->second);
@@ -270,24 +269,24 @@ namespace hgraph
     template <typename K> void ReduceNode<K>::bind_key_to_node(const K &key, const std::tuple<int64_t, int64_t> &ndx) {
         bound_node_indexes_[key] = ndx;
         auto [node_id, side]     = ndx;
+        //This could be simplified to get the node using direct math instead of getting a view and then get node directly
         auto nodes               = get_node(node_id);
         auto node                = nodes[side];
 
-        auto &tsd = dynamic_cast<TimeSeriesDictInput_T<K> &>(*input()["ts"]);
-        auto  ts  = tsd[key];
+        auto  ts_  = (*ts())[key];
 
         // Create new input bundle with the ts (Python line 198)
-        node->reset_input(node->input().copy_with(node.get(), {ts.get()}));
+        node->reset_input(node->input().copy_with(node.get(), {ts_.get()}));
 
         // Re-parent the ts to the node's input (CRITICAL FIX - Python line 200)
         // Cast to TimeSeriesType::ptr for re_parent
-        ts->re_parent(node->input_ptr().get());
+        ts_->re_parent(node->input_ptr().get());
 
         // Make the time series active (CRITICAL FIX - Python line 201)
-        ts->make_active();
+        ts_->make_active();
 
         // This was ``ts._bound_to_key = True``
-        bound_to_key_flags_.insert(ts.get());
+        bound_to_key_flags_.insert(ts_.get());
 
         node->notify();
     }
@@ -333,7 +332,7 @@ namespace hgraph
     template <typename K> int64_t ReduceNode<K>::node_count() const { return nested_graph_->nodes().size() / node_size(); }
 
     template <typename K> std::vector<node_ptr> ReduceNode<K>::get_node(int64_t ndx) {
-        //This should be cleaned up to return a view over the existing nodes.
+        // This should be cleaned up to return a view over the existing nodes.
         auto   &all_nodes = nested_graph_->nodes();
         int64_t ns        = node_size();
         int64_t start     = ndx * ns;
