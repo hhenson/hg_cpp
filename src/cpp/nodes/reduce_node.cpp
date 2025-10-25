@@ -158,8 +158,8 @@ namespace hgraph
         auto dst_node = dst_nodes[dst_side];
 
         // Get the old inputs before swapping
-        auto src_input = src_node->input()["ts"];
-        auto dst_input = dst_node->input()["ts"];
+        auto src_input = src_node->input()[0];
+        auto dst_input = dst_node->input()[0];
 
         // Swap the inputs by creating new input bundles
         src_node->reset_input(src_node->input().copy_with(src_node.get(), {dst_input.get()}));
@@ -167,8 +167,8 @@ namespace hgraph
 
         // Re-parent the inputs to their new parent bundles (CRITICAL FIX - Python lines 159-160)
         // Cast to TimeSeriesType::ptr for re_parent
-        dst_input->re_parent(TimeSeriesType::ptr(src_node->input_ptr().get()));
-        src_input->re_parent(TimeSeriesType::ptr(dst_node->input_ptr().get()));
+        dst_input->re_parent(src_node->input_ptr().get());
+        src_input->re_parent(dst_node->input_ptr().get());
 
         src_node->notify();
         dst_node->notify();
