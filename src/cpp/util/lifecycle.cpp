@@ -25,7 +25,7 @@ namespace hgraph
 
         nb::class_<InitialiseDisposeContext>(m, "initialise_dispose_context").def(nb::init<ComponentLifeCycle &>(), "component"_a);
 
-        nb::class_<StartStopContext>(m, "start_stop_context").def(nb::init<StartStopContext &>(), "component"_a);
+        nb::class_<StartStopContext>(m, "start_stop_context").def(nb::init<ComponentLifeCycle &>(), "component"_a);
     }
 
     struct TransitionGuard
