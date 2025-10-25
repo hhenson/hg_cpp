@@ -333,11 +333,12 @@ namespace hgraph
     template <typename K> int64_t ReduceNode<K>::node_count() const { return nested_graph_->nodes().size() / node_size(); }
 
     template <typename K> std::vector<node_ptr> ReduceNode<K>::get_node(int64_t ndx) {
+        //This should be cleaned up to return a view over the existing nodes.
         auto   &all_nodes = nested_graph_->nodes();
         int64_t ns        = node_size();
         int64_t start     = ndx * ns;
         int64_t end       = start + ns;
-        return std::vector<node_ptr>(all_nodes.begin() + start, all_nodes.begin() + end);
+        return {all_nodes.begin() + start, all_nodes.begin() + end};
     }
 
     // Explicit template instantiations for supported key types
