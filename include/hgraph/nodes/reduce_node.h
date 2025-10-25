@@ -3,19 +3,18 @@
 #ifndef REDUCE_NODE_H
 #define REDUCE_NODE_H
 
-#include <hgraph/nodes/nested_node.h>
-#include <hgraph/nodes/nested_evaluation_engine.h>
-#include <hgraph/types/tsd.h>
 #include <deque>
+#include <hgraph/nodes/nested_evaluation_engine.h>
+#include <hgraph/nodes/nested_node.h>
+#include <hgraph/types/tsd.h>
 
 namespace hgraph
 {
 
     void register_reduce_node_with_nanobind(nb::module_ &m);
 
-    template<typename K> struct ReduceNode;
-    template<typename K>
-    using reduce_node_ptr = nb::ref<ReduceNode<K>>;
+    template <typename K> struct ReduceNode;
+    template <typename K> using reduce_node_ptr = nb::ref<ReduceNode<K>>;
 
     /**
      * C++ implementation of PythonReduceNodeImpl.
@@ -29,6 +28,9 @@ namespace hgraph
                    int64_t output_node_id);
 
         std::unordered_map<int, graph_ptr> &nested_graphs();
+
+        TimeSeriesDictInput_T<K>::ptr ts();
+        time_series_reference_input_ptr zero();
 
       protected:
         void initialise() override;
@@ -49,21 +51,22 @@ namespace hgraph
         void zero_node(const std::tuple<int64_t, int64_t> &ndx);
         void swap_node(const std::tuple<int64_t, int64_t> &src_ndx, const std::tuple<int64_t, int64_t> &dst_ndx);
 
-        int64_t node_size() const;
-        int64_t node_count() const;
+        int64_t               node_size() const;
+        int64_t               node_count() const;
         std::vector<node_ptr> get_node(int64_t ndx);
 
       private:
+        graph_ptr                                           nested_graph_;
         graph_builder_ptr                                   nested_graph_builder_;
         std::tuple<int64_t, int64_t>                        input_node_ids_;  // LHS index, RHS index
         int64_t                                             output_node_id_;
         std::unordered_map<K, std::tuple<int64_t, int64_t>> bound_node_indexes_;
-        std::vector<std::tuple<int64_t, int64_t>>          free_node_indexes_;  // List of (ndx, 0(lhs)|1(rhs)) tuples
-        graph_ptr                                           nested_graph_;
+        std::vector<std::tuple<int64_t, int64_t>>           free_node_indexes_;  // List of (ndx, 0(lhs)|1(rhs)) tuples
 
-        // Track which inputs are bound to keys (vs bound to zero)
-        // Key is the pointer address of the TimeSeriesReferenceInput
-        std::unordered_set<TimeSeriesInput*>               bound_to_key_flags_;
+        // The python code uses the fact that you can randomly add properties to a python object and tracks
+        // if an input is bound to a key or not using _bound_to_key.
+        // C++ does not do that, so we can track if the ts is bound to a key using a set.
+        std::unordered_set<TimeSeriesInput *> bound_to_key_flags_;
     };
 
 }  // namespace hgraph

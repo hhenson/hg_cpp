@@ -38,6 +38,14 @@ namespace hgraph
         return graphs;
     }
 
+    template <typename K> typename TimeSeriesDictInput_T<K>::ptr ReduceNode<K>::ts() {
+        return dynamic_cast<TimeSeriesDictInput_T<K> *>(input()[0].get());
+    }
+
+    template <typename K> time_series_reference_input_ptr ReduceNode<K>::zero() {
+        return dynamic_cast<TimeSeriesReferenceInput *>(input()[1].get());
+    }
+
     template <typename K> void ReduceNode<K>::initialise() {
         nested_graph_ = new Graph(std::vector<int64_t>{node_ndx()}, std::vector<node_ptr>{}, this, "", new Traits());
         nested_graph_->set_evaluation_engine(new NestedEvaluationEngine(
@@ -46,15 +54,15 @@ namespace hgraph
     }
 
     template <typename K> void ReduceNode<K>::do_start() {
-        auto &tsd = dynamic_cast<TimeSeriesDictInput_T<K> &>(*input()["ts"]);
-        if (tsd.valid()) {
+        auto tsd = ts();
+        if (tsd->valid()) {
             // Get all keys
             std::vector<K> all_keys;
-            for (const auto &[key, _] : tsd) { all_keys.push_back(key); }
+            for (const auto &[key, _] : *tsd) { all_keys.push_back(key); }
 
             // Get added keys
             std::vector<K> added_keys_vec;
-            const auto    &added_items = tsd.added_items();
+            const auto    &added_items = tsd->added_items();
             for (const auto &[key, _] : added_items) { added_keys_vec.push_back(key); }
 
             // Find existing keys (not in added)
@@ -83,7 +91,11 @@ namespace hgraph
 
     template <typename K> void ReduceNode<K>::do_stop() { stop_component(*nested_graph_); }
 
-    template <typename K> void ReduceNode<K>::dispose() { dispose_component(*nested_graph_); }
+    template <typename K> void ReduceNode<K>::dispose() {
+        if (nested_graph_ == nullptr) { return; }
+        dispose_component(*nested_graph_);
+        nested_graph_ = nullptr;
+    }
 
     template <typename K> void ReduceNode<K>::eval() {
         mark_evaluated();
@@ -296,14 +308,13 @@ namespace hgraph
 
         // Re-parent the ts to the node's input (CRITICAL FIX - Python line 200)
         // Cast to TimeSeriesType::ptr for re_parent
-        ts->re_parent(TimeSeriesType::ptr(node->input_ptr().get()));
+        ts->re_parent(node->input_ptr().get());
 
         // Make the time series active (CRITICAL FIX - Python line 201)
         ts->make_active();
 
-        // Track that this input is bound to a key (CRITICAL FIX - Python line 202)
-        auto inner_input = node->input()["ts"].get();
-        bound_to_key_flags_.insert(inner_input);
+        // This was ``ts._bound_to_key = True``
+        bound_to_key_flags_.insert(ts.get());
 
         node->notify();
     }
@@ -313,12 +324,11 @@ namespace hgraph
         auto nodes           = get_node(node_id);
         auto node            = nodes[side];
 
-        auto inner_input = node->input()["ts"];
+        // This was using the "ts" name, but since this would by definitions
+        auto inner_input = node->input()[0];
 
-        // Check if this input was bound to a key (CRITICAL FIX - Python line 214)
-        bool was_bound_to_key = bound_to_key_flags_.find(inner_input.get()) != bound_to_key_flags_.end();
-
-        if (was_bound_to_key) {
+        // This was ``getattr(inner_input, '_bound_to_key', False)``
+        if (bound_to_key_flags_.contains(inner_input.get())) {
             // Re-parent back to the TSD for cleanup (CRITICAL FIX - Python line 215)
             // Cast to TimeSeriesType::ptr for re_parent
             inner_input->re_parent(TimeSeriesType::ptr(input()["ts"].get()));
@@ -335,8 +345,6 @@ namespace hgraph
             auto zero_ts = dynamic_cast<TimeSeriesReferenceInput *>(input()["zero"].get());
             if (zero_ts != nullptr) { new_ref_input->clone_binding(*zero_ts); }
 
-            // Remove from bound_to_key tracking
-            bound_to_key_flags_.erase(inner_input.get());
         } else {
             // Simple clone binding (CRITICAL FIX - Python line 222)
             auto zero_ts   = dynamic_cast<TimeSeriesReferenceInput *>(input()["zero"].get());
@@ -373,43 +381,57 @@ namespace hgraph
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
                           const std::tuple<int64_t, int64_t> &, int64_t>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a);
+                 "output_node_id"_a)
+            .def_prop_ro("ts", &ReduceNode<bool>::ts)
+            .def_prop_ro("zero", &ReduceNode<bool>::zero);
 
         nb::class_<ReduceNode<int64_t>, NestedNode>(m, "ReduceNode_int")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
                           const std::tuple<int64_t, int64_t> &, int64_t>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a);
+                 "output_node_id"_a)
+            .def_prop_ro("ts", &ReduceNode<int64_t>::ts)
+            .def_prop_ro("zero", &ReduceNode<int64_t>::zero);
 
         nb::class_<ReduceNode<double>, NestedNode>(m, "ReduceNode_float")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
                           const std::tuple<int64_t, int64_t> &, int64_t>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a);
+                 "output_node_id"_a)
+            .def_prop_ro("ts", &ReduceNode<double>::ts)
+            .def_prop_ro("zero", &ReduceNode<double>::zero);
 
         nb::class_<ReduceNode<engine_date_t>, NestedNode>(m, "ReduceNode_date")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
                           const std::tuple<int64_t, int64_t> &, int64_t>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a);
+                 "output_node_id"_a)
+            .def_prop_ro("ts", &ReduceNode<engine_date_t>::ts)
+            .def_prop_ro("zero", &ReduceNode<engine_date_t>::zero);
 
         nb::class_<ReduceNode<engine_time_t>, NestedNode>(m, "ReduceNode_datetime")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
                           const std::tuple<int64_t, int64_t> &, int64_t>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a);
+                 "output_node_id"_a)
+            .def_prop_ro("ts", &ReduceNode<engine_time_t>::ts)
+            .def_prop_ro("zero", &ReduceNode<engine_time_t>::zero);
 
         nb::class_<ReduceNode<engine_time_delta_t>, NestedNode>(m, "ReduceNode_timedelta")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
                           const std::tuple<int64_t, int64_t> &, int64_t>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a);
+                 "output_node_id"_a)
+            .def_prop_ro("ts", &ReduceNode<engine_time_delta_t>::ts)
+            .def_prop_ro("zero", &ReduceNode<engine_time_delta_t>::zero);
 
         nb::class_<ReduceNode<nb::object>, NestedNode>(m, "ReduceNode_object")
             .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
                           const std::tuple<int64_t, int64_t> &, int64_t>(),
                  "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a);
+                 "output_node_id"_a)
+            .def_prop_ro("ts", &ReduceNode<nb::object>::ts)
+            .def_prop_ro("zero", &ReduceNode<nb::object>::zero);
     }
 
 }  // namespace hgraph

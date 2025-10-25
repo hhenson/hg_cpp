@@ -252,6 +252,7 @@ namespace hgraph
 
     template <typename T_Key> struct TimeSeriesDictInput_T : TimeSeriesDictInput, TSDKeyObserver<T_Key>
     {
+        using ptr                 = nb::ref<TimeSeriesDictInput_T>;
         using key_type            = T_Key;
         using value_type          = time_series_input_ptr;
         using map_type            = std::unordered_map<key_type, value_type>;
