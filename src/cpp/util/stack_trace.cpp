@@ -1,6 +1,6 @@
 #include <hgraph/util/stack_trace.h>
 
-#define BACKWARD_HAS_BACKTRACE 1
+//#define BACKWARD_HAS_BACKTRACE 1
 #include <backward.hpp>
 
 namespace hgraph {

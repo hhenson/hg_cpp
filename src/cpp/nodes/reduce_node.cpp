@@ -31,7 +31,7 @@ namespace hgraph
                               const std::tuple<int64_t, int64_t> &input_node_ids, int64_t output_node_id)
         : NestedNode(node_ndx, owning_graph_id, signature, scalars), nested_graph_builder_(nested_graph_builder),
           input_node_ids_(input_node_ids), output_node_id_(output_node_id) {
-        nested_graph_ = new Graph(std::vector<int64_t>{node_ndx}, std::vector<node_ptr>{}, this, "", traits_ptr{});
+        nested_graph_ = new Graph(std::vector<int64_t>{node_ndx}, std::vector<node_ptr>{}, this, "", new Traits());
     }
 
     template <typename K> std::unordered_map<int, graph_ptr> &ReduceNode<K>::nested_graphs() {

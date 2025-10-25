@@ -42,7 +42,7 @@ namespace hgraph
             } else {
                 if (was_removed(k_)) { return false; }
                 if (contains(k_)) {
-                    if (!operator[](k_).can_apply_result(nb::borrow(v_))) { return false; }
+                    if (!operator[](k_)->can_apply_result(nb::borrow(v_))) { return false; }
                 }
             }
         }
@@ -52,7 +52,8 @@ namespace hgraph
     template <typename T_Key>
     nb::object TimeSeriesDictOutput_T<T_Key>::py_get(const nb::object &item, const nb::object &default_value) const {
         auto key{nb::cast<T_Key>(item)};
-        if (contains(key)) { return nb::cast(operator[](key)); }
+        auto v{operator[](key)};
+        if (contains(key)) { return nb::cast(v); }
         return default_value;
     }
 
@@ -197,7 +198,7 @@ namespace hgraph
                 }
                 erase(k_);
             } else {
-                _get_or_create(k_).py_set_value(v);
+                _get_or_create(k_)->py_set_value(v);
             }
         }
     }
@@ -252,7 +253,7 @@ namespace hgraph
             if (other_key_set_value.contains(key)) { to_remove.push_back(key); }
         }
         for (const auto &k : to_remove) { erase(k); }
-        for (const auto &[k, v] : other._ts_values) { _get_or_create(k).copy_from_output(*v); }
+        for (const auto &[k, v] : other._ts_values) { _get_or_create(k)->copy_from_output(*v); }
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::copy_from_input(const TimeSeriesInput &input) {
@@ -265,7 +266,7 @@ namespace hgraph
             if (other_key_set_value.contains(key)) { to_remove.push_back(key); }
         }
         for (const auto &k : to_remove) { erase(k); }
-        for (const auto &[k, v_input] : dict_input.value()) { _get_or_create(k).copy_from_input(*v_input); }
+        for (const auto &[k, v_input] : dict_input.value()) { _get_or_create(k)->copy_from_input(*v_input); }
     }
 
     template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_added() const { return !_added_keys.empty(); }
@@ -285,27 +286,27 @@ namespace hgraph
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_get_item(const nb::object &item) const {
         auto KET_SET_ID = nb::module_::import_("hgraph").attr("KEY_SET_ID");
         if (KET_SET_ID.is(item)) { return nb::cast(_key_set); }
-        auto  k  = nb::cast<T_Key>(item);
-        auto &ts = operator[](k);
-        auto *py = ts.self_py();
+        auto k  = nb::cast<T_Key>(item);
+        auto ts = operator[](k);
+        auto *py = ts->self_py();
         if (py) return nb::borrow(py);
         // Prefer wrapping as base type to avoid double-wrapping under different derived bindings
-        return nb::cast(const_cast<TimeSeriesOutput *>(&ts));
+        return nb::cast(const_cast<TimeSeriesOutput *>(ts.get()));
     }
 
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_get_or_create(const nb::object &key) {
-        auto &ts = _get_or_create(nb::cast<T_Key>(key));
-        return nb::cast(&ts);
+        auto ts = _get_or_create(nb::cast<T_Key>(key));
+        return nb::cast(ts.get());
     }
 
     template <typename T_Key>
-    TimeSeriesDict<TimeSeriesOutput>::ts_type &TimeSeriesDictOutput_T<T_Key>::operator[](const key_type &item) {
+    TimeSeriesDict<TimeSeriesOutput>::ts_type_ptr TimeSeriesDictOutput_T<T_Key>::operator[](const key_type &item) {
         return _get_or_create(item);
     }
 
     template <typename T_Key>
-    const TimeSeriesDict<TimeSeriesOutput>::ts_type &TimeSeriesDictOutput_T<T_Key>::operator[](const key_type &item) const {
-        return *_ts_values.at(item);
+    TimeSeriesDict<TimeSeriesOutput>::ts_type_ptr TimeSeriesDictOutput_T<T_Key>::operator[](const key_type &item) const {
+        return _ts_values.at(item);
     }
 
     template <typename T_Key>
@@ -397,13 +398,13 @@ namespace hgraph
 
     template <typename T_Key> nb::iterator TimeSeriesDictOutput_T<T_Key>::py_added_values() const {
         nb::list l{};
-        for (const auto &k : added_keys()) { l.append(nb::cast(operator[](k))); }
+        for (const auto &k : added_keys()) { l.append(nb::cast(operator[](k).get())); }
         return nb::iter(l);
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictOutput_T<T_Key>::py_added_items() const {
         nb::dict d{};
-        for (const auto &k : added_keys()) { d[nb::cast(k)] = (nb::cast(operator[](k))); }
+        for (const auto &k : added_keys()) { d[nb::cast(k)] = (nb::cast(operator[](k).get())); }
         return nb::iter(d);
     }
 
@@ -467,8 +468,8 @@ namespace hgraph
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::py_set_item(const nb::object &key, const nb::object &value) {
-        auto &ts{operator[](nb::cast<T_Key>(key))};
-        ts.apply_result(value);
+        auto ts{operator[](nb::cast<T_Key>(key))};
+        ts->apply_result(value);
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::py_del_item(const nb::object &key) {
@@ -525,9 +526,9 @@ namespace hgraph
         _added_keys.clear();
     }
 
-    template <typename T_Key> TimeSeriesOutput &TimeSeriesDictOutput_T<T_Key>::_get_or_create(const key_type &key) {
+    template <typename T_Key> TimeSeriesOutput::ptr TimeSeriesDictOutput_T<T_Key>::_get_or_create(const key_type &key) {
         if (_ts_values.find(key) == _ts_values.end()) { _create(key); }
-        return *_ts_values[key];
+        return _ts_values[key];
     }
 
     template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_reference() const { return _ts_builder->has_reference(); }
@@ -811,7 +812,7 @@ namespace hgraph
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::on_key_added(const key_type &key) {
         auto value{get_or_create(key)};
-        value->bind_output(&output_t()[key]);
+        value->bind_output(output_t()[key].get());
     }
 
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::on_key_removed(const key_type &key) {

@@ -31,6 +31,7 @@ namespace hgraph
     struct TimeSeriesDict : T_TS
     {
         using ts_type = T_TS;
+        using ts_type_ptr = nb::ref<T_TS>;
         using T_TS::T_TS;
 
         [[nodiscard]] virtual size_t size() const = 0;
@@ -144,8 +145,8 @@ namespace hgraph
 
         [[nodiscard]] nb::object     py_get_item(const nb::object &item) const override;
         [[nodiscard]] nb::object     py_get_or_create(const nb::object &key) override;
-        [[nodiscard]] ts_type       &operator[](const key_type &item);
-        [[nodiscard]] const ts_type &operator[](const key_type &item) const;
+        [[nodiscard]] ts_type_ptr    operator[](const key_type &item);
+        [[nodiscard]] ts_type_ptr    operator[](const key_type &item) const;
 
         [[nodiscard]] const_item_iterator begin() const;
         [[nodiscard]] item_iterator       begin();
@@ -211,7 +212,7 @@ namespace hgraph
 
         // void post_modify() override;
 
-        TimeSeriesOutput &_get_or_create(const key_type &key);
+        TimeSeriesOutput::ptr _get_or_create(const key_type &key);
 
         [[nodiscard]] bool has_reference() const override;
 

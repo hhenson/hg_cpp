@@ -68,6 +68,7 @@ add_definitions(-Dhgraph_EXPORTS)
 nanobind_add_module(${PROJECT_NAME} ${HGRAPH_SOURCES} ${HGRAPH_INCLUDES})
 
 target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads fmt::fmt Python::Python Backward::Backward)
+#target_compile_definitions(${PROJECT_NAME} PRIVATE BACKWARD_HAS_BACKTRACE=1)
 
 # Install directive for scikit-build-core
 install(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION .)
