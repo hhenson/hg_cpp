@@ -234,6 +234,7 @@ namespace hgraph
         map_type    _modified_items;
         k_set_type  _added_keys;
         map_type    _removed_items;  // This ensures we hold onto the values until we are sure no one needs to reference them.
+        mutable map_type _valid_items_cache;  // Cache for valid_items() to ensure iterator lifetime safety.
 
         output_builder_ptr _ts_builder;
         output_builder_ptr _ts_ref_builder;
@@ -303,7 +304,7 @@ namespace hgraph
         [[nodiscard]] bool         py_was_modified(const nb::object &key) const override;
         [[nodiscard]] bool         was_modified(const key_type &key) const;
 
-        [[nodiscard]] auto valid_items() const;
+        [[nodiscard]] const map_type &valid_items() const;
 
         [[nodiscard]] nb::iterator py_valid_keys() const override;
         [[nodiscard]] nb::iterator py_valid_values() const override;

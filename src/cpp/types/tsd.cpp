@@ -705,11 +705,13 @@ namespace hgraph
         return it != _ts_values.end() && it->second->modified();
     }
 
-    template <typename T_Key> auto TimeSeriesDictInput_T<T_Key>::valid_items() const {
-        // TODO: look into maintaining this cached.
+    template <typename T_Key> const typename TimeSeriesDictInput_T<T_Key>::map_type &TimeSeriesDictInput_T<T_Key>::valid_items() const {
+        // Rebuild cache each call to ensure freshness; returns a reference to a member to ensure iterator lifetime safety.
         _valid_items_cache.clear();
-        for (const auto &item : _ts_values | std::views::filter([](const auto &item) { return item.second->valid(); })) {
-            _valid_items_cache.insert(item);
+        for (const auto &item : _ts_values) {
+            if (item.second->valid()) {
+                _valid_items_cache.insert(item);
+            }
         }
         return _valid_items_cache;
     }
