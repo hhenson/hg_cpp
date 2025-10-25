@@ -5,6 +5,7 @@
 #include <hgraph/nodes/nested_evaluation_engine.h>
 #include <hgraph/nodes/tsd_map_node.h>
 #include <hgraph/runtime/record_replay.h>
+#include <hgraph/types/error_type.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
@@ -46,6 +47,8 @@ namespace hgraph
     template <typename K> void TsdMapNode<K>::initialise() {}
 
     template <typename K> void TsdMapNode<K>::do_start() {
+        // Note: In Python, super().do_start() is called here, but in C++ the base Node class
+        // do_start() is pure virtual and has no implementation to call.
         auto trait{graph().traits().get_trait_or(RECORDABLE_ID_TRAIT, nb::none())};
         if (!trait.is_none()) {
             auto recordable_id{signature().record_replay_id};
@@ -134,8 +137,7 @@ namespace hgraph
 
         if (!recordable_id_.empty()) {
             auto nested_recordable_id = fmt::format("{}[{}]", recordable_id_, to_string(key));
-            // TODO: implement
-            // set_parent_recordable_id(*graph_, nested_recordable_id);
+            set_parent_recordable_id(*graph_, nested_recordable_id);
         }
 
         wire_graph(key, graph_);
@@ -167,10 +169,11 @@ namespace hgraph
             try {
                 graph->evaluate_graph();
             } catch (const std::exception &e) {
-                // TODO: Resolve processing error outputs
-                // auto &error_output = dynamic_cast<TimeSeriesDictOutput_T<K> &>(error_output());
-                // auto  node_error   = NodeError::capture_error(e, this, fmt::format("key: {}", key));
-                // error_output.get_or_create(key).value(node_error);
+                auto &error_tsd = dynamic_cast<TimeSeriesDictOutput_T<K> &>(error_output());
+                auto  msg = std::string("key: ") + to_string(key);
+                auto  node_exception = NodeException::capture_error(e, *this, msg);
+                auto &error_ts = error_tsd._get_or_create(key);
+                error_ts.py_set_value(nb::cast(node_exception.error));
             }
         } else {
             graph->evaluate_graph();
