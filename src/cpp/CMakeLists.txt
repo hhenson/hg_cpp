@@ -6,6 +6,19 @@ set(HGRAPH_SOURCES
         builders/input_builder.cpp
         builders/node_builder.cpp
         builders/output_builder.cpp
+        builders/nodes/python_node_builder.cpp
+        builders/nodes/python_generator_node_builder.cpp
+        builders/nodes/tsd_map_node_builder.cpp
+        builders/nodes/reduce_node_builder.cpp
+        builders/nodes/context_node_builder.cpp
+        builders/nodes/base_nested_graph_node_builder.cpp
+        builders/nodes/nested_graph_node_builder.cpp
+        builders/nodes/component_node_builder.cpp
+        builders/nodes/try_except_node_builder.cpp
+        builders/nodes/switch_node_builder.cpp
+        builders/nodes/tsd_non_associative_reduce_node_builder.cpp
+        builders/nodes/mesh_node_builder.cpp
+        builders/nodes/last_value_pull_node_builder.cpp
 
         nodes/base_python_node.cpp
         nodes/component_node.cpp
