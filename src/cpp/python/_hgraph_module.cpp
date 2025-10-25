@@ -9,6 +9,7 @@
  */
 #include <hgraph/hgraph_base.h>
 #include <hgraph/types/error_type.h>
+#include <hgraph/util/stack_trace.h>
 
 #include <nanobind/intrusive/counter.inl>
 
@@ -63,6 +64,13 @@ NB_MODULE(_hgraph, m) {
         m, "intrusive_base",
         nb::intrusive_ptr<nb::intrusive_base>(
             [](nb::intrusive_base *o, PyObject *po) noexcept { o->set_self_py(po); }));
+
+    // Install crash handlers for automatic stack traces on crashes
+    hgraph::install_crash_handlers();
+
+    // Expose stack trace functions to Python
+    m.def("get_stack_trace", &hgraph::get_stack_trace, "Get current C++ stack trace as a string");
+    m.def("print_stack_trace", &hgraph::print_stack_trace, "Print current C++ stack trace to stderr");
 
     export_utils(m);
     export_types(m);

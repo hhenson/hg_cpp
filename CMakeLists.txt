@@ -66,6 +66,7 @@ message(STATUS "Nanobind DIR: ${NB_DIR}/include")
 find_package(Threads)
 
 find_package(fmt CONFIG REQUIRED)
+find_package(Backward CONFIG REQUIRED)
 #find_package(immer CONFIG REQUIRED)
 
 if (EXISTS "${CMAKE_SOURCE_DIR}/.git")
@@ -166,6 +167,7 @@ set(HGRAPH_INCLUDES
         include/hgraph/util/lifecycle.h
         include/hgraph/util/reference_count_subscriber.h
         include/hgraph/util/sender_receiver_state.h
+        include/hgraph/util/stack_trace.h
         include/hgraph/util/string_utils.h
 
         include/hgraph/hgraph_export.h
