@@ -104,7 +104,7 @@ namespace hgraph
         auto l = dynamic_cast<TimeSeriesReferenceOutput *>(last_output().get());
         auto o = dynamic_cast<TimeSeriesReferenceOutput *>(output_ptr().get());
 
-        if ((!o->valid() && l->valid()) || o->value() != l->value()) { o->set_value(l->value()); }
+        if ((!o->valid() && l->valid()) || (l->valid() && o->value() != l->value())) { o->set_value(l->value()); }
     }
 
     template <typename K> TimeSeriesOutput::ptr ReduceNode<K>::last_output() {
@@ -224,8 +224,8 @@ namespace hgraph
                 auto lhs_input = sub_graph[std::get<0>(input_node_ids_)];
                 auto rhs_input = sub_graph[std::get<1>(input_node_ids_)];
 
-                dynamic_cast<TimeSeriesInput &>(*lhs_input->input()["ts"]).bind_output(left_parent.get());
-                dynamic_cast<TimeSeriesInput &>(*rhs_input->input()["ts"]).bind_output(right_parent.get());
+                dynamic_cast<TimeSeriesInput &>(*lhs_input->input()[0]).bind_output(left_parent.get());
+                dynamic_cast<TimeSeriesInput &>(*rhs_input->input()[0]).bind_output(right_parent.get());
 
                 lhs_input->notify();
                 rhs_input->notify();
@@ -236,10 +236,7 @@ namespace hgraph
             // Start the newly added nodes
             int64_t start_idx = count * node_size();
             int64_t end_idx   = nested_graph_->nodes().size();
-            for (int64_t i = start_idx; i < end_idx; ++i) {
-                auto node = nested_graph_->nodes()[i];
-                start_component(*node.get());
-            }
+            nested_graph_->start_subgraph(start_idx, end_idx);
         }
     }
 
@@ -257,13 +254,13 @@ namespace hgraph
 
         // Keep only the first halved_capacity - active_count free nodes
         std::sort(free_node_indexes_.begin(), free_node_indexes_.end(),
-                  [](const auto &a, const auto &b) { return std::get<0>(a) < std::get<0>(b); });
+                  [](const auto &a, const auto &b) { return a < b; });
 
         int64_t to_keep = halved_capacity - active_count;
         if (static_cast<size_t>(to_keep) < free_node_indexes_.size()) { free_node_indexes_.resize(to_keep); }
 
         std::sort(free_node_indexes_.begin(), free_node_indexes_.end(),
-                  [](const auto &a, const auto &b) { return std::get<0>(a) > std::get<0>(b); });
+                  [](const auto &a, const auto &b) { return a > b; });
     }
 
     template <typename K> void ReduceNode<K>::bind_key_to_node(const K &key, const std::tuple<int64_t, int64_t> &ndx) {

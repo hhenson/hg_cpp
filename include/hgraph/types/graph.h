@@ -61,13 +61,12 @@ namespace hgraph
 
         static void register_with_nanobind(nb::module_ &m);
 
-      protected:
         void initialise_subgraph(int64_t start, int64_t end);
-
         void start_subgraph(int64_t start, int64_t end);
         void stop_subgraph(int64_t start, int64_t end);
         void dispose_subgraph(int64_t start, int64_t end);
 
+      protected:
         void initialise() override;
         void start() override;
         void stop() override;
