@@ -31,10 +31,10 @@ namespace hgraph
             // Apple does not yet support ranges::contains :(
             auto key{input().schema().keys()[i]};
             if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) {
-                // Force exposure of inputs as base TimeSeriesInput to avoid double-wrapping as derived classes
-                // This fixes a strange bug, but is potentially risky if the user holds a reference to this (which should
-                // technically never actually happen)
-                _kwargs[key.c_str()] = nb::cast(static_cast<TimeSeriesInput *>(input()[i]));
+                // Expose inputs as base TimeSeriesInput using nb::ref to preserve lifetime semantics.
+                // Avoid casting to raw pointer, which bypasses intrusive ref counting and can cause
+                // dangling references when Python holds onto the object (e.g., during iteration).
+                _kwargs[key.c_str()] = nb::cast(input()[i]);
             }
         }
     }
