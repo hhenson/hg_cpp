@@ -19,6 +19,21 @@ set(HGRAPH_SOURCES
         builders/nodes/tsd_non_associative_reduce_node_builder.cpp
         builders/nodes/mesh_node_builder.cpp
         builders/nodes/last_value_pull_node_builder.cpp
+        builders/time_series_types/time_series_signal_input_builder.cpp
+        builders/time_series_types/time_series_value_input_builder.cpp
+        builders/time_series_types/time_series_ref_input_builder.cpp
+        builders/time_series_types/time_series_list_input_builder.cpp
+        builders/time_series_types/time_series_bundle_input_builder.cpp
+        builders/time_series_types/time_series_set_input_builder.cpp
+        builders/time_series_types/time_series_window_input_builder.cpp
+        builders/time_series_types/time_series_dict_input_builder.cpp
+        builders/time_series_types/time_series_value_output_builder.cpp
+        builders/time_series_types/time_series_ref_output_builder.cpp
+        builders/time_series_types/time_series_list_output_builder.cpp
+        builders/time_series_types/time_series_bundle_output_builder.cpp
+        builders/time_series_types/time_series_set_output_builder.cpp
+        builders/time_series_types/time_series_window_output_builder.cpp
+        builders/time_series_types/time_series_dict_output_builder.cpp
 
         nodes/base_python_node.cpp
         nodes/component_node.cpp

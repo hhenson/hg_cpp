@@ -7,6 +7,8 @@
 
 #include <hgraph/builders/input_builder.h>
 #include <hgraph/builders/output_builder.h>
+#include <hgraph/builders/time_series_types/time_series_dict_input_builder.h>
+#include <hgraph/builders/time_series_types/time_series_dict_output_builder.h>
 #include <hgraph/types/tss.h>
 #include <ranges>
 

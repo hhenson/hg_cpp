@@ -1,6 +1,7 @@
 #include "hgraph/types/node.h"
 
 #include <hgraph/builders/output_builder.h>
+#include <hgraph/builders/time_series_types/time_series_value_output_builder.h>
 #include <hgraph/types/constants.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/ts.h>
