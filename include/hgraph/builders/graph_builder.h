@@ -23,7 +23,7 @@ namespace hgraph
 
     struct Graph;
 
-    struct GraphBuilder : public Builder
+    struct GraphBuilder :  Builder
     {
         std::vector<node_builder_ptr> node_builders;
         std::vector<Edge>     edges;
