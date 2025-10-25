@@ -57,10 +57,10 @@ namespace hgraph
         auto tsd{ts()};
         if (tsd->valid()) {
             // Get all keys
-            std::vector<K> keys;
-            const auto &key_set{tsd->key_set_t()};
+            std::unordered_set<K> keys;
+            const auto    &key_set{tsd->key_set_t()};
             for (const auto &key : key_set.value()) {
-                if (key_set.was_added(key)) { keys.push_back(key); }
+                if (key_set.was_added(key)) { keys.insert(key); }
             }
 
             if (!keys.empty()) {
@@ -85,37 +85,26 @@ namespace hgraph
     template <typename K> void ReduceNode<K>::eval() {
         mark_evaluated();
 
-        auto &tsd = dynamic_cast<TimeSeriesDictInput_T<K> &>(*input()["ts"]);
-
-        // Collect removed and added keys
-        std::vector<K> removed_keys_vec;
-        const auto    &removed_items = tsd.removed_items();
-        for (const auto &[key, _] : removed_items) { removed_keys_vec.push_back(key); }
-
-        std::vector<K> added_keys_vec;
-        const auto    &added_items = tsd.added_items();
-        for (const auto &[key, _] : added_items) { added_keys_vec.push_back(key); }
+        auto &key_set = ts()->key_set_t();
 
         // Process removals first, then additions
-        remove_nodes(removed_keys_vec);
-        add_nodes(added_keys_vec);
+        remove_nodes(key_set.removed());
+        add_nodes(key_set.added());
 
         // Re-balance the tree if required
         re_balance_nodes();
 
         // Evaluate the nested graph
-        dynamic_cast<NestedEngineEvaluationClock &>(nested_graph_->evaluation_engine_clock())
-            .reset_next_scheduled_evaluation_time();
+        auto ec{dynamic_cast<NestedEngineEvaluationClock &>(nested_graph_->evaluation_engine_clock())};
+        ec.reset_next_scheduled_evaluation_time();
         nested_graph_->evaluate_graph();
-        dynamic_cast<NestedEngineEvaluationClock &>(nested_graph_->evaluation_engine_clock())
-            .reset_next_scheduled_evaluation_time();
+        ec.reset_next_scheduled_evaluation_time();
 
         // Propagate output if changed
-        auto  last_out     = last_output();
-        auto &ref_last_out = dynamic_cast<TimeSeriesReferenceOutput &>(*last_out);
-        auto &ref_output   = dynamic_cast<TimeSeriesReferenceOutput &>(output());
+        auto l = dynamic_cast<TimeSeriesReferenceOutput *>(last_output().get());
+        auto o = dynamic_cast<TimeSeriesReferenceOutput *>(output_ptr().get());
 
-        if (!output().valid() || ref_output.value() != ref_last_out.value()) { ref_output.set_value(ref_last_out.value()); }
+        if ((!o->valid() && l->valid()) || o->value() != l->value()) { o->set_value(l->value()); }
     }
 
     template <typename K> TimeSeriesOutput::ptr ReduceNode<K>::last_output() {
@@ -124,7 +113,7 @@ namespace hgraph
         return out_node->output_ptr();
     }
 
-    template <typename K> void ReduceNode<K>::add_nodes(const std::vector<K> &keys) {
+    template <typename K> void ReduceNode<K>::add_nodes(const std::unordered_set<K> &keys) {
         for (const auto &key : keys) {
             if (free_node_indexes_.empty()) { grow_tree(); }
             auto ndx = free_node_indexes_.back();
@@ -133,7 +122,7 @@ namespace hgraph
         }
     }
 
-    template <typename K> void ReduceNode<K>::remove_nodes(const std::vector<K> &keys) {
+    template <typename K> void ReduceNode<K>::remove_nodes(const std::unordered_set<K> &keys) {
         for (const auto &key : keys) {
             auto it = bound_node_indexes_.find(key);
             if (it == bound_node_indexes_.end()) { continue; }

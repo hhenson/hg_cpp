@@ -42,8 +42,8 @@ namespace hgraph
 
         TimeSeriesOutput::ptr last_output();
 
-        void add_nodes(const std::vector<K> &keys);
-        void remove_nodes(const std::vector<K> &keys);
+        void add_nodes(const std::unordered_set<K> &keys);
+        void remove_nodes(const std::unordered_set<K> &keys);
         void re_balance_nodes();
         void grow_tree();
         void shrink_tree();
