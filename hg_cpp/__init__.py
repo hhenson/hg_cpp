@@ -35,6 +35,9 @@ def _make_cpp_graph_builder(node_builders, edges):
     return _hgraph.GraphBuilder(list(node_builders), cpp_edges)
 
 
+# Register C++ GraphBuilder as a virtual subclass of Python GraphBuilder so isinstance works
+hgraph._builder._graph_builder.GraphBuilder.register(_hgraph.GraphBuilder)
+
 hgraph.GraphBuilderFactory.declare(_make_cpp_graph_builder)
 
 # The graph engine type
