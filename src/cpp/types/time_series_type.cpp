@@ -274,6 +274,20 @@ namespace hgraph
         _output = nullptr;
     }
 
+    // Minimal-teardown helper: avoid consulting owning_node/graph
+    void TimeSeriesInput::builder_release_cleanup() {
+        if (_output.get() != nullptr && _active) {
+            // Unsubscribe from output without triggering any node notifications
+            _output->un_subscribe(this);
+        }
+        _active = false;
+        if (_reference_output != nullptr) {
+            _reference_output->stop_observing_reference(this);
+            _reference_output.reset();
+        }
+        _output = nullptr;
+    }
+
     void TimeSeriesInput::notify_parent(TimeSeriesInput *child, engine_time_t modified_time) {
         notify(modified_time);
     }  // NOLINT(*-no-recursion)
@@ -311,6 +325,14 @@ namespace hgraph
     bool TimeSeriesOutput::has_parent_output() const { return _has_parent_time_series(); }
 
     bool TimeSeriesOutput::can_apply_result(nb::object value) { return not modified(); }
+
+    // Minimal-teardown helper: avoid consulting owning_node/graph
+    void TimeSeriesOutput::builder_release_cleanup() {
+        // Clear subscribers safely without notifications
+        _subscribers.clear();
+        // Reset modification state to a neutral value without touching evaluation_clock
+        _reset_last_modified_time();
+    }
 
     bool TimeSeriesOutput::modified() const { return owning_graph().evaluation_clock().evaluation_time() == _last_modified_time; }
 

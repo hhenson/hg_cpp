@@ -128,6 +128,9 @@ namespace hgraph
         void                        subscribe(Notifiable *node);
         void                        un_subscribe(Notifiable *node);
 
+        // Minimal-teardown helper used by builders during release; must not access owning_node/graph
+        void                        builder_release_cleanup();
+
         virtual void py_set_value(nb::object value) = 0;
         virtual bool can_apply_result(nb::object value);
         virtual void apply_result(nb::object value)                   = 0;
@@ -181,6 +184,9 @@ namespace hgraph
         virtual void make_passive();
 
         [[nodiscard]] virtual bool has_output() const;
+
+        // Minimal-teardown helper used by builders during release; must not access owning_node/graph
+        void                        builder_release_cleanup();
 
         [[nodiscard]] nb::object    py_value() const override;
         [[nodiscard]] nb::object    py_delta_value() const override;
