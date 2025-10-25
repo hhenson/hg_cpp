@@ -54,32 +54,17 @@ namespace hgraph
     }
 
     template <typename K> void ReduceNode<K>::do_start() {
-        auto tsd = ts();
+        auto tsd{ts()};
         if (tsd->valid()) {
             // Get all keys
-            std::vector<K> all_keys;
-            for (const auto &[key, _] : *tsd) { all_keys.push_back(key); }
-
-            // Get added keys
-            std::vector<K> added_keys_vec;
-            const auto    &added_items = tsd->added_items();
-            for (const auto &[key, _] : added_items) { added_keys_vec.push_back(key); }
-
-            // Find existing keys (not in added)
-            std::vector<K> existing_keys;
-            for (const auto &key : all_keys) {
-                bool is_added = false;
-                for (const auto &added_key : added_keys_vec) {
-                    if (keys_equal(key, added_key)) {
-                        is_added = true;
-                        break;
-                    }
-                }
-                if (!is_added) { existing_keys.push_back(key); }
+            std::vector<K> keys;
+            const auto &key_set{tsd->key_set_t()};
+            for (const auto &key : key_set.value()) {
+                if (key_set.was_added(key)) { keys.push_back(key); }
             }
 
-            if (!existing_keys.empty()) {
-                add_nodes(existing_keys);
+            if (!keys.empty()) {
+                add_nodes(keys);
             } else {
                 grow_tree();
             }
