@@ -343,14 +343,14 @@ namespace hgraph
         return times.empty() ? sample_time() : *std::max_element(times.begin(), times.end());
     }
 
-    void TimeSeriesReferenceInput::clone_binding(const TimeSeriesReferenceInput &other) {
+    void TimeSeriesReferenceInput::clone_binding(const TimeSeriesReferenceInput::ptr &other) {
         un_bind_output(false);
-        if (other.has_output()) {
-            bind_output(other.output());
-        } else if (other._items.has_value()) {
-            for (size_t i = 0; i < other._items->size(); ++i) { this->get_ref_input(i)->clone_binding(*(*other._items)[i]); }
-        } else if (other.has_value()) {
-            _value = other._value;
+        if (other->has_output()) {
+            bind_output(other->output());
+        } else if (other->_items.has_value()) {
+            for (size_t i = 0; i < other->_items->size(); ++i) { this->get_ref_input(i)->clone_binding((*other->_items)[i]); }
+        } else if (other->has_value()) {
+            _value = other->_value;
             if (owning_node().is_started()) {
                 set_sample_time(owning_graph().evaluation_clock().evaluation_time());
                 if (active()) { notify(sample_time()); }

@@ -224,7 +224,7 @@ namespace hgraph
                     auto ts          = dynamic_cast<TimeSeriesReferenceInput *>(input()[arg].get());
                     auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
 
-                    if (ts != nullptr && inner_input != nullptr) { inner_input->clone_binding(*ts); }
+                    if (ts != nullptr && inner_input != nullptr) { inner_input->clone_binding(ts); }
                 }
             }
         }

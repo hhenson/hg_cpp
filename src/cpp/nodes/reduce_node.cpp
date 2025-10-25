@@ -269,11 +269,11 @@ namespace hgraph
     template <typename K> void ReduceNode<K>::bind_key_to_node(const K &key, const std::tuple<int64_t, int64_t> &ndx) {
         bound_node_indexes_[key] = ndx;
         auto [node_id, side]     = ndx;
-        //This could be simplified to get the node using direct math instead of getting a view and then get node directly
-        auto nodes               = get_node(node_id);
-        auto node                = nodes[side];
+        // This could be simplified to get the node using direct math instead of getting a view and then get node directly
+        auto nodes = get_node(node_id);
+        auto node  = nodes[side];
 
-        auto  ts_  = (*ts())[key];
+        auto ts_ = (*ts())[key];
 
         // Create new input bundle with the ts (Python line 198)
         node->reset_input(node->input().copy_with(node.get(), {ts_.get()}));
@@ -303,7 +303,7 @@ namespace hgraph
         if (bound_to_key_flags_.contains(inner_input.get())) {
             // Re-parent back to the TSD for cleanup (CRITICAL FIX - Python line 215)
             // Cast to TimeSeriesType::ptr for re_parent
-            inner_input->re_parent(TimeSeriesType::ptr(input()["ts"].get()));
+            inner_input->re_parent(ts().get());
 
             // Create a new empty reference input (Python lines 216-218)
             auto new_ref_input = new TimeSeriesReferenceInput(node.get());
@@ -311,17 +311,15 @@ namespace hgraph
 
             // Re-parent the new input to the node's input bundle (Python line 219)
             // Cast to TimeSeriesType::ptr for re_parent
-            new_ref_input->re_parent(TimeSeriesType::ptr(node->input_ptr().get()));
+            new_ref_input->re_parent(node->input_ptr().get());
 
             // Clone binding from zero (Python line 220)
-            auto zero_ts = dynamic_cast<TimeSeriesReferenceInput *>(input()["zero"].get());
-            if (zero_ts != nullptr) { new_ref_input->clone_binding(*zero_ts); }
+            new_ref_input->clone_binding(zero());
 
         } else {
             // Simple clone binding (CRITICAL FIX - Python line 222)
-            auto zero_ts   = dynamic_cast<TimeSeriesReferenceInput *>(input()["zero"].get());
             auto inner_ref = dynamic_cast<TimeSeriesReferenceInput *>(inner_input.get());
-            if (inner_ref != nullptr && zero_ts != nullptr) { inner_ref->clone_binding(*zero_ts); }
+            inner_ref->clone_binding(zero());
         }
 
         node->notify();

@@ -148,7 +148,7 @@ namespace hgraph
         [[nodiscard]] TimeSeriesReference::ptr value() const;
 
         // Duplicate binding of another input
-        void clone_binding(const TimeSeriesReferenceInput &other);
+        void clone_binding(const TimeSeriesReferenceInput::ptr &other);
 
         [[nodiscard]] bool          bound() const override;
         [[nodiscard]] bool          modified() const override;

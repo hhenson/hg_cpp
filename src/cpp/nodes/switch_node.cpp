@@ -215,7 +215,7 @@ namespace hgraph
                         throw std::runtime_error(
                             fmt::format("SwitchNode wire_graph expects REF inputs for arg '{}'", arg));
                     }
-                    inner_ref->clone_binding(*outer_ref);
+                    inner_ref->clone_binding(outer_ref);
                 }
             }
         }
