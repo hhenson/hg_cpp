@@ -253,14 +253,12 @@ namespace hgraph
         nested_graph_->reduce_graph(start * node_size());
 
         // Keep only the first halved_capacity - active_count free nodes
-        std::sort(free_node_indexes_.begin(), free_node_indexes_.end(),
-                  [](const auto &a, const auto &b) { return a < b; });
+        std::sort(free_node_indexes_.begin(), free_node_indexes_.end(), [](const auto &a, const auto &b) { return a < b; });
 
         int64_t to_keep = halved_capacity - active_count;
         if (static_cast<size_t>(to_keep) < free_node_indexes_.size()) { free_node_indexes_.resize(to_keep); }
 
-        std::sort(free_node_indexes_.begin(), free_node_indexes_.end(),
-                  [](const auto &a, const auto &b) { return a > b; });
+        std::sort(free_node_indexes_.begin(), free_node_indexes_.end(), [](const auto &a, const auto &b) { return a > b; });
     }
 
     template <typename K> void ReduceNode<K>::bind_key_to_node(const K &key, const std::tuple<int64_t, int64_t> &ndx) {
@@ -335,6 +333,16 @@ namespace hgraph
         return {all_nodes.begin() + start, all_nodes.begin() + end};
     }
 
+    template <typename K> const graph_ptr &ReduceNode<K>::nested_graph() const { return nested_graph_; }
+    template <typename K> const std::tuple<int64_t, int64_t> &ReduceNode<K>::input_node_ids() const { return input_node_ids_; }
+    template <typename K> int64_t                             ReduceNode<K>::output_node_id() const { return output_node_id_; }
+    template <typename K> const std::unordered_map<K, std::tuple<int64_t, int64_t>> &ReduceNode<K>::bound_node_indexes() const {
+        return bound_node_indexes_;
+    }
+    template <typename K> const std::vector<std::tuple<int64_t, int64_t>> &ReduceNode<K>::free_node_indexes() const {
+        return free_node_indexes_;
+    }
+
     // Explicit template instantiations for supported key types
     template struct ReduceNode<bool>;
     template struct ReduceNode<int64_t>;
@@ -344,62 +352,30 @@ namespace hgraph
     template struct ReduceNode<engine_time_delta_t>;
     template struct ReduceNode<nb::object>;
 
+    // Template function to register ReduceNode<K> with nanobind
+    template <typename K> void register_reduce_node_type(nb::module_ &m, const char *class_name) {
+        nb::class_<ReduceNode<K>, NestedNode>(m, class_name)
+            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
+                          const std::tuple<int64_t, int64_t> &, int64_t>(),
+                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
+                 "output_node_id"_a)
+            .def_prop_ro("nested_graph", &ReduceNode<K>::nested_graph)
+            .def_prop_ro("ts", &ReduceNode<K>::ts)
+            .def_prop_ro("zero", &ReduceNode<K>::zero)
+            .def_prop_ro("input_node_ids", &ReduceNode<K>::input_node_ids)
+            .def_prop_ro("output_node_id", &ReduceNode<K>::output_node_id)
+            .def_prop_ro("bound_node_indexes", &ReduceNode<K>::bound_node_indexes)
+            .def_prop_ro("free_node_indexes", &ReduceNode<K>::free_node_indexes);
+    }
+
     void register_reduce_node_with_nanobind(nb::module_ &m) {
-        nb::class_<ReduceNode<bool>, NestedNode>(m, "ReduceNode_bool")
-            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::tuple<int64_t, int64_t> &, int64_t>(),
-                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a)
-            .def_prop_ro("ts", &ReduceNode<bool>::ts)
-            .def_prop_ro("zero", &ReduceNode<bool>::zero);
-
-        nb::class_<ReduceNode<int64_t>, NestedNode>(m, "ReduceNode_int")
-            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::tuple<int64_t, int64_t> &, int64_t>(),
-                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a)
-            .def_prop_ro("ts", &ReduceNode<int64_t>::ts)
-            .def_prop_ro("zero", &ReduceNode<int64_t>::zero);
-
-        nb::class_<ReduceNode<double>, NestedNode>(m, "ReduceNode_float")
-            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::tuple<int64_t, int64_t> &, int64_t>(),
-                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a)
-            .def_prop_ro("ts", &ReduceNode<double>::ts)
-            .def_prop_ro("zero", &ReduceNode<double>::zero);
-
-        nb::class_<ReduceNode<engine_date_t>, NestedNode>(m, "ReduceNode_date")
-            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::tuple<int64_t, int64_t> &, int64_t>(),
-                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a)
-            .def_prop_ro("ts", &ReduceNode<engine_date_t>::ts)
-            .def_prop_ro("zero", &ReduceNode<engine_date_t>::zero);
-
-        nb::class_<ReduceNode<engine_time_t>, NestedNode>(m, "ReduceNode_datetime")
-            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::tuple<int64_t, int64_t> &, int64_t>(),
-                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a)
-            .def_prop_ro("ts", &ReduceNode<engine_time_t>::ts)
-            .def_prop_ro("zero", &ReduceNode<engine_time_t>::zero);
-
-        nb::class_<ReduceNode<engine_time_delta_t>, NestedNode>(m, "ReduceNode_timedelta")
-            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::tuple<int64_t, int64_t> &, int64_t>(),
-                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a)
-            .def_prop_ro("ts", &ReduceNode<engine_time_delta_t>::ts)
-            .def_prop_ro("zero", &ReduceNode<engine_time_delta_t>::zero);
-
-        nb::class_<ReduceNode<nb::object>, NestedNode>(m, "ReduceNode_object")
-            .def(nb::init<int64_t, std::vector<int64_t>, NodeSignature::ptr, nb::dict, graph_builder_ptr,
-                          const std::tuple<int64_t, int64_t> &, int64_t>(),
-                 "node_ndx"_a, "owning_graph_id"_a, "signature"_a, "scalars"_a, "nested_graph_builder"_a, "input_node_ids"_a,
-                 "output_node_id"_a)
-            .def_prop_ro("ts", &ReduceNode<nb::object>::ts)
-            .def_prop_ro("zero", &ReduceNode<nb::object>::zero);
+        register_reduce_node_type<bool>(m, "ReduceNode_bool");
+        register_reduce_node_type<int64_t>(m, "ReduceNode_int");
+        register_reduce_node_type<double>(m, "ReduceNode_float");
+        register_reduce_node_type<engine_date_t>(m, "ReduceNode_date");
+        register_reduce_node_type<engine_time_t>(m, "ReduceNode_datetime");
+        register_reduce_node_type<engine_time_delta_t>(m, "ReduceNode_timedelta");
+        register_reduce_node_type<nb::object>(m, "ReduceNode_object");
     }
 
 }  // namespace hgraph

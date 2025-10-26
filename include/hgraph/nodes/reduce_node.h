@@ -32,6 +32,14 @@ namespace hgraph
         TimeSeriesDictInput_T<K>::ptr ts();
         time_series_reference_input_ptr zero();
 
+        // Expose attributes to allow us to more easily inspect the state in Python
+        // Can make debugging easier.
+        const graph_ptr &     nested_graph() const;
+        const std::tuple<int64_t, int64_t>& input_node_ids() const;
+        int64_t output_node_id() const;
+        const std::unordered_map<K, std::tuple<int64_t, int64_t>>& bound_node_indexes() const;
+        const std::vector<std::tuple<int64_t, int64_t>>& free_node_indexes() const;
+
       protected:
         void initialise() override;
         void do_start() override;
