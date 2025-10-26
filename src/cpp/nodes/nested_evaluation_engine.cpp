@@ -23,7 +23,8 @@ namespace hgraph
         auto let{_nested_node->last_evaluation_time()};
         //Unlike python when not set let will be MIN_DT
         // Python: if (let := self._nested_node.last_evaluation_time) and let >= next_time or self._nested_node.is_stopping:
-        if (let != MIN_DT /* equivalent to falisy */ && let >= next_time || _nested_node->is_stopping()) { return; }
+        // In python we evaluate left to right so putting the brackets on the left side should be consistent
+        if ((let != MIN_DT /* equivalent to falisy */ && let >= next_time) || _nested_node->is_stopping()) { return; }
 
         // Match Python: min(next_time, max(self._nested_next_scheduled_evaluation_time, (let or MIN_DT) + MIN_TD))
         // Note let or MIN_DT is equivalent to let
