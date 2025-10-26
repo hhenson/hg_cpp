@@ -143,8 +143,9 @@ namespace hgraph
     }
 
     std::string BoundTimeSeriesReference::to_string() const {
-        // Avoid calling owning_node() methods to prevent infinite loops in debugger
-        return fmt::format("REF[output@{:p}]", static_cast<const void *>(_output.get()));
+         return fmt::format("REF[{}<{}>.ouput@{:p}]", _output->owning_node().signature().name,
+                           fmt::join(_output->owning_node().node_id(), ", "),
+                           const_cast<void *>(static_cast<const void *>(_output.get())));
     }
 
     UnBoundTimeSeriesReference::UnBoundTimeSeriesReference(std::vector<ptr> items) : _items{std::move(items)} {}
