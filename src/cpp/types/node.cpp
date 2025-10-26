@@ -644,6 +644,8 @@ namespace hgraph
 
     void Node::reset_input(time_series_bundle_input_ptr value) {
         _input = std::move(value);
+        _check_all_valid_inputs.clear();
+        _check_valid_inputs.clear();
         _check_valid_inputs.reserve(signature().valid_inputs.has_value() ? signature().valid_inputs->size()
                                                                          : signature().time_series_inputs->size());
         if (signature().valid_inputs.has_value()) {

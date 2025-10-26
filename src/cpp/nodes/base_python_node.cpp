@@ -26,6 +26,11 @@ namespace hgraph
                 _kwargs[key_] = value;
             }
         }
+        _initialise_kwarg_inputs();
+    }
+
+    void BasePythonNode::_initialise_kwarg_inputs() {
+        auto &signature_args = signature().args;
         for (size_t i = 0, l = signature().time_series_inputs.has_value() ? signature().time_series_inputs->size() : 0; i < l;
              ++i) {
             // Apple does not yet support ranges::contains :(
@@ -61,8 +66,12 @@ namespace hgraph
             // }
         }
     }
+    void BasePythonNode::reset_input(time_series_bundle_input_ptr value) {
+        Node::reset_input(value);
+        _initialise_kwarg_inputs();
+    }
 
-class ContextManager
+    class ContextManager
     {
       public:
         explicit ContextManager(BasePythonNode &node) {
@@ -94,7 +103,7 @@ class ContextManager
 
       private:
         std::vector<nb::object> contexts_;
-        std::exception_ptr cached_error_;
+        std::exception_ptr      cached_error_;
     };
 
     void BasePythonNode::do_eval() {

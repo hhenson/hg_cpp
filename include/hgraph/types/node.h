@@ -182,7 +182,7 @@ namespace hgraph
         time_series_bundle_input_ptr input() const;
 
         void set_input(time_series_bundle_input_ptr value);
-        void reset_input(time_series_bundle_input_ptr value);
+        virtual void reset_input(time_series_bundle_input_ptr value);
 
         time_series_output_ptr output();
 
