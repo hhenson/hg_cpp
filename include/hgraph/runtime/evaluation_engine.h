@@ -93,9 +93,9 @@ namespace hgraph
 
         [[nodiscard]] virtual engine_time_t end_time() const = 0;
 
-        const EvaluationClock &evaluation_clock() const { return const_cast<EvaluationEngineApi *>(this)->evaluation_clock(); };
+        EvaluationClock::ptr evaluation_clock() const { return const_cast<EvaluationEngineApi *>(this)->evaluation_clock(); };
 
-        [[nodiscard]] virtual EvaluationClock &evaluation_clock() = 0;
+        [[nodiscard]] virtual EvaluationClock::ptr evaluation_clock() = 0;
 
         virtual void request_engine_stop() = 0;
 
@@ -185,7 +185,7 @@ namespace hgraph
 
         [[nodiscard]] engine_time_t end_time() const override;
 
-        [[nodiscard]] EvaluationClock &evaluation_clock() override;
+        [[nodiscard]] EvaluationClock::ptr evaluation_clock() override;
 
         EngineEvaluationClock &engine_evaluation_clock() override;
 
@@ -334,7 +334,7 @@ namespace hgraph
         [[nodiscard]] EvaluationMode   evaluation_mode() const override;
         [[nodiscard]] engine_time_t    start_time() const override;
         [[nodiscard]] engine_time_t    end_time() const override;
-        [[nodiscard]] EvaluationClock &evaluation_clock() override;
+        [[nodiscard]] EvaluationClock::ptr evaluation_clock() override;
         void                           request_engine_stop() override;
         bool                           is_stop_requested() override;
         void                           add_before_evaluation_notification(std::function<void()> &&fn) override;

@@ -43,7 +43,7 @@ namespace hgraph
 
         [[nodiscard]] engine_time_t start_time() const override;
 
-        [[nodiscard]] EngineEvaluationClock &evaluation_clock() override;
+        [[nodiscard]] EvaluationClock::ptr evaluation_clock() override;
 
         [[nodiscard]] EngineEvaluationClock &engine_evaluation_clock() override;
 
