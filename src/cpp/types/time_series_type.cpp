@@ -24,7 +24,7 @@ namespace hgraph
 
     void TimeSeriesType::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesType, nb::intrusive_base>(m, "TimeSeriesType")
-            .def_prop_ro("owning_node", static_cast<const Node &(TimeSeriesType::*)() const>(&TimeSeriesType::owning_node))
+            .def_prop_ro("owning_node", static_cast<node_ptr (TimeSeriesType::*)() const>(&TimeSeriesType::owning_node))
             .def_prop_ro("owning_graph", static_cast<const Graph &(TimeSeriesType::*)() const>(&TimeSeriesType::owning_graph))
             .def_prop_ro("value", &TimeSeriesType::py_value)
             .def_prop_ro("delta_value", &TimeSeriesType::py_delta_value)
@@ -78,9 +78,9 @@ namespace hgraph
         }
     }
 
-    Graph &TimeSeriesType::owning_graph() { return *owning_node().graph(); }
+    Graph &TimeSeriesType::owning_graph() { return *owning_node()->graph(); }
 
-    const Graph &TimeSeriesType::owning_graph() const { return *owning_node().graph(); }
+    const Graph &TimeSeriesType::owning_graph() const { return *owning_node()->graph(); }
 
     void TimeSeriesOutput::clear() {}
 
@@ -115,15 +115,15 @@ namespace hgraph
             });
     }
 
-    const Node &TimeSeriesType::_owning_node() const {
+    node_ptr TimeSeriesType::_owning_node() const {
         if (_parent_ts_or_node.has_value()) {
             return std::visit(
-                []<typename T_>(T_ &&value) -> const Node & {
+                []<typename T_>(T_ &&value) -> node_ptr {
                     using T = std::decay_t<T_>;  // Get the actual type
                     if constexpr (std::is_same_v<T, TimeSeriesType::ptr>) {
-                        return (*value).owning_node();
+                        return value->owning_node();
                     } else if constexpr (std::is_same_v<T, Node::ptr>) {
-                        return *value;
+                        return value;
                     } else {
                         throw std::runtime_error("Unknown type");
                     }
@@ -138,9 +138,9 @@ namespace hgraph
 
     TimeSeriesType::TimeSeriesType(const ptr &parent) : _parent_ts_or_node{parent} {}
 
-    Node &TimeSeriesType::owning_node() { return const_cast<Node &>(_owning_node()); }
+    node_ptr TimeSeriesType::owning_node() { return _owning_node(); }
 
-    const Node &TimeSeriesType::owning_node() const { return _owning_node(); }
+    node_ptr TimeSeriesType::owning_node() const { return _owning_node(); }
 
     TimeSeriesInput::ptr TimeSeriesInput::parent_input() const {
         return static_cast<TimeSeriesInput *>(_parent_time_series().get());  // NOLINT(*-pro-type-static-cast-downcast)
@@ -179,7 +179,7 @@ namespace hgraph
         // - The input was previously bound (rebinding case), OR
         // - The new output is valid
         // This matches the Python implementation: (was_bound or self._output.valid)
-        if ((owning_node().is_started() || owning_node().is_starting()) && _output.get() && (was_bound || _output->valid())) {
+        if ((owning_node()->is_started() || owning_node()->is_starting()) && _output.get() && (was_bound || _output->valid())) {
             _sample_time = owning_graph().evaluation_clock().evaluation_time();
             if (active()) {
                 notify(_sample_time);
@@ -202,11 +202,11 @@ namespace hgraph
         if (bound()) {
             do_un_bind_output(unbind_refs);
 
-            if (owning_node().is_started() && was_valid) {
+            if (owning_node()->is_started() && was_valid) {
                 _sample_time = owning_graph().evaluation_clock().evaluation_time();
                 if (active()) {
                     // Notify as the state of the node has changed from bound to un_bound
-                    owning_node().notify(_sample_time);
+                    owning_node()->notify(_sample_time);
                 }
             }
         }
@@ -305,7 +305,7 @@ namespace hgraph
             if (has_parent_input()) {
                 parent_input()->notify_parent(this, modified_time);
             } else {
-                owning_node().notify(modified_time);
+                owning_node()->notify(modified_time);
             }
         }
     }

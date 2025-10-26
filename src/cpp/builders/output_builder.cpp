@@ -22,7 +22,7 @@ namespace hgraph
         if (item->_subscribers.size() != 0) {
             fmt::print("Output instance still has subscribers when released, this is a bug.\nOutput belongs to node: "
                        "{}\nSubscriber count: {}",
-                       (item->has_owning_node() ? item->owning_node().signature().name : "null"),
+                       (item->has_owning_node() ? item->owning_node()->signature().name : "null"),
                        std::to_string(item->_subscribers.size()));
         }
         item->reset_parent_or_node();

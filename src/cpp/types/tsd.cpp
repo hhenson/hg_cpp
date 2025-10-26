@@ -862,7 +862,7 @@ namespace hgraph
 
         key_set_t().bind_output(output_key_set);
 
-        if (owning_node().is_started() && has_output()) {
+        if (owning_node()->is_started() && has_output()) {
             output_t().remove_key_observer(this);
             _prev_output = {&output_t()};
             // TODO: check this will not enter again

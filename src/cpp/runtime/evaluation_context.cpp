@@ -11,7 +11,7 @@ namespace hgraph
 
     EvaluationClock &EvaluationContext::evaluation_clock() const { return *_evaluation_clock; }
     Graph           &EvaluationContext::graph() const { return *_graph; }
-    Node            &EvaluationContext::node() const { return *_node; }
+    node_ptr         EvaluationContext::node() const { return node_ptr{_node}; }
     void             EvaluationContext::set_node(Node *node) { _node = node; }
 
 }  // namespace hgraph

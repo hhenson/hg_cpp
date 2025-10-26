@@ -17,7 +17,7 @@ namespace hgraph
     TimeSeriesOutput::ptr FeatureOutputExtension<T>::create_or_increment(const T &key, const void *requester) {
         auto it = _outputs.find(key);
         if (it == _outputs.end()) {
-            auto new_output{output_builder->make_instance(&owning_output->owning_node())};
+            auto new_output{output_builder->make_instance(owning_output->owning_node())};
 
             auto [inserted_it, success] = _outputs.emplace(key, FeatureOutputRequestTracker(new_output));
 

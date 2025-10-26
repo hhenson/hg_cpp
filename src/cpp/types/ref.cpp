@@ -143,8 +143,8 @@ namespace hgraph
     }
 
     std::string BoundTimeSeriesReference::to_string() const {
-         return fmt::format("REF[{}<{}>.ouput@{:p}]", _output->owning_node().signature().name,
-                           fmt::join(_output->owning_node().node_id(), ", "),
+         return fmt::format("REF[{}<{}>.ouput@{:p}]", _output->owning_node()->signature().name,
+                           fmt::join(_output->owning_node()->node_id(), ", "),
                            const_cast<void *>(static_cast<const void *>(_output.get())));
     }
 
@@ -361,7 +361,7 @@ namespace hgraph
             for (size_t i = 0; i < other->_items->size(); ++i) { this->get_ref_input(i)->clone_binding((*other->_items)[i]); }
         } else if (other->has_value()) {
             _value = other->_value;
-            if (owning_node().is_started()) {
+            if (owning_node()->is_started()) {
                 set_sample_time(owning_graph().evaluation_clock().evaluation_time());
                 if (active()) { notify(sample_time()); }
             }
@@ -371,7 +371,7 @@ namespace hgraph
     bool TimeSeriesReferenceInput::bind_output(time_series_output_ptr output_) {
         auto peer = do_bind_output(output_);
 
-        if (owning_node().is_started() && has_output() && output()->valid()) {
+        if (owning_node()->is_started() && has_output() && output()->valid()) {
             set_sample_time(owning_graph().evaluation_clock().evaluation_time());
             if (active()) { notify(sample_time()); }
         }
@@ -383,11 +383,11 @@ namespace hgraph
         bool was_valid = valid();
         do_un_bind_output(unbind_refs);
 
-        if (has_owning_node() && owning_node().is_started() && was_valid) {
+        if (has_owning_node() && owning_node()->is_started() && was_valid) {
             set_sample_time(owning_graph().evaluation_clock().evaluation_time());
             if (active()) {
                 // Notify as the state of the node has changed from bound to unbound
-                owning_node().notify(sample_time());
+                owning_node()->notify(sample_time());
             }
         }
     }
@@ -445,11 +445,11 @@ namespace hgraph
         // We are binding directly to a concrete output: wrap it as a reference value
         _value = TimeSeriesReference::make(std::move(output_));
         output().reset();
-        if (owning_node().is_started()) {
+        if (owning_node()->is_started()) {
             set_sample_time(owning_graph().evaluation_clock().evaluation_time());
             notify(sample_time());
         } else {
-            owning_node().add_start_input(this);
+            owning_node()->add_start_input(this);
         }
         return false;
     }
@@ -459,7 +459,7 @@ namespace hgraph
         if (has_value()) {
             reset_value();
             // TODO: Do we need to notify here? Should we notify only if the input is active?
-            set_sample_time(owning_node().is_started() ? owning_graph().evaluation_clock().evaluation_time() : MIN_ST);
+            set_sample_time(owning_node()->is_started() ? owning_graph().evaluation_clock().evaluation_time() : MIN_ST);
         }
         if (_items.has_value()) {
             for (auto &item : *_items) { item->un_bind_output(unbind_refs); }

@@ -26,7 +26,7 @@ namespace hgraph {
 
         [[nodiscard]] EvaluationClock& evaluation_clock() const;
         [[nodiscard]] Graph& graph() const;
-        [[nodiscard]] Node& node() const;
+        [[nodiscard]] node_ptr node() const;
     protected:
         void set_node(Node *node);
     private:

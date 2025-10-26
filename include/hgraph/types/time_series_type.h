@@ -25,9 +25,9 @@ namespace hgraph
         // Pure virtual methods to be implemented in derived classes
 
         // Method for owning node
-        [[nodiscard]] Node &owning_node();
+        [[nodiscard]] node_ptr owning_node();
 
-        [[nodiscard]] const Node &owning_node() const;
+        [[nodiscard]] node_ptr owning_node() const;
 
         // Method for owning graph
         [[nodiscard]] Graph &owning_graph();
@@ -105,7 +105,7 @@ namespace hgraph
          * Utility to extract the owning node associated to this time-series.
          * Will raise if no value set.
          */
-        const Node &_owning_node() const;
+        node_ptr _owning_node() const;
     };
 
     struct TimeSeriesInput;
