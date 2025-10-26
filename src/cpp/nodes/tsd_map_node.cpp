@@ -204,7 +204,7 @@ namespace hgraph
             }
         }
 
-        if (output_node_id_) { tsd_output().erase(key); }
+        if (output_node_id_ >= 0) { tsd_output().erase(key); }
     }
 
     template <typename K> void TsdMapNode<K>::wire_graph(const K &key, Graph::ptr &graph) {
@@ -233,7 +233,7 @@ namespace hgraph
             }
         }
 
-        if (output_node_id_) {
+        if (output_node_id_ >= 0) {
             auto  node       = graph->nodes()[output_node_id_];
             auto &output_tsd = tsd_output();
             node->set_output(output_tsd._get_or_create(key).get());
