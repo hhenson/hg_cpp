@@ -36,23 +36,23 @@ namespace hgraph
             return;
         }
 
-        auto &output_obj = output();
+        auto output_obj = output();
 
         // Check the type of the output and set the appropriate combine function
         // TimeSeriesSet (TSS)
-        if (dynamic_cast<TimeSeriesSetOutput *>(&output_obj)) {
+        if (dynamic_cast<TimeSeriesSetOutput *>(output_obj.get())) {
             _delta_combine_fn = _combine_tss_delta;
         }
         // TimeSeriesDict (TSD)
-        else if (dynamic_cast<TimeSeriesDictOutput *>(&output_obj)) {
+        else if (dynamic_cast<TimeSeriesDictOutput *>(output_obj.get())) {
             _delta_combine_fn = _combine_tsd_delta;
         }
         // TimeSeriesBundle (TSB)
-        else if (dynamic_cast<TimeSeriesBundleOutput *>(&output_obj)) {
+        else if (dynamic_cast<TimeSeriesBundleOutput *>(output_obj.get())) {
             _delta_combine_fn = _combine_tsb_delta;
         }
         // TimeSeriesList (TSL)
-        else if (dynamic_cast<TimeSeriesListOutput *>(&output_obj)) {
+        else if (dynamic_cast<TimeSeriesListOutput *>(output_obj.get())) {
             _delta_combine_fn = _combine_tsl_delta_value;
         }
         // Default: simple replacement
@@ -109,7 +109,7 @@ namespace hgraph
 
     void LastValuePullNode::do_eval() {
         if (_delta_value.has_value()) {
-            output().apply_result(_delta_value.value());
+            output()->apply_result(_delta_value.value());
             _delta_value.reset();
         }
     }

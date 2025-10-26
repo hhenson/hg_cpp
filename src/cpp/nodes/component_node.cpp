@@ -26,7 +26,7 @@ namespace hgraph
     void ComponentNode::wire_outputs() {
         if (m_output_node_id_) {
             auto node = m_active_graph_->nodes()[m_output_node_id_];
-            node->set_output(&output());
+            node->set_output(output());
         }
     }
 
@@ -36,7 +36,7 @@ namespace hgraph
         m_active_graph_ = m_nested_graph_builder_->make_instance(node_id(), this, id_);
         m_active_graph_->traits().set_trait(RECORDABLE_ID_TRAIT, nb::cast(id_));
         m_active_graph_->set_evaluation_engine(new NestedEvaluationEngine(
-            &graph().evaluation_engine(), new NestedEngineEvaluationClock(&graph().evaluation_engine_clock(), this)));
+            &graph()->evaluation_engine(), new NestedEngineEvaluationClock(&graph()->evaluation_engine_clock(), this)));
 
         initialise_component(*m_active_graph_);
         wire_graph();

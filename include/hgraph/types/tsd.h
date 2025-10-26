@@ -292,7 +292,7 @@ namespace hgraph
 
         [[nodiscard]] nb::object        py_get_item(const nb::object &item) const override;
         [[nodiscard]] nb::object        py_get_or_create(const nb::object &key) override;
-        [[nodiscard]] const value_type &operator[](const key_type &item) const;
+        [[nodiscard]] value_type        operator[](const key_type &item) const;
         [[nodiscard]] value_type        operator[](const key_type &item);
 
         [[nodiscard]] nb::iterator py_keys() const override;

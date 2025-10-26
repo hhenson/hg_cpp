@@ -35,13 +35,13 @@ namespace hgraph
                 node->notify();
 
                 // Fetch the outer time-series input to be passed into the inner node as its 'ts'
-                auto ts = input()[arg];
+                auto ts = (*input())[arg];
 
                 // Replace the inner node's input with a copy that uses the outer ts and is owned by the inner node
-                node->reset_input(node->input().copy_with(node.get(), {ts.get()}));
+                node->reset_input(node->input()->copy_with(node.get(), {ts.get()}));
 
                 // Re-parent the provided ts so its parent container becomes the inner node's input bundle
-                ts->re_parent(node->input_ptr().get());
+                ts->re_parent(node->input().get());
             }
         }
     }
@@ -50,14 +50,14 @@ namespace hgraph
         if (m_output_node_id_) {
             auto node = m_active_graph_->nodes()[m_output_node_id_];
             // Align with Python: simply replace the inner node's output with the parent node's output
-            node->set_output(output_ptr());
+            node->set_output(output());
         }
     }
 
     void NestedGraphNode::initialise() {
         m_active_graph_ = m_nested_graph_builder_->make_instance(node_id(), this, signature().name);
         m_active_graph_->set_evaluation_engine(new NestedEvaluationEngine(
-            &graph().evaluation_engine(), new NestedEngineEvaluationClock(&graph().evaluation_engine_clock(), this)));
+            &graph()->evaluation_engine(), new NestedEngineEvaluationClock(&graph()->evaluation_engine_clock(), this)));
         initialise_component(*m_active_graph_);
         wire_graph();
     }

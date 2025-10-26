@@ -173,38 +173,32 @@ namespace hgraph
 
         const nb::dict &scalars() const;
 
-        Graph &graph();
-
-        const Graph &graph() const;
+        graph_ptr graph();
+        graph_ptr graph() const;
 
         void set_graph(graph_ptr value);
 
-        TimeSeriesBundleInput       &input();
-        const TimeSeriesBundleInput &input() const;
-        time_series_bundle_input_ptr input_ptr();
-        time_series_bundle_input_ptr input_ptr() const;
+        time_series_bundle_input_ptr input();
+        time_series_bundle_input_ptr input() const;
 
         void set_input(time_series_bundle_input_ptr value);
         void reset_input(time_series_bundle_input_ptr value);
 
-        TimeSeriesOutput      &output();
-        time_series_output_ptr output_ptr();
+        time_series_output_ptr output();
 
         void set_output(time_series_output_ptr value);
 
-        TimeSeriesBundleOutput       &recordable_state();
-        time_series_bundle_output_ptr recordable_state_ptr();
+        time_series_bundle_output_ptr recordable_state();
 
         void set_recordable_state(time_series_bundle_output_ptr value);
 
         bool has_recordable_state() const;
 
-        NodeScheduler &scheduler();
+        NodeScheduler::ptr scheduler();
         bool           has_scheduler() const;
         void           unset_scheduler();
 
-        TimeSeriesOutput      &error_output();
-        time_series_output_ptr error_output_ptr();
+        time_series_output_ptr error_output();
 
         void set_error_output(time_series_output_ptr value);
 

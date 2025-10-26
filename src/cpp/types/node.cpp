@@ -451,7 +451,7 @@ namespace hgraph
 
     bool NodeScheduler::is_scheduled_node() const {
         return !_scheduled_events.empty() &&
-               _scheduled_events.begin()->first == _node->graph().evaluation_clock().evaluation_time();
+               _scheduled_events.begin()->first == _node->graph()->evaluation_clock().evaluation_time();
     }
 
     bool NodeScheduler::has_tag(const std::string &tag) const { return _tags.contains(tag); }
@@ -478,7 +478,7 @@ namespace hgraph
         }
 
         if (on_wall_clock) {
-            auto clock{dynamic_cast<RealTimeEvaluationClock *>(&_node->graph().evaluation_clock())};
+            auto clock{dynamic_cast<RealTimeEvaluationClock *>(&_node->graph()->evaluation_clock())};
             if (clock) {
                 if (!tag.has_value()) { throw std::runtime_error("Can't schedule an alarm without a tag"); }
                 auto        tag_{tag.value()};
@@ -490,7 +490,7 @@ namespace hgraph
         }
 
         auto is_started{_node->is_started()};
-        auto now_{is_scheduled_node() ? _node->graph().evaluation_clock().evaluation_time() : MIN_DT};
+        auto now_{is_scheduled_node() ? _node->graph()->evaluation_clock().evaluation_time() : MIN_DT};
         if (when > now_) {
             _tags[tag.value_or("")] = when;
             auto current_first      = !_scheduled_events.empty() ? _scheduled_events.begin()->first : MAX_DT;
@@ -498,13 +498,13 @@ namespace hgraph
             auto next_{next_scheduled_time()};
             if (is_started && current_first > next_) {
                 bool force_set{original_time.has_value() && original_time.value() < when};
-                _node->graph().schedule_node(_node->node_ndx(), next_, force_set);
+                _node->graph()->schedule_node(_node->node_ndx(), next_, force_set);
             }
         }
     }
 
     void NodeScheduler::schedule(engine_time_delta_t when, std::optional<std::string> tag, bool on_wall_clock) {
-        auto when_{_node->graph().evaluation_clock().evaluation_time() + when};
+        auto when_{_node->graph()->evaluation_clock().evaluation_time() + when};
         schedule(when_, std::move(tag), on_wall_clock);
     }
 
@@ -523,7 +523,7 @@ namespace hgraph
     void NodeScheduler::reset() {
         _scheduled_events.clear();
         _tags.clear();
-        auto real_time_clock = dynamic_cast<RealTimeEvaluationClock *>(&_node->graph().evaluation_clock());
+        auto real_time_clock = dynamic_cast<RealTimeEvaluationClock *>(&_node->graph()->evaluation_clock());
         if (real_time_clock) {
             for (const auto &alarm : _alarm_tags) { real_time_clock->cancel_alarm(alarm.first); }
             _alarm_tags.clear();
@@ -534,12 +534,12 @@ namespace hgraph
 
     void NodeScheduler::advance() {
         if (_scheduled_events.empty()) { return; }
-        auto until = _node->graph().evaluation_clock().evaluation_time();
+        auto until = _node->graph()->evaluation_clock().evaluation_time();
         // Note: empty string is considered smallest in std::string comparison,
         // so upper_bound will correctly find elements <= until regardless of tag value
         _scheduled_events.erase(_scheduled_events.begin(), _scheduled_events.upper_bound({until, VERY_LARGE_STRING}));
 
-        if (!_scheduled_events.empty()) { _node->graph().schedule_node(_node->node_ndx(), _scheduled_events.begin()->first); }
+        if (!_scheduled_events.empty()) { _node->graph()->schedule_node(_node->node_ndx(), _scheduled_events.begin()->first); }
     }
 
     void NodeScheduler::register_with_nanobind(nb::module_ &m) {
@@ -578,7 +578,7 @@ namespace hgraph
         std::string alarm_tag = fmt::format("{}:{}", reinterpret_cast<std::uintptr_t>(this), tag);
         _alarm_tags.erase(alarm_tag);
         _scheduled_events.insert({when, tag});
-        _node->graph().schedule_node(_node->node_ndx(), when);
+        _node->graph()->schedule_node(_node->node_ndx(), when);
     }
 
     Node::Node(int64_t node_ndx, std::vector<int64_t> owning_graph_id, NodeSignature::ptr signature, nb::dict scalars)
@@ -587,17 +587,17 @@ namespace hgraph
 
     void Node::notify(engine_time_t modified_time) {
         if (is_started() || is_starting()) {
-            graph().schedule_node(node_ndx(), modified_time);
+            graph()->schedule_node(node_ndx(), modified_time);
         } else {
-            scheduler().schedule(MIN_ST, "start");
+            scheduler()->schedule(MIN_ST, "start");
         }
     }
 
-    void Node::notify() { notify(graph().evaluation_clock().evaluation_time()); }
+    void Node::notify() { notify(graph()->evaluation_clock().evaluation_time()); }
 
     void Node::notify_next_cycle() {
         if (is_started() || is_starting()) {
-            graph().schedule_node(node_ndx(), graph().evaluation_clock().next_cycle_evaluation_time());
+            graph()->schedule_node(node_ndx(), graph()->evaluation_clock().next_cycle_evaluation_time());
         } else {
             notify();
         }
@@ -621,17 +621,13 @@ namespace hgraph
 
     const nb::dict &Node::scalars() const { return _scalars; }
 
-    Graph &Node::graph() { return *_graph; }
-
-    const Graph &Node::graph() const { return *_graph; }
+    graph_ptr Node::graph() { return _graph; }
+    graph_ptr Node::graph() const { return _graph; }
 
     void Node::set_graph(graph_ptr value) { _graph = value; }
 
-    TimeSeriesBundleInput       &Node::input() { return *_input; }
-    const TimeSeriesBundleInput &Node::input() const { return *_input; }
-
-    time_series_bundle_input_ptr Node::input_ptr() { return _input; }
-    time_series_bundle_input_ptr Node::input_ptr() const { return _input; }
+    time_series_bundle_input_ptr Node::input() { return _input; }
+    time_series_bundle_input_ptr Node::input() const { return _input; }
 
     void Node::set_input(time_series_bundle_input_ptr value) {
         if (has_input()) { throw std::runtime_error("Input already set on node: " + _signature->signature()); }
@@ -643,43 +639,40 @@ namespace hgraph
         _check_valid_inputs.reserve(signature().valid_inputs.has_value() ? signature().valid_inputs->size()
                                                                          : signature().time_series_inputs->size());
         if (signature().valid_inputs.has_value()) {
-            for (const auto &key : std::views::all(*signature().valid_inputs)) { _check_valid_inputs.push_back(input()[key]); }
+            for (const auto &key : std::views::all(*signature().valid_inputs)) { _check_valid_inputs.push_back((*input())[key]); }
         } else {
             for (const auto &key : std::views::elements<0>(*signature().time_series_inputs)) {
                 // Do not treat context inputs as required by default
                 bool is_context = signature().context_inputs.has_value() && signature().context_inputs->contains(key);
-                if (!is_context) { _check_valid_inputs.push_back(input()[key]); }
+                if (!is_context) { _check_valid_inputs.push_back((*input())[key]); }
             }
         }
         if (signature().all_valid_inputs.has_value()) {
             _check_all_valid_inputs.reserve(signature().all_valid_inputs->size());
-            for (const auto &key : *signature().all_valid_inputs) { _check_all_valid_inputs.push_back(input()[key]); }
+            for (const auto &key : *signature().all_valid_inputs) { _check_all_valid_inputs.push_back((*input())[key]); }
         }
     }
 
-    TimeSeriesOutput      &Node::output() { return *_output; }
-    time_series_output_ptr Node::output_ptr() { return _output; }
+    time_series_output_ptr Node::output() { return _output; }
 
     void Node::set_output(time_series_output_ptr value) { _output = value; }
 
-    TimeSeriesBundleOutput       &Node::recordable_state() { return *_recordable_state; }
-    time_series_bundle_output_ptr Node::recordable_state_ptr() { return _recordable_state; }
+    time_series_bundle_output_ptr Node::recordable_state() { return _recordable_state; }
 
     void Node::set_recordable_state(nb::ref<TimeSeriesBundleOutput> value) { _recordable_state = value; }
 
     bool Node::has_recordable_state() const { return _recordable_state.get() != nullptr; }
 
-    NodeScheduler &Node::scheduler() {
+    NodeScheduler::ptr Node::scheduler() {
         if (_scheduler.get() == nullptr) { _scheduler = new NodeScheduler(this); }
-        return *_scheduler;
+        return _scheduler;
     }
 
     bool Node::has_scheduler() const { return _scheduler != nullptr; }
 
     void Node::unset_scheduler() { _scheduler.reset(); }
 
-    TimeSeriesOutput      &Node::error_output() { return *_error_output; }
-    time_series_output_ptr Node::error_output_ptr() { return _error_output; }
+    time_series_output_ptr Node::error_output() { return _error_output; }
 
     void Node::set_error_output(time_series_output_ptr value) { _error_output = std::move(value); }
 
@@ -700,13 +693,13 @@ namespace hgraph
             .def_prop_ro("node_id", &Node::node_id)
             .def_prop_ro("signature", &Node::signature)
             .def_prop_ro("scalars", &Node::scalars)
-            .def_prop_rw("graph", static_cast<const Graph &(Node::*)() const>(&Node::graph), &Node::set_graph)
-            .def_prop_rw("input", static_cast<const TimeSeriesBundleInput &(Node::*)() const>(&Node::input), &Node::set_input)
+            .def_prop_rw("graph", static_cast<graph_ptr (Node::*)() const>(&Node::graph), &Node::set_graph)
+            .def_prop_rw("input", static_cast<time_series_bundle_input_ptr (Node::*)() const>(&Node::input), &Node::set_input)
             .def_prop_ro("inputs",
                          [](Node &self) {
                              nb::dict d;
-                             auto     inp_{self.input()};
-                             for (const auto &key : self.input().schema().keys()) { d[key.c_str()] = inp_[key]; }
+                             auto     inp_{*self.input()};
+                             for (const auto &key : inp_.schema().keys()) { d[key.c_str()] = inp_[key]; }
                              return d;
                          })
             .def_prop_ro("start_inputs",
@@ -785,12 +778,12 @@ namespace hgraph
     void Node::start() {
         do_start();
         if (has_scheduler()) {
-            auto pop_result = scheduler().pop_tag("start");
+            auto pop_result = scheduler()->pop_tag("start");
             if (pop_result != MIN_DT) {
                 notify();
                 if (!signature().uses_scheduler()) { _scheduler.reset(); }
             } else {
-                scheduler().advance();
+                scheduler()->advance();
             }
         }
     }
@@ -801,8 +794,8 @@ namespace hgraph
         {
             Node *node;
             ~Cleanup() {
-                if (node->has_input()) { node->input().un_bind_output(true); }
-                if (node->has_scheduler()) { node->scheduler().reset(); }
+                if (node->has_input()) { node->input()->un_bind_output(true); }
+                if (node->has_scheduler()) { node->scheduler()->reset(); }
             }
         } cleanup{this};
 
@@ -820,7 +813,7 @@ namespace hgraph
                 // Apple does not yet support ranges::contains :(
                 if (!signature().active_inputs ||
                     (std::ranges::find(active_inputs, signature().args[i]) != std::ranges::end(active_inputs))) {
-                    input()[i]->make_active();  // Assuming `make_active` is a method of the `TimeSeriesInput` type
+                    (*input())[i]->make_active();  // Assuming `make_active` is a method of the `TimeSeriesInput` type
                 }
             }
         }
@@ -843,7 +836,7 @@ namespace hgraph
             // Check scheduler state
             if (should_eval && _signature->uses_scheduler() && !scheduled) {
                 should_eval = !signature().time_series_inputs.has_value() ||
-                              std::ranges::any_of(input().values(),
+                              std::ranges::any_of(input()->values(),
                                                   [](const auto &input_) { return input_->modified() && input_->active(); });
             }
         }
@@ -863,7 +856,7 @@ namespace hgraph
             // Must have a scheduler if it is scheduled
             _scheduler->advance();
         } else if (has_scheduler() && _scheduler->requires_scheduling()) {
-            graph().schedule_node(node_ndx(), _scheduler->next_scheduled_time());
+            graph()->schedule_node(node_ndx(), _scheduler->next_scheduled_time());
         }
     }
 

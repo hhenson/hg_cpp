@@ -113,7 +113,7 @@ namespace hgraph
         }
 
         // Finally, set this node's own REF output to the captured value (may be None)
-        auto my_output = dynamic_cast<TimeSeriesReferenceOutput *>(&output());
+        auto my_output = dynamic_cast<TimeSeriesReferenceOutput *>(output().get());
         if (!my_output) {
             throw std::runtime_error("ContextStubSourceNode: output is not a TimeSeriesReferenceOutput");
         }

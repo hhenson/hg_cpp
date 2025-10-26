@@ -54,10 +54,10 @@ namespace hgraph
     }
 
     void NodeBuilder::release_instance(node_ptr &item) const {
-        if (input_builder) { (*input_builder)->release_instance(item->input_ptr().get()); }
-        if (output_builder) { (*output_builder)->release_instance(item->output_ptr().get()); }
-        if (error_builder) { (*error_builder)->release_instance(item->error_output_ptr().get()); }
-        if (recordable_state_builder) { (*recordable_state_builder)->release_instance(item->recordable_state_ptr().get()); }
+        if (input_builder) { (*input_builder)->release_instance(item->input().get()); }
+        if (output_builder) { (*output_builder)->release_instance(item->output().get()); }
+        if (error_builder) { (*error_builder)->release_instance(item->error_output().get()); }
+        if (recordable_state_builder) { (*recordable_state_builder)->release_instance(item->recordable_state().get()); }
         dispose_component(*item.get());
     }
 

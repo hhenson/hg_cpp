@@ -48,7 +48,7 @@ namespace hgraph
         auto          it = node->scheduled_keys_by_rank_[rank].find(_key);
         engine_time_t tm = (it != node->scheduled_keys_by_rank_[rank].end()) ? it->second : MIN_DT;
 
-        if (tm == MIN_DT || tm > next_time || tm < node->graph().evaluation_clock().evaluation_time()) {
+        if (tm == MIN_DT || tm > next_time || tm < node->graph()->evaluation_clock().evaluation_time()) {
             node->schedule_graph(_key, next_time);
         }
 
@@ -71,10 +71,10 @@ namespace hgraph
 
         // Set up the reference output and register in GlobalState
         if (GlobalState::has_instance()) {
-            auto tsb_output{dynamic_cast<TimeSeriesBundleOutput &>(this->output())};
+            auto *tsb_output = dynamic_cast<TimeSeriesBundleOutput *>(this->output().get());
             // Get the "out" and "ref" outputs from the output bundle
-            auto &tsd_output = dynamic_cast<TimeSeriesDictOutput_T<K> &>(*tsb_output["out"]);
-            auto &ref_output = dynamic_cast<TimeSeriesReferenceOutput &>(*tsb_output["ref"]);
+            auto &tsd_output = dynamic_cast<TimeSeriesDictOutput_T<K> &>(*(*tsb_output)["out"]);
+            auto &ref_output = dynamic_cast<TimeSeriesReferenceOutput &>(*(*tsb_output)["ref"]);
 
             // Create a TimeSeriesReference from the "out" output and set it on the "ref" output
             auto reference = TimeSeriesReference::make(time_series_output_ptr(&tsd_output));
@@ -98,7 +98,7 @@ namespace hgraph
         this->mark_evaluated();
 
         // 1. Process keys input (additions/removals)
-        auto &input_bundle = dynamic_cast<TimeSeriesBundleInput &>(this->input());
+        auto &input_bundle = dynamic_cast<TimeSeriesBundleInput &>(*this->input());
         auto &keys         = dynamic_cast<TimeSeriesSetInput_T<K> &>(*input_bundle[TsdMapNode<K>::KEYS_ARG]);
         if (keys.modified()) {
             for (const auto &k : keys.added()) {
@@ -189,13 +189,13 @@ namespace hgraph
         }
 
         // 6. Schedule next evaluation if needed
-        if (next_time < MAX_DT) { this->graph().schedule_node(this->node_ndx(), next_time); }
+        if (next_time < MAX_DT) { this->graph()->schedule_node(this->node_ndx(), next_time); }
     }
 
     template <typename K> TimeSeriesDictOutput_T<K> &MeshNode<K>::tsd_output() {
-        // Access output bundle's "out" member - output() returns TimeSeriesBundleOutput
-        auto &output_bundle = dynamic_cast<TimeSeriesBundleOutput &>(this->output());
-        return dynamic_cast<TimeSeriesDictOutput_T<K> &>(*output_bundle["out"]);
+        // Access output bundle's "out" member - output() returns smart pointer to TimeSeriesBundleOutput
+        auto *output_bundle = dynamic_cast<TimeSeriesBundleOutput *>(this->output().get());
+        return dynamic_cast<TimeSeriesDictOutput_T<K> &>(*(*output_bundle)["out"]);
     }
 
     template <typename K> void MeshNode<K>::create_new_graph(const K &key, int rank) {
@@ -210,8 +210,8 @@ namespace hgraph
         // Set up evaluation engine with MeshNestedEngineEvaluationClock
         // Pattern from TsdMapNode: new NestedEvaluationEngine(&eval_engine, new Clock(&clock, key, this))
         graph->set_evaluation_engine(new NestedEvaluationEngine(
-            &this->graph().evaluation_engine(),
-            new MeshNestedEngineEvaluationClock<K>(&this->graph().evaluation_engine().engine_evaluation_clock(), key, this)));
+            &this->graph()->evaluation_engine(),
+            new MeshNestedEngineEvaluationClock<K>(&this->graph()->evaluation_engine().engine_evaluation_clock(), key, this)));
 
         initialise_component(*graph);
         this->wire_graph(key, graph);
@@ -228,10 +228,10 @@ namespace hgraph
         // Update scheduled rank time
         auto          rank_it           = scheduled_ranks_.find(rank);
         engine_time_t current_rank_time = (rank_it != scheduled_ranks_.end()) ? rank_it->second : MAX_DT;
-        engine_time_t eval_time         = this->graph().evaluation_clock().evaluation_time();
+        engine_time_t eval_time         = this->graph()->evaluation_clock().evaluation_time();
         scheduled_ranks_[rank]          = std::min(std::max(current_rank_time, eval_time), tm);
 
-        this->graph().schedule_node(this->node_ndx(), tm);
+        this->graph()->schedule_node(this->node_ndx(), tm);
 
         // Check for circular dependencies
         if (tm == this->last_evaluation_time() && current_eval_rank_.has_value() && rank <= current_eval_rank_.value()) {
@@ -244,7 +244,7 @@ namespace hgraph
     template <typename K> void MeshNode<K>::remove_graph(const K &key) {
         // Remove error output if using exception capture
         if (this->signature().capture_exception) {
-            auto &error_output_ = dynamic_cast<TimeSeriesDictOutput_T<K> &>(this->error_output());
+            auto &error_output_ = dynamic_cast<TimeSeriesDictOutput_T<K> &>(*this->error_output());
             error_output_.erase(key);
         }
 
@@ -277,7 +277,7 @@ namespace hgraph
             // Dependency doesn't exist yet, add to pending
             this->pending_keys_.insert(depends_on);
             auto schedule_time = this->last_evaluation_time() + MIN_TD;
-            this->graph().schedule_node(this->node_ndx(), schedule_time);
+            this->graph()->schedule_node(this->node_ndx(), schedule_time);
             return false;
         } else {
             return request_re_rank(key, depends_on);
@@ -289,7 +289,7 @@ namespace hgraph
 
         // Check if we should remove the dependency graph
         if (active_graphs_dependencies_[depends_on].empty()) {
-            auto &input_bundle = dynamic_cast<TimeSeriesBundleInput &>(this->input());
+            auto &input_bundle = dynamic_cast<TimeSeriesBundleInput &>(*this->input());
             auto &keys         = dynamic_cast<TimeSeriesSetInput_T<K> &>(*input_bundle[TsdMapNode<K>::KEYS_ARG]);
             if (!keys.contains(depends_on)) { graphs_to_remove_.insert(depends_on); }
         }

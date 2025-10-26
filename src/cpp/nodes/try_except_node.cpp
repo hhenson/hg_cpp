@@ -14,11 +14,11 @@ namespace hgraph
             auto node = m_active_graph_->nodes()[m_output_node_id_];
             // Python parity: replace the inner node's output with the outer node's 'out' sub-output
             // If the outer output is a bundle, use its 'out' member; otherwise, wire the outer output directly.
-            if (auto bundle = dynamic_cast<TimeSeriesBundleOutput *>(&output())) {
+            if (auto bundle = dynamic_cast<TimeSeriesBundleOutput *>(output().get())) {
                 auto out_ts = (*bundle)["out"];  // TimeSeriesOutput::ptr
                 node->set_output(out_ts);
             } else {
-                node->set_output(output_ptr());
+                node->set_output(output());
             }
         }
     }

@@ -629,7 +629,7 @@ namespace hgraph
     }
 
     template <typename T_Key>
-    const TimeSeriesDictInput_T<T_Key>::value_type &TimeSeriesDictInput_T<T_Key>::operator[](const key_type &item) const {
+    TimeSeriesDictInput_T<T_Key>::value_type TimeSeriesDictInput_T<T_Key>::operator[](const key_type &item) const {
         return _ts_values.at(item);
     }
 

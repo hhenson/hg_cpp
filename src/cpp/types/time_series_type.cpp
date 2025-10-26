@@ -70,9 +70,9 @@ namespace hgraph
         }
     }
 
-    Graph &TimeSeriesType::owning_graph() { return owning_node().graph(); }
+    Graph &TimeSeriesType::owning_graph() { return *owning_node().graph(); }
 
-    const Graph &TimeSeriesType::owning_graph() const { return owning_node().graph(); }
+    const Graph &TimeSeriesType::owning_graph() const { return *owning_node().graph(); }
 
     void TimeSeriesOutput::clear() {}
 

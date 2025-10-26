@@ -13,8 +13,8 @@ namespace hgraph
     }
 
     bool PushQueueNode::apply_message(nb::object message) {
-        if (_elide || output().can_apply_result(message)) {
-            output().apply_result(std::move(message));
+        if (_elide || output()->can_apply_result(message)) {
+            output()->apply_result(std::move(message));
             return true;
         }
         return false;
@@ -25,7 +25,7 @@ namespace hgraph
     void PushQueueNode::set_receiver(sender_receiver_state_ptr value) { _receiver = value; }
 
     void PushQueueNode::start() {
-        _receiver = &graph().receiver();
+        _receiver = &graph()->receiver();
         _elide    = scalars().contains("elide") ? nb::cast<bool>(scalars()["elide"]) : false;
         _batch    = scalars().contains("batch") ? nb::cast<bool>(scalars()["batch"]) : false;
 

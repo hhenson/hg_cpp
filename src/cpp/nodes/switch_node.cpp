@@ -67,17 +67,17 @@ namespace hgraph
     }
 
     template <typename K> void SwitchNode<K>::do_start() {
-        auto ts{input()["key"].get()};
+        auto ts{(*input())["key"].get()};
         key_ts = dynamic_cast<TimeSeriesValueInput<K> *>(ts);
         if (!key_ts) { throw std::runtime_error("SwitchNode requires a TimeSeriesValueInput<K> for key input, but none found"); }
         // Check if graph has recordable ID trait
-        if (has_recordable_id_trait(graph().traits())) {
+        if (has_recordable_id_trait(graph()->traits())) {
             // NodeSignature::record_replay_id is std::optional<std::string>
             auto &record_replay_id = signature().record_replay_id;
             if (!record_replay_id.has_value() || record_replay_id.value().empty()) {
-                recordable_id_ = get_fq_recordable_id(graph().traits(), "switch_");
+                recordable_id_ = get_fq_recordable_id(graph()->traits(), "switch_");
             } else {
-                recordable_id_ = get_fq_recordable_id(graph().traits(), record_replay_id.value());
+                recordable_id_ = get_fq_recordable_id(graph()->traits(), record_replay_id.value());
             }
         }
         _initialise_inputs();
@@ -117,7 +117,7 @@ namespace hgraph
                     graph_ptr graph_to_dispose = active_graph_;
                     // Capture the nested_graph_builders and default_graph_builder by value for the lambda
                     auto builder = active_graph_builder_;
-                    graph().evaluation_engine().add_before_evaluation_notification(
+                    graph()->evaluation_engine().add_before_evaluation_notification(
                         [graph_to_dispose, builder]() mutable {
                             // release_instance will call dispose_component
                             builder->release_instance(graph_to_dispose);
@@ -143,7 +143,7 @@ namespace hgraph
 
                 // Set up evaluation engine
                 active_graph_->set_evaluation_engine(new NestedEvaluationEngine(
-                    &graph().evaluation_engine(), new NestedEngineEvaluationClock(&graph().evaluation_engine_clock(), this)));
+                    &graph()->evaluation_engine(), new NestedEngineEvaluationClock(&graph()->evaluation_engine_clock(), this)));
 
                 // Initialize and wire the new graph
                 initialise_component(*active_graph_);
@@ -159,8 +159,8 @@ namespace hgraph
                 .reset_next_scheduled_evaluation_time();
             active_graph_->evaluate_graph();
             // Reset output to None if graph was switched and output wasn't modified
-            if (graph_reset_ && output_ptr() != nullptr && !output_ptr()->modified()) {
-                output_ptr()->invalidate();
+            if (graph_reset_ && output() != nullptr && !output()->modified()) {
+                output()->invalidate();
             }
             static_cast<NestedEngineEvaluationClock &>(
                 active_graph_->evaluation_engine_clock())  // NOLINT(*-pro-type-static-cast-downcast)
@@ -207,8 +207,8 @@ namespace hgraph
                     nb::setattr(key_node.eval_fn(), "key", nb::cast(graph_key));
                 } else {
                     // Python expects REF wiring: clone binding from outer REF input to inner REF input 'ts'
-                    auto outer_any = input()[arg].get();
-                    auto inner_any = node->input()["ts"].get();
+                    auto outer_any = (*input())[arg].get();
+                    auto inner_any = (*node->input())["ts"].get();
                     auto inner_ref = dynamic_cast<TimeSeriesReferenceInput *>(inner_any);
                     auto outer_ref = dynamic_cast<TimeSeriesReferenceInput *>(outer_any);
                     if (!inner_ref || !outer_ref) {
@@ -231,8 +231,8 @@ namespace hgraph
 
         if (output_node_id >= 0) {
             auto node   = graph->nodes()[output_node_id];
-            old_output_ = node->output_ptr();
-            node->set_output(output_ptr());
+            old_output_ = node->output();
+            node->set_output(output());
         }
     }
 

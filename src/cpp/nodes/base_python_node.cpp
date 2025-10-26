@@ -29,12 +29,12 @@ namespace hgraph
         for (size_t i = 0, l = signature().time_series_inputs.has_value() ? signature().time_series_inputs->size() : 0; i < l;
              ++i) {
             // Apple does not yet support ranges::contains :(
-            auto key{input().schema().keys()[i]};
+            auto key{input()->schema().keys()[i]};
             if (std::ranges::find(signature_args, key) != std::ranges::end(signature_args)) {
                 // Expose inputs as base TimeSeriesInput using nb::ref to preserve lifetime semantics.
                 // Avoid casting to raw pointer, which bypasses intrusive ref counting and can cause
                 // dangling references when Python holds onto the object (e.g., during iteration).
-                _kwargs[key.c_str()] = nb::cast(input()[i]);
+                _kwargs[key.c_str()] = nb::cast((*input())[i]);
             }
         }
     }
@@ -69,8 +69,8 @@ class ContextManager
             if (node.signature().context_inputs.has_value() && !node.signature().context_inputs->empty()) {
                 contexts_.reserve(node.signature().context_inputs->size());
                 for (const auto &context_key : *node.signature().context_inputs) {
-                    if (node.input()[context_key]->valid()) {
-                        nb::object context_value = node.input()[context_key]->py_value();
+                    if ((*node.input())[context_key]->valid()) {
+                        nb::object context_value = (*node.input())[context_key]->py_value();
                         context_value.attr("__enter__")();
                         contexts_.push_back(context_value);
                     }
@@ -101,7 +101,7 @@ class ContextManager
         ContextManager context_manager(*this);
         try {
             auto out{_eval_fn(**_kwargs)};
-            if (!out.is_none()) { output().apply_result(out); }
+            if (!out.is_none()) { output()->apply_result(out); }
         } catch (nb::python_error &e) { throw NodeException::capture_error(e, *this, "During Python node evaluation"); }
     }
 

@@ -110,13 +110,13 @@ namespace hgraph
         auto        sig    = node.signature();
         std::string suffix = use_label && sig.label.has_value() ? sig.label.value() : sig.name;
 
-        if (auto parent_node = node.graph().parent_node()) {
+        if (auto parent_node = node.graph()->parent_node()) {
             auto p_l = runtime_path_name(*parent_node);
             auto p_n = runtime_path_name(*parent_node, false);
             p_n      = remove_indices(p_n);
 
             std::string result =
-                fmt::format("{}[{}].{}.{}", p_l, node.graph().label().value_or(""), replace(sig.wiring_path_name, p_n, ""), suffix);
+                fmt::format("{}[{}].{}.{}", p_l, node.graph()->label().value_or(""), replace(sig.wiring_path_name, p_n, ""), suffix);
 
             // Replace double dots with single dot
             size_t pos;
@@ -144,7 +144,7 @@ namespace hgraph
             std::unordered_map<std::string, engine_time_t> input_last_modified_time;
 
             if (node->has_input()) {
-                for (const auto &[input_name, input] : node->input().items()) {
+                for (const auto &[input_name, input] : node->input()->items()) {
                     capture_input(active_inputs, *input, input_name, capture_values, depth);
 
                     if (capture_values) {

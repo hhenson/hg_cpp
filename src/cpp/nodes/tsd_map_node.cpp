@@ -49,10 +49,10 @@ namespace hgraph
     template <typename K> void TsdMapNode<K>::do_start() {
         // Note: In Python, super().do_start() is called here, but in C++ the base Node class
         // do_start() is pure virtual and has no implementation to call.
-        auto trait{graph().traits().get_trait_or(RECORDABLE_ID_TRAIT, nb::none())};
+        auto trait{graph()->traits().get_trait_or(RECORDABLE_ID_TRAIT, nb::none())};
         if (!trait.is_none()) {
             auto recordable_id{signature().record_replay_id};
-            recordable_id_ = get_fq_recordable_id(graph().traits(), recordable_id.has_value() ? recordable_id.value() : "map_");
+            recordable_id_ = get_fq_recordable_id(graph()->traits(), recordable_id.has_value() ? recordable_id.value() : "map_");
         }
     }
 
@@ -71,7 +71,7 @@ namespace hgraph
     template <typename K> void TsdMapNode<K>::eval() {
         mark_evaluated();
 
-        auto &keys = dynamic_cast<TimeSeriesSetInput_T<K> &>(*input()[KEYS_ARG]);
+        auto &keys = dynamic_cast<TimeSeriesSetInput_T<K> &>(*(*input())[KEYS_ARG]);
         if (keys.modified()) {
             for (const auto &k : keys.added()) {
                 // There seems to be a case where a set can show a value as added even though it is not.
@@ -99,7 +99,7 @@ namespace hgraph
             if (dt < last_evaluation_time()) {
                 throw std::runtime_error(
                     fmt::format("Scheduled time is in the past; last evaluation time: {}, scheduled time: {}, evaluation time: {}",
-                                last_evaluation_time(), dt, graph().evaluation_clock().evaluation_time()));
+                                last_evaluation_time(), dt, graph()->evaluation_clock().evaluation_time()));
             }
             engine_time_t next_dt;
             if (dt == last_evaluation_time()) {
@@ -109,13 +109,13 @@ namespace hgraph
             }
             if (next_dt != MAX_DT && next_dt > last_evaluation_time()) {
                 scheduled_keys_[k] = next_dt;
-                graph().schedule_node(node_ndx(), next_dt);
+                graph()->schedule_node(node_ndx(), next_dt);
             }
         }
     }
 
     template <typename K> TimeSeriesDictOutput_T<K> &TsdMapNode<K>::tsd_output() {
-        return dynamic_cast<TimeSeriesDictOutput_T<K> &>(output());
+        return dynamic_cast<TimeSeriesDictOutput_T<K> &>(*output());
     }
 
     template <typename K> void TsdMapNode<K>::create_new_graph(const K &key) {
@@ -130,8 +130,8 @@ namespace hgraph
         active_graphs_[key] = graph_;
 
         graph_->set_evaluation_engine(new NestedEvaluationEngine(
-            &graph().evaluation_engine(),
-            new MapNestedEngineEvaluationClock<K>(&graph().evaluation_engine().engine_evaluation_clock(), key, this)));
+            &graph()->evaluation_engine(),
+            new MapNestedEngineEvaluationClock<K>(&graph()->evaluation_engine().engine_evaluation_clock(), key, this)));
 
         initialise_component(*graph_);
 
@@ -148,7 +148,7 @@ namespace hgraph
     template <typename K> void TsdMapNode<K>::remove_graph(const K &key) {
         if (signature().capture_exception) {
             // Remove the error output associated to the graph if there is one
-            auto &error_output_ = dynamic_cast<TimeSeriesDictOutput_T<K> &>(error_output());
+            auto &error_output_ = dynamic_cast<TimeSeriesDictOutput_T<K> &>(*error_output());
             error_output_.erase(key);
         }
 
@@ -169,7 +169,7 @@ namespace hgraph
             try {
                 graph->evaluate_graph();
             } catch (const std::exception &e) {
-                auto &error_tsd = dynamic_cast<TimeSeriesDictOutput_T<K> &>(error_output());
+                auto &error_tsd = dynamic_cast<TimeSeriesDictOutput_T<K> &>(*error_output());
                 auto  msg = std::string("key: ") + to_string(key);
                 auto  node_exception = NodeException::capture_error(e, *this, msg);
                 auto error_ts = error_tsd._get_or_create(key);
@@ -189,10 +189,10 @@ namespace hgraph
             auto node = graph->nodes()[node_ndx];
             if (arg != key_arg_) {
                 if (multiplexed_args_.find(arg) != multiplexed_args_.end()) {
-                    auto  ts{static_cast<TimeSeriesInput *>(input()[arg].get())};
+                    auto  ts{static_cast<TimeSeriesInput *>((*input())[arg].get())};
                     auto &tsd =
                         dynamic_cast<TimeSeriesDictInput_T<K> &>(*ts);  // Since this is a multiplexed arg it must be of type K
-                    node->input()["ts"]->re_parent(ts);
+                    (*node->input())["ts"]->re_parent(ts);
                     if (!tsd.key_set().valid() || !dynamic_cast<TimeSeriesSetInput_T<K> &>(tsd.key_set()).contains(key)) {
                         tsd.on_key_removed(key);
                     }
@@ -214,15 +214,15 @@ namespace hgraph
                 nb::setattr(key_node.eval_fn(), "key", nb::cast(key));
             } else {
                 if (multiplexed_args_.find(arg) != multiplexed_args_.end()) {
-                    auto  ts       = static_cast<TimeSeriesInput *>(input()[arg].get());
+                    auto  ts       = static_cast<TimeSeriesInput *>((*input())[arg].get());
                     auto &tsd      = dynamic_cast<TimeSeriesDictInput_T<K> &>(*ts);
                     auto ts_value = tsd.get_or_create(key);
 
-                    node->reset_input(node->input().copy_with(node, {ts_value}));
-                    ts_value->re_parent(node->input_ptr().get());
+                    node->reset_input(node->input()->copy_with(node, {ts_value}));
+                    ts_value->re_parent(node->input().get());
                 } else {
-                    auto ts          = dynamic_cast<TimeSeriesReferenceInput *>(input()[arg].get());
-                    auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>(node->input()["ts"].get());
+                    auto ts          = dynamic_cast<TimeSeriesReferenceInput *>((*input())[arg].get());
+                    auto inner_input = dynamic_cast<TimeSeriesReferenceInput *>((*node->input())["ts"].get());
 
                     if (ts != nullptr && inner_input != nullptr) { inner_input->clone_binding(ts); }
                 }

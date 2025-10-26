@@ -39,17 +39,17 @@ namespace hgraph
     }
 
     template <typename K> typename TimeSeriesDictInput_T<K>::ptr ReduceNode<K>::ts() {
-        return dynamic_cast<TimeSeriesDictInput_T<K> *>(input()[0].get());
+        return dynamic_cast<TimeSeriesDictInput_T<K> *>((*input())[0].get());
     }
 
     template <typename K> time_series_reference_input_ptr ReduceNode<K>::zero() {
-        return dynamic_cast<TimeSeriesReferenceInput *>(input()[1].get());
+        return dynamic_cast<TimeSeriesReferenceInput *>((*input())[1].get());
     }
 
     template <typename K> void ReduceNode<K>::initialise() {
         nested_graph_ = new Graph(std::vector<int64_t>{node_ndx()}, std::vector<node_ptr>{}, this, "", new Traits());
         nested_graph_->set_evaluation_engine(new NestedEvaluationEngine(
-            &graph().evaluation_engine(), new NestedEngineEvaluationClock(&graph().evaluation_engine_clock(), this)));
+            &graph()->evaluation_engine(), new NestedEngineEvaluationClock(&graph()->evaluation_engine_clock(), this)));
         initialise_component(*nested_graph_);
     }
 
@@ -102,7 +102,7 @@ namespace hgraph
 
         // Propagate output if changed
         auto l = dynamic_cast<TimeSeriesReferenceOutput *>(last_output().get());
-        auto o = dynamic_cast<TimeSeriesReferenceOutput *>(output_ptr().get());
+        auto o = dynamic_cast<TimeSeriesReferenceOutput *>(output().get());
 
         if ((!o->valid() && l->valid()) || (l->valid() && o->value() != l->value())) { o->set_value(l->value()); }
     }
@@ -110,7 +110,7 @@ namespace hgraph
     template <typename K> TimeSeriesOutput::ptr ReduceNode<K>::last_output() {
         auto sub_graph = get_node(node_count() - 1);
         auto out_node  = sub_graph[output_node_id_];
-        return out_node->output_ptr();
+        return out_node->output();
     }
 
     template <typename K> void ReduceNode<K>::add_nodes(const std::unordered_set<K> &keys) {
@@ -157,17 +157,17 @@ namespace hgraph
         auto dst_node = dst_nodes[dst_side];
 
         // Get the old inputs before swapping
-        auto src_input = src_node->input()[0];
-        auto dst_input = dst_node->input()[0];
+        auto src_input = (*src_node->input())[0];
+        auto dst_input = (*dst_node->input())[0];
 
         // Swap the inputs by creating new input bundles
-        src_node->reset_input(src_node->input().copy_with(src_node.get(), {dst_input.get()}));
-        dst_node->reset_input(dst_node->input().copy_with(dst_node.get(), {src_input.get()}));
+        src_node->reset_input(src_node->input()->copy_with(src_node.get(), {dst_input.get()}));
+        dst_node->reset_input(dst_node->input()->copy_with(dst_node.get(), {src_input.get()}));
 
         // Re-parent the inputs to their new parent bundles (CRITICAL FIX - Python lines 159-160)
         // Cast to TimeSeriesType::ptr for re_parent
-        dst_input->re_parent(src_node->input_ptr().get());
-        src_input->re_parent(dst_node->input_ptr().get());
+        dst_input->re_parent(src_node->input().get());
+        src_input->re_parent(dst_node->input().get());
 
         src_node->notify();
         dst_node->notify();
@@ -205,27 +205,27 @@ namespace hgraph
                 if (i < last_node) {
                     auto left_idx = un_bound_outputs.front();
                     un_bound_outputs.pop_front();
-                    left_parent = get_node(left_idx)[output_node_id_]->output_ptr();
+                    left_parent = get_node(left_idx)[output_node_id_]->output();
 
                     auto right_idx = un_bound_outputs.front();
                     un_bound_outputs.pop_front();
-                    right_parent = get_node(right_idx)[output_node_id_]->output_ptr();
+                    right_parent = get_node(right_idx)[output_node_id_]->output();
                 } else {
                     auto old_root = get_node(count - 1)[output_node_id_];
-                    left_parent   = old_root->output_ptr();
+                    left_parent   = old_root->output();
 
                     auto new_root_idx = un_bound_outputs.front();
                     un_bound_outputs.pop_front();
                     auto new_root = get_node(new_root_idx)[output_node_id_];
-                    right_parent  = new_root->output_ptr();
+                    right_parent  = new_root->output();
                 }
 
                 auto sub_graph = get_node(i);
                 auto lhs_input = sub_graph[std::get<0>(input_node_ids_)];
                 auto rhs_input = sub_graph[std::get<1>(input_node_ids_)];
 
-                dynamic_cast<TimeSeriesInput &>(*lhs_input->input()[0]).bind_output(left_parent.get());
-                dynamic_cast<TimeSeriesInput &>(*rhs_input->input()[0]).bind_output(right_parent.get());
+                dynamic_cast<TimeSeriesInput &>(*(*lhs_input->input())[0]).bind_output(left_parent.get());
+                dynamic_cast<TimeSeriesInput &>(*(*rhs_input->input())[0]).bind_output(right_parent.get());
 
                 lhs_input->notify();
                 rhs_input->notify();
@@ -271,11 +271,11 @@ namespace hgraph
         auto ts_ = (*ts())[key];
 
         // Create new input bundle with the ts (Python line 198)
-        node->reset_input(node->input().copy_with(node.get(), {ts_.get()}));
+        node->reset_input(node->input()->copy_with(node.get(), {ts_.get()}));
 
         // Re-parent the ts to the node's input (CRITICAL FIX - Python line 200)
         // Cast to TimeSeriesType::ptr for re_parent
-        ts_->re_parent(node->input_ptr().get());
+        ts_->re_parent(node->input().get());
 
         // Make the time series active (CRITICAL FIX - Python line 201)
         ts_->make_active();
@@ -292,7 +292,7 @@ namespace hgraph
         auto node            = nodes[side];
 
         // This was using the "ts" name, but since this would by definitions
-        auto inner_input = node->input()[0];
+        auto inner_input = (*node->input())[0];
 
         // This was ``getattr(inner_input, '_bound_to_key', False)``
         if (bound_to_key_flags_.contains(inner_input.get())) {
@@ -302,11 +302,11 @@ namespace hgraph
 
             // Create a new empty reference input (Python lines 216-218)
             auto new_ref_input = new TimeSeriesReferenceInput(node.get());
-            node->reset_input(node->input().copy_with(node.get(), {new_ref_input}));
+            node->reset_input(node->input()->copy_with(node.get(), {new_ref_input}));
 
             // Re-parent the new input to the node's input bundle (Python line 219)
             // Cast to TimeSeriesType::ptr for re_parent
-            new_ref_input->re_parent(node->input_ptr().get());
+            new_ref_input->re_parent(node->input().get());
 
             // Clone binding from zero (Python line 220)
             new_ref_input->clone_binding(zero());

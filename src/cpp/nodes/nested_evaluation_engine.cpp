@@ -27,7 +27,7 @@ namespace hgraph
 
         if (proposed_next_time != _nested_next_scheduled_evaluation_time) {
             _nested_next_scheduled_evaluation_time = proposed_next_time;
-            _nested_node->graph().schedule_node(_nested_node->node_ndx(), proposed_next_time);
+            _nested_node->graph()->schedule_node(_nested_node->node_ndx(), proposed_next_time);
         }
     }
 
