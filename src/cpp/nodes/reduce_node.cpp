@@ -226,7 +226,7 @@ namespace hgraph
             }
         }
 
-        // Wire the nodes that need wiring BEFORE starting them
+        // Wire the nodes that need wiring
         for (auto i : wiring_info) {
             TimeSeriesOutput::ptr left_parent;
             TimeSeriesOutput::ptr right_parent;

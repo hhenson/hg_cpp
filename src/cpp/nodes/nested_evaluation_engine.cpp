@@ -21,6 +21,13 @@ namespace hgraph
 
     void NestedEngineEvaluationClock::update_next_scheduled_evaluation_time(std::chrono::system_clock::time_point next_time) {
         auto let{_nested_node->last_evaluation_time()};
+        auto eval_time = evaluation_time();
+
+        // Debug output
+        // std::cout << "update_next_scheduled_evaluation_time: next_time=" << next_time.time_since_epoch().count()
+        //           << " let=" << let.time_since_epoch().count()
+        //           << " eval_time=" << eval_time.time_since_epoch().count() << std::endl;
+
         //Unlike python when not set let will be MIN_DT
         // Python: if (let := self._nested_node.last_evaluation_time) and let >= next_time or self._nested_node.is_stopping:
         // In python we evaluate left to right so putting the brackets on the left side should be consistent
@@ -28,7 +35,9 @@ namespace hgraph
 
         // Match Python: min(next_time, max(self._nested_next_scheduled_evaluation_time, (let or MIN_DT) + MIN_TD))
         // Note let or MIN_DT is equivalent to let
-        auto proposed_next_time = std::min(next_time, std::max(_nested_next_scheduled_evaluation_time, let + MIN_TD));
+        // CRITICAL FIX: Also ensure we never schedule before current evaluation time
+        auto min_allowed_time = std::max(eval_time, let + MIN_TD);
+        auto proposed_next_time = std::min(next_time, std::max(_nested_next_scheduled_evaluation_time, min_allowed_time));
 
         if (proposed_next_time != _nested_next_scheduled_evaluation_time) {
             _nested_next_scheduled_evaluation_time = proposed_next_time;

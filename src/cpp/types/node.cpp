@@ -595,7 +595,11 @@ namespace hgraph
 
     void Node::notify(engine_time_t modified_time) {
         if (is_started() || is_starting()) {
-            graph()->schedule_node(node_ndx(), modified_time);
+            // When a node is starting, it might be notified with a historical time (from inputs that ticked in the past).
+            // We should schedule for MAX(modified_time, current_evaluation_time) to avoid scheduling in the past.
+            auto eval_time = graph()->evaluation_clock()->evaluation_time();
+            auto schedule_time = std::max(modified_time, eval_time);
+            graph()->schedule_node(node_ndx(), schedule_time);
         } else {
             scheduler()->schedule(MIN_ST, "start");
         }

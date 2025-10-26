@@ -54,19 +54,13 @@ namespace hgraph
         auto clock = this->evaluation_engine_clock();
         auto  et    = clock->evaluation_time();
 
-        // Clamp when to current time if it's in the past (can happen when nodes start mid-execution)
+        // Match Python: just throw if scheduling in the past
         if (when < et) {
-            auto node = this->nodes()[node_ndx];
-            // Only clamp if node is starting (being started mid-execution), otherwise it's a real error
-            if (node->is_starting()) {
-                when = et;
-            } else {
-                auto graph_id{this->graph_id()};
-                auto msg{fmt::format(
-                    "Graph{} Trying to schedule node: {}[{}] for {:%Y-%m-%d %H:%M:%S} but current time is {:%Y-%m-%d %H:%M:%S}",
-                    graph_id, this->nodes()[node_ndx]->signature().signature(), node_ndx, when, et)};
-                throw std::runtime_error(msg);
-            }
+            auto graph_id{this->graph_id()};
+            auto msg{fmt::format(
+                "Graph{} Trying to schedule node: {}[{}] for {:%Y-%m-%d %H:%M:%S} but current time is {:%Y-%m-%d %H:%M:%S}",
+                graph_id, this->nodes()[node_ndx]->signature().signature(), node_ndx, when, et)};
+            throw std::runtime_error(msg);
         }
 
         auto &st = this->_schedule[node_ndx];
