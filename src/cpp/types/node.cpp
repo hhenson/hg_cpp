@@ -736,13 +736,13 @@ namespace hgraph
         bool               first = true;
         auto               none_str{std::string("None")};
 
-        oss << "[";
+        oss << signature().name << "[";
         for (auto ndx : _owning_graph_id) {
             if (!first) { oss << ", "; }
             oss << ndx;
             first = false;
         }
-        oss << ", " << _node_ndx << "]" << signature().name << "(";
+        oss << (first ? "" : ", ") << _node_ndx << "]" << "(";
 
         auto obj_to_type = [&](const nb::object &obj) { return obj.is_none() ? none_str : nb::cast<std::string>(nb::str(obj)); };
 
@@ -764,7 +764,7 @@ namespace hgraph
 
         if (bool(signature().time_series_output)) {
             auto v = signature().time_series_output.value();
-            oss << " -> " << (v.is_none() ? none_str : nb::cast<std::string>(v));
+            oss << " -> " << (v.is_none() ? none_str : nb::cast<std::string>(nb::str(v)));
         }
 
         return oss.str();
@@ -802,7 +802,6 @@ namespace hgraph
         do_stop();  // Will still clean up if this throws
     }
 
-
     void Node::_initialise_inputs() {
         if (signature().time_series_inputs.has_value()) {
             for (auto &start_input : _start_inputs) {
@@ -818,7 +817,6 @@ namespace hgraph
             }
         }
     }
-
 
     void Node::eval() {
         bool scheduled{has_scheduler() ? _scheduler->is_scheduled_node() : false};
