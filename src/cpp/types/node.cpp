@@ -732,42 +732,48 @@ namespace hgraph
     bool Node::has_output() const { return _output.get() != nullptr; }
 
     std::string Node::repr() const {
-        std::ostringstream oss;
-        bool               first = true;
-        auto               none_str{std::string("None")};
+        static auto none_str = std::string("None");
+        static auto obj_to_type = [none_str=none_str](const nb::object &obj) {
+            return obj.is_none() ? none_str : nb::cast<std::string>(nb::str(obj));
+        };
 
-        oss << signature().name << "[";
-        for (auto ndx : _owning_graph_id) {
-            if (!first) { oss << ", "; }
-            oss << ndx;
-            first = false;
+        // Build graph ID portion: "[id1, id2, ..., node_ndx]"
+        std::string graph_id_str = fmt::format("{}", fmt::join(_owning_graph_id, ", "));
+        if (!_owning_graph_id.empty()) {
+            graph_id_str = fmt::format("{}, {}", graph_id_str, _node_ndx);
+        } else {
+            graph_id_str = fmt::format("{}", _node_ndx);
         }
-        oss << (first ? "" : ", ") << _node_ndx << "]" << "(";
 
-        auto obj_to_type = [&](const nb::object &obj) { return obj.is_none() ? none_str : nb::cast<std::string>(nb::str(obj)); };
-
-        first = true;
+        // Build arguments portion
+        std::vector<std::string> arg_strs;
         for (const auto &arg : signature().args) {
-            if (!first) { oss << ", "; }
-            oss << arg << ": " << obj_to_type(signature().get_arg_type(arg));
+            std::string arg_str = fmt::format("{}: {}", arg, obj_to_type(signature().get_arg_type(arg)));
+
             if (!signature().time_series_inputs->contains(arg)) {
                 nb::handle key_handle{_scalars[arg.c_str()]};
                 nb::str    s{nb::str(key_handle)};
                 size_t     length{nb::len(s)};
-                if (length > 8) { s = nb::str("{}...").format(s[nb::slice(0, 8)]); }
-                oss << "=" << s.c_str();
+                if (length > 8) {
+                    s = nb::str("{}...").format(s[nb::slice(0, 8)]);
+                }
+                arg_str = fmt::format("{}={}", arg_str, s.c_str());
             }
-            first = false;
+            arg_strs.push_back(arg_str);
         }
 
-        oss << ")";
-
+        // Build return type portion
+        std::string return_str;
         if (bool(signature().time_series_output)) {
             auto v = signature().time_series_output.value();
-            oss << " -> " << (v.is_none() ? none_str : nb::cast<std::string>(nb::str(v)));
+            return_str = fmt::format(" -> {}", v.is_none() ? none_str : nb::cast<std::string>(nb::str(v)));
         }
 
-        return oss.str();
+        return fmt::format("{}[{}]({}){}",
+            signature().name,
+            graph_id_str,
+            fmt::join(arg_strs, ", "),
+            return_str);
     }
 
     std::string Node::str() const {

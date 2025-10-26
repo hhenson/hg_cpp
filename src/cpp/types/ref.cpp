@@ -45,7 +45,7 @@ namespace hgraph
     void TimeSeriesReference::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesReference, nb::intrusive_base>(m, "TimeSeriesReference")
             .def("__str__", &TimeSeriesReference::to_string)
-            .def("__ref__", &TimeSeriesReference::to_string)
+            .def("__repr__", &TimeSeriesReference::to_string)
             .def("bind_input", &TimeSeriesReference::bind_input)
             .def_prop_ro("has_output", &TimeSeriesReference::has_output)
             .def_prop_ro("is_empty", &TimeSeriesReference::is_empty)
@@ -143,9 +143,8 @@ namespace hgraph
     }
 
     std::string BoundTimeSeriesReference::to_string() const {
-        return fmt::format("REF[{}<{}>.out<{:p}>]", _output->owning_node().signature().name,
-                           fmt::join(_output->owning_node().node_id(), ", "),
-                           const_cast<void *>(static_cast<const void *>(_output.get())));
+        // Avoid calling owning_node() methods to prevent infinite loops in debugger
+        return fmt::format("REF[output@{:p}]", static_cast<const void *>(_output.get()));
     }
 
     UnBoundTimeSeriesReference::UnBoundTimeSeriesReference(std::vector<ptr> items) : _items{std::move(items)} {}
@@ -277,7 +276,17 @@ namespace hgraph
             .def_prop_ro(
                 "reference_observers_count", [](const TimeSeriesReferenceOutput &self) { return self._reference_observers.size(); },
                 "Number of inputs observing this reference value")
-            .def("clear", &TimeSeriesReferenceOutput::clear);
+            .def("clear", &TimeSeriesReferenceOutput::clear)
+            .def("__str__", [](const TimeSeriesReferenceOutput &self) {
+                return fmt::format("TimeSeriesReferenceOutput@{:p}[{}]",
+                    static_cast<const void *>(&self),
+                    self.has_value() ? self._value->to_string() : "None");
+            })
+            .def("__repr__", [](const TimeSeriesReferenceOutput &self) {
+                return fmt::format("TimeSeriesReferenceOutput@{:p}[{}]",
+                    static_cast<const void *>(&self),
+                    self.has_value() ? self._value->to_string() : "None");
+            });
     }
 
     bool TimeSeriesReferenceOutput::has_value() const { return _value != nullptr; }
@@ -478,6 +487,30 @@ namespace hgraph
                  "Unbind this reference input; optionally unbind nested references")
             .def("__getitem__", [](TimeSeriesReferenceInput &self, size_t index) -> TimeSeriesInput::ptr {
                 return TimeSeriesInput::ptr{self.get_input(index)};
+            })
+            .def("__str__", [](const TimeSeriesReferenceInput &self) {
+                std::string value_str = "None";
+                if (self.has_value()) {
+                    value_str = self._value->to_string();
+                } else if (self.has_output()) {
+                    value_str = "bound";
+                } else if (self._items.has_value()) {
+                    value_str = fmt::format("{} items", self._items->size());
+                }
+                return fmt::format("TimeSeriesReferenceInput@{:p}[{}]",
+                    static_cast<const void *>(&self), value_str);
+            })
+            .def("__repr__", [](const TimeSeriesReferenceInput &self) {
+                std::string value_str = "None";
+                if (self.has_value()) {
+                    value_str = self._value->to_string();
+                } else if (self.has_output()) {
+                    value_str = "bound";
+                } else if (self._items.has_value()) {
+                    value_str = fmt::format("{} items", self._items->size());
+                }
+                return fmt::format("TimeSeriesReferenceInput@{:p}[{}]",
+                    static_cast<const void *>(&self), value_str);
             });
     }
 

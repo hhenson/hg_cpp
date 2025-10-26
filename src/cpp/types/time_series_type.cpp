@@ -80,7 +80,11 @@ namespace hgraph
 
     void TimeSeriesOutput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesOutput, TimeSeriesType>(m, "TimeSeriesOutput")
-            .def_prop_ro("parent_output", static_cast<ptr (TimeSeriesOutput::*)()>(&TimeSeriesOutput::parent_output))
+            .def_prop_ro("parent_output",
+                         [](const TimeSeriesOutput &ts) -> nb::object {
+                             if (ts.has_parent_output()) { return nb::cast(ts.parent_output()); }
+                             return nb::none();
+                         })
             .def_prop_ro("has_parent_output", &TimeSeriesOutput::has_parent_output)
             .def_prop_rw("value", &TimeSeriesOutput::py_value, &TimeSeriesOutput::py_set_value, nb::arg("value").none())
             .def("can_apply_result", &TimeSeriesOutput::can_apply_result)
@@ -233,12 +237,25 @@ namespace hgraph
 
     void TimeSeriesInput::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesInput, TimeSeriesType>(m, "TimeSeriesInput")
-            .def_prop_ro("parent_input", &TimeSeriesInput::parent_input)
+            .def_prop_ro("parent_input",
+                         [](const TimeSeriesInput &ts) -> nb::object {
+                             if (ts.has_parent_input()) { return nb::cast(ts.parent_input()); }
+                             return nb::none();
+                         })
             .def_prop_ro("has_parent_input", &TimeSeriesInput::has_parent_input)
             .def_prop_ro("bound", &TimeSeriesInput::bound)
             .def_prop_ro("has_peer", &TimeSeriesInput::has_peer)
-            .def_prop_ro("output", &TimeSeriesInput::output)
-            .def_prop_ro("reference_output", &TimeSeriesInput::reference_output)
+            .def_prop_ro("output",
+                         [](const TimeSeriesInput &ts) -> nb::object {
+                             if (ts.has_output()) { return nb::cast(ts.output()); }
+                             return nb::none();
+                         })
+            .def_prop_ro("reference_output",
+                         [](const TimeSeriesInput &ts) -> nb::object {
+                             auto ref = ts.reference_output();
+                             if (ref != nullptr) { return nb::cast(ref); }
+                             return nb::none();
+                         })
             .def_prop_ro("active", &TimeSeriesInput::active)
             .def("bind_output", &TimeSeriesInput::bind_output, "output"_a)
             .def("un_bind_output", &TimeSeriesInput::un_bind_output, "unbind_refs"_a = false)
