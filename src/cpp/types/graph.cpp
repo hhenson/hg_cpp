@@ -176,7 +176,7 @@ namespace hgraph
         }
         for (auto i = start; i < end; ++i) {
             auto node{_nodes[i]};
-            node->initialise();
+            initialise_component(*node);
         }
     }
 
@@ -185,7 +185,7 @@ namespace hgraph
             auto node{_nodes[i]};
             try {
                 evaluation_engine()->notify_before_start_node(node);
-                node->start();
+                start_component(*node);
                 evaluation_engine()->notify_after_start_node(node);
             } catch (const NodeException &e) {
                 throw; // already enriched
@@ -202,7 +202,7 @@ namespace hgraph
             auto node{_nodes[i]};
             try {
                 evaluation_engine()->notify_before_stop_node(node);
-                node->stop();
+                stop_component(*node);
                 evaluation_engine()->notify_after_stop_node(node);
             } catch (const NodeException &e) {
                 throw; // already enriched
@@ -217,7 +217,7 @@ namespace hgraph
     void Graph::dispose_subgraph(int64_t start, int64_t end) {
         for (auto i = start; i < end; ++i) {
             auto node{_nodes[i]};
-            node->dispose();
+            dispose_component(*node);
         }
     }
 
