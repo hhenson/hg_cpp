@@ -9,38 +9,35 @@ namespace hgraph
     {
         NB_TRAMPOLINE(EvaluationLifeCycleObserver, 12);
 
-        void on_before_start_graph(const Graph &graph) override { NB_OVERRIDE(on_before_start_graph, graph); }
+        void on_before_start_graph(graph_ptr graph) override { NB_OVERRIDE(on_before_start_graph, graph); }
 
-        void on_after_start_graph(const Graph &graph) override { NB_OVERRIDE(on_after_start_graph, graph); }
+        void on_after_start_graph(graph_ptr graph) override { NB_OVERRIDE(on_after_start_graph, graph); }
 
-        void on_before_start_node(const Node &node) override { NB_OVERRIDE(on_before_start_node, node); }
+        void on_before_start_node(node_ptr node) override { NB_OVERRIDE(on_before_start_node, node); }
 
-        void on_after_start_node(const Node &node) override { NB_OVERRIDE(on_after_start_node, node); }
+        void on_after_start_node(node_ptr node) override { NB_OVERRIDE(on_after_start_node, node); }
 
-        void on_before_graph_evaluation(const Graph &graph) override { NB_OVERRIDE(on_before_graph_evaluation, graph); }
+        void on_before_graph_evaluation(graph_ptr graph) override { NB_OVERRIDE(on_before_graph_evaluation, graph); }
 
-        void on_after_graph_evaluation(const Graph &graph) override { NB_OVERRIDE(on_after_graph_evaluation, graph); }
+        void on_after_graph_evaluation(graph_ptr graph) override { NB_OVERRIDE(on_after_graph_evaluation, graph); }
 
-        void on_before_node_evaluation(const Node &node) override { NB_OVERRIDE(on_before_node_evaluation, node); }
+        void on_before_node_evaluation(node_ptr node) override { NB_OVERRIDE(on_before_node_evaluation, node); }
 
-        void on_after_node_evaluation(const Node &node) override { NB_OVERRIDE(on_after_node_evaluation, node); }
+        void on_after_node_evaluation(node_ptr node) override { NB_OVERRIDE(on_after_node_evaluation, node); }
 
-        void on_before_stop_node(const Node &node) override { NB_OVERRIDE(on_before_stop_node, node); }
+        void on_before_stop_node(node_ptr node) override { NB_OVERRIDE(on_before_stop_node, node); }
 
-        void on_after_stop_node(const Node &node) override { NB_OVERRIDE(on_after_stop_node, node); }
+        void on_after_stop_node(node_ptr node) override { NB_OVERRIDE(on_after_stop_node, node); }
 
-        void on_before_stop_graph(const Graph &graph) override { NB_OVERRIDE(on_before_stop_graph, graph); }
+        void on_before_stop_graph(graph_ptr graph) override { NB_OVERRIDE(on_before_stop_graph, graph); }
 
-        void on_after_stop_graph(const Graph &graph) override { NB_OVERRIDE(on_after_stop_graph, graph); }
+        void on_after_stop_graph(graph_ptr graph) override { NB_OVERRIDE(on_after_stop_graph, graph); }
     };
 
     void GraphExecutor::register_with_nanobind(nb::module_ &m) {
         nb::class_<GraphExecutor, nb::intrusive_base>(m, "GraphExecutor")
             .def_prop_ro("run_mode", &GraphExecutor::run_mode)
-            .def_prop_ro("graph", [](const GraphExecutor &self) -> nb::ref<Graph> {
-                // Return a borrowed intrusive reference to the underlying Graph held by the executor
-                return nb::ref(const_cast<Graph *>(&self.graph()));
-            })
+            .def_prop_ro("graph", &GraphExecutor::graph)
             .def("run", &GraphExecutor::run)
             .def("__str__", [](const GraphExecutor &self) {
                 return fmt::format("GraphExecutor@{:p}[mode={}]",
@@ -79,9 +76,7 @@ namespace hgraph
 
     EvaluationMode GraphExecutorImpl::run_mode() const { return _run_mode; }
 
-    const Graph &GraphExecutorImpl::graph() const { return *_graph; }
-
-    graph_ptr GraphExecutorImpl::graph_py() const { return _graph; }
+    graph_ptr GraphExecutorImpl::graph() const { return _graph; }
 
     void GraphExecutorImpl::run(const engine_time_t &start_time, const engine_time_t &end_time) {
         if (end_time <= start_time) {
@@ -145,8 +140,7 @@ namespace hgraph
     void GraphExecutorImpl::register_with_nanobind(nb::module_ &m) {
         nb::class_<GraphExecutorImpl, GraphExecutor>(m, "GraphExecutorImpl")
             .def(nb::init<graph_ptr, EvaluationMode, std::vector<EvaluationLifeCycleObserver::ptr>>(), "graph"_a, "run_mode"_a,
-                 "observers"_a = std::vector<EvaluationLifeCycleObserver::ptr>{})
-            .def_prop_ro("graph", &GraphExecutorImpl::graph_py);
+                 "observers"_a = std::vector<EvaluationLifeCycleObserver::ptr>{});
     }
 
     void GraphExecutorImpl::_evaluate(EvaluationEngine &evaluationEngine) {

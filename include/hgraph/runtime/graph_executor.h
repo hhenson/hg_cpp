@@ -12,36 +12,37 @@ namespace hgraph
     struct Node;
     struct EvaluationEngine;
     using graph_ptr = nb::ref<Graph>;
+    using node_ptr = nb::ref<Node>;
 
     struct EvaluationLifeCycleObserver : nb::intrusive_base
     {
         using ptr = nb::ref<EvaluationLifeCycleObserver>;
 
-        virtual void on_before_start_graph(const Graph &) {};
+        virtual void on_before_start_graph(graph_ptr) {};
 
-        virtual void on_after_start_graph(const Graph &) {};
+        virtual void on_after_start_graph(graph_ptr) {};
 
-        virtual void on_before_start_node(const Node &) {};
+        virtual void on_before_start_node(node_ptr) {};
 
-        virtual void on_after_start_node(const Node &) {};
+        virtual void on_after_start_node(node_ptr) {};
 
-        virtual void on_before_graph_evaluation(const Graph &) {};
+        virtual void on_before_graph_evaluation(graph_ptr) {};
 
-        virtual void on_after_graph_evaluation(const Graph &) {};
+        virtual void on_after_graph_evaluation(graph_ptr) {};
 
-        virtual void on_after_graph_push_nodes_evaluation(const Graph &) {};
+        virtual void on_after_graph_push_nodes_evaluation(graph_ptr) {};
 
-        virtual void on_before_node_evaluation(const Node &) {};
+        virtual void on_before_node_evaluation(node_ptr) {};
 
-        virtual void on_after_node_evaluation(const Node &) {};
+        virtual void on_after_node_evaluation(node_ptr) {};
 
-        virtual void on_before_stop_node(const Node &) {};
+        virtual void on_before_stop_node(node_ptr) {};
 
-        virtual void on_after_stop_node(const Node &) {};
+        virtual void on_after_stop_node(node_ptr) {};
 
-        virtual void on_before_stop_graph(const Graph &) {};
+        virtual void on_before_stop_graph(graph_ptr) {};
 
-        virtual void on_after_stop_graph(const Graph &) {};
+        virtual void on_after_stop_graph(graph_ptr) {};
     };
 
     struct HGRAPH_EXPORT GraphExecutor : nb::intrusive_base
@@ -49,7 +50,7 @@ namespace hgraph
 
         // Abstract methods.
         virtual EvaluationMode run_mode() const                                                    = 0;
-        virtual const Graph   &graph() const                                                       = 0;
+        virtual graph_ptr      graph() const                                                       = 0;
         virtual void           run(const engine_time_t &start_time, const engine_time_t &end_time) = 0;
 
         void static register_with_nanobind(nb::module_ &m);
@@ -61,8 +62,7 @@ namespace hgraph
 
         EvaluationMode run_mode() const override;
 
-        const Graph &graph() const override;
-        graph_ptr graph_py() const; // returns intrusive handle for Python binding
+        graph_ptr graph() const override;
 
         void run(const engine_time_t &start_time, const engine_time_t &end_time) override;
 
