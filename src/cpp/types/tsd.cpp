@@ -115,11 +115,11 @@ namespace hgraph
         _modified_items.erase(key);
 
         // Schedule cleanup notification only once per evaluation cycle
-        auto et = owning_graph().evaluation_clock().evaluation_time();
+        auto et = owning_graph()->evaluation_clock().evaluation_time();
 
         if (_last_cleanup_time < et) {
             _last_cleanup_time = et;
-            owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { _clear_key_changes(); });
+            owning_graph()->evaluation_engine_api().add_after_evaluation_notification([this]() { _clear_key_changes(); });
         }
     }
 
@@ -665,7 +665,7 @@ namespace hgraph
         } else if (active()) {
             // When active but not sampled or peered, only return cached modified items
             // during the current evaluation cycle
-            if (last_modified_time() == owning_graph().evaluation_clock().evaluation_time()) {
+            if (last_modified_time() == owning_graph()->evaluation_clock().evaluation_time()) {
                 return _modified_items;
             } else {
                 return empty_;  // Return empty set if not in current cycle
@@ -866,7 +866,7 @@ namespace hgraph
             output_t().remove_key_observer(this);
             _prev_output = {&output_t()};
             // TODO: check this will not enter again
-            owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { this->reset_prev(); });
+            owning_graph()->evaluation_engine_api().add_after_evaluation_notification([this]() { this->reset_prev(); });
         }
 
         auto active_{active()};
@@ -977,7 +977,7 @@ namespace hgraph
             // Capture by value to ensure the lambda has valid references
             auto builder  = _ts_builder;
             auto instance = value;
-            owning_graph().evaluation_engine_api().add_after_evaluation_notification(
+            owning_graph()->evaluation_engine_api().add_after_evaluation_notification(
                 [builder, instance]() { builder->release_instance(instance); });
             value->un_bind_output(true);
         }
@@ -993,7 +993,7 @@ namespace hgraph
     template <typename T_Key> void TimeSeriesDictInput_T<T_Key>::register_clear_key_changes() {
         if (!_clear_key_changes_registered) {
             _clear_key_changes_registered = true;
-            owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { clear_key_changes(); });
+            owning_graph()->evaluation_engine_api().add_after_evaluation_notification([this]() { clear_key_changes(); });
         }
     }
 
@@ -1045,7 +1045,7 @@ namespace hgraph
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::modified() const {
         if (has_peer()) { return TimeSeriesDictInput::modified(); }
         if (active()) {
-            auto et{owning_graph().evaluation_clock().evaluation_time()};
+            auto et{owning_graph()->evaluation_clock().evaluation_time()};
             return _last_modified_time == et || key_set_t().modified() || sample_time() == et;
         }
         return key_set_t().modified() ||
@@ -1098,10 +1098,10 @@ namespace hgraph
         _ref_ts_feature.update(key);
         for (auto &observer : _key_observers) { observer->on_key_added(key); }
 
-        auto et{owning_graph().evaluation_clock().evaluation_time()};
+        auto et{owning_graph()->evaluation_clock().evaluation_time()};
         if (_last_cleanup_time < et) {
             _last_cleanup_time = et;
-            owning_graph().evaluation_engine_api().add_after_evaluation_notification([this]() { _clear_key_changes(); });
+            owning_graph()->evaluation_engine_api().add_after_evaluation_notification([this]() { _clear_key_changes(); });
         }
     }
 

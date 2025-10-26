@@ -743,7 +743,7 @@ namespace hgraph
         if (_pending_reset_prev) { return; }
         _pending_reset_prev = true;
         auto self           = const_cast<TimeSeriesSetInput *>(this);
-        const_cast<Graph &>(owning_graph()).evaluation_engine_api().add_after_evaluation_notification([self]() {
+        owning_graph()->evaluation_engine_api().add_after_evaluation_notification([self]() {
             self->reset_prev();
         });
     }

@@ -30,9 +30,9 @@ namespace hgraph
         [[nodiscard]] node_ptr owning_node() const;
 
         // Method for owning graph
-        [[nodiscard]] Graph &owning_graph();
+        [[nodiscard]] graph_ptr owning_graph();
 
-        [[nodiscard]] const Graph &owning_graph() const;
+        [[nodiscard]] graph_ptr owning_graph() const;
 
         // Method for value - as python object
         [[nodiscard]] virtual nb::object py_value() const = 0;

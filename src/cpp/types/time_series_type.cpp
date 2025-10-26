@@ -25,7 +25,7 @@ namespace hgraph
     void TimeSeriesType::register_with_nanobind(nb::module_ &m) {
         nb::class_<TimeSeriesType, nb::intrusive_base>(m, "TimeSeriesType")
             .def_prop_ro("owning_node", static_cast<node_ptr (TimeSeriesType::*)() const>(&TimeSeriesType::owning_node))
-            .def_prop_ro("owning_graph", static_cast<const Graph &(TimeSeriesType::*)() const>(&TimeSeriesType::owning_graph))
+            .def_prop_ro("owning_graph", static_cast<graph_ptr (TimeSeriesType::*)() const>(&TimeSeriesType::owning_graph))
             .def_prop_ro("value", &TimeSeriesType::py_value)
             .def_prop_ro("delta_value", &TimeSeriesType::py_delta_value)
             .def_prop_ro("modified", &TimeSeriesType::modified)
@@ -78,9 +78,9 @@ namespace hgraph
         }
     }
 
-    Graph &TimeSeriesType::owning_graph() { return *owning_node()->graph(); }
+    graph_ptr TimeSeriesType::owning_graph() { return owning_node()->graph(); }
 
-    const Graph &TimeSeriesType::owning_graph() const { return *owning_node()->graph(); }
+    graph_ptr TimeSeriesType::owning_graph() const { return owning_node()->graph(); }
 
     void TimeSeriesOutput::clear() {}
 
@@ -180,7 +180,7 @@ namespace hgraph
         // - The new output is valid
         // This matches the Python implementation: (was_bound or self._output.valid)
         if ((owning_node()->is_started() || owning_node()->is_starting()) && _output.get() && (was_bound || _output->valid())) {
-            _sample_time = owning_graph().evaluation_clock().evaluation_time();
+            _sample_time = owning_graph()->evaluation_clock().evaluation_time();
             if (active()) {
                 notify(_sample_time);
                 // TODO: This might belong to make_active, or not? There is a race with setting sample_time too.
@@ -203,7 +203,7 @@ namespace hgraph
             do_un_bind_output(unbind_refs);
 
             if (owning_node()->is_started() && was_valid) {
-                _sample_time = owning_graph().evaluation_clock().evaluation_time();
+                _sample_time = owning_graph()->evaluation_clock().evaluation_time();
                 if (active()) {
                     // Notify as the state of the node has changed from bound to un_bound
                     owning_node()->notify(_sample_time);
@@ -338,7 +338,7 @@ namespace hgraph
     engine_time_t TimeSeriesInput::sample_time() const { return _sample_time; }
 
     bool TimeSeriesInput::sampled() const {
-        return _sample_time != MIN_DT && _sample_time == owning_graph().evaluation_clock().evaluation_time();
+        return _sample_time != MIN_DT && _sample_time == owning_graph()->evaluation_clock().evaluation_time();
     }
 
     time_series_reference_output_ptr TimeSeriesInput::reference_output() const { return _reference_output; }
@@ -375,7 +375,7 @@ namespace hgraph
         _reset_last_modified_time();
     }
 
-    bool TimeSeriesOutput::modified() const { return owning_graph().evaluation_clock().evaluation_time() == _last_modified_time; }
+    bool TimeSeriesOutput::modified() const { return owning_graph()->evaluation_clock().evaluation_time() == _last_modified_time; }
 
     bool TimeSeriesOutput::valid() const { return _last_modified_time > MIN_DT; }
 
@@ -388,13 +388,13 @@ namespace hgraph
     void TimeSeriesOutput::mark_invalid() {
         if (_last_modified_time > MIN_DT) {
             _last_modified_time = MIN_DT;
-            _notify(owning_graph().evaluation_clock().evaluation_time());
+            _notify(owning_graph()->evaluation_clock().evaluation_time());
         }
     }
 
     void TimeSeriesOutput::mark_modified() {
         if (has_parent_or_node()) {
-            mark_modified(owning_graph().evaluation_clock().evaluation_time());
+            mark_modified(owning_graph()->evaluation_clock().evaluation_time());
         } else {
             mark_modified(MAX_ET);
         }
