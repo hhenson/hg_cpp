@@ -96,11 +96,13 @@ namespace hgraph
         re_balance_nodes();
 
         // Evaluate the nested graph
-        if (auto nec = dynamic_cast<NestedEngineEvaluationClock *>(nested_graph_->evaluation_engine_clock().get())) {
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(nested_graph_->evaluation_engine_clock().get())) {
             nec->reset_next_scheduled_evaluation_time();
         }
+
         nested_graph_->evaluate_graph();
-        if (auto nec = dynamic_cast<NestedEngineEvaluationClock *>(nested_graph_->evaluation_engine_clock().get())) {
+
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(nested_graph_->evaluation_engine_clock().get())) {
             nec->reset_next_scheduled_evaluation_time();
         }
 
@@ -111,11 +113,14 @@ namespace hgraph
         // Since l is the last output and o is the main output, they are different TimeSeriesReferenceOutput objects
         // We need to compare their values (both are TimeSeriesReference::ptr)
         bool values_equal = o->valid() && l->valid() && (o->value().get() == l->value().get());
-        if ((!o->valid() && l->valid()) || (l->valid() && !values_equal)) { o->set_value(l->value()); }
+        if ((!o->valid() && l->valid()) || (l->valid() && !values_equal)) {
+            o->set_value(l->value());
+        }
     }
 
     template <typename K> TimeSeriesOutput::ptr ReduceNode<K>::last_output() {
-        auto sub_graph = get_node(node_count() - 1);
+        auto root_ndx  = node_count() - 1;
+        auto sub_graph = get_node(root_ndx);
         auto out_node  = sub_graph[output_node_id_];
         return out_node->output();
     }
@@ -123,7 +128,9 @@ namespace hgraph
     template <typename K> void ReduceNode<K>::add_nodes(const std::unordered_set<K> &keys) {
         // Grow the tree upfront if needed, to avoid growing while binding
         // This ensures the tree structure is consistent before we start binding keys
-        while (free_node_indexes_.size() < keys.size()) { grow_tree(); }
+        while (free_node_indexes_.size() < keys.size()) {
+            grow_tree();
+        }
 
         for (const auto &key : keys) {
             auto ndx = free_node_indexes_.back();
@@ -194,7 +201,7 @@ namespace hgraph
         int64_t top_layer_end    = std::max(count + top_layer_length, static_cast<int64_t>(1));
         int64_t last_node        = end - 1;
 
-        std::deque<int64_t>  un_bound_outputs;
+        std::deque<int64_t> un_bound_outputs;
         std::vector<int64_t> wiring_info;  // Nodes that need wiring after start
 
         for (int64_t i = count; i < end; ++i) {
@@ -249,8 +256,8 @@ namespace hgraph
             rhs_input->notify();
         }
 
+        // Start the newly added nodes AFTER wiring them (matches Python line 272-273)
         if (nested_graph_->is_started() || nested_graph_->is_starting()) {
-            // Start the newly added nodes
             int64_t start_idx = count * node_size();
             int64_t end_idx   = nested_graph_->nodes().size();
             nested_graph_->start_subgraph(start_idx, end_idx);
@@ -281,23 +288,23 @@ namespace hgraph
     template <typename K> void ReduceNode<K>::bind_key_to_node(const K &key, const std::tuple<int64_t, int64_t> &ndx) {
         bound_node_indexes_[key] = ndx;
         auto [node_id, side]     = ndx;
-        // This could be simplified to get the node using direct math instead of getting a view and then get node directly
         auto nodes = get_node(node_id);
         auto node  = nodes[side];
 
+        // Get the time series input from the TSD for this key
         auto ts_ = (*ts())[key];
 
         // Create new input bundle with the ts (Python line 198)
         node->reset_input(node->input()->copy_with(node.get(), {ts_.get()}));
 
         // Re-parent the ts to the node's input (CRITICAL FIX - Python line 200)
-        // Cast to TimeSeriesType::ptr for re_parent
         ts_->re_parent(node->input().get());
 
         // Make the time series active (CRITICAL FIX - Python line 201)
         ts_->make_active();
 
-        // This was ``ts._bound_to_key = True``
+        // Track that this input is bound to a key (Python: ts._bound_to_key = True)
+        // Note: insert() is idempotent - if already present, it does nothing
         bound_to_key_flags_.insert(ts_.get());
 
         node->notify();
@@ -308,28 +315,26 @@ namespace hgraph
         auto nodes           = get_node(node_id);
         auto node            = nodes[side];
 
-        // This was using the "ts" name, but since this would by definitions
+        // Get the current input
         auto inner_input = (*node->input())[0];
 
-        // This was ``getattr(inner_input, '_bound_to_key', False)``
+        // Check if this input is bound to a key (from TSD) by checking if it's in bound_to_key_flags_
+        // If not in flags, it's just an unbound reference that we created, so we can reuse it
         if (bound_to_key_flags_.contains(inner_input.get())) {
-            // Re-parent back to the TSD for cleanup (CRITICAL FIX - Python line 215)
-            // Cast to TimeSeriesType::ptr for re_parent
+            // This input was bound to a key, so we need to:
+            // 1. Remove it from our tracking set
+            // 2. Re-parent it back to the TSD for cleanup
+            // 3. Create a new unbound reference input for this node
+            bound_to_key_flags_.erase(inner_input.get());
             inner_input->re_parent(ts().get());
 
-            // Create a new empty reference input (Python lines 216-218)
             auto new_ref_input = new TimeSeriesReferenceInput(node.get());
             node->reset_input(node->input()->copy_with(node.get(), {new_ref_input}));
-
-            // Re-parent the new input to the node's input bundle (Python line 219)
-            // Cast to TimeSeriesType::ptr for re_parent
             new_ref_input->re_parent(node->input().get());
-
-            // Clone binding from zero (Python line 220)
             new_ref_input->clone_binding(zero());
-
         } else {
-            // Simple clone binding (CRITICAL FIX - Python line 222)
+            // This input is not bound to a key (it's an unbound reference we created),
+            // so we can just clone the zero binding without creating a new input
             auto inner_ref = dynamic_cast<TimeSeriesReferenceInput *>(inner_input.get());
             inner_ref->clone_binding(zero());
         }
@@ -350,7 +355,7 @@ namespace hgraph
         return {all_nodes.begin() + start, all_nodes.begin() + end};
     }
 
-    template <typename K> const graph_ptr                    &ReduceNode<K>::nested_graph() const { return nested_graph_; }
+    template <typename K> const graph_ptr &ReduceNode<K>::nested_graph() const { return nested_graph_; }
     template <typename K> const std::tuple<int64_t, int64_t> &ReduceNode<K>::input_node_ids() const { return input_node_ids_; }
     template <typename K> int64_t                             ReduceNode<K>::output_node_id() const { return output_node_id_; }
     template <typename K> const std::unordered_map<K, std::tuple<int64_t, int64_t>> &ReduceNode<K>::bound_node_indexes() const {
