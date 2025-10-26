@@ -37,7 +37,13 @@ namespace hgraph
                     throw std::runtime_error("At least one of owning_node or owning_output must be provided");
                 },
                 "owning_node"_a = nb::none(), "owning_output"_a = nb::none())
-            .def("release_instance", &InputBuilder::release_instance);
+            .def("release_instance", &InputBuilder::release_instance)
+            .def("__str__", [](const InputBuilder &self) {
+                return fmt::format("InputBuilder@{:p}", static_cast<const void *>(&self));
+            })
+            .def("__repr__", [](const InputBuilder &self) {
+                return fmt::format("InputBuilder@{:p}", static_cast<const void *>(&self));
+            });
 
         // Call the register functions from each builder type
         TimeSeriesSignalInputBuilder::register_with_nanobind(m);

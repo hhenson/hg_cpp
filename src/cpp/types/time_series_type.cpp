@@ -35,7 +35,15 @@ namespace hgraph
             .def("re_parent", static_cast<void (TimeSeriesType::*)(const Node::ptr &)>(&TimeSeriesType::re_parent))
             .def("re_parent", static_cast<void (TimeSeriesType::*)(const ptr &)>(&TimeSeriesType::re_parent))
             .def("is_reference", &TimeSeriesType::is_reference)
-            .def("has_reference", &TimeSeriesType::has_reference);
+            .def("has_reference", &TimeSeriesType::has_reference)
+            .def("__str__", [](const TimeSeriesType &self) {
+                return fmt::format("TimeSeriesType@{:p}[valid={}, modified={}]",
+                    static_cast<const void *>(&self), self.valid(), self.modified());
+            })
+            .def("__repr__", [](const TimeSeriesType &self) {
+                return fmt::format("TimeSeriesType@{:p}[valid={}, modified={}]",
+                    static_cast<const void *>(&self), self.valid(), self.modified());
+            });
     }
 
     TimeSeriesType::ptr &TimeSeriesType::_parent_time_series() const {
@@ -96,7 +104,15 @@ namespace hgraph
             .def("subscribe", &TimeSeriesOutput::subscribe)
             .def("unsubscribe", &TimeSeriesOutput::un_subscribe)
             .def("copy_from_output", &TimeSeriesOutput::copy_from_output)
-            .def("copy_from_input", &TimeSeriesOutput::copy_from_input);
+            .def("copy_from_input", &TimeSeriesOutput::copy_from_input)
+            .def("__str__", [](const TimeSeriesOutput &self) {
+                return fmt::format("TimeSeriesOutput@{:p}[valid={}, modified={}]",
+                    static_cast<const void *>(&self), self.valid(), self.modified());
+            })
+            .def("__repr__", [](const TimeSeriesOutput &self) {
+                return fmt::format("TimeSeriesOutput@{:p}[valid={}, modified={}]",
+                    static_cast<const void *>(&self), self.valid(), self.modified());
+            });
     }
 
     const Node &TimeSeriesType::_owning_node() const {
@@ -260,7 +276,15 @@ namespace hgraph
             .def("bind_output", &TimeSeriesInput::bind_output, "output"_a)
             .def("un_bind_output", &TimeSeriesInput::un_bind_output, "unbind_refs"_a = false)
             .def("make_active", &TimeSeriesInput::make_active)
-            .def("make_passive", &TimeSeriesInput::make_passive);
+            .def("make_passive", &TimeSeriesInput::make_passive)
+            .def("__str__", [](const TimeSeriesInput &self) {
+                return fmt::format("TimeSeriesInput@{:p}[bound={}, valid={}, active={}]",
+                    static_cast<const void *>(&self), self.bound(), self.valid(), self.active());
+            })
+            .def("__repr__", [](const TimeSeriesInput &self) {
+                return fmt::format("TimeSeriesInput@{:p}[bound={}, valid={}, active={}]",
+                    static_cast<const void *>(&self), self.bound(), self.valid(), self.active());
+            });
     }
 
     bool TimeSeriesInput::do_bind_output(time_series_output_ptr &output_) {

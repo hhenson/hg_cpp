@@ -15,7 +15,17 @@ namespace hgraph
             .def_prop_ro("evaluation_time", &EvaluationClock::evaluation_time)
             .def_prop_ro("now", &EvaluationClock::now)
             .def_prop_ro("next_cycle_evaluation_time", &EvaluationClock::next_cycle_evaluation_time)
-            .def_prop_ro("cycle_time", &EvaluationClock::cycle_time);
+            .def_prop_ro("cycle_time", &EvaluationClock::cycle_time)
+            .def("__str__", [](const EvaluationClock &self) {
+                return fmt::format("EvaluationClock@{:p}[eval_time={}]",
+                    static_cast<const void *>(&self),
+                    self.evaluation_time().time_since_epoch().count());
+            })
+            .def("__repr__", [](const EvaluationClock &self) {
+                return fmt::format("EvaluationClock@{:p}[eval_time={}]",
+                    static_cast<const void *>(&self),
+                    self.evaluation_time().time_since_epoch().count());
+            });
     }
 
     void EngineEvaluationClock::register_with_nanobind(nb::module_ &m) {
@@ -84,7 +94,13 @@ namespace hgraph
             .def("add_before_evaluation_notification", &EvaluationEngineApi::add_before_evaluation_notification, "fn"_a)
             .def("add_after_evaluation_notification", &EvaluationEngineApi::add_after_evaluation_notification, "fn"_a)
             .def("add_life_cycle_observer", &EvaluationEngineApi::add_life_cycle_observer, "observer"_a)
-            .def("remove_life_cycle_observer", &EvaluationEngineApi::remove_life_cycle_observer, "observer"_a);
+            .def("remove_life_cycle_observer", &EvaluationEngineApi::remove_life_cycle_observer, "observer"_a)
+            .def("__str__", [](const EvaluationEngineApi &self) {
+                return fmt::format("EvaluationEngineApi@{:p}", static_cast<const void *>(&self));
+            })
+            .def("__repr__", [](const EvaluationEngineApi &self) {
+                return fmt::format("EvaluationEngineApi@{:p}", static_cast<const void *>(&self));
+            });
     }
 
     void EvaluationEngine::register_with_nanobind(nb::module_ &m) {
@@ -103,7 +119,13 @@ namespace hgraph
             .def("notify_before_stop_node", &EvaluationEngine::notify_before_stop_node)
             .def("notify_after_stop_node", &EvaluationEngine::notify_after_stop_node)
             .def("notify_before_stop_graph", &EvaluationEngine::notify_before_stop_graph)
-            .def("notify_after_stop_graph", &EvaluationEngine::notify_after_stop_graph);
+            .def("notify_after_stop_graph", &EvaluationEngine::notify_after_stop_graph)
+            .def("__str__", [](const EvaluationEngine &self) {
+                return fmt::format("EvaluationEngine@{:p}", static_cast<const void *>(&self));
+            })
+            .def("__repr__", [](const EvaluationEngine &self) {
+                return fmt::format("EvaluationEngine@{:p}", static_cast<const void *>(&self));
+            });
     }
 
     NotifyGraphEvaluation::NotifyGraphEvaluation(EvaluationEngine &evaluation_engine, const Graph &graph)

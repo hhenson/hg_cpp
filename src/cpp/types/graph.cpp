@@ -237,7 +237,19 @@ namespace hgraph
             .def_prop_ro("schedule", &Graph::schedule)
             .def("evaluate_graph", &Graph::evaluate_graph)
             .def("copy_with", &Graph::copy_with, "nodes"_a)
-            .def_prop_ro("traits", &Graph::traits);
+            .def_prop_ro("traits", &Graph::traits)
+            .def("__str__", [](const Graph &self) {
+                return fmt::format("Graph@{:p}[id={}, nodes={}]",
+                    static_cast<const void *>(&self),
+                    fmt::join(self.graph_id(), ","),
+                    self.nodes().size());
+            })
+            .def("__repr__", [](const Graph &self) {
+                return fmt::format("Graph@{:p}[id={}, nodes={}]",
+                    static_cast<const void *>(&self),
+                    fmt::join(self.graph_id(), ","),
+                    self.nodes().size());
+            });
         ;
     }
 

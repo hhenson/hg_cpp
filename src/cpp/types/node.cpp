@@ -570,7 +570,15 @@ namespace hgraph
                 "when"_a, "tag"_a = nb::none(), "on_wall_clock"_a = false)
             .def("un_schedule", static_cast<void (NodeScheduler::*)(const std::string &)>(&NodeScheduler::un_schedule), "tag"_a)
             .def("un_schedule", static_cast<void (NodeScheduler::*)()>(&NodeScheduler::un_schedule))
-            .def("reset", &NodeScheduler::reset);
+            .def("reset", &NodeScheduler::reset)
+            .def("__str__", [](const NodeScheduler &self) {
+                return fmt::format("NodeScheduler@{:p}[scheduled={}]",
+                    static_cast<const void *>(&self), self.is_scheduled());
+            })
+            .def("__repr__", [](const NodeScheduler &self) {
+                return fmt::format("NodeScheduler@{:p}[scheduled={}]",
+                    static_cast<const void *>(&self), self.is_scheduled());
+            });
     }
 
     void NodeScheduler::_on_alarm(engine_time_t when, std::string tag) {

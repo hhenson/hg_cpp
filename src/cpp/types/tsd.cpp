@@ -1202,7 +1202,15 @@ namespace hgraph
                     self.py_release_ref(key, requester);
                 },
                 "key"_a, "requester"_a)
-            .def_prop_ro("key_set", &TimeSeriesDictOutput::py_key_set);
+            .def_prop_ro("key_set", &TimeSeriesDictOutput::py_key_set)
+            .def("__str__", [](const TimeSeriesDictOutput &self) {
+                return fmt::format("TimeSeriesDictOutput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            })
+            .def("__repr__", [](const TimeSeriesDictOutput &self) {
+                return fmt::format("TimeSeriesDictOutput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            });
 
         nb::class_<TimeSeriesDictInput, TimeSeriesInput>(m, "TimeSeriesDictInput")
             .def("__contains__", &TimeSeriesDictInput::py_contains, "key"_a)
@@ -1238,7 +1246,15 @@ namespace hgraph
             .def_prop_ro(
                 "key_set",
                 static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesInput>::ts_type> &(TimeSeriesDictInput::*)() const>(
-                    &TimeSeriesDictInput::key_set));
+                    &TimeSeriesDictInput::key_set))
+            .def("__str__", [](const TimeSeriesDictInput &self) {
+                return fmt::format("TimeSeriesDictInput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            })
+            .def("__repr__", [](const TimeSeriesDictInput &self) {
+                return fmt::format("TimeSeriesDictInput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            });
 
         nb::class_<TSD_OUT_Bool, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Bool");
         nb::class_<TSD_OUT_Int, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Int");

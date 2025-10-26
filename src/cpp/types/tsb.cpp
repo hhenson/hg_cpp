@@ -322,7 +322,15 @@ namespace hgraph
             .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a)
             .def_prop_rw(
                 "value", [](const TimeSeriesBundleOutput &self) -> nb::object { return self.py_value(); },
-                &TimeSeriesBundleOutput::py_set_value);
+                &TimeSeriesBundleOutput::py_set_value)
+            .def("__str__", [](const TimeSeriesBundleOutput &self) {
+                return fmt::format("TimeSeriesBundleOutput@{:p}[keys={}, valid={}]",
+                    static_cast<const void *>(&self), self.keys().size(), self.valid());
+            })
+            .def("__repr__", [](const TimeSeriesBundleOutput &self) {
+                return fmt::format("TimeSeriesBundleOutput@{:p}[keys={}, valid={}]",
+                    static_cast<const void *>(&self), self.keys().size(), self.valid());
+            });
     }
     bool TimeSeriesBundleInput::is_same_type(const TimeSeriesType *other) const {
         auto other_b = dynamic_cast<const TimeSeriesBundleInput *>(other);
@@ -371,7 +379,15 @@ namespace hgraph
 
         nb::class_<TimeSeriesBundleInput, TimeSeriesBundle_Input>(m, "TimeSeriesBundleInput")
             .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
-            .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a);
+            .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a)
+            .def("__str__", [](const TimeSeriesBundleInput &self) {
+                return fmt::format("TimeSeriesBundleInput@{:p}[keys={}, valid={}]",
+                    static_cast<const void *>(&self), self.keys().size(), self.valid());
+            })
+            .def("__repr__", [](const TimeSeriesBundleInput &self) {
+                return fmt::format("TimeSeriesBundleInput@{:p}[keys={}, valid={}]",
+                    static_cast<const void *>(&self), self.keys().size(), self.valid());
+            });
     }
 
     TimeSeriesBundleInput::ptr TimeSeriesBundleInput::copy_with(const node_ptr &parent, collection_type ts_values) {

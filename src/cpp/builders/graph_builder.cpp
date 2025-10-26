@@ -96,7 +96,15 @@ namespace hgraph
             .def("make_and_connect_nodes", &GraphBuilder::make_and_connect_nodes, "graph_id"_a, "first_node_ndx"_a)
             .def("release_instance", &GraphBuilder::release_instance, "item"_a)
             .def_ro("node_builders", &GraphBuilder::node_builders)
-            .def_ro("edges", &GraphBuilder::edges);
+            .def_ro("edges", &GraphBuilder::edges)
+            .def("__str__", [](const GraphBuilder &self) {
+                return fmt::format("GraphBuilder@{:p}[nodes={}, edges={}]",
+                    static_cast<const void *>(&self), self.node_builders.size(), self.edges.size());
+            })
+            .def("__repr__", [](const GraphBuilder &self) {
+                return fmt::format("GraphBuilder@{:p}[nodes={}, edges={}]",
+                    static_cast<const void *>(&self), self.node_builders.size(), self.edges.size());
+            });
 
         nb::class_<Edge>(m, "Edge")
             .def(nb::init<int64_t, std::vector<int64_t>, int64_t, std::vector<int64_t>>(), "src_node"_a, "output_path"_a,
@@ -104,6 +112,14 @@ namespace hgraph
             .def_ro("src_node", &Edge::src_node)
             .def_ro("output_path", &Edge::output_path)
             .def_ro("dst_node", &Edge::dst_node)
-            .def_ro("input_path", &Edge::input_path);
+            .def_ro("input_path", &Edge::input_path)
+            .def("__str__", [](const Edge &self) {
+                return fmt::format("Edge[{}->{} to {}->[{}]]", self.src_node,
+                    fmt::join(self.output_path, ","), self.dst_node, fmt::join(self.input_path, ","));
+            })
+            .def("__repr__", [](const Edge &self) {
+                return fmt::format("Edge[{}->{} to {}->[{}]]", self.src_node,
+                    fmt::join(self.output_path, ","), self.dst_node, fmt::join(self.input_path, ","));
+            });
     }
 }  // namespace hgraph

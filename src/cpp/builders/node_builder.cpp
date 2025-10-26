@@ -70,7 +70,15 @@ namespace hgraph
             .def_ro("input_builder", &NodeBuilder::input_builder)
             .def_ro("output_builder", &NodeBuilder::output_builder)
             .def_ro("error_builder", &NodeBuilder::error_builder)
-            .def_ro("recordable_state_builder", &NodeBuilder::recordable_state_builder);
+            .def_ro("recordable_state_builder", &NodeBuilder::recordable_state_builder)
+            .def("__str__", [](const NodeBuilder &self) {
+                return fmt::format("NodeBuilder@{:p}[sig={}]",
+                    static_cast<const void *>(&self), self.signature->name);
+            })
+            .def("__repr__", [](const NodeBuilder &self) {
+                return fmt::format("NodeBuilder@{:p}[sig={}]",
+                    static_cast<const void *>(&self), self.signature->name);
+            });
 
         nb::class_<BaseNodeBuilder, NodeBuilder>(m, "BaseNodeBuilder");
 

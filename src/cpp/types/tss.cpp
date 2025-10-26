@@ -789,7 +789,15 @@ namespace hgraph
             .def("added", &TimeSeriesSetInput::py_added)
             .def("removed", &TimeSeriesSetInput::py_removed)
             .def("was_added", &TimeSeriesSetInput::py_was_added)
-            .def("was_removed", &TimeSeriesSetInput::py_was_removed);
+            .def("was_removed", &TimeSeriesSetInput::py_was_removed)
+            .def("__str__", [](const TimeSeriesSetInput &self) {
+                return fmt::format("TimeSeriesSetInput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            })
+            .def("__repr__", [](const TimeSeriesSetInput &self) {
+                return fmt::format("TimeSeriesSetInput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            });
 
         nb::class_<TimeSeriesSetInput_T<bool>, TimeSeriesSetInput>(m, "TimeSeriesSetInput_Bool");
         nb::class_<TimeSeriesSetInput_T<int64_t>, TimeSeriesSetInput>(m, "TimeSeriesSetInput_Int");
@@ -808,7 +816,15 @@ namespace hgraph
             .def("was_added", &TimeSeriesSetOutput::py_was_added)
             .def("was_removed", &TimeSeriesSetOutput::py_was_removed)
             .def("get_contains_output", &TimeSeriesSetOutput::get_contains_output)
-            .def("release_contains_output", &TimeSeriesSetOutput::release_contains_output);
+            .def("release_contains_output", &TimeSeriesSetOutput::release_contains_output)
+            .def("__str__", [](const TimeSeriesSetOutput &self) {
+                return fmt::format("TimeSeriesSetOutput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            })
+            .def("__repr__", [](const TimeSeriesSetOutput &self) {
+                return fmt::format("TimeSeriesSetOutput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            });
 
         nb::class_<TimeSeriesSetOutput_T<bool>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Bool");
         nb::class_<TimeSeriesSetOutput_T<int64_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Int");

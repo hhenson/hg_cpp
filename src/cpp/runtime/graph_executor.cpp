@@ -41,7 +41,17 @@ namespace hgraph
                 // Return a borrowed intrusive reference to the underlying Graph held by the executor
                 return nb::ref(const_cast<Graph *>(&self.graph()));
             })
-            .def("run", &GraphExecutor::run);
+            .def("run", &GraphExecutor::run)
+            .def("__str__", [](const GraphExecutor &self) {
+                return fmt::format("GraphExecutor@{:p}[mode={}]",
+                    static_cast<const void *>(&self),
+                    static_cast<int>(self.run_mode()));
+            })
+            .def("__repr__", [](const GraphExecutor &self) {
+                return fmt::format("GraphExecutor@{:p}[mode={}]",
+                    static_cast<const void *>(&self),
+                    static_cast<int>(self.run_mode()));
+            });
 
         nb::enum_<EvaluationMode>(m, "EvaluationMode")
             .value("REAL_TIME", EvaluationMode::REAL_TIME)

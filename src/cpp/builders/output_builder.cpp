@@ -39,7 +39,13 @@ namespace hgraph
                     throw std::runtime_error("At least one of owning_node or owning_output must be provided");
                 },
                 "owning_node"_a = nb::none(), "owning_output"_a = nb::none())
-            .def("release_instance", &OutputBuilder::release_instance);
+            .def("release_instance", &OutputBuilder::release_instance)
+            .def("__str__", [](const OutputBuilder &self) {
+                return fmt::format("OutputBuilder@{:p}", static_cast<const void *>(&self));
+            })
+            .def("__repr__", [](const OutputBuilder &self) {
+                return fmt::format("OutputBuilder@{:p}", static_cast<const void *>(&self));
+            });
 
         // Call the register functions from each builder type
         time_series_value_output_builder_register_with_nanobind(m);

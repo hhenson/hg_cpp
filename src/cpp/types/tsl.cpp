@@ -144,7 +144,15 @@ namespace hgraph
                  static_cast<enumerated_collection_type (TimeSeriesListOutput::*)() const>(&TimeSeriesListOutput::valid_items))
             .def("modified_keys", &TimeSeriesListOutput::modified_keys)
             .def("modified_items",
-                 static_cast<enumerated_collection_type (TimeSeriesListOutput::*)() const>(&TimeSeriesListOutput::modified_items));
+                 static_cast<enumerated_collection_type (TimeSeriesListOutput::*)() const>(&TimeSeriesListOutput::modified_items))
+            .def("__str__", [](const TimeSeriesListOutput &self) {
+                return fmt::format("TimeSeriesListOutput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            })
+            .def("__repr__", [](const TimeSeriesListOutput &self) {
+                return fmt::format("TimeSeriesListOutput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            });
     }
     bool TimeSeriesListInput::is_same_type(const TimeSeriesType *other) const {
         auto other_list = dynamic_cast<const TimeSeriesListInput *>(other);
@@ -174,6 +182,14 @@ namespace hgraph
                  static_cast<enumerated_collection_type (TimeSeriesListInput::*)() const>(&TimeSeriesListInput::valid_items))
             .def("modified_keys", &TimeSeriesListInput::modified_keys)
             .def("modified_items",
-                 static_cast<enumerated_collection_type (TimeSeriesListInput::*)() const>(&TimeSeriesListInput::modified_items));
+                 static_cast<enumerated_collection_type (TimeSeriesListInput::*)() const>(&TimeSeriesListInput::modified_items))
+            .def("__str__", [](const TimeSeriesListInput &self) {
+                return fmt::format("TimeSeriesListInput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            })
+            .def("__repr__", [](const TimeSeriesListInput &self) {
+                return fmt::format("TimeSeriesListInput@{:p}[size={}, valid={}]",
+                    static_cast<const void *>(&self), self.size(), self.valid());
+            });
     }
 }  // namespace hgraph
