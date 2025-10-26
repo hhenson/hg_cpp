@@ -70,7 +70,7 @@ namespace hgraph
     std::vector<engine_time_t> &Graph::schedule() { return _schedule; }
 
     void Graph::evaluate_graph() {
-        NotifyGraphEvaluation nge{evaluation_engine(), *this};
+        NotifyGraphEvaluation nge{evaluation_engine(), graph_ptr{this}};
 
         engine_time_t now      = evaluation_engine_clock().evaluation_time();
         auto         &clock    = evaluation_engine_clock();
@@ -85,10 +85,11 @@ namespace hgraph
 
             while (auto value = receiver().dequeue()) {
                 auto [i, message]         = *value;  // Use the already dequeued value
-                auto                &node = *nodes[i];
+                auto node = nodes[i];
+                auto &node_ref = *node;
                 try {
                     NotifyNodeEvaluation nne{evaluation_engine(), node};
-                    bool success = dynamic_cast<PushQueueNode &>(node).apply_message(message);
+                    bool success = dynamic_cast<PushQueueNode &>(node_ref).apply_message(message);
                     if (!success) {
                         receiver().enqueue_front({i, message});
                         clock.mark_push_node_requires_scheduling();
@@ -97,14 +98,14 @@ namespace hgraph
                 } catch (const NodeException &e) {
                     throw;  // already enriched
                 } catch (const std::exception &e) {
-                    throw NodeException::capture_error(e, node, "During push node message application");
+                    throw NodeException::capture_error(e, node_ref, "During push node message application");
                 } catch (...) {
-                    throw NodeException::capture_error(std::current_exception(), node,
+                    throw NodeException::capture_error(std::current_exception(), node_ref,
                                                        "Unknown error during push node message application");
                 }
             }
             try {
-                evaluation_engine().notify_after_push_nodes_evaluation(*this);
+                evaluation_engine().notify_after_push_nodes_evaluation(graph_ptr{this});
             } catch (const NodeException &e) {
                 throw; // already enriched
             } catch (const std::exception &e) {
@@ -116,11 +117,12 @@ namespace hgraph
 
         for (size_t i = push_source_nodes_end(); i < nodes.size(); ++i) {
             auto  scheduled_time = schedule[i];
-            auto &node           = *nodes[i];
+            auto nodep           = nodes[i];
+            auto &node           = *nodep;
 
             if (scheduled_time == now) {
                 try {
-                    NotifyNodeEvaluation nne{evaluation_engine(), node};
+                    NotifyNodeEvaluation nne{evaluation_engine(), nodep};
                     node.eval();
                 } catch (const NodeException &e) { throw e; } catch (const std::exception &e) {
                     throw NodeException::capture_error(e, node, "During evaluation");
@@ -182,9 +184,9 @@ namespace hgraph
         for (auto i = start; i < end; ++i) {
             auto node{_nodes[i]};
             try {
-                evaluation_engine().notify_before_start_node(*node);
+                evaluation_engine().notify_before_start_node(node);
                 node->start();
-                evaluation_engine().notify_after_start_node(*node);
+                evaluation_engine().notify_after_start_node(node);
             } catch (const NodeException &e) {
                 throw; // already enriched
             } catch (const std::exception &e) {
@@ -199,9 +201,9 @@ namespace hgraph
         for (auto i = start; i < end; ++i) {
             auto node{_nodes[i]};
             try {
-                evaluation_engine().notify_before_stop_node(*node);
+                evaluation_engine().notify_before_stop_node(node);
                 node->stop();
-                evaluation_engine().notify_after_stop_node(*node);
+                evaluation_engine().notify_after_stop_node(node);
             } catch (const NodeException &e) {
                 throw; // already enriched
             } catch (const std::exception &e) {
@@ -262,24 +264,24 @@ namespace hgraph
 
     void Graph::start() {
         auto &engine = *_evaluation_engine;
-        engine.notify_before_start_graph(*this);
+        engine.notify_before_start_graph(graph_ptr{this});
         for (auto &node : _nodes) {
-            engine.notify_before_start_node(*node);
+            engine.notify_before_start_node(node);
             start_component(*node);
-            engine.notify_after_start_node(*node);
+            engine.notify_after_start_node(node);
         }
-        engine.notify_after_start_graph(*this);
+        engine.notify_after_start_graph(graph_ptr{this});
     }
 
     void Graph::stop() {
         auto &engine = *_evaluation_engine;
-        engine.notify_before_stop_graph(*this);
+        engine.notify_before_stop_graph(graph_ptr{this});
         for (auto &node : _nodes) {
-            engine.notify_before_stop_node(*node);
+            engine.notify_before_stop_node(node);
             stop_component(*node);
-            engine.notify_after_stop_node(*node);
+            engine.notify_after_stop_node(node);
         }
-        engine.notify_after_stop_graph(*this);
+        engine.notify_after_stop_graph(graph_ptr{this});
     }
 
     void Graph::dispose() {

@@ -130,25 +130,25 @@ namespace hgraph
 
         virtual void notify_after_evaluation() = 0;
 
-        virtual void notify_before_start_graph(const Graph &graph) = 0;
-        virtual void notify_after_start_graph(const Graph &graph)  = 0;
+        virtual void notify_before_start_graph(graph_ptr graph) = 0;
+        virtual void notify_after_start_graph(graph_ptr graph)  = 0;
 
-        virtual void notify_before_start_node(const Node &node) = 0;
-        virtual void notify_after_start_node(const Node &node)  = 0;
+        virtual void notify_before_start_node(node_ptr node) = 0;
+        virtual void notify_after_start_node(node_ptr node)  = 0;
 
-        virtual void notify_before_graph_evaluation(const Graph &graph) = 0;
-        virtual void notify_after_graph_evaluation(const Graph &graph)  = 0;
+        virtual void notify_before_graph_evaluation(graph_ptr graph) = 0;
+        virtual void notify_after_graph_evaluation(graph_ptr graph)  = 0;
 
-        virtual void notify_after_push_nodes_evaluation(const Graph &graph) = 0;
+        virtual void notify_after_push_nodes_evaluation(graph_ptr graph) = 0;
 
-        virtual void notify_before_node_evaluation(const Node &node) = 0;
-        virtual void notify_after_node_evaluation(const Node &node)  = 0;
+        virtual void notify_before_node_evaluation(node_ptr node) = 0;
+        virtual void notify_after_node_evaluation(node_ptr node)  = 0;
 
-        virtual void notify_before_stop_node(const Node &node) = 0;
-        virtual void notify_after_stop_node(const Node &node)  = 0;
+        virtual void notify_before_stop_node(node_ptr node) = 0;
+        virtual void notify_after_stop_node(node_ptr node)  = 0;
 
-        virtual void notify_before_stop_graph(const Graph &graph) = 0;
-        virtual void notify_after_stop_graph(const Graph &graph)  = 0;
+        virtual void notify_before_stop_graph(graph_ptr graph) = 0;
+        virtual void notify_after_stop_graph(graph_ptr graph)  = 0;
 
         static void register_with_nanobind(nb::module_ &m);
 
@@ -157,22 +157,22 @@ namespace hgraph
 
     struct NotifyGraphEvaluation
     {
-        NotifyGraphEvaluation(EvaluationEngine &evaluation_engine, const Graph &graph);
+        NotifyGraphEvaluation(EvaluationEngine &evaluation_engine, graph_ptr graph);
         ~NotifyGraphEvaluation() noexcept;
 
       private:
         EvaluationEngine &_evaluation_engine;
-        const Graph      &_graph;
+        graph_ptr         _graph;
     };
 
     struct NotifyNodeEvaluation
     {
-        NotifyNodeEvaluation(EvaluationEngine &evaluation_engine, const Node &node);
+        NotifyNodeEvaluation(EvaluationEngine &evaluation_engine, node_ptr node);
         ~NotifyNodeEvaluation() noexcept;
 
       private:
         EvaluationEngine &_evaluation_engine;
-        const Node       &_node;
+        node_ptr          _node;
     };
 
     struct HGRAPH_EXPORT EvaluationEngineDelegate : EvaluationEngine
@@ -207,31 +207,31 @@ namespace hgraph
 
         void notify_after_evaluation() override;
 
-        void notify_before_start_graph(const Graph &graph) override;
+        void notify_before_start_graph(graph_ptr graph) override;
 
-        void notify_after_start_graph(const Graph &graph) override;
+        void notify_after_start_graph(graph_ptr graph) override;
 
-        void notify_before_start_node(const Node &node) override;
+        void notify_before_start_node(node_ptr node) override;
 
-        void notify_after_start_node(const Node &node) override;
+        void notify_after_start_node(node_ptr node) override;
 
-        void notify_before_graph_evaluation(const Graph &graph) override;
+        void notify_before_graph_evaluation(graph_ptr graph) override;
 
-        void notify_after_graph_evaluation(const Graph &graph) override;
+        void notify_after_graph_evaluation(graph_ptr graph) override;
 
-        void notify_after_push_nodes_evaluation(const Graph &graph) override;
+        void notify_after_push_nodes_evaluation(graph_ptr graph) override;
 
-        void notify_before_node_evaluation(const Node &node) override;
+        void notify_before_node_evaluation(node_ptr node) override;
 
-        void notify_after_node_evaluation(const Node &node) override;
+        void notify_after_node_evaluation(node_ptr node) override;
 
-        void notify_before_stop_node(const Node &node) override;
+        void notify_before_stop_node(node_ptr node) override;
 
-        void notify_after_stop_node(const Node &node) override;
+        void notify_after_stop_node(node_ptr node) override;
 
-        void notify_before_stop_graph(const Graph &graph) override;
+        void notify_before_stop_graph(graph_ptr graph) override;
 
-        void notify_after_stop_graph(const Graph &graph) override;
+        void notify_after_stop_graph(graph_ptr graph) override;
 
         static void register_with_nanobind(nb::module_ &m);
 
@@ -345,19 +345,19 @@ namespace hgraph
         void                           advance_engine_time() override;
         void                           notify_before_evaluation() override;
         void                           notify_after_evaluation() override;
-        void                           notify_before_start_graph(const Graph &graph) override;
-        void                           notify_after_start_graph(const Graph &graph) override;
-        void                           notify_before_start_node(const Node &node) override;
-        void                           notify_after_start_node(const Node &node) override;
-        void                           notify_before_graph_evaluation(const Graph &graph) override;
-        void                           notify_after_graph_evaluation(const Graph &graph) override;
-        void                           notify_after_push_nodes_evaluation(const Graph &graph) override;
-        void                           notify_before_node_evaluation(const Node &node) override;
-        void                           notify_after_node_evaluation(const Node &node) override;
-        void                           notify_before_stop_node(const Node &node) override;
-        void                           notify_after_stop_node(const Node &node) override;
-        void                           notify_before_stop_graph(const Graph &graph) override;
-        void                           notify_after_stop_graph(const Graph &graph) override;
+        void                           notify_before_start_graph(graph_ptr graph) override;
+        void                           notify_after_start_graph(graph_ptr graph) override;
+        void                           notify_before_start_node(node_ptr node) override;
+        void                           notify_after_start_node(node_ptr node) override;
+        void                           notify_before_graph_evaluation(graph_ptr graph) override;
+        void                           notify_after_graph_evaluation(graph_ptr graph) override;
+        void                           notify_after_push_nodes_evaluation(graph_ptr graph) override;
+        void                           notify_before_node_evaluation(node_ptr node) override;
+        void                           notify_after_node_evaluation(node_ptr node) override;
+        void                           notify_before_stop_node(node_ptr node) override;
+        void                           notify_after_stop_node(node_ptr node) override;
+        void                           notify_before_stop_graph(graph_ptr graph) override;
+        void                           notify_after_stop_graph(graph_ptr graph) override;
 
         static void register_with_nanobind(nb::module_ &m);
 
