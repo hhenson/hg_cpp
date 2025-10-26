@@ -179,21 +179,21 @@ namespace hgraph
     template <bool is_delta>
     nb::object TimeSeriesBundle<T_TS>::py_value_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
         nb::dict out;
-        auto     include_nones{!_schema->scalar_type().is_none()};
+        bool has_scalar_type = !_schema->scalar_type().is_none();
         for (size_t i = 0, l = ts_values().size(); i < l; ++i) {
-            if (auto ts{ts_values()[i]}; constraint(*ts)) {
+            auto &key = _schema->keys()[i];
+            auto ts = ts_values()[i];
+            if (constraint(*ts)) {
                 if constexpr (is_delta) {
-                    out[_schema->keys()[i].c_str()] = ts->py_delta_value();
+                    out[key.c_str()] = ts->py_delta_value();
                 } else {
-                    out[_schema->keys()[i].c_str()] = ts->py_value();
+                    out[key.c_str()] = ts->py_value();
                 }
-            } else if (include_nones) {
-                out[_schema->keys()[i].c_str()] = nb::none();
             }
         }
 
-        if (!include_nones) { return out; }
-        return nb::cast<nb::object>(_schema->scalar_type()(**out));
+        // Always return a plain dict of available fields (omit missing), matching tests' expectations
+        return out;
     }
 
     template <typename T_TS>

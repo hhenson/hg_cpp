@@ -111,6 +111,8 @@ namespace hgraph
             if (reload_on_ticked_ || !active_key_.has_value() || !keys_equal(key_ts->value(), active_key_.value())) {
                 if (active_key_.has_value()) {
                     graph_reset_ = true;
+                    // Invalidate current output so stale fields (e.g., TSB members) are cleared on branch switch
+                    if (output() != nullptr) { output()->invalidate(); }
                     stop_component(*active_graph_);
                     unwire_graph(active_graph_);
                     // Schedule deferred disposal via lambda capture
@@ -169,27 +171,34 @@ namespace hgraph
     }
 
     template <typename K> void SwitchNode<K>::wire_graph(graph_ptr &graph) {
+        // Determine the effective graph key as Python does: if no specific mapping, use DEFAULT
         K graph_key = active_key_.value();
+        bool has_specific = nested_graph_builders_.find(graph_key) != nested_graph_builders_.end();
+        K effective_key = graph_key;
+        if (!has_specific) {
+            if constexpr (std::is_same_v<K, nb::object>) {
+                effective_key = nb::cast<K>(get_python_default());
+            }
+        }
 
-        // Try to find input_node_ids for the specific key, or use default if not found
-        auto input_ids_it = input_node_ids_.find(graph_key);
+        // Try to find input_node_ids for the effective key, or fallback to typed-default maps
         const std::unordered_map<std::string, int> *input_ids_to_use = nullptr;
-
+        auto input_ids_it = input_node_ids_.find(effective_key);
         if (input_ids_it != input_node_ids_.end()) {
             input_ids_to_use = &input_ids_it->second;
         } else if (!default_input_node_ids_.empty()) {
             input_ids_to_use = &default_input_node_ids_;
         }
 
-        // Set recordable ID if needed
+        // Set recordable ID if needed, using the effective key label
         if (!recordable_id_.empty()) {
             std::string key_str;
             if constexpr (std::is_same_v<K, std::string>) {
-                key_str = graph_key;
+                key_str = effective_key;
             } else if constexpr (std::is_same_v<K, nb::object>) {
-                key_str = nb::cast<std::string>(nb::str(graph_key));
+                key_str = nb::cast<std::string>(nb::str(effective_key));
             } else {
-                key_str = to_string(graph_key);
+                key_str = to_string(effective_key);
             }
             std::string full_id = fmt::format("{}[{}]", recordable_id_, key_str);
             set_parent_recordable_id(*graph, full_id);
@@ -220,9 +229,9 @@ namespace hgraph
             }
         }
 
-        // Wire output using the same resolved graph_key, or use default if not found
-        auto output_id_it = output_node_ids_.find(graph_key);
+        // Wire output using the effective key (or typed default fallback)
         int output_node_id = -1;
+        auto output_id_it = output_node_ids_.find(effective_key);
         if (output_id_it != output_node_ids_.end()) {
             output_node_id = output_id_it->second;
         } else if (default_output_node_id_ >= 0) {
