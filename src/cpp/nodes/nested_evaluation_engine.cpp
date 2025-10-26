@@ -17,18 +17,16 @@ namespace hgraph
         return _nested_next_scheduled_evaluation_time;
     }
 
-    void NestedEngineEvaluationClock::reset_next_scheduled_evaluation_time() {
-        _nested_next_scheduled_evaluation_time = MAX_DT;
-    }
+    void NestedEngineEvaluationClock::reset_next_scheduled_evaluation_time() { _nested_next_scheduled_evaluation_time = MAX_DT; }
 
     void NestedEngineEvaluationClock::update_next_scheduled_evaluation_time(std::chrono::system_clock::time_point next_time) {
         auto last_eval_time = _nested_node->last_evaluation_time();
         if ((last_eval_time != MIN_DT && last_eval_time >= next_time) || _nested_node->is_stopping()) { return; }
 
         // Match Python: (let or MIN_DT) + MIN_TD, but also ensure we never use a time < current_time
-        auto current_time = _nested_node->graph()->evaluation_clock().evaluation_time();
-        auto lower_bound = std::max(current_time, (last_eval_time == MIN_DT ? MIN_DT : last_eval_time));
-        auto proposed_next_time = std::min(next_time, std::max(_nested_next_scheduled_evaluation_time, lower_bound + MIN_TD));
+        auto current_time       = _nested_node->graph()->evaluation_clock()->evaluation_time();
+        auto lower_bound        = std::max(current_time, last_eval_time) + MIN_TD;
+        auto proposed_next_time = std::min(next_time, std::max(_nested_next_scheduled_evaluation_time, lower_bound));
 
         if (proposed_next_time != _nested_next_scheduled_evaluation_time) {
             _nested_next_scheduled_evaluation_time = proposed_next_time;
@@ -50,11 +48,8 @@ namespace hgraph
     EvaluationClock::ptr NestedEvaluationEngine::evaluation_clock() { return _engine_evaluation_clock.get(); }
 
     EngineEvaluationClock::ptr NestedEvaluationEngine::engine_evaluation_clock() { return _engine_evaluation_clock; }
-    void                   NestedEvaluationEngine::register_with_nanobind(nb::module_ &m) {
+    void                       NestedEvaluationEngine::register_with_nanobind(nb::module_ &m) {
         nb::class_<NestedEvaluationEngine, EvaluationEngineDelegate>(m, "NestedEvaluationEngine");
     }
 
-
 }  // namespace hgraph
-
-
