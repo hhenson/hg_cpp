@@ -20,13 +20,14 @@ namespace hgraph
     void NestedEngineEvaluationClock::reset_next_scheduled_evaluation_time() { _nested_next_scheduled_evaluation_time = MAX_DT; }
 
     void NestedEngineEvaluationClock::update_next_scheduled_evaluation_time(std::chrono::system_clock::time_point next_time) {
-        auto last_eval_time = _nested_node->last_evaluation_time();
-        if ((last_eval_time != MIN_DT && last_eval_time >= next_time) || _nested_node->is_stopping()) { return; }
+        auto let{_nested_node->last_evaluation_time()};
+        //Unlike python when not set let will be MIN_DT
+        // Python: if (let := self._nested_node.last_evaluation_time) and let >= next_time or self._nested_node.is_stopping:
+        if (let != MIN_DT /* equivalent to falisy */ && let >= next_time || _nested_node->is_stopping()) { return; }
 
-        // Match Python: (let or MIN_DT) + MIN_TD, but also ensure we never use a time < current_time
-        auto current_time       = _nested_node->graph()->evaluation_clock()->evaluation_time();
-        auto lower_bound        = std::max(current_time, last_eval_time) + MIN_TD;
-        auto proposed_next_time = std::min(next_time, std::max(_nested_next_scheduled_evaluation_time, lower_bound));
+        // Match Python: min(next_time, max(self._nested_next_scheduled_evaluation_time, (let or MIN_DT) + MIN_TD))
+        // Note let or MIN_DT is equivalent to let
+        auto proposed_next_time = std::min(next_time, std::max(_nested_next_scheduled_evaluation_time, let + MIN_TD));
 
         if (proposed_next_time != _nested_next_scheduled_evaluation_time) {
             _nested_next_scheduled_evaluation_time = proposed_next_time;
