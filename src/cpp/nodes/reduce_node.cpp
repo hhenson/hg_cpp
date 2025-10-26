@@ -298,6 +298,15 @@ namespace hgraph
         // Get the time series input from the TSD for this key
         auto ts_ = (*ts())[key];
 
+        // Check what's currently at this position before binding
+        auto old_input = (*node->input())[0];
+
+        // If the old input is in bound_to_key_flags_, we need to remove it
+        // This can happen if we're re-binding to a position that was swapped with another bound position
+        if (bound_to_key_flags_.contains(old_input.get()) && old_input.get() != ts_.get()) {
+            bound_to_key_flags_.erase(old_input.get());
+        }
+
         // Create new input bundle with the ts (Python line 198)
         node->reset_input(node->input()->copy_with(node.get(), {ts_.get()}));
 
