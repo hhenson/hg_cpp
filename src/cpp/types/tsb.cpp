@@ -258,8 +258,8 @@ namespace hgraph
         if (result.is_none()) { return true; }
 
         if (!schema().scalar_type().is_none() && nb::isinstance(result, schema().scalar_type())) {
-            // If it's a scalar type, we can apply if this bundle is modified
-            return modified();
+            // Allow applying scalar-type compound on initial assignment (not valid yet), or when already modified
+            return !valid() || modified();
         } else {
             // For dict-like results, check each child
             for (auto [key, val] : nb::cast<nb::dict>(result)) {

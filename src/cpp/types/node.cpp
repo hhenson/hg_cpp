@@ -449,7 +449,7 @@ namespace hgraph
 
     bool NodeScheduler::is_scheduled() const { return !_scheduled_events.empty() || !_alarm_tags.empty(); }
 
-    bool NodeScheduler::is_scheduled_node() const {
+    bool NodeScheduler::is_scheduled_now() const {
         return !_scheduled_events.empty() &&
                _scheduled_events.begin()->first == _node->graph()->evaluation_clock()->evaluation_time();
     }
@@ -490,7 +490,7 @@ namespace hgraph
         }
 
         auto is_started{_node->is_started()};
-        auto now_{is_scheduled_node() ? _node->graph()->evaluation_clock()->evaluation_time() : MIN_DT};
+        auto now_{is_scheduled_now() ? _node->graph()->evaluation_clock()->evaluation_time() : MIN_DT};
         if (when > now_) {
             _tags[tag.value_or("")] = when;
             auto current_first      = !_scheduled_events.empty() ? _scheduled_events.begin()->first : MAX_DT;
@@ -546,7 +546,7 @@ namespace hgraph
         nb::class_<NodeScheduler, intrusive_base>(m, "NodeScheduler")
             .def_prop_ro("next_scheduled_time", &NodeScheduler::next_scheduled_time)
             .def_prop_ro("is_scheduled", &NodeScheduler::is_scheduled)
-            .def_prop_ro("is_scheduled_node", &NodeScheduler::is_scheduled_node)
+            .def_prop_ro("is_scheduled_now", &NodeScheduler::is_scheduled_now)
             .def_prop_ro("has_tag", &NodeScheduler::has_tag)
             .def(
                 "pop_tag", [](NodeScheduler &self, const std::string &tag) { return self.pop_tag(tag); }, "tag"_a)
@@ -835,7 +835,7 @@ namespace hgraph
     }
 
     void Node::eval() {
-        bool scheduled{has_scheduler() ? _scheduler->is_scheduled_node() : false};
+        bool scheduled{has_scheduler() ? _scheduler->is_scheduled_now() : false};
         bool should_eval{true};
 
         if (has_input()) {

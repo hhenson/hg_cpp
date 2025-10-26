@@ -113,7 +113,11 @@ namespace hgraph
         // Since l is the last output and o is the main output, they are different TimeSeriesReferenceOutput objects
         // We need to compare their values (both are TimeSeriesReference::ptr)
         bool values_equal = o->valid() && l->valid() && (o->value().get() == l->value().get());
-        if ((!o->valid() && l->valid()) || (l->valid() && !values_equal)) {
+        // Propagate when:
+        // - last_output is valid and main output is invalid (initial assignment), or
+        // - reference pointer changed, or
+        // - last_output itself ticked (modified) even if the reference pointer is the same
+        if (l->valid() && (!o->valid() || !values_equal || l->modified())) {
             o->set_value(l->value());
         }
     }

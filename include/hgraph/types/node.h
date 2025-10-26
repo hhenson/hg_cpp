@@ -124,7 +124,7 @@ namespace hgraph
         [[nodiscard]] engine_time_t next_scheduled_time() const;
         [[nodiscard]] bool          requires_scheduling() const;
         [[nodiscard]] bool          is_scheduled() const;
-        [[nodiscard]] bool          is_scheduled_node() const;
+        [[nodiscard]] bool          is_scheduled_now() const;
         [[nodiscard]] bool          has_tag(const std::string &tag) const;
         engine_time_t               pop_tag(const std::string &tag);
         engine_time_t               pop_tag(const std::string &tag, engine_time_t default_time);
