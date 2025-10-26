@@ -76,7 +76,8 @@ namespace hgraph
                 if (v != _ts_values.end()) {
                     _modified_items[it->second] = v->second;
                 } else {
-                    fmt::print("[TSDOut][mark_child_modified] Missing value for key: {}\n", to_string(it->second));
+                    // If key is not in _ts_values, then we should not add to modified items, and we are not modified.
+                    // This can happen when a key is removed but its child still notifies us.
                     return;
                 }
             }
