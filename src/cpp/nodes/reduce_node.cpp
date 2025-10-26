@@ -56,15 +56,16 @@ namespace hgraph
     template <typename K> void ReduceNode<K>::do_start() {
         auto tsd{ts()};
         if (tsd->valid()) {
-            // Get all keys
+            // Get all keys that are valid but NOT added (i.e., keys present before start)
+            // This matches Python: keys = key_set.valid - key_set.added
             std::unordered_set<K> keys;
             const auto           &key_set{tsd->key_set_t()};
             for (const auto &key : key_set.value()) {
-                if (key_set.was_added(key)) { keys.insert(key); }
+                if (!key_set.was_added(key)) { keys.insert(key); }
             }
 
             if (!keys.empty()) {
-                add_nodes(keys);
+                add_nodes(keys);  // If there are already inputs, then add the keys.
             } else {
                 grow_tree();
             }
@@ -107,7 +108,12 @@ namespace hgraph
         auto l = dynamic_cast<TimeSeriesReferenceOutput *>(last_output().get());
         auto o = dynamic_cast<TimeSeriesReferenceOutput *>(output().get());
 
-        if ((!o->valid() && l->valid()) || (l->valid() && o->value() != l->value())) { o->set_value(l->value()); }
+        // Since l is the last output and o is the main output, they are different TimeSeriesReferenceOutput objects
+        // We need to compare their values (both are TimeSeriesReference::ptr)
+        bool values_equal = o->valid() && l->valid() && (o->value().get() == l->value().get());
+        if ((!o->valid() && l->valid()) || (l->valid() && !values_equal)) {
+            o->set_value(l->value());
+        }
     }
 
     template <typename K> TimeSeriesOutput::ptr ReduceNode<K>::last_output() {
@@ -117,8 +123,13 @@ namespace hgraph
     }
 
     template <typename K> void ReduceNode<K>::add_nodes(const std::unordered_set<K> &keys) {
+        // Grow the tree upfront if needed, to avoid growing while binding
+        // This ensures the tree structure is consistent before we start binding keys
+        while (free_node_indexes_.size() < keys.size()) {
+            grow_tree();
+        }
+
         for (const auto &key : keys) {
-            if (free_node_indexes_.empty()) { grow_tree(); }
             auto ndx = free_node_indexes_.back();
             free_node_indexes_.pop_back();
             bind_key_to_node(key, ndx);
