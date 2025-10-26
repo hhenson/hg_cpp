@@ -199,6 +199,7 @@ namespace hgraph
         int64_t last_node        = end - 1;
 
         std::deque<int64_t> un_bound_outputs;
+        std::vector<int64_t> wiring_info;  // Nodes that need wiring after start
 
         for (int64_t i = count; i < end; ++i) {
             un_bound_outputs.push_back(i);
@@ -213,8 +214,15 @@ namespace hgraph
                 free_node_indexes_.push_back(ndx_rhs);
                 zero_node(ndx_rhs);
             } else {
-                TimeSeriesOutput::ptr left_parent;
-                TimeSeriesOutput::ptr right_parent;
+                // Defer wiring until after nodes are started
+                wiring_info.push_back(i);
+            }
+        }
+
+        // Wire the nodes that need wiring BEFORE starting them
+        for (auto i : wiring_info) {
+            TimeSeriesOutput::ptr left_parent;
+            TimeSeriesOutput::ptr right_parent;
 
                 if (i < last_node) {
                     auto left_idx = un_bound_outputs.front();
