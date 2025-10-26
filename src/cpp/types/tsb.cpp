@@ -179,20 +179,23 @@ namespace hgraph
     template <bool is_delta>
     nb::object TimeSeriesBundle<T_TS>::py_value_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
         nb::dict out;
-        bool has_scalar_type = !_schema->scalar_type().is_none();
         for (size_t i = 0, l = ts_values().size(); i < l; ++i) {
-            auto &key = _schema->keys()[i];
-            auto ts = ts_values()[i];
+            const auto &key = _schema->keys()[i];
+            const auto &ts  = ts_values()[i];
             if (constraint(*ts)) {
+                nb::object val;
                 if constexpr (is_delta) {
-                    out[key.c_str()] = ts->py_delta_value();
+                    val = ts->py_delta_value();
                 } else {
-                    out[key.c_str()] = ts->py_value();
+                    val = ts->py_value();
+                }
+                // Only include entries that have an actual value. Some TS can be marked valid but carry no value.
+                if (val.is_valid() && !val.is_none()) {
+                    out[key.c_str()] = std::move(val);
                 }
             }
         }
-
-        // Always return a plain dict of available fields (omit missing), matching tests' expectations
+        // Always return a plain dict of available fields (omit missing), matching Python behavior
         return out;
     }
 
@@ -242,11 +245,9 @@ namespace hgraph
     }
 
     void TimeSeriesBundleOutput::mark_invalid() {
-        // Python: super().mark_invalid() then children mark_invalid()
-        if (valid()) {
-            TimeSeriesOutput::mark_invalid();  // Call parent FIRST
-            for (auto &v : ts_values()) { v->mark_invalid(); }
-        }
+        // Always invalidate children to ensure no stale fields remain (match Python semantics)
+        TimeSeriesOutput::mark_invalid();  // Call parent FIRST
+        for (auto &v : ts_values()) { v->mark_invalid(); }
     }
 
     bool TimeSeriesBundleOutput::can_apply_result(nb::object result) {

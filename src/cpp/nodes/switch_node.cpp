@@ -247,11 +247,18 @@ namespace hgraph
 
     template <typename K> void SwitchNode<K>::unwire_graph(graph_ptr &graph) {
         if (old_output_ != nullptr) {
-            // Find the output node ID, using default if specific key not found
+            // Resolve the same effective key used during wiring (handles DEFAULT fallback)
             K graph_key = active_key_.value();
-            auto output_id_it = output_node_ids_.find(graph_key);
-            int output_node_id = -1;
+            bool has_specific = nested_graph_builders_.find(graph_key) != nested_graph_builders_.end();
+            K effective_key = graph_key;
+            if (!has_specific) {
+                if constexpr (std::is_same_v<K, nb::object>) {
+                    effective_key = nb::cast<K>(get_python_default());
+                }
+            }
 
+            int output_node_id = -1;
+            auto output_id_it = output_node_ids_.find(effective_key);
             if (output_id_it != output_node_ids_.end()) {
                 output_node_id = output_id_it->second;
             } else if (default_output_node_id_ >= 0) {
