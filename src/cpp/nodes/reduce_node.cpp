@@ -96,11 +96,11 @@ namespace hgraph
         re_balance_nodes();
 
         // Evaluate the nested graph
-        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(nested_graph_->evaluation_engine_clock().get())) {
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock *>(nested_graph_->evaluation_engine_clock().get())) {
             nec->reset_next_scheduled_evaluation_time();
         }
         nested_graph_->evaluate_graph();
-        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(nested_graph_->evaluation_engine_clock().get())) {
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock *>(nested_graph_->evaluation_engine_clock().get())) {
             nec->reset_next_scheduled_evaluation_time();
         }
 
@@ -111,9 +111,7 @@ namespace hgraph
         // Since l is the last output and o is the main output, they are different TimeSeriesReferenceOutput objects
         // We need to compare their values (both are TimeSeriesReference::ptr)
         bool values_equal = o->valid() && l->valid() && (o->value().get() == l->value().get());
-        if ((!o->valid() && l->valid()) || (l->valid() && !values_equal)) {
-            o->set_value(l->value());
-        }
+        if ((!o->valid() && l->valid()) || (l->valid() && !values_equal)) { o->set_value(l->value()); }
     }
 
     template <typename K> TimeSeriesOutput::ptr ReduceNode<K>::last_output() {
@@ -125,9 +123,7 @@ namespace hgraph
     template <typename K> void ReduceNode<K>::add_nodes(const std::unordered_set<K> &keys) {
         // Grow the tree upfront if needed, to avoid growing while binding
         // This ensures the tree structure is consistent before we start binding keys
-        while (free_node_indexes_.size() < keys.size()) {
-            grow_tree();
-        }
+        while (free_node_indexes_.size() < keys.size()) { grow_tree(); }
 
         for (const auto &key : keys) {
             auto ndx = free_node_indexes_.back();
@@ -198,7 +194,7 @@ namespace hgraph
         int64_t top_layer_end    = std::max(count + top_layer_length, static_cast<int64_t>(1));
         int64_t last_node        = end - 1;
 
-        std::deque<int64_t> un_bound_outputs;
+        std::deque<int64_t>  un_bound_outputs;
         std::vector<int64_t> wiring_info;  // Nodes that need wiring after start
 
         for (int64_t i = count; i < end; ++i) {
@@ -224,34 +220,33 @@ namespace hgraph
             TimeSeriesOutput::ptr left_parent;
             TimeSeriesOutput::ptr right_parent;
 
-                if (i < last_node) {
-                    auto left_idx = un_bound_outputs.front();
-                    un_bound_outputs.pop_front();
-                    left_parent = get_node(left_idx)[output_node_id_]->output();
+            if (i < last_node) {
+                auto left_idx = un_bound_outputs.front();
+                un_bound_outputs.pop_front();
+                left_parent = get_node(left_idx)[output_node_id_]->output();
 
-                    auto right_idx = un_bound_outputs.front();
-                    un_bound_outputs.pop_front();
-                    right_parent = get_node(right_idx)[output_node_id_]->output();
-                } else {
-                    auto old_root = get_node(count - 1)[output_node_id_];
-                    left_parent   = old_root->output();
+                auto right_idx = un_bound_outputs.front();
+                un_bound_outputs.pop_front();
+                right_parent = get_node(right_idx)[output_node_id_]->output();
+            } else {
+                auto old_root = get_node(count - 1)[output_node_id_];
+                left_parent   = old_root->output();
 
-                    auto new_root_idx = un_bound_outputs.front();
-                    un_bound_outputs.pop_front();
-                    auto new_root = get_node(new_root_idx)[output_node_id_];
-                    right_parent  = new_root->output();
-                }
-
-                auto sub_graph = get_node(i);
-                auto lhs_input = sub_graph[std::get<0>(input_node_ids_)];
-                auto rhs_input = sub_graph[std::get<1>(input_node_ids_)];
-
-                dynamic_cast<TimeSeriesInput &>(*(*lhs_input->input())[0]).bind_output(left_parent.get());
-                dynamic_cast<TimeSeriesInput &>(*(*rhs_input->input())[0]).bind_output(right_parent.get());
-
-                lhs_input->notify();
-                rhs_input->notify();
+                auto new_root_idx = un_bound_outputs.front();
+                un_bound_outputs.pop_front();
+                auto new_root = get_node(new_root_idx)[output_node_id_];
+                right_parent  = new_root->output();
             }
+
+            auto sub_graph = get_node(i);
+            auto lhs_input = sub_graph[std::get<0>(input_node_ids_)];
+            auto rhs_input = sub_graph[std::get<1>(input_node_ids_)];
+
+            dynamic_cast<TimeSeriesInput &>(*(*lhs_input->input())[0]).bind_output(left_parent.get());
+            dynamic_cast<TimeSeriesInput &>(*(*rhs_input->input())[0]).bind_output(right_parent.get());
+
+            lhs_input->notify();
+            rhs_input->notify();
         }
 
         if (nested_graph_->is_started() || nested_graph_->is_starting()) {
@@ -355,7 +350,7 @@ namespace hgraph
         return {all_nodes.begin() + start, all_nodes.begin() + end};
     }
 
-    template <typename K> const graph_ptr &ReduceNode<K>::nested_graph() const { return nested_graph_; }
+    template <typename K> const graph_ptr                    &ReduceNode<K>::nested_graph() const { return nested_graph_; }
     template <typename K> const std::tuple<int64_t, int64_t> &ReduceNode<K>::input_node_ids() const { return input_node_ids_; }
     template <typename K> int64_t                             ReduceNode<K>::output_node_id() const { return output_node_id_; }
     template <typename K> const std::unordered_map<K, std::tuple<int64_t, int64_t>> &ReduceNode<K>::bound_node_indexes() const {
