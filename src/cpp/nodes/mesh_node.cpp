@@ -48,7 +48,7 @@ namespace hgraph
         auto          it = node->scheduled_keys_by_rank_[rank].find(_key);
         engine_time_t tm = (it != node->scheduled_keys_by_rank_[rank].end()) ? it->second : MIN_DT;
 
-        if (tm == MIN_DT || tm > next_time || tm < node->graph()->evaluation_clock().evaluation_time()) {
+        if (tm == MIN_DT || tm > next_time || tm < node->graph()->evaluation_clock()->evaluation_time()) {
             node->schedule_graph(_key, next_time);
         }
 
@@ -210,8 +210,8 @@ namespace hgraph
         // Set up evaluation engine with MeshNestedEngineEvaluationClock
         // Pattern from TsdMapNode: new NestedEvaluationEngine(&eval_engine, new Clock(&clock, key, this))
         graph->set_evaluation_engine(new NestedEvaluationEngine(
-            &this->graph()->evaluation_engine(),
-            new MeshNestedEngineEvaluationClock<K>(&this->graph()->evaluation_engine().engine_evaluation_clock(), key, this)));
+            this->graph()->evaluation_engine(),
+            new MeshNestedEngineEvaluationClock<K>(this->graph()->evaluation_engine()->engine_evaluation_clock(), key, this)));
 
         initialise_component(*graph);
         this->wire_graph(key, graph);
@@ -228,7 +228,7 @@ namespace hgraph
         // Update scheduled rank time
         auto          rank_it           = scheduled_ranks_.find(rank);
         engine_time_t current_rank_time = (rank_it != scheduled_ranks_.end()) ? rank_it->second : MAX_DT;
-        engine_time_t eval_time         = this->graph()->evaluation_clock().evaluation_time();
+        engine_time_t eval_time         = this->graph()->evaluation_clock()->evaluation_time();
         scheduled_ranks_[rank]          = std::min(std::max(current_rank_time, eval_time), tm);
 
         this->graph()->schedule_node(this->node_ndx(), tm);

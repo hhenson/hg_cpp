@@ -27,15 +27,15 @@ namespace hgraph
 
         [[nodiscard]] std::optional<std::string> label() const;
 
-        [[nodiscard]] EvaluationEngineApi &evaluation_engine_api();
+        [[nodiscard]] EvaluationEngineApi::ptr evaluation_engine_api();
 
-        [[nodiscard]] EvaluationClock &evaluation_clock();
+        [[nodiscard]] EvaluationClock::ptr evaluation_clock();
 
-        [[nodiscard]] const EvaluationClock &evaluation_clock() const;
+        [[nodiscard]] EvaluationClock::ptr evaluation_clock() const;
 
-        [[nodiscard]] EngineEvaluationClock &evaluation_engine_clock();
+        [[nodiscard]] EngineEvaluationClock::ptr evaluation_engine_clock();
 
-        [[nodiscard]] EvaluationEngine &evaluation_engine();
+        [[nodiscard]] EvaluationEngine::ptr evaluation_engine();
 
         void set_evaluation_engine(EvaluationEngine::ptr value);
 

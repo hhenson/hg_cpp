@@ -99,7 +99,7 @@ namespace hgraph
             if (dt < last_evaluation_time()) {
                 throw std::runtime_error(
                     fmt::format("Scheduled time is in the past; last evaluation time: {}, scheduled time: {}, evaluation time: {}",
-                                last_evaluation_time(), dt, graph()->evaluation_clock().evaluation_time()));
+                                last_evaluation_time(), dt, graph()->evaluation_clock()->evaluation_time()));
             }
             engine_time_t next_dt;
             if (dt == last_evaluation_time()) {
@@ -130,8 +130,8 @@ namespace hgraph
         active_graphs_[key] = graph_;
 
         graph_->set_evaluation_engine(new NestedEvaluationEngine(
-            &graph()->evaluation_engine(),
-            new MapNestedEngineEvaluationClock<K>(&graph()->evaluation_engine().engine_evaluation_clock(), key, this)));
+            graph()->evaluation_engine(),
+            new MapNestedEngineEvaluationClock<K>(graph()->evaluation_engine()->engine_evaluation_clock(), key, this)));
 
         initialise_component(*graph_);
 
@@ -163,7 +163,9 @@ namespace hgraph
 
     template <typename K> engine_time_t TsdMapNode<K>::evaluate_graph(const K &key) {
         auto &graph = active_graphs_[key];
-        dynamic_cast<NestedEngineEvaluationClock &>(graph->evaluation_engine_clock()).reset_next_scheduled_evaluation_time();
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(graph->evaluation_engine_clock().get())) {
+            nec->reset_next_scheduled_evaluation_time();
+        }
 
         if (signature().capture_exception) {
             try {
@@ -179,8 +181,10 @@ namespace hgraph
             graph->evaluate_graph();
         }
 
-        auto next = graph->evaluation_engine_clock().next_scheduled_evaluation_time();
-        dynamic_cast<NestedEngineEvaluationClock &>(graph->evaluation_engine_clock()).reset_next_scheduled_evaluation_time();
+        auto next = graph->evaluation_engine_clock()->next_scheduled_evaluation_time();
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(graph->evaluation_engine_clock().get())) {
+            nec->reset_next_scheduled_evaluation_time();
+        }
         return next;
     }
 

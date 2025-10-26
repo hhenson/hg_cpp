@@ -49,7 +49,7 @@ namespace hgraph
 
     EvaluationClock::ptr NestedEvaluationEngine::evaluation_clock() { return _engine_evaluation_clock.get(); }
 
-    EngineEvaluationClock &NestedEvaluationEngine::engine_evaluation_clock() { return *_engine_evaluation_clock; }
+    EngineEvaluationClock::ptr NestedEvaluationEngine::engine_evaluation_clock() { return _engine_evaluation_clock; }
     void                   NestedEvaluationEngine::register_with_nanobind(nb::module_ &m) {
         nb::class_<NestedEvaluationEngine, EvaluationEngineDelegate>(m, "NestedEvaluationEngine");
     }

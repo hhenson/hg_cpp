@@ -49,7 +49,7 @@ namespace hgraph
     template <typename K> void ReduceNode<K>::initialise() {
         nested_graph_ = new Graph(std::vector<int64_t>{node_ndx()}, std::vector<node_ptr>{}, this, "", new Traits());
         nested_graph_->set_evaluation_engine(new NestedEvaluationEngine(
-            &graph()->evaluation_engine(), new NestedEngineEvaluationClock(&graph()->evaluation_engine_clock(), this)));
+            graph()->evaluation_engine(), new NestedEngineEvaluationClock(graph()->evaluation_engine_clock(), this)));
         initialise_component(*nested_graph_);
     }
 
@@ -95,10 +95,13 @@ namespace hgraph
         re_balance_nodes();
 
         // Evaluate the nested graph
-        auto ec{dynamic_cast<NestedEngineEvaluationClock &>(nested_graph_->evaluation_engine_clock())};
-        ec.reset_next_scheduled_evaluation_time();
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(nested_graph_->evaluation_engine_clock().get())) {
+            nec->reset_next_scheduled_evaluation_time();
+        }
         nested_graph_->evaluate_graph();
-        ec.reset_next_scheduled_evaluation_time();
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(nested_graph_->evaluation_engine_clock().get())) {
+            nec->reset_next_scheduled_evaluation_time();
+        }
 
         // Propagate output if changed
         auto l = dynamic_cast<TimeSeriesReferenceOutput *>(last_output().get());

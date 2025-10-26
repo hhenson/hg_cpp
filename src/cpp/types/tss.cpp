@@ -314,7 +314,7 @@ namespace hgraph
             // Make sure we only do this once
             TimeSeriesSetOutput::mark_modified(modified_time);
             if (has_parent_or_node()) {
-                owning_node()->graph()->evaluation_engine_api().add_after_evaluation_notification([this]() { this->_reset(); });
+                owning_node()->graph()->evaluation_engine_api()->add_after_evaluation_notification([this]() { this->_reset(); });
             }
         }
     }
@@ -743,7 +743,7 @@ namespace hgraph
         if (_pending_reset_prev) { return; }
         _pending_reset_prev = true;
         auto self           = const_cast<TimeSeriesSetInput *>(this);
-        owning_graph()->evaluation_engine_api().add_after_evaluation_notification([self]() {
+        owning_graph()->evaluation_engine_api()->add_after_evaluation_notification([self]() {
             self->reset_prev();
         });
     }

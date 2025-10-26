@@ -27,11 +27,13 @@ namespace hgraph
         mark_evaluated();
 
         try {
-            reinterpret_cast<NestedEngineEvaluationClock &>(m_active_graph_->evaluation_engine_clock())
-                .reset_next_scheduled_evaluation_time();
+            if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(m_active_graph_->evaluation_engine_clock().get())) {
+                nec->reset_next_scheduled_evaluation_time();
+            }
             m_active_graph_->evaluate_graph();
-            reinterpret_cast<NestedEngineEvaluationClock &>(m_active_graph_->evaluation_engine_clock())
-                .reset_next_scheduled_evaluation_time();
+            if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(m_active_graph_->evaluation_engine_clock().get())) {
+                nec->reset_next_scheduled_evaluation_time();
+            }
         } catch (const std::exception &e) {
             // TODO: Implement error capture and wiring to exception output
             // For now, just rethrow

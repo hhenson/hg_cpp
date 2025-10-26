@@ -27,15 +27,15 @@ namespace hgraph
 
     std::optional<std::string> Graph::label() const { return _label; }
 
-    EvaluationEngineApi &Graph::evaluation_engine_api() { return *_evaluation_engine; }
+    EvaluationEngineApi::ptr Graph::evaluation_engine_api() { return _evaluation_engine.get(); }
 
-    EvaluationClock &Graph::evaluation_clock() { return _evaluation_engine->engine_evaluation_clock(); }
+    EvaluationClock::ptr Graph::evaluation_clock() { return _evaluation_engine->evaluation_clock(); }
 
-    const EvaluationClock &Graph::evaluation_clock() const { return _evaluation_engine->engine_evaluation_clock(); }
+    EvaluationClock::ptr Graph::evaluation_clock() const { return _evaluation_engine->evaluation_clock(); }
 
-    EngineEvaluationClock &Graph::evaluation_engine_clock() { return _evaluation_engine->engine_evaluation_clock(); }
+    EngineEvaluationClock::ptr Graph::evaluation_engine_clock() { return _evaluation_engine->engine_evaluation_clock(); }
 
-    EvaluationEngine &Graph::evaluation_engine() { return *_evaluation_engine; }
+    EvaluationEngine::ptr Graph::evaluation_engine() { return _evaluation_engine.get(); }
 
     void Graph::set_evaluation_engine(EvaluationEngine::ptr value) {
         if (_evaluation_engine.get() != nullptr && value.get() != nullptr) {
@@ -43,7 +43,7 @@ namespace hgraph
         }
         _evaluation_engine = std::move(value);
 
-        if (_push_source_nodes_end > 0) { _receiver.set_evaluation_clock(nb::ref(&evaluation_engine_clock())); }
+        if (_push_source_nodes_end > 0) { _receiver.set_evaluation_clock(evaluation_engine_clock()); }
     }
 
     int64_t Graph::push_source_nodes_end() const { return _push_source_nodes_end; }
@@ -51,8 +51,8 @@ namespace hgraph
     void Graph::schedule_node(int64_t node_ndx, engine_time_t when) { schedule_node(node_ndx, when, false); }
 
     void Graph::schedule_node(int64_t node_ndx, engine_time_t when, bool force_set) {
-        auto &clock = this->evaluation_engine_clock();
-        auto  et    = clock.evaluation_time();
+        auto clock = this->evaluation_engine_clock();
+        auto  et    = clock->evaluation_time();
 
         if (when < et) {
             auto graph_id{this->graph_id()};
@@ -64,7 +64,7 @@ namespace hgraph
 
         auto &st = this->_schedule[node_ndx];
         if (force_set || st <= et || st > when) { st = when; }
-        clock.update_next_scheduled_evaluation_time(when);
+        clock->update_next_scheduled_evaluation_time(when);
     }
 
     std::vector<engine_time_t> &Graph::schedule() { return _schedule; }
@@ -72,16 +72,16 @@ namespace hgraph
     void Graph::evaluate_graph() {
         NotifyGraphEvaluation nge{evaluation_engine(), graph_ptr{this}};
 
-        engine_time_t now      = evaluation_engine_clock().evaluation_time();
-        auto         &clock    = evaluation_engine_clock();
+        engine_time_t now      = evaluation_engine_clock()->evaluation_time();
+        auto          clock    = evaluation_engine_clock();
         auto         &nodes    = _nodes;
         auto         &schedule = _schedule;
 
         _last_evaluation_time = now;
 
         // Handle push source nodes scheduling if necessary
-        if (push_source_nodes_end() > 0 && clock.push_node_requires_scheduling()) {
-            clock.reset_push_node_requires_scheduling();
+        if (push_source_nodes_end() > 0 && clock->push_node_requires_scheduling()) {
+            clock->reset_push_node_requires_scheduling();
 
             while (auto value = receiver().dequeue()) {
                 auto [i, message]         = *value;  // Use the already dequeued value
@@ -92,7 +92,7 @@ namespace hgraph
                     bool success = dynamic_cast<PushQueueNode &>(node_ref).apply_message(message);
                     if (!success) {
                         receiver().enqueue_front({i, message});
-                        clock.mark_push_node_requires_scheduling();
+                        clock->mark_push_node_requires_scheduling();
                         break;
                     }
                 } catch (const NodeException &e) {
@@ -105,7 +105,7 @@ namespace hgraph
                 }
             }
             try {
-                evaluation_engine().notify_after_push_nodes_evaluation(graph_ptr{this});
+                evaluation_engine()->notify_after_push_nodes_evaluation(graph_ptr{this});
             } catch (const NodeException &e) {
                 throw; // already enriched
             } catch (const std::exception &e) {
@@ -130,7 +130,7 @@ namespace hgraph
                     throw NodeException::capture_error(std::current_exception(), node, "Unknown error during node evaluation");
                 }
             } else if (scheduled_time > now) {
-                clock.update_next_scheduled_evaluation_time(scheduled_time);
+                clock->update_next_scheduled_evaluation_time(scheduled_time);
             }
         }
     }
@@ -184,9 +184,9 @@ namespace hgraph
         for (auto i = start; i < end; ++i) {
             auto node{_nodes[i]};
             try {
-                evaluation_engine().notify_before_start_node(node);
+                evaluation_engine()->notify_before_start_node(node);
                 node->start();
-                evaluation_engine().notify_after_start_node(node);
+                evaluation_engine()->notify_after_start_node(node);
             } catch (const NodeException &e) {
                 throw; // already enriched
             } catch (const std::exception &e) {
@@ -201,9 +201,9 @@ namespace hgraph
         for (auto i = start; i < end; ++i) {
             auto node{_nodes[i]};
             try {
-                evaluation_engine().notify_before_stop_node(node);
+                evaluation_engine()->notify_before_stop_node(node);
                 node->stop();
-                evaluation_engine().notify_after_stop_node(node);
+                evaluation_engine()->notify_after_stop_node(node);
             } catch (const NodeException &e) {
                 throw; // already enriched
             } catch (const std::exception &e) {
@@ -230,7 +230,7 @@ namespace hgraph
             .def_prop_ro("parent_node", &Graph::parent_node)
             .def_prop_ro("label", &Graph::label)
             .def_prop_ro("evaluation_engine_api", &Graph::evaluation_engine_api)
-            .def_prop_ro("evaluation_clock", static_cast<const EvaluationClock &(Graph::*)() const>(&Graph::evaluation_clock))
+            .def_prop_ro("evaluation_clock", static_cast<EvaluationClock::ptr (Graph::*)() const>(&Graph::evaluation_clock))
             .def_prop_ro("engine_evaluation_clock", &Graph::evaluation_engine_clock)
             .def_prop_rw("evaluation_engine", &Graph::evaluation_engine, &Graph::set_evaluation_engine)
             .def_prop_ro("push_source_nodes_end", &Graph::push_source_nodes_end)

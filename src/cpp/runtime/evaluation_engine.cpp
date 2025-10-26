@@ -105,7 +105,7 @@ namespace hgraph
 
     void EvaluationEngine::register_with_nanobind(nb::module_ &m) {
         nb::class_<EvaluationEngine, EvaluationEngineApi>(m, "EvaluationEngine")
-            .def_prop_ro("engine_evaluation_clock", static_cast<const EngineEvaluationClock &(EvaluationEngine::*)() const>(
+            .def_prop_ro("engine_evaluation_clock", static_cast<EngineEvaluationClock::ptr (EvaluationEngine::*)() const>(
                                                         &EvaluationEngine::engine_evaluation_clock))
             .def("advance_engine_time", &EvaluationEngine::advance_engine_time)
             .def("notify_before_evaluation", &EvaluationEngine::notify_before_evaluation)
@@ -128,14 +128,14 @@ namespace hgraph
             });
     }
 
-    NotifyGraphEvaluation::NotifyGraphEvaluation(EvaluationEngine &evaluation_engine, graph_ptr graph)
-        : _evaluation_engine{evaluation_engine}, _graph{std::move(graph)} {
-        _evaluation_engine.notify_before_graph_evaluation(_graph);
+    NotifyGraphEvaluation::NotifyGraphEvaluation(EvaluationEngine::ptr evaluation_engine, graph_ptr graph)
+        : _evaluation_engine{std::move(evaluation_engine)}, _graph{std::move(graph)} {
+        _evaluation_engine->notify_before_graph_evaluation(_graph);
     }
 
     NotifyGraphEvaluation::~NotifyGraphEvaluation() noexcept {
         try {
-            _evaluation_engine.notify_after_graph_evaluation(_graph);
+            _evaluation_engine->notify_after_graph_evaluation(_graph);
         } catch (const std::exception &e) {
             fprintf(stderr, "Warning: exception during notify_after_graph_evaluation: %s\n", e.what());
         } catch (...) {
@@ -143,14 +143,14 @@ namespace hgraph
         }
     }
 
-    NotifyNodeEvaluation::NotifyNodeEvaluation(EvaluationEngine &evaluation_engine, node_ptr node)
-        : _evaluation_engine{evaluation_engine}, _node{std::move(node)} {
-        _evaluation_engine.notify_before_node_evaluation(_node);
+    NotifyNodeEvaluation::NotifyNodeEvaluation(EvaluationEngine::ptr evaluation_engine, node_ptr node)
+        : _evaluation_engine{std::move(evaluation_engine)}, _node{std::move(node)} {
+        _evaluation_engine->notify_before_node_evaluation(_node);
     }
 
     NotifyNodeEvaluation::~NotifyNodeEvaluation() noexcept {
         try {
-            _evaluation_engine.notify_after_node_evaluation(_node);
+            _evaluation_engine->notify_after_node_evaluation(_node);
         } catch (const std::exception &e) {
             fprintf(stderr, "Warning: exception during notify_after_node_evaluation: %s\n", e.what());
         } catch (...) {
@@ -168,7 +168,7 @@ namespace hgraph
 
     EvaluationClock::ptr EvaluationEngineDelegate::evaluation_clock() { return _evaluation_engine->evaluation_clock(); }
 
-    EngineEvaluationClock &EvaluationEngineDelegate::engine_evaluation_clock() {
+    EngineEvaluationClock::ptr EvaluationEngineDelegate::engine_evaluation_clock() {
         return _evaluation_engine->engine_evaluation_clock();
     }
 
@@ -434,7 +434,7 @@ namespace hgraph
 
     void EvaluationEngineImpl::dispose() {}
 
-    EngineEvaluationClock &EvaluationEngineImpl::engine_evaluation_clock() { return *_clock; }
+    EngineEvaluationClock::ptr EvaluationEngineImpl::engine_evaluation_clock() { return _clock; }
 
     EvaluationMode EvaluationEngineImpl::evaluation_mode() const { return _run_mode; }
 

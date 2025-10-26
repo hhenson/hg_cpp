@@ -45,7 +45,7 @@ namespace hgraph
 
         [[nodiscard]] EvaluationClock::ptr evaluation_clock() override;
 
-        [[nodiscard]] EngineEvaluationClock &engine_evaluation_clock() override;
+        [[nodiscard]] EngineEvaluationClock::ptr engine_evaluation_clock() override;
 
         static void register_with_nanobind(nb::module_ &m);
 

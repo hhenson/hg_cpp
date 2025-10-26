@@ -36,7 +36,7 @@ namespace hgraph
         m_active_graph_ = m_nested_graph_builder_->make_instance(node_id(), this, id_);
         m_active_graph_->traits().set_trait(RECORDABLE_ID_TRAIT, nb::cast(id_));
         m_active_graph_->set_evaluation_engine(new NestedEvaluationEngine(
-            &graph()->evaluation_engine(), new NestedEngineEvaluationClock(&graph()->evaluation_engine_clock(), this)));
+            graph()->evaluation_engine(), new NestedEngineEvaluationClock(graph()->evaluation_engine_clock(), this)));
 
         initialise_component(*m_active_graph_);
         wire_graph();
@@ -63,11 +63,13 @@ namespace hgraph
 
     void ComponentNode::do_eval() {
         mark_evaluated();
-        reinterpret_cast<NestedEngineEvaluationClock &>(m_active_graph_->evaluation_engine_clock())
-            .reset_next_scheduled_evaluation_time();
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(m_active_graph_->evaluation_engine_clock().get())) {
+            nec->reset_next_scheduled_evaluation_time();
+        }
         m_active_graph_->evaluate_graph();
-        reinterpret_cast<NestedEngineEvaluationClock &>(m_active_graph_->evaluation_engine_clock())
-            .reset_next_scheduled_evaluation_time();
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(m_active_graph_->evaluation_engine_clock().get())) {
+            nec->reset_next_scheduled_evaluation_time();
+        }
     }
 
     std::unordered_map<int, graph_ptr> ComponentNode::nested_graphs() const {

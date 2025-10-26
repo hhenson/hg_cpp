@@ -117,7 +117,7 @@ namespace hgraph
                     graph_ptr graph_to_dispose = active_graph_;
                     // Capture the nested_graph_builders and default_graph_builder by value for the lambda
                     auto builder = active_graph_builder_;
-                    graph()->evaluation_engine().add_before_evaluation_notification(
+                    graph()->evaluation_engine()->add_before_evaluation_notification(
                         [graph_to_dispose, builder]() mutable {
                             // release_instance will call dispose_component
                             builder->release_instance(graph_to_dispose);
@@ -143,7 +143,7 @@ namespace hgraph
 
                 // Set up evaluation engine
                 active_graph_->set_evaluation_engine(new NestedEvaluationEngine(
-                    &graph()->evaluation_engine(), new NestedEngineEvaluationClock(&graph()->evaluation_engine_clock(), this)));
+                    graph()->evaluation_engine(), new NestedEngineEvaluationClock(graph()->evaluation_engine_clock(), this)));
 
                 // Initialize and wire the new graph
                 initialise_component(*active_graph_);
@@ -154,17 +154,17 @@ namespace hgraph
 
         // Evaluate the active graph if it exists
         if (active_graph_ != nullptr) {
-            static_cast<NestedEngineEvaluationClock &>(
-                active_graph_->evaluation_engine_clock())  // NOLINT(*-pro-type-static-cast-downcast)
-                .reset_next_scheduled_evaluation_time();
+            if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(active_graph_->evaluation_engine_clock().get())) {
+                nec->reset_next_scheduled_evaluation_time();
+            }
             active_graph_->evaluate_graph();
             // Reset output to None if graph was switched and output wasn't modified
             if (graph_reset_ && output() != nullptr && !output()->modified()) {
                 output()->invalidate();
             }
-            static_cast<NestedEngineEvaluationClock &>(
-                active_graph_->evaluation_engine_clock())  // NOLINT(*-pro-type-static-cast-downcast)
-                .reset_next_scheduled_evaluation_time();
+            if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(active_graph_->evaluation_engine_clock().get())) {
+                nec->reset_next_scheduled_evaluation_time();
+            }
         }
     }
 

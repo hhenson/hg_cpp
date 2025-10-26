@@ -43,7 +43,7 @@ namespace hgraph
     template <typename T> nb::object TimeSeriesFixedWindowOutput<T>::py_delta_value() const {
         if (_length == 0) return nb::none();
         size_t pos = (_length < _size) ? (_length - 1) : ((_start + _length - 1) % _size);
-        if (_times[pos] == owning_graph()->evaluation_clock().evaluation_time()) {
+        if (_times[pos] == owning_graph()->evaluation_clock()->evaluation_time()) {
             if constexpr (std::is_same_v<T, bool>) {
                 bool v = static_cast<bool>(_buffer[pos]);
                 return nb::cast(v);
@@ -65,7 +65,7 @@ namespace hgraph
             if (length > capacity) {
                 _removed_value.reset();
                 _removed_value = _buffer[start];
-                owning_graph()->evaluation_engine_api().add_after_evaluation_notification([this]() { _removed_value.reset(); });
+                owning_graph()->evaluation_engine_api()->add_after_evaluation_notification([this]() { _removed_value.reset(); });
                 start  = (start + 1) % capacity;
                 _start = start;
                 length = capacity;
@@ -73,7 +73,7 @@ namespace hgraph
             _length       = length;
             size_t pos    = (start + length - 1) % capacity;
             _buffer[pos]  = v;
-            _times[pos]   = owning_graph()->evaluation_clock().evaluation_time();
+            _times[pos]   = owning_graph()->evaluation_clock()->evaluation_time();
             mark_modified();
         } catch (const std::exception &e) {
             throw std::runtime_error(std::string("Cannot apply node output: ") + e.what());

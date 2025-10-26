@@ -118,9 +118,9 @@ namespace hgraph
     {
         using ptr = nanobind::ref<EvaluationEngine>;
 
-        virtual EngineEvaluationClock &engine_evaluation_clock() = 0;
+        virtual EngineEvaluationClock::ptr engine_evaluation_clock() = 0;
 
-        const EngineEvaluationClock &engine_evaluation_clock() const {
+        EngineEvaluationClock::ptr engine_evaluation_clock() const {
             return const_cast<EvaluationEngine *>(this)->engine_evaluation_clock();
         };
 
@@ -157,22 +157,22 @@ namespace hgraph
 
     struct NotifyGraphEvaluation
     {
-        NotifyGraphEvaluation(EvaluationEngine &evaluation_engine, graph_ptr graph);
+        NotifyGraphEvaluation(EvaluationEngine::ptr evaluation_engine, graph_ptr graph);
         ~NotifyGraphEvaluation() noexcept;
 
       private:
-        EvaluationEngine &_evaluation_engine;
-        graph_ptr         _graph;
+        EvaluationEngine::ptr _evaluation_engine;
+        graph_ptr             _graph;
     };
 
     struct NotifyNodeEvaluation
     {
-        NotifyNodeEvaluation(EvaluationEngine &evaluation_engine, node_ptr node);
+        NotifyNodeEvaluation(EvaluationEngine::ptr evaluation_engine, node_ptr node);
         ~NotifyNodeEvaluation() noexcept;
 
       private:
-        EvaluationEngine &_evaluation_engine;
-        node_ptr          _node;
+        EvaluationEngine::ptr _evaluation_engine;
+        node_ptr              _node;
     };
 
     struct HGRAPH_EXPORT EvaluationEngineDelegate : EvaluationEngine
@@ -187,7 +187,7 @@ namespace hgraph
 
         [[nodiscard]] EvaluationClock::ptr evaluation_clock() override;
 
-        EngineEvaluationClock &engine_evaluation_clock() override;
+        EngineEvaluationClock::ptr engine_evaluation_clock() override;
 
         void request_engine_stop() override;
 
@@ -341,7 +341,7 @@ namespace hgraph
         void                           add_after_evaluation_notification(std::function<void()> &&fn) override;
         void                           add_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) override;
         void                           remove_life_cycle_observer(EvaluationLifeCycleObserver::ptr observer) override;
-        EngineEvaluationClock         &engine_evaluation_clock() override;
+        EngineEvaluationClock::ptr     engine_evaluation_clock() override;
         void                           advance_engine_time() override;
         void                           notify_before_evaluation() override;
         void                           notify_after_evaluation() override;

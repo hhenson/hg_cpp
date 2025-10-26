@@ -10,7 +10,7 @@ namespace hgraph
     }
 
     void PythonGeneratorNode::do_eval() {
-        auto       et = graph()->evaluation_clock().evaluation_time();
+        auto       et = graph()->evaluation_clock()->evaluation_time();
         auto       next_time{MIN_DT};
         auto       sentinel{nb::iterator::sentinel()};
         nb::object out;
@@ -76,6 +76,6 @@ namespace hgraph
     void PythonGeneratorNode::start() {
         BasePythonNode::_initialise_kwargs();
         generator = nb::cast<nb::iterator>(_eval_fn(**_kwargs));
-        graph()->schedule_node(node_ndx(), graph()->evaluation_clock().evaluation_time());
+        graph()->schedule_node(node_ndx(), graph()->evaluation_clock()->evaluation_time());
     }
 }

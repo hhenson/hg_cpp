@@ -451,7 +451,7 @@ namespace hgraph
 
     bool NodeScheduler::is_scheduled_node() const {
         return !_scheduled_events.empty() &&
-               _scheduled_events.begin()->first == _node->graph()->evaluation_clock().evaluation_time();
+               _scheduled_events.begin()->first == _node->graph()->evaluation_clock()->evaluation_time();
     }
 
     bool NodeScheduler::has_tag(const std::string &tag) const { return _tags.contains(tag); }
@@ -478,7 +478,7 @@ namespace hgraph
         }
 
         if (on_wall_clock) {
-            auto clock{dynamic_cast<RealTimeEvaluationClock *>(&_node->graph()->evaluation_clock())};
+            auto clock{dynamic_cast<RealTimeEvaluationClock *>(_node->graph()->evaluation_clock().get())};
             if (clock) {
                 if (!tag.has_value()) { throw std::runtime_error("Can't schedule an alarm without a tag"); }
                 auto        tag_{tag.value()};
@@ -490,7 +490,7 @@ namespace hgraph
         }
 
         auto is_started{_node->is_started()};
-        auto now_{is_scheduled_node() ? _node->graph()->evaluation_clock().evaluation_time() : MIN_DT};
+        auto now_{is_scheduled_node() ? _node->graph()->evaluation_clock()->evaluation_time() : MIN_DT};
         if (when > now_) {
             _tags[tag.value_or("")] = when;
             auto current_first      = !_scheduled_events.empty() ? _scheduled_events.begin()->first : MAX_DT;
@@ -504,7 +504,7 @@ namespace hgraph
     }
 
     void NodeScheduler::schedule(engine_time_delta_t when, std::optional<std::string> tag, bool on_wall_clock) {
-        auto when_{_node->graph()->evaluation_clock().evaluation_time() + when};
+        auto when_{_node->graph()->evaluation_clock()->evaluation_time() + when};
         schedule(when_, std::move(tag), on_wall_clock);
     }
 
@@ -523,7 +523,7 @@ namespace hgraph
     void NodeScheduler::reset() {
         _scheduled_events.clear();
         _tags.clear();
-        auto real_time_clock = dynamic_cast<RealTimeEvaluationClock *>(&_node->graph()->evaluation_clock());
+        auto real_time_clock = dynamic_cast<RealTimeEvaluationClock *>(_node->graph()->evaluation_clock().get());
         if (real_time_clock) {
             for (const auto &alarm : _alarm_tags) { real_time_clock->cancel_alarm(alarm.first); }
             _alarm_tags.clear();
@@ -534,7 +534,7 @@ namespace hgraph
 
     void NodeScheduler::advance() {
         if (_scheduled_events.empty()) { return; }
-        auto until = _node->graph()->evaluation_clock().evaluation_time();
+        auto until = _node->graph()->evaluation_clock()->evaluation_time();
         // Note: empty string is considered smallest in std::string comparison,
         // so upper_bound will correctly find elements <= until regardless of tag value
         _scheduled_events.erase(_scheduled_events.begin(), _scheduled_events.upper_bound({until, VERY_LARGE_STRING}));
@@ -601,11 +601,11 @@ namespace hgraph
         }
     }
 
-    void Node::notify() { notify(graph()->evaluation_clock().evaluation_time()); }
+    void Node::notify() { notify(graph()->evaluation_clock()->evaluation_time()); }
 
     void Node::notify_next_cycle() {
         if (is_started() || is_starting()) {
-            graph()->schedule_node(node_ndx(), graph()->evaluation_clock().next_cycle_evaluation_time());
+            graph()->schedule_node(node_ndx(), graph()->evaluation_clock()->next_cycle_evaluation_time());
         } else {
             notify();
         }
