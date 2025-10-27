@@ -9,8 +9,7 @@
 
 namespace hgraph
 {
-    TimeSeriesSchema::TimeSeriesSchema(std::vector<std::string> keys)
-        : TimeSeriesSchema(std::move(keys), nb::none()) {}
+    TimeSeriesSchema::TimeSeriesSchema(std::vector<std::string> keys) : TimeSeriesSchema(std::move(keys), nb::none()) {}
 
     TimeSeriesSchema::TimeSeriesSchema(std::vector<std::string> keys, nb::object type)
         : _keys{std::move(keys)}, _scalar_type{std::move(type)} {}
@@ -190,9 +189,7 @@ namespace hgraph
                     val = ts->py_value();
                 }
                 // Only include entries that have an actual value. Some TS can be marked valid but carry no value.
-                if (val.is_valid() && !val.is_none()) {
-                    out[key.c_str()] = std::move(val);
-                }
+                if (val.is_valid() && !val.is_none()) { out[key.c_str()] = std::move(val); }
             }
         }
         // Always return a plain dict of available fields (omit missing), matching Python behavior
@@ -316,7 +313,8 @@ namespace hgraph
             .def("modified_items", static_cast<key_value_collection_type (TimeSeriesBundle_Output::*)() const>(
                                        &TimeSeriesBundle_Output::modified_items))
             .def_prop_ro("__schema__", static_cast<const TimeSeriesSchema &(TimeSeriesBundle_Output::*)() const>(
-                                           &TimeSeriesBundle_Output::schema));
+                                           &TimeSeriesBundle_Output::schema))
+            .def_prop_ro("as_schema", [](TimeSeriesBundle_Output::ptr self) { return self; });
 
         nb::class_<TimeSeriesBundleOutput, IndexedTimeSeriesOutput>(m, "TimeSeriesBundleOutput")
             .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
@@ -324,13 +322,14 @@ namespace hgraph
             .def_prop_rw(
                 "value", [](const TimeSeriesBundleOutput &self) -> nb::object { return self.py_value(); },
                 &TimeSeriesBundleOutput::py_set_value)
-            .def("__str__", [](const TimeSeriesBundleOutput &self) {
-                return fmt::format("TimeSeriesBundleOutput@{:p}[keys={}, valid={}]",
-                    static_cast<const void *>(&self), self.keys().size(), self.valid());
-            })
+            .def("__str__",
+                 [](const TimeSeriesBundleOutput &self) {
+                     return fmt::format("TimeSeriesBundleOutput@{:p}[keys={}, valid={}]", static_cast<const void *>(&self),
+                                        self.keys().size(), self.valid());
+                 })
             .def("__repr__", [](const TimeSeriesBundleOutput &self) {
-                return fmt::format("TimeSeriesBundleOutput@{:p}[keys={}, valid={}]",
-                    static_cast<const void *>(&self), self.keys().size(), self.valid());
+                return fmt::format("TimeSeriesBundleOutput@{:p}[keys={}, valid={}]", static_cast<const void *>(&self),
+                                   self.keys().size(), self.valid());
             });
     }
     bool TimeSeriesBundleInput::is_same_type(const TimeSeriesType *other) const {
@@ -373,21 +372,24 @@ namespace hgraph
                  static_cast<key_value_collection_type (TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::valid_items))
             .def_prop_ro("__schema__",
                          static_cast<const TimeSeriesSchema &(TimeSeriesBundle_Input::*)() const>(&TimeSeriesBundle_Input::schema))
-            .def("__getattr__", [](TimeSeriesBundle_Input &self, const std::string &key) -> TimeSeriesInput::ptr {
-                if (self.contains(key)) { return self[key]; }
-                throw nb::attribute_error(("Attribute '" + key + "' not found in TimeSeriesBundle").c_str());
-            });
+            .def("__getattr__",
+                 [](TimeSeriesBundle_Input &self, const std::string &key) -> TimeSeriesInput::ptr {
+                     if (self.contains(key)) { return self[key]; }
+                     throw nb::attribute_error(("Attribute '" + key + "' not found in TimeSeriesBundle").c_str());
+                 })
+            .def_prop_ro("as_schema", [](TimeSeriesBundle_Input::ptr self) { return self; });
 
         nb::class_<TimeSeriesBundleInput, TimeSeriesBundle_Input>(m, "TimeSeriesBundleInput")
             .def(nb::init<const node_ptr &, TimeSeriesSchema::ptr>(), "owning_node"_a, "schema"_a)
             .def(nb::init<const TimeSeriesType::ptr &, TimeSeriesSchema::ptr>(), "parent_input"_a, "schema"_a)
-            .def("__str__", [](const TimeSeriesBundleInput &self) {
-                return fmt::format("TimeSeriesBundleInput@{:p}[keys={}, valid={}]",
-                    static_cast<const void *>(&self), self.keys().size(), self.valid());
-            })
+            .def("__str__",
+                 [](const TimeSeriesBundleInput &self) {
+                     return fmt::format("TimeSeriesBundleInput@{:p}[keys={}, valid={}]", static_cast<const void *>(&self),
+                                        self.keys().size(), self.valid());
+                 })
             .def("__repr__", [](const TimeSeriesBundleInput &self) {
-                return fmt::format("TimeSeriesBundleInput@{:p}[keys={}, valid={}]",
-                    static_cast<const void *>(&self), self.keys().size(), self.valid());
+                return fmt::format("TimeSeriesBundleInput@{:p}[keys={}, valid={}]", static_cast<const void *>(&self),
+                                   self.keys().size(), self.valid());
             });
     }
 
