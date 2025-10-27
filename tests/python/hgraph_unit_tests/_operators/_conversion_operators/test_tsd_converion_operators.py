@@ -70,7 +70,7 @@ def test_combine_tsd_from_tuple_and_tuple():
     def g(k: TS[tuple[str, ...]], v: TS[tuple[int, ...]]) -> TSD[str, TS[int]]:
         return combine[TSD](k, v)
 
-    result= eval_node(g, [("a", "b"), None, ("a", "c")], [(1, 2), (1, 3), None], __trace_wiring__=True)
+    result= eval_node(g, [("a", "b"), None, ("a", "c")], [(1, 2), (1, 3), None])
     assert result == [fd({"a": 1, "b": 2}), fd({"b": 3}), fd({"b": REMOVE, "c": 3})]
 
 
