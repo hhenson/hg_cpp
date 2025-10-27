@@ -96,13 +96,13 @@ namespace hgraph
         re_balance_nodes();
 
         // Evaluate the nested graph
-        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(nested_graph_->evaluation_engine_clock().get())) {
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock *>(nested_graph_->evaluation_engine_clock().get())) {
             nec->reset_next_scheduled_evaluation_time();
         }
 
         nested_graph_->evaluate_graph();
 
-        if (auto nec = dynamic_cast<NestedEngineEvaluationClock*>(nested_graph_->evaluation_engine_clock().get())) {
+        if (auto nec = dynamic_cast<NestedEngineEvaluationClock *>(nested_graph_->evaluation_engine_clock().get())) {
             nec->reset_next_scheduled_evaluation_time();
         }
 
@@ -116,9 +116,7 @@ namespace hgraph
         // Python reference (reference/hgraph/src/hgraph/_impl/_runtime/_reduce_node.py lines 109-112):
         // if (not o.valid and l.valid) or (l.valid and o.value != l.value): o.value = l.value
         // Do not propagate solely on l->modified(); only propagate when pointer changes or initial assignment.
-        if ((l->valid() && !o->valid()) || (l->valid() && !values_equal)) {
-            o->set_value(l->value());
-        }
+        if ((l->valid() && !o->valid()) || (l->valid() && !values_equal)) { o->set_value(l->value()); }
     }
 
     template <typename K> TimeSeriesOutput::ptr ReduceNode<K>::last_output() {
@@ -131,10 +129,10 @@ namespace hgraph
     template <typename K> void ReduceNode<K>::add_nodes(const std::unordered_set<K> &keys) {
         // Grow the tree upfront if needed, to avoid growing while binding
         // This ensures the tree structure is consistent before we start binding keys
-        while (free_node_indexes_.size() < keys.size()) {
-            grow_tree();
-        }
+        while (free_node_indexes_.size() < keys.size()) { grow_tree(); }
 
+        // Note: free_node_indexes_ is sorted in descending order, so .back() gives the LOWEST position
+        // This maintains the left-based invariant: keys are always added to leftmost available positions
         for (const auto &key : keys) {
             auto ndx = free_node_indexes_.back();
             free_node_indexes_.pop_back();
@@ -155,7 +153,7 @@ namespace hgraph
 
                     // CRITICAL: Save the key and position BEFORE modifying the map, as modifying the map
                     // may invalidate the iterator or cause a rehash
-                    K max_key = max_it->first;
+                    K    max_key = max_it->first;
                     auto max_ndx = max_it->second;
 
                     // Match Python: only swap if max is in a HIGHER layer
@@ -211,7 +209,7 @@ namespace hgraph
         int64_t top_layer_end    = std::max(count + top_layer_length, static_cast<int64_t>(1));
         int64_t last_node        = end - 1;
 
-        std::deque<int64_t> un_bound_outputs;
+        std::deque<int64_t>  un_bound_outputs;
         std::vector<int64_t> wiring_info;  // Nodes that need wiring after start
 
         for (int64_t i = count; i < end; ++i) {
@@ -272,6 +270,10 @@ namespace hgraph
             int64_t end_idx   = nested_graph_->nodes().size();
             nested_graph_->start_subgraph(start_idx, end_idx);
         }
+
+        // Sort free list in descending order so .pop_back() gives LOWEST positions first
+        // This maintains the left-based invariant: keys are always added to leftmost available positions
+        std::sort(free_node_indexes_.begin(), free_node_indexes_.end(), [](const auto &a, const auto &b) { return a > b; });
     }
 
     template <typename K> void ReduceNode<K>::shrink_tree() {
@@ -285,66 +287,24 @@ namespace hgraph
         int64_t last_node = (node_count() - 1) / 2;
         int64_t start     = last_node;
 
-        // CRITICAL FIX: Before deleting nodes, move any bound keys from nodes >= start to free positions in nodes < start
-        // This ensures we don't lose bound keys when shrinking
-        std::vector<K> keys_to_move;
-        for (const auto &[key, pos] : bound_node_indexes_) {
-            if (std::get<0>(pos) >= start) {
-                keys_to_move.push_back(key);
-            }
-        }
-
-        // Find free positions in nodes < start
-        std::vector<std::tuple<int64_t, int64_t>> low_free_positions;
-        for (const auto &pos : free_node_indexes_) {
-            if (std::get<0>(pos) < start) {
-                low_free_positions.push_back(pos);
-            }
-        }
-
-        if (keys_to_move.size() > low_free_positions.size()) {
-            return;  // Can't shrink safely
-        }
-
-        // Move each key to a low free position
-        for (size_t i = 0; i < keys_to_move.size(); ++i) {
-            const auto &key = keys_to_move[i];
-            const auto &old_pos = bound_node_indexes_[key];
-            const auto &new_pos = low_free_positions[i];
-
-            // Swap the inputs
-            swap_node(new_pos, old_pos);
-
-            // Update the bound position
-            bound_node_indexes_[key] = new_pos;
-
-            // Remove the new_pos from free list (it's now bound)
-            auto it = std::find(free_node_indexes_.begin(), free_node_indexes_.end(), new_pos);
-            if (it != free_node_indexes_.end()) {
-                free_node_indexes_.erase(it);
-            }
-
-            // Add the old_pos to free list (it's now free)
-            free_node_indexes_.push_back(old_pos);
-        }
-
-        // Now it's safe to delete the high nodes
+        // Delete the high nodes - the left-based invariant ensures no bound keys are in nodes >= start
         nested_graph_->reduce_graph(start * node_size());
 
-        // Keep only the first halved_capacity - active_count free nodes
+        // Keep only the low free positions (first halved_capacity - active_count when sorted)
         std::sort(free_node_indexes_.begin(), free_node_indexes_.end(), [](const auto &a, const auto &b) { return a < b; });
 
         int64_t to_keep = halved_capacity - active_count;
         if (static_cast<size_t>(to_keep) < free_node_indexes_.size()) { free_node_indexes_.resize(to_keep); }
 
+        // Reverse sort so .pop_back() gives lowest positions (maintains left-based invariant)
         std::sort(free_node_indexes_.begin(), free_node_indexes_.end(), [](const auto &a, const auto &b) { return a > b; });
     }
 
     template <typename K> void ReduceNode<K>::bind_key_to_node(const K &key, const std::tuple<int64_t, int64_t> &ndx) {
         bound_node_indexes_[key] = ndx;
         auto [node_id, side]     = ndx;
-        auto nodes = get_node(node_id);
-        auto node  = nodes[side];
+        auto nodes               = get_node(node_id);
+        auto node                = nodes[side];
 
         // Get the time series input from the TSD for this key
         auto ts_ = (*ts())[key];
@@ -419,7 +379,7 @@ namespace hgraph
         return {all_nodes.begin() + start, all_nodes.begin() + end};
     }
 
-    template <typename K> const graph_ptr &ReduceNode<K>::nested_graph() const { return nested_graph_; }
+    template <typename K> const graph_ptr                    &ReduceNode<K>::nested_graph() const { return nested_graph_; }
     template <typename K> const std::tuple<int64_t, int64_t> &ReduceNode<K>::input_node_ids() const { return input_node_ids_; }
     template <typename K> int64_t                             ReduceNode<K>::output_node_id() const { return output_node_id_; }
     template <typename K> const std::unordered_map<K, std::tuple<int64_t, int64_t>> &ReduceNode<K>::bound_node_indexes() const {
