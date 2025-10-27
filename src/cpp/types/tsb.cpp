@@ -192,10 +192,21 @@ namespace hgraph
                 if (val.is_valid() && !val.is_none()) { out[key.c_str()] = std::move(val); }
             }
         }
-        // is_delta always returns dicts, when not is_delta we should return a scalar is one is available
+        // is_delta always returns dicts. For non-delta and when a scalar_type exists,
+        // construct the compound scalar using available values and None for missing
+        // fields. When __strict__ is True, the compute node ensures all fields are
+        // valid before calling us, so this still yields a fully-populated instance.
         if constexpr (!is_delta) {
             if (schema().scalar_type().is_valid() && !schema().scalar_type().is_none()) {
-                return schema().scalar_type()(**out);
+                nb::dict kwargs;
+                for (const auto &k : schema().keys()) {
+                    if (out.contains(k.c_str())) {
+                        kwargs[k.c_str()] = out[k.c_str()];
+                    } else {
+                        kwargs[k.c_str()] = nb::none();
+                    }
+                }
+                return schema().scalar_type()(**kwargs);
             }
         }
         return out;
