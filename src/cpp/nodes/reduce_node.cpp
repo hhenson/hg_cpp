@@ -153,10 +153,15 @@ namespace hgraph
                     auto max_it = std::max_element(bound_node_indexes_.begin(), bound_node_indexes_.end(),
                                                    [](const auto &a, const auto &b) { return a.second < b.second; });
 
-                    if (std::get<0>(max_it->second) > std::get<0>(ndx)) {
-                        swap_node(ndx, max_it->second);
-                        bound_node_indexes_[max_it->first] = ndx;
-                        ndx                                = max_it->second;
+                    // CRITICAL: Save the key and position BEFORE modifying the map, as modifying the map
+                    // may invalidate the iterator or cause a rehash
+                    K max_key = max_it->first;
+                    auto max_ndx = max_it->second;
+
+                    if (std::get<0>(max_ndx) > std::get<0>(ndx)) {
+                        swap_node(ndx, max_ndx);
+                        bound_node_indexes_[max_key] = ndx;
+                        ndx                          = max_ndx;
                     }
                 }
                 free_node_indexes_.push_back(ndx);
