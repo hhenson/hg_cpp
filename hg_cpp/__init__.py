@@ -310,32 +310,11 @@ def _create_mesh_node_builder_factory(
 
 hgraph._wiring._wiring_node_class.MeshWiringNodeClass.BUILDER_CLASS = _create_mesh_node_builder_factory
 
-# Register C++ TSS Input types as virtual subclasses of PythonTimeSeriesSetInput
-# This is to support fixing multimethod dispatching, this is actually a problem that should be resolved
-# in a more appropriate way, but for now this seems to be a solution
-# TODO: Fix the root cause, this is a work-around
-try:
-    # Import the Python reference ABC for set inputs used by multimethod dispatch
-    from hgraph._impl._types._tss import PythonTimeSeriesSetInput as _PyTSSInput
 
-    for _suffix in ("bool", "int", "float", "date", "date_time", "time_delta", "object"):
-        _cls_name = f"TimeSeriesSetInput_{_suffix}"
-        _cpp_cls = getattr(_hgraph, _cls_name, None)
-        if _cpp_cls is not None:
-            # Make the C++ class a virtual subclass so isinstance checks succeed
-            _PyTSSInput.register(_cpp_cls)
-except Exception:
-    # If import path changes or classes are missing, skip registration gracefully
-    pass
-
-# Register C++ TSD Input base as a virtual subclass of PythonTimeSeriesDictInput
+# Register C++ TimeSeriesReferenceOutput base as a virtual subclass of python instance
 # This ensures multimethod dispatch (e.g., dedup_item) uses dict-specific overloads in the reference implementation.
-try:
-    from hgraph._impl._types._tsd import PythonTimeSeriesDictInput as _PyTSDInput
-    if hasattr(_hgraph, "TimeSeriesDictInput"):
-        _PyTSDInput.register(_hgraph.TimeSeriesDictInput)
-except Exception:
-    pass
+from hgraph._types._ref_type import TimeSeriesReferenceOutput as _TSRO
+_TSRO.register(_hgraph.TimeSeriesReferenceOutput)
 
 
 def _service_impl_nested_graph_builder(*, signature, scalars, input_builder, output_builder, error_builder,
