@@ -89,7 +89,12 @@ namespace hgraph
         // If an eval function was provided (from push_queue decorator), call it with a sender and scalar kwargs
         if (_eval_fn.is_valid() && !_eval_fn.is_none()) {
             // Create a Python-callable sender that enqueues messages into this node
-            nb::object sender = nb::cpp_function([this](nb::object m) { this->enqueue_message(std::move(m)); });
+            // The sender will be called from a Python thread, so it needs to acquire the GIL
+            nb::object sender = nb::cpp_function([this](nb::object m) {
+                // Acquire GIL in case we're being called from a thread that doesn't have it
+                nb::gil_scoped_acquire gil;
+                this->enqueue_message(std::move(m));
+            });
             // Call eval_fn(sender, **scalars)
             try {
                 _eval_fn(sender, **scalars());

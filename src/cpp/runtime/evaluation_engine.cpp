@@ -365,6 +365,8 @@ namespace hgraph
 
             while (now < next_scheduled_time && !_push_node_requires_scheduling) {
                 auto sleep_time = std::chrono::duration_cast<engine_time_delta_t>(next_scheduled_time - now);
+                // Release GIL while waiting so Python threads can call the sender
+                nb::gil_scoped_release gil;
                 _push_node_requires_scheduling_condition.wait_for(
                     lock, std::min(sleep_time, duration_cast<engine_time_delta_t>(std::chrono::seconds(10))));
                 now = engine_clock::now();
