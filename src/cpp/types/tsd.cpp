@@ -117,11 +117,8 @@ namespace hgraph
         item->clear();
         if (!was_added) {
             _removed_items.emplace(key, item);
-        } else {
-            // If the key was added in this cycle, remove it from _added_keys
-            _added_keys.erase(key);
-            // No need to track in _removed_items since net effect is no change
         }
+        // Note: TSS key_set handles all added/removed tracking via key_set_t().remove()
         _ts_values_to_keys.erase(item.get());
         _ref_ts_feature.update(key);
         _modified_items.erase(key);
@@ -281,7 +278,7 @@ namespace hgraph
         for (const auto &[k, v_input] : dict_input.value()) { _get_or_create(k)->copy_from_input(*v_input); }
     }
 
-    template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_added() const { return !_added_keys.empty(); }
+    template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_added() const { return !added_keys().empty(); }
 
     template <typename T_Key> bool TimeSeriesDictOutput_T<T_Key>::has_removed() const { return !_removed_items.empty(); }
 
@@ -400,7 +397,8 @@ namespace hgraph
 
     template <typename T_Key>
     const typename TimeSeriesDictOutput_T<T_Key>::k_set_type &TimeSeriesDictOutput_T<T_Key>::added_keys() const {
-        return _added_keys;
+        // Delegate to key_set.added() to get the actual added keys from the underlying TSS
+        return key_set_t().added();
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictOutput_T<T_Key>::py_added_keys() const {
@@ -535,7 +533,6 @@ namespace hgraph
         // Release removed instances before clearing
         for (auto &[_, value] : _removed_items) { _ts_builder->release_instance(value); }
         _removed_items.clear();
-        _added_keys.clear();
     }
 
     template <typename T_Key> TimeSeriesOutput::ptr TimeSeriesDictOutput_T<T_Key>::_get_or_create(const key_type &key) {
@@ -1103,13 +1100,10 @@ namespace hgraph
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_create(const key_type &key) {
-        key_set_t().add(key);
+        key_set_t().add(key);  // This handles adding to the _added set in TSS
         auto item{_ts_builder->make_instance(this)};
         _ts_values.insert({key, item});
         _ts_values_to_keys.insert({item.get(), key});
-
-        // Always add to _added_keys (matching TSS behavior where _add always adds to _added)
-        _added_keys.insert(key);
 
         // If the key was removed in this cycle, clean up the removed tracking
         if (auto it = _removed_items.find(key); it != _removed_items.end()) {
