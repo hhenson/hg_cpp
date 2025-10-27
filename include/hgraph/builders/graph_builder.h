@@ -17,10 +17,25 @@ namespace hgraph
         int64_t                  dst_node;
         std::vector<int64_t> input_path;
 
-        Edge(int64_t src, std::vector<int64_t> out_path, int64_t dst, std::vector<int64_t> in_path)
-            : src_node(src), output_path(std::move(out_path)), dst_node(dst), input_path(std::move(in_path)) {}
+        Edge(int64_t src, std::vector<int64_t> out_path, int64_t dst, std::vector<int64_t> in_path);
+
+        bool operator==(const Edge &other) const;
+
+        bool operator<(const Edge &other) const;
+
     };
 
+}  // namespace hgraph
+
+namespace std
+{
+    template <> struct hash<hgraph::Edge>
+    {
+        size_t operator()(const hgraph::Edge &edge) const noexcept;
+    };
+}  // namespace std
+
+namespace hgraph {
     struct Graph;
 
     struct GraphBuilder :  Builder

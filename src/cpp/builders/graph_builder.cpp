@@ -1,14 +1,13 @@
 #include "hgraph/types/tsd.h"
-
 #include <hgraph/builders/graph_builder.h>
 #include <hgraph/builders/node_builder.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
+#include <hgraph/types/ref.h>
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/traits.h>
-#include <hgraph/types/tsb.h>
 #include <hgraph/types/ts_signal.h>
-#include <hgraph/types/ref.h>
+#include <hgraph/types/tsb.h>
 
 namespace hgraph
 {
@@ -39,9 +38,7 @@ namespace hgraph
 
         auto input = dynamic_cast<TimeSeriesInput *>(node->input().get());
 
-        for (const auto &ndx : path) {
-            input = input->get_input(ndx);
-        }
+        for (const auto &ndx : path) { input = input->get_input(ndx); }
         return input;
     }
 
@@ -95,15 +92,16 @@ namespace hgraph
             .def("make_instance", &GraphBuilder::make_instance, "graph_id"_a, "parent_node"_a = nullptr, "label"_a = "")
             .def("make_and_connect_nodes", &GraphBuilder::make_and_connect_nodes, "graph_id"_a, "first_node_ndx"_a)
             .def("release_instance", &GraphBuilder::release_instance, "item"_a)
-            .def_ro("node_builders", &GraphBuilder::node_builders)
-            .def_ro("edges", &GraphBuilder::edges)
-            .def("__str__", [](const GraphBuilder &self) {
-                return fmt::format("GraphBuilder@{:p}[nodes={}, edges={}]",
-                    static_cast<const void *>(&self), self.node_builders.size(), self.edges.size());
-            })
+            .def_prop_ro("node_builders", [](const GraphBuilder &self) { return nb::tuple(nb::cast(self.node_builders)); })
+            .def_prop_ro("edges", [](const GraphBuilder &self) { return nb::tuple(nb::cast(self.edges)); })
+            .def("__str__",
+                 [](const GraphBuilder &self) {
+                     return fmt::format("GraphBuilder@{:p}[nodes={}, edges={}]", static_cast<const void *>(&self),
+                                        self.node_builders.size(), self.edges.size());
+                 })
             .def("__repr__", [](const GraphBuilder &self) {
-                return fmt::format("GraphBuilder@{:p}[nodes={}, edges={}]",
-                    static_cast<const void *>(&self), self.node_builders.size(), self.edges.size());
+                return fmt::format("GraphBuilder@{:p}[nodes={}, edges={}]", static_cast<const void *>(&self),
+                                   self.node_builders.size(), self.edges.size());
             });
 
         nb::class_<Edge>(m, "Edge")
@@ -113,13 +111,44 @@ namespace hgraph
             .def_ro("output_path", &Edge::output_path)
             .def_ro("dst_node", &Edge::dst_node)
             .def_ro("input_path", &Edge::input_path)
-            .def("__str__", [](const Edge &self) {
-                return fmt::format("Edge[{}->{} to {}->[{}]]", self.src_node,
-                    fmt::join(self.output_path, ","), self.dst_node, fmt::join(self.input_path, ","));
+            .def("__eq__", &Edge::operator==)
+            .def("__lt__", &Edge::operator<)
+            .def("__hash__", [](const Edge &self) {
+                return std::hash<Edge>{}(self);
             })
+            .def("__str__",
+                 [](const Edge &self) {
+                     return fmt::format("Edge[{}->{} to {}->[{}]]", self.src_node, fmt::join(self.output_path, ","), self.dst_node,
+                                        fmt::join(self.input_path, ","));
+                 })
             .def("__repr__", [](const Edge &self) {
-                return fmt::format("Edge[{}->{} to {}->[{}]]", self.src_node,
-                    fmt::join(self.output_path, ","), self.dst_node, fmt::join(self.input_path, ","));
+                return fmt::format("Edge[{}->{} to {}->[{}]]", self.src_node, fmt::join(self.output_path, ","), self.dst_node,
+                                   fmt::join(self.input_path, ","));
             });
     }
+
+    Edge::Edge(int64_t src, std::vector<int64_t> out_path, int64_t dst, std::vector<int64_t> in_path)
+        : src_node(src), output_path(std::move(out_path)), dst_node(dst), input_path(std::move(in_path)) {}
+    
+    bool Edge::operator==(const Edge &other) const {
+        return src_node == other.src_node && output_path == other.output_path && dst_node == other.dst_node &&
+               input_path == other.input_path;
+    }
+    
+    bool Edge::operator<(const Edge &other) const {
+        if (src_node != other.src_node) return src_node < other.src_node;
+        if (output_path != other.output_path) return output_path < other.output_path;
+        if (dst_node != other.dst_node) return dst_node < other.dst_node;
+        return input_path < other.input_path;
+    }
 }  // namespace hgraph
+
+size_t std::hash<hgraph::Edge>::operator()(const hgraph::Edge &edge) const noexcept {
+    size_t h1 = std::hash<int64_t>{}(edge.src_node);
+    size_t h2 = std::hash<int64_t>{}(edge.dst_node);
+    size_t h3 = 0;
+    for (const auto &v : edge.output_path) { h3 ^= std::hash<int64_t>{}(v) + 0x9e3779b9 + (h3 << 6) + (h3 >> 2); }
+    size_t h4 = 0;
+    for (const auto &v : edge.input_path) { h4 ^= std::hash<int64_t>{}(v) + 0x9e3779b9 + (h4 << 6) + (h4 >> 2); }
+    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
+}
