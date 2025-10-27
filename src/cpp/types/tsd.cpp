@@ -217,7 +217,8 @@ namespace hgraph
         for (const auto &[key, value] : _ts_values) {
             if (value->valid()) { v[nb::cast(key)] = value->py_value(); }
         }
-        return get_frozendict()(v);
+        // Return a plain dict for value() to match Python reference semantics
+        return v;
     }
 
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_delta_value() const {
@@ -590,7 +591,8 @@ namespace hgraph
         for (const auto &[key, value] : _ts_values) {
             if (value->valid()) { v[nb::cast(key)] = value->py_value(); }
         }
-        return get_frozendict()(v);
+        // Return a plain dict to match Python reference semantics
+        return v;
     }
 
     template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_delta_value() const {
