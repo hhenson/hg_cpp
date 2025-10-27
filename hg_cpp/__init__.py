@@ -80,6 +80,14 @@ def _create_tsd_map_builder_factory(
         multiplexed_args, key_arg,
         key_tp,
 ):
+    # Normalize Python-side inputs to types nanobind can cast reliably
+    # - input_node_ids may be a frozendict; convert to built-in dict[str, int]
+    input_node_ids = dict(input_node_ids) if input_node_ids is not None else {}
+    # - output_node_id can be None; map to -1 as the C++ default sentinel
+    output_node_id = -1 if output_node_id is None else int(output_node_id)
+    # - multiplexed_args may be a frozenset; convert to built-in set[str]
+    multiplexed_args = set(multiplexed_args) if multiplexed_args is not None else set()
+
     key_tp = key_tp.py_type
     return {
         bool: _hgraph.TsdMapNodeBuilder_bool,

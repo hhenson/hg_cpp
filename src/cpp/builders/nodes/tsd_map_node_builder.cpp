@@ -31,7 +31,10 @@ namespace hgraph
             args[4].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[4]));
         std::optional<output_builder_ptr> recordable_state_builder_ =
             args[5].is_none() ? std::nullopt : std::optional<output_builder_ptr>(nb::cast<output_builder_ptr>(args[5]));
-        auto nested_graph_builder = nb::cast<graph_builder_ptr>(args[6]);
+        if (args[6].is_none()) {
+            throw nb::type_error("TsdMapNodeBuilder requires a nested_graph (arg[6]) and it must not be None");
+        }
+        graph_builder_ptr nested_graph_builder = nb::cast<graph_builder_ptr>(args[6]);
         auto input_node_ids = nb::cast<std::unordered_map<std::string, int64_t>>(args[7]);
         auto output_node_id = nb::cast<int64_t>(args[8]);
         auto multiplexed_args = nb::cast<std::unordered_set<std::string>>(args[9]);
