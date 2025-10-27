@@ -1,3 +1,4 @@
+import hg_cpp
 import threading
 import time
 from datetime import datetime, timedelta

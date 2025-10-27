@@ -2,6 +2,7 @@
 #include <hgraph/types/error_type.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/time_series_type.h>
+#include <hgraph/types/tsd.h>
 
 namespace hgraph
 {
@@ -13,8 +14,64 @@ namespace hgraph
     }
 
     bool PushQueueNode::apply_message(nb::object message) {
+        if (_batch) {
+            // Batch mode: accumulate messages into a tuple
+            auto output_ptr = output();
+
+            // Check if output is a TimeSeriesDictOutput (TSD)
+            if (auto tsd_output = dynamic_cast<TimeSeriesDictOutput *>(output_ptr.get())) {
+                // For TSD outputs, iterate over message dict
+                auto msg_dict = nb::cast<nb::dict>(message);
+                for (auto [key, val] : msg_dict) {
+                    // Handle REMOVE and REMOVE_IF_EXISTS (TODO: check if these symbols are available)
+                    // For now, skip removal handling
+                    auto child_output = tsd_output->py_get_or_create(nb::cast<nb::object>(key));
+
+                    // Get the modified state by checking if the value property exists and has been set
+                    bool is_modified = nb::hasattr(child_output, "modified") && nb::cast<bool>(child_output.attr("modified"));
+
+                    if (is_modified) {
+                        // Append to existing tuple
+                        auto existing = child_output.attr("value");
+                        size_t existing_len = PyTuple_Size(existing.ptr());
+                        nb::tuple new_tuple = nb::steal<nb::tuple>(PyTuple_New(existing_len + 1));
+                        for (size_t i = 0; i < existing_len; ++i) {
+                            PyTuple_SET_ITEM(new_tuple.ptr(), i, nb::borrow(existing[i]).release().ptr());
+                        }
+                        PyTuple_SET_ITEM(new_tuple.ptr(), existing_len, nb::borrow(val).release().ptr());
+                        child_output.attr("value") = new_tuple;
+                    } else {
+                        // Create new tuple with single element
+                        nb::tuple new_tuple = nb::make_tuple(val);
+                        child_output.attr("value") = new_tuple;
+                    }
+                }
+            } else {
+                // For non-TSD outputs, accumulate messages into a tuple
+                if (output_ptr->modified()) {
+                    // Append to existing tuple
+                    auto existing = output_ptr->py_value();
+                    size_t existing_len = PyTuple_Size(existing.ptr());
+                    nb::tuple new_tuple = nb::steal<nb::tuple>(PyTuple_New(existing_len + 1));
+                    for (size_t i = 0; i < existing_len; ++i) {
+                        PyTuple_SET_ITEM(new_tuple.ptr(), i, nb::borrow(existing[i]).release().ptr());
+                    }
+                    PyTuple_SET_ITEM(new_tuple.ptr(), existing_len, message.release().ptr());
+                    output_ptr->py_set_value(new_tuple);
+                } else {
+                    // Create new tuple with single element
+                    nb::tuple new_tuple = nb::make_tuple(message);
+                    output_ptr->py_set_value(new_tuple);
+                }
+            }
+
+            ++_messages_dequeued;
+            return true;
+        }
+
         if (_elide || output()->can_apply_result(message)) {
             output()->apply_result(std::move(message));
+            ++_messages_dequeued;
             return true;
         }
         return false;
@@ -24,7 +81,7 @@ namespace hgraph
 
     void PushQueueNode::set_receiver(sender_receiver_state_ptr value) { _receiver = value; }
 
-    void PushQueueNode::start() {
+    void PushQueueNode::do_start() {
         _receiver = &graph()->receiver();
         _elide    = scalars().contains("elide") ? nb::cast<bool>(scalars()["elide"]) : false;
         _batch    = scalars().contains("batch") ? nb::cast<bool>(scalars()["batch"]) : false;

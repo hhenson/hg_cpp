@@ -39,11 +39,10 @@ namespace hgraph
 
       protected:
         void do_eval() override;
-        void do_start() override {}
+        void do_start() override;
         void do_stop() override {}
         void initialise() override {}
         void dispose() override {}
-        void start() override;
 
       private:
         sender_receiver_state_ptr _receiver;
