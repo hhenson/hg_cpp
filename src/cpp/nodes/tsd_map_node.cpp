@@ -240,7 +240,10 @@ namespace hgraph
         if (output_node_id_ >= 0) {
             auto  node       = graph->nodes()[output_node_id_];
             auto &output_tsd = tsd_output();
-            node->set_output(output_tsd._get_or_create(key).get());
+            // NOTE: Must call _get_or_create BEFORE checking has_added, as _get_or_create may call _create
+            // which populates _added_keys
+            auto output_ts = output_tsd._get_or_create(key);
+            node->set_output(output_ts.get());
         }
     }
 
