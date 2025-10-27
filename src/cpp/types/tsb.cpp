@@ -192,7 +192,12 @@ namespace hgraph
                 if (val.is_valid() && !val.is_none()) { out[key.c_str()] = std::move(val); }
             }
         }
-        // Always return a plain dict of available fields (omit missing), matching Python behavior
+        // is_delta always returns dicts, when not is_delta we should return a scalar is one is available
+        if constexpr (!is_delta) {
+            if (schema().scalar_type().is_valid() && !schema().scalar_type().is_none()) {
+                return schema().scalar_type()(**out);
+            }
+        }
         return out;
     }
 
