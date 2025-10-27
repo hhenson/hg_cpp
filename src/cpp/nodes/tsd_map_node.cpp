@@ -196,7 +196,16 @@ namespace hgraph
                     auto  ts{static_cast<TimeSeriesInput *>((*input())[arg].get())};
                     auto &tsd =
                         dynamic_cast<TimeSeriesDictInput_T<K> &>(*ts);  // Since this is a multiplexed arg it must be of type K
+
+                    // Re-parent the per-key input back to the TSD to detach it from the nested graph
                     (*node->input())["ts"]->re_parent(ts);
+
+                    // Create a new empty reference input to replace the old one in the node's input bundle
+                    // This ensures the per-key input is fully detached before the nested graph is torn down
+                    auto empty_ref = nb::ref<TimeSeriesReferenceInput>(new TimeSeriesReferenceInput(node));
+                    node->reset_input(node->input()->copy_with(node, {empty_ref.get()}));
+                    empty_ref->re_parent(node->input().get());
+
                     // Align with Python: only clear upstream per-key state when the key is truly absent
                     // from the upstream key set (and that key set is valid). Do NOT clear during startup
                     // when the key set may be invalid, as this breaks re-add semantics.
@@ -240,8 +249,6 @@ namespace hgraph
         if (output_node_id_ >= 0) {
             auto  node       = graph->nodes()[output_node_id_];
             auto &output_tsd = tsd_output();
-            // NOTE: Must call _get_or_create BEFORE checking has_added, as _get_or_create may call _create
-            // which populates _added_keys
             auto output_ts = output_tsd._get_or_create(key);
             node->set_output(output_ts.get());
         }
