@@ -115,7 +115,13 @@ namespace hgraph
         _ts_values.erase(it);
         // Is this wise clearing the item if we are going to track the remove? What if we need the last known value?
         item->clear();
-        if (!was_added) { _removed_items.emplace(key, item); }
+        if (!was_added) {
+            _removed_items.emplace(key, item);
+        } else {
+            // If the key was added in this cycle, remove it from _added_keys
+            _added_keys.erase(key);
+            // No need to track in _removed_items since net effect is no change
+        }
         _ts_values_to_keys.erase(item.get());
         _ref_ts_feature.update(key);
         _modified_items.erase(key);
@@ -1097,11 +1103,24 @@ namespace hgraph
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_create(const key_type &key) {
+        // Check if this key was removed in this cycle
+        bool was_removed = _removed_items.find(key) != _removed_items.end();
+
         key_set_t().add(key);
         auto item{_ts_builder->make_instance(this)};
         _ts_values.insert({key, item});
         _ts_values_to_keys.insert({item.get(), key});
-        _added_keys.insert(key);  // Track that this key was added
+
+        // If the key was removed in this cycle, remove it from removed tracking
+        // and don't add to _added_keys (net effect is no change)
+        if (was_removed) {
+            auto removed_item = _removed_items[key];
+            _ts_builder->release_instance(removed_item);
+            _removed_items.erase(key);
+        } else {
+            _added_keys.insert(key);  // Track that this key was added
+        }
+
         _ref_ts_feature.update(key);
         for (auto &observer : _key_observers) { observer->on_key_added(key); }
 
