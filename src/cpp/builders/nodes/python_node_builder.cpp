@@ -68,9 +68,9 @@ namespace hgraph
                          kwargs.contains("recordable_state_builder")
                              ? nb::cast<std::optional<output_builder_ptr>>(kwargs["recordable_state_builder"])
                              : std::nullopt;
-                     auto eval_fn_  = nb::cast<nb::handle>(kwargs["eval_fn"]);
-                     auto start_fn_ = nb::cast<nb::handle>(kwargs["start_fn"]);
-                     auto stop_fn_  = nb::cast<nb::handle>(kwargs["stop_fn"]);
+                     nb::handle eval_fn_  = kwargs.contains("eval_fn") ? nb::cast<nb::handle>(kwargs["eval_fn"]) : nb::handle{};
+                     nb::handle start_fn_ = kwargs.contains("start_fn") ? nb::cast<nb::handle>(kwargs["start_fn"]) : nb::handle{};
+                     nb::handle stop_fn_  = kwargs.contains("stop_fn") ? nb::cast<nb::handle>(kwargs["stop_fn"]) : nb::handle{};
 
                      nb::callable eval_fn =
                          eval_fn_.is_valid() && !eval_fn_.is_none() ? nb::cast<nb::callable>(eval_fn_) : nb::callable{};
