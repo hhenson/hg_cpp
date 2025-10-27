@@ -1103,22 +1103,18 @@ namespace hgraph
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::_create(const key_type &key) {
-        // Check if this key was removed in this cycle
-        bool was_removed = _removed_items.find(key) != _removed_items.end();
-
         key_set_t().add(key);
         auto item{_ts_builder->make_instance(this)};
         _ts_values.insert({key, item});
         _ts_values_to_keys.insert({item.get(), key});
 
-        // If the key was removed in this cycle, remove it from removed tracking
-        // and don't add to _added_keys (net effect is no change)
-        if (was_removed) {
-            auto removed_item = _removed_items[key];
-            _ts_builder->release_instance(removed_item);
-            _removed_items.erase(key);
-        } else {
-            _added_keys.insert(key);  // Track that this key was added
+        // Always add to _added_keys (matching TSS behavior where _add always adds to _added)
+        _added_keys.insert(key);
+
+        // If the key was removed in this cycle, clean up the removed tracking
+        if (auto it = _removed_items.find(key); it != _removed_items.end()) {
+            _ts_builder->release_instance(it->second);
+            _removed_items.erase(it);
         }
 
         _ref_ts_feature.update(key);
