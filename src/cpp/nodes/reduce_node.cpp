@@ -158,6 +158,8 @@ namespace hgraph
                     K max_key = max_it->first;
                     auto max_ndx = max_it->second;
 
+                    // Match Python: only swap if max is in a HIGHER layer
+                    // Python: if next_largest[1][0] > ndx[0]
                     if (std::get<0>(max_ndx) > std::get<0>(ndx)) {
                         swap_node(ndx, max_ndx);
                         bound_node_indexes_[max_key] = ndx;
@@ -282,6 +284,51 @@ namespace hgraph
 
         int64_t last_node = (node_count() - 1) / 2;
         int64_t start     = last_node;
+
+        // CRITICAL FIX: Before deleting nodes, move any bound keys from nodes >= start to free positions in nodes < start
+        // This ensures we don't lose bound keys when shrinking
+        std::vector<K> keys_to_move;
+        for (const auto &[key, pos] : bound_node_indexes_) {
+            if (std::get<0>(pos) >= start) {
+                keys_to_move.push_back(key);
+            }
+        }
+
+        // Find free positions in nodes < start
+        std::vector<std::tuple<int64_t, int64_t>> low_free_positions;
+        for (const auto &pos : free_node_indexes_) {
+            if (std::get<0>(pos) < start) {
+                low_free_positions.push_back(pos);
+            }
+        }
+
+        if (keys_to_move.size() > low_free_positions.size()) {
+            return;  // Can't shrink safely
+        }
+
+        // Move each key to a low free position
+        for (size_t i = 0; i < keys_to_move.size(); ++i) {
+            const auto &key = keys_to_move[i];
+            const auto &old_pos = bound_node_indexes_[key];
+            const auto &new_pos = low_free_positions[i];
+
+            // Swap the inputs
+            swap_node(new_pos, old_pos);
+
+            // Update the bound position
+            bound_node_indexes_[key] = new_pos;
+
+            // Remove the new_pos from free list (it's now bound)
+            auto it = std::find(free_node_indexes_.begin(), free_node_indexes_.end(), new_pos);
+            if (it != free_node_indexes_.end()) {
+                free_node_indexes_.erase(it);
+            }
+
+            // Add the old_pos to free list (it's now free)
+            free_node_indexes_.push_back(old_pos);
+        }
+
+        // Now it's safe to delete the high nodes
         nested_graph_->reduce_graph(start * node_size());
 
         // Keep only the first halved_capacity - active_count free nodes
