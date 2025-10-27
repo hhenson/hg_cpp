@@ -11,7 +11,6 @@ namespace hgraph
 
     void BasePythonNode::_initialise_kwargs() {
         // Assuming Injector and related types are properly defined, and scalars is a map-like container
-        auto &signature_args = signature().args;
         _kwargs              = {};
 
         bool has_injectables{signature().injectables != 0};
