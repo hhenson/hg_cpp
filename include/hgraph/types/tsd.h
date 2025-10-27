@@ -234,7 +234,6 @@ namespace hgraph
 
         reverse_map _ts_values_to_keys;
         map_type    _modified_items;
-        k_set_type  _added_keys;
         map_type    _removed_items;  // This ensures we hold onto the values until we are sure no one needs to reference them.
         mutable map_type _valid_items_cache;  // Cache for valid_items() to ensure iterator lifetime safety.
 
