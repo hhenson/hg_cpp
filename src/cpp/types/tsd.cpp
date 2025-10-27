@@ -52,8 +52,13 @@ namespace hgraph
     template <typename T_Key>
     nb::object TimeSeriesDictOutput_T<T_Key>::py_get(const nb::object &item, const nb::object &default_value) const {
         auto key{nb::cast<T_Key>(item)};
-        auto v{operator[](key)};
-        if (contains(key)) { return nb::cast(v); }
+        // Do NOT call operator[] here on a const object; the const overload uses at() and will throw if missing.
+        // Python dict.get semantics require returning the default when the key is absent.
+        auto it = _ts_values.find(key);
+        if (it != _ts_values.end()) {
+            // Return the existing child TS (wrap as base type to avoid double-wrapping inconsistencies)
+            return nb::cast(const_cast<TimeSeriesOutput *>(it->second.get()));
+        }
         return default_value;
     }
 

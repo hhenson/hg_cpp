@@ -328,6 +328,15 @@ except Exception:
     # If import path changes or classes are missing, skip registration gracefully
     pass
 
+# Register C++ TSD Input base as a virtual subclass of PythonTimeSeriesDictInput
+# This ensures multimethod dispatch (e.g., dedup_item) uses dict-specific overloads in the reference implementation.
+try:
+    from hgraph._impl._types._tsd import PythonTimeSeriesDictInput as _PyTSDInput
+    if hasattr(_hgraph, "TimeSeriesDictInput"):
+        _PyTSDInput.register(_hgraph.TimeSeriesDictInput)
+except Exception:
+    pass
+
 
 def _service_impl_nested_graph_builder(*, signature, scalars, input_builder, output_builder, error_builder,
                                        recordable_state_builder, nested_graph):
