@@ -187,25 +187,18 @@ namespace hgraph
             key_set().mark_modified();  // Even if we tick an empty set, we still need to mark this as modified
         }
         auto item_attr = nb::getattr(value, "items", nb::none());
-        auto it{item_attr.is_none() ? nb::iter(value) : nb::iter(item_attr())};
         auto remove{get_remove()};
         auto remove_if_exists{get_remove_if_exists()};
 
-        for (const auto &i : it) {
-            const auto k{i[0]};
-            const auto v{i[1]};
-
+        // Python semantics for this layer: treat both mappings and iterables as deltas.
+        // Operators (convert/collect/combine) are responsible for emitting REMOVE entries when needed.
+        nb::iterator items = item_attr.is_none() ? nb::iter(value) : nb::iter(item_attr());
+        for (const auto &kv : items) {
+            auto k_ = nb::cast<T_Key>(kv[0]);
+            auto v  = kv[1];
             if (v.is_none()) { continue; }
-
-            auto k_ = nb::cast<T_Key>(k);
             if (v.is(remove) || v.is(remove_if_exists)) {
-                // Skip removal if key doesn't exist (both REMOVE and REMOVE_IF_EXISTS)
-                if (!contains(k_)) {
-                    if (v.is(remove_if_exists)) { continue; }
-                    std::string msg = "Key not found for REMOVE: " + to_string(k_);
-                    throw nb::key_error(msg.c_str());
-                }
-                erase(k_);
+                if (contains(k_)) { erase(k_); }
             } else {
                 _get_or_create(k_)->py_set_value(v);
             }
