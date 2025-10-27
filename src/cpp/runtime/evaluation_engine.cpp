@@ -320,6 +320,7 @@ namespace hgraph
     engine_time_delta_t RealTimeEvaluationClock::cycle_time() const {
         return std::chrono::duration_cast<engine_time_delta_t>(engine_clock::now() - evaluation_time());
     }
+    
     void RealTimeEvaluationClock::mark_push_node_requires_scheduling() {
         std::unique_lock<std::mutex> lock(_condition_mutex);
         _push_node_requires_scheduling = true;
@@ -359,17 +360,42 @@ namespace hgraph
 
         _ready_to_push = false;
         if (next_scheduled_time > evaluation_time() + MIN_TD || now > _last_time_allowed_push + std::chrono::seconds(15)) {
-            std::unique_lock<std::mutex> lock(_condition_mutex);
-            _ready_to_push          = true;
-            _last_time_allowed_push = now;
+            // Mark ready-to-push and remember the last time we allowed pushing
+            {
+                std::unique_lock<std::mutex> lock(_condition_mutex);
+                _ready_to_push          = true;
+                _last_time_allowed_push = now;
+            }
 
-            while (now < next_scheduled_time && !_push_node_requires_scheduling) {
-                auto sleep_time = std::chrono::duration_cast<engine_time_delta_t>(next_scheduled_time - now);
-                // Release GIL while waiting so Python threads can call the sender
-                nb::gil_scoped_release gil;
-                _push_node_requires_scheduling_condition.wait_for(
-                    lock, std::min(sleep_time, duration_cast<engine_time_delta_t>(std::chrono::seconds(10))));
+            // Wait until either the next scheduled time arrives or a push-node requests scheduling.
+            // Important: Avoid GIL/lock inversion by ensuring that the mutex is not held when the
+            // GIL is reacquired (gil_scoped_release destructor). We achieve this by:
+            //  - Creating gil_scoped_release BEFORE acquiring the mutex
+            //  - Creating the unique_lock AFTER gil_scoped_release within the same scope
+            //  - Letting the unique_lock be destroyed BEFORE gil_scoped_release at scope exit
+            while (true) {
+                // Check termination condition
                 now = engine_clock::now();
+                if (now >= next_scheduled_time) {
+                    break;
+                }
+
+                bool scheduled = false;
+                auto sleep_time = std::chrono::duration_cast<engine_time_delta_t>(next_scheduled_time - now);
+                {
+                    nb::gil_scoped_release gil;  // release GIL before taking the mutex
+                    std::unique_lock<std::mutex> lock(_condition_mutex);
+                    scheduled = _push_node_requires_scheduling;
+                    if (!scheduled) {
+                        _push_node_requires_scheduling_condition.wait_for(
+                            lock, std::min(sleep_time, duration_cast<engine_time_delta_t>(std::chrono::seconds(10))));
+                        scheduled = _push_node_requires_scheduling;
+                    }
+                } // lock released here, then GIL is reacquired — no inversion
+
+                if (scheduled) {
+                    break;
+                }
             }
         }
         set_evaluation_time(std::min(next_scheduled_time, std::max(next_cycle_evaluation_time(), now)));
