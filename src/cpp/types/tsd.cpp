@@ -1101,6 +1101,7 @@ namespace hgraph
         auto item{_ts_builder->make_instance(this)};
         _ts_values.insert({key, item});
         _ts_values_to_keys.insert({item.get(), key});
+        _added_keys.insert(key);  // Track that this key was added
         _ref_ts_feature.update(key);
         for (auto &observer : _key_observers) { observer->on_key_added(key); }
 
