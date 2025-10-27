@@ -197,7 +197,11 @@ namespace hgraph
                     auto &tsd =
                         dynamic_cast<TimeSeriesDictInput_T<K> &>(*ts);  // Since this is a multiplexed arg it must be of type K
                     (*node->input())["ts"]->re_parent(ts);
-                    if (!tsd.key_set().valid() || !dynamic_cast<TimeSeriesSetInput_T<K> &>(tsd.key_set()).contains(key)) {
+                    // Align with Python: only clear upstream per-key state when the key is truly absent
+                    // from the upstream key set (and that key set is valid). Do NOT clear during startup
+                    // when the key set may be invalid, as this breaks re-add semantics.
+                    auto &key_set = dynamic_cast<TimeSeriesSetInput_T<K> &>(tsd.key_set());
+                    if (key_set.valid() && !key_set.contains(key)) {
                         tsd.on_key_removed(key);
                     }
                 }

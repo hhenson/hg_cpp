@@ -3,14 +3,10 @@ from datetime import date, datetime, timedelta
 import _hgraph
 import hgraph
 from hgraph import TsdMapWiringSignature
-from hgraph._runtime._global_keys import set_output_key_builder
 
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.NODE_SIGNATURE = _hgraph.NodeSignature
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.NODE_TYPE_ENUM = _hgraph.NodeTypeEnum
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.INJECTABLE_TYPES_ENUM = _hgraph.InjectableTypesEnum
-
-# Register the C++ OutputKeyBuilder so Python uses the same key scheme as the C++ runtime
-set_output_key_builder(_hgraph.OutputKeyBuilder())
 
 hgraph._runtime._evaluation_engine.EvaluationMode = _hgraph.EvaluationMode
 hgraph._runtime._evaluation_engine.EvaluationLifeCycleObserver = _hgraph.EvaluationLifeCycleObserver
@@ -43,7 +39,7 @@ hgraph.GraphBuilderFactory.declare(_make_cpp_graph_builder)
 # The graph engine type
 hgraph.GraphEngineFactory.declare(lambda graph, run_mode, observers: _hgraph.GraphExecutorImpl(
     graph, {hgraph.EvaluationMode.SIMULATION: _hgraph.EvaluationMode.SIMULATION,
-            hgraph.EvaluationMode.REAL_TIME: _hgraph.EvaluationMode.REAL_TIME}[run_mode], observers))
+            hgraph.EvaluationMode.REAL_TIME: _hgraph.EvaluationMode.REAL_TIME}[run_mode], list(observers) if observers is not None else []))
 
 # The time-series builder factory.
 hgraph.TimeSeriesBuilderFactory.declare(HgCppFactory())
@@ -251,10 +247,11 @@ def _create_tsd_non_associative_reduce_node_builder_factory(
         input_builder,
         output_builder,
         error_builder,
-        recordable_state_builder,
-        nested_graph,
-        input_node_ids,
-        output_node_id,
+        recordable_state_builder=None,
+        nested_graph=None,
+        input_node_ids=None,
+        output_node_id=0,
+        context_path=None,
 ):
     return _hgraph.TsdNonAssociativeReduceNodeBuilder(
         signature,
