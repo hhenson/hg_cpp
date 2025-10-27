@@ -9,31 +9,15 @@ namespace hgraph
     template <typename T> nb::object TimeSeriesFixedWindowOutput<T>::py_value() const {
         if (!valid() || _length < _min_size) return nb::none();
 
-        // If the window is contiguous from the start (no rotation), we can expose a dynamic
-        // ndarray view into the internal storage with proper ownership to avoid a copy.
-        if (_start == 0) {
-            size_t len = (_length < _size) ? _length : _size;
-            if (len == 0) return nb::none();
-
-            // Only expose zero-copy ndarray for POD-like types excluding nb::object and vector<bool>.
-            if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
-                using ND = nb::ndarray<nb::numpy, T, nb::ndim<1>>;
-                const T* data_ptr = _buffer.data();
-                // Use the bound C++ instance as the owner to ensure lifetime safety.
-                nb::object owner = nb::cast(const_cast<TimeSeriesFixedWindowOutput<T>*>(this));
-                ND arr((void*) data_ptr, { len }, owner);
-                return nb::cast(arr);
-            }
-            // For nb::object and bool, fall back to a copy-based Python sequence.
-            std::vector<T> out(_buffer.begin(), _buffer.begin() + len);
-            return nb::cast(out);
-        }
-
-        // General path: build ordered view (copy semantics for rotation)
+        // Build a materialized Python sequence in correct chronological order.
+        // This mirrors the Python reference behavior and avoids zero-copy view
+        // issues that can expose uninitialized/rotated storage.
         std::vector<T> out;
         if (_length < _size) {
+            // No rotation has occurred; use the first _length elements
             out.assign(_buffer.begin(), _buffer.begin() + _length);
         } else {
+            // Full window; materialize from the logical start
             out.resize(_size);
             for (size_t i = 0; i < _size; ++i) out[i] = _buffer[(i + _start) % _size];
         }
