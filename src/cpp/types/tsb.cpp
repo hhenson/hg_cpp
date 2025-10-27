@@ -327,6 +327,28 @@ namespace hgraph
             .def_prop_rw(
                 "value", [](const TimeSeriesBundleOutput &self) -> nb::object { return self.py_value(); },
                 &TimeSeriesBundleOutput::py_set_value)
+            .def("__getitem__",
+                 [](TimeSeriesBundleOutput &self, const std::string &key) -> TimeSeriesOutput::ptr { return self[key]; })
+            .def("__getitem__",
+                 [](TimeSeriesBundleOutput &self, size_t index) -> TimeSeriesOutput::ptr { return self[index]; })
+            .def("__iter__",
+                 [](TimeSeriesBundleOutput &self) {
+                     nb::list values;
+                     for (size_t i = 0; i < self.size(); ++i) { values.append(self[i]); }
+                     return values.attr("__iter__")();
+                 })
+            .def("__contains__", &TimeSeriesBundleOutput::contains)
+            .def("keys", &TimeSeriesBundleOutput::keys)
+            .def("items", static_cast<key_value_collection_type (TimeSeriesBundleOutput::*)() const>(
+                               &TimeSeriesBundleOutput::items))
+            .def("valid_keys", &TimeSeriesBundleOutput::valid_keys)
+            .def("valid_items", static_cast<key_value_collection_type (TimeSeriesBundleOutput::*)() const>(
+                                      &TimeSeriesBundleOutput::valid_items))
+            .def("modified_keys", &TimeSeriesBundleOutput::modified_keys)
+            .def("modified_items", static_cast<key_value_collection_type (TimeSeriesBundleOutput::*)() const>(
+                                         &TimeSeriesBundleOutput::modified_items))
+            .def_prop_ro("__schema__", static_cast<const TimeSeriesSchema &(TimeSeriesBundleOutput::*)() const>(
+                                           &TimeSeriesBundleOutput::schema))
             .def("__str__",
                  [](const TimeSeriesBundleOutput &self) {
                      return fmt::format("TimeSeriesBundleOutput@{:p}[keys={}, valid={}]", static_cast<const void *>(&self),
