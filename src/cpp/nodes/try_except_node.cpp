@@ -10,7 +10,7 @@
 namespace hgraph
 {
     void TryExceptNode::wire_outputs() {
-        if (m_output_node_id_) {
+        if (m_output_node_id_ >= 0) {
             auto node = m_active_graph_->nodes()[m_output_node_id_];
             // Python parity: replace the inner node's output with the outer node's 'out' sub-output
             // If the outer output is a bundle, use its 'out' member; otherwise, wire the outer output directly.

@@ -24,7 +24,7 @@ namespace hgraph
     }
 
     void ComponentNode::wire_outputs() {
-        if (m_output_node_id_) {
+        if (m_output_node_id_ >= 0) {
             auto node = m_active_graph_->nodes()[m_output_node_id_];
             node->set_output(output());
         }
