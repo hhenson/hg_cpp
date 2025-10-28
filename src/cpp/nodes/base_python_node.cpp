@@ -1,6 +1,10 @@
 #include <hgraph/nodes/base_python_node.h>
 #include <hgraph/types/error_type.h>
 #include <hgraph/types/tsb.h>
+#include <hgraph/types/constants.h>
+#include <hgraph/types/graph.h>
+#include <hgraph/types/traits.h>
+#include <hgraph/util/date_time.h>
 
 namespace hgraph
 {
@@ -44,26 +48,61 @@ namespace hgraph
     }
 
     void BasePythonNode::_initialise_state() {
-        if (has_recordable_state()) {
-            // TODO: Implement this once a bit more infra is in place
-            throw std::runtime_error("Recordable state not yet implemented");
-            // auto &record_context = RecordReplayContext::instance();
-            // auto  mode           = record_context.mode();
-            //
-            // if (mode.contains(RecordReplayEnum::RECOVER)) {
-            //     // TODO: make recordable_id unique by using parent node context information
-            //     auto recordable_id   = get_fq_recordable_id(this->graph().traits(), this->signature().record_replay_id());
-            //     auto clock           = this->graph().evaluation_clock();
-            //     auto evaluation_time = clock.evaluation_time();
-            //     auto as_of_time      = get_as_of(clock);
-            //
-            //     this->recordable_state().value() =
-            //         replay_const("__state__", this->signature().recordable_state().tsb_type().py_type(), recordable_id,
-            //                      evaluation_time - MIN_TD,  // We want the state just before now
-            //                      as_of_time)
-            //             .value();
-            // }
+        if (!has_recordable_state()) {
+            return;
         }
+
+        // Get RecordReplayContext and check if RECOVER mode is active
+        nb::object context_cls = get_record_replay_context();
+        nb::object context = context_cls.attr("instance")();
+        nb::object mode = context.attr("mode");
+
+        // Get RecordReplayEnum to check for RECOVER flag
+        nb::object enum_cls = get_record_replay_enum();
+        nb::object recover_flag = enum_cls.attr("RECOVER");
+
+        // Check if RECOVER is in mode (using bitwise 'in' operation via Python __contains__)
+        bool is_recover_mode = nb::cast<bool>(recover_flag.attr("__rand__")(mode));
+
+        if (!is_recover_mode) {
+            return;
+        }
+
+        // Get the evaluation clock as a Python object
+        nb::object clock = nb::cast(graph()->evaluation_clock());
+
+        // Get the fully qualified recordable ID
+        nb::object fq_recordable_id_fn = get_fq_recordable_id_fn();
+        nb::object traits_obj = nb::cast(&(graph()->traits()));
+        std::string record_replay_id = signature().record_replay_id.value_or("");
+        nb::object recordable_id = fq_recordable_id_fn(traits_obj, nb::str(record_replay_id.c_str()));
+
+        // Get evaluation time minus MIN_TD
+        engine_time_t eval_time = graph()->evaluation_clock()->evaluation_time();
+        engine_time_t tm = eval_time - MIN_TD;
+
+        // Get as_of time
+        nb::object get_as_of = get_as_of_fn();
+        nb::object as_of = get_as_of(clock);
+
+        // Get the recordable_state type from the Python signature object
+        // Cast the C++ signature to a Python object to access the recordable_state property
+        nb::object py_signature = nb::cast(&signature());
+        nb::object recordable_state_type = py_signature.attr("recordable_state");
+        nb::object tsb_type = recordable_state_type.attr("tsb_type").attr("py_type");
+
+        // Call replay_const to restore state
+        nb::object replay_const = get_replay_const_fn();
+        nb::object restored_state = replay_const(
+            nb::str("__state__"),
+            tsb_type,
+            nb::arg("recordable_id") = recordable_id,
+            nb::arg("tm") = nb::cast(tm),
+            nb::arg("as_of") = as_of
+        );
+
+        // Set the value on recordable_state
+        recordable_state()->apply_result(restored_state.attr("value"));
     }
     void BasePythonNode::reset_input(time_series_bundle_input_ptr value) {
         Node::reset_input(value);

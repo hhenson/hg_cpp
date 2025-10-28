@@ -48,4 +48,44 @@ namespace hgraph
         return OBJECT;
     }
 
+    static nb::object RECORD_REPLAY_CONTEXT;
+    nb::object get_record_replay_context() {
+        if (!RECORD_REPLAY_CONTEXT.is_valid()) {
+            RECORD_REPLAY_CONTEXT = nb::module_::import_("hgraph._operators._record_replay").attr("RecordReplayContext");
+        }
+        return RECORD_REPLAY_CONTEXT;
+    }
+
+    static nb::object RECORD_REPLAY_ENUM;
+    nb::object get_record_replay_enum() {
+        if (!RECORD_REPLAY_ENUM.is_valid()) {
+            RECORD_REPLAY_ENUM = nb::module_::import_("hgraph._operators._record_replay").attr("RecordReplayEnum");
+        }
+        return RECORD_REPLAY_ENUM;
+    }
+
+    static nb::object REPLAY_CONST_FN;
+    nb::object get_replay_const_fn() {
+        if (!REPLAY_CONST_FN.is_valid()) {
+            REPLAY_CONST_FN = nb::module_::import_("hgraph._operators._record_replay").attr("replay_const");
+        }
+        return REPLAY_CONST_FN;
+    }
+
+    static nb::object GET_AS_OF_FN;
+    nb::object get_as_of_fn() {
+        if (!GET_AS_OF_FN.is_valid()) {
+            GET_AS_OF_FN = nb::module_::import_("hgraph._operators._to_table").attr("get_as_of");
+        }
+        return GET_AS_OF_FN;
+    }
+
+    static nb::object GET_FQ_RECORDABLE_ID_FN;
+    nb::object get_fq_recordable_id_fn() {
+        if (!GET_FQ_RECORDABLE_ID_FN.is_valid()) {
+            GET_FQ_RECORDABLE_ID_FN = nb::module_::import_("hgraph._operators._record_replay").attr("get_fq_recordable_id");
+        }
+        return GET_FQ_RECORDABLE_ID_FN;
+    }
+
 }  // namespace hgraph
