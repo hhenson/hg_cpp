@@ -1,3 +1,4 @@
+import hg_cpp
 import pytest
 from frozendict import frozendict as fd
 

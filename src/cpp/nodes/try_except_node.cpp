@@ -53,7 +53,7 @@ namespace hgraph
                 }
             } else {
                 // Sink case: direct TS[NodeError]
-                output()->py_set_value(nb::cast(err));
+                output()->py_set_value(nb::cast(error_ptr));
             }
 
             // Stop the nested component to mirror Python try/except behavior
