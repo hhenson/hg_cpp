@@ -808,6 +808,31 @@ namespace hgraph
         nb::class_<TimeSeriesSetInput_T<engine_time_delta_t>, TimeSeriesSetInput>(m, "TimeSeriesSetInput_TimeDelta");
         nb::class_<TimeSeriesSetInput_T<nb::object>, TimeSeriesSetInput>(m, "TimeSeriesSetInput_object");
 
+        // Helper template function to bind TimeSeriesSetOutput methods
+        auto bind_tss_output_methods = []<typename T>(nb::class_<TimeSeriesSetOutput_T<T>, TimeSeriesSetOutput> &cls) {
+            using ItemType = std::conditional_t<
+                std::is_same_v<T, bool> || std::is_same_v<T, int64_t> || std::is_same_v<T, double>,
+                T,
+                const T&
+            >;
+
+            cls.def("add", [](TimeSeriesSetOutput_T<T> &self, ItemType item) {
+                typename TimeSeriesSetOutput_T<T>::collection_type added{item};
+                typename TimeSeriesSetOutput_T<T>::collection_type removed;
+                self.set_value(std::move(added), std::move(removed));
+            })
+            .def("remove", [](TimeSeriesSetOutput_T<T> &self, ItemType item) {
+                typename TimeSeriesSetOutput_T<T>::collection_type added;
+                typename TimeSeriesSetOutput_T<T>::collection_type removed{item};
+                self.set_value(std::move(added), std::move(removed));
+            })
+            .def("clear", [](TimeSeriesSetOutput_T<T> &self) {
+                typename TimeSeriesSetOutput_T<T>::collection_type added;
+                typename TimeSeriesSetOutput_T<T>::collection_type removed = self.value();
+                self.set_value(std::move(added), std::move(removed));
+            });
+        };
+
         nb::class_<TimeSeriesSetOutput, TimeSeriesOutput>(m, "TimeSeriesSetOutput")
             .def("__contains__", &TimeSeriesSetOutput::py_contains)
             .def("__len__", &TimeSeriesSetOutput::size)
@@ -829,47 +854,25 @@ namespace hgraph
                     static_cast<const void *>(&self), self.size(), self.valid());
             });
 
-        nb::class_<TimeSeriesSetOutput_T<bool>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Bool")
-            .def("add", [](TimeSeriesSetOutput_T<bool> &self, bool item) {
-                TimeSeriesSetOutput_T<bool>::collection_type added{item};
-                TimeSeriesSetOutput_T<bool>::collection_type removed;
-                self.set_value(std::move(added), std::move(removed));
-            });
-        nb::class_<TimeSeriesSetOutput_T<int64_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Int")
-            .def("add", [](TimeSeriesSetOutput_T<int64_t> &self, int64_t item) {
-                TimeSeriesSetOutput_T<int64_t>::collection_type added{item};
-                TimeSeriesSetOutput_T<int64_t>::collection_type removed;
-                self.set_value(std::move(added), std::move(removed));
-            });
-        nb::class_<TimeSeriesSetOutput_T<double>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Float")
-            .def("add", [](TimeSeriesSetOutput_T<double> &self, double item) {
-                TimeSeriesSetOutput_T<double>::collection_type added{item};
-                TimeSeriesSetOutput_T<double>::collection_type removed;
-                self.set_value(std::move(added), std::move(removed));
-            });
-        nb::class_<TimeSeriesSetOutput_T<engine_date_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Date")
-            .def("add", [](TimeSeriesSetOutput_T<engine_date_t> &self, const engine_date_t &item) {
-                TimeSeriesSetOutput_T<engine_date_t>::collection_type added{item};
-                TimeSeriesSetOutput_T<engine_date_t>::collection_type removed;
-                self.set_value(std::move(added), std::move(removed));
-            });
-        nb::class_<TimeSeriesSetOutput_T<engine_time_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_DateTime")
-            .def("add", [](TimeSeriesSetOutput_T<engine_time_t> &self, const engine_time_t &item) {
-                TimeSeriesSetOutput_T<engine_time_t>::collection_type added{item};
-                TimeSeriesSetOutput_T<engine_time_t>::collection_type removed;
-                self.set_value(std::move(added), std::move(removed));
-            });
-        nb::class_<TimeSeriesSetOutput_T<engine_time_delta_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_TimeDelta")
-            .def("add", [](TimeSeriesSetOutput_T<engine_time_delta_t> &self, const engine_time_delta_t &item) {
-                TimeSeriesSetOutput_T<engine_time_delta_t>::collection_type added{item};
-                TimeSeriesSetOutput_T<engine_time_delta_t>::collection_type removed;
-                self.set_value(std::move(added), std::move(removed));
-            });
-        nb::class_<TimeSeriesSetOutput_T<nb::object>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_object")
-            .def("add", [](TimeSeriesSetOutput_T<nb::object> &self, const nb::object &item) {
-                TimeSeriesSetOutput_T<nb::object>::collection_type added{item};
-                TimeSeriesSetOutput_T<nb::object>::collection_type removed;
-                self.set_value(std::move(added), std::move(removed));
-            });
+        auto tss_out_bool = nb::class_<TimeSeriesSetOutput_T<bool>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Bool");
+        bind_tss_output_methods(tss_out_bool);
+
+        auto tss_out_int = nb::class_<TimeSeriesSetOutput_T<int64_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Int");
+        bind_tss_output_methods(tss_out_int);
+
+        auto tss_out_float = nb::class_<TimeSeriesSetOutput_T<double>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Float");
+        bind_tss_output_methods(tss_out_float);
+
+        auto tss_out_date = nb::class_<TimeSeriesSetOutput_T<engine_date_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_Date");
+        bind_tss_output_methods(tss_out_date);
+
+        auto tss_out_datetime = nb::class_<TimeSeriesSetOutput_T<engine_time_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_DateTime");
+        bind_tss_output_methods(tss_out_datetime);
+
+        auto tss_out_timedelta = nb::class_<TimeSeriesSetOutput_T<engine_time_delta_t>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_TimeDelta");
+        bind_tss_output_methods(tss_out_timedelta);
+
+        auto tss_out_object = nb::class_<TimeSeriesSetOutput_T<nb::object>, TimeSeriesSetOutput>(m, "TimeSeriesSetOutput_object");
+        bind_tss_output_methods(tss_out_object);
     }
 }  // namespace hgraph
