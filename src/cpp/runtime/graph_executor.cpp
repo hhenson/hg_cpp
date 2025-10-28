@@ -102,6 +102,7 @@ namespace hgraph
         try {
                 // Initialise the graph but do not dispose here; disposal is handled by GraphBuilder.release_instance in Python
                 initialise_component(*_graph);
+                // Use RAII; StartStopContext destructor will stop and now rethrow first exception from stop hooks
                 auto startStopContext  = StartStopContext(*_graph);
 
                 while (clock->evaluation_time() < end_time) { _evaluate(*evaluationEngine); }

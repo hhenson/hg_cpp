@@ -83,14 +83,14 @@ namespace hgraph
 
     StartStopContext::StartStopContext(ComponentLifeCycle &component) : _component{component} { start_component(_component); }
 
-    StartStopContext::~StartStopContext() noexcept {
-        // Destructors must not throw. Ensure cleanup happens but never aborts the process.
+    StartStopContext::~StartStopContext() {
+        // Stop all handlers; if any throws, remember the first and rethrow after completion
+        std::exception_ptr first_exc;
         try {
             stop_component(_component);
-        } catch (const std::exception &e) {
-            fprintf(stderr, "Warning: exception during stop_component: %s\n", e.what());
         } catch (...) {
-            fprintf(stderr, "Warning: unknown exception during stop_component\n");
+            if (!first_exc) first_exc = std::current_exception();
         }
+        if (first_exc) std::rethrow_exception(first_exc);
     }
 }  // namespace hgraph

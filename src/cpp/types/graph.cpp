@@ -277,12 +277,30 @@ namespace hgraph
     void Graph::stop() {
         auto &engine = *_evaluation_engine;
         engine.notify_before_stop_graph(graph_ptr{this});
+        std::exception_ptr first_exc;
         for (auto &node : _nodes) {
-            engine.notify_before_stop_node(node);
-            stop_component(*node);
-            engine.notify_after_stop_node(node);
+            try {
+                engine.notify_before_stop_node(node);
+            } catch (...) {
+                if (!first_exc) first_exc = std::current_exception();
+            }
+            try {
+                stop_component(*node);
+            } catch (...) {
+                if (!first_exc) first_exc = std::current_exception();
+            }
+            try {
+                engine.notify_after_stop_node(node);
+            } catch (...) {
+                if (!first_exc) first_exc = std::current_exception();
+            }
         }
-        engine.notify_after_stop_graph(graph_ptr{this});
+        try {
+            engine.notify_after_stop_graph(graph_ptr{this});
+        } catch (...) {
+            if (!first_exc) first_exc = std::current_exception();
+        }
+        if (first_exc) std::rethrow_exception(first_exc);
     }
 
     void Graph::dispose() {

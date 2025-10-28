@@ -39,7 +39,7 @@ namespace hgraph {
      */
     struct StartStopContext {
         StartStopContext(ComponentLifeCycle &component);
-        ~StartStopContext() noexcept;  // Destructors must not throw; exceptions are reported earlier
+        ~StartStopContext();  // Destructor may throw after completing all stop handlers to mirror Python behavior
     private:
         ComponentLifeCycle& _component;
     };
