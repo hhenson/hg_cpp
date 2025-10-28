@@ -198,7 +198,15 @@ namespace hgraph
             auto v  = kv[1];
             if (v.is_none()) { continue; }
             if (v.is(remove) || v.is(remove_if_exists)) {
-                if (contains(k_)) { erase(k_); }
+                if (contains(k_)) {
+                    erase(k_);
+                } else {
+                    // Python semantics: REMOVE on missing -> KeyError; REMOVE_IF_EXISTS on missing -> no-op
+                    if (v.is(remove)) {
+                        std::string msg = "TSD key not found for REMOVE: " + to_string(k_);
+                        throw nb::key_error(msg.c_str());
+                    } // else REMOVE_IF_EXISTS: do nothing
+                }
             } else {
                 _get_or_create(k_)->py_set_value(v);
             }
@@ -210,8 +218,8 @@ namespace hgraph
         for (const auto &[key, value] : _ts_values) {
             if (value->valid()) { v[nb::cast(key)] = value->py_value(); }
         }
-        // Return a plain dict for value() to match Python reference semantics
-        return v;
+        // Return frozendict snapshot of all valid items (mirror Python `_tsd.py:value`)
+        return get_frozendict()(v);
     }
 
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_delta_value() const {
@@ -223,7 +231,8 @@ namespace hgraph
             auto removed{get_remove()};
             for (const auto &[key, _] : _removed_items) { delta_value[nb::cast(key)] = removed; }
         }
-        return delta_value;
+        // Return frozendict of modified-valid entries plus removed keys (mirror Python `_tsd.py:delta_value`)
+        return get_frozendict()(delta_value);
     }
 
     template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::clear() {
@@ -584,8 +593,8 @@ namespace hgraph
         for (const auto &[key, value] : _ts_values) {
             if (value->valid()) { v[nb::cast(key)] = value->py_value(); }
         }
-        // Return a plain dict to match Python reference semantics
-        return v;
+        // Return frozendict snapshot of all valid items to mirror Python `_tsd.py:value`
+        return get_frozendict()(v);
     }
 
     template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_delta_value() const {
