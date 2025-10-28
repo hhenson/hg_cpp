@@ -178,9 +178,9 @@ namespace hgraph
             } catch (const std::exception &e) {
                 auto &error_tsd = dynamic_cast<TimeSeriesDictOutput_T<K> &>(*error_output());
                 auto  msg = std::string("key: ") + to_string(key);
-                auto  node_exception = NodeException::capture_error(e, *this, msg);
+                auto  node_error = NodeError::capture_error(e, *this, msg);
                 auto error_ts = error_tsd._get_or_create(key);
-                error_ts->py_set_value(nb::cast(node_exception));
+                error_ts->py_set_value(nb::cast(node_error));
             }
         } else {
             graph->evaluate_graph();

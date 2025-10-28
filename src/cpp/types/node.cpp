@@ -880,7 +880,7 @@ namespace hgraph
                 }
             } catch (const std::exception &e) {
                 if (signature().capture_exception && error_output().get() != nullptr) {
-                    auto ne = NodeException::capture_error(e, *this, "During evaluation");
+                    auto ne = NodeError::capture_error(e, *this, "During evaluation");
                     try {
                         error_output()->py_set_value(nb::cast(ne));
                     } catch (const std::exception &set_err) {
@@ -894,7 +894,7 @@ namespace hgraph
                 }
             } catch (...) {
                 if (signature().capture_exception && error_output().get() != nullptr) {
-                    auto ne = NodeException::capture_error(std::current_exception(), *this, "Unknown error during node evaluation");
+                    auto ne = NodeError::capture_error(std::current_exception(), *this, "Unknown error during node evaluation");
                     try {
                         error_output()->py_set_value(nb::cast(ne));
                     } catch (const std::exception &set_err) {
