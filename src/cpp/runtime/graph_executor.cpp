@@ -102,8 +102,6 @@ namespace hgraph
         for (const auto &observer : _observers) { evaluationEngine->add_life_cycle_observer(observer); }
 
         try {
-                // Ensure top-level graph has parent recordable id set to 'nodes' to match Python test harness expectations
-                set_parent_recordable_id(*_graph, std::string("nodes"));
                 // Initialise the graph but do not dispose here; disposal is handled by GraphBuilder.release_instance in Python
                 initialise_component(*_graph);
                 // Use RAII; StartStopContext destructor will stop and now rethrow first exception from stop hooks
