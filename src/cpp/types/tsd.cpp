@@ -613,8 +613,8 @@ namespace hgraph
                 }
             }
         }
-        // Return a plain dict to match Python reference semantics
-        return delta;
+        // Return frozendict to mirror Python `_tsd.py:delta_value`
+        return get_frozendict()(delta);
     }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::py_contains(const nb::object &item) const {
