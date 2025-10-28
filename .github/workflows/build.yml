@@ -18,10 +18,16 @@ jobs:
     env:
       # Common environment variables for all platforms.
       PYTHON_VERSION: "3.12"
-      CMAKE_ARGS: "-DNB_USE_STABLE_ABI=ON -DCMAKE_CXX_STANDARD=20"
+      CMAKE_ARGS: "-DNB_USE_STABLE_ABI=ON -DCMAKE_CXX_STANDARD=23"
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Setup MSVC (Windows only)
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -43,7 +49,7 @@ jobs:
 
       - name: Conan Install
         run: |
-          uv tool run conan install . --build=missing -s build_type=Release -pr default -s compiler.cppstd=20
+          uv tool run conan install . --build=missing -s build_type=Release -pr default -s compiler.cppstd=23
 
       - name: Build Python Wheel with scikit-build-core
         shell: bash
