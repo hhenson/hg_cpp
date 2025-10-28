@@ -83,14 +83,26 @@ namespace hgraph
 
     StartStopContext::StartStopContext(ComponentLifeCycle &component) : _component{component} { start_component(_component); }
 
-    StartStopContext::~StartStopContext() {
-        // Stop all handlers; if any throws, remember the first and rethrow after completion
-        std::exception_ptr first_exc;
+    StartStopContext::~StartStopContext() noexcept {
+        // RAII finally pattern: exceptions from stop() should propagate to Python
+        // But we can't throw from destructor during unwinding (causes std::terminate)
+        // Solution: set Python error state instead of throwing C++ exception
         try {
             stop_component(_component);
+        } catch (nb::python_error &e) {
+            // Python exception from stop_fn - nanobind cleared it when throwing, so restore it
+            e.restore();
+        } catch (const std::exception &e) {
+            // C++ exception from stop - convert to Python exception
+            // Only set Python error if one isn't already set (preserve first exception)
+            if (!PyErr_Occurred()) {
+                PyErr_SetString(PyExc_RuntimeError, e.what());
+            }
         } catch (...) {
-            if (!first_exc) first_exc = std::current_exception();
+            // Unknown exception
+            if (!PyErr_Occurred()) {
+                PyErr_SetString(PyExc_RuntimeError, "Unknown exception during stop_component");
+            }
         }
-        if (first_exc) std::rethrow_exception(first_exc);
     }
 }  // namespace hgraph

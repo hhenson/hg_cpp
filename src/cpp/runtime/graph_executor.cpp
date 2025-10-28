@@ -104,10 +104,15 @@ namespace hgraph
         try {
                 // Initialise the graph but do not dispose here; disposal is handled by GraphBuilder.release_instance in Python
                 initialise_component(*_graph);
-                // Use RAII; StartStopContext destructor will stop and now rethrow first exception from stop hooks
-                auto startStopContext  = StartStopContext(*_graph);
-
-                while (clock->evaluation_time() < end_time) { _evaluate(*evaluationEngine); }
+                // Use RAII; StartStopContext destructor will stop and set Python error if exception occurs
+                {
+                    auto startStopContext  = StartStopContext(*_graph);
+                    while (clock->evaluation_time() < end_time) { _evaluate(*evaluationEngine); }
+                }
+                // After StartStopContext destruction, check if a Python error was set during stop
+                if (PyErr_Occurred()) {
+                    throw nb::python_error();
+                }
         } catch (const NodeException &e) {
             // Raise Python hgraph.NodeException constructed from C++ NodeException details
             try {
