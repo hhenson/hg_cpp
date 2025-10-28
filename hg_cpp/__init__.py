@@ -277,6 +277,38 @@ def _create_tsd_non_associative_reduce_node_builder_factory(
 hgraph._wiring._wiring_node_class._reduce_wiring_node.TsdNonAssociativeReduceWiringNodeClass.BUILDER_CLASS = _create_tsd_non_associative_reduce_node_builder_factory
 
 
+# Nested Graph Node
+from hgraph._wiring._wiring_node_class import _nested_graph_wiring_node as _ng
+
+def _create_nested_graph_builder_factory(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder=None,
+        nested_graph=None,
+        input_node_ids=None,
+        output_node_id=None,
+):
+    # Normalize ids as nanobind-friendly types
+    input_node_ids = dict(input_node_ids) if input_node_ids is not None else {}
+    output_node_id = -1 if output_node_id in (None, 0) else int(output_node_id)
+    return _hgraph.NestedGraphNodeBuilder(
+        signature,
+        scalars,
+        input_builder,
+        output_builder,
+        error_builder,
+        recordable_state_builder,
+        nested_graph,
+        input_node_ids,
+        output_node_id,
+    )
+
+# Use C++ NestedGraphNodeBuilder for nested_graph wiring
+_ng.NestedGraphWiringNodeClass.BUILDER_CLASS = _create_nested_graph_builder_factory
+
 # Mesh Node
 def _create_mesh_node_builder_factory(
         signature,
@@ -337,7 +369,7 @@ def _service_impl_nested_graph_builder(*, signature, scalars, input_builder, out
         recordable_state_builder,
         nested_graph,
         {},
-        0,
+        -1,
     )
 
 

@@ -47,7 +47,7 @@ namespace hgraph
     }
 
     void NestedGraphNode::wire_outputs() {
-        if (m_output_node_id_) {
+        if (m_output_node_id_ >= 0) {
             auto node = m_active_graph_->nodes()[m_output_node_id_];
             // Align with Python: simply replace the inner node's output with the parent node's output
             node->set_output(output());
