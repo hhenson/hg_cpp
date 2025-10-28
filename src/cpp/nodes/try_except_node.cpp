@@ -6,19 +6,22 @@
 #include <hgraph/types/tsb.h>
 #include <hgraph/types/time_series_type.h>
 #include <hgraph/types/ref.h>
+#include <hgraph/util/lifecycle.h>
 
 namespace hgraph
 {
     void TryExceptNode::wire_outputs() {
         if (m_output_node_id_ >= 0) {
             auto node = m_active_graph_->nodes()[m_output_node_id_];
-            // Python parity: replace the inner node's output with the outer node's 'out' sub-output
-            // If the outer output is a bundle, use its 'out' member; otherwise, wire the outer output directly.
+            // Python parity: set the outer REF 'out' to reference the inner node's existing output.
+            // Do NOT replace the inner node's output pointer.
             if (auto bundle = dynamic_cast<TimeSeriesBundleOutput *>(output().get())) {
-                auto out_ts = (*bundle)["out"];  // TimeSeriesOutput::ptr
-                node->set_output(out_ts);
+                auto out_ts = (*bundle)["out"];  // TimeSeriesOutput::ptr (expected TimeSeriesReferenceOutput)
+                if (auto out_ref = dynamic_cast<TimeSeriesReferenceOutput *>(out_ts.get())) {
+                    out_ref->set_value(TimeSeriesReference::make(node->output()));
+                }
             } else {
-                node->set_output(output());
+                // Non-bundle case (sink): nothing to wire here
             }
         }
     }
@@ -35,9 +38,24 @@ namespace hgraph
                 nec->reset_next_scheduled_evaluation_time();
             }
         } catch (const std::exception &e) {
-            // TODO: Implement error capture and wiring to exception output
-            // For now, just rethrow
-            throw;
+            // Capture the exception and publish it to the error output, mirroring Python behavior
+            auto node_exception = NodeException::capture_error(e, *this, "");
+
+            if (auto bundle = dynamic_cast<TimeSeriesBundleOutput *>(output().get())) {
+                // Write to the 'exception' field of the bundle
+                auto exception_ts = (*bundle)["exception"];
+                try {
+                    exception_ts->py_set_value(nb::cast(node_exception.error));
+                } catch (const std::exception &set_err) {
+                    exception_ts->py_set_value(nb::str(node_exception.error.to_string().c_str()));
+                }
+            } else {
+                // Sink case: direct TS[NodeError]
+                output()->py_set_value(nb::cast(node_exception.error));
+            }
+
+            // Stop the nested component to mirror Python try/except behavior
+            stop_component(*m_active_graph_);
         }
     }
 

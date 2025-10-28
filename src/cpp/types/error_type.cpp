@@ -148,12 +148,15 @@ namespace hgraph
                     capture_input(active_inputs, *input, input_name, capture_values, depth);
 
                     if (capture_values) {
-                        auto   value_str{nb::cast<std::string>(input->py_value())};
+                        // Convert values to strings via Python's str() to avoid C++ cast issues (std::bad_cast)
+                        nb::str py_val_str = nb::str(input->py_value());
+                        std::string value_str = nb::cast<std::string>(py_val_str);
                         size_t newline_pos = value_str.find('\n');
                         if (newline_pos != std::string::npos) { value_str = value_str.substr(0, newline_pos); }
 
                         input_short_values[input_name]       = value_str.substr(0, 32) + (value_str.length() > 32 ? "..." : "");
-                        input_delta_values[input_name]       = nb::cast<std::string>(input->py_delta_value());
+                        std::string delta_str = nb::cast<std::string>(nb::str(input->py_delta_value()));
+                        input_delta_values[input_name]       = delta_str;
                         input_values[input_name]             = value_str;
                         input_last_modified_time[input_name] = input->last_modified_time();
                     }

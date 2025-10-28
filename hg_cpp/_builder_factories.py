@@ -10,6 +10,11 @@ def _raise_un_implemented(value_tp: hgraph.HgTimeSeriesTypeMetaData):
 
 class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
 
+    def make_error_builder(self, value_tp: hgraph.HgTimeSeriesTypeMetaData) -> hgraph.TSOutputBuilder:
+        # Error outputs are standard time-series outputs (typically TS[NodeError] or TSD[K, TS[NodeError]])
+        # We can reuse the normal output builder logic here.
+        return self.make_output_builder(value_tp)
+
     def make_input_builder(self, value_tp: hgraph.HgTimeSeriesTypeMetaData) -> hgraph.TSInputBuilder:
         # Unfortunately the approach is really all or nothing, so either we can build it or we can't
         return {
