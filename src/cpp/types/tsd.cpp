@@ -489,7 +489,7 @@ namespace hgraph
         erase(nb::cast<T_Key>(key));
     }
 
-    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::erase(const key_type &key) { remove_value(key, true); }
+    template <typename T_Key> void TimeSeriesDictOutput_T<T_Key>::erase(const key_type &key) { remove_value(key, false); }
 
     template <typename T_Key>
     nb::object TimeSeriesDictOutput_T<T_Key>::py_pop(const nb::object &key, const nb::object &default_value) {
