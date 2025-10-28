@@ -24,10 +24,11 @@ if (NOT SKBUILD)
   after editing C++ files.")
 endif()
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if (UNIX)
-    set(PYBIND11_CPP_STANDARD -std=c++20)
+    set(PYBIND11_CPP_STANDARD -std=c++23)
     set(CMAKE_CXX_FLAGS_RELEASE "-g -O3")
     set(CMAKE_CXX_FLAGS_DEBUG "-g -v") # -fsanitize=address")
     set(CMAKE_CXX_FLAGS "-Wall")
