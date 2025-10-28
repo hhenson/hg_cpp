@@ -12,6 +12,7 @@
 #include <hgraph/types/tsb.h>
 #include <hgraph/types/tss.h>
 #include <hgraph/util/string_utils.h>
+#include <hgraph/util/scope.h>
 
 namespace hgraph
 {
@@ -254,16 +255,20 @@ namespace hgraph
             this->active_graphs_.erase(graph_it);
 
             this->un_wire_graph(key, graph);
+
+            // Ensure cleanup happens even if stop_component throws (matches Python try-finally pattern)
+            auto cleanup = make_scope_exit([this, key]() {
+                scheduled_keys_by_rank_[active_graphs_rank_[key]].erase(key);
+                active_graphs_rank_.erase(key);
+
+                // Remove any re-rank requests involving this key
+                re_rank_requests_.erase(std::remove_if(re_rank_requests_.begin(), re_rank_requests_.end(),
+                                                       [&key](const auto &pair) { return std::equal_to<K>()(pair.first, key); }),
+                                        re_rank_requests_.end());
+            });
+
             // Use component lifecycle functions like TsdMapNode does
             stop_component(*graph);
-
-            scheduled_keys_by_rank_[active_graphs_rank_[key]].erase(key);
-            active_graphs_rank_.erase(key);
-
-            // Remove any re-rank requests involving this key
-            re_rank_requests_.erase(std::remove_if(re_rank_requests_.begin(), re_rank_requests_.end(),
-                                                   [&key](const auto &pair) { return std::equal_to<K>()(pair.first, key); }),
-                                    re_rank_requests_.end());
 
             // NOTE: Do not call dispose or release_instance here. The graph is managed by nanobind
             // and will be cleaned up when its reference count reaches zero.

@@ -1,4 +1,4 @@
-#include "hgraph/types/tss.h"
+#include <hgraph/types/tss.h>
 
 #include <hgraph/builders/graph_builder.h>
 #include <hgraph/nodes/python_node.h>
@@ -14,6 +14,8 @@
 #include <hgraph/types/tsd.h>
 #include <hgraph/util/lifecycle.h>
 #include <hgraph/util/string_utils.h>
+
+#include <hgraph/util/scope.h>
 
 namespace hgraph
 {
@@ -156,9 +158,12 @@ namespace hgraph
         active_graphs_.erase(key);
 
         un_wire_graph(key, graph);
+
+        auto cleanup = make_scope_exit([this, graph=graph]() {
+            // Release the graph back to the builder pool (which will call dispose)
+            nested_graph_builder_->release_instance(graph);
+        });
         stop_component(*graph);
-        // Release the graph back to the builder pool (which will call dispose)
-        nested_graph_builder_->release_instance(graph);
     }
 
     template <typename K> engine_time_t TsdMapNode<K>::evaluate_graph(const K &key) {
