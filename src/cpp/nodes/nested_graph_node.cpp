@@ -56,9 +56,6 @@ namespace hgraph
 
     void NestedGraphNode::initialise() {
         m_active_graph_ = m_nested_graph_builder_->make_instance(node_id(), this, signature().name);
-        // Mirror Python: set the parent recordable id for the nested graph so inner nodes publish under
-        // `<outer-id>.<inner-node-id>.<output>` paths (e.g., 'nodes.record.out').
-        m_active_graph_->traits().set_trait(RECORDABLE_ID_TRAIT, nb::cast(signature().name));
         m_active_graph_->set_evaluation_engine(new NestedEvaluationEngine(
             graph()->evaluation_engine(), new NestedEngineEvaluationClock(graph()->evaluation_engine_clock(), this)));
         initialise_component(*m_active_graph_);
