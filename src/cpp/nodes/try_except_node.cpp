@@ -40,12 +40,14 @@ namespace hgraph
         } catch (const std::exception &e) {
             // Capture the exception and publish it to the error output, mirroring Python behavior
             auto err = NodeError::capture_error(e, *this, "");
+            // Create a heap-allocated copy managed by nanobind
+            auto error_ptr = nb::ref<NodeError>(new NodeError(err));
 
             if (auto bundle = dynamic_cast<TimeSeriesBundleOutput *>(output().get())) {
                 // Write to the 'exception' field of the bundle
                 auto exception_ts = (*bundle)["exception"];
                 try {
-                    exception_ts->py_set_value(nb::cast(err));
+                    exception_ts->py_set_value(nb::cast(error_ptr));
                 } catch (const std::exception &set_err) {
                     exception_ts->py_set_value(nb::str(err.to_string().c_str()));
                 }

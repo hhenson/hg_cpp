@@ -881,8 +881,10 @@ namespace hgraph
             } catch (const std::exception &e) {
                 if (signature().capture_exception && error_output().get() != nullptr) {
                     auto ne = NodeError::capture_error(e, *this, "During evaluation");
+                    // Create a heap-allocated copy managed by nanobind
+                    auto error_ptr = nb::ref<NodeError>(new NodeError(ne));
                     try {
-                        error_output()->py_set_value(nb::cast(ne));
+                        error_output()->py_set_value(nb::cast(error_ptr));
                     } catch (const std::exception &set_err) {
                         error_output()->py_set_value(nb::str(ne.to_string().c_str()));
                     } catch (...) {
@@ -895,8 +897,10 @@ namespace hgraph
             } catch (...) {
                 if (signature().capture_exception && error_output().get() != nullptr) {
                     auto ne = NodeError::capture_error(std::current_exception(), *this, "Unknown error during node evaluation");
+                    // Create a heap-allocated copy managed by nanobind
+                    auto error_ptr = nb::ref<NodeError>(new NodeError(ne));
                     try {
-                        error_output()->py_set_value(nb::cast(ne));
+                        error_output()->py_set_value(nb::cast(error_ptr));
                     } catch (const std::exception &set_err) {
                         error_output()->py_set_value(nb::str(ne.to_string().c_str()));
                     } catch (...) {

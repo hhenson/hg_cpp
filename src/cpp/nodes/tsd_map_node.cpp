@@ -180,7 +180,9 @@ namespace hgraph
                 auto  msg = std::string("key: ") + to_string(key);
                 auto  node_error = NodeError::capture_error(e, *this, msg);
                 auto error_ts = error_tsd._get_or_create(key);
-                error_ts->py_set_value(nb::cast(node_error));
+                // Create a heap-allocated copy managed by nanobind
+                auto error_ptr = nb::ref<NodeError>(new NodeError(node_error));
+                error_ts->py_set_value(nb::cast(error_ptr));
             }
         } else {
             graph->evaluate_graph();

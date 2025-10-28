@@ -289,9 +289,20 @@ namespace hgraph
     }
 
     std::string NodeError::to_string() const {
-        std::stringstream ss;
-        ss << *this;
-        return ss.str();
+        std::string result = signature_name;
+        if (!label.empty()) {
+            result += " labelled " + label;
+        }
+        if (!wiring_path.empty()) {
+            result += " at " + wiring_path;
+        }
+        if (!additional_context.empty()) {
+            result += " :: " + additional_context;
+        }
+        result += "\nNodeError: " + error_msg;
+        result += "\nStack trace:\n" + stack_trace;
+        result += "\nActivation Back Trace:\n" + activation_back_trace;
+        return result;
     }
 
     NodeError NodeError::capture_error(const std::exception &e, const Node &node, const std::string &msg) {
@@ -348,7 +359,8 @@ namespace hgraph
             .def_static("capture_error",
                 nb::overload_cast<const std::exception &, const Node &, const std::string &>(&NodeError::capture_error),
                 nb::arg("exception"), nb::arg("node"), nb::arg("message") = "")
-            .def("__str__", [](NodeError &self) { return self.to_string(); });
+            .def("__str__", [](NodeError &self) { return self.to_string(); })
+            .def("__repr__", [](NodeError &self) { return self.to_string(); });
     }
 
     NodeException::NodeException(const NodeError& error)
