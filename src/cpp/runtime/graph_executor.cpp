@@ -114,13 +114,13 @@ namespace hgraph
                 nb::object hgraph_mod = nb::module_::import_("hgraph");
                 nb::object py_node_exc_cls = hgraph_mod.attr("NodeException");
                 nb::tuple args = nb::make_tuple(
-                    nb::cast(e.error.signature_name),
-                    nb::cast(e.error.label),
-                    nb::cast(e.error.wiring_path),
-                    nb::cast(e.error.error_msg),
-                    nb::cast(e.error.stack_trace),
-                    nb::cast(e.error.activation_back_trace),
-                    nb::cast(e.error.additional_context)
+                    nb::cast(e.signature_name),
+                    nb::cast(e.label),
+                    nb::cast(e.wiring_path),
+                    nb::cast(e.error_msg),
+                    nb::cast(e.stack_trace),
+                    nb::cast(e.activation_back_trace),
+                    nb::cast(e.additional_context)
                 );
                 PyErr_SetObject(py_node_exc_cls.ptr(), args.ptr());
             } catch (...) {

@@ -866,10 +866,10 @@ namespace hgraph
                 if (signature().capture_exception && error_output().get() != nullptr) {
                     // Route captured error to the node's error output instead of rethrowing
                     try {
-                        error_output()->py_set_value(nb::cast(e.error));
+                        error_output()->py_set_value(nb::cast(e));
                     } catch (const std::exception &set_err) {
                         // Fall back to setting a generic Python object (string) to avoid rethrow during error routing
-                        error_output()->py_set_value(nb::str(e.error.to_string().c_str()));
+                        error_output()->py_set_value(nb::str(e.to_string().c_str()));
                     } catch (...) {
                         // As a last resort, invalidate the error output to signal an error occurred without throwing
                         error_output()->py_set_value(nb::none());
@@ -882,9 +882,9 @@ namespace hgraph
                 if (signature().capture_exception && error_output().get() != nullptr) {
                     auto ne = NodeException::capture_error(e, *this, "During evaluation");
                     try {
-                        error_output()->py_set_value(nb::cast(ne.error));
+                        error_output()->py_set_value(nb::cast(ne));
                     } catch (const std::exception &set_err) {
-                        error_output()->py_set_value(nb::str(ne.error.to_string().c_str()));
+                        error_output()->py_set_value(nb::str(ne.to_string().c_str()));
                     } catch (...) {
                         error_output()->py_set_value(nb::none());
                     }
@@ -896,9 +896,9 @@ namespace hgraph
                 if (signature().capture_exception && error_output().get() != nullptr) {
                     auto ne = NodeException::capture_error(std::current_exception(), *this, "Unknown error during node evaluation");
                     try {
-                        error_output()->py_set_value(nb::cast(ne.error));
+                        error_output()->py_set_value(nb::cast(ne));
                     } catch (const std::exception &set_err) {
-                        error_output()->py_set_value(nb::str(ne.error.to_string().c_str()));
+                        error_output()->py_set_value(nb::str(ne.to_string().c_str()));
                     } catch (...) {
                         error_output()->py_set_value(nb::none());
                     }

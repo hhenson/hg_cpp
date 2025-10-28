@@ -45,13 +45,13 @@ namespace hgraph
                 // Write to the 'exception' field of the bundle
                 auto exception_ts = (*bundle)["exception"];
                 try {
-                    exception_ts->py_set_value(nb::cast(node_exception.error));
+                    exception_ts->py_set_value(nb::cast(node_exception));
                 } catch (const std::exception &set_err) {
-                    exception_ts->py_set_value(nb::str(node_exception.error.to_string().c_str()));
+                    exception_ts->py_set_value(nb::str(node_exception.to_string().c_str()));
                 }
             } else {
                 // Sink case: direct TS[NodeError]
-                output()->py_set_value(nb::cast(node_exception.error));
+                output()->py_set_value(nb::cast(node_exception));
             }
 
             // Stop the nested component to mirror Python try/except behavior

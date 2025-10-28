@@ -15,6 +15,44 @@ namespace hgraph
         : name(std::move(name_)), args(std::move(args_)), wiring_path_name(std::move(wiring_path_name_)),
           runtime_path_name(std::move(runtime_path_name_)), node_id(std::move(node_id_)) {}
 
+    const std::vector<std::string> &BacktraceSignature::keys() const {
+        static const std::vector<std::string> keys_{"name", "args", "wiring_path_name", "runtime_path_name", "node_id"};
+        return keys_;
+    }
+
+    nb::object BacktraceSignature::get_value(const std::string &key) const {
+        nb::gil_scoped_acquire gil;
+        if (key == "name") return nb::cast(name);
+        if (key == "args") return nb::cast(args);
+        if (key == "wiring_path_name") return nb::cast(wiring_path_name);
+        if (key == "runtime_path_name") return nb::cast(runtime_path_name);
+        if (key == "node_id") return nb::cast(node_id);
+        throw std::invalid_argument("Unknown key: " + key);
+    }
+
+    nb::dict BacktraceSignature::to_dict() const {
+        nb::gil_scoped_acquire gil;
+        nb::dict d;
+        d["name"] = name;
+        d["args"] = args;
+        d["wiring_path_name"] = wiring_path_name;
+        d["runtime_path_name"] = runtime_path_name;
+        d["node_id"] = node_id;
+        return d;
+    }
+
+    void BacktraceSignature::register_with_nanobind(nb::module_ &m) {
+        nb::class_<BacktraceSignature, CompoundScalar>(m, "BacktraceSignature")
+            .def(nb::init<std::string, std::vector<std::string>, std::string, std::string, std::string>(),
+                 nb::arg("name"), nb::arg("args"), nb::arg("wiring_path_name"),
+                 nb::arg("runtime_path_name"), nb::arg("node_id"))
+            .def_ro("name", &BacktraceSignature::name)
+            .def_ro("args", &BacktraceSignature::args)
+            .def_ro("wiring_path_name", &BacktraceSignature::wiring_path_name)
+            .def_ro("runtime_path_name", &BacktraceSignature::runtime_path_name)
+            .def_ro("node_id", &BacktraceSignature::node_id);
+    }
+
     BackTrace::BackTrace(std::optional<BacktraceSignature> signature_, std::unordered_map<std::string, BackTrace> active_inputs_,
                          std::unordered_map<std::string, std::string>   input_short_values_,
                          std::unordered_map<std::string, std::string>   input_delta_values_,
@@ -204,32 +242,6 @@ namespace hgraph
         }
     }
 
-    NodeError::NodeError(std::string signature_name_, std::string label_, std::string wiring_path_, std::string error_msg_,
-                         std::string stack_trace_, std::string activation_back_trace_, std::string additional_context_)
-        : signature_name(std::move(signature_name_)), label(std::move(label_)), wiring_path(std::move(wiring_path_)),
-          error_msg(std::move(error_msg_)), stack_trace(std::move(stack_trace_)),
-          activation_back_trace(std::move(activation_back_trace_)), additional_context(std::move(additional_context_)) {}
-
-    std::string NodeError::to_string() const {
-        std::stringstream ss;
-        ss << *this;
-        return ss.str();
-    }
-
-    void NodeError::register_with_nanobind(nb::module_ &m) {
-        nb::class_<NodeError, intrusive_base>(m, "NodeError")
-            .def_ro("signature_name", &NodeError::signature_name)
-            .def_ro("label", &NodeError::label)
-            .def_ro("wiring_path", &NodeError::wiring_path)
-            .def_ro("error_msg", &NodeError::error_msg)
-            .def_ro("stack_trace", &NodeError::stack_trace)
-            .def_ro("activation_back_trace", &NodeError::activation_back_trace)
-            .def_ro("additional_context", &NodeError::additional_context)
-            .def("__str__", [](NodeError &self) { return self.to_string(); });
-    }
-
-    NodeException::NodeException(NodeError error) : std::runtime_error(error.to_string()), error{std::move(error)} {}
-
     std::string traceback_to_string(nb::python_error exception) {
         nb::gil_scoped_acquire gil;  // Ensure we hold the GIL when interacting with Python APIs
         auto trace_back_mod{nb::module_::import_("traceback")};
@@ -239,40 +251,115 @@ namespace hgraph
         return nb::cast<std::string>(result);
     }
 
-    NodeException NodeException::capture_error(const std::exception &e, const Node &node, const std::string &msg) {
+    NodeError::NodeError(std::string signature_name_, std::string label_, std::string wiring_path_, std::string error_msg_,
+                         std::string stack_trace_, std::string activation_back_trace_, std::string additional_context_)
+        : signature_name(std::move(signature_name_)), label(std::move(label_)), wiring_path(std::move(wiring_path_)),
+          error_msg(std::move(error_msg_)), stack_trace(std::move(stack_trace_)),
+          activation_back_trace(std::move(activation_back_trace_)), additional_context(std::move(additional_context_)) {}
+
+    const std::vector<std::string> &NodeError::keys() const {
+        static const std::vector<std::string> keys_{"signature_name", "label", "wiring_path", "error_msg",
+                                                     "stack_trace", "activation_back_trace", "additional_context"};
+        return keys_;
+    }
+
+    nb::object NodeError::get_value(const std::string &key) const {
+        nb::gil_scoped_acquire gil;
+        if (key == "signature_name") return nb::cast(signature_name);
+        if (key == "label") return nb::cast(label);
+        if (key == "wiring_path") return nb::cast(wiring_path);
+        if (key == "error_msg") return nb::cast(error_msg);
+        if (key == "stack_trace") return nb::cast(stack_trace);
+        if (key == "activation_back_trace") return nb::cast(activation_back_trace);
+        if (key == "additional_context") return nb::cast(additional_context);
+        throw std::invalid_argument("Unknown key: " + key);
+    }
+
+    nb::dict NodeError::to_dict() const {
+        nb::gil_scoped_acquire gil;
+        nb::dict d;
+        d["signature_name"] = signature_name;
+        d["label"] = label;
+        d["wiring_path"] = wiring_path;
+        d["error_msg"] = error_msg;
+        d["stack_trace"] = stack_trace;
+        d["activation_back_trace"] = activation_back_trace;
+        d["additional_context"] = additional_context;
+        return d;
+    }
+
+    std::string NodeError::to_string() const {
+        std::stringstream ss;
+        ss << *this;
+        return ss.str();
+    }
+
+    NodeError NodeError::capture_error(const std::exception &e, const Node &node, const std::string &msg) {
+        // Check if the exception is already a NodeError
+        if (auto *node_err = dynamic_cast<const NodeException *>(&e)) {
+            return *node_err;  // Return the NodeError part
+        }
+
         try {
-            nb::gil_scoped_acquire gil;  // Python interaction below needs the GIL
-            auto py_err{dynamic_cast<const nb::python_error *>(&e)};
-            auto back_trace{BackTrace::capture_back_trace(&node, node.signature().capture_values, node.signature().trace_back_depth)};
-            auto stack_trace{py_err == nullptr ? std::string("") : traceback_to_string(*py_err)};
-            return NodeException{NodeError(node.signature().signature(), node.signature().label.value_or(""),
-                                           node.signature().wiring_path_name, e.what(), stack_trace, back_trace.to_string(), msg)};
+            nb::gil_scoped_acquire gil;
+            auto py_err = dynamic_cast<const nb::python_error *>(&e);
+            auto back_trace = BackTrace::capture_back_trace(&node, node.signature().capture_values, node.signature().trace_back_depth);
+            auto stack_trace = py_err == nullptr ? std::string("") : traceback_to_string(*py_err);
+            return NodeError(node.signature().signature(), node.signature().label.value_or(""),
+                           node.signature().wiring_path_name, e.what(), stack_trace, back_trace.to_string(), msg);
         } catch (const std::exception &inner) {
-            // Never throw from error capture; provide a minimal NodeException
-            return NodeException{NodeError(node.signature().signature(), node.signature().label.value_or(""),
-                                           node.signature().wiring_path_name,
-                                           std::string("Error during exception capture: ") + inner.what() + "; original: " + e.what(),
-                                           "", "", msg)};
+            return NodeError(node.signature().signature(), node.signature().label.value_or(""),
+                           node.signature().wiring_path_name,
+                           std::string("Error during exception capture: ") + inner.what() + "; original: " + e.what(),
+                           "", "", msg);
         } catch (...) {
-            return NodeException{NodeError(node.signature().signature(), node.signature().label.value_or(""),
-                                           node.signature().wiring_path_name,
-                                           std::string("Unknown error during exception capture; original: ") + e.what(),
-                                           "", "", msg)};
+            return NodeError(node.signature().signature(), node.signature().label.value_or(""),
+                           node.signature().wiring_path_name,
+                           std::string("Unknown error during exception capture; original: ") + e.what(),
+                           "", "", msg);
         }
     }
 
-    NodeException NodeException::capture_error(std::exception_ptr e, const Node &node, const std::string &msg) {
+    NodeError NodeError::capture_error(std::exception_ptr e, const Node &node, const std::string &msg) {
         try {
             rethrow_exception(std::move(e));
-        } catch (exception &e_) {
-            return NodeException::capture_error(e_, node, msg);
-        } catch (const std::exception &e2) {
-            return NodeException::capture_error(e2, node, msg);
+        } catch (const std::exception &e_) {
+            return NodeError::capture_error(e_, node, msg);
         } catch (...) {
-            return NodeException{NodeError(node.signature().signature(), node.signature().label.value_or(""),
-                                           node.signature().wiring_path_name,
-                                           "Unknown non-standard exception during node evaluation", "", "", msg)};
+            return NodeError(node.signature().signature(), node.signature().label.value_or(""),
+                           node.signature().wiring_path_name,
+                           "Unknown non-standard exception during node evaluation", "", "", msg);
         }
+    }
+
+    void NodeError::register_with_nanobind(nb::module_ &m) {
+        nb::class_<NodeError, CompoundScalar>(m, "NodeError")
+            .def(nb::init<std::string, std::string, std::string, std::string, std::string, std::string, std::string>(),
+                 nb::arg("signature_name") = "", nb::arg("label") = "", nb::arg("wiring_path") = "",
+                 nb::arg("error_msg") = "", nb::arg("stack_trace") = "", nb::arg("activation_back_trace") = "",
+                 nb::arg("additional_context") = "")
+            .def_ro("signature_name", &NodeError::signature_name)
+            .def_ro("label", &NodeError::label)
+            .def_ro("wiring_path", &NodeError::wiring_path)
+            .def_ro("error_msg", &NodeError::error_msg)
+            .def_ro("stack_trace", &NodeError::stack_trace)
+            .def_ro("activation_back_trace", &NodeError::activation_back_trace)
+            .def_ro("additional_context", &NodeError::additional_context)
+            .def_static("capture_error",
+                nb::overload_cast<const std::exception &, const Node &, const std::string &>(&NodeError::capture_error),
+                nb::arg("exception"), nb::arg("node"), nb::arg("message") = "")
+            .def("__str__", [](NodeError &self) { return self.to_string(); });
+    }
+
+    NodeException::NodeException(const NodeError& error)
+        : NodeError(error), std::runtime_error(error.to_string()) {}
+
+    NodeException NodeException::capture_error(const std::exception &e, const Node &node, const std::string &msg) {
+        return NodeException(NodeError::capture_error(e, node, msg));
+    }
+
+    NodeException NodeException::capture_error(std::exception_ptr e, const Node &node, const std::string &msg) {
+        return NodeException(NodeError::capture_error(std::move(e), node, msg));
     }
 
     std::ostream &operator<<(std::ostream &os, const NodeError &error) {

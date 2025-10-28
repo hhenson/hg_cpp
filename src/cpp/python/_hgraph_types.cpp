@@ -1,5 +1,6 @@
 #include "hgraph/types/tsd.h"
 
+#include <hgraph/types/error_type.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
 #include <hgraph/types/ref.h>
@@ -21,6 +22,10 @@ void export_types(nb::module_ &m) {
     AbstractSchema::register_with_nanobind(m);
     CompoundScalar::register_with_nanobind(m);
     PythonCompoundScalar::register_with_nanobind(m);
+
+    // Error types (derive from CompoundScalar)
+    BacktraceSignature::register_with_nanobind(m);
+    NodeError::register_with_nanobind(m);
 
     TimeSeriesType::register_with_nanobind(m);
     TimeSeriesOutput::register_with_nanobind(m);

@@ -6,6 +6,7 @@
 #define ERROR_TYPE_H
 
 #include <hgraph/hgraph_base.h>
+#include <hgraph/types/scalar_types.h>
 
 #include <exception>
 #include <ostream>
@@ -13,7 +14,7 @@
 
 namespace hgraph
 {
-    struct HGRAPH_EXPORT BacktraceSignature
+    struct HGRAPH_EXPORT BacktraceSignature : CompoundScalar
     {
         std::string              name;
         std::vector<std::string> args;
@@ -28,6 +29,15 @@ namespace hgraph
         BacktraceSignature &operator=(const BacktraceSignature &) = default;
         BacktraceSignature(BacktraceSignature &&)                 = default;
         BacktraceSignature &operator=(BacktraceSignature &&)      = default;
+
+        // Override from AbstractSchema
+        [[nodiscard]] const std::vector<std::string> &keys() const override;
+        [[nodiscard]] nb::object get_value(const std::string &key) const override;
+
+        // Override from CompoundScalar
+        [[nodiscard]] nb::dict to_dict() const override;
+
+        static void register_with_nanobind(nb::module_ &m);
     };
 
     struct HGRAPH_EXPORT BackTrace
@@ -63,7 +73,7 @@ namespace hgraph
                                          const std::string &input_name, bool capture_values, int64_t depth);
     };
 
-    struct HGRAPH_EXPORT NodeError : nanobind::intrusive_base
+    struct HGRAPH_EXPORT NodeError : CompoundScalar
     {
         std::string signature_name;
         std::string label;
@@ -77,21 +87,28 @@ namespace hgraph
                            std::string error_msg_ = "", std::string stack_trace_ = "", std::string activation_back_trace_ = "",
                            std::string additional_context_ = "");
 
-        std::string to_string() const;
+        // Override from AbstractSchema
+        [[nodiscard]] const std::vector<std::string> &keys() const override;
+        [[nodiscard]] nb::object get_value(const std::string &key) const override;
+
+        // Override from CompoundScalar
+        [[nodiscard]] nb::dict to_dict() const override;
+        [[nodiscard]] std::string to_string() const override;
 
         friend std::ostream &operator<<(std::ostream &os, const NodeError &error);
+
+        static NodeError capture_error(const std::exception &e, const Node &node, const std::string &msg = "");
+        static NodeError capture_error(std::exception_ptr e, const Node &node, const std::string &msg = "");
 
         static void register_with_nanobind(nb::module_ &m);
     };
 
-    struct HGRAPH_EXPORT NodeException : std::runtime_error
+    struct HGRAPH_EXPORT NodeException : NodeError, std::runtime_error
     {
-        NodeError error;
-        explicit NodeException(NodeError error);
+        explicit NodeException(const NodeError& error);
 
-        NodeException static capture_error(const std::exception &e, const Node &node, const std::string &msg);
-
-        NodeException static capture_error(std::exception_ptr e, const Node &node, const std::string &msg);
+        static NodeException capture_error(const std::exception &e, const Node &node, const std::string &msg = "");
+        static NodeException capture_error(std::exception_ptr e, const Node &node, const std::string &msg = "");
     };
 }  // namespace hgraph
 
