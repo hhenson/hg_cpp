@@ -271,9 +271,10 @@ namespace hgraph
         const auto &key_set_value{key_set_t().value()};
         const auto &other_key_set_value{dict_input.key_set_t().value()};
 
+        // Remove keys that are in output but NOT in input (matching Python: self.key_set.value - input.key_set.value)
         std::vector<T_Key> to_remove;
         for (const auto &key : key_set_value) {
-            if (other_key_set_value.contains(key)) { to_remove.push_back(key); }
+            if (!other_key_set_value.contains(key)) { to_remove.push_back(key); }
         }
         for (const auto &k : to_remove) { erase(k); }
         for (const auto &[k, v_input] : dict_input.value()) { _get_or_create(k)->copy_from_input(*v_input); }
