@@ -1,9 +1,9 @@
 #include <hgraph/nodes/base_python_node.h>
-#include <hgraph/types/error_type.h>
-#include <hgraph/types/tsb.h>
 #include <hgraph/types/constants.h>
+#include <hgraph/types/error_type.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/traits.h>
+#include <hgraph/types/tsb.h>
 #include <hgraph/util/date_time.h>
 
 namespace hgraph
@@ -15,21 +15,33 @@ namespace hgraph
 
     void BasePythonNode::_initialise_kwargs() {
         // Assuming Injector and related types are properly defined, and scalars is a map-like container
-        _kwargs              = {};
+        _kwargs = {};
 
         bool has_injectables{signature().injectables != 0};
         for (const auto &[key_, value] : scalars()) {
             std::string key{nb::cast<std::string>(key_)};
-            if (has_injectables && signature().injectable_inputs->contains(key)) {
-                // TODO: This may be better extracted directly, but for now use the python function calls.
-                nb::object node{nb::cast(this)};
-                nb::object key_handle{value(node)};
-                _kwargs[key_] = key_handle;  // Assuming this call applies the Injector properly
-            } else {
-                _kwargs[key_] = value;
+            try {
+                if (has_injectables && signature().injectable_inputs->contains(key)) {
+                    // TODO: This may be better extracted directly, but for now use the python function calls.
+                    nb::object node{nb::cast(this)};
+                    nb::object key_handle{value(node)};
+                    _kwargs[key_] = key_handle;  // Assuming this call applies the Injector properly
+                } else {
+                    _kwargs[key_] = value;
+                }
+            } catch (const nb::python_error &e) {
+                throw NodeException::capture_error(e, *this, std::string("Initialising kwargs for '" + key + "'"));
+            } catch (const std::exception &e) {
+                throw NodeException::capture_error(e, *this, std::string("Initialising kwargs for '" + key + "'"));
             }
         }
-        _initialise_kwarg_inputs();
+        try {
+            _initialise_kwarg_inputs();
+        } catch (const nb::python_error &e) {
+            throw NodeException::capture_error(e, *this, "Initialising kwargs");
+        } catch (const std::exception &e) {
+            throw NodeException::capture_error(e, *this, "Initialising kwargs");
+        }
     }
 
     void BasePythonNode::_initialise_kwarg_inputs() {
@@ -48,58 +60,49 @@ namespace hgraph
     }
 
     void BasePythonNode::_initialise_state() {
-        if (!has_recordable_state()) {
-            return;
-        }
+        if (!has_recordable_state()) { return; }
 
         // Get RecordReplayContext and check if RECOVER mode is active
         nb::object context_cls = get_record_replay_context();
-        nb::object context = context_cls.attr("instance")();
-        nb::object mode = context.attr("mode");
+        nb::object context     = context_cls.attr("instance")();
+        nb::object mode        = context.attr("mode");
 
         // Get RecordReplayEnum to check for RECOVER flag
-        nb::object enum_cls = get_record_replay_enum();
+        nb::object enum_cls     = get_record_replay_enum();
         nb::object recover_flag = enum_cls.attr("RECOVER");
 
         // Check if RECOVER is in mode (using bitwise 'in' operation via Python __contains__)
         bool is_recover_mode = nb::cast<bool>(recover_flag.attr("__rand__")(mode));
 
-        if (!is_recover_mode) {
-            return;
-        }
+        if (!is_recover_mode) { return; }
 
         // Get the evaluation clock as a Python object
         nb::object clock = nb::cast(graph()->evaluation_clock());
 
         // Get the fully qualified recordable ID
-        nb::object fq_recordable_id_fn = get_fq_recordable_id_fn();
-        nb::object traits_obj = nb::cast(&(graph()->traits()));
-        std::string record_replay_id = signature().record_replay_id.value_or("");
-        nb::object recordable_id = fq_recordable_id_fn(traits_obj, nb::str(record_replay_id.c_str()));
+        nb::object  fq_recordable_id_fn = get_fq_recordable_id_fn();
+        nb::object  traits_obj          = nb::cast(&(graph()->traits()));
+        std::string record_replay_id    = signature().record_replay_id.value_or("");
+        nb::object  recordable_id       = fq_recordable_id_fn(traits_obj, nb::str(record_replay_id.c_str()));
 
         // Get evaluation time minus MIN_TD
         engine_time_t eval_time = graph()->evaluation_clock()->evaluation_time();
-        engine_time_t tm = eval_time - MIN_TD;
+        engine_time_t tm        = eval_time - MIN_TD;
 
         // Get as_of time
         nb::object get_as_of = get_as_of_fn();
-        nb::object as_of = get_as_of(clock);
+        nb::object as_of     = get_as_of(clock);
 
         // Get the recordable_state type from the Python signature object
         // Cast the C++ signature to a Python object to access the recordable_state property
-        nb::object py_signature = nb::cast(&signature());
+        nb::object py_signature          = nb::cast(&signature());
         nb::object recordable_state_type = py_signature.attr("recordable_state");
-        nb::object tsb_type = recordable_state_type.attr("tsb_type").attr("py_type");
+        nb::object tsb_type              = recordable_state_type.attr("tsb_type").attr("py_type");
 
         // Call replay_const to restore state
-        nb::object replay_const = get_replay_const_fn();
-        nb::object restored_state = replay_const(
-            nb::str("__state__"),
-            tsb_type,
-            nb::arg("recordable_id") = recordable_id,
-            nb::arg("tm") = nb::cast(tm),
-            nb::arg("as_of") = as_of
-        );
+        nb::object replay_const   = get_replay_const_fn();
+        nb::object restored_state = replay_const(nb::str("__state__"), tsb_type, nb::arg("recordable_id") = recordable_id,
+                                                 nb::arg("tm") = nb::cast(tm), nb::arg("as_of") = as_of);
 
         // Set the value on recordable_state
         recordable_state()->apply_result(restored_state.attr("value"));
