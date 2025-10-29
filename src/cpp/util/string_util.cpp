@@ -30,7 +30,7 @@ namespace hgraph
 
     template <> std::string to_string(const nb::object &value) {
         try {
-            return nb::cast<std::string>(value.attr("__str__")());
+            return nb::cast<std::string>(nb::str(value));
         } catch (...) { return nb::cast<std::string>(nb::repr(value)); }
     }
 
