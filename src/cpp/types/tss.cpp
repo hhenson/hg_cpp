@@ -520,18 +520,25 @@ namespace hgraph
         _added.clear();
         _removed.clear();
 
+        // Make a copy of _value to avoid issues if we're copying from ourselves
+        collection_type old_value = _value;
+
         // Calculate added elements (elements in output but not in current value)
         for (const auto &item : output_obj._value) {
-            if (!_value.contains(item)) { _add(item); }
+            if (!old_value.contains(item)) { _added.insert(item); }
         }
 
         // Calculate removed elements (elements in current value but not in output)
-        for (const auto &item : _value) {
-            if (!output_obj._value.contains(item)) { _remove(item); }
+        for (const auto &item : old_value) {
+            if (!output_obj._value.contains(item)) { _removed.insert(item); }
         }
 
         if (_added.size() > 0 || _removed.size() > 0 || !valid()) {
             _value = output_obj._value;
+            // Reset Python-side caches so py_added/py_removed reflect current tick modifications
+            _py_added.reset();
+            _py_removed.reset();
+            _py_value.reset();
             is_empty_output()->set_value(empty());
             _contains_ref_outputs.update_all(_added.begin(), _added.end());
             _contains_ref_outputs.update_all(_removed.begin(), _removed.end());
@@ -545,19 +552,29 @@ namespace hgraph
         _added.clear();
         _removed.clear();
 
-        // Calculate added elements (elements in output but not in current value)
-        const auto &value = input_obj.value();
-        for (const auto &item : value) {
-            if (!_value.contains(item)) { _add(item); }
+        // Calculate added elements (elements in input but not in current value)
+        const auto &input_value = input_obj.value();
+
+        // Make a copy of _value to avoid issues if input_value references _value
+        collection_type old_value = _value;
+
+        for (const auto &item : input_value) {
+            if (!old_value.contains(item)) { _added.insert(item); }
         }
 
-        // Calculate removed elements (elements in current value but not in output)
-        for (const auto &item : _value) {
-            if (!value.contains(item)) { _remove(item); }
+        // Calculate removed elements (elements in current value but not in input)
+        for (const auto &item : old_value) {
+            if (!input_value.contains(item)) {
+                _removed.insert(item);
+            }
         }
 
         if (_added.size() > 0 || _removed.size() > 0 || !valid()) {
-            _value = value;
+            _value = input_value;
+            // Reset Python-side caches so py_added/py_removed reflect current tick modifications
+            _py_added.reset();
+            _py_removed.reset();
+            _py_value.reset();
             is_empty_output()->set_value(empty());
             _contains_ref_outputs.update_all(_added.begin(), _added.end());
             _contains_ref_outputs.update_all(_removed.begin(), _removed.end());
