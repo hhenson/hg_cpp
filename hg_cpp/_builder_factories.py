@@ -15,21 +15,16 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
         # We can reuse the normal output builder logic here.
         return self.make_output_builder(value_tp)
 
+    def _make_tsw_input_builder(self, value_tp):
+        # Unified input builder works for both fixed-size and timedelta windows
+        return _tsw_input_builder_type_for(value_tp.value_scalar_tp)()
+
     def make_input_builder(self, value_tp: hgraph.HgTimeSeriesTypeMetaData) -> hgraph.TSInputBuilder:
         # Unfortunately the approach is really all or nothing, so either we can build it or we can't
         return {
             hgraph.HgSignalMetaData: lambda: _hgraph.InputBuilder_TS_Signal(),
             hgraph.HgTSTypeMetaData: lambda: _ts_input_builder_type_for(value_tp.value_scalar_tp)(),
-            hgraph.HgTSWTypeMetaData: lambda: (
-                _tsw_input_builder_type_for(value_tp.value_scalar_tp)(
-                    value_tp.size_tp.py_type.SIZE,
-                    value_tp.min_size_tp.py_type.SIZE if value_tp.min_size_tp.py_type.FIXED_SIZE else 0
-                ) if getattr(value_tp.size_tp.py_type, 'FIXED_SIZE', True) else
-                _ttsw_input_builder_type_for(value_tp.value_scalar_tp)(
-                    value_tp.size_tp.py_type.TIME_RANGE,
-                    value_tp.min_size_tp.py_type.TIME_RANGE if hasattr(value_tp.min_size_tp.py_type, 'TIME_RANGE') else value_tp.min_size_tp.py_type.TIME_RANGE
-                )
-            ),
+            hgraph.HgTSWTypeMetaData: lambda: self._make_tsw_input_builder(value_tp),
             hgraph.HgTSLTypeMetaData: lambda: _hgraph.InputBuilder_TSL(
                 self.make_input_builder(value_tp.value_tp),
                 value_tp.size_tp.py_type.SIZE
@@ -53,6 +48,26 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
             ),
             hgraph.HgCONTEXTTypeMetaData: lambda: self.make_input_builder(value_tp.ts_type)
         }.get(type(value_tp), lambda: _throw(value_tp))()
+
+    def _make_tsw_output_builder(self, value_tp):
+        import sys
+        # Check if it's a time-based window by looking for TIME_RANGE attribute
+        # TIME_RANGE should be not None and should be a timedelta
+        time_range = getattr(value_tp.size_tp.py_type, 'TIME_RANGE', None)
+        is_time_based = time_range is not None
+        # print(f"DEBUG: TSW output - is_time_based={is_time_based}, TIME_RANGE={time_range}, size_tp={value_tp.size_tp.py_type}", file=sys.stderr)
+        if is_time_based:
+            # Time-based window
+            return _ttsw_output_builder_for_tp(value_tp.value_scalar_tp)(
+                value_tp.size_tp.py_type.TIME_RANGE,
+                value_tp.min_size_tp.py_type.TIME_RANGE if getattr(value_tp.min_size_tp.py_type, 'TIME_RANGE', None) else value_tp.min_size_tp.py_type.TIME_RANGE
+            )
+        else:
+            # Fixed-size window
+            return _tsw_output_builder_for_tp(value_tp.value_scalar_tp)(
+                value_tp.size_tp.py_type.SIZE,
+                value_tp.min_size_tp.py_type.SIZE if getattr(value_tp.min_size_tp.py_type, 'FIXED_SIZE', True) else 0
+            )
 
     def make_output_builder(self, value_tp: hgraph.HgTimeSeriesTypeMetaData) -> hgraph.TSOutputBuilder:
         return {
@@ -81,16 +96,7 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
                 self.make_output_builder(value_tp.value_tp),
                 self.make_output_builder(value_tp.value_tp.as_reference())
             ),
-            hgraph.HgTSWTypeMetaData: lambda: (
-                _tsw_output_builder_for_tp(value_tp.value_scalar_tp)(
-                    value_tp.size_tp.py_type.SIZE,
-                    value_tp.min_size_tp.py_type.SIZE if value_tp.min_size_tp.py_type.FIXED_SIZE else 0
-                ) if getattr(value_tp.size_tp.py_type, 'FIXED_SIZE', True) else
-                _ttsw_output_builder_for_tp(value_tp.value_scalar_tp)(
-                    value_tp.size_tp.py_type.TIME_RANGE,
-                    value_tp.min_size_tp.py_type.TIME_RANGE if hasattr(value_tp.min_size_tp.py_type, 'TIME_RANGE') else value_tp.min_size_tp.py_type.TIME_RANGE
-                )
-            ),
+            hgraph.HgTSWTypeMetaData: lambda: self._make_tsw_output_builder(value_tp),
         }.get(type(value_tp), lambda: _throw(value_tp))()
 
 
@@ -164,42 +170,17 @@ def _tsd_output_builder_for_tp(scalar_type: hgraph.HgScalarTypeMetaData) -> hgra
 # we raise NotImplementedError via _raise_un_implemented to make the gap explicit during wiring.
 
 def _tsw_input_builder_type_for(scalar_type: hgraph.HgScalarTypeMetaData):
+    """Unified TSW input builder - works for both fixed-size and timedelta windows"""
     tp = scalar_type.py_type
     mapping = {
-        bool: getattr(_hgraph, 'InputBuilder_TSW_Bool', None),
-        int: getattr(_hgraph, 'InputBuilder_TSW_Int', None),
-        float: getattr(_hgraph, 'InputBuilder_TSW_Float', None),
-        date: getattr(_hgraph, 'InputBuilder_TSW_Date', None),
-        datetime: getattr(_hgraph, 'InputBuilder_TSW_DateTime', None),
-        timedelta: getattr(_hgraph, 'InputBuilder_TSW_TimeDelta', None),
+        bool: _hgraph.InputBuilder_TSW_Bool,
+        int: _hgraph.InputBuilder_TSW_Int,
+        float: _hgraph.InputBuilder_TSW_Float,
+        date: _hgraph.InputBuilder_TSW_Date,
+        datetime: _hgraph.InputBuilder_TSW_DateTime,
+        timedelta: _hgraph.InputBuilder_TSW_TimeDelta,
     }
-    builder_cls = mapping.get(tp, getattr(_hgraph, 'InputBuilder_TSW_Object', None))
-
-    def ctor(size: int, min_size: int):
-        if builder_cls is None:
-            return _raise_un_implemented(f"TSW InputBuilder for type {tp}")
-        return builder_cls(size, min_size)
-
-    return ctor
-
-
-def _ttsw_input_builder_type_for(scalar_type: hgraph.HgScalarTypeMetaData):
-    """Time-based (timedelta) TSW input builders"""
-    tp = scalar_type.py_type
-
-    def ctor(size: timedelta, min_size: timedelta):
-        mapping = {
-            bool: _hgraph.InputBuilder_TTSW_Bool,
-            int: _hgraph.InputBuilder_TTSW_Int,
-            float: _hgraph.InputBuilder_TTSW_Float,
-            date: _hgraph.InputBuilder_TTSW_Date,
-            datetime: _hgraph.InputBuilder_TTSW_DateTime,
-            timedelta: _hgraph.InputBuilder_TTSW_TimeDelta,
-        }
-        builder_cls = mapping.get(tp, _hgraph.InputBuilder_TTSW_Object)
-        return builder_cls(size, min_size)
-
-    return ctor
+    return mapping.get(tp, _hgraph.InputBuilder_TSW_Object)
 
 
 def _tsw_output_builder_for_tp(scalar_type: hgraph.HgScalarTypeMetaData):

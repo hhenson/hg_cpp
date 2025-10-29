@@ -119,10 +119,27 @@ namespace hgraph
                           .def_prop_ro("first_modified_time", &In::first_modified_time)
                           .def_prop_ro("has_removed_value", &In::has_removed_value)
                           .def_prop_ro("removed_value", &In::removed_value)
-                          .def("__len__", [](const In &self) { return self.output_t().len(); });
+                          .def("__len__", [](const In &self) {
+                              if (auto* f = self.as_fixed_output()) return f->len();
+                              if (auto* t = self.as_time_output()) return t->len();
+                              throw std::runtime_error("TimeSeriesWindowInput: output is not a window output");
+                          });
 
         (void)out_cls;
         (void)in_cls;
+    }
+
+    // Unified TimeSeriesWindowInput implementation
+    template <typename T> bool TimeSeriesWindowInput<T>::all_valid() const {
+        if (!valid()) return false;
+        if (auto* f = as_fixed_output()) return f->len() >= f->min_size();
+        if (auto* t = as_time_output()) {
+            // For time windows, check if enough time has passed
+            auto elapsed = owning_graph()->evaluation_clock()->evaluation_time() -
+                          owning_graph()->evaluation_engine_api()->start_time();
+            return elapsed >= t->min_size();
+        }
+        return false;
     }
 
     // TimeSeriesTimeWindowOutput implementation
@@ -245,28 +262,22 @@ namespace hgraph
     }
 
     template <typename T> void TimeSeriesTimeWindowOutput<T>::copy_from_input(const TimeSeriesInput &input) {
-        auto &i = dynamic_cast<const TimeSeriesTimeWindowInput<T> &>(input);
-        const auto &src = i.output_t();
-        _buffer   = src._buffer;
-        _times    = src._times;
-        _size     = src._size;
-        _min_size = src._min_size;
-        _ready    = src._ready;
-        mark_modified();
-    }
-
-    template <typename T> bool TimeSeriesTimeWindowInput<T>::all_valid() const {
-        if (!valid()) return false;
-        // Check if enough time has passed
-        auto elapsed = owning_graph()->evaluation_clock()->evaluation_time() -
-                      owning_graph()->evaluation_engine_api()->start_time();
-        return elapsed >= output_t().min_size();
+        auto &i = dynamic_cast<const TimeSeriesWindowInput<T> &>(input);
+        if (auto* src = i.as_time_output()) {
+            _buffer   = src->_buffer;
+            _times    = src->_times;
+            _size     = src->_size;
+            _min_size = src->_min_size;
+            _ready    = src->_ready;
+            mark_modified();
+        } else {
+            throw std::runtime_error("TimeSeriesTimeWindowOutput::copy_from_input: input output is not time window");
+        }
     }
 
     // Binding functions for time-based windows
     template <typename T> static void bind_time_tsw_for_type(nb::module_ &m, const char *suffix) {
         using Out = TimeSeriesTimeWindowOutput<T>;
-        using In  = TimeSeriesTimeWindowInput<T>;
 
         auto out_cls = nb::class_<Out, TimeSeriesOutput>(m, (std::string("TimeSeriesTimeWindowOutput_") + suffix).c_str())
                            .def_prop_ro("value_times", &Out::py_value_times)
@@ -277,15 +288,7 @@ namespace hgraph
                            .def_prop_ro("removed_value", &Out::removed_value)
                            .def("__len__", &Out::len);
 
-        auto in_cls = nb::class_<In, TimeSeriesInput>(m, (std::string("TimeSeriesTimeWindowInput_") + suffix).c_str())
-                          .def_prop_ro("value_times", &In::py_value_times)
-                          .def_prop_ro("first_modified_time", &In::first_modified_time)
-                          .def_prop_ro("has_removed_value", &In::has_removed_value)
-                          .def_prop_ro("removed_value", &In::removed_value)
-                          .def("__len__", [](const In &self) { return self.output_t().len(); });
-
         (void)out_cls;
-        (void)in_cls;
     }
 
     void tsw_register_with_nanobind(nb::module_ &m) {
@@ -307,5 +310,14 @@ namespace hgraph
         bind_time_tsw_for_type<engine_time_delta_t>(m, "time_delta");
         bind_time_tsw_for_type<nb::object>(m, "object");
     }
+
+    // Template instantiations for unified TimeSeriesWindowInput
+    template struct TimeSeriesWindowInput<bool>;
+    template struct TimeSeriesWindowInput<int64_t>;
+    template struct TimeSeriesWindowInput<double>;
+    template struct TimeSeriesWindowInput<engine_date_t>;
+    template struct TimeSeriesWindowInput<engine_time_t>;
+    template struct TimeSeriesWindowInput<engine_time_delta_t>;
+    template struct TimeSeriesWindowInput<nb::object>;
 
 }  // namespace hgraph
