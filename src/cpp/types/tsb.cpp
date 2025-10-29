@@ -250,7 +250,15 @@ namespace hgraph
                 }
             } else {
                 // Dict-like: iterate items
-                for (auto [key, val] : nb::cast<nb::dict>(v)) {
+                nb::object items;
+                if (nb::hasattr(v, "items")) {
+                    items = nb::getattr(v, "items", nb::none());
+                } else {
+                    items = v;
+                }
+                for (auto pair : nb::iter(v)) {
+                    auto key = pair[0];
+                    auto val = pair[1];
                     if (!val.is_none()) { (*this)[nb::cast<std::string>(key)]->py_set_value(nb::borrow(val)); }
                 }
             }
