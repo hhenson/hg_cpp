@@ -94,10 +94,10 @@ namespace hgraph
 
     using TS_Bool     = TimeSeriesValueInput<bool>;
     using TS_Out_Bool = TimeSeriesValueOutput<bool>;
-    using TS_Int     = TimeSeriesValueInput<int>;
-    using TS_Out_Int = TimeSeriesValueOutput<int>;
-    using TS_Float     = TimeSeriesValueInput<float>;
-    using TS_Out_Float = TimeSeriesValueOutput<float>;
+    using TS_Int     = TimeSeriesValueInput<int64_t>;
+    using TS_Out_Int = TimeSeriesValueOutput<int64_t>;
+    using TS_Float     = TimeSeriesValueInput<double>;
+    using TS_Out_Float = TimeSeriesValueOutput<double>;
     using TS_Date     = TimeSeriesValueInput<engine_date_t>;
     using TS_Out_Date = TimeSeriesValueOutput<engine_date_t>;
     using TS_DateTime     = TimeSeriesValueInput<engine_time_t>;
