@@ -323,11 +323,17 @@ namespace hgraph
         _value.emplace(item);
         _added.emplace(item);
         _removed.erase(item);
+        // Reset Python-side caches so py_added/py_removed reflect current tick modifications
+        _py_added.reset();
+        _py_removed.reset();
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_remove(const element_type &item) {
         _value.erase(item);
         _removed.emplace(item);
+        // Reset Python-side caches so py_added/py_removed reflect current tick modifications
+        _py_added.reset();
+        _py_removed.reset();
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_post_modify() {

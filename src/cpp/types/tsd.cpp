@@ -144,6 +144,11 @@ namespace hgraph
                                   auto r{TimeSeriesReference::make(it->second)};
                                   auto r_val{nb::cast(r)};
                                   result_output.apply_result(r_val);
+                              } else {
+                                  // Key removed: propagate empty reference and mark modified to match Python semantics
+                                  auto r{TimeSeriesReference::make()};
+                                  auto r_val{nb::cast(r)};
+                                  result_output.apply_result(r_val);
                               }
                           },
                           {}} {
@@ -162,6 +167,11 @@ namespace hgraph
                               auto  it = output_t._ts_values.find(key);
                               if (it != output_t._ts_values.end()) {
                                   auto r{TimeSeriesReference::make(it->second)};
+                                  auto r_val{nb::cast(r)};
+                                  result_output.apply_result(r_val);
+                              } else {
+                                  // Key removed: propagate empty reference and mark modified to match Python semantics
+                                  auto r{TimeSeriesReference::make()};
                                   auto r_val{nb::cast(r)};
                                   result_output.apply_result(r_val);
                               }
