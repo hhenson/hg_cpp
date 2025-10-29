@@ -30,7 +30,7 @@ jobs:
           uv tool install conan
           uv pip install -e .
           uv pip install pytest scikit-build-core nanobind
-          uv tool run conan profile detect
+          uv tool run conan profile detect --force
       - name: Run tests
         run: |
           uv run pytest -q
@@ -100,7 +100,7 @@ jobs:
       - name: Configure Conan Profile
         shell: bash
         run: |
-          uv tool run conan profile detect
+          uv tool run conan profile detect --force
 
       - name: Conan Install
         run: |
