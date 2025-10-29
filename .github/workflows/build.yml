@@ -64,6 +64,7 @@ jobs:
           VERSION="${REF#v_}"
           echo "Setting project version to: $VERSION"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          export VERSION="$VERSION"
           python - <<'PY'
           import os, re, pathlib, sys
           p = pathlib.Path("pyproject.toml")
