@@ -252,11 +252,11 @@ namespace hgraph
                 // Dict-like: iterate items
                 nb::object items;
                 if (nb::hasattr(v, "items")) {
-                    items = nb::getattr(v, "items", nb::none());
+                    items = nb::getattr(v, "items")();
                 } else {
                     items = v;
                 }
-                for (auto pair : nb::iter(v)) {
+                for (auto pair : nb::iter(items)) {
                     auto key = pair[0];
                     auto val = pair[1];
                     if (!val.is_none()) { (*this)[nb::cast<std::string>(key)]->py_set_value(nb::borrow(val)); }
