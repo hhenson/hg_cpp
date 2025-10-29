@@ -79,6 +79,7 @@ def test_collect_tss_from_sets():
             {3, 4},
         ],
         [None, None, True],
+        #__trace_wiring__=True,
     ) == [{1}, {2}, {3, 4, Removed(2), Removed(1)}]
 
 
@@ -99,6 +100,7 @@ def test_collect_tss_from_tss():
             {3, 4},
         ],
         [None, None, True],
+        #__trace_wiring__=True,
     ) == [{1}, {2}, {3, 4, Removed(2), Removed(1)}]
 
 

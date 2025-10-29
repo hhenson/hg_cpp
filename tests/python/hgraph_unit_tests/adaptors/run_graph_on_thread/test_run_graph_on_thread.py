@@ -1,4 +1,3 @@
-# import hg_cpp
 from datetime import timedelta
 from hgraph import (
     MIN_ST,
