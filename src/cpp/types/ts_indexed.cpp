@@ -32,7 +32,15 @@ namespace hgraph
     void IndexedTimeSeriesOutput::copy_from_input(const TimeSeriesInput &input) {
         if (auto *ndx_inputs = dynamic_cast<const IndexedTimeSeriesInput *>(&input); ndx_inputs != nullptr) {
             if (ndx_inputs->size() == size()) {
-                for (size_t i = 0; i < ts_values().size(); ++i) { ts_values()[i]->copy_from_input(ndx_inputs[i]); }
+                for (size_t i = 0; i < ts_values().size(); ++i) {
+                    auto &child{ndx_inputs->operator[](i)};
+                    auto  v{ts_values()[i]};
+                    if (child->valid()) {
+                        v->copy_from_input(*child);
+                    } else {
+                        if (v->valid()) { v->invalidate(); }
+                    }
+                }
             } else {
                 // Simple validation at this level to ensure they are at least size compatible
                 throw std::runtime_error(std::format("Incorrect shape provided to copy_from_input, expected {} items got {}",
@@ -110,9 +118,7 @@ namespace hgraph
         }
     }
 
-    TimeSeriesInput *IndexedTimeSeriesInput::get_input(size_t index) {
-        return (*this)[index].get();
-    }
+    TimeSeriesInput *IndexedTimeSeriesInput::get_input(size_t index) { return (*this)[index].get(); }
 
     void IndexedTimeSeriesInput::register_with_nanobind(nb::module_ &m) {
         using IndexedTimeSeries_Input = IndexedTimeSeries<TimeSeriesInput>;
