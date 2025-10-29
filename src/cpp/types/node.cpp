@@ -866,12 +866,14 @@ namespace hgraph
                 if (signature().capture_exception && error_output().get() != nullptr) {
                     // Route captured error to the node's error output instead of rethrowing
                     try {
-                        error_output()->py_set_value(nb::cast(e));
+                        auto ne{static_cast<const NodeException &>(e)};
+                        auto error_ptr{nb::ref<NodeError>(new NodeError(ne))};
+                        error_output()->py_set_value(nb::cast(error_ptr));
                     } catch (const std::exception &set_err) {
                         // Fall back to setting a generic Python object (string) to avoid rethrow during error routing
                         error_output()->py_set_value(nb::str(e.to_string().c_str()));
                     } catch (...) {
-                        // As a last resort, invalidate the error output to signal an error occurred without throwing
+                        // As a last resort, set none to signal an error occurred without throwing
                         error_output()->py_set_value(nb::none());
                     }
                     return;  // Do not propagate
