@@ -72,7 +72,8 @@ namespace hgraph
         nb::object recover_flag = enum_cls.attr("RECOVER");
 
         // Check if RECOVER is in mode (using bitwise 'in' operation via Python __contains__)
-        bool is_recover_mode = nb::cast<bool>(recover_flag.attr("__rand__")(mode));
+        nb::object anded{mode.attr("__and__")(recover_flag)};
+        bool is_recover_mode = nb::cast<bool>(nb::bool_(anded));
 
         if (!is_recover_mode) { return; }
 
