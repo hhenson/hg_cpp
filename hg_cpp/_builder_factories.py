@@ -20,10 +20,16 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
         return {
             hgraph.HgSignalMetaData: lambda: _hgraph.InputBuilder_TS_Signal(),
             hgraph.HgTSTypeMetaData: lambda: _ts_input_builder_type_for(value_tp.value_scalar_tp)(),
-            hgraph.HgTSWTypeMetaData: lambda: _tsw_input_builder_type_for(value_tp.value_scalar_tp)(
-                value_tp.size_tp.py_type.SIZE,
-                value_tp.min_size_tp.py_type.SIZE if value_tp.min_size_tp.py_type.FIXED_SIZE else 0
-            ) if getattr(value_tp.size_tp.py_type, 'FIXED_SIZE', True) else _raise_un_implemented(value_tp),
+            hgraph.HgTSWTypeMetaData: lambda: (
+                _tsw_input_builder_type_for(value_tp.value_scalar_tp)(
+                    value_tp.size_tp.py_type.SIZE,
+                    value_tp.min_size_tp.py_type.SIZE if value_tp.min_size_tp.py_type.FIXED_SIZE else 0
+                ) if getattr(value_tp.size_tp.py_type, 'FIXED_SIZE', True) else
+                _ttsw_input_builder_type_for(value_tp.value_scalar_tp)(
+                    value_tp.size_tp.py_type.TIME_RANGE,
+                    value_tp.min_size_tp.py_type.TIME_RANGE if hasattr(value_tp.min_size_tp.py_type, 'TIME_RANGE') else value_tp.min_size_tp.py_type.TIME_RANGE
+                )
+            ),
             hgraph.HgTSLTypeMetaData: lambda: _hgraph.InputBuilder_TSL(
                 self.make_input_builder(value_tp.value_tp),
                 value_tp.size_tp.py_type.SIZE
@@ -75,10 +81,16 @@ class HgCppFactory(hgraph.TimeSeriesBuilderFactory):
                 self.make_output_builder(value_tp.value_tp),
                 self.make_output_builder(value_tp.value_tp.as_reference())
             ),
-            hgraph.HgTSWTypeMetaData: lambda: _tsw_output_builder_for_tp(value_tp.value_scalar_tp)(
-                value_tp.size_tp.py_type.SIZE,
-                value_tp.min_size_tp.py_type.SIZE if value_tp.min_size_tp.py_type.FIXED_SIZE else 0
-            ) if getattr(value_tp.size_tp.py_type, 'FIXED_SIZE', True) else _raise_un_implemented(value_tp),
+            hgraph.HgTSWTypeMetaData: lambda: (
+                _tsw_output_builder_for_tp(value_tp.value_scalar_tp)(
+                    value_tp.size_tp.py_type.SIZE,
+                    value_tp.min_size_tp.py_type.SIZE if value_tp.min_size_tp.py_type.FIXED_SIZE else 0
+                ) if getattr(value_tp.size_tp.py_type, 'FIXED_SIZE', True) else
+                _ttsw_output_builder_for_tp(value_tp.value_scalar_tp)(
+                    value_tp.size_tp.py_type.TIME_RANGE,
+                    value_tp.min_size_tp.py_type.TIME_RANGE if hasattr(value_tp.min_size_tp.py_type, 'TIME_RANGE') else value_tp.min_size_tp.py_type.TIME_RANGE
+                )
+            ),
         }.get(type(value_tp), lambda: _throw(value_tp))()
 
 
@@ -171,6 +183,25 @@ def _tsw_input_builder_type_for(scalar_type: hgraph.HgScalarTypeMetaData):
     return ctor
 
 
+def _ttsw_input_builder_type_for(scalar_type: hgraph.HgScalarTypeMetaData):
+    """Time-based (timedelta) TSW input builders"""
+    tp = scalar_type.py_type
+
+    def ctor(size: timedelta, min_size: timedelta):
+        mapping = {
+            bool: _hgraph.InputBuilder_TTSW_Bool,
+            int: _hgraph.InputBuilder_TTSW_Int,
+            float: _hgraph.InputBuilder_TTSW_Float,
+            date: _hgraph.InputBuilder_TTSW_Date,
+            datetime: _hgraph.InputBuilder_TTSW_DateTime,
+            timedelta: _hgraph.InputBuilder_TTSW_TimeDelta,
+        }
+        builder_cls = mapping.get(tp, _hgraph.InputBuilder_TTSW_Object)
+        return builder_cls(size, min_size)
+
+    return ctor
+
+
 def _tsw_output_builder_for_tp(scalar_type: hgraph.HgScalarTypeMetaData):
     tp = scalar_type.py_type
     mapping = {
@@ -186,6 +217,25 @@ def _tsw_output_builder_for_tp(scalar_type: hgraph.HgScalarTypeMetaData):
     def ctor(size: int, min_size: int):
         if builder_cls is None:
             return _raise_un_implemented(f"TSW OutputBuilder for type {tp}")
+        return builder_cls(size, min_size)
+
+    return ctor
+
+
+def _ttsw_output_builder_for_tp(scalar_type: hgraph.HgScalarTypeMetaData):
+    """Time-based (timedelta) TSW output builders"""
+    tp = scalar_type.py_type
+
+    def ctor(size: timedelta, min_size: timedelta):
+        mapping = {
+            bool: _hgraph.OutputBuilder_TTSW_Bool,
+            int: _hgraph.OutputBuilder_TTSW_Int,
+            float: _hgraph.OutputBuilder_TTSW_Float,
+            date: _hgraph.OutputBuilder_TTSW_Date,
+            datetime: _hgraph.OutputBuilder_TTSW_DateTime,
+            timedelta: _hgraph.OutputBuilder_TTSW_TimeDelta,
+        }
+        builder_cls = mapping.get(tp, _hgraph.OutputBuilder_TTSW_Object)
         return builder_cls(size, min_size)
 
     return ctor

@@ -1,6 +1,6 @@
 //
-// TimeSeriesWindow (TSW) fixed-size (tick-count) implementation
-// Ported following TS patterns. Time-window (timedelta) variant can be added later.
+// TimeSeriesWindow (TSW) implementation
+// Includes both fixed-size (tick-count) and time-window (timedelta) variants.
 //
 
 #ifndef TSW_H
@@ -127,6 +127,91 @@ namespace hgraph
         _min_size = src._min_size;
         mark_modified();
     }
+
+    // TimeSeriesTimeWindowOutput - timedelta-based window
+    template <typename T> struct TimeSeriesTimeWindowOutput : TimeSeriesOutput
+    {
+        using value_type = T;
+
+        using TimeSeriesOutput::TimeSeriesOutput;
+
+        // Construct with time window and min time window
+        TimeSeriesTimeWindowOutput(const node_ptr &parent, engine_time_delta_t size, engine_time_delta_t min_size)
+            : TimeSeriesOutput(parent), _size(size), _min_size(min_size), _ready(false) {}
+
+        TimeSeriesTimeWindowOutput(const TimeSeriesType::ptr &parent, engine_time_delta_t size, engine_time_delta_t min_size)
+            : TimeSeriesOutput(parent), _size(size), _min_size(min_size), _ready(false) {}
+
+        [[nodiscard]] nb::object py_value() const override;
+        [[nodiscard]] nb::object py_delta_value() const override;
+        void py_set_value(nb::object value) override;
+        bool can_apply_result(nb::object) override { return !modified(); }
+        void apply_result(nb::object value) override;
+        void invalidate() override { mark_invalid(); }
+        void mark_invalid() override;
+
+        [[nodiscard]] nb::object py_value_times() const;
+        [[nodiscard]] engine_time_t first_modified_time() const;
+
+        void copy_from_output(const TimeSeriesOutput &output) override {
+            auto &o = dynamic_cast<const TimeSeriesTimeWindowOutput<T> &>(output);
+            _buffer  = o._buffer;
+            _times   = o._times;
+            _size    = o._size;
+            _min_size = o._min_size;
+            _ready   = o._ready;
+            mark_modified();
+        }
+
+        void copy_from_input(const TimeSeriesInput &input) override;
+
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            return dynamic_cast<const TimeSeriesTimeWindowOutput<T> *>(other) != nullptr;
+        }
+
+        // Extra API to mirror Python TSW
+        [[nodiscard]] engine_time_delta_t size() const { return _size; }
+        [[nodiscard]] engine_time_delta_t min_size() const { return _min_size; }
+        [[nodiscard]] bool has_removed_value() const;
+        [[nodiscard]] nb::object removed_value() const;
+        [[nodiscard]] size_t len() const;
+
+      private:
+        void _roll() const;  // mutable operation to clean up old items
+        void _reset_removed_values();
+
+        mutable std::deque<T>              _buffer;
+        mutable std::deque<engine_time_t>  _times;
+        engine_time_delta_t                _size{};
+        engine_time_delta_t                _min_size{};
+        mutable bool                       _ready{false};
+        mutable std::vector<T>             _removed_values;
+    };
+
+    template <typename T> struct TimeSeriesTimeWindowInput : TimeSeriesInput
+    {
+        using TimeSeriesInput::TimeSeriesInput;
+
+        [[nodiscard]] TimeSeriesTimeWindowOutput<T>       &output_t() { return dynamic_cast<TimeSeriesTimeWindowOutput<T> &>(*output()); }
+        [[nodiscard]] const TimeSeriesTimeWindowOutput<T> &output_t() const { return dynamic_cast<const TimeSeriesTimeWindowOutput<T> &>(*output()); }
+
+        [[nodiscard]] nb::object py_value() const override { return output_t().py_value(); }
+        [[nodiscard]] nb::object py_delta_value() const override { return output_t().py_delta_value(); }
+
+        [[nodiscard]] bool modified() const override { return output()->modified(); }
+        [[nodiscard]] bool valid() const override { return output()->valid(); }
+        [[nodiscard]] bool all_valid() const override;
+        [[nodiscard]] engine_time_t last_modified_time() const override { return output()->last_modified_time(); }
+
+        [[nodiscard]] nb::object py_value_times() const { return output_t().py_value_times(); }
+        [[nodiscard]] engine_time_t first_modified_time() const { return output_t().first_modified_time(); }
+        [[nodiscard]] bool has_removed_value() const { return output_t().has_removed_value(); }
+        [[nodiscard]] nb::object removed_value() const { return output_t().removed_value(); }
+
+        [[nodiscard]] bool is_same_type(const TimeSeriesType *other) const override {
+            return dynamic_cast<const TimeSeriesTimeWindowInput<T> *>(other) != nullptr;
+        }
+    };
 
     // Registration
     void tsw_register_with_nanobind(nb::module_ &m);

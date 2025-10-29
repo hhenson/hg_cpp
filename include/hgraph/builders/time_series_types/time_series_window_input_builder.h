@@ -29,6 +29,26 @@ namespace hgraph
         }
     };
 
+    // TimeSeriesWindow (TSW) input builder for timedelta-based windows
+    template <typename T> struct HGRAPH_EXPORT TimeSeriesTimeWindowInputBuilder_T : InputBuilder
+    {
+        using ptr = nb::ref<TimeSeriesTimeWindowInputBuilder_T<T>>;
+        engine_time_delta_t size;
+        engine_time_delta_t min_size;
+
+        TimeSeriesTimeWindowInputBuilder_T(engine_time_delta_t size, engine_time_delta_t min_size) : size(size), min_size(min_size) {}
+
+        time_series_input_ptr make_instance(node_ptr owning_node) const override;
+        time_series_input_ptr make_instance(time_series_input_ptr owning_input) const override;
+
+        [[nodiscard]] bool is_same_type(const Builder &other) const override {
+            if (auto other_b = dynamic_cast<const TimeSeriesTimeWindowInputBuilder_T<T> *>(&other)) {
+                return size == other_b->size && min_size == other_b->min_size;
+            }
+            return false;
+        }
+    };
+
     void time_series_window_input_builder_register_with_nanobind(nb::module_ &m);
 
 }  // namespace hgraph
