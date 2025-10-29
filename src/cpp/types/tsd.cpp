@@ -115,9 +115,7 @@ namespace hgraph
         _ts_values.erase(it);
         // Is this wise clearing the item if we are going to track the remove? What if we need the last known value?
         item->clear();
-        if (!was_added) {
-            _removed_items.emplace(key, item);
-        }
+        if (!was_added) { _removed_items.emplace(key, item); }
         // Note: TSS key_set handles all added/removed tracking via key_set_t().remove()
         _ts_values_to_keys.erase(item.get());
         _ref_ts_feature.update(key);
@@ -205,7 +203,7 @@ namespace hgraph
                     if (v.is(remove)) {
                         std::string msg = "TSD key not found for REMOVE: " + to_string(k_);
                         throw nb::key_error(msg.c_str());
-                    } // else REMOVE_IF_EXISTS: do nothing
+                    }  // else REMOVE_IF_EXISTS: do nothing
                 }
             } else {
                 _get_or_create(k_)->py_set_value(v);
@@ -298,8 +296,8 @@ namespace hgraph
     template <typename T_Key> nb::object TimeSeriesDictOutput_T<T_Key>::py_get_item(const nb::object &item) const {
         auto KET_SET_ID = nb::module_::import_("hgraph").attr("KEY_SET_ID");
         if (KET_SET_ID.is(item)) { return nb::cast(_key_set); }
-        auto k  = nb::cast<T_Key>(item);
-        auto ts = operator[](k);
+        auto  k  = nb::cast<T_Key>(item);
+        auto  ts = operator[](k);
         auto *py = ts->self_py();
         if (py) return nb::borrow(py);
         // Prefer wrapping as base type to avoid double-wrapping under different derived bindings
@@ -622,7 +620,7 @@ namespace hgraph
     }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::contains(const key_type &item) const {
-        return _ts_values.contains(item);
+        return has_peer() ? key_set_t().contains(item) : _ts_values.contains(item);
     }
 
     template <typename T_Key>
@@ -719,13 +717,12 @@ namespace hgraph
         return it != _ts_values.end() && it->second->modified();
     }
 
-    template <typename T_Key> const typename TimeSeriesDictInput_T<T_Key>::map_type &TimeSeriesDictInput_T<T_Key>::valid_items() const {
+    template <typename T_Key>
+    const typename TimeSeriesDictInput_T<T_Key>::map_type &TimeSeriesDictInput_T<T_Key>::valid_items() const {
         // Rebuild cache each call to ensure freshness; returns a reference to a member to ensure iterator lifetime safety.
         _valid_items_cache.clear();
         for (const auto &item : _ts_values) {
-            if (item.second->valid()) {
-                _valid_items_cache.insert(item);
-            }
+            if (item.second->valid()) { _valid_items_cache.insert(item); }
         }
         return _valid_items_cache;
     }
@@ -1224,13 +1221,14 @@ namespace hgraph
                 },
                 "key"_a, "requester"_a)
             .def_prop_ro("key_set", &TimeSeriesDictOutput::py_key_set)
-            .def("__str__", [](const TimeSeriesDictOutput &self) {
-                return fmt::format("TimeSeriesDictOutput@{:p}[size={}, valid={}]",
-                    static_cast<const void *>(&self), self.size(), self.valid());
-            })
+            .def("__str__",
+                 [](const TimeSeriesDictOutput &self) {
+                     return fmt::format("TimeSeriesDictOutput@{:p}[size={}, valid={}]", static_cast<const void *>(&self),
+                                        self.size(), self.valid());
+                 })
             .def("__repr__", [](const TimeSeriesDictOutput &self) {
-                return fmt::format("TimeSeriesDictOutput@{:p}[size={}, valid={}]",
-                    static_cast<const void *>(&self), self.size(), self.valid());
+                return fmt::format("TimeSeriesDictOutput@{:p}[size={}, valid={}]", static_cast<const void *>(&self), self.size(),
+                                   self.valid());
             });
 
         nb::class_<TimeSeriesDictInput, TimeSeriesInput>(m, "TimeSeriesDictInput")
@@ -1268,13 +1266,14 @@ namespace hgraph
                 "key_set",
                 static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesInput>::ts_type> &(TimeSeriesDictInput::*)() const>(
                     &TimeSeriesDictInput::key_set))
-            .def("__str__", [](const TimeSeriesDictInput &self) {
-                return fmt::format("TimeSeriesDictInput@{:p}[size={}, valid={}]",
-                    static_cast<const void *>(&self), self.size(), self.valid());
-            })
+            .def("__str__",
+                 [](const TimeSeriesDictInput &self) {
+                     return fmt::format("TimeSeriesDictInput@{:p}[size={}, valid={}]", static_cast<const void *>(&self),
+                                        self.size(), self.valid());
+                 })
             .def("__repr__", [](const TimeSeriesDictInput &self) {
-                return fmt::format("TimeSeriesDictInput@{:p}[size={}, valid={}]",
-                    static_cast<const void *>(&self), self.size(), self.valid());
+                return fmt::format("TimeSeriesDictInput@{:p}[size={}, valid={}]", static_cast<const void *>(&self), self.size(),
+                                   self.valid());
             });
 
         nb::class_<TSD_OUT_Bool, TimeSeriesDictOutput>(m, "TimeSeriesDictOutput_Bool");
