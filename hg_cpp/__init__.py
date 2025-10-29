@@ -232,6 +232,8 @@ def _create_try_except_node_builder_factory(
         input_node_ids=None,
         output_node_id=0,
 ):
+    input_node_ids = dict(input_node_ids) if input_node_ids is not None else {}
+    output_node_id = -1 if output_node_id in (None, 0) else int(output_node_id)
     return _hgraph.TryExceptNodeBuilder(
         signature,
         scalars,
