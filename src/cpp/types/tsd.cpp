@@ -861,7 +861,7 @@ namespace hgraph
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::was_removed(const key_type &key) const {
         return _removed_items.find(key) != _removed_items.end();
     }
-    template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_key_set() const { return nb::cast(key_set()); }
+    template <typename T_Key> nb::object TimeSeriesDictInput_T<T_Key>::py_key_set() const { return nb::cast(_key_set); }
 
     template <typename T_Key> bool TimeSeriesDictInput_T<T_Key>::py_was_removed(const nb::object &key) const {
         return was_removed(nb::cast<T_Key>(key));
@@ -1265,10 +1265,7 @@ namespace hgraph
             .def("removed_items", &TimeSeriesDictInput::py_removed_items)
             .def("was_removed", &TimeSeriesDictInput::py_was_removed, "key"_a)
             .def_prop_ro("has_removed", &TimeSeriesDictInput::has_removed)
-            .def_prop_ro(
-                "key_set",
-                static_cast<const TimeSeriesSet<TimeSeriesDict<TimeSeriesInput>::ts_type> &(TimeSeriesDictInput::*)() const>(
-                    &TimeSeriesDictInput::key_set))
+            .def_prop_ro("key_set", &TimeSeriesDictInput::py_key_set)
             .def("__str__",
                  [](const TimeSeriesDictInput &self) {
                      return fmt::format("TimeSeriesDictInput@{:p}[size={}, valid={}]", static_cast<const void *>(&self),
