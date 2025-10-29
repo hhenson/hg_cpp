@@ -338,7 +338,9 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictOutput_T<T_Key>::py_keys() const {
-        return nb::iter(key_set_t().py_value());
+        // Return keys from _ts_values map, not from key_set (which only contains current tick's modifications)
+        // This matches Python behavior: __iter__ returns iter(self._ts_values)
+        return nb::make_key_iterator(nb::type<map_type>(), "KeyIterator", begin(), end());
     }
 
     template <typename T_Key> nb::iterator TimeSeriesDictOutput_T<T_Key>::py_values() const {
