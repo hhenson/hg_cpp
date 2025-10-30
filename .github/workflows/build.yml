@@ -173,8 +173,8 @@ jobs:
           fi
           if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             uv tool install auditwheel
-            # Use manylinux_2_28 for C++23 support (glibc 2.28+, Ubuntu 18.04+)
-            uv tool run auditwheel repair dist/*.whl --plat manylinux_2_35_x86_64 -w wheelhouse
+            # Use manylinux_2_39 for C++23 support (glibc 2.28+, Ubuntu 18.04+)
+            uv tool run auditwheel repair dist/*.whl --plat manylinux_2_39_x86_64 -w wheelhouse
             rm dist/*.whl
             mv wheelhouse/*.whl dist/
             uv build --sdist

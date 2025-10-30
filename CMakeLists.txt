@@ -26,9 +26,9 @@ endif()
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (UNIX)
-    set(PYBIND11_CPP_STANDARD -std=c++23)
     set(CMAKE_CXX_FLAGS_RELEASE "-g -O3")
     set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -O3 -DNDEBUG")
     set(CMAKE_CXX_FLAGS_DEBUG "-g -v") # -fsanitize=address")
