@@ -115,11 +115,18 @@ jobs:
           # Install and generate CMake config + toolchain into build/conan
           uv tool run conan install . --output-folder=build/conan --build=missing \
             -s build_type=Release -pr default -s compiler.cppstd=23 -s arch=$ARCH \
-            -g CMakeDeps
+            -g CMakeDeps -g CMakeToolchain
+
+          # Get absolute path and convert to CMake-compatible format on Windows
+          CONAN_DIR="$(pwd)/build/conan"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            # Convert to Windows path format for CMake (forward slashes work in CMake)
+            CONAN_DIR=$(cygpath -m "$CONAN_DIR")
+          fi
 
           # Expose paths for the subsequent scikit-build / CMake run
-          echo "CONAN_BUILD_DIR=$(pwd)/build/conan" >> $GITHUB_ENV
-          echo "CMAKE_ARGS=$CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=$CONAN_BUILD_DIR/conan_toolchain.cmake -DCMAKE_PREFIX_PATH=$CONAN_BUILD_DIR" >> $GITHUB_ENV
+          echo "CONAN_BUILD_DIR=$CONAN_DIR" >> $GITHUB_ENV
+          echo "CMAKE_ARGS=$CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=$CONAN_DIR/conan_toolchain.cmake -DCMAKE_PREFIX_PATH=$CONAN_DIR" >> $GITHUB_ENV
 
       - name: Build Python Wheel with scikit-build-core
         shell: bash
