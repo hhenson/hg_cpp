@@ -121,6 +121,89 @@ public:
         if (!src)
             return false;
 
+        try {
+            // Try to use timestamp() method for UTC normalization
+            // This ensures timezone-aware datetimes are correctly converted
+            PyObject* timestamp_method = PyObject_GetAttrString(src.ptr(), "timestamp");
+            if (timestamp_method && PyCallable_Check(timestamp_method)) {
+                // Check if datetime is naive (tzinfo is None)
+                PyObject* tzinfo = PyObject_GetAttrString(src.ptr(), "tzinfo");
+                bool is_naive = (tzinfo == Py_None);
+                Py_XDECREF(tzinfo);
+                
+                PyObject* dt_to_convert = src.ptr();
+                PyObject* utc_dt = nullptr;
+                
+                // If naive, treat as UTC by attaching timezone.utc
+                if (is_naive) {
+                    // Import datetime module
+                    PyObject* datetime_module = PyImport_ImportModule("datetime");
+                    if (datetime_module) {
+                        // Get timezone class
+                        PyObject* timezone_class = PyObject_GetAttrString(datetime_module, "timezone");
+                        if (timezone_class) {
+                            // Get timezone.utc
+                            PyObject* utc_tz = PyObject_GetAttrString(timezone_class, "utc");
+                            if (utc_tz) {
+                                // Call replace(tzinfo=timezone.utc) on the datetime
+                                PyObject* replace_method = PyObject_GetAttrString(src.ptr(), "replace");
+                                if (replace_method) {
+                                    PyObject* empty_args = PyTuple_New(0);
+                                    PyObject* kwargs = Py_BuildValue("{s:O}", "tzinfo", utc_tz);
+                                    utc_dt = PyObject_Call(replace_method, empty_args, kwargs);
+                                    Py_DECREF(empty_args);
+                                    Py_DECREF(kwargs);
+                                    Py_DECREF(replace_method);
+                                    if (utc_dt) {
+                                        dt_to_convert = utc_dt;
+                                    }
+                                }
+                                Py_DECREF(utc_tz);
+                            }
+                            Py_DECREF(timezone_class);
+                        }
+                        Py_DECREF(datetime_module);
+                    }
+                }
+                
+                // Call timestamp() to get POSIX seconds (always in UTC)
+                PyObject* timestamp_result = PyObject_CallObject(timestamp_method, nullptr);
+                Py_DECREF(timestamp_method);
+                
+                if (timestamp_result) {
+                    double posix_seconds = PyFloat_AsDouble(timestamp_result);
+                    Py_DECREF(timestamp_result);
+                    if (utc_dt) {
+                        Py_DECREF(utc_dt);
+                    }
+                    
+                    if (posix_seconds != -1.0 || !PyErr_Occurred()) {
+                        // Convert POSIX seconds to time_point
+                        auto duration_seconds = ch::duration<double>(posix_seconds);
+                        value = type(ch::duration_cast<Duration>(duration_seconds));
+                        
+                        // Debug output
+                        auto us_since_epoch = ch::duration_cast<ch::microseconds>(value.time_since_epoch()).count();
+                        std::cerr << "[chrono.h] Converted using timestamp(): " << posix_seconds 
+                                  << " seconds (" << us_since_epoch << " us since epoch)" << std::endl;
+                        
+                        return true;
+                    }
+                }
+                
+                if (utc_dt) {
+                    Py_DECREF(utc_dt);
+                }
+                // Clear any Python errors from timestamp attempt
+                PyErr_Clear();
+            } else {
+                Py_XDECREF(timestamp_method);
+            }
+        } catch (...) {
+            // Fall through to legacy method
+        }
+
+        // Fallback: use legacy unpack_datetime method
         int yy, mon, dd, hh, min, ss, uu;
         try {
             if (!unpack_datetime(src.ptr(), &yy, &mon, &dd,
@@ -139,7 +222,7 @@ public:
 
         // Debug output for CI debugging
         auto us_since_epoch = std::chrono::duration_cast<std::chrono::microseconds>(value.time_since_epoch()).count();
-        std::cerr << "[chrono.h] Converted Python datetime(" << yy << "-" << mon << "-" << dd << " "
+        std::cerr << "[chrono.h] Converted (fallback) Python datetime(" << yy << "-" << mon << "-" << dd << " "
                   << hh << ":" << min << ":" << ss << "." << uu << ") to " << us_since_epoch << " us since epoch" << std::endl;
 
         return true;
@@ -148,6 +231,69 @@ public:
     static handle from_cpp(const type& src, rv_policy, cleanup_list*) noexcept {
         namespace ch = std::chrono;
 
+        // Try to create a UTC-aware datetime using fromtimestamp
+        try {
+            // Convert to POSIX timestamp (seconds since Unix epoch)
+            auto duration_since_epoch = src.time_since_epoch();
+            auto seconds_since_epoch = ch::duration_cast<ch::duration<double>>(duration_since_epoch);
+            double posix_timestamp = seconds_since_epoch.count();
+            
+            // Import datetime module
+            PyObject* datetime_module = PyImport_ImportModule("datetime");
+            if (datetime_module) {
+                // Get datetime class
+                PyObject* datetime_class = PyObject_GetAttrString(datetime_module, "datetime");
+                if (datetime_class) {
+                    // Get timezone class
+                    PyObject* timezone_class = PyObject_GetAttrString(datetime_module, "timezone");
+                    if (timezone_class) {
+                        // Get timezone.utc
+                        PyObject* utc_tz = PyObject_GetAttrString(timezone_class, "utc");
+                        if (utc_tz) {
+                            // Call datetime.fromtimestamp(posix_timestamp, tz=timezone.utc)
+                            PyObject* fromtimestamp_method = PyObject_GetAttrString(datetime_class, "fromtimestamp");
+                            if (fromtimestamp_method) {
+                                PyObject* args = Py_BuildValue("(d)", posix_timestamp);
+                                PyObject* kwargs = Py_BuildValue("{s:O}", "tz", utc_tz);
+                                PyObject* result = PyObject_Call(fromtimestamp_method, args, kwargs);
+                                Py_DECREF(args);
+                                Py_DECREF(kwargs);
+                                Py_DECREF(fromtimestamp_method);
+                                Py_DECREF(utc_tz);
+                                Py_DECREF(timezone_class);
+                                Py_DECREF(datetime_class);
+                                Py_DECREF(datetime_module);
+                                
+                                if (result) {
+                                    return handle(result);
+                                } else {
+                                    PyErr_Clear();
+                                }
+                            } else {
+                                Py_DECREF(utc_tz);
+                                Py_DECREF(timezone_class);
+                                Py_DECREF(datetime_class);
+                                Py_DECREF(datetime_module);
+                            }
+                        } else {
+                            Py_DECREF(timezone_class);
+                            Py_DECREF(datetime_class);
+                            Py_DECREF(datetime_module);
+                        }
+                    } else {
+                        Py_DECREF(datetime_class);
+                        Py_DECREF(datetime_module);
+                    }
+                } else {
+                    Py_DECREF(datetime_module);
+                }
+            }
+        } catch (...) {
+            // Fall through to legacy method
+            PyErr_Clear();
+        }
+
+        // Fallback to legacy method: return naive datetime
         auto current_day = std::chrono::floor<std::chrono::days>(src);
         std::chrono::year_month_day ymd{current_day};
         int year = static_cast<int>(ymd.year());
