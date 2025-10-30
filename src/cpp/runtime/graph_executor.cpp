@@ -1,9 +1,9 @@
 #include <hgraph/runtime/graph_executor.h>
+#include <hgraph/runtime/record_replay.h>
+#include <hgraph/types/error_type.h>
 #include <hgraph/types/graph.h>
 #include <hgraph/types/node.h>
-#include <hgraph/types/error_type.h>
 #include <hgraph/util/lifecycle.h>
-#include <hgraph/runtime/record_replay.h>
 
 namespace hgraph
 {
@@ -41,15 +41,14 @@ namespace hgraph
             .def_prop_ro("run_mode", &GraphExecutor::run_mode)
             .def_prop_ro("graph", &GraphExecutor::graph)
             .def("run", &GraphExecutor::run)
-            .def("__str__", [](const GraphExecutor &self) {
-                return fmt::format("GraphExecutor@{:p}[mode={}]",
-                    static_cast<const void *>(&self),
-                    static_cast<int>(self.run_mode()));
-            })
+            .def("__str__",
+                 [](const GraphExecutor &self) {
+                     return fmt::format("GraphExecutor@{:p}[mode={}]", static_cast<const void *>(&self),
+                                        static_cast<int>(self.run_mode()));
+                 })
             .def("__repr__", [](const GraphExecutor &self) {
-                return fmt::format("GraphExecutor@{:p}[mode={}]",
-                    static_cast<const void *>(&self),
-                    static_cast<int>(self.run_mode()));
+                return fmt::format("GraphExecutor@{:p}[mode={}]", static_cast<const void *>(&self),
+                                   static_cast<int>(self.run_mode()));
             });
 
         nb::enum_<EvaluationMode>(m, "EvaluationMode")
@@ -81,6 +80,11 @@ namespace hgraph
     graph_ptr GraphExecutorImpl::graph() const { return _graph; }
 
     void GraphExecutorImpl::run(const engine_time_t &start_time, const engine_time_t &end_time) {
+
+        auto now = std::chrono::system_clock::now();
+        fmt::print("{} [CPP] Running graph [{}] start time: {} end time: {}\n", fmt::format("{:%Y-%m-%d %H:%M:%S}", now),
+                   (_graph ? *_graph->label() : std::string{"unknown"}), start_time, end_time);
+
         if (end_time <= start_time) {
             if (end_time < start_time) {
                 throw std::invalid_argument("End time cannot be before the start time");
@@ -102,43 +106,31 @@ namespace hgraph
         for (const auto &observer : _observers) { evaluationEngine->add_life_cycle_observer(observer); }
 
         try {
-                // Initialise the graph but do not dispose here; disposal is handled by GraphBuilder.release_instance in Python
-                initialise_component(*_graph);
-                // Use RAII; StartStopContext destructor will stop and set Python error if exception occurs
-                {
-                    auto startStopContext  = StartStopContext(*_graph);
-                    while (clock->evaluation_time() < end_time) { _evaluate(*evaluationEngine); }
-                }
-                // After StartStopContext destruction, check if a Python error was set during stop
-                if (PyErr_Occurred()) {
-                    throw nb::python_error();
-                }
+            // Initialise the graph but do not dispose here; disposal is handled by GraphBuilder.release_instance in Python
+            initialise_component(*_graph);
+            // Use RAII; StartStopContext destructor will stop and set Python error if exception occurs
+            {
+                auto startStopContext = StartStopContext(*_graph);
+                while (clock->evaluation_time() < end_time) { _evaluate(*evaluationEngine); }
+            }
+            // After StartStopContext destruction, check if a Python error was set during stop
+            if (PyErr_Occurred()) { throw nb::python_error(); }
         } catch (const NodeException &e) {
             // Raise Python hgraph.NodeException constructed from C++ NodeException details
             try {
-                nb::object hgraph_mod = nb::module_::import_("hgraph");
+                nb::object hgraph_mod      = nb::module_::import_("hgraph");
                 nb::object py_node_exc_cls = hgraph_mod.attr("NodeException");
-                nb::tuple args = nb::make_tuple(
-                    nb::cast(e.signature_name),
-                    nb::cast(e.label),
-                    nb::cast(e.wiring_path),
-                    nb::cast(e.error_msg),
-                    nb::cast(e.stack_trace),
-                    nb::cast(e.activation_back_trace),
-                    nb::cast(e.additional_context)
-                );
+                nb::tuple  args =
+                    nb::make_tuple(nb::cast(e.signature_name), nb::cast(e.label), nb::cast(e.wiring_path), nb::cast(e.error_msg),
+                                   nb::cast(e.stack_trace), nb::cast(e.activation_back_trace), nb::cast(e.additional_context));
                 PyErr_SetObject(py_node_exc_cls.ptr(), args.ptr());
-            } catch (...) {
-                PyErr_SetString(PyExc_RuntimeError, e.what());
-            }
+            } catch (...) { PyErr_SetString(PyExc_RuntimeError, e.what()); }
             throw nb::python_error();
         } catch (const nb::python_error &e) {
-            throw; // Preserve Python exception raised above
+            throw;  // Preserve Python exception raised above
         } catch (const std::exception &e) {
             // Preserve any active Python exception (e.g., hgraph.NodeException)
-            if (PyErr_Occurred()) {
-                throw nb::python_error();
-            }
+            if (PyErr_Occurred()) { throw nb::python_error(); }
             // Provide a clear message for unexpected exceptions
             std::string msg = std::string("Graph execution failed: ") + e.what();
             throw nb::builtin_exception(nb::exception_type::runtime_error, msg.c_str());
@@ -157,9 +149,7 @@ namespace hgraph
         } catch (const NodeException &e) {
             // Let NodeException propagate to nanobind exception translator
             throw;
-        } catch (const nb::python_error &e) {
-            throw;
-        } catch (const std::exception &e) {
+        } catch (const nb::python_error &e) { throw; } catch (const std::exception &e) {
             if (PyErr_Occurred()) { throw nb::python_error(); }
             std::string msg = std::string("Error in notify_before_evaluation: ") + e.what();
             throw nb::builtin_exception(nb::exception_type::runtime_error, msg.c_str());
@@ -169,9 +159,7 @@ namespace hgraph
         } catch (const NodeException &e) {
             // Let NodeException propagate to nanobind exception translator
             throw;
-        } catch (const nb::python_error &e) {
-            throw;
-        } catch (const std::exception &e) {
+        } catch (const nb::python_error &e) { throw; } catch (const std::exception &e) {
             if (PyErr_Occurred()) { throw nb::python_error(); }
             std::string msg = std::string("Graph evaluation failed: ") + e.what();
             throw nb::builtin_exception(nb::exception_type::runtime_error, msg.c_str());
