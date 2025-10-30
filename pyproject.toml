@@ -51,7 +51,7 @@ minimum-version = "0.10"
 
 # The build type to use when building the project. Valid options are: "Debug",
 # "Release", "RelWithDebInfo", "MinSizeRel", "", etc.
-cmake.build-type = "Debug"
+cmake.build-type = "RelWithDebInfo"
 
 # Setuptools-style build caching in a local directory
 build-dir = "build/{wheel_tag}"
