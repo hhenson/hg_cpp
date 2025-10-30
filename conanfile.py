@@ -1,6 +1,3 @@
-# This file is managed by Conan, contents will be overwritten.
-# To keep your changes, remove these comment lines, but the plugin won't be able to modify your requirements
-
 from conan import ConanFile
 from conan.tools.cmake import cmake_layout, CMakeToolchain
 
@@ -10,7 +7,7 @@ class ConanApplication(ConanFile):
     generators = "CMakeDeps"
 
     def layout(self):
-        cmake_layout(self)
+        cmake_layout(self, build_folder="build")
 
     def generate(self):
         tc = CMakeToolchain(self)

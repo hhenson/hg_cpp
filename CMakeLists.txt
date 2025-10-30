@@ -33,7 +33,13 @@ if (UNIX)
     set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -O3 -DNDEBUG")
     set(CMAKE_CXX_FLAGS_DEBUG "-g -v") # -fsanitize=address")
     set(CMAKE_CXX_FLAGS "-Wall")
-endif (UNIX)
+elseif (MSVC)
+    # MSVC optimization flags for Windows
+    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /Zi /DNDEBUG")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/O2 /Zi /DNDEBUG")
+    set(CMAKE_CXX_FLAGS_DEBUG "/Zi /Od")
+    set(CMAKE_CXX_FLAGS "/W3 /EHsc")
+endif ()
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     # Set properties specific to macOS
