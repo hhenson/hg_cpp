@@ -51,8 +51,6 @@ endif (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 
 #find_package(spdlog CONFIG REQUIRED)
 
-find_package(fmt CONFIG REQUIRED)
-
 find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development.Module)
 include_directories(${Python3_INCLUDE_DIRS})
 
@@ -66,9 +64,23 @@ message(STATUS "Nanobind DIR: ${NB_DIR}/include")
 #find_package(Boost REQUIRED)
 find_package(Threads)
 
-find_package(fmt CONFIG REQUIRED)
-find_package(Backward CONFIG REQUIRED)
 #find_package(immer CONFIG REQUIRED)
+
+# Prefer package config (Conan / system). If not found, fetch them.
+find_package(fmt CONFIG QUIET)
+if (NOT fmt_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(fmt GIT_REPOSITORY https://github.com/fmtlib/fmt.git GIT_TAG 10.1.0)
+    FetchContent_MakeAvailable(fmt)
+endif()
+
+find_package(Backward CONFIG QUIET)
+if (NOT Backward_FOUND)
+    include(FetchContent)
+    FetchContent_Declare(backward GIT_REPOSITORY https://github.com/bombela/backward-cpp.git GIT_TAG v1.5)
+    set(BACKWARD_ENABLE ON CACHE BOOL "Enable backward" FORCE)
+    FetchContent_MakeAvailable(backward)
+endif()
 
 if (EXISTS "${CMAKE_SOURCE_DIR}/.git")
     execute_process(
