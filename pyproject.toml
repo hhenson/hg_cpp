@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "hg_cpp"
-version = "0.0.5"
+version = "0.0.0"  # A placeholder this gets overwritten with tag when building.
 dependencies = [
     "hgraph[web, messaging]>=0.4.101"
 ]
@@ -40,7 +40,7 @@ Repository = "https://github.com/hhenson/hg_cpp.git"
 [dependency-groups]
 dev = [
     "pytest >= 8.3.4",
-    "conan >= 2.11.0",
+    "conan >= 2.22.1",
     "nanobind >= 2.2.0",
     "scikit-build-core",
 ]

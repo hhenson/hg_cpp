@@ -116,7 +116,7 @@ wheels = [
 
 [[package]]
 name = "conan"
-version = "2.21.0"
+version = "2.22.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama" },
@@ -129,7 +129,7 @@ dependencies = [
     { name = "requests" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f7/2f/46df55bff30f95ee91b128b6bdc96128dd616b4527ce45c39ab4d6bfc0b6/conan-2.21.0.tar.gz", hash = "sha256:709b07998be008044166eaa1368383d700f24cbe79241dbf0c73589f0aa9650d", size = 534579, upload-time = "2025-09-29T16:25:06.528Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/f6/9617b34c095f991337740bf56da0c94924fdb758653a3304a33523ede10d/conan-2.22.1.tar.gz", hash = "sha256:c33f4d538f0827e7664813a5e2b5db5ce6a7aa58fb3d0eb6145b2261b56b005c", size = 542436, upload-time = "2025-10-30T07:23:41.441Z" }
 
 [[package]]
 name = "distro"
@@ -234,7 +234,7 @@ requires-dist = [{ name = "hgraph", extras = ["web", "messaging"], specifier = "
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "conan", specifier = ">=2.11.0" },
+    { name = "conan", specifier = ">=2.22.1" },
     { name = "nanobind", specifier = ">=2.2.0" },
     { name = "pytest", specifier = ">=8.3.4" },
     { name = "scikit-build-core" },
@@ -242,7 +242,7 @@ dev = [
 
 [[package]]
 name = "hgraph"
-version = "0.4.101"
+version = "0.4.102"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "black" },
@@ -260,9 +260,9 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/94/d4/57b26e3345a6f4f231223fa2ff9c46d5da3eebf6268b901c67e6c60463ac/hgraph-0.4.101.tar.gz", hash = "sha256:78a0bb36f3b8d4099630982694ecd69f4904cba1f6d5a112f5f7031d24d37939", size = 850391, upload-time = "2025-10-28T08:14:19.059Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4b/14/2b4cccf4270c0485ef1325667efc10efebed5fd719da26526d3d72f24326/hgraph-0.4.102.tar.gz", hash = "sha256:9160b7d7a41cd994981202640d8892d6388f8fdcdb04c228eb254892ea7d4e6e", size = 850725, upload-time = "2025-10-28T12:21:56.776Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/f8/871b20eac38db4e1017f5bdf02ccd7de99d57925abd4ec65c88417ef5cb2/hgraph-0.4.101-py3-none-any.whl", hash = "sha256:ceb1f6777da36add156883686bd35eb148b0c8255c4d817157719561bac3751b", size = 549141, upload-time = "2025-10-28T08:14:17.308Z" },
+    { url = "https://files.pythonhosted.org/packages/42/5d/10b443bdedfcf51ef87cb780b00bf5233d82471b5d8383116d371af3398b/hgraph-0.4.102-py3-none-any.whl", hash = "sha256:d17bc08ba42a818c6d58de1f5b8f2e3479ef85358454f96505f71f927ce80923", size = 549298, upload-time = "2025-10-28T12:21:55.049Z" },
 ]
 
 [package.optional-dependencies]
