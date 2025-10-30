@@ -21,7 +21,6 @@
 #include <cmath>
 #include <ctime>
 #include <limits>
-#include <iostream>
 
 #include <nanobind/stl/detail/chrono.h>
 
@@ -133,15 +132,11 @@ public:
         }
         std::chrono::year_month_day ymd{std::chrono::year{yy}, std::chrono::month{static_cast<unsigned>(mon)}, std::chrono::day{static_cast<unsigned>(dd)}};
         std::chrono::sys_days date_part = ymd;
-        auto time_part = std::chrono::hours{hh} + std::chrono::minutes{min} + std::chrono::seconds{ss} + std::chrono::microseconds{uu};
+
+        // Use explicit microseconds throughout to avoid overflow during intermediate calculations
+        auto time_part = std::chrono::microseconds{hh * 3600000000LL + min * 60000000LL + ss * 1000000LL + uu};
 
         value = date_part + time_part;
-
-        // Debug output for CI debugging
-        auto us_since_epoch = std::chrono::duration_cast<std::chrono::microseconds>(value.time_since_epoch()).count();
-        std::cerr << "[chrono.h] Converted Python datetime(" << yy << "-" << mon << "-" << dd << " "
-                  << hh << ":" << min << ":" << ss << "." << uu << ") to " << us_since_epoch << " us since epoch" << std::endl;
-
         return true;
     }
 
