@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.30)
+
+# Force gcc/g++ on Linux (must be before project())
+if (UNIX AND NOT APPLE)
+    set(CMAKE_C_COMPILER gcc)
+    set(CMAKE_CXX_COMPILER g++)
+endif()
+
 project(hgraph_cpp_engine)
 
 if (NOT SKBUILD)
@@ -27,6 +34,7 @@ endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if (UNIX)
     set(CMAKE_CXX_FLAGS_RELEASE "-g -O3")
@@ -88,9 +96,15 @@ find_package(Backward CONFIG QUIET)
 if (NOT Backward_FOUND)
     message(STATUS "Backward not found via find_package, using FetchContent")
     include(FetchContent)
-    FetchContent_Declare(backward GIT_REPOSITORY https://github.com/bombela/backward-cpp.git GIT_TAG v1.5)
+    # Set minimum policy version to allow backward-cpp to work with CMake 4.x
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    FetchContent_Declare(backward GIT_REPOSITORY https://github.com/bombela/backward-cpp.git GIT_TAG v1.6)
     set(BACKWARD_ENABLE ON CACHE BOOL "Enable backward" FORCE)
     FetchContent_MakeAvailable(backward)
+    # Create an alias to match the expected target name
+    if(TARGET backward)
+        add_library(Backward::Backward ALIAS backward)
+    endif()
 else()
     message(STATUS "Found Backward via Conan/system: ${Backward_DIR}")
 endif()
