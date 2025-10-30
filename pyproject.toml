@@ -60,7 +60,8 @@ build-dir = "build/{wheel_tag}"
 wheel.py-api = "cp312"
 wheel.license-files = ["LICENSE"]
 
-cmake.define = { CMAKE_PROJECT_TOP_LEVEL_INCLUDES="conan_provider.cmake" }
+# Note: We use explicit conan install in CI/CD workflow, not conan_provider.cmake
+# cmake.define = { CMAKE_PROJECT_TOP_LEVEL_INCLUDES="conan_provider.cmake" }
 
 [tool.cibuildwheel]
 # Necessary to see build output from the actual compilation
