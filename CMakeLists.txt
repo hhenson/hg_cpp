@@ -52,9 +52,8 @@ endif (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 
 find_package(fmt CONFIG REQUIRED)
 
-find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development)
+find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development.Module)
 include_directories(${Python3_INCLUDE_DIRS})
-link_libraries(${Python3_LIBRARIES})
 
 #find_package(tsl-robin-map CONFIG REQUIRED)
 execute_process(
