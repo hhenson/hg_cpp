@@ -46,9 +46,23 @@ namespace hgraph
     using engine_time_delta_t = std::chrono::microseconds;
 
     constexpr engine_time_t min_time() noexcept { return engine_time_t{}; }
-    constexpr engine_time_t max_time() noexcept {
-        auto specific_date = std::chrono::year(2300) / std::chrono::January / std::chrono::day(1);
-        return std::chrono::sys_days(specific_date);
+    // Note: system_clock::duration may be as fine as nanoseconds on some platforms (e.g., glibc++ on Linux).
+    // 64-bit nanoseconds can only represent times up to ~2262-04-11 23:47:16 since the Unix epoch.
+    // The previously hardcoded cap of 2300-01-01 could overflow on such platforms, wrapping into a
+    // negative timestamp. To keep behavior consistent across platforms, we clamp the maximum engine
+    // time to the lesser of:
+    //  - the desired logical cap (2300-01-01 00:00:00), and
+    //  - the largest whole-day time point representable by engine_clock::time_point.
+    inline engine_time_t max_time() noexcept {
+        using namespace std::chrono;
+        // Desired logical cap
+        const sys_days desired_cap = year(2300) / January / day(1);
+        // Compute the largest whole-day that can be represented without overflow
+        const auto max_whole_day = floor<days>(engine_time_t::max());
+        // Pick the earlier of the two
+        const sys_days chosen_day = (desired_cap <= max_whole_day) ? desired_cap : max_whole_day;
+        // Convert back to the engine_time_t representation at midnight of the chosen day
+        return engine_time_t{chosen_day.time_since_epoch()};
     }
     constexpr engine_time_delta_t smallest_time_increment() noexcept { return engine_time_delta_t(1); }
     constexpr engine_time_t       min_start_time() noexcept { return min_time() + smallest_time_increment(); }
