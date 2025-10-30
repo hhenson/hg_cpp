@@ -103,8 +103,23 @@ jobs:
           uv tool run conan profile detect --force
 
       - name: Conan Install
+        shell: bash
         run: |
-          uv tool run conan install . --build=missing -s build_type=Release -pr default -s compiler.cppstd=23
+          # Detect architecture for the build
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            ARCH="armv8"
+          else
+            ARCH="x86_64"
+          fi
+
+          # Install and generate CMake config + toolchain into build/conan
+          uv tool run conan install . --output-folder=build/conan --build=missing \
+            -s build_type=Release -pr default -s compiler.cppstd=23 -s arch=$ARCH \
+            -g CMakeDeps -g CMakeToolchain
+
+          # Expose paths for the subsequent scikit-build / CMake run
+          echo "CONAN_BUILD_DIR=$(pwd)/build/conan" >> $GITHUB_ENV
+          echo "CMAKE_ARGS=$CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=$CONAN_BUILD_DIR/conan_toolchain.cmake -DCMAKE_PREFIX_PATH=$CONAN_BUILD_DIR" >> $GITHUB_ENV
 
       - name: Build Python Wheel with scikit-build-core
         shell: bash
@@ -121,7 +136,8 @@ jobs:
           fi
           if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             uv tool install auditwheel
-            uv tool run auditwheel repair dist/*.whl --plat manylinux_2_39_x86_64 -w wheelhouse
+            # Use manylinux_2_28 for C++23 support (glibc 2.28+, Ubuntu 18.04+)
+            uv tool run auditwheel repair dist/*.whl --plat manylinux_2_28_x86_64 -w wheelhouse
             rm dist/*.whl
             mv wheelhouse/*.whl dist/
             uv build --sdist
