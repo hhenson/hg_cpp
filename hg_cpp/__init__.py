@@ -4,6 +4,13 @@ import _hgraph
 import hgraph
 from hgraph import TsdMapWiringSignature
 
+# Replace Python date/time constants with C++ versions
+hgraph.MIN_DT = _hgraph.MIN_DT
+hgraph.MAX_DT = _hgraph.MAX_DT
+hgraph.MIN_ST = _hgraph.MIN_ST
+hgraph.MAX_ET = _hgraph.MAX_ET
+hgraph.MIN_TD = _hgraph.MIN_TD
+
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.NODE_SIGNATURE = _hgraph.NodeSignature
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.NODE_TYPE_ENUM = _hgraph.NodeTypeEnum
 hgraph._wiring._wiring_node_class._wiring_node_class.WiringNodeInstance.INJECTABLE_TYPES_ENUM = _hgraph.InjectableTypesEnum
