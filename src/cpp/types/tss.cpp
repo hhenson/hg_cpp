@@ -293,6 +293,11 @@ namespace hgraph
     }
 
     template <typename T_Key> nb::object TimeSeriesSetOutput_T<T_Key>::py_delta_value() const {
+        if (!modified()) {
+            // For consistency with Python, this should return empty if requested and not modified.
+            collection_type empty_set;
+            return nb::cast(make_set_delta<T_Key>(empty_set, empty_set));
+        }
         return nb::cast(make_set_delta<T_Key>(_added, _removed));
     }
 
@@ -344,7 +349,10 @@ namespace hgraph
         _py_removed.reset();
         _py_added.reset();
 
-        if (_added.size() > 0 || _removed.size() > 0 || !valid()) {
+        bool has_changes{_added.size() > 0 || _removed.size() > 0};
+        bool needs_validation{!valid()};
+        bool is_current_cycle = (last_modified_time() < owning_graph()->evaluation_clock()->evaluation_time());
+        if ((has_changes || needs_validation) && is_current_cycle) {
             mark_modified();
             if (_added.size() > 0 && is_empty_output()->valid() && is_empty_output()->value()) {
                 is_empty_output()->set_value(false);
@@ -842,14 +850,10 @@ namespace hgraph
             >;
 
             cls.def("add", [](TimeSeriesSetOutput_T<T> &self, ItemType item) {
-                typename TimeSeriesSetOutput_T<T>::collection_type added{item};
-                typename TimeSeriesSetOutput_T<T>::collection_type removed;
-                self.set_value(std::move(added), std::move(removed));
+                self.add(item);
             })
             .def("remove", [](TimeSeriesSetOutput_T<T> &self, ItemType item) {
-                typename TimeSeriesSetOutput_T<T>::collection_type added;
-                typename TimeSeriesSetOutput_T<T>::collection_type removed{item};
-                self.set_value(std::move(added), std::move(removed));
+                self.remove(item);
             })
             .def("clear", [](TimeSeriesSetOutput_T<T> &self) {
                 typename TimeSeriesSetOutput_T<T>::collection_type added;
