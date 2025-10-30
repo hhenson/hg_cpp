@@ -115,7 +115,7 @@ jobs:
           # Install and generate CMake config + toolchain into build/conan
           uv tool run conan install . --output-folder=build/conan --build=missing \
             -s build_type=Release -pr default -s compiler.cppstd=23 -s arch=$ARCH \
-            -g CMakeDeps -g CMakeToolchain
+            -g CMakeDeps
 
           # Expose paths for the subsequent scikit-build / CMake run
           echo "CONAN_BUILD_DIR=$(pwd)/build/conan" >> $GITHUB_ENV
