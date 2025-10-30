@@ -117,32 +117,39 @@ jobs:
           uv tool run conan install . --output-folder=build/conan --build=missing \
             -s build_type=Release -pr default -s compiler.cppstd=23 -s arch=$ARCH
 
-          # Find the toolchain file (Conan with cmake_layout creates build/<type>/generators/)
-          # Look for it in the expected locations
+          # Find the toolchain file and CMake modules
+          # Conan with cmake_layout creates build/<type>/generators/
           if [ -f "build/conan/build/Release/generators/conan_toolchain.cmake" ]; then
-            TOOLCHAIN_FILE="build/conan/build/Release/generators/conan_toolchain.cmake"
+            GENERATORS_DIR="build/conan/build/Release/generators"
           elif [ -f "build/conan/build/generators/conan_toolchain.cmake" ]; then
-            TOOLCHAIN_FILE="build/conan/build/generators/conan_toolchain.cmake"
+            GENERATORS_DIR="build/conan/build/generators"
           elif [ -f "build/conan/conan_toolchain.cmake" ]; then
-            TOOLCHAIN_FILE="build/conan/conan_toolchain.cmake"
+            GENERATORS_DIR="build/conan"
           else
             echo "Error: Cannot find conan_toolchain.cmake"
             find build/conan -name "conan_toolchain.cmake" || true
+            find build/conan -name "*.cmake" | head -20 || true
             exit 1
           fi
 
-          # Convert to absolute path
-          TOOLCHAIN_FILE="$(cd "$(dirname "$TOOLCHAIN_FILE")" && pwd)/$(basename "$TOOLCHAIN_FILE")"
+          TOOLCHAIN_FILE="$GENERATORS_DIR/conan_toolchain.cmake"
+
+          # Convert to absolute paths
+          GENERATORS_DIR="$(cd "$GENERATORS_DIR" && pwd)"
+          TOOLCHAIN_FILE="$GENERATORS_DIR/conan_toolchain.cmake"
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             # Convert to Windows path format for CMake (forward slashes work in CMake)
             TOOLCHAIN_FILE=$(cygpath -m "$TOOLCHAIN_FILE")
+            GENERATORS_DIR=$(cygpath -m "$GENERATORS_DIR")
           fi
 
           echo "Using toolchain file: $TOOLCHAIN_FILE"
+          echo "CMake modules directory: $GENERATORS_DIR"
 
-          # Expose path for the subsequent scikit-build / CMake run
-          echo "CMAKE_ARGS=$CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=$TOOLCHAIN_FILE" >> $GITHUB_ENV
+          # Expose paths for the subsequent scikit-build / CMake run
+          # CMAKE_PREFIX_PATH helps find_package() locate the Conan-generated config files
+          echo "CMAKE_ARGS=$CMAKE_ARGS -DCMAKE_TOOLCHAIN_FILE=$TOOLCHAIN_FILE -DCMAKE_PREFIX_PATH=$GENERATORS_DIR" >> $GITHUB_ENV
 
       - name: Build Python Wheel with scikit-build-core
         shell: bash
