@@ -227,7 +227,7 @@ namespace hgraph
         requires IndexedTimeSeriesT<T_TS>
     typename TimeSeriesBundle<T_TS>::key_value_collection_type
     TimeSeriesBundle<T_TS>::key_value_with_constraint(const std::function<bool(const ts_type &)> &constraint) const {
-        auto                      index_results = items_with_constraint(constraint);
+        auto                      index_results = this->items_with_constraint(constraint);
         key_value_collection_type result;
         result.reserve(index_results.size());
         for (auto &[ndx, ts] : index_results) { result.emplace_back(_schema->keys()[ndx], ts); }
@@ -447,5 +447,9 @@ namespace hgraph
         // if (active()){v->make_active();}
         return v;
     }
+
+    // Explicit template instantiations
+    template struct TimeSeriesBundle<IndexedTimeSeriesInput>;
+    template struct TimeSeriesBundle<IndexedTimeSeriesOutput>;
 
 }  // namespace hgraph
