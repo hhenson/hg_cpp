@@ -827,14 +827,11 @@ namespace hgraph
             for (auto &start_input : _start_inputs) {
                 start_input->start();  // Assuming start_input is some time series type with a start method
             }
-            std::unordered_set<std::string> active_inputs;
-            if (signature().active_inputs.has_value()) {
-                active_inputs = *signature().active_inputs;
-            }
+            const std::unordered_set<std::string>* active_inputs = signature().active_inputs.has_value() ? &signature().active_inputs.value() : nullptr;
             for (size_t i = 0; i < signature().time_series_inputs->size(); ++i) {
                 // Apple does not yet support ranges::contains :(
-                if (!signature().active_inputs ||
-                    (std::ranges::find(active_inputs, signature().args[i]) != std::ranges::end(active_inputs))) {
+                if (!active_inputs ||
+                    (std::ranges::find(*active_inputs, signature().args[i]) != std::ranges::end(*active_inputs))) {
                     (*input())[i]->make_active();  // Assuming `make_active` is a method of the `TimeSeriesInput` type
                 }
             }
