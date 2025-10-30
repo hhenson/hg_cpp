@@ -326,6 +326,7 @@ namespace hgraph
         // Reset Python-side caches so py_added/py_removed reflect current tick modifications
         _py_added.reset();
         _py_removed.reset();
+        _py_value.reset();
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_remove(const element_type &item) {
@@ -334,6 +335,7 @@ namespace hgraph
         // Reset Python-side caches so py_added/py_removed reflect current tick modifications
         _py_added.reset();
         _py_removed.reset();
+        _py_value.reset();
     }
 
     template <typename T_Key> void TimeSeriesSetOutput_T<T_Key>::_post_modify() {
