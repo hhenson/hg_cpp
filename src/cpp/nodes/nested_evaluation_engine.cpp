@@ -19,7 +19,7 @@ namespace hgraph
 
     void NestedEngineEvaluationClock::reset_next_scheduled_evaluation_time() { _nested_next_scheduled_evaluation_time = MAX_DT; }
 
-    void NestedEngineEvaluationClock::update_next_scheduled_evaluation_time(std::chrono::system_clock::time_point next_time) {
+    void NestedEngineEvaluationClock::update_next_scheduled_evaluation_time(engine_time_t next_time) {
         auto let{_nested_node->last_evaluation_time()};
         auto eval_time = evaluation_time();
 

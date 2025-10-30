@@ -42,7 +42,8 @@ namespace hgraph
 {
 
     using engine_clock        = std::chrono::system_clock;
-    using engine_time_t       = engine_clock::time_point;
+    // Use microsecond precision to avoid overflow for dates beyond 2262
+    using engine_time_t       = std::chrono::time_point<engine_clock, std::chrono::microseconds>;
     using engine_time_delta_t = std::chrono::microseconds;
 
     constexpr engine_time_t min_time() noexcept { return engine_time_t{}; }

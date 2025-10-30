@@ -139,9 +139,21 @@ public:
         // time_since_epoch to the target Duration and add the time-of-day also
         // cast to the target Duration so the resulting time_point has the
         // correct representation type.
+        //
+        // IMPORTANT: On platforms where system_clock uses nanosecond precision,
+        // dates beyond ~2262 will overflow. We work in microseconds to avoid this.
         auto days_since_epoch = date_part.time_since_epoch();
-        using duration_t = Duration;
-        value = type(std::chrono::duration_cast<duration_t>(days_since_epoch) + std::chrono::duration_cast<duration_t>(tod));
+
+        // Convert to microseconds (safe range)
+        auto days_us = std::chrono::duration_cast<std::chrono::microseconds>(days_since_epoch);
+        auto tod_us = std::chrono::duration_cast<std::chrono::microseconds>(tod);
+        auto total_us = days_us + tod_us;
+
+        // Create a time_point with EXPLICIT microsecond duration to avoid overflow
+        // DO NOT convert this to nanoseconds as it will overflow for dates > 2262
+        using sys_clock = std::chrono::system_clock;
+        using time_point_us = std::chrono::time_point<sys_clock, std::chrono::microseconds>;
+        value = time_point_us(total_us);
 
         return true;
     }

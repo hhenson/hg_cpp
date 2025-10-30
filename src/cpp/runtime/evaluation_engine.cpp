@@ -280,17 +280,17 @@ namespace hgraph
     }
 
     SimulationEvaluationClock::SimulationEvaluationClock(engine_time_t current_time)
-        : BaseEvaluationClock(current_time), _system_clock_at_start_of_evaluation{engine_time_t::clock::now()} {}
+        : BaseEvaluationClock(current_time), _system_clock_at_start_of_evaluation{std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now())} {}
 
     void SimulationEvaluationClock::set_evaluation_time(engine_time_t value) {
         BaseEvaluationClock::set_evaluation_time(value);
-        _system_clock_at_start_of_evaluation = engine_clock::now();
+        _system_clock_at_start_of_evaluation = std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now());
     }
 
     engine_time_t SimulationEvaluationClock::now() const { return evaluation_time() + cycle_time(); }
 
     engine_time_delta_t SimulationEvaluationClock::cycle_time() const {
-        return std::chrono::duration_cast<engine_time_delta_t>(engine_clock::now() - _system_clock_at_start_of_evaluation);
+        return std::chrono::duration_cast<engine_time_delta_t>(std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now()) - _system_clock_at_start_of_evaluation);
     }
 
     void SimulationEvaluationClock::advance_to_next_scheduled_time() { set_evaluation_time(next_scheduled_evaluation_time()); }
@@ -314,11 +314,11 @@ namespace hgraph
           _last_time_allowed_push(MIN_TD) {}
 
     engine_time_t RealTimeEvaluationClock::now() const {
-        return std::chrono::time_point_cast<std::chrono::milliseconds>(engine_clock::now());
+        return std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now());
     }
 
     engine_time_delta_t RealTimeEvaluationClock::cycle_time() const {
-        return std::chrono::duration_cast<engine_time_delta_t>(engine_clock::now() - evaluation_time());
+        return std::chrono::duration_cast<engine_time_delta_t>(std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now()) - evaluation_time());
     }
     
     void RealTimeEvaluationClock::mark_push_node_requires_scheduling() {
@@ -335,7 +335,7 @@ namespace hgraph
 
     void RealTimeEvaluationClock::advance_to_next_scheduled_time() {
         engine_time_t next_scheduled_time = next_scheduled_evaluation_time();
-        engine_time_t now                 = engine_clock::now();
+        engine_time_t now                 = std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now());
 
         // Process all alarms that are due and adjust the next scheduled time
         while (!_alarms.empty()) {
@@ -375,7 +375,7 @@ namespace hgraph
             //  - Letting the unique_lock be destroyed BEFORE gil_scoped_release at scope exit
             while (true) {
                 // Check termination condition
-                now = engine_clock::now();
+                now = std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now());
                 if (now >= next_scheduled_time) {
                     break;
                 }
