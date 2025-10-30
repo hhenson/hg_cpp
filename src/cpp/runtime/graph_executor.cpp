@@ -4,6 +4,7 @@
 #include <hgraph/types/error_type.h>
 #include <hgraph/util/lifecycle.h>
 #include <hgraph/runtime/record_replay.h>
+#include <iostream>
 
 namespace hgraph
 {
@@ -81,6 +82,17 @@ namespace hgraph
     graph_ptr GraphExecutorImpl::graph() const { return _graph; }
 
     void GraphExecutorImpl::run(const engine_time_t &start_time, const engine_time_t &end_time) {
+        // Debug: print the time values to understand the comparison
+        auto start_tt = std::chrono::system_clock::to_time_t(start_time);
+        auto end_tt = std::chrono::system_clock::to_time_t(end_time);
+        auto start_us = std::chrono::duration_cast<std::chrono::microseconds>(start_time.time_since_epoch()).count();
+        auto end_us = std::chrono::duration_cast<std::chrono::microseconds>(end_time.time_since_epoch()).count();
+
+        std::cerr << "C++ GraphExecutor::run() called:" << std::endl;
+        std::cerr << "  start_time: " << start_tt << " (" << start_us << " us since epoch)" << std::endl;
+        std::cerr << "  end_time: " << end_tt << " (" << end_us << " us since epoch)" << std::endl;
+        std::cerr << "  comparison: end_time <= start_time = " << (end_time <= start_time) << std::endl;
+
         if (end_time <= start_time) {
             if (end_time < start_time) {
                 throw std::invalid_argument("End time cannot be before the start time");
