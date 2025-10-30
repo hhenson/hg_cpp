@@ -133,10 +133,16 @@ public:
         std::chrono::year_month_day ymd{std::chrono::year{yy}, std::chrono::month{static_cast<unsigned>(mon)}, std::chrono::day{static_cast<unsigned>(dd)}};
         std::chrono::sys_days date_part = ymd;
 
-        // Use explicit microseconds throughout to avoid overflow during intermediate calculations
-        auto time_part = std::chrono::microseconds{hh * 3600000000LL + min * 60000000LL + ss * 1000000LL + uu};
+        auto tod = std::chrono::hours{hh} + std::chrono::minutes{min} + std::chrono::seconds{ss} + std::chrono::microseconds{uu};
 
-        value = date_part + time_part;
+        // date_part is a sys_days time_point (days resolution). Convert its
+        // time_since_epoch to the target Duration and add the time-of-day also
+        // cast to the target Duration so the resulting time_point has the
+        // correct representation type.
+        auto days_since_epoch = date_part.time_since_epoch();
+        using duration_t = Duration;
+        value = type(std::chrono::duration_cast<duration_t>(days_since_epoch) + std::chrono::duration_cast<duration_t>(tod));
+
         return true;
     }
 
