@@ -65,6 +65,11 @@ endif (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 
 #find_package(spdlog CONFIG REQUIRED)
 
+# Set Python executable to .venv if available
+if(EXISTS "${CMAKE_SOURCE_DIR}/.venv/bin/python")
+    set(Python_EXECUTABLE "${CMAKE_SOURCE_DIR}/.venv/bin/python")
+endif()
+
 find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development.Module)
 include_directories(${Python3_INCLUDE_DIRS})
 
