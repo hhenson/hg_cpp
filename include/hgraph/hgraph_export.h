@@ -25,5 +25,6 @@
 
 #ifdef DLL_WARNING_DISABLE_4251
 #pragma warning( disable : 4251 )
+#pragma warning( disable : 4275 )
 #endif
 
