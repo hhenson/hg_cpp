@@ -239,9 +239,31 @@ public:
         unsigned int month = static_cast<unsigned int>(src.month());
         unsigned int day = static_cast<unsigned int>(src.day());
 
-        return PyDate_FromDate(year,
-                             month,
-                             day);
+#if !defined(Py_LIMITED_API) && !defined(PYPY_VERSION)
+        // Initialize PyDateTimeAPI if needed (required before using PyDate_FromDate)
+        if (!PyDateTimeAPI) {
+            PyDateTime_IMPORT;
+            if (!PyDateTimeAPI) {
+                return nanobind::none().release();
+            }
+        }
+        PyObject* result = PyDate_FromDate(year, month, day);
+#else
+        // Use Python object creation for limited API
+        PyObject* result = nullptr;
+        try {
+            datetime_types.ensure_ready();
+            result = datetime_types.date(year, month, day).release().ptr();
+        } catch (python_error& e) {
+            e.restore();
+            return nanobind::none().release();
+        }
+#endif
+        if (!result) {
+            PyErr_Clear();
+            return nanobind::none().release();
+        }
+        return result;
     }
     #if PY_VERSION_HEX < 0x03090000
         NB_TYPE_CASTER(type, io_name("typing.Union[datetime.datetime, datetime.date, datetime.time]",
