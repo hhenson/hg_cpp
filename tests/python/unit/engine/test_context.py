@@ -30,6 +30,14 @@ from hgraph import (
 from hgraph.test import eval_node
 
 
+@pytest.fixture(autouse=True)
+def reset_test_context():
+    """Reset TestContext.__instance__ between tests to prevent state pollution."""
+    TestContext.__instance__ = None
+    yield
+    TestContext.__instance__ = None
+
+
 class TestContext:
     __instance__ = None
 
