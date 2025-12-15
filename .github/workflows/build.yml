@@ -17,7 +17,7 @@ jobs:
       PYTHON_VERSION: "3.12"
       CMAKE_ARGS: "-DNB_USE_STABLE_ABI=ON -DCMAKE_CXX_STANDARD=23"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -51,7 +51,7 @@ jobs:
       CMAKE_ARGS: "-DNB_USE_STABLE_ABI=ON -DCMAKE_CXX_STANDARD=23"
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       
       - name: Set version from tag into pyproject
         shell: bash
@@ -189,7 +189,7 @@ jobs:
           # pytest tests
 
       - name: Upload Wheels as Artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-${{ matrix.os }}
           path: dist/*
@@ -207,7 +207,7 @@ jobs:
     steps:
       - name: "Install uv"
         uses: astral-sh/setup-uv@v7
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           pattern: wheels-*
           path: wheels
