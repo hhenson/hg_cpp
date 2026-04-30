@@ -1,0 +1,75 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.12",
+    "cmake>=3.25",
+    "ninja",
+    "nanobind>=2.12",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "hgraph"
+version = "0.1.0"
+description = "C++ first implementation of the hgraph runtime with Python wiring integration"
+readme = {text = "C++ first implementation of the hgraph runtime with Python wiring integration.", content-type = "text/markdown"}
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Howard Henson", email = "howard@henson.me.uk"},
+]
+keywords = [
+    "reactive",
+    "graph",
+    "forward propagating graph",
+    "time series",
+    "functional reactive programming",
+    "c++",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: C++",
+    "Programming Language :: C++ :: 23",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+dependencies = []
+
+[project.optional-dependencies]
+python = [
+    "nanobind>=2.12",
+]
+test = [
+    "pytest>=8",
+]
+dev = [
+    "cmake>=3.25",
+    "ninja",
+    "nanobind>=2.12",
+    "pytest>=8",
+    "scikit-build-core>=0.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/hhenson/hgraph"
+Repository = "https://github.com/hhenson/hgraph"
+
+[tool.scikit-build]
+build.verbose = true
+cmake.source-dir = "."
+minimum-version = "build-system.requires"
+wheel.packages = []
+
+[tool.scikit-build.cmake.define]
+HGRAPH_BUILD_PYTHON_BINDINGS = "ON"
+HGRAPH_ENABLE_PYTHON_USER_NODES = "ON"
+BUILD_TESTING = "OFF"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = [
+    "tests/python",
+]
