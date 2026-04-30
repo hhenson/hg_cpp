@@ -36,9 +36,13 @@ python3 -c "import pathlib, tomllib; tomllib.loads(pathlib.Path('pyproject.toml'
 Expected layout as the codebase grows:
 
 - `include/hgraph/...`: public C++ headers.
-- `src/cpp/...`: C++ runtime implementation.
+- `src/...`: C++ runtime implementation.
 - `bindings/python/...`: optional Python extension bridge.
-- `tests/...`: C++ tests first; Python compatibility tests only where the bridge or wiring requires them.
+- `tests/cpp/...`: C++ tests.
+- `tests/python/...`: Python compatibility tests only where the bridge or wiring requires them.
+- `docs/source/...`: Sphinx documentation for Read the Docs, split into user and developer guides.
+
+`include/hgraph/version.h` is generated from `include/hgraph/version.h.in` into the CMake build tree and installed with the public headers.
 
 Avoid committing generated build trees, CMake cache files, virtual environments, or Python bytecode.
 

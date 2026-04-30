@@ -12,6 +12,42 @@ include(CMakePackageConfigHelpers)
 include(CTest)
 include(GNUInstallDirs)
 
+set(HGRAPH_GENERATED_INCLUDE_DIR "${PROJECT_BINARY_DIR}/generated/include")
+set(HGRAPH_VERSION_HEADER_IN "${PROJECT_SOURCE_DIR}/include/hgraph/version.h.in")
+set(HGRAPH_VERSION_HEADER "${HGRAPH_GENERATED_INCLUDE_DIR}/hgraph/version.h")
+
+set(HGRAPH_GIT_BRANCH "unknown")
+set(HGRAPH_GIT_COMMIT_HASH "unknown")
+set(HGRAPH_GIT_COMMIT_DATE "unknown")
+
+find_package(Git QUIET)
+if(Git_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
+    function(hgraph_read_git_metadata output_variable)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" ${ARGN}
+            WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+            OUTPUT_VARIABLE git_output
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE git_result
+            ERROR_QUIET
+        )
+        if(git_result EQUAL 0 AND NOT git_output STREQUAL "")
+            set("${output_variable}" "${git_output}" PARENT_SCOPE)
+        endif()
+    endfunction()
+
+    hgraph_read_git_metadata(HGRAPH_GIT_BRANCH rev-parse --abbrev-ref HEAD)
+    hgraph_read_git_metadata(HGRAPH_GIT_COMMIT_HASH log -1 --format=%H)
+    hgraph_read_git_metadata(HGRAPH_GIT_COMMIT_DATE log -1 --format=%cD)
+endif()
+
+message(STATUS "hgraph git branch: ${HGRAPH_GIT_BRANCH}")
+message(STATUS "hgraph git commit: ${HGRAPH_GIT_COMMIT_HASH}")
+message(STATUS "hgraph git commit date: ${HGRAPH_GIT_COMMIT_DATE}")
+
+file(MAKE_DIRECTORY "${HGRAPH_GENERATED_INCLUDE_DIR}/hgraph")
+configure_file("${HGRAPH_VERSION_HEADER_IN}" "${HGRAPH_VERSION_HEADER}" @ONLY)
+
 option(HGRAPH_BUILD_SHARED "Build hgraph_core as a shared library" OFF)
 option(HGRAPH_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(HGRAPH_ENABLE_ASAN "Enable AddressSanitizer" OFF)
@@ -29,6 +65,7 @@ add_library(hgraph::options ALIAS hgraph_options)
 
 target_compile_features(hgraph_options INTERFACE cxx_std_23)
 target_include_directories(hgraph_options INTERFACE
+    $<BUILD_INTERFACE:${HGRAPH_GENERATED_INCLUDE_DIR}>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
@@ -76,7 +113,9 @@ if(HGRAPH_BUILD_SHARED)
     set(HGRAPH_CORE_TARGET_TYPE SHARED)
 endif()
 
-if(EXISTS "${PROJECT_SOURCE_DIR}/src/cpp/CMakeLists.txt")
+if(EXISTS "${PROJECT_SOURCE_DIR}/src/CMakeLists.txt")
+    add_subdirectory(src)
+elseif(EXISTS "${PROJECT_SOURCE_DIR}/src/cpp/CMakeLists.txt")
     add_subdirectory(src/cpp)
 elseif(EXISTS "${PROJECT_SOURCE_DIR}/src")
     file(GLOB_RECURSE HGRAPH_CORE_SOURCES CONFIGURE_DEPENDS
@@ -160,8 +199,14 @@ install(TARGETS ${_hgraph_export_targets}
 )
 
 if(EXISTS "${PROJECT_SOURCE_DIR}/include")
-    install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        FILES_MATCHING
+            PATTERN "*.h"
+            PATTERN "*.hh"
+            PATTERN "*.hpp"
+    )
 endif()
+install(FILES "${HGRAPH_VERSION_HEADER}" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hgraph)
 
 write_basic_package_version_file(
     "${PROJECT_BINARY_DIR}/hgraphConfigVersion.cmake"
