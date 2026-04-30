@@ -1,4 +1,0 @@
-requirements:
-  - "tsl-robin-map/1.4.0"
-  - "fmt/12.0.0"
-  - "backward-cpp/1.6"
