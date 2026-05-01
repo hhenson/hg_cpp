@@ -473,12 +473,18 @@ Per-kind mapping:
 
 A few notes on the cells that aren't immediate:
 
-- ``REF<T>`` schema-wise is ``TS<TimeSeriesReference>``: the reference
-  token itself is the value, and the schema does not see ``T``.
-  Dereferencing to read the target's value is a runtime concern handled
-  through binding state, not through the schema. Two ``REF<T>``
-  metadata pointers over different ``T`` therefore share their
-  value/delta schemas — the synthetic ``TimeSeriesReference`` atomic.
+- ``REF<T>`` is conceptually ``TS<TimeSeriesReference>``: the reference
+  token itself is the value, and dereferencing to read the target's
+  value is a runtime concern handled through binding state, not
+  through ``value_schema`` or ``delta_value_schema``. Note the
+  asymmetry: every ``REF<T>`` *schema* (the ``TSValueTypeMetaData``)
+  is unique per ``T`` and continues to carry the wrapped target
+  schema via ``referenced_ts()`` — useful for binding validation,
+  introspection, and ``dereference()``. What is shared across all
+  ``REF<T>`` metadata pointers is only the ``value_schema`` and
+  ``delta_value_schema``: both alias the canonical
+  ``TimeSeriesReference`` atomic, the C++ value type that backs a
+  reference token at runtime.
 - ``TSL`` keys its delta on ``int64`` because the slot id (an integer
   index) is the universal path identifier into a slot store. The
   registry auto-registers an ``int64`` scalar the first time it

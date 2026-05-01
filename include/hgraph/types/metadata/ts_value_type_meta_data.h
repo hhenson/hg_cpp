@@ -193,10 +193,11 @@ namespace hgraph
          * - ``TSL<T>``    — ``List<T.value_schema, fixed_size>``
          * - ``TSW<T>``    — ``List<T, period>`` (tick) / ``List<T, 0>`` (duration)
          * - ``TSB{f...}`` — ``Bundle{f: f.value_schema...}``
-         * - ``REF<T>``    — ``TimeSeriesReference`` (REF behaves as
-         *                    ``TS<TimeSeriesReference>``: the reference
-         *                    token itself *is* the value; dereferencing is
-         *                    a runtime concern, not a schema one)
+         * - ``REF<T>``    — ``TimeSeriesReference`` (the runtime value of
+         *                    a reference is the reference token itself;
+         *                    the schema's ``referenced_ts()`` still
+         *                    records ``T`` for binding validation, but
+         *                    it does not appear in ``value_schema``)
          * - ``SIGNAL``    — ``bool``
          */
         const ValueTypeMetaData *value_schema{nullptr};
@@ -213,8 +214,8 @@ namespace hgraph
          * - ``TSL<T>``    — ``Map<i64, T.delta_value_schema>``
          * - ``TSW<T>``    — ``T`` (the element added this tick)
          * - ``TSB{f...}`` — ``Bundle{f: f.delta_value_schema...}``
-         * - ``REF<T>``    — ``TimeSeriesReference`` (same as ``value_schema``;
-         *                    REF behaves as ``TS<TimeSeriesReference>``)
+         * - ``REF<T>``    — ``TimeSeriesReference`` (same as
+         *                    ``value_schema`` for REFs)
          * - ``SIGNAL``    — ``bool``
          */
         const ValueTypeMetaData *delta_value_schema{nullptr};

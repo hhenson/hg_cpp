@@ -193,7 +193,7 @@ TEST_CASE("ts_schemas: TSB<{f...}>.value_schema is Bundle{f.value...}, delta is 
     REQUIRE(tsb->delta_value_schema->fields[1].type == int_meta);
 }
 
-TEST_CASE("ts_schemas: REF<T> behaves as TS<TimeSeriesReference>")
+TEST_CASE("ts_schemas: REF<T> value/delta schemas are TimeSeriesReference, but the REF schemas themselves are distinct")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
@@ -201,7 +201,8 @@ TEST_CASE("ts_schemas: REF<T> behaves as TS<TimeSeriesReference>")
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
 
-    // REF's value is the reference token itself, not the dereferenced target.
+    // REF's runtime value is the reference token itself, backed by the
+    // TimeSeriesReference atomic.
     const auto *ref_atom = registry.value_type("TimeSeriesReference");
     REQUIRE(ref_atom != nullptr);
     REQUIRE(ref_atom->kind == ValueTypeKind::Atomic);
@@ -209,11 +210,18 @@ TEST_CASE("ts_schemas: REF<T> behaves as TS<TimeSeriesReference>")
     REQUIRE(ref_int->value_schema == ref_atom);
     REQUIRE(ref_int->delta_value_schema == ref_atom);
 
-    // Two REFs over different targets share the same value/delta schemas.
+    // The REF *schemas* over different targets are distinct (they carry
+    // the wrapped T via referenced_ts()), but their value/delta schemas
+    // both point at the canonical TimeSeriesReference atomic.
     const auto *double_meta = registry.register_scalar<double>("double");
-    const auto *ref_double  = registry.ref(registry.ts(double_meta));
-    REQUIRE(ref_double->value_schema == ref_int->value_schema);
-    REQUIRE(ref_double->delta_value_schema == ref_int->delta_value_schema);
+    const auto *ts_double   = registry.ts(double_meta);
+    const auto *ref_double  = registry.ref(ts_double);
+
+    REQUIRE(ref_double != ref_int);                     // distinct schemas
+    REQUIRE(ref_int->referenced_ts() == ts_int);        // T preserved on each
+    REQUIRE(ref_double->referenced_ts() == ts_double);
+    REQUIRE(ref_double->value_schema == ref_int->value_schema);              // shared
+    REQUIRE(ref_double->delta_value_schema == ref_int->delta_value_schema);  // shared
 }
 
 TEST_CASE("ts_schemas: nested compositions resolve recursively")

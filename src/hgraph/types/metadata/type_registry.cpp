@@ -1,6 +1,7 @@
 #include <hgraph/types/metadata/type_registry.h>
 
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/time_series_reference.h>
 
 #include <cstdint>
 #include <utility>
@@ -495,8 +496,11 @@ namespace hgraph
         const TSValueTypeMetaData &meta = ref_cache_.intern(referenced_ts, [&]() {
             if (!time_series_reference_meta_)
             {
-                time_series_reference_meta_ =
-                    synthetic_atomic("TimeSeriesReference", ValueTypeFlags::Hashable | ValueTypeFlags::Equatable);
+                // Register the real C++ TimeSeriesReference type so the
+                // schema is paired with a proper StoragePlan via
+                // ValuePlanFactory. Every REF schema's value_schema /
+                // delta_value_schema points at this canonical metadata.
+                time_series_reference_meta_ = register_scalar<TimeSeriesReference>("TimeSeriesReference");
             }
             TSValueTypeMetaData m(TSTypeKind::REF, time_series_reference_meta_);
             m.set_ref(referenced_ts);
