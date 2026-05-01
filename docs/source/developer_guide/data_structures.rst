@@ -300,27 +300,278 @@ The node scheduler owns the complete set of pending events. The graph schedule t
 Time-Series Layer
 -----------------
 
-Time-series structures provide the value and notification graph used by nodes.
+The time-series layer wraps value-layer storage with the additional state
+every output and input needs to participate in graph evaluation: modification
+time, subscribers, binding, delta tracking, and the path identity that makes
+output-to-input wiring possible.
 
-Common elements:
+This section currently focuses on the foundational concepts that make TSS
+and TSD work — memory stability, path-from-root addressing, and the slot
+abstraction. Other kinds (TS, TSB, TSL, TSW, REF) reuse the same
+primitives and will be elaborated as the implementation settles.
 
-``TimeSeriesHeader``
-    Kind, parent pointer, owning node or owning time-series parent, validity state, and last modification time.
+Time-Series Kinds
+~~~~~~~~~~~~~~~~~
 
-``TimeSeriesInput``
-    Bound view of an output. Active inputs subscribe to output modification notifications and schedule their owning node.
+``TS[T]``
+    Scalar time-series of one atomic type.
 
-``TimeSeriesOutput``
-    Owns or references value storage and publishes modification notifications.
+``TSB``
+    Named bundle of time-series fields.
 
-``SubscriberList``
-    Inputs or parent structures that need to be notified when an output changes.
+``TSL``
+    Ordered list of one time-series type, fixed-size or dynamic.
 
-``ChildIndex``
-    Mapping from field, index, or key to child time-series for bundle, list, set, dictionary, and window-shaped types.
+``TSS``
+    Unordered set of one scalar type.
 
-``DeltaState``
-    Per-cycle structural and value changes that must be visible during the current evaluation cycle and cleared by after-evaluation callbacks.
+``TSD``
+    Keyed dictionary with scalar keys and time-series values.
+
+``TSW``
+    Sliding window of one scalar type.
+
+``REF``
+    Reference to a time-series target. The target is resolved through
+    binding state rather than carried inline.
+
+Tick Semantics
+~~~~~~~~~~~~~~
+
+Every time-series, regardless of kind, exposes the same five tick-level
+properties. These are the universal time-series contract. Inputs and
+outputs both expose them; on an input, the values reflect the bound
+output. The kind-specific view APIs described later add
+container-specific access on top of this base, but the base is always
+present.
+
+``value``
+    The cumulative current state of the time-series. For a ``TS[T]`` this
+    is the scalar that has been written; for a ``TSB`` it is the bundle
+    of all currently valid fields; for a ``TSD`` it is the map of all
+    live keys to their current values. ``value`` persists across ticks
+    until it is replaced or extended.
+
+``delta_value``
+    What changed in the current tick. ``delta_value`` is ``None`` when
+    the time-series did not tick in the current engine cycle. When it
+    did tick, the shape depends on the kind:
+
+    - ``TS[T]`` — ticks are atomic value replacements with no diffing,
+      so ``delta_value`` is the new scalar (the same object as
+      ``value``). Setting a ``TS[T]`` to its current value still
+      produces a delta.
+    - ``TSB`` — modified fields only.
+    - ``TSL`` — modified elements with their indices.
+    - ``TSS`` — added and removed sets.
+    - ``TSD`` — added entries, removed keys, and per-key modified values.
+    - ``TSW`` — the element added in the current tick (if any).
+
+    ``delta_value`` is logically present only for the engine cycle of
+    the change. The runtime is not required to physically reset it at
+    the end of the cycle, and in fact prefers lazy cleanup: removed
+    ``TSS`` and ``TSD`` slot entries live past their logical destruction
+    so the current cycle's delta can be read, and physical erase happens
+    later at the next outermost ``begin_mutation()``. A subsequent
+    engine cycle querying ``delta_value`` returns ``None`` if no new
+    change has occurred, or the new change if one has.
+
+``modified``
+    Whether the time-series ticked in the current evaluation cycle. For
+    container kinds this is recursive: a container is modified if any
+    of its elements is modified. Equivalent to
+    ``last_modified_time == evaluation_time``. Must be an O(1) query —
+    consumers test it on every active input on every tick, so it is
+    read directly from per-TS state, never derived by scanning children.
+
+``valid``
+    Whether the time-series has ever been ticked. Equivalent to
+    ``last_modified_time != MIN_DT`` (``MIN_DT`` is the sentinel for
+    never-modified). Note that ``valid`` does *not* imply the
+    time-series holds any content: a ``TSS`` or ``TSD`` that ticked
+    with no members is valid but empty. Also an O(1) query.
+
+``last_modified_time``
+    The engine time at which the time-series was last modified. Stored
+    once per time-series instance in the per-TS runtime state tree.
+    Defaults to ``MIN_DT`` until the first tick.
+
+Per-Element Modification
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+For composite kinds, a consumer often needs to ask not just *did this
+container tick?* but *which children ticked?*. The answer comes from
+each child's own time-series state: every time-series instance — at
+every level of nesting — carries its own ``last_modified_time`` as
+part of the per-TS runtime state tree. A collection like TSD holds a
+vector of slots where each slot contains the full time-series state of
+that element, including the child's ``last_modified_time``. Walking
+the slots and inspecting each child's ``last_modified_time`` is how
+the container reports which elements changed in the current cycle —
+there is no separate side structure tracking this.
+
+The container's own ``last_modified_time`` is updated whenever any
+child ticks, which is what makes the recursive container-level
+``modified`` query a single field read rather than a tree walk. A
+slot id is therefore both a path identifier and the key into the
+child's full time-series state.
+
+Memory Stability Invariant
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every time-series value in the runtime must be memory-stable. Once an
+output's value and its ops table are published, their addresses must not
+move for the lifetime of the owning node. Output-to-input binding is
+implemented by recording pointers — to the value, to the ops, to
+per-element state — and those pointers must remain valid across ticks,
+rebinds, and structural mutation of containers.
+
+For fixed-shape time-series (TS, TSB, fixed-size TSL, TSW), stability is
+trivial: the value lives in node-owned storage and survives until the
+owning node is destroyed.
+
+For TSD and dynamic TSL, stability is harder. Elements are added and
+removed during evaluation, but a consumer that bound to one of them on
+the previous tick must still be able to dereference it on the current
+tick. Compacting storage cannot be used. The runtime instead uses
+chained, non-relocating slot blocks: new capacity is appended without
+moving previously published slot addresses.
+
+Path Construction and the Slot Concept
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every binding carries a path that locates the target value within its
+owning graph. For indexable kinds — TSB, TSL — the path is a sequence
+of ``size_t`` indices (field index, element index) and addressing is
+direct.
+
+TSD breaks this because keys can be of any scalar type. Carrying
+arbitrary keys in paths would be expensive (variable-width encoding,
+type-aware comparison at every step) and would couple every path
+traversal to key semantics.
+
+The runtime resolves this by introducing the **slot**: a stable
+non-negative integer that names an element of a keyed container without
+referencing the key itself. A slot is allocated when a key is first
+inserted, remains allocated while the key is live, and persists through
+delayed-erase windows so consumers can still inspect a removed element
+on the tick of its removal. With slots, paths into TSD become
+``(slot_id)`` — exactly the shape of paths into TSL — and the runtime
+can treat all keyed containers uniformly.
+
+Slots originate in TSS rather than TSD. The reason is the TSS/TSD
+relationship described below: a TSD exposes its keys as a TSS, and that
+TSS must use the same slot ids as the parent TSD. Putting slots at the
+TSS layer first lets TSD's value side reuse them directly.
+
+The Slot Store Family
+~~~~~~~~~~~~~~~~~~~~~
+
+Three primitives in ``v2/types/utils/`` express the slot machinery:
+
+``StableSlotStorage``
+    Non-relocating, double-indexed slot storage. ``slots`` is a logical
+    slot-id → payload-pointer table; ``blocks`` owns the chained heap
+    allocations behind those pointers. Growth appends a block; previously
+    issued slot pointers never move.
+
+``KeySlotStore``
+    Stable slot-backed key storage with delayed-erase semantics. Owns
+    homogeneous keys keyed off a ``StoragePlan`` and a small ops vtable
+    (``hash``, ``equal``). Maintains two parallel bitmaps:
+
+    - ``constructed[slot]`` — payload object exists in slot memory
+    - ``live[slot]`` — payload is currently a member of the set
+
+    A slot in ``constructed && !live`` is *pending erase*: still
+    addressable and inspectable until the next outermost
+    ``begin_mutation()`` or an explicit ``erase_pending()`` flush. This
+    is what lets a consumer that bound on the previous tick inspect the
+    slot's last value during the tick of its removal.
+
+``ValueSlotStore``
+    Parallel value memory keyed off the same slot ids as a
+    ``KeySlotStore``. The owning store decides which slot ids are live;
+    ``ValueSlotStore`` owns the value payload, the per-slot
+    ``constructed`` bit, and a per-slot ``updated`` bit used to drive the
+    current mutation epoch.
+
+Both stores expose a ``SlotObserver`` notification protocol —
+``on_capacity``, ``on_insert``, ``on_remove``, ``on_erase``,
+``on_clear`` — so parallel structures over the same slot ids stay
+synchronised without any of them needing to know about the others.
+
+The Set and Map shapes used by the value layer's delta-tracking
+implementations are layered on these primitives. A delta-tracking Set
+owns one ``KeySlotStore``. A delta-tracking Map owns one ``KeySlotStore``
+for keys plus one ``ValueSlotStore`` for values, with the value store
+registered as a slot observer on the key store.
+
+TSS
+~~~
+
+TSS is the time-series wrapper around a delta-tracking Set. It owns:
+
+- a ``KeySlotStore`` for the keys, providing stable per-slot addresses
+  and delayed-erase semantics;
+- the time-series state common to every kind (modification time,
+  subscribers, validity);
+- per-slot insertion and removal records that drive ``delta_value``.
+
+The slot ids assigned by the ``KeySlotStore`` are the path identifiers
+used throughout the rest of the time-series layer.
+
+A TSS instance can be **owning** — a TSS output written by a node — or
+**read-only** — a TSS view exposed by another container (see TSD).
+Both modes share the same TSS surface: ``value``, ``delta_value``,
+subscription, and slot-based path access. The read-only mode rejects
+write operations because the underlying storage belongs to the parent
+container.
+
+TSD
+~~~
+
+TSD is the time-series wrapper around a delta-tracking Map. It owns:
+
+- a ``KeySlotStore`` for the keys, identical in shape to a TSS's;
+- a ``ValueSlotStore`` whose slot ids match the key store's, holding
+  the per-key time-series values;
+- the time-series state common to every kind.
+
+The value side is itself a recursive time-series layer: each value-slot
+holds a complete time-series value (most often a ``TS[T]``, but ``TSB``,
+``TSL``, or further nested ``TSD`` are all permitted by the schema).
+Memory stability is preserved by the underlying ``StableSlotStorage`` so
+consumers can bind to a specific slot's value without worrying about
+future structural changes.
+
+Key-Set Exposure
+^^^^^^^^^^^^^^^^
+
+A TSD exposes its keys as a TSS through ``key_set()``. The returned TSS
+is **read-only**:
+
+- it shares the parent TSD's ``KeySlotStore`` directly, so slot ids
+  match one-to-one with the parent's value side;
+- it can be subscribed to and exposes ``value`` and ``delta_value`` like
+  any other TSS;
+- it rejects write operations — keys are owned by the TSD and only
+  change through the TSD's mutable view.
+
+This is the value-layer Map → read-only Set view (described in the
+Value Layer) lifted into the time-series layer. The difference is that
+the time-series version carries modification time and a delta stream,
+not just structural read access.
+
+Buffer Exposure
+^^^^^^^^^^^^^^^
+
+Because keys and values live in slot stores backed by stable contiguous
+blocks, both TSS and the value side of TSD can expose buffer views the
+same way the value layer does — over live keys, over live values, and
+over the per-slot ``updated`` mask for the current tick. This matters
+for adaptors and analytics paths that consume large keyed time-series
+in bulk.
 
 Value Layer
 -----------
@@ -386,8 +637,37 @@ A Value has one of eight kinds, recorded on its ``ValueTypeMetaData``:
 Each kind has a corresponding specialized view: ``TupleView``, ``BundleView``,
 ``ListView``, ``SetView``, ``MapView``, ``CyclicBufferView``, ``QueueView``.
 Specialized views are thin wrappers over the same two-word ``ValueView``
-context; they expose kind-specific behaviour (``at``, ``set``, ``push_back``,
-``contains``, etc.).
+context; they expose kind-specific read access (``at``, ``contains``,
+iteration). Mutation goes through the corresponding mutable view, described
+under Read-Only and Mutable Views.
+
+Multiple Implementations per Kind
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The reason every kind is exposed through a type-erased view rather than a
+concrete C++ template is that one kind can have several implementations,
+chosen by the caller's needs and bound at the value layer's resolution
+step.
+
+Pure-data callers — those that only need to store, hash, compare, and
+serialise values — use **compact** implementations. A pure-data Set is a
+hash-backed key store; a pure-data Map is a paired key/value slot store.
+These minimise memory and skip bookkeeping the caller does not need.
+
+Time-series callers — those that need to observe insertions, removals, and
+modifications across ticks — use **delta-tracking** implementations. The
+delta-tracking Set is the storage substrate for ``TSS``; the delta-tracking
+Map is the substrate for ``TSD``. They carry per-slot observers and
+pending-erase state so the time-series layer can produce coherent deltas.
+
+Both implementations expose the same ``SetView`` / ``MapView`` shape. Code
+that walks a Set or a Map through its view does not need to know which
+implementation it is looking at. The choice is made by the schema's bound
+``StoragePlan`` and ``ValueOps``; the view contract is unchanged.
+
+This is the load-bearing reason the value layer is type-erased rather than
+generic-templated: it lets the time-series layer reuse the value-layer
+container vocabulary without forking the surface.
 
 Binding and Interning
 ~~~~~~~~~~~~~~~~~~~~~
@@ -482,9 +762,12 @@ A ``ValueView`` exposes:
   atomic kinds.
 - generic ops: ``hash()``, ``equals()``, ``compare()``, ``to_string()`` —
   always routed through the bound ``ValueOps``.
-- mutation: ``set<T>(value)`` for atomics; container mutation goes through
-  the specialized adapters described under View Casting.
-- ``copy_from(other)`` for assigning between views with matching bindings.
+- read access for composite kinds via the specialized adapters described
+  under View Casting.
+
+Mutation, including atomic ``set<T>`` and structural assignment, requires a
+mutable view obtained via ``begin_mutation()`` (see Read-Only and Mutable
+Views).
 
 View Casting
 ~~~~~~~~~~~~
@@ -508,6 +791,41 @@ These casts only re-interpret the existing binding's view shape. They do
 not change the underlying schema or copy the payload. Cross-schema
 adaptation — exposing one schema's value through a different schema —
 is a time-series concern, not a value-layer concern.
+
+Read-Only and Mutable Views
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Views come in read-only and mutable variants. The distinction is part of
+the public contract, not just C++ ``const`` discipline:
+
+- A **read-only view** exposes inspection and iteration: typed access,
+  ``hash``, ``equals``, ``compare``, ``to_string``, buffer exposure, and
+  structural reads.
+- A **mutable view** adds the kind-specific mutation operations: ``set``
+  for atomics, field mutation on bundles and tuples, ``push_back`` /
+  ``resize`` on lists, ``add`` / ``remove`` on sets, key insertion and
+  value updates on maps, and so on.
+
+A mutable view is obtained from an existing view by calling
+``begin_mutation()``. The transition is explicit so that consumers can
+reason about when mutation is in scope — the time-series layer in
+particular needs to know precisely when changes start and end so its
+delta accounting stays coherent.
+
+The mutation is closed by calling ``end_mutation()`` on the mutable
+view. If the caller does not call it, the mutable view's destructor
+closes the mutation when the view goes out of scope. Explicit
+``end_mutation()`` gives the caller deterministic control over when
+the runtime sees the mutation complete; RAII closure is the safety net
+that guarantees no mutation is left dangling if a caller forgets or an
+exception unwinds the stack.
+
+One specific cross-kind read-only view is worth calling out: ``MapView``
+exposes ``key_set()``, which returns a read-only ``SetView`` over the
+map's keys. Callers can iterate or query keys with the same surface they
+would use for a standalone set, without copying or materialising a second
+container. The view is read-only because the keys belong to the map;
+structural changes go through the map's mutable view.
 
 Nullability
 ~~~~~~~~~~~
