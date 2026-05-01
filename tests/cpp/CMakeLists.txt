@@ -34,8 +34,11 @@ if(NOT Catch2_FOUND)
 endif()
 
 add_executable(hgraph_unit_tests
+    test_intern_table.cpp
     test_memory_utils.cpp
+    test_plan_factories.cpp
     test_slot_utils.cpp
+    test_type_registry.cpp
 )
 
 target_link_libraries(hgraph_unit_tests

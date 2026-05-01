@@ -586,10 +586,17 @@ Mapping to Core Concepts
 ================  ============================================================
 Concept role      Value-layer name
 ================  ============================================================
-Schema            ``ValueTypeMetaData`` — kind, size, alignment, fields,
-                  element/key types, capability flags
-Plan              ``MemoryUtils::StoragePlan`` — memory layout plus a
-                  ``LifecycleOps`` table (alloc, construct, destruct, dealloc)
+Schema            ``ValueTypeMetaData`` — kind, capability flags, fields,
+                  element/key types. *No layout information; that lives on
+                  the matching* ``StoragePlan``.
+Plan              ``MemoryUtils::StoragePlan`` — memory layout (size,
+                  alignment, field offsets) plus a ``LifecycleOps`` table
+                  (alloc, construct, destruct, dealloc)
+Plan factory      ``ValuePlanFactory`` — schema → plan mapping, with
+                  results cached against the schema. Atomic plans are
+                  pre-registered by ``TypeRegistry`` from
+                  ``MemoryUtils::plan_for<T>()``; tuple / bundle / fixed
+                  list plans are synthesised on first use.
 Ops               ``ValueOps`` — ``hash``, ``equals``, ``compare``,
                   ``to_string`` function pointers
 Binding           ``ValueTypeBinding`` — interned ``(ValueTypeMetaData,
@@ -700,6 +707,44 @@ Composite schemas are populated lazily. The first request for a tuple,
 list, map, or other container schema synthesises its plan from the
 element/key bindings, interns the resulting binding, and stores the
 builder.
+
+Plan Factory
+~~~~~~~~~~~~
+
+``ValuePlanFactory`` is the schema → plan mapping. It is the value
+layer's answer to "the schema is independent of plan, but a builder
+needs to pick a plan": the factory hands back the canonical plan for a
+given schema, with results cached against the schema for stable
+addresses.
+
+- **Atomic schemas** are paired with their canonical plan at
+  registration time. ``TypeRegistry::register_scalar<T>()`` calls
+  ``ValuePlanFactory::register_atomic(schema, &MemoryUtils::plan_for<T>())``,
+  so subsequent ``plan_for(atomic_schema)`` calls return the
+  function-local-static plan without recomputation.
+- **Tuple, bundle, and fixed-size list schemas** are synthesised on
+  first use. ``plan_for`` recursively resolves component schemas to
+  their plans and feeds them into ``MemoryUtils::tuple_plan`` /
+  ``named_tuple_plan`` / ``array_plan``. Because those builders intern
+  their results, the factory's cache lines up with the global plan
+  cache.
+- **Container kinds (Set, Map, CyclicBuffer, Queue, dynamic List)**
+  require the value-layer's container storage shapes
+  (``DynamicListStorage``, ``SetStorage``, ``MapStorage``, etc.). Until
+  that layer is ported, ``plan_for`` throws for these kinds; the
+  interface is in place so callers can be written against the final
+  shape.
+
+The time-series layer has the matching ``TSValuePlanFactory``. It is
+declared with the same surface today; its synthesis logic is deferred
+until the value-layer container shapes and the TS-layer state-tree
+storage are both in place.
+
+A builder may use the default factory to obtain a default plan, or
+swap in an alternative factory for a specialised implementation
+(e.g. a delta-tracking factory for time-series consumers wrapping the
+same set/map shape). The schema itself remains untouched in both
+cases.
 
 Owning Value
 ~~~~~~~~~~~~
