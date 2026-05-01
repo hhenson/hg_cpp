@@ -9,9 +9,7 @@ The developer guide describes the internal design of the C++ implementation. The
    build_system
    documentation_conventions
    architecture
-   memory_management
    data_structures
-   schema_management
    wiring
    python_integration
    testing
