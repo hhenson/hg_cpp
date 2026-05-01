@@ -8,17 +8,28 @@ during wiring and evaluation. They do **not** describe how that thing is
 laid out in memory or how it behaves at runtime; those concerns live in
 *Allocation, Plans and Ops*.
 
-This chapter covers the two schema families:
+This chapter covers four schema families, each describing identity at a
+different layer of the runtime:
 
 - **Scalar schemas** describe the value-layer payload kinds (atomic,
   tuple, bundle, list, set, map, cyclic buffer, queue).
 - **Time-series schemas** describe the runtime-side wrappers (TS, TSS,
   TSD, TSL, TSW, TSB, REF, SIGNAL) that participate in graph evaluation.
+- **Node schemas** describe the contract of a single graph node — its
+  inputs, output, optional error output, optional state, lifecycle
+  hooks, and any injectable dependencies (clock, scheduler).
+- **Graph schemas** describe a graph topology — the set of nodes, the
+  wiring between them, the graph's boundary ports, and (for nested
+  graphs) how those boundary ports bind into a parent graph.
 
-The two families are separate types but share the same vocabulary
+The four families are separate types but share the same vocabulary
 introduced in *Core Concepts*: a schema is a Plan-independent identity,
-interned through the registry, and consulted everywhere a value or
-time-series flows through the system.
+interned through the registry, and consulted everywhere a value, a
+time-series, a node, or a graph flows through the system. Higher-layer
+schemas reference lower-layer ones: a node schema names time-series
+schemas for its inputs and outputs and a value schema for its state; a
+graph schema names node schemas for its members and time-series schemas
+for its boundary ports.
 
 Responsibilities
 ----------------
@@ -49,13 +60,20 @@ artifact's lifetime without managing ownership.
 The two relevant registries are:
 
 ``TypeRegistry``
-    The single registry for both scalar and time-series schemas.
-    Internally it owns one ``InternTable<TypedKey, TypeMetaData>`` per
-    composite shape (atomic, tuple, bundle, list, set, map, sized, TSD,
-    TSL, TSW, TSB) and a flat name-keyed map for atomic scalar
-    registrations. Calling ``ts(int_meta)`` or ``tsd(string_meta,
-    ts_int_meta)`` returns the same pointer no matter how the request
-    was assembled.
+    The single registry for scalar and time-series schemas. Internally
+    it owns one ``InternTable<TypedKey, TypeMetaData>`` per composite
+    shape (atomic, tuple, bundle, list, set, map, sized, TSD, TSL, TSW,
+    TSB) and a flat name-keyed map for atomic scalar registrations.
+    Calling ``ts(int_meta)`` or ``tsd(string_meta, ts_int_meta)``
+    returns the same pointer no matter how the request was assembled.
+
+``NodeRegistry`` / ``GraphRegistry``
+    Companion registries for node and graph schemas, each layered on
+    one ``InternTable``. Node schemas are interned by their structural
+    key (input schema pointer, output schema pointer, state schema
+    pointer, lifecycle flags, node kind); graph schemas are interned by
+    their topology key. The exact key shapes are described in the
+    per-layer pages.
 
 ``ValuePlanFactory`` / ``TSValuePlanFactory``
     Schema → plan mapping. Atomic plans are paired with their schema at
@@ -71,23 +89,29 @@ holds for nested compositions: ``TSD<string, TSL<TS<double>>>`` is a
 single interned schema, and the registry never re-synthesises any of
 its components on subsequent lookups.
 
-What this chapter does *not* cover
-----------------------------------
+Out-of-scope topics
+-------------------
 
-The schema layer is intentionally narrow. It does not own:
+The schema layer leaves a few related concerns to other chapters:
 
-- node signatures (input/output port lists, type variables, defaults) —
-  these will be described under *Wiring* once that chapter is filled
-  out;
-- graph boundary descriptors (parent/nested graph connection shapes) —
-  same;
-- canonical Python type metadata conversion — covered separately under
-  *Python Integration*;
+- the runtime *building* of a node or graph (allocators, lifecycle
+  ops, view materialisation) — see *Allocation, Plans and Ops*;
+- output-to-input link state machinery (TargetLink, RefLink,
+  ForwardingLink) — see *Linking Strategies*;
+- canonical Python type metadata conversion — covered separately
+  under *Python Integration*;
 - error messaging for failed resolution and serialisation/debug
   representation — open topics, see *Refinement Topics*.
+
+Schema types
+------------
+
+The four schema families covered in this chapter:
 
 .. toctree::
    :maxdepth: 2
 
    scalar
    time_series
+   node
+   graph

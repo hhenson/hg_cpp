@@ -40,12 +40,11 @@ Open questions inherited from the schema-management notes:
 - canonical Python type metadata conversion (Python type → schema),
 - C++ template integration for typed wrappers around erased schemas,
 - error messages and diagnostics for failed schema resolution,
-- serialisation or debug representation of schemas across runs,
-- node signature representation (input/output port lists, type
-  variables, defaults) — a schema-management concern that has not been
-  picked up by this document yet,
-- graph boundary descriptors (parent/nested graph connection shapes) —
-  same.
+- serialisation or debug representation of schemas across runs.
+
+Node and graph schemas are covered in *Schemas > Node Schemas* and
+*Schemas > Graph Schemas*; several details on those pages are still in
+flight and will be filled in alongside the implementation.
 
 Open Questions
 --------------

@@ -17,7 +17,8 @@ Schema            ``ValueTypeMetaData`` — kind, capability flags, fields,
                   the matching* ``StoragePlan``.
 Plan              ``MemoryUtils::StoragePlan`` — memory layout (size,
                   alignment, field offsets) plus a ``LifecycleOps`` table
-                  (alloc, construct, destruct, dealloc)
+                  (construct, copy/move construct and assign, destroy).
+                  Carries no allocator reference.
 Plan factory      ``ValuePlanFactory`` — schema → plan mapping, with
                   results cached against the schema. Atomic plans are
                   pre-registered by ``TypeRegistry`` from
@@ -104,18 +105,28 @@ never directly on ``Value``.
 Storage and Allocation
 ----------------------
 
-Memory is owned by ``MemoryUtils::StorageHandle``, parameterised by an
-inline-storage policy and the binding type. Lifecycle hooks are
-delegated to ``LifecycleOps`` on the binding's ``StoragePlan``:
+Memory is owned by ``MemoryUtils::StorageHandle``, parameterised by
+an inline-storage policy and the binding type. Lifecycle hooks
+delegated to ``LifecycleOps`` on the binding's ``StoragePlan`` cover
+only object lifetime:
 
 - ``construct``, ``copy_construct``, ``move_construct``
 - ``copy_assign``, ``move_assign``
 - ``destroy``
-- ``allocate``, ``deallocate``
+
+Allocation is **not** part of ``LifecycleOps``. The ``StorageHandle``
+holds an allocator separately — by default a heap allocator with the
+plan's alignment, but any allocator with the matching size and
+alignment contract can be used — and consults the bound
+``StoragePlan`` only for size and alignment when it needs to acquire
+memory. Once the storage exists, the lifecycle ops construct into it;
+teardown reverses the order: ``destroy`` runs first, then the
+allocator releases the buffer. The ``StoragePlan`` is therefore
+reusable across allocation strategies without modification.
 
 Small payloads use inline (SBO) storage; larger payloads heap-allocate
-with schema alignment. Container kinds have their own internal storage
-shapes that keep element addresses stable across growth and
+with schema alignment. Container kinds have their own internal
+storage shapes that keep element addresses stable across growth and
 reconciliation; those shapes feed directly into the time-series
 representation and are described under *Time-Series Plans and Ops*.
 

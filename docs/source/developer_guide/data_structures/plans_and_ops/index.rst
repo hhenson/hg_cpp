@@ -15,10 +15,15 @@ sit side-by-side here, deliberately separated:
 ``Plan``
     The memory layout for one data structure. A plan carries the
     information an allocator needs to size and align a region: total
-    size, alignment, field offsets for composites, and a
-    ``LifecycleOps`` table that pairs construction and destruction with
-    matching allocation and deallocation hooks. Plans are immutable and
-    interned; consumers hold borrowed pointers to them.
+    size, alignment, and field offsets for composites. It also carries
+    a ``LifecycleOps`` table for the construction, copy / move, and
+    destruction operations that bring an instance to life in
+    already-allocated memory. A plan does **not** allocate or
+    deallocate memory and holds no reference to any allocator; an
+    allocator consumes the plan's size and alignment to acquire
+    storage, and a separate caller (typically the owning Value) then
+    invokes the lifecycle hooks on that storage. Plans are immutable
+    and interned; consumers hold borrowed pointers to them.
 
 ``Ops``
     A struct of function pointers that defines behaviour over a value's
@@ -29,9 +34,12 @@ sit side-by-side here, deliberately separated:
 
 Separating allocation from construction is what lets the runtime mix
 strategies — heap, arena, pool, inline storage — without rewriting the
-construction logic. The plan describes the layout; the allocator
-consumes the plan to acquire memory; the lifecycle ops then construct
-into that memory. Tearing down is symmetric: destruct, then deallocate.
+construction logic, and lets the same plan be used unchanged across
+all of them. The plan describes the layout; the allocator consumes
+the plan's size and alignment to acquire memory; the lifecycle ops
+then construct into that memory. Tearing down is symmetric: the
+plan's ``destroy`` runs first, then the allocator (which the plan
+knows nothing about) releases the buffer.
 
 This chapter is organised as:
 

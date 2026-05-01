@@ -11,8 +11,9 @@ The chapters below split the description by responsibility:
   View vocabulary that every layer reuses.
 - *Overview* names the structural layers (Execution, Graph, Node,
   scheduling, TimeSeries) and how they fit together.
-- *Schemas* describes type identity for scalar values and
-  time-series, including the registries that intern them.
+- *Schemas* describes type identity at four layers — scalar values,
+  time-series, nodes, and graphs (including nested graphs) — and the
+  registries that intern them.
 - *Allocation, Plans and Ops* describes how those types are laid out in
   memory and what behaviour their ops vtables expose, separately for
   scalars and time-series.

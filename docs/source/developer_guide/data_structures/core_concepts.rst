@@ -14,9 +14,14 @@ Concept Group
 ~~~~~~~~~~~~~
 
 ``Plan``
-    Memory-layout primitive. A Plan describes how to allocate, construct,
-    destruct, and deallocate the memory for one data structure. It does not
-    carry semantic meaning beyond memory lifecycle.
+    Memory-layout primitive. A Plan describes the size, alignment, and
+    field layout for one data structure, and pairs that with the
+    construction, copy / move, and destruction operations needed to
+    bring an instance to life in already-allocated memory. A Plan does
+    **not** allocate or deallocate memory and carries no reference to
+    any allocator; allocators consume a Plan's size and alignment
+    separately to acquire storage. A Plan does not carry semantic
+    meaning beyond memory layout and lifecycle.
 
 ``Schema``
     Independent, generic description of a concept. A Schema describes what a
@@ -52,9 +57,13 @@ Data Group
 ``Value``
     Holds the data described by a Plan. By definition, Values are
     type-erased storage. A Value carries only the minimum behaviour needed
-    to live in a container: deallocation, copy and move construction and
+    to live in a container: destruction, copy and move construction and
     assignment, equality, and hash. Reads, writes, comparisons over content,
     and iteration are exposed through a View, never directly on the Value.
+    A Value owns its allocator separately from its Plan: the Plan
+    contributes size and alignment, the allocator owns the storage,
+    and the Plan's lifecycle ops construct and destruct into that
+    storage.
 
 ``View``
     Constructed from an existing Value. A View references the Value's
