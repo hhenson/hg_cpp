@@ -416,6 +416,86 @@ child ticks, which is what makes the recursive container-level
 slot id is therefore both a path identifier and the key into the
 child's full time-series state.
 
+Value and Delta-Value Schemas
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The conceptual ``value`` and ``delta_value`` shapes described under
+Tick Semantics surface as two pre-computed properties on every TS
+schema (``TSValueTypeMetaData``):
+
+- ``value_schema`` — the value-layer schema of the time-series's
+  runtime ``value``.
+- ``delta_value_schema`` — the value-layer schema of its
+  ``delta_value`` (the per-tick change set).
+
+Both are populated during schema registration and read as plain field
+accesses — consumers never need to recompute them. The same composite
+plans the value layer interns (see *Value Layer*) back the underlying
+storage, so two TS schemas with the same value/delta shapes share the
+same value-layer schema pointers.
+
+Per-kind mapping:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 35 45
+
+   * - Kind
+     - ``value_schema``
+     - ``delta_value_schema``
+   * - ``TS<T>``
+     - ``T``
+     - ``T``
+   * - ``TSS<T>``
+     - ``Set<T>``
+     - ``Bundle{added: Set<T>, removed: Set<T>}``
+   * - ``TSD<K, V>``
+     - ``Map<K, V.value_schema>``
+     - ``Bundle{added: Map<K, V.delta>, removed: Set<K>, modified: Map<K, V.delta>}``
+   * - ``TSL<T>``
+     - ``List<T.value_schema, fixed_size>``
+     - ``Map<int64, T.delta_value_schema>``
+   * - ``TSW<T>`` (tick)
+     - ``List<T, period>``
+     - ``T``
+   * - ``TSW<T>`` (duration)
+     - ``List<T, 0>`` (dynamic)
+     - ``T``
+   * - ``TSB{f...}``
+     - ``Bundle{f: f.value_schema...}``
+     - ``Bundle{f: f.delta_value_schema...}``
+   * - ``REF<T>``
+     - ``TimeSeriesReference``
+     - ``TimeSeriesReference``
+   * - ``SIGNAL``
+     - ``bool``
+     - ``bool``
+
+A few notes on the cells that aren't immediate:
+
+- ``REF<T>`` schema-wise is ``TS<TimeSeriesReference>``: the reference
+  token itself is the value, and the schema does not see ``T``.
+  Dereferencing to read the target's value is a runtime concern handled
+  through binding state, not through the schema. Two ``REF<T>``
+  metadata pointers over different ``T`` therefore share their
+  value/delta schemas — the synthetic ``TimeSeriesReference`` atomic.
+- ``TSL`` keys its delta on ``int64`` because the slot id (an integer
+  index) is the universal path identifier into a slot store. The
+  registry auto-registers an ``int64`` scalar the first time it
+  synthesises a TSL delta schema.
+- ``TSD`` and ``TSS`` deltas are bundles because the per-tick change
+  set has multiple categories (added / removed / modified). Each
+  category is its own value-layer container.
+- ``TSW`` (tick) has a fixed-size list as ``value_schema`` because the
+  rolling window length is known up front; duration-based windows fall
+  back to a dynamic list since the count of elements per window varies
+  with tick rate.
+
+Recursion is automatic: the metadata for a nested ``TSD<string,
+TSL<TS<double>>>`` reads its inner ``TSL``'s ``delta_value_schema``
+directly off the inner schema, so the registry never has to recompose
+known schemas.
+
 Memory Stability Invariant
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 

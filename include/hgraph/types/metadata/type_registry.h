@@ -131,6 +131,14 @@ namespace hgraph
         void register_value_alias(std::string_view name, const ValueTypeMetaData *meta);
         void register_ts_alias(std::string_view name, const TSValueTypeMetaData *meta);
 
+        /**
+         * Populate ``meta.value_schema`` and ``meta.delta_value_schema`` for a
+         * partially-constructed time-series schema. Called from each TS
+         * factory before the metadata is interned, so the resulting interned
+         * schema carries the pre-computed pointers as immutable properties.
+         */
+        void populate_ts_schemas(TSValueTypeMetaData &meta);
+
         // ----------------------------------------------------------------
         // Cache keys for the identity caches.
         //

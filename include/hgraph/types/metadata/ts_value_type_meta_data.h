@@ -170,10 +170,54 @@ namespace hgraph
 
         /** Kind discriminator for ``data``. */
         TSTypeKind kind{TSTypeKind::SIGNAL};
-        /** Underlying value schema for ``TS`` / ``TSS`` / ``TSW`` kinds. */
+        /**
+         * Underlying value-layer schema the metadata was constructed against.
+         * This is the value pointer passed to the constructor and used
+         * internally during composite construction (e.g. ``TSD`` reads
+         * ``element_ts->value_type`` to compose its own value layout). For
+         * the consumer-visible value schema use ``value_schema`` instead.
+         */
         const ValueTypeMetaData *value_type{nullptr};
         /** Kind-dependent payload; populated through the ``set_*`` helpers. */
         KindData data{};
+        /**
+         * Value-layer schema describing the runtime ``value`` of this
+         * time-series. Pre-computed by ``TypeRegistry`` during registration
+         * so reading the property is a plain field access.
+         *
+         * Per-kind mapping:
+         *
+         * - ``TS<T>``     — ``T``
+         * - ``TSS<T>``    — ``Set<T>``
+         * - ``TSD<K, V>`` — ``Map<K, V.value_schema>``
+         * - ``TSL<T>``    — ``List<T.value_schema, fixed_size>``
+         * - ``TSW<T>``    — ``List<T, period>`` (tick) / ``List<T, 0>`` (duration)
+         * - ``TSB{f...}`` — ``Bundle{f: f.value_schema...}``
+         * - ``REF<T>``    — ``TimeSeriesReference`` (REF behaves as
+         *                    ``TS<TimeSeriesReference>``: the reference
+         *                    token itself *is* the value; dereferencing is
+         *                    a runtime concern, not a schema one)
+         * - ``SIGNAL``    — ``bool``
+         */
+        const ValueTypeMetaData *value_schema{nullptr};
+        /**
+         * Value-layer schema describing the runtime ``delta_value`` of this
+         * time-series — the per-tick change set in its kind-specific shape.
+         * Pre-computed by ``TypeRegistry``.
+         *
+         * Per-kind mapping:
+         *
+         * - ``TS<T>``     — ``T``
+         * - ``TSS<T>``    — ``Bundle{added: Set<T>, removed: Set<T>}``
+         * - ``TSD<K, V>`` — ``Bundle{added: Map<K, V.delta>, removed: Set<K>, modified: Map<K, V.delta>}``
+         * - ``TSL<T>``    — ``Map<i64, T.delta_value_schema>``
+         * - ``TSW<T>``    — ``T`` (the element added this tick)
+         * - ``TSB{f...}`` — ``Bundle{f: f.delta_value_schema...}``
+         * - ``REF<T>``    — ``TimeSeriesReference`` (same as ``value_schema``;
+         *                    REF behaves as ``TS<TimeSeriesReference>``)
+         * - ``SIGNAL``    — ``bool``
+         */
+        const ValueTypeMetaData *delta_value_schema{nullptr};
 
         /** Populate ``data.tsd`` for a ``TSD`` descriptor. */
         constexpr void set_tsd(const ValueTypeMetaData *key_type, const TSValueTypeMetaData *value_ts) noexcept

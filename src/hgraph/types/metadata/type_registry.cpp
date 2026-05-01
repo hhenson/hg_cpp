@@ -374,6 +374,7 @@ namespace hgraph
         {
             signal_meta_ = std::make_unique<TSValueTypeMetaData>(
                 TSTypeKind::SIGNAL, register_scalar<bool>("bool"), store_name_interned("SIGNAL"));
+            populate_ts_schemas(*signal_meta_);
             register_ts_alias("SIGNAL", signal_meta_.get());
         }
         return signal_meta_.get();
@@ -382,7 +383,9 @@ namespace hgraph
     const TSValueTypeMetaData *TypeRegistry::ts(const ValueTypeMetaData *value_type)
     {
         const TSValueTypeMetaData &meta = ts_cache_.intern(value_type, [&]() {
-            return TSValueTypeMetaData(TSTypeKind::TS, value_type);
+            TSValueTypeMetaData m(TSTypeKind::TS, value_type);
+            populate_ts_schemas(m);
+            return m;
         });
         return &meta;
     }
@@ -390,7 +393,9 @@ namespace hgraph
     const TSValueTypeMetaData *TypeRegistry::tss(const ValueTypeMetaData *element_type)
     {
         const TSValueTypeMetaData &meta = tss_cache_.intern(element_type, [&]() {
-            return TSValueTypeMetaData(TSTypeKind::TSS, element_type ? set(element_type) : nullptr);
+            TSValueTypeMetaData m(TSTypeKind::TSS, element_type ? set(element_type) : nullptr);
+            populate_ts_schemas(m);
+            return m;
         });
         return &meta;
     }
@@ -402,6 +407,7 @@ namespace hgraph
             TSValueTypeMetaData m(
                 TSTypeKind::TSD, key_type && value_ts ? map(key_type, value_ts->value_type) : nullptr);
             m.set_tsd(key_type, value_ts);
+            populate_ts_schemas(m);
             return m;
         });
         return &meta;
@@ -415,6 +421,7 @@ namespace hgraph
                 TSTypeKind::TSL,
                 element_ts && element_ts->value_type ? list(element_ts->value_type, fixed_size) : nullptr);
             m.set_tsl(element_ts, fixed_size);
+            populate_ts_schemas(m);
             return m;
         });
         return &meta;
@@ -426,6 +433,7 @@ namespace hgraph
         const TSValueTypeMetaData &meta = tsw_cache_.intern(key, [&]() {
             TSValueTypeMetaData m(TSTypeKind::TSW, value_type);
             m.set_tsw_tick(period, min_period);
+            populate_ts_schemas(m);
             return m;
         });
         return &meta;
@@ -439,6 +447,7 @@ namespace hgraph
         const TSValueTypeMetaData &meta = tsw_cache_.intern(key, [&]() {
             TSValueTypeMetaData m(TSTypeKind::TSW, value_type);
             m.set_tsw_duration(time_range, min_time_range);
+            populate_ts_schemas(m);
             return m;
         });
         return &meta;
@@ -474,6 +483,7 @@ namespace hgraph
             TSValueTypeMetaData m(
                 TSTypeKind::TSB, bundle(value_fields, name), store_name_interned(name));
             m.set_tsb(fields_ptr, fields.size(), store_name_interned(name));
+            populate_ts_schemas(m);
             return m;
         });
         register_ts_alias(name, &meta);
@@ -490,9 +500,91 @@ namespace hgraph
             }
             TSValueTypeMetaData m(TSTypeKind::REF, time_series_reference_meta_);
             m.set_ref(referenced_ts);
+            populate_ts_schemas(m);
             return m;
         });
         return &meta;
+    }
+
+    void TypeRegistry::populate_ts_schemas(TSValueTypeMetaData &meta)
+    {
+        switch (meta.kind)
+        {
+            case TSTypeKind::TS:
+            case TSTypeKind::SIGNAL:
+            case TSTypeKind::REF:
+                // REF is conceptually TS<TimeSeriesReference>: the reference
+                // token itself is the value. ``value_type`` was set during
+                // construction (T for TS, ``bool`` for SIGNAL, the synthetic
+                // ``TimeSeriesReference`` atomic for REF).
+                meta.value_schema       = meta.value_type;
+                meta.delta_value_schema = meta.value_type;
+                break;
+
+            case TSTypeKind::TSW:
+            {
+                const size_t length     = meta.is_duration_based() ? 0 : meta.period();
+                meta.value_schema       = list(meta.value_type, length);
+                meta.delta_value_schema = meta.value_type;
+                break;
+            }
+
+            case TSTypeKind::TSS:
+            {
+                meta.value_schema = meta.value_type;
+                if (meta.value_type != nullptr)
+                {
+                    const ValueTypeMetaData *element  = meta.value_type->element_type;
+                    const ValueTypeMetaData *set_of_t = set(element);
+                    meta.delta_value_schema = bundle({{"added", set_of_t}, {"removed", set_of_t}});
+                }
+                break;
+            }
+
+            case TSTypeKind::TSD:
+            {
+                meta.value_schema = meta.value_type;
+                const ValueTypeMetaData *key = meta.key_type();
+                if (const TSValueTypeMetaData *value_ts = meta.element_ts(); key != nullptr && value_ts != nullptr)
+                {
+                    const ValueTypeMetaData *value_delta = value_ts->delta_value_schema;
+                    const ValueTypeMetaData *delta_map   = map(key, value_delta);
+                    const ValueTypeMetaData *removed_set = set(key);
+                    meta.delta_value_schema =
+                        bundle({{"added", delta_map}, {"removed", removed_set}, {"modified", delta_map}});
+                }
+                break;
+            }
+
+            case TSTypeKind::TSL:
+            {
+                meta.value_schema = meta.value_type;
+                if (const TSValueTypeMetaData *element_ts = meta.element_ts(); element_ts != nullptr)
+                {
+                    const ValueTypeMetaData *index_type    = register_scalar<int64_t>("int64");
+                    const ValueTypeMetaData *element_delta = element_ts->delta_value_schema;
+                    meta.delta_value_schema                = map(index_type, element_delta);
+                }
+                break;
+            }
+
+            case TSTypeKind::TSB:
+            {
+                meta.value_schema = meta.value_type;
+
+                std::vector<std::pair<std::string, const ValueTypeMetaData *>> delta_fields;
+                delta_fields.reserve(meta.field_count());
+                for (size_t i = 0; i < meta.field_count(); ++i)
+                {
+                    const TSFieldMetaData &field = meta.fields()[i];
+                    delta_fields.emplace_back(field.name ? std::string(field.name) : std::string{},
+                                              field.type ? field.type->delta_value_schema : nullptr);
+                }
+                meta.delta_value_schema = bundle(delta_fields);
+                break;
+            }
+
+        }
     }
 
     bool TypeRegistry::contains_ref(const TSValueTypeMetaData *meta)

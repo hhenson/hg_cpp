@@ -1,0 +1,245 @@
+// Tests for the value_schema / delta_value_schema properties on
+// TSValueTypeMetaData. These are pre-computed by the registry during TS
+// schema construction and read as plain field accesses.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/util/date_time.h>
+
+#include <cstdint>
+#include <string>
+
+TEST_CASE("ts_schemas: TS<int>.value_schema and delta_value_schema are int")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    REQUIRE(ts_int->value_schema == int_meta);
+    REQUIRE(ts_int->delta_value_schema == int_meta);
+}
+
+TEST_CASE("ts_schemas: SIGNAL.value_schema and delta_value_schema are bool")
+{
+    using namespace hgraph;
+    auto       &registry  = TypeRegistry::instance();
+    const auto *bool_meta = registry.register_scalar<bool>("bool");
+    const auto *sig       = registry.signal();
+
+    REQUIRE(sig->value_schema == bool_meta);
+    REQUIRE(sig->delta_value_schema == bool_meta);
+}
+
+TEST_CASE("ts_schemas: TSS<T>.value_schema is Set<T>, delta is Bundle{added: Set<T>, removed: Set<T>}")
+{
+    using namespace hgraph;
+    auto       &registry  = TypeRegistry::instance();
+    const auto *str_meta  = registry.register_scalar<std::string>("string");
+    const auto *tss       = registry.tss(str_meta);
+
+    // value_schema = Set<string>
+    const auto *expected_value = registry.set(str_meta);
+    REQUIRE(tss->value_schema == expected_value);
+    REQUIRE(tss->value_schema->kind == ValueTypeKind::Set);
+    REQUIRE(tss->value_schema->element_type == str_meta);
+
+    // delta_value_schema = Bundle{added: Set<string>, removed: Set<string>}
+    REQUIRE(tss->delta_value_schema != nullptr);
+    REQUIRE(tss->delta_value_schema->kind == ValueTypeKind::Bundle);
+    REQUIRE(tss->delta_value_schema->field_count == 2);
+    REQUIRE(std::string(tss->delta_value_schema->fields[0].name) == "added");
+    REQUIRE(std::string(tss->delta_value_schema->fields[1].name) == "removed");
+    REQUIRE(tss->delta_value_schema->fields[0].type == expected_value);
+    REQUIRE(tss->delta_value_schema->fields[1].type == expected_value);
+}
+
+TEST_CASE("ts_schemas: TSD<K, V>.value_schema is Map<K, V.value_schema>, delta is added/removed/modified bundle")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *str_meta = registry.register_scalar<std::string>("string");
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *tsd      = registry.tsd(str_meta, ts_int);
+
+    // value_schema = Map<string, int>
+    const auto *expected_value = registry.map(str_meta, ts_int->value_schema);
+    REQUIRE(tsd->value_schema == expected_value);
+    REQUIRE(tsd->value_schema->kind == ValueTypeKind::Map);
+    REQUIRE(tsd->value_schema->key_type == str_meta);
+    REQUIRE(tsd->value_schema->element_type == int_meta);
+
+    // delta_value_schema = Bundle{added: Map<string, int>, removed: Set<string>, modified: Map<string, int>}
+    REQUIRE(tsd->delta_value_schema != nullptr);
+    REQUIRE(tsd->delta_value_schema->kind == ValueTypeKind::Bundle);
+    REQUIRE(tsd->delta_value_schema->field_count == 3);
+    REQUIRE(std::string(tsd->delta_value_schema->fields[0].name) == "added");
+    REQUIRE(std::string(tsd->delta_value_schema->fields[1].name) == "removed");
+    REQUIRE(std::string(tsd->delta_value_schema->fields[2].name) == "modified");
+
+    const auto *expected_delta_map = registry.map(str_meta, ts_int->delta_value_schema);
+    const auto *expected_removed   = registry.set(str_meta);
+    REQUIRE(tsd->delta_value_schema->fields[0].type == expected_delta_map);
+    REQUIRE(tsd->delta_value_schema->fields[1].type == expected_removed);
+    REQUIRE(tsd->delta_value_schema->fields[2].type == expected_delta_map);
+}
+
+TEST_CASE("ts_schemas: TSL<T>.value_schema is List<T.value>, delta is Map<int64, T.delta>")
+{
+    using namespace hgraph;
+    auto       &registry    = TypeRegistry::instance();
+    const auto *double_meta = registry.register_scalar<double>("double");
+    const auto *ts_double   = registry.ts(double_meta);
+
+    SECTION("fixed-size TSL")
+    {
+        const auto *tsl = registry.tsl(ts_double, 4);
+
+        // value_schema = List<double, 4>
+        const auto *expected_value = registry.list(double_meta, 4);
+        REQUIRE(tsl->value_schema == expected_value);
+        REQUIRE(tsl->value_schema->kind == ValueTypeKind::List);
+        REQUIRE(tsl->value_schema->element_type == double_meta);
+        REQUIRE(tsl->value_schema->fixed_size == 4);
+
+        // delta_value_schema = Map<int64, double>
+        const auto *int64_meta         = registry.value_type("int64");
+        REQUIRE(int64_meta != nullptr);
+        const auto *expected_delta_map = registry.map(int64_meta, double_meta);
+        REQUIRE(tsl->delta_value_schema == expected_delta_map);
+    }
+
+    SECTION("dynamic TSL")
+    {
+        const auto *tsl = registry.tsl(ts_double, /*fixed_size=*/0);
+
+        // value_schema = List<double> (dynamic)
+        const auto *expected_value = registry.list(double_meta, 0);
+        REQUIRE(tsl->value_schema == expected_value);
+        REQUIRE(tsl->value_schema->fixed_size == 0);
+
+        // delta_value_schema = Map<int64, double>
+        const auto *int64_meta         = registry.value_type("int64");
+        const auto *expected_delta_map = registry.map(int64_meta, double_meta);
+        REQUIRE(tsl->delta_value_schema == expected_delta_map);
+    }
+}
+
+TEST_CASE("ts_schemas: TSW<T>.value_schema is List<T, period>, delta is T")
+{
+    using namespace hgraph;
+    auto       &registry    = TypeRegistry::instance();
+    const auto *double_meta = registry.register_scalar<double>("double");
+
+    SECTION("tick-based window")
+    {
+        const auto *win = registry.tsw(double_meta, /*period=*/10, /*min_period=*/3);
+
+        // value_schema = List<double, 10>
+        const auto *expected_value = registry.list(double_meta, 10);
+        REQUIRE(win->value_schema == expected_value);
+        REQUIRE(win->value_schema->kind == ValueTypeKind::List);
+        REQUIRE(win->value_schema->element_type == double_meta);
+        REQUIRE(win->value_schema->fixed_size == 10);
+
+        // delta_value_schema = double
+        REQUIRE(win->delta_value_schema == double_meta);
+    }
+
+    SECTION("duration-based window")
+    {
+        const auto *win = registry.tsw_duration(double_meta,
+                                                engine_time_delta_t{1'000'000},
+                                                engine_time_delta_t{100'000});
+
+        // value_schema = List<double> (dynamic; duration-based has no fixed length)
+        const auto *expected_value = registry.list(double_meta, 0);
+        REQUIRE(win->value_schema == expected_value);
+        REQUIRE(win->value_schema->fixed_size == 0);
+
+        // delta_value_schema = double
+        REQUIRE(win->delta_value_schema == double_meta);
+    }
+}
+
+TEST_CASE("ts_schemas: TSB<{f...}>.value_schema is Bundle{f.value...}, delta is Bundle{f.delta...}")
+{
+    using namespace hgraph;
+    auto       &registry    = TypeRegistry::instance();
+    const auto *double_meta = registry.register_scalar<double>("double");
+    const auto *int_meta    = registry.register_scalar<int>("int");
+    const auto *ts_double   = registry.ts(double_meta);
+    const auto *ts_int      = registry.ts(int_meta);
+
+    const auto *tsb = registry.tsb({{"price", ts_double}, {"size", ts_int}}, "TSBSchemaTest");
+
+    // value_schema = Bundle{price: double, size: int}
+    REQUIRE(tsb->value_schema != nullptr);
+    REQUIRE(tsb->value_schema->kind == ValueTypeKind::Bundle);
+    REQUIRE(tsb->value_schema->field_count == 2);
+    REQUIRE(std::string(tsb->value_schema->fields[0].name) == "price");
+    REQUIRE(std::string(tsb->value_schema->fields[1].name) == "size");
+    REQUIRE(tsb->value_schema->fields[0].type == double_meta);
+    REQUIRE(tsb->value_schema->fields[1].type == int_meta);
+
+    // delta_value_schema = Bundle{price: double, size: int} — same shape since
+    // each TS<T> has delta == T.
+    REQUIRE(tsb->delta_value_schema != nullptr);
+    REQUIRE(tsb->delta_value_schema->kind == ValueTypeKind::Bundle);
+    REQUIRE(tsb->delta_value_schema->field_count == 2);
+    REQUIRE(tsb->delta_value_schema->fields[0].type == double_meta);
+    REQUIRE(tsb->delta_value_schema->fields[1].type == int_meta);
+}
+
+TEST_CASE("ts_schemas: REF<T> behaves as TS<TimeSeriesReference>")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *ref_int  = registry.ref(ts_int);
+
+    // REF's value is the reference token itself, not the dereferenced target.
+    const auto *ref_atom = registry.value_type("TimeSeriesReference");
+    REQUIRE(ref_atom != nullptr);
+    REQUIRE(ref_atom->kind == ValueTypeKind::Atomic);
+
+    REQUIRE(ref_int->value_schema == ref_atom);
+    REQUIRE(ref_int->delta_value_schema == ref_atom);
+
+    // Two REFs over different targets share the same value/delta schemas.
+    const auto *double_meta = registry.register_scalar<double>("double");
+    const auto *ref_double  = registry.ref(registry.ts(double_meta));
+    REQUIRE(ref_double->value_schema == ref_int->value_schema);
+    REQUIRE(ref_double->delta_value_schema == ref_int->delta_value_schema);
+}
+
+TEST_CASE("ts_schemas: nested compositions resolve recursively")
+{
+    using namespace hgraph;
+    auto       &registry    = TypeRegistry::instance();
+    const auto *double_meta = registry.register_scalar<double>("double");
+    const auto *str_meta    = registry.register_scalar<std::string>("string");
+    const auto *ts_double   = registry.ts(double_meta);
+
+    // TSD<string, TSL<TS<double>>> — keyed by string, value is a list of TS<double>.
+    const auto *tsl  = registry.tsl(ts_double, /*fixed_size=*/4);
+    const auto *tsd  = registry.tsd(str_meta, tsl);
+
+    // tsd.value_schema = Map<string, List<double, 4>>
+    const auto *expected_value = registry.map(str_meta, registry.list(double_meta, 4));
+    REQUIRE(tsd->value_schema == expected_value);
+
+    // tsd.delta_value_schema = Bundle{added, removed, modified} where the
+    // modified-map values are Map<int64, double> (TSL's delta).
+    REQUIRE(tsd->delta_value_schema != nullptr);
+    REQUIRE(tsd->delta_value_schema->kind == ValueTypeKind::Bundle);
+    REQUIRE(tsd->delta_value_schema->field_count == 3);
+
+    const auto *int64_meta             = registry.value_type("int64");
+    const auto *expected_inner_delta   = registry.map(int64_meta, double_meta);  // tsl's delta
+    const auto *expected_modified_map  = registry.map(str_meta, expected_inner_delta);
+    REQUIRE(tsd->delta_value_schema->fields[2].type == expected_modified_map);
+}
