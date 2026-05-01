@@ -67,6 +67,7 @@ target_compile_features(hgraph_options INTERFACE cxx_std_23)
 target_include_directories(hgraph_options INTERFACE
     $<BUILD_INTERFACE:${HGRAPH_GENERATED_INCLUDE_DIR}>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include/third_party>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
