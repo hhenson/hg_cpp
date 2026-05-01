@@ -78,7 +78,7 @@ void instantiate_schema() {
 
     const auto *ts_int = registry.ts(int_meta);
     assert(ts_int != nullptr);
-    assert(ts_int->kind == hgraph::TSValueTypeKind::Value);
+    assert(ts_int->kind == hgraph::TSTypeKind::TS);
 }
 
 void instantiate_plan_factory() {

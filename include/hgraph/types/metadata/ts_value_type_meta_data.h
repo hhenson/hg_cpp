@@ -17,27 +17,28 @@ namespace hgraph
     struct TSValueTypeMetaData;
 
     /**
-     * The seven time-series kinds enumerated in the developer guide.
+     * The eight time-series kinds enumerated in the developer guide,
+     * named with the canonical short labels users write in code:
      *
-     * - ``Value``       — ``TS[T]``: scalar time-series of one atomic type.
-     * - ``Set``         — ``TSS``: unordered set of one scalar type.
-     * - ``Dict``        — ``TSD``: keyed dictionary with TS values.
-     * - ``List``        — ``TSL``: ordered list of one TS type.
-     * - ``Window``      — ``TSW``: sliding window of one scalar type.
-     * - ``Bundle``      — ``TSB``: named bundle of TS fields.
-     * - ``Reference``   — ``REF``: reference to another TS target.
-     * - ``Signal``      — ``SIGNAL``: zero-payload tick stream.
+     * - ``TS``     — scalar time-series of one atomic type.
+     * - ``TSS``    — unordered set of one scalar type.
+     * - ``TSD``    — keyed dictionary with TS values.
+     * - ``TSL``    — ordered list of one TS type.
+     * - ``TSW``    — sliding window of one scalar type.
+     * - ``TSB``    — named bundle of TS fields.
+     * - ``REF``    — reference to another TS target.
+     * - ``SIGNAL`` — zero-payload tick stream.
      */
-    enum class TSValueTypeKind : uint8_t
+    enum class TSTypeKind : uint8_t
     {
-        Value,
-        Set,
-        Dict,
-        List,
-        Window,
-        Bundle,
-        Reference,
-        Signal,
+        TS,
+        TSS,
+        TSD,
+        TSL,
+        TSW,
+        TSB,
+        REF,
+        SIGNAL,
     };
 
     /**
@@ -59,17 +60,17 @@ namespace hgraph
     /**
      * Schema descriptor for time-series-layer types.
      *
-     * The shape of ``data`` depends on ``kind``: dictionaries carry a key
-     * type and value-TS schema, lists carry an element-TS schema and
-     * fixed size, windows carry tick or duration parameters, bundles
-     * carry a field array, references carry the referenced TS schema.
+     * The shape of ``data`` depends on ``kind``: ``TSD`` carries a key
+     * type and value-TS schema, ``TSL`` carries an element-TS schema and
+     * fixed size, ``TSW`` carries tick or duration parameters, ``TSB``
+     * carries a field array, ``REF`` carries the referenced TS schema.
      * Use the ``set_*`` methods to populate ``data`` consistently with
      * ``kind``.
      *
      * Always interned through ``TypeRegistry``: equivalent metadata
      * resolves to the same pointer. ``value_type`` records the underlying
-     * value-layer schema where one applies (``Value``, ``Set``, ``Dict``
-     * key, ``Window``).
+     * value-layer schema where one applies (``TS``, ``TSS``, ``TSD`` key,
+     * ``TSW``).
      */
     struct TSValueTypeMetaData final : TypeMetaData
     {
@@ -95,42 +96,42 @@ namespace hgraph
             }
         };
 
-        /** Empty payload used for kinds without extra metadata (``Value``, ``Set``, ``Signal``). */
+        /** Empty payload used for kinds without extra metadata (``TS``, ``TSS``, ``SIGNAL``). */
         struct EmptyData
         {
         };
 
-        /** ``Dict`` payload: key value-schema and per-key TS-schema. */
-        struct DictData
+        /** ``TSD`` payload: key value-schema and per-key TS-schema. */
+        struct TsdData
         {
             const ValueTypeMetaData *key_type{nullptr};
             const TSValueTypeMetaData *value_ts{nullptr};
         };
 
-        /** ``List`` payload: element TS-schema and fixed size (``0`` for dynamic). */
-        struct ListData
+        /** ``TSL`` payload: element TS-schema and fixed size (``0`` for dynamic). */
+        struct TslData
         {
             const TSValueTypeMetaData *element_ts{nullptr};
             size_t fixed_size{0};
         };
 
-        /** ``Window`` payload: a flag plus the tick or duration parameters. */
-        struct WindowData
+        /** ``TSW`` payload: a flag plus the tick or duration parameters. */
+        struct TswData
         {
             bool is_duration_based{false};
             WindowParams window{};
         };
 
-        /** ``Bundle`` payload: field array, count, and the bundle name. */
-        struct BundleData
+        /** ``TSB`` payload: field array, count, and the bundle name. */
+        struct TsbData
         {
             const TSFieldMetaData *fields{nullptr};
             size_t field_count{0};
             const char *bundle_name{nullptr};
         };
 
-        /** ``Reference`` payload: schema of the referenced time-series. */
-        struct ReferenceData
+        /** ``REF`` payload: schema of the referenced time-series. */
+        struct RefData
         {
             const TSValueTypeMetaData *referenced_ts{nullptr};
         };
@@ -139,11 +140,11 @@ namespace hgraph
         union KindData
         {
             EmptyData empty;
-            DictData dict;
-            ListData list;
-            WindowData window;
-            BundleData bundle;
-            ReferenceData reference;
+            TsdData tsd;
+            TslData tsl;
+            TswData tsw;
+            TsbData tsb;
+            RefData ref;
 
             constexpr KindData()
                 : empty{}
@@ -151,14 +152,14 @@ namespace hgraph
             }
         };
 
-        /** Default construct an empty descriptor (kind defaults to ``Signal``). */
+        /** Default construct an empty descriptor (kind defaults to ``SIGNAL``). */
         constexpr TSValueTypeMetaData() noexcept
             : TypeMetaData(MetaCategory::TimeSeries)
         {
         }
 
         /** Construct with kind, optional underlying value type, and optional name. */
-        constexpr TSValueTypeMetaData(TSValueTypeKind kind_,
+        constexpr TSValueTypeMetaData(TSTypeKind kind_,
                                       const ValueTypeMetaData *value_type_ = nullptr,
                                       const char *display_name_ = nullptr) noexcept
             : TypeMetaData(MetaCategory::TimeSeries, display_name_)
@@ -168,148 +169,148 @@ namespace hgraph
         }
 
         /** Kind discriminator for ``data``. */
-        TSValueTypeKind kind{TSValueTypeKind::Signal};
-        /** Underlying value schema for ``Value`` / ``Set`` / ``Window`` kinds. */
+        TSTypeKind kind{TSTypeKind::SIGNAL};
+        /** Underlying value schema for ``TS`` / ``TSS`` / ``TSW`` kinds. */
         const ValueTypeMetaData *value_type{nullptr};
         /** Kind-dependent payload; populated through the ``set_*`` helpers. */
         KindData data{};
 
-        /** Populate ``data.dict`` for a ``Dict`` (TSD) descriptor. */
-        constexpr void set_dict(const ValueTypeMetaData *key_type, const TSValueTypeMetaData *value_ts) noexcept
+        /** Populate ``data.tsd`` for a ``TSD`` descriptor. */
+        constexpr void set_tsd(const ValueTypeMetaData *key_type, const TSValueTypeMetaData *value_ts) noexcept
         {
-            data.dict = DictData{key_type, value_ts};
+            data.tsd = TsdData{key_type, value_ts};
         }
 
-        /** Populate ``data.list`` for a ``List`` (TSL) descriptor. */
-        constexpr void set_list(const TSValueTypeMetaData *element_ts, size_t fixed_size) noexcept
+        /** Populate ``data.tsl`` for a ``TSL`` descriptor. */
+        constexpr void set_tsl(const TSValueTypeMetaData *element_ts, size_t fixed_size) noexcept
         {
-            data.list = ListData{element_ts, fixed_size};
+            data.tsl = TslData{element_ts, fixed_size};
         }
 
-        /** Populate ``data.window`` for a tick-count ``Window`` (TSW). */
-        constexpr void set_tick_window(size_t period, size_t min_period) noexcept
+        /** Populate ``data.tsw`` for a tick-count ``TSW``. */
+        constexpr void set_tsw_tick(size_t period, size_t min_period) noexcept
         {
-            data.window = WindowData{false, WindowParams{}};
-            data.window.window.tick.period = period;
-            data.window.window.tick.min_period = min_period;
+            data.tsw = TswData{false, WindowParams{}};
+            data.tsw.window.tick.period = period;
+            data.tsw.window.tick.min_period = min_period;
         }
 
-        /** Populate ``data.window`` for a duration-based ``Window`` (TSW). */
-        constexpr void set_duration_window(engine_time_delta_t time_range,
+        /** Populate ``data.tsw`` for a duration-based ``TSW``. */
+        constexpr void set_tsw_duration(engine_time_delta_t time_range,
                                            engine_time_delta_t min_time_range) noexcept
         {
-            data.window = WindowData{true, WindowParams{}};
-            data.window.window.duration.time_range = time_range;
-            data.window.window.duration.min_time_range = min_time_range;
+            data.tsw = TswData{true, WindowParams{}};
+            data.tsw.window.duration.time_range = time_range;
+            data.tsw.window.duration.min_time_range = min_time_range;
         }
 
-        /** Populate ``data.bundle`` for a ``Bundle`` (TSB) descriptor. */
-        constexpr void set_bundle(const TSFieldMetaData *fields, size_t field_count, const char *bundle_name) noexcept
+        /** Populate ``data.tsb`` for a ``TSB`` descriptor. */
+        constexpr void set_tsb(const TSFieldMetaData *fields, size_t field_count, const char *bundle_name) noexcept
         {
-            data.bundle = BundleData{fields, field_count, bundle_name};
+            data.tsb = TsbData{fields, field_count, bundle_name};
         }
 
-        /** Populate ``data.reference`` for a ``Reference`` (REF) descriptor. */
-        constexpr void set_reference(const TSValueTypeMetaData *referenced_ts) noexcept
+        /** Populate ``data.ref`` for a ``REF`` descriptor. */
+        constexpr void set_ref(const TSValueTypeMetaData *referenced_ts) noexcept
         {
-            data.reference = ReferenceData{referenced_ts};
+            data.ref = RefData{referenced_ts};
         }
 
-        /** Key value-schema for ``Dict`` (TSD); null for other kinds. */
+        /** Key value-schema for ``TSD``; null for other kinds. */
         [[nodiscard]] constexpr const ValueTypeMetaData *key_type() const noexcept
         {
-            return kind == TSValueTypeKind::Dict ? data.dict.key_type : nullptr;
+            return kind == TSTypeKind::TSD ? data.tsd.key_type : nullptr;
         }
 
-        /** Element TS-schema for ``Dict`` (value-TS), ``List``, or ``Reference`` (target). */
+        /** Element TS-schema for ``TSD`` (value-TS), ``TSL``, or ``REF`` (target). */
         [[nodiscard]] constexpr const TSValueTypeMetaData *element_ts() const noexcept
         {
             switch (kind)
             {
-                case TSValueTypeKind::Dict: return data.dict.value_ts;
-                case TSValueTypeKind::List: return data.list.element_ts;
-                case TSValueTypeKind::Reference: return data.reference.referenced_ts;
+                case TSTypeKind::TSD: return data.tsd.value_ts;
+                case TSTypeKind::TSL: return data.tsl.element_ts;
+                case TSTypeKind::REF: return data.ref.referenced_ts;
                 default: return nullptr;
             }
         }
 
-        /** Fixed size of a static ``List`` (TSL); zero for dynamic or non-list kinds. */
+        /** Fixed size of a static ``TSL``; zero for dynamic or non-list kinds. */
         [[nodiscard]] constexpr size_t fixed_size() const noexcept
         {
-            return kind == TSValueTypeKind::List ? data.list.fixed_size : 0;
+            return kind == TSTypeKind::TSL ? data.tsl.fixed_size : 0;
         }
 
-        /** True when ``Window`` (TSW) is duration-based; false for tick-based or non-window. */
+        /** True when ``TSW`` is duration-based; false for tick-based or non-window. */
         [[nodiscard]] constexpr bool is_duration_based() const noexcept
         {
-            return kind == TSValueTypeKind::Window && data.window.is_duration_based;
+            return kind == TSTypeKind::TSW && data.tsw.is_duration_based;
         }
 
         /** Tick-count window period; zero for duration-based or non-window kinds. */
         [[nodiscard]] constexpr size_t period() const noexcept
         {
-            return kind == TSValueTypeKind::Window && !data.window.is_duration_based ? data.window.window.tick.period : 0;
+            return kind == TSTypeKind::TSW && !data.tsw.is_duration_based ? data.tsw.window.tick.period : 0;
         }
 
         /** Tick-count window warm-up size; zero for duration-based or non-window kinds. */
         [[nodiscard]] constexpr size_t min_period() const noexcept
         {
-            return kind == TSValueTypeKind::Window && !data.window.is_duration_based
-                       ? data.window.window.tick.min_period
+            return kind == TSTypeKind::TSW && !data.tsw.is_duration_based
+                       ? data.tsw.window.tick.min_period
                        : 0;
         }
 
         /** Duration-window time range; zero for tick-based or non-window kinds. */
         [[nodiscard]] constexpr engine_time_delta_t time_range() const noexcept
         {
-            return kind == TSValueTypeKind::Window && data.window.is_duration_based
-                       ? data.window.window.duration.time_range
+            return kind == TSTypeKind::TSW && data.tsw.is_duration_based
+                       ? data.tsw.window.duration.time_range
                        : engine_time_delta_t{0};
         }
 
         /** Duration-window warm-up; zero for tick-based or non-window kinds. */
         [[nodiscard]] constexpr engine_time_delta_t min_time_range() const noexcept
         {
-            return kind == TSValueTypeKind::Window && data.window.is_duration_based
-                       ? data.window.window.duration.min_time_range
+            return kind == TSTypeKind::TSW && data.tsw.is_duration_based
+                       ? data.tsw.window.duration.min_time_range
                        : engine_time_delta_t{0};
         }
 
-        /** Field array for ``Bundle`` (TSB); null for other kinds. */
+        /** Field array for ``TSB``; null for other kinds. */
         [[nodiscard]] constexpr const TSFieldMetaData *fields() const noexcept
         {
-            return kind == TSValueTypeKind::Bundle ? data.bundle.fields : nullptr;
+            return kind == TSTypeKind::TSB ? data.tsb.fields : nullptr;
         }
 
-        /** Field count for ``Bundle`` (TSB); zero for other kinds. */
+        /** Field count for ``TSB``; zero for other kinds. */
         [[nodiscard]] constexpr size_t field_count() const noexcept
         {
-            return kind == TSValueTypeKind::Bundle ? data.bundle.field_count : 0;
+            return kind == TSTypeKind::TSB ? data.tsb.field_count : 0;
         }
 
-        /** Bundle display name for ``Bundle`` (TSB); null for other kinds. */
+        /** Bundle display name for ``TSB``; null for other kinds. */
         [[nodiscard]] constexpr const char *bundle_name() const noexcept
         {
-            return kind == TSValueTypeKind::Bundle ? data.bundle.bundle_name : nullptr;
+            return kind == TSTypeKind::TSB ? data.tsb.bundle_name : nullptr;
         }
 
-        /** Schema referenced by a ``Reference`` (REF); null for other kinds. */
+        /** Schema referenced by a ``REF``; null for other kinds. */
         [[nodiscard]] constexpr const TSValueTypeMetaData *referenced_ts() const noexcept
         {
-            return kind == TSValueTypeKind::Reference ? data.reference.referenced_ts : nullptr;
+            return kind == TSTypeKind::REF ? data.ref.referenced_ts : nullptr;
         }
 
-        /** True for the keyed/structural kinds (``Set``, ``Dict``, ``List``, ``Bundle``). */
+        /** True for the keyed/structural kinds (``TSS``, ``TSD``, ``TSL``, ``TSB``). */
         [[nodiscard]] constexpr bool is_collection() const noexcept
         {
-            return kind == TSValueTypeKind::Set || kind == TSValueTypeKind::Dict || kind == TSValueTypeKind::List ||
-                   kind == TSValueTypeKind::Bundle;
+            return kind == TSTypeKind::TSS || kind == TSTypeKind::TSD || kind == TSTypeKind::TSL ||
+                   kind == TSTypeKind::TSB;
         }
 
-        /** True for kinds whose payload is a single scalar TS (``Value``, ``Window``, ``Signal``). */
+        /** True for kinds whose payload is a single scalar TS (``TS``, ``TSW``, ``SIGNAL``). */
         [[nodiscard]] constexpr bool is_scalar_ts() const noexcept
         {
-            return kind == TSValueTypeKind::Value || kind == TSValueTypeKind::Window || kind == TSValueTypeKind::Signal;
+            return kind == TSTypeKind::TS || kind == TSTypeKind::TSW || kind == TSTypeKind::SIGNAL;
         }
     };
 }  // namespace hgraph

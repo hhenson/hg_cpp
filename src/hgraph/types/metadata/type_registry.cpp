@@ -15,132 +15,6 @@ namespace hgraph
                                                        ValueTypeFlags::Equatable | ValueTypeFlags::Comparable |
                                                        ValueTypeFlags::BufferCompatible;
 
-        void append_pointer_signature(std::string &target, const void *ptr)
-        {
-            target += std::to_string(reinterpret_cast<uintptr_t>(ptr));
-        }
-
-        [[nodiscard]] std::string make_tuple_signature(const std::vector<const ValueTypeMetaData *> &element_types)
-        {
-            std::string signature = "tuple(";
-            for (const ValueTypeMetaData *type : element_types)
-            {
-                append_pointer_signature(signature, type);
-                signature.push_back(';');
-            }
-            signature.push_back(')');
-            return signature;
-        }
-
-        [[nodiscard]] std::string
-        make_bundle_signature(const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields)
-        {
-            std::string signature = "bundle(";
-            for (const auto &[name, type] : fields)
-            {
-                signature += name;
-                signature.push_back(':');
-                append_pointer_signature(signature, type);
-                signature.push_back(';');
-            }
-            signature.push_back(')');
-            return signature;
-        }
-
-        [[nodiscard]] std::string make_unary_signature(std::string_view kind, const ValueTypeMetaData *element_type)
-        {
-            std::string signature{kind};
-            signature.push_back('(');
-            append_pointer_signature(signature, element_type);
-            signature.push_back(')');
-            return signature;
-        }
-
-        [[nodiscard]] std::string
-        make_binary_signature(std::string_view kind, const ValueTypeMetaData *lhs, const ValueTypeMetaData *rhs)
-        {
-            std::string signature{kind};
-            signature.push_back('(');
-            append_pointer_signature(signature, lhs);
-            signature.push_back(',');
-            append_pointer_signature(signature, rhs);
-            signature.push_back(')');
-            return signature;
-        }
-
-        [[nodiscard]] std::string
-        make_sized_signature(std::string_view kind, const ValueTypeMetaData *element_type, size_t size, bool extra = false)
-        {
-            std::string signature{kind};
-            signature.push_back('(');
-            append_pointer_signature(signature, element_type);
-            signature.push_back(',');
-            signature += std::to_string(size);
-            signature.push_back(',');
-            signature += extra ? "1" : "0";
-            signature.push_back(')');
-            return signature;
-        }
-
-        [[nodiscard]] std::string make_unary_ts_signature(std::string_view kind, const void *meta)
-        {
-            std::string signature{kind};
-            signature.push_back('(');
-            append_pointer_signature(signature, meta);
-            signature.push_back(')');
-            return signature;
-        }
-
-        [[nodiscard]] std::string make_sized_ts_signature(std::string_view kind, const void *meta, size_t size)
-        {
-            std::string signature{kind};
-            signature.push_back('(');
-            append_pointer_signature(signature, meta);
-            signature.push_back(',');
-            signature += std::to_string(size);
-            signature.push_back(')');
-            return signature;
-        }
-
-        [[nodiscard]] std::string make_dict_signature(const ValueTypeMetaData *key_type, const TSValueTypeMetaData *value_ts)
-        {
-            std::string signature = "dict(";
-            append_pointer_signature(signature, key_type);
-            signature.push_back(',');
-            append_pointer_signature(signature, value_ts);
-            signature.push_back(')');
-            return signature;
-        }
-
-        [[nodiscard]] std::string
-        make_window_signature(const ValueTypeMetaData *value_type, bool duration_based, int64_t first, int64_t second)
-        {
-            std::string signature = "window(";
-            append_pointer_signature(signature, value_type);
-            signature.push_back(',');
-            signature += duration_based ? "1" : "0";
-            signature.push_back(',');
-            signature += std::to_string(first);
-            signature.push_back(',');
-            signature += std::to_string(second);
-            signature.push_back(')');
-            return signature;
-        }
-
-        [[nodiscard]] std::string make_ts_bundle_signature(const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> &fields)
-        {
-            std::string signature = "tsb(";
-            for (const auto &[name, type] : fields)
-            {
-                signature += name;
-                signature.push_back(':');
-                append_pointer_signature(signature, type);
-                signature.push_back(';');
-            }
-            signature.push_back(')');
-            return signature;
-        }
-
         [[nodiscard]] ValueTypeFlags intersect_with(ValueTypeFlags flags, const ValueTypeMetaData *meta) noexcept
         {
             if (!meta)
@@ -385,8 +259,8 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::tuple(const std::vector<const ValueTypeMetaData *> &element_types)
     {
-        const std::string signature = make_tuple_signature(element_types);
-        const ValueTypeMetaData &meta = tuple_cache_.intern(signature, [&]() {
+        TupleKey key{element_types};
+        const ValueTypeMetaData &meta = tuple_cache_.intern(std::move(key), [&]() {
             std::unique_ptr<ValueFieldMetaData[]> fields =
                 element_types.empty() ? nullptr : std::make_unique<ValueFieldMetaData[]>(element_types.size());
             for (size_t index = 0; index < element_types.size(); ++index)
@@ -408,8 +282,13 @@ namespace hgraph
     const ValueTypeMetaData *
     TypeRegistry::bundle(const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields, std::string_view name)
     {
-        const std::string signature = make_bundle_signature(fields);
-        const ValueTypeMetaData &meta = bundle_cache_.intern(signature, [&]() {
+        BundleKey key;
+        key.fields.reserve(fields.size());
+        for (const auto &[field_name, field_type] : fields)
+        {
+            key.fields.push_back(BundleKey::Field{field_name, field_type});
+        }
+        const ValueTypeMetaData &meta = bundle_cache_.intern(std::move(key), [&]() {
             std::unique_ptr<ValueFieldMetaData[]> stored_fields =
                 fields.empty() ? nullptr : std::make_unique<ValueFieldMetaData[]>(fields.size());
             for (size_t index = 0; index < fields.size(); ++index)
@@ -433,8 +312,8 @@ namespace hgraph
     const ValueTypeMetaData *
     TypeRegistry::list(const ValueTypeMetaData *element_type, size_t fixed_size, bool variadic_tuple)
     {
-        const std::string signature = make_sized_signature("list", element_type, fixed_size, variadic_tuple);
-        const ValueTypeMetaData &meta = list_cache_.intern(signature, [&]() {
+        const ListKey key{element_type, fixed_size, variadic_tuple};
+        const ValueTypeMetaData &meta = list_cache_.intern(key, [&]() {
             ValueTypeMetaData m(ValueTypeKind::List, list_flags(element_type, fixed_size, variadic_tuple));
             m.element_type = element_type;
             m.fixed_size = fixed_size;
@@ -445,8 +324,7 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::set(const ValueTypeMetaData *element_type)
     {
-        const std::string signature = make_unary_signature("set", element_type);
-        const ValueTypeMetaData &meta = set_cache_.intern(signature, [&]() {
+        const ValueTypeMetaData &meta = set_cache_.intern(element_type, [&]() {
             ValueTypeMetaData m(ValueTypeKind::Set, set_flags(element_type));
             m.element_type = element_type;
             return m;
@@ -456,8 +334,8 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::map(const ValueTypeMetaData *key_type, const ValueTypeMetaData *value_type)
     {
-        const std::string signature = make_binary_signature("map", key_type, value_type);
-        const ValueTypeMetaData &meta = map_cache_.intern(signature, [&]() {
+        const MapKey key{key_type, value_type};
+        const ValueTypeMetaData &meta = map_cache_.intern(key, [&]() {
             ValueTypeMetaData m(ValueTypeKind::Map, map_flags(key_type, value_type));
             m.key_type = key_type;
             m.element_type = value_type;
@@ -468,8 +346,8 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::cyclic_buffer(const ValueTypeMetaData *element_type, size_t capacity)
     {
-        const std::string signature = make_sized_signature("cyclic_buffer", element_type, capacity);
-        const ValueTypeMetaData &meta = cyclic_buffer_cache_.intern(signature, [&]() {
+        const SizedKey key{element_type, capacity};
+        const ValueTypeMetaData &meta = cyclic_buffer_cache_.intern(key, [&]() {
             ValueTypeMetaData m(ValueTypeKind::CyclicBuffer, ValueTypeFlags::None);
             m.element_type = element_type;
             m.fixed_size = capacity;
@@ -480,8 +358,8 @@ namespace hgraph
 
     const ValueTypeMetaData *TypeRegistry::queue(const ValueTypeMetaData *element_type, size_t max_capacity)
     {
-        const std::string signature = make_sized_signature("queue", element_type, max_capacity);
-        const ValueTypeMetaData &meta = queue_cache_.intern(signature, [&]() {
+        const SizedKey key{element_type, max_capacity};
+        const ValueTypeMetaData &meta = queue_cache_.intern(key, [&]() {
             ValueTypeMetaData m(ValueTypeKind::Queue, ValueTypeFlags::None);
             m.element_type = element_type;
             m.fixed_size = max_capacity;
@@ -495,7 +373,7 @@ namespace hgraph
         if (!signal_meta_)
         {
             signal_meta_ = std::make_unique<TSValueTypeMetaData>(
-                TSValueTypeKind::Signal, register_scalar<bool>("bool"), store_name_interned("SIGNAL"));
+                TSTypeKind::SIGNAL, register_scalar<bool>("bool"), store_name_interned("SIGNAL"));
             register_ts_alias("SIGNAL", signal_meta_.get());
         }
         return signal_meta_.get();
@@ -503,29 +381,27 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::ts(const ValueTypeMetaData *value_type)
     {
-        const std::string signature = make_unary_ts_signature("ts", value_type);
-        const TSValueTypeMetaData &meta = ts_cache_.intern(signature, [&]() {
-            return TSValueTypeMetaData(TSValueTypeKind::Value, value_type);
+        const TSValueTypeMetaData &meta = ts_cache_.intern(value_type, [&]() {
+            return TSValueTypeMetaData(TSTypeKind::TS, value_type);
         });
         return &meta;
     }
 
     const TSValueTypeMetaData *TypeRegistry::tss(const ValueTypeMetaData *element_type)
     {
-        const std::string signature = make_unary_ts_signature("tss", element_type);
-        const TSValueTypeMetaData &meta = tss_cache_.intern(signature, [&]() {
-            return TSValueTypeMetaData(TSValueTypeKind::Set, element_type ? set(element_type) : nullptr);
+        const TSValueTypeMetaData &meta = tss_cache_.intern(element_type, [&]() {
+            return TSValueTypeMetaData(TSTypeKind::TSS, element_type ? set(element_type) : nullptr);
         });
         return &meta;
     }
 
     const TSValueTypeMetaData *TypeRegistry::tsd(const ValueTypeMetaData *key_type, const TSValueTypeMetaData *value_ts)
     {
-        const std::string signature = make_dict_signature(key_type, value_ts);
-        const TSValueTypeMetaData &meta = tsd_cache_.intern(signature, [&]() {
+        const TSDictKey key{key_type, value_ts};
+        const TSValueTypeMetaData &meta = tsd_cache_.intern(key, [&]() {
             TSValueTypeMetaData m(
-                TSValueTypeKind::Dict, key_type && value_ts ? map(key_type, value_ts->value_type) : nullptr);
-            m.set_dict(key_type, value_ts);
+                TSTypeKind::TSD, key_type && value_ts ? map(key_type, value_ts->value_type) : nullptr);
+            m.set_tsd(key_type, value_ts);
             return m;
         });
         return &meta;
@@ -533,12 +409,12 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::tsl(const TSValueTypeMetaData *element_ts, size_t fixed_size)
     {
-        const std::string signature = make_sized_ts_signature("tsl", element_ts, fixed_size);
-        const TSValueTypeMetaData &meta = tsl_cache_.intern(signature, [&]() {
+        const TSListKey key{element_ts, fixed_size};
+        const TSValueTypeMetaData &meta = tsl_cache_.intern(key, [&]() {
             TSValueTypeMetaData m(
-                TSValueTypeKind::List,
+                TSTypeKind::TSL,
                 element_ts && element_ts->value_type ? list(element_ts->value_type, fixed_size) : nullptr);
-            m.set_list(element_ts, fixed_size);
+            m.set_tsl(element_ts, fixed_size);
             return m;
         });
         return &meta;
@@ -546,11 +422,10 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::tsw(const ValueTypeMetaData *value_type, size_t period, size_t min_period)
     {
-        const std::string signature = make_window_signature(
-            value_type, false, static_cast<int64_t>(period), static_cast<int64_t>(min_period));
-        const TSValueTypeMetaData &meta = tsw_cache_.intern(signature, [&]() {
-            TSValueTypeMetaData m(TSValueTypeKind::Window, value_type);
-            m.set_tick_window(period, min_period);
+        const TSWindowKey key{value_type, false, static_cast<int64_t>(period), static_cast<int64_t>(min_period)};
+        const TSValueTypeMetaData &meta = tsw_cache_.intern(key, [&]() {
+            TSValueTypeMetaData m(TSTypeKind::TSW, value_type);
+            m.set_tsw_tick(period, min_period);
             return m;
         });
         return &meta;
@@ -560,11 +435,10 @@ namespace hgraph
                                                           engine_time_delta_t time_range,
                                                           engine_time_delta_t min_time_range)
     {
-        const std::string signature =
-            make_window_signature(value_type, true, time_range.count(), min_time_range.count());
-        const TSValueTypeMetaData &meta = tsw_cache_.intern(signature, [&]() {
-            TSValueTypeMetaData m(TSValueTypeKind::Window, value_type);
-            m.set_duration_window(time_range, min_time_range);
+        const TSWindowKey key{value_type, true, time_range.count(), min_time_range.count()};
+        const TSValueTypeMetaData &meta = tsw_cache_.intern(key, [&]() {
+            TSValueTypeMetaData m(TSTypeKind::TSW, value_type);
+            m.set_tsw_duration(time_range, min_time_range);
             return m;
         });
         return &meta;
@@ -573,8 +447,13 @@ namespace hgraph
     const TSValueTypeMetaData *
     TypeRegistry::tsb(const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> &fields, std::string_view name)
     {
-        const std::string signature = make_ts_bundle_signature(fields);
-        const TSValueTypeMetaData &meta = tsb_cache_.intern(signature, [&]() {
+        TSBundleKey ts_key;
+        ts_key.fields.reserve(fields.size());
+        for (const auto &[field_name, field_type] : fields)
+        {
+            ts_key.fields.push_back(TSBundleKey::Field{field_name, field_type});
+        }
+        const TSValueTypeMetaData &meta = tsb_cache_.intern(std::move(ts_key), [&]() {
             std::vector<std::pair<std::string, const ValueTypeMetaData *>> value_fields;
             value_fields.reserve(fields.size());
             for (const auto &[field_name, ts_type] : fields)
@@ -593,8 +472,8 @@ namespace hgraph
             TSFieldMetaData *fields_ptr = stored_fields ? store_ts_fields(std::move(stored_fields)) : nullptr;
 
             TSValueTypeMetaData m(
-                TSValueTypeKind::Bundle, bundle(value_fields, name), store_name_interned(name));
-            m.set_bundle(fields_ptr, fields.size(), store_name_interned(name));
+                TSTypeKind::TSB, bundle(value_fields, name), store_name_interned(name));
+            m.set_tsb(fields_ptr, fields.size(), store_name_interned(name));
             return m;
         });
         register_ts_alias(name, &meta);
@@ -603,15 +482,14 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::ref(const TSValueTypeMetaData *referenced_ts)
     {
-        const std::string signature = make_unary_ts_signature("ref", referenced_ts);
-        const TSValueTypeMetaData &meta = ref_cache_.intern(signature, [&]() {
+        const TSValueTypeMetaData &meta = ref_cache_.intern(referenced_ts, [&]() {
             if (!time_series_reference_meta_)
             {
                 time_series_reference_meta_ =
                     synthetic_atomic("TimeSeriesReference", ValueTypeFlags::Hashable | ValueTypeFlags::Equatable);
             }
-            TSValueTypeMetaData m(TSValueTypeKind::Reference, time_series_reference_meta_);
-            m.set_reference(referenced_ts);
+            TSValueTypeMetaData m(TSTypeKind::REF, time_series_reference_meta_);
+            m.set_ref(referenced_ts);
             return m;
         });
         return &meta;
@@ -626,8 +504,8 @@ namespace hgraph
 
         switch (meta->kind)
         {
-            case TSValueTypeKind::Reference: return true;
-            case TSValueTypeKind::Bundle:
+            case TSTypeKind::REF: return true;
+            case TSTypeKind::TSB:
                 for (size_t index = 0; index < meta->field_count(); ++index)
                 {
                     if (contains_ref(meta->fields()[index].type))
@@ -636,8 +514,8 @@ namespace hgraph
                     }
                 }
                 return false;
-            case TSValueTypeKind::Dict:
-            case TSValueTypeKind::List: return contains_ref(meta->element_ts());
+            case TSTypeKind::TSD:
+            case TSTypeKind::TSL: return contains_ref(meta->element_ts());
             default: return false;
         }
     }
@@ -657,11 +535,11 @@ namespace hgraph
         const TSValueTypeMetaData *result = meta;
         switch (meta->kind)
         {
-            case TSValueTypeKind::Reference:
+            case TSTypeKind::REF:
                 result = dereference(meta->referenced_ts());
                 break;
 
-            case TSValueTypeKind::Bundle:
+            case TSTypeKind::TSB:
             {
                 if (!contains_ref(meta))
                 {
@@ -685,14 +563,14 @@ namespace hgraph
                 break;
             }
 
-            case TSValueTypeKind::List:
+            case TSTypeKind::TSL:
             {
                 const TSValueTypeMetaData *element = dereference(meta->element_ts());
                 result = element == meta->element_ts() ? meta : tsl(element, meta->fixed_size());
                 break;
             }
 
-            case TSValueTypeKind::Dict:
+            case TSTypeKind::TSD:
             {
                 const TSValueTypeMetaData *value_ts = dereference(meta->element_ts());
                 result = value_ts == meta->element_ts() ? meta : tsd(meta->key_type(), value_ts);

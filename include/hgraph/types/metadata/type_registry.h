@@ -131,31 +131,227 @@ namespace hgraph
         void register_value_alias(std::string_view name, const ValueTypeMetaData *meta);
         void register_ts_alias(std::string_view name, const TSValueTypeMetaData *meta);
 
+        // ----------------------------------------------------------------
+        // Cache keys for the identity caches.
+        //
+        // Each cache uses a typed structural key that captures exactly the
+        // meaningful information for that cache's kind. Equivalent inputs
+        // produce equal keys, so the InternTables dedupe correctly without
+        // any string-encoding step. Single-pointer caches (set, ts, tss,
+        // ref) just key on the pointer directly.
+        // ----------------------------------------------------------------
+
+        /** boost::hash_combine-style mix; private to the registry's keys. */
+        static constexpr size_t combine(size_t seed, size_t value) noexcept
+        {
+            return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U));
+        }
+
+        /** Key for the value-side ``tuple`` cache: ordered list of element schemas. */
+        struct TupleKey
+        {
+            std::vector<const ValueTypeMetaData *> elements;
+            bool operator==(const TupleKey &) const noexcept = default;
+        };
+        struct TupleKeyHash
+        {
+            size_t operator()(const TupleKey &k) const noexcept
+            {
+                size_t seed = 0;
+                for (const auto *e : k.elements)
+                {
+                    seed = combine(seed, std::hash<const ValueTypeMetaData *>{}(e));
+                }
+                return seed;
+            }
+        };
+
+        /** Key for the value-side ``bundle`` cache: ordered ``(name, type)`` fields. */
+        struct BundleKey
+        {
+            struct Field
+            {
+                std::string name;
+                const ValueTypeMetaData *type{nullptr};
+                bool operator==(const Field &) const noexcept = default;
+            };
+            std::vector<Field> fields;
+            bool operator==(const BundleKey &) const noexcept = default;
+        };
+        struct BundleKeyHash
+        {
+            size_t operator()(const BundleKey &k) const noexcept
+            {
+                size_t seed = 0;
+                for (const auto &f : k.fields)
+                {
+                    seed = combine(seed, std::hash<std::string>{}(f.name));
+                    seed = combine(seed, std::hash<const ValueTypeMetaData *>{}(f.type));
+                }
+                return seed;
+            }
+        };
+
+        /** Key for the value-side ``list`` cache: element type + size + variadic-tuple flag. */
+        struct ListKey
+        {
+            const ValueTypeMetaData *element_type{nullptr};
+            size_t fixed_size{0};
+            bool variadic_tuple{false};
+            bool operator==(const ListKey &) const noexcept = default;
+        };
+        struct ListKeyHash
+        {
+            size_t operator()(const ListKey &k) const noexcept
+            {
+                size_t seed = std::hash<const ValueTypeMetaData *>{}(k.element_type);
+                seed = combine(seed, std::hash<size_t>{}(k.fixed_size));
+                seed = combine(seed, std::hash<bool>{}(k.variadic_tuple));
+                return seed;
+            }
+        };
+
+        /** Key for the value-side ``map`` cache: ``(key_type, value_type)``. */
+        struct MapKey
+        {
+            const ValueTypeMetaData *key_type{nullptr};
+            const ValueTypeMetaData *element_type{nullptr};
+            bool operator==(const MapKey &) const noexcept = default;
+        };
+        struct MapKeyHash
+        {
+            size_t operator()(const MapKey &k) const noexcept
+            {
+                size_t seed = std::hash<const ValueTypeMetaData *>{}(k.key_type);
+                return combine(seed, std::hash<const ValueTypeMetaData *>{}(k.element_type));
+            }
+        };
+
+        /** Shared key for ``cyclic_buffer`` and ``queue`` caches: ``(element, size)``. */
+        struct SizedKey
+        {
+            const ValueTypeMetaData *element_type{nullptr};
+            size_t size{0};
+            bool operator==(const SizedKey &) const noexcept = default;
+        };
+        struct SizedKeyHash
+        {
+            size_t operator()(const SizedKey &k) const noexcept
+            {
+                size_t seed = std::hash<const ValueTypeMetaData *>{}(k.element_type);
+                return combine(seed, std::hash<size_t>{}(k.size));
+            }
+        };
+
+        /** Key for the ``tsd`` cache: ``(value-key-type, ts-value-schema)``. */
+        struct TSDictKey
+        {
+            const ValueTypeMetaData *key_type{nullptr};
+            const TSValueTypeMetaData *value_ts{nullptr};
+            bool operator==(const TSDictKey &) const noexcept = default;
+        };
+        struct TSDictKeyHash
+        {
+            size_t operator()(const TSDictKey &k) const noexcept
+            {
+                size_t seed = std::hash<const ValueTypeMetaData *>{}(k.key_type);
+                return combine(seed, std::hash<const TSValueTypeMetaData *>{}(k.value_ts));
+            }
+        };
+
+        /** Key for the ``tsl`` cache: ``(element-ts-schema, fixed_size)``. */
+        struct TSListKey
+        {
+            const TSValueTypeMetaData *element_ts{nullptr};
+            size_t fixed_size{0};
+            bool operator==(const TSListKey &) const noexcept = default;
+        };
+        struct TSListKeyHash
+        {
+            size_t operator()(const TSListKey &k) const noexcept
+            {
+                size_t seed = std::hash<const TSValueTypeMetaData *>{}(k.element_ts);
+                return combine(seed, std::hash<size_t>{}(k.fixed_size));
+            }
+        };
+
+        /**
+         * Key for the ``tsw`` cache: ``(value-type, is_duration_based, p1, p2)``.
+         *
+         * ``p1`` and ``p2`` carry either tick-window ``(period, min_period)`` or
+         * duration-window ``(time_range, min_time_range)`` counts depending on
+         * ``is_duration_based``.
+         */
+        struct TSWindowKey
+        {
+            const ValueTypeMetaData *value_type{nullptr};
+            bool is_duration_based{false};
+            int64_t param1{0};
+            int64_t param2{0};
+            bool operator==(const TSWindowKey &) const noexcept = default;
+        };
+        struct TSWindowKeyHash
+        {
+            size_t operator()(const TSWindowKey &k) const noexcept
+            {
+                size_t seed = std::hash<const ValueTypeMetaData *>{}(k.value_type);
+                seed = combine(seed, std::hash<bool>{}(k.is_duration_based));
+                seed = combine(seed, std::hash<int64_t>{}(k.param1));
+                seed = combine(seed, std::hash<int64_t>{}(k.param2));
+                return seed;
+            }
+        };
+
+        /** Key for the ``tsb`` cache: ordered ``(name, ts-schema)`` fields. */
+        struct TSBundleKey
+        {
+            struct Field
+            {
+                std::string name;
+                const TSValueTypeMetaData *type{nullptr};
+                bool operator==(const Field &) const noexcept = default;
+            };
+            std::vector<Field> fields;
+            bool operator==(const TSBundleKey &) const noexcept = default;
+        };
+        struct TSBundleKeyHash
+        {
+            size_t operator()(const TSBundleKey &k) const noexcept
+            {
+                size_t seed = 0;
+                for (const auto &f : k.fields)
+                {
+                    seed = combine(seed, std::hash<std::string>{}(f.name));
+                    seed = combine(seed, std::hash<const TSValueTypeMetaData *>{}(f.type));
+                }
+                return seed;
+            }
+        };
+
         // Auxiliary memory referenced by metadata (display names, field arrays).
         std::vector<std::unique_ptr<std::string>> name_storage_;
         std::vector<std::unique_ptr<ValueFieldMetaData[]>> value_field_storage_;
         std::vector<std::unique_ptr<TSFieldMetaData[]>> ts_field_storage_;
 
-        // Identity caches: each one is a thin wrapper over InternTable that
-        // also owns the metadata. Equivalent keys always return the same
-        // canonical pointer.
+        // Identity caches: thin wrappers over InternTable that own the
+        // metadata. Equivalent keys always return the same canonical pointer.
         InternTable<std::type_index, ValueTypeMetaData> scalar_cache_;
         InternTable<std::string, ValueTypeMetaData> synthetic_scalar_cache_;
-        InternTable<std::string, ValueTypeMetaData> tuple_cache_;
-        InternTable<std::string, ValueTypeMetaData> bundle_cache_;
-        InternTable<std::string, ValueTypeMetaData> list_cache_;
-        InternTable<std::string, ValueTypeMetaData> set_cache_;
-        InternTable<std::string, ValueTypeMetaData> map_cache_;
-        InternTable<std::string, ValueTypeMetaData> cyclic_buffer_cache_;
-        InternTable<std::string, ValueTypeMetaData> queue_cache_;
+        InternTable<TupleKey, ValueTypeMetaData, TupleKeyHash> tuple_cache_;
+        InternTable<BundleKey, ValueTypeMetaData, BundleKeyHash> bundle_cache_;
+        InternTable<ListKey, ValueTypeMetaData, ListKeyHash> list_cache_;
+        InternTable<const ValueTypeMetaData *, ValueTypeMetaData> set_cache_;
+        InternTable<MapKey, ValueTypeMetaData, MapKeyHash> map_cache_;
+        InternTable<SizedKey, ValueTypeMetaData, SizedKeyHash> cyclic_buffer_cache_;
+        InternTable<SizedKey, ValueTypeMetaData, SizedKeyHash> queue_cache_;
 
-        InternTable<std::string, TSValueTypeMetaData> ts_cache_;
-        InternTable<std::string, TSValueTypeMetaData> tss_cache_;
-        InternTable<std::string, TSValueTypeMetaData> tsd_cache_;
-        InternTable<std::string, TSValueTypeMetaData> tsl_cache_;
-        InternTable<std::string, TSValueTypeMetaData> tsw_cache_;
-        InternTable<std::string, TSValueTypeMetaData> tsb_cache_;
-        InternTable<std::string, TSValueTypeMetaData> ref_cache_;
+        InternTable<const ValueTypeMetaData *, TSValueTypeMetaData> ts_cache_;
+        InternTable<const ValueTypeMetaData *, TSValueTypeMetaData> tss_cache_;
+        InternTable<TSDictKey, TSValueTypeMetaData, TSDictKeyHash> tsd_cache_;
+        InternTable<TSListKey, TSValueTypeMetaData, TSListKeyHash> tsl_cache_;
+        InternTable<TSWindowKey, TSValueTypeMetaData, TSWindowKeyHash> tsw_cache_;
+        InternTable<TSBundleKey, TSValueTypeMetaData, TSBundleKeyHash> tsb_cache_;
+        InternTable<const TSValueTypeMetaData *, TSValueTypeMetaData> ref_cache_;
 
         // Aliasing maps: borrow pointers to canonical metadata stored in the
         // identity caches above; do not own the metadata.

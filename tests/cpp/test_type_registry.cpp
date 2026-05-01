@@ -134,20 +134,20 @@ TEST_CASE("TypeRegistry::ts / tss / tsd / tsl / tsw intern correctly")
     const auto *int_meta = registry.register_scalar<int>("int");
 
     const auto *ts_int = registry.ts(int_meta);
-    REQUIRE(ts_int->kind == TSValueTypeKind::Value);
+    REQUIRE(ts_int->kind == TSTypeKind::TS);
     REQUIRE(ts_int == registry.ts(int_meta));
 
     const auto *tss = registry.tss(int_meta);
-    REQUIRE(tss->kind == TSValueTypeKind::Set);
+    REQUIRE(tss->kind == TSTypeKind::TSS);
     REQUIRE(tss == registry.tss(int_meta));
 
     const auto *tsd = registry.tsd(int_meta, ts_int);
-    REQUIRE(tsd->kind == TSValueTypeKind::Dict);
+    REQUIRE(tsd->kind == TSTypeKind::TSD);
     REQUIRE(tsd->key_type() == int_meta);
     REQUIRE(tsd->element_ts() == ts_int);
 
     const auto *tsl_fixed = registry.tsl(ts_int, 4);
-    REQUIRE(tsl_fixed->kind == TSValueTypeKind::List);
+    REQUIRE(tsl_fixed->kind == TSTypeKind::TSL);
     REQUIRE(tsl_fixed->fixed_size() == 4);
     REQUIRE(tsl_fixed->element_ts() == ts_int);
 
@@ -156,14 +156,14 @@ TEST_CASE("TypeRegistry::ts / tss / tsd / tsl / tsw intern correctly")
     REQUIRE(tsl_dynamic->fixed_size() == 0);
 
     const auto *tsw_tick = registry.tsw(int_meta, 10, 5);
-    REQUIRE(tsw_tick->kind == TSValueTypeKind::Window);
+    REQUIRE(tsw_tick->kind == TSTypeKind::TSW);
     REQUIRE(!tsw_tick->is_duration_based());
     REQUIRE(tsw_tick->period() == 10);
     REQUIRE(tsw_tick->min_period() == 5);
 
     const auto *tsw_dur = registry.tsw_duration(
         int_meta, engine_time_delta_t{1000}, engine_time_delta_t{500});
-    REQUIRE(tsw_dur->kind == TSValueTypeKind::Window);
+    REQUIRE(tsw_dur->kind == TSTypeKind::TSW);
     REQUIRE(tsw_dur->is_duration_based());
     REQUIRE(tsw_dur->time_range() == engine_time_delta_t{1000});
     REQUIRE(tsw_dur->min_time_range() == engine_time_delta_t{500});
@@ -178,7 +178,7 @@ TEST_CASE("TypeRegistry::tsb stores fields and registers the alias")
     const auto *ts_int   = registry.ts(int_meta);
 
     const auto *tsb = registry.tsb({{"a", ts_int}, {"b", ts_int}}, "TestTSBundleA");
-    REQUIRE(tsb->kind == TSValueTypeKind::Bundle);
+    REQUIRE(tsb->kind == TSTypeKind::TSB);
     REQUIRE(tsb->field_count() == 2);
     REQUIRE(std::string(tsb->fields()[0].name) == "a");
     REQUIRE(std::string(tsb->fields()[1].name) == "b");
@@ -195,7 +195,7 @@ TEST_CASE("TypeRegistry::signal returns a single canonical instance")
     const auto *s1       = registry.signal();
     const auto *s2       = registry.signal();
     REQUIRE(s1 == s2);
-    REQUIRE(s1->kind == TSValueTypeKind::Signal);
+    REQUIRE(s1->kind == TSTypeKind::SIGNAL);
     REQUIRE(registry.time_series_type("SIGNAL") == s1);
 }
 
@@ -209,7 +209,7 @@ TEST_CASE("TypeRegistry::ref creates the TimeSeriesReference singleton")
     const auto *r1 = registry.ref(ts_int);
     const auto *r2 = registry.ref(ts_int);
     REQUIRE(r1 == r2);
-    REQUIRE(r1->kind == TSValueTypeKind::Reference);
+    REQUIRE(r1->kind == TSTypeKind::REF);
     REQUIRE(r1->referenced_ts() == ts_int);
 }
 
@@ -250,7 +250,7 @@ TEST_CASE("TypeRegistry::dereference unwraps refs and recurses into containers")
     const auto *list_of_refs = registry.tsl(ref_int);
     const auto *list_deref   = registry.dereference(list_of_refs);
     REQUIRE(list_deref != list_of_refs);
-    REQUIRE(list_deref->kind == TSValueTypeKind::List);
+    REQUIRE(list_deref->kind == TSTypeKind::TSL);
     REQUIRE(list_deref->element_ts() == ts_int);
 
     const auto *list_of_ts  = registry.tsl(ts_int);
