@@ -24,7 +24,36 @@ Time-Series Kinds
     Scalar time-series of one atomic type.
 
 ``TSB``
-    Named bundle of time-series fields.
+    Bundle of time-series fields. Like the value-layer ``Bundle``, a
+    ``TSB`` is either **un-named** or **named** (see *Scalar Schemas
+    > Bundle* for the structural-vs-nominal identity rule). The
+    schema content (the ordered ``(field_name, ts_schema)`` list) is
+    stored on the un-named form; a named TSB layers a name on top
+    and holds a borrowed pointer to the un-named schema. Two un-
+    named TSBs with the same field list are the same schema; two
+    named TSBs with the same field list but different names are
+    distinct schemas. A named TSB can be assigned values from an
+    un-named TSB with the same field list (and vice versa); named ↔
+    named with different names is rejected.
+
+    The companion factory pair on ``TypeRegistry`` is therefore
+    ``un_named_tsb({...})`` and ``tsb(name, {...})``, mirroring the
+    bundle pair.
+
+    *Python correspondence.* Python ``TimeSeriesSchema``
+    (``hgraph._types._tsb_type.TimeSeriesSchema``) maps onto the
+    C++ ``TSB`` kind. A subclass of ``TimeSeriesSchema`` is the
+    *named* TSB whose name is the Python class name;
+    ``UnNamedTimeSeriesSchema.create(**fields)`` (also exposed as
+    the convenience ``ts_schema(**fields)``) is the *un-named*
+    form. The runtime ``TimeSeriesBundle`` instance is the C++
+    ``TSB`` value. ``TSB[schema].value`` in Python is a
+    ``CompoundScalar`` — the snapshot of currently valid fields —
+    which lines up with the schema-mapping table below: ``TSB``'s
+    ``value_schema`` is a ``Bundle`` whose fields are the per-
+    field ``value_schema`` of each TSB component, and that
+    ``Bundle`` is exactly the C++ representation of the
+    corresponding Python ``CompoundScalar``.
 
 ``TSL``
     Ordered list of one time-series type, fixed-size or dynamic.

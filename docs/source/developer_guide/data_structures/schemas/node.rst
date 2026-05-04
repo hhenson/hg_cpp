@@ -19,12 +19,14 @@ Schema            ``NodeTypeMetaData`` — kind, input/output/error/state
 Plan              ``NodePlan`` — memory layout for the node's runtime
                   state: input slots, output slots, state buffer,
                   optional scheduler, optional error output.
-Ops               ``NodeOps`` — the behaviour vtable: ``start``, ``eval``,
-                  ``stop``, plus an optional error-handling hook. The
-                  first parameter of every op is a pointer to the
-                  node's runtime memory. Construction and destruction
-                  are handled by the plan's ``LifecycleOps``, not by
-                  ``NodeOps``.
+Ops               ``NodeOps`` — the behaviour vtable: ``start``,
+                  ``eval``, ``stop``, plus an error-handling hook
+                  that is wired in only when the schema turns on
+                  exception capture (otherwise exceptions propagate
+                  out of ``eval`` normally). The first parameter of
+                  every op is a pointer to the node's runtime memory.
+                  Construction and destruction are handled by the
+                  plan's ``LifecycleOps``, not by ``NodeOps``.
 Binding           ``NodeTypeBinding`` — interned ``(schema, plan, ops)``
                   triple.
 Builder           ``NodeBuilder`` — wraps a binding and constructs a
@@ -43,23 +45,31 @@ What a Node Schema Records
 A ``NodeTypeMetaData`` carries:
 
 ``input_schema``
-    The TSB-shaped time-series schema describing the named input ports.
-    A node with no inputs (a source node) records an empty bundle. The
-    schema lives in the time-series registry; the node schema only
-    holds a borrowed pointer.
+    Always a TSB. The top-level input of a node is invariably a
+    bundle whose fields are the named arguments. A single-argument
+    node carries a single-field TSB; a multi-argument node carries a
+    multi-field TSB; a source node records an empty bundle. There is
+    no non-TSB top-level input. The schema lives in the time-series
+    registry; the node schema only holds a borrowed pointer.
 
 ``output_schema``
-    The time-series schema for the node's output. Single-output nodes
-    point at a single TS schema (``TS<int>``, ``TSD<string, double>``,
-    …); multi-output nodes point at a TSB whose fields are the named
-    outputs. A sink node records ``nullptr`` for ``output_schema``.
+    The time-series schema for the node's primary output (named
+    ``output`` at runtime — see *Overview > Node Layer*). It is a
+    single TS-shaped schema (``TS<int>``, ``TSD<string, double>``,
+    …) — at most one main output per node. A sink node records
+    ``nullptr`` for ``output_schema``. Auxiliary outputs (error,
+    recordable state) are recorded as separate properties below, not
+    folded into ``output_schema``.
 
 ``error_output_schema``
-    Optional. When present, the schema of the per-node error output
-    used to capture evaluation errors. Default is a ``TS<NodeError>``
-    or similar — but the exact ``NodeError`` shape is itself an
-    interned scalar schema, so node implementations are free to use a
-    richer error type when they need to.
+    Optional. The time-series schema for the node's ``error_output``,
+    set only when the schema turns on exception capture. With capture
+    off, this property is ``nullptr`` and exceptions thrown by
+    ``eval`` propagate normally; with capture on, the runtime catches
+    them and writes a ``NodeError`` value to ``error_output``. The
+    default schema is ``TS<NodeError>``; the ``NodeError`` shape is
+    itself an interned scalar schema, so node implementations are
+    free to use a richer error type when needed.
 
 ``state_schema``
     Optional. The scalar (value-layer) schema for the node's local
@@ -128,10 +138,14 @@ The hooks are intentionally minimal:
     ``start`` acquired. Most compute nodes do not need it.
 
 ``handle_error(node*, error_value*)``
-    Optional. Called when an exception thrown by ``eval`` is captured
-    by the runtime. Default behaviour is to surface the error on the
-    node's error output if one is declared; the hook lets node
-    implementations override that.
+    Optional, and **only present when the schema turns on exception
+    capture**. With capture off, an exception thrown by ``eval``
+    propagates out as a normal C++ exception and is handled by
+    whatever frame above the node catches it; the runtime does not
+    intercept it. With capture on, the runtime catches the exception,
+    constructs a ``NodeError``, and routes it through ``handle_error``
+    if the node implementation provides one (otherwise the default
+    behaviour is to write the ``NodeError`` to ``error_output``).
 
 The first parameter of every op is a pointer to the node's runtime
 memory — the same pattern the value-layer ops table uses. This keeps

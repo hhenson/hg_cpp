@@ -113,13 +113,24 @@ Core elements:
     Node index, rank position, owning graph pointer, lifecycle state, and schema/runtime metadata needed for dispatch.
 
 ``RuntimeOps``
-    Function table or equivalent dispatch object for start, stop, evaluate, dispose, and error handling.
+    Behaviour vtable for ``start``, ``eval``, and ``stop``. Error handling is **opt-in**: it is wired in only when the node's schema turns on exception capture. With capture off (the default), an exception thrown by ``eval`` propagates normally; with capture on, the runtime catches it and routes a ``NodeError`` value through the node's ``error_output``. Construction and destruction of the node's runtime memory are not on this vtable; they are handled by the bound plan's ``LifecycleOps``.
 
-``InputSet``
-    Ordered inputs used by readiness checks and evaluation dispatch. Inputs may be active subscribers, passive samples, or context inputs.
+``Input``
+    Optional. A node has **at most one** time-series input, and that top-level input is **always** a TSB. The bundle's fields are the named arguments — so a node with one argument has a single-field TSB, a node with several arguments has a TSB whose fields are those arguments, and a node with no arguments (a source node) carries no input at all. There is never a non-TSB top-level input.
 
-``OutputSet``
-    Ordered outputs produced by the node. Outputs propagate modification notifications to subscribers.
+Named outputs
+    A node has zero or more named outputs. The runtime does not represent these as a flat ordered set; each is a distinct, named position addressed by the wiring layer:
+
+    ``output``
+        The primary output — present whenever the node produces a normal output value.
+
+    ``error_output``
+        Optional. Present only when the node's schema turns on exception capture; in that mode, exceptions thrown by ``eval`` are caught and surfaced here instead of propagating. With capture off, this output is absent and exceptions propagate normally.
+
+    ``recordable_state``
+        Optional. Carries replay-recordable state when the node opts into recording.
+
+    A node that has any output has at least ``output``; ``error_output`` and ``recordable_state`` are independent of ``output`` and are added only when the schema declares them.
 
 ``NodeState``
     Optional node-local state. This is present only for nodes whose schema or implementation requires state.
@@ -127,10 +138,13 @@ Core elements:
 ``NodeScheduler``
     Optional node-local scheduler. This is present only when the schema declares that the node requires scheduling.
 
-``ErrorOutput``
-    Optional output used to capture evaluation errors when the schema provides one.
+Which of these elements are present is determined by the node's kind:
 
-The optional elements are important. A node that does not require a scheduler must not allocate scheduler state. A stateless node must not pay for state storage.
+- **Source nodes** — outputs only, no input.
+- **Compute nodes** — both an input and outputs.
+- **Sink nodes** — input only; no ``output``, though they may still expose an ``error_output``.
+
+The optional elements are important. A node that does not require a scheduler must not allocate scheduler state. A stateless node must not pay for state storage. A sink must not allocate an unused ``output``.
 
 Scheduling Structures
 ~~~~~~~~~~~~~~~~~~~~~

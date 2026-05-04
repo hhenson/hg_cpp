@@ -151,6 +151,32 @@ the runtime sees the mutation complete; RAII closure is the safety net
 that guarantees no mutation is left dangling if a caller forgets or an
 exception unwinds the stack.
 
+.. note::
+
+   **Expected use: one outer mutation per engine cycle.** The runtime
+   contract assumes that a given collection enters at most one
+   *outermost* ``begin_mutation()`` per evaluation cycle. Nested
+   ``begin_mutation()`` calls within that outer scope are fine — they
+   are tracked as a depth counter and only the outermost call performs
+   start-of-mutation work — but the design does not anticipate a
+   collection completing one full mutation and then opening a second
+   independent mutation in the same cycle. Pending-erase cleanup runs
+   at the start of an outermost mutation, so a second outermost
+   mutation in the same cycle would re-run the cleanup against the
+   delta state still in scope for the current tick and discard
+   information consumers may still want to read.
+
+   If a use case ever needs multiple disjoint outer mutations per
+   cycle, the fix is not to disable cleanup but to change mutation
+   tracking from a depth counter to an *evaluation-time* stamp: record
+   the cycle in which cleanup last ran, and let the start-of-mutation
+   logic skip work whenever that stamp matches the current
+   ``evaluation_time``. Subsequent outer mutations within the same
+   cycle would then be no-ops for cleanup while still flushing user-
+   visible changes on close. This is a deliberate fallback path; the
+   current depth-counter implementation is correct as long as the
+   one-outer-mutation-per-cycle assumption holds.
+
 One specific cross-kind read-only view is worth calling out:
 ``MapView`` exposes ``key_set()``, which returns a read-only
 ``SetView`` over the map's keys. Callers can iterate or query keys
