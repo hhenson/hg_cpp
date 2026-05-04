@@ -40,6 +40,7 @@ add_executable(hgraph_unit_tests
     test_plan_factories.cpp
     test_schema_examples.cpp
     test_slot_utils.cpp
+    test_static_schema.cpp
     test_time_series_reference.cpp
     test_ts_schemas.cpp
     test_type_registry.cpp

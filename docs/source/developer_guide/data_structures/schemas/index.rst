@@ -115,3 +115,4 @@ The four schema families covered in this chapter:
    time_series
    node
    graph
+   static_schema

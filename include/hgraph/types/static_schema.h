@@ -1,0 +1,564 @@
+#ifndef HGRAPH_CPP_ROOT_STATIC_SCHEMA_H
+#define HGRAPH_CPP_ROOT_STATIC_SCHEMA_H
+
+#include <hgraph/types/metadata/ts_value_type_meta_data.h>
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_type_meta_data.h>
+
+#include <cstddef>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+namespace hgraph
+{
+    /**
+     * Static schema is the C++-side compile-time vocabulary for describing
+     * the same shapes the runtime ``TypeRegistry`` interns. Each marker
+     * type below is a small struct template that carries its shape entirely
+     * in template parameters; nothing instantiates at runtime.
+     *
+     * The bridge to the runtime is the ``schema_descriptor<T>`` /
+     * ``scalar_descriptor<T>`` / ``ts_field_descriptor<F>`` trait family at
+     * the bottom of this header. Each descriptor has one or two compile-
+     * time queries (``is_concrete()``) and a single accessor that calls
+     * into the registry every time:
+     *
+     * - ``scalar_descriptor<T>::value_meta()``
+     *     ↪ ``TypeRegistry::register_scalar<T>(...)``
+     * - ``schema_descriptor<TSchema>::ts_meta()``
+     *     ↪ ``TypeRegistry::ts(...)`` / ``tss(...)`` / ``tsd(...)`` / etc.
+     *
+     * The descriptors deliberately do **not** cache the resolved pointer
+     * in a function-local static. The registry's intern tables are
+     * already the canonical cache: a second call into ``ts(...)`` /
+     * ``tsd(...)`` / etc. with the same inputs returns the same pointer
+     * via the InternTable hash lookup. Skipping the descriptor-side cache
+     * keeps the lookup correct across registry resets (tests reset the
+     * registries between cases via the test-fixture listener).
+     *
+     * See ``data_structures/schemas/static_schema.rst`` for the design
+     * narrative.
+     */
+
+    /**
+     * Compile-time string literal usable as a non-type template parameter.
+     * Used to embed names (field names, bundle names) directly into a
+     * schema type.
+     */
+    template <std::size_t N>
+    struct fixed_string
+    {
+        char value[N]{};
+
+        constexpr fixed_string(const char (&src)[N])
+        {
+            for (std::size_t i = 0; i < N; ++i) { value[i] = src[i]; }
+        }
+
+        [[nodiscard]] constexpr std::string_view sv() const noexcept
+        {
+            // Strip the trailing null terminator from the literal.
+            return std::string_view{value, N - 1};
+        }
+    };
+
+    template <std::size_t N>
+    fixed_string(const char (&)[N]) -> fixed_string<N>;
+
+    // -----------------------------------------------------------------
+    // Time-series marker types
+    // -----------------------------------------------------------------
+
+    /** Scalar time-series schema; equivalent to ``TS[T]`` in the runtime. */
+    template <typename TValue>
+    struct TS
+    {
+        using value_type = TValue;
+    };
+
+    /** Set time-series schema; equivalent to ``TSS[T]``. */
+    template <typename TValue>
+    struct TSS
+    {
+        using value_type = TValue;
+    };
+
+    /** Dict time-series schema; equivalent to ``TSD[K, V]``. */
+    template <typename TKey, typename TValueSchema>
+    struct TSD
+    {
+        using key_type     = TKey;
+        using value_schema = TValueSchema;
+    };
+
+    /** List time-series schema; equivalent to ``TSL[T, N?]``. ``N == 0`` is dynamic. */
+    template <typename TElementSchema, std::size_t FixedSize = 0>
+    struct TSL
+    {
+        using element_schema             = TElementSchema;
+        static constexpr std::size_t fixed_size = FixedSize;
+    };
+
+    /**
+     * Tick-based sliding window; equivalent to runtime ``TSW`` constructed
+     * via ``tsw(value_type, period, min_period)``. Duration-based windows
+     * are not yet expressible as a compile-time type — use the runtime
+     * registry for that case.
+     */
+    template <typename TValue, std::size_t Period, std::size_t MinPeriod = 0>
+    struct TSW
+    {
+        using value_type                      = TValue;
+        static constexpr std::size_t period     = Period;
+        static constexpr std::size_t min_period = MinPeriod;
+    };
+
+    /** REF marker; equivalent to runtime ``REF<TSchema>``. */
+    template <typename TSchema>
+    struct REF
+    {
+        using target_schema = TSchema;
+    };
+
+    /** Signal marker. */
+    struct SIGNAL
+    {};
+
+    /** Named field used inside ``Bundle`` / ``UnNamedBundle`` / ``TSB`` / ``UnNamedTSB``. */
+    template <fixed_string Name, typename TSchema>
+    struct Field
+    {
+        using schema                  = TSchema;
+        static constexpr auto name_sv = Name;
+    };
+
+    /** Un-named (structural) value-layer compound; corresponds to ``un_named_bundle``. */
+    template <typename... TFields>
+    struct UnNamedBundle
+    {};
+
+    /** Named value-layer compound; corresponds to ``bundle(name, fields)``. */
+    template <fixed_string Name, typename... TFields>
+    struct Bundle
+    {
+        static constexpr auto name_sv = Name;
+    };
+
+    /** Un-named (structural) time-series bundle; corresponds to ``un_named_tsb``. */
+    template <typename... TFields>
+    struct UnNamedTSB
+    {};
+
+    /** Named time-series bundle; corresponds to ``tsb(name, fields)``. */
+    template <fixed_string Name, typename... TFields>
+    struct TSB
+    {
+        static constexpr auto name_sv = Name;
+    };
+
+    /** Time-series type variable used in generic schemas. Resolution happens at wiring time. */
+    template <fixed_string Name, typename... TConstraints>
+    struct TsVar
+    {
+        static constexpr auto name_sv = Name;
+    };
+
+    /** Scalar (value-layer) type variable used in generic schemas. */
+    template <fixed_string Name, typename... TConstraints>
+    struct ScalarVar
+    {
+        static constexpr auto name_sv = Name;
+    };
+
+    // -----------------------------------------------------------------
+    // Descriptor traits: bridge to the runtime registry
+    // -----------------------------------------------------------------
+
+    namespace static_schema_detail
+    {
+        template <typename T>
+        inline constexpr bool always_false_v = false;
+
+        /**
+         * Storage for the canonical scalar registration name. ``T`` carries
+         * its display name through ``TypeRegistry::register_scalar<T>``;
+         * for built-in scalars the name has to be supplied somewhere. We
+         * specialise this template per-type for the built-ins; user-
+         * defined scalars must specialise it once to register their name.
+         */
+        template <typename T>
+        struct scalar_name;
+
+        template <>
+        struct scalar_name<bool>        { static constexpr std::string_view value{"bool"};        };
+        template <>
+        struct scalar_name<int8_t>      { static constexpr std::string_view value{"int8"};        };
+        template <>
+        struct scalar_name<int16_t>     { static constexpr std::string_view value{"int16"};       };
+        template <>
+        struct scalar_name<int32_t>     { static constexpr std::string_view value{"int32"};       };
+        template <>
+        struct scalar_name<int64_t>     { static constexpr std::string_view value{"int64"};       };
+        template <>
+        struct scalar_name<uint8_t>     { static constexpr std::string_view value{"uint8"};       };
+        template <>
+        struct scalar_name<uint16_t>    { static constexpr std::string_view value{"uint16"};      };
+        template <>
+        struct scalar_name<uint32_t>    { static constexpr std::string_view value{"uint32"};      };
+        template <>
+        struct scalar_name<uint64_t>    { static constexpr std::string_view value{"uint64"};      };
+        template <>
+        struct scalar_name<float>       { static constexpr std::string_view value{"float"};       };
+        template <>
+        struct scalar_name<double>      { static constexpr std::string_view value{"double"};      };
+        template <>
+        struct scalar_name<std::string> { static constexpr std::string_view value{"string"};      };
+    }  // namespace static_schema_detail
+
+    /**
+     * Descriptor for a value-layer scalar type. The default specialisation
+     * handles concrete built-in scalars; ``ScalarVar<...>`` is handled by
+     * its own specialisation and reports as non-concrete.
+     */
+    template <typename T>
+    struct scalar_descriptor
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept { return true; }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            return TypeRegistry::instance().register_scalar<T>(
+                static_schema_detail::scalar_name<T>::value);
+        }
+    };
+
+    template <fixed_string Name, typename... TConstraints>
+    struct scalar_descriptor<ScalarVar<Name, TConstraints...>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept { return false; }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta() noexcept { return nullptr; }
+    };
+
+    /** Descriptor for a static time-series schema. Specialised per marker type below. */
+    template <typename TSchema>
+    struct schema_descriptor
+    {
+        static_assert(static_schema_detail::always_false_v<TSchema>,
+                      "Unsupported static time-series schema");
+    };
+
+    template <typename TValue>
+    struct schema_descriptor<TS<TValue>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TValue>::is_concrete();
+        }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                return TypeRegistry::instance().ts(scalar_descriptor<TValue>::value_meta());
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <typename TValue>
+    struct schema_descriptor<TSS<TValue>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TValue>::is_concrete();
+        }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                return TypeRegistry::instance().tss(scalar_descriptor<TValue>::value_meta());
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <typename TKey, typename TValueSchema>
+    struct schema_descriptor<TSD<TKey, TValueSchema>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TKey>::is_concrete() &&
+                   schema_descriptor<TValueSchema>::is_concrete();
+        }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                return TypeRegistry::instance().tsd(scalar_descriptor<TKey>::value_meta(),
+                                                    schema_descriptor<TValueSchema>::ts_meta());
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <typename TElementSchema, std::size_t FixedSize>
+    struct schema_descriptor<TSL<TElementSchema, FixedSize>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return schema_descriptor<TElementSchema>::is_concrete();
+        }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                return TypeRegistry::instance().tsl(
+                    schema_descriptor<TElementSchema>::ts_meta(), FixedSize);
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <typename TValue, std::size_t Period, std::size_t MinPeriod>
+    struct schema_descriptor<TSW<TValue, Period, MinPeriod>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TValue>::is_concrete();
+        }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                return TypeRegistry::instance().tsw(
+                    scalar_descriptor<TValue>::value_meta(), Period, MinPeriod);
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <typename TSchema>
+    struct schema_descriptor<REF<TSchema>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return schema_descriptor<TSchema>::is_concrete();
+        }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                return TypeRegistry::instance().ref(schema_descriptor<TSchema>::ts_meta());
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <>
+    struct schema_descriptor<SIGNAL>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept { return true; }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta()
+        {
+            return TypeRegistry::instance().signal();
+        }
+    };
+
+    template <fixed_string Name, typename... TConstraints>
+    struct schema_descriptor<TsVar<Name, TConstraints...>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept { return false; }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta() noexcept { return nullptr; }
+    };
+
+    // -----------------------------------------------------------------
+    // Field descriptor (TSB / Bundle members) and bundle/TSB descriptors
+    // -----------------------------------------------------------------
+
+    /** Descriptor for a ``Field<Name, TSchema>`` used in TSB / UnNamedTSB. */
+    template <typename TField>
+    struct ts_field_descriptor;
+
+    template <fixed_string Name, typename TSchema>
+    struct ts_field_descriptor<Field<Name, TSchema>>
+    {
+        using schema = TSchema;
+
+        [[nodiscard]] static std::string field_name() { return std::string{Name.sv()}; }
+
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return schema_descriptor<TSchema>::is_concrete();
+        }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta()
+        {
+            return schema_descriptor<TSchema>::ts_meta();
+        }
+    };
+
+    /** Descriptor for a ``Field<Name, TSchema>`` used in Bundle / UnNamedBundle. */
+    template <typename TField>
+    struct value_field_descriptor;
+
+    template <fixed_string Name, typename TSchema>
+    struct value_field_descriptor<Field<Name, TSchema>>
+    {
+        using schema = TSchema;
+
+        [[nodiscard]] static std::string field_name() { return std::string{Name.sv()}; }
+
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return scalar_descriptor<TSchema>::is_concrete();
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            return scalar_descriptor<TSchema>::value_meta();
+        }
+    };
+
+    template <typename... TFields>
+    struct schema_descriptor<UnNamedTSB<TFields...>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return (ts_field_descriptor<TFields>::is_concrete() && ...);
+        }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+                fields.reserve(sizeof...(TFields));
+                (fields.emplace_back(ts_field_descriptor<TFields>::field_name(),
+                                     ts_field_descriptor<TFields>::ts_meta()),
+                 ...);
+                return TypeRegistry::instance().un_named_tsb(fields);
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <fixed_string Name, typename... TFields>
+    struct schema_descriptor<TSB<Name, TFields...>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return (ts_field_descriptor<TFields>::is_concrete() && ...);
+        }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+                fields.reserve(sizeof...(TFields));
+                (fields.emplace_back(ts_field_descriptor<TFields>::field_name(),
+                                     ts_field_descriptor<TFields>::ts_meta()),
+                 ...);
+                return TypeRegistry::instance().tsb(Name.sv(), fields);
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    /** Descriptor for value-layer Bundle/UnNamedBundle. */
+    template <typename TBundle>
+    struct value_schema_descriptor
+    {
+        static_assert(static_schema_detail::always_false_v<TBundle>,
+                      "value_schema_descriptor only specialises for Bundle / UnNamedBundle");
+    };
+
+    template <typename... TFields>
+    struct value_schema_descriptor<UnNamedBundle<TFields...>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return (value_field_descriptor<TFields>::is_concrete() && ...);
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                std::vector<std::pair<std::string, const ValueTypeMetaData *>> fields;
+                fields.reserve(sizeof...(TFields));
+                (fields.emplace_back(value_field_descriptor<TFields>::field_name(),
+                                     value_field_descriptor<TFields>::value_meta()),
+                 ...);
+                return TypeRegistry::instance().un_named_bundle(fields);
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+
+    template <fixed_string Name, typename... TFields>
+    struct value_schema_descriptor<Bundle<Name, TFields...>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept
+        {
+            return (value_field_descriptor<TFields>::is_concrete() && ...);
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *value_meta()
+        {
+            if constexpr (is_concrete())
+            {
+                std::vector<std::pair<std::string, const ValueTypeMetaData *>> fields;
+                fields.reserve(sizeof...(TFields));
+                (fields.emplace_back(value_field_descriptor<TFields>::field_name(),
+                                     value_field_descriptor<TFields>::value_meta()),
+                 ...);
+                return TypeRegistry::instance().bundle(Name.sv(), fields);
+            }
+            else
+            {
+                return nullptr;
+            }
+        }
+    };
+}  // namespace hgraph
+
+#endif  // HGRAPH_CPP_ROOT_STATIC_SCHEMA_H

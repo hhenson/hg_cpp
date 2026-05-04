@@ -6,4 +6,31 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series_reference.cpp
 )
 
-add_library(hgraph_core ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_CORE_SOURCES})
+# Public headers — listed so CLion (and other IDEs) pick them up under the
+# library target. They are not compiled directly; the build relies on
+# include directories. ``CMAKE_CURRENT_SOURCE_DIR/../include`` is already
+# on the include path via the parent CMakeLists.
+set(HGRAPH_CORE_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/hgraph.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/hgraph_export.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_schema.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series_reference.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_value_plan_factory.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_value_type_meta_data.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/type_binding.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/type_meta_data.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/type_registry.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/value_plan_factory.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/value_type_meta_data.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/intern_table.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/key_slot_store.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/memory_utils.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/slot_observer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/stable_slot_storage.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/value_slot_store.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/util/date_time.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/util/scope.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/util/tagged_ptr.h
+)
+
+add_library(hgraph_core ${HGRAPH_CORE_TARGET_TYPE} ${HGRAPH_CORE_SOURCES} ${HGRAPH_CORE_HEADERS})
