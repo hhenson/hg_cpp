@@ -70,7 +70,7 @@ TEST_CASE("TypeRegistry::bundle interns by structural identity and registers the
     auto       &registry   = TypeRegistry::instance();
     const auto *int_meta   = registry.register_scalar<int>("int");
     const auto *str_meta   = registry.register_scalar<std::string>("string");
-    const auto *bundle_meta = registry.bundle({{"x", int_meta}, {"y", str_meta}}, "TestBundleA");
+    const auto *bundle_meta = registry.bundle("TestBundleA", {{"x", int_meta}, {"y", str_meta}});
 
     REQUIRE(bundle_meta != nullptr);
     REQUIRE(bundle_meta->kind == ValueTypeKind::Bundle);
@@ -78,8 +78,66 @@ TEST_CASE("TypeRegistry::bundle interns by structural identity and registers the
     REQUIRE(std::string(bundle_meta->fields[0].name) == "x");
     REQUIRE(std::string(bundle_meta->fields[1].name) == "y");
 
-    REQUIRE(registry.bundle({{"x", int_meta}, {"y", str_meta}}, "TestBundleA") == bundle_meta);
+    REQUIRE(registry.bundle("TestBundleA", {{"x", int_meta}, {"y", str_meta}}) == bundle_meta);
     REQUIRE(registry.value_type("TestBundleA") == bundle_meta);
+}
+
+TEST_CASE("TypeRegistry: un_named_bundle and bundle distinguish structural vs nominal identity")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *str_meta = registry.register_scalar<std::string>("string");
+
+    const std::vector<std::pair<std::string, const ValueTypeMetaData *>> fields{
+        {"x", int_meta}, {"y", str_meta}};
+
+    // Two un_named_bundle calls with the same field list return the same canonical pointer.
+    const auto *u1 = registry.un_named_bundle(fields);
+    const auto *u2 = registry.un_named_bundle(fields);
+    REQUIRE(u1 == u2);
+    REQUIRE(u1->is_un_named_bundle());
+    REQUIRE_FALSE(u1->is_named_bundle());
+    REQUIRE(u1->display_name == nullptr);
+    REQUIRE(u1->wrapped_un_named == nullptr);
+
+    // bundle(name, fields) wraps an un_named_bundle; same name + same fields → same pointer.
+    const auto *named_a1 = registry.bundle("BundleNamedA", fields);
+    const auto *named_a2 = registry.bundle("BundleNamedA", fields);
+    REQUIRE(named_a1 == named_a2);
+    REQUIRE(named_a1->is_named_bundle());
+    REQUIRE_FALSE(named_a1->is_un_named_bundle());
+    REQUIRE(named_a1->wrapped_un_named == u1);  // wraps the un-named twin
+    REQUIRE(std::string(named_a1->name()) == std::string("BundleNamedA"));
+    REQUIRE(named_a1->fields == u1->fields);     // shares the field array
+    REQUIRE(named_a1->field_count == u1->field_count);
+
+    // Different names with the same fields are DISTINCT named schemas (nominal identity).
+    const auto *named_b = registry.bundle("BundleNamedB", fields);
+    REQUIRE(named_b != named_a1);
+    REQUIRE(named_b->wrapped_un_named == u1);    // both wrap the same un-named
+
+    // Named ≠ un-named, even though they share fields.
+    REQUIRE(named_a1 != u1);
+
+    // bundle(...) requires a non-empty name.
+    REQUIRE_THROWS_AS(registry.bundle("", fields), std::invalid_argument);
+
+    // named_bundle() lookup: returns the named meta, or nullptr when the
+    // name doesn't exist or doesn't resolve to a named bundle.
+    REQUIRE(registry.named_bundle("BundleNamedA") == named_a1);
+    REQUIRE(registry.named_bundle("BundleNamedB") == named_b);
+    REQUIRE(registry.named_bundle("DoesNotExist") == nullptr);
+    // The atomic "int" registered earlier shares the value-name space but is not a named bundle.
+    REQUIRE(registry.named_bundle("int") == nullptr);
+
+    // Bundle name namespace is unique: same name + same fields is idempotent,
+    // same name + different fields is rejected.
+    const std::vector<std::pair<std::string, const ValueTypeMetaData *>> different_fields{
+        {"x", int_meta}, {"z", int_meta}};
+    REQUIRE_NOTHROW(registry.bundle("BundleNamedA", fields));            // same shape -> OK
+    REQUIRE_THROWS_AS(registry.bundle("BundleNamedA", different_fields), // different shape -> conflict
+                      std::invalid_argument);
 }
 
 TEST_CASE("TypeRegistry::list distinguishes fixed and dynamic forms")
@@ -177,7 +235,7 @@ TEST_CASE("TypeRegistry::tsb stores fields and registers the alias")
     const auto *int_meta = registry.register_scalar<int>("int");
     const auto *ts_int   = registry.ts(int_meta);
 
-    const auto *tsb = registry.tsb({{"a", ts_int}, {"b", ts_int}}, "TestTSBundleA");
+    const auto *tsb = registry.tsb("TestTSBundleA", {{"a", ts_int}, {"b", ts_int}});
     REQUIRE(tsb->kind == TSTypeKind::TSB);
     REQUIRE(tsb->field_count() == 2);
     REQUIRE(std::string(tsb->fields()[0].name) == "a");
@@ -185,7 +243,72 @@ TEST_CASE("TypeRegistry::tsb stores fields and registers the alias")
     REQUIRE(tsb->fields()[0].type == ts_int);
 
     REQUIRE(registry.time_series_type("TestTSBundleA") == tsb);
-    REQUIRE(registry.tsb({{"a", ts_int}, {"b", ts_int}}, "TestTSBundleA") == tsb);
+    REQUIRE(registry.tsb("TestTSBundleA", {{"a", ts_int}, {"b", ts_int}}) == tsb);
+}
+
+TEST_CASE("TypeRegistry: un_named_tsb and tsb distinguish structural vs nominal identity")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields{
+        {"a", ts_int}, {"b", ts_int}};
+
+    // Same field list -> same canonical un-named TSB.
+    const auto *u1 = registry.un_named_tsb(fields);
+    const auto *u2 = registry.un_named_tsb(fields);
+    REQUIRE(u1 == u2);
+    REQUIRE(u1->is_un_named_tsb());
+    REQUIRE_FALSE(u1->is_named_tsb());
+    REQUIRE(u1->display_name == nullptr);
+    REQUIRE(u1->wrapped_un_named_tsb() == nullptr);
+    // The un-named TSB's value-side bundle is the matching un-named Bundle.
+    REQUIRE(u1->value_type != nullptr);
+    REQUIRE(u1->value_type->is_un_named_bundle());
+
+    // tsb(name, fields) wraps the un-named TSB.
+    const auto *named_x1 = registry.tsb("TSBNamedX", fields);
+    const auto *named_x2 = registry.tsb("TSBNamedX", fields);
+    REQUIRE(named_x1 == named_x2);
+    REQUIRE(named_x1->is_named_tsb());
+    REQUIRE(named_x1->wrapped_un_named_tsb() == u1);
+    REQUIRE(std::string(named_x1->name()) == std::string("TSBNamedX"));
+    // Field array shared with the un-named twin.
+    REQUIRE(named_x1->fields() == u1->fields());
+    REQUIRE(named_x1->field_count() == u1->field_count());
+    // Value-side bundle is the matching named Bundle (nominal identity flows through).
+    REQUIRE(named_x1->value_type != nullptr);
+    REQUIRE(named_x1->value_type->is_named_bundle());
+
+    // Different names with the same fields are distinct named TSBs.
+    const auto *named_y = registry.tsb("TSBNamedY", fields);
+    REQUIRE(named_y != named_x1);
+    REQUIRE(named_y->wrapped_un_named_tsb() == u1);  // share the un-named twin
+    REQUIRE(named_y->value_type != named_x1->value_type);
+
+    // Named TSB ≠ un-named TSB.
+    REQUIRE(named_x1 != u1);
+
+    // tsb(...) requires a non-empty name.
+    REQUIRE_THROWS_AS(registry.tsb("", fields), std::invalid_argument);
+
+    // named_tsb() lookup.
+    REQUIRE(registry.named_tsb("TSBNamedX") == named_x1);
+    REQUIRE(registry.named_tsb("TSBNamedY") == named_y);
+    REQUIRE(registry.named_tsb("DoesNotExist") == nullptr);
+    // SIGNAL is registered in the TS name space but isn't a named TSB.
+    (void)registry.signal();
+    REQUIRE(registry.named_tsb("SIGNAL") == nullptr);
+
+    // TSB name namespace is unique: same name + same fields is idempotent,
+    // same name + different fields is rejected.
+    const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> different_fields{
+        {"a", ts_int}, {"c", ts_int}};
+    REQUIRE_NOTHROW(registry.tsb("TSBNamedX", fields));            // same shape -> OK
+    REQUIRE_THROWS_AS(registry.tsb("TSBNamedX", different_fields), // different shape -> conflict
+                      std::invalid_argument);
 }
 
 TEST_CASE("TypeRegistry::signal returns a single canonical instance")
@@ -224,8 +347,8 @@ TEST_CASE("TypeRegistry::contains_ref recurses through composite TS kinds")
     REQUIRE(!TypeRegistry::contains_ref(ts_int));
     REQUIRE(TypeRegistry::contains_ref(ref_int));
 
-    const auto *bundle_with_ref    = registry.tsb({{"r", ref_int}}, "TestRefBundleA");
-    const auto *bundle_without_ref = registry.tsb({{"v", ts_int}}, "TestRefBundleB");
+    const auto *bundle_with_ref    = registry.tsb("TestRefBundleA", {{"r", ref_int}});
+    const auto *bundle_without_ref = registry.tsb("TestRefBundleB", {{"v", ts_int}});
     REQUIRE(TypeRegistry::contains_ref(bundle_with_ref));
     REQUIRE(!TypeRegistry::contains_ref(bundle_without_ref));
 

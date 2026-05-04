@@ -62,9 +62,31 @@ namespace hgraph
 
         /** Intern a positional tuple value-schema with the given element types. */
         const ValueTypeMetaData *tuple(const std::vector<const ValueTypeMetaData *> &element_types);
-        /** Intern a named bundle value-schema; ``name`` is optional and used for display only. */
-        const ValueTypeMetaData *bundle(const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields,
-                                        std::string_view name = {});
+        /**
+         * Intern a *structural* (un-named) bundle value-schema. Two
+         * ``un_named_bundle`` calls with the same field list always return
+         * the same canonical pointer; the result has ``name == nullptr`` and
+         * ``wrapped_un_named == nullptr``.
+         */
+        const ValueTypeMetaData *un_named_bundle(
+            const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields);
+        /**
+         * Intern a *named* bundle value-schema. Internally synthesises the
+         * un-named bundle for ``fields``, then interns a named wrapper keyed
+         * by ``(name, un_named_pointer)``. Two named bundles with the same
+         * field list but different names are distinct schemas (nominal
+         * identity); ``name`` must be non-empty.
+         */
+        const ValueTypeMetaData *bundle(std::string_view name,
+                                        const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields);
+        /**
+         * Look up a previously-registered *named* bundle by name. Returns
+         * the canonical named-bundle metadata, or ``nullptr`` if no schema
+         * is registered under ``name``, or if the schema registered under
+         * ``name`` is not a named bundle (e.g. an atomic, tuple, or other
+         * value kind sharing the name). Lookup-only — does not synthesise.
+         */
+        [[nodiscard]] const ValueTypeMetaData *named_bundle(std::string_view name) const;
         /**
          * Intern a list value-schema. Pass ``fixed_size > 0`` for a static
          * list. ``variadic_tuple`` flags the metadata as a variadic-tuple
@@ -98,14 +120,44 @@ namespace hgraph
         const TSValueTypeMetaData *tsw_duration(const ValueTypeMetaData *value_type,
                                                 engine_time_delta_t time_range,
                                                 engine_time_delta_t min_time_range = engine_time_delta_t{0});
-        /** Intern a ``TSB`` (named bundle of TS fields); ``name`` is optional. */
-        const TSValueTypeMetaData *tsb(const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> &fields,
-                                       std::string_view name = {});
+        /**
+         * Intern a *structural* (un-named) ``TSB``. Two ``un_named_tsb`` calls
+         * with the same field list always return the same canonical pointer;
+         * the value-side bundle of the resulting TSB is the corresponding
+         * un-named ``Bundle``.
+         */
+        const TSValueTypeMetaData *un_named_tsb(
+            const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> &fields);
+        /**
+         * Intern a *named* ``TSB``. Internally synthesises the un-named TSB
+         * for ``fields``, then interns a named wrapper keyed by
+         * ``(name, un_named_pointer)``. The value-side bundle of the named
+         * TSB is the matching named ``Bundle``. ``name`` must be non-empty.
+         */
+        const TSValueTypeMetaData *tsb(std::string_view name,
+                                       const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> &fields);
+        /**
+         * Look up a previously-registered *named* ``TSB`` by name. Returns
+         * the canonical named-TSB metadata, or ``nullptr`` if no TS schema
+         * is registered under ``name``, or if the schema registered under
+         * ``name`` is not a named TSB. Lookup-only — does not synthesise.
+         */
+        [[nodiscard]] const TSValueTypeMetaData *named_tsb(std::string_view name) const;
         /** Intern a ``REF`` to the supplied time-series. */
         const TSValueTypeMetaData *ref(const TSValueTypeMetaData *referenced_ts);
 
         /** True when ``meta`` is a ``REF`` or contains a ``REF`` reachable through its structure. */
         [[nodiscard]] static bool contains_ref(const TSValueTypeMetaData *meta);
+
+        /**
+         * Drop every interned schema, alias, and auxiliary storage block.
+         *
+         * Test-only helper used to isolate test cases from each other —
+         * pointers previously handed out by *any* registry method become
+         * invalid. Production code must not call this; the registry's
+         * lifetime is the process.
+         */
+        void reset() noexcept;
         /**
          * Return the ``REF``-stripped version of ``meta``. ``REF<T>`` becomes
          * ``T``; container kinds recurse; non-REF metadata returns the same
@@ -174,7 +226,7 @@ namespace hgraph
             }
         };
 
-        /** Key for the value-side ``bundle`` cache: ordered ``(name, type)`` fields. */
+        /** Key for the value-side ``un_named_bundle`` cache: ordered ``(field_name, type)`` fields. Bundle name is **not** part of the key. */
         struct BundleKey
         {
             struct Field
@@ -197,6 +249,22 @@ namespace hgraph
                     seed = combine(seed, std::hash<const ValueTypeMetaData *>{}(f.type));
                 }
                 return seed;
+            }
+        };
+
+        /** Key for the named-bundle cache: ``(name, un_named_pointer)``. Two named bundles with the same fields but different names hash to different buckets. */
+        struct NamedBundleKey
+        {
+            std::string name;
+            const ValueTypeMetaData *un_named{nullptr};
+            bool operator==(const NamedBundleKey &) const noexcept = default;
+        };
+        struct NamedBundleKeyHash
+        {
+            size_t operator()(const NamedBundleKey &k) const noexcept
+            {
+                size_t seed = std::hash<std::string>{}(k.name);
+                return combine(seed, std::hash<const ValueTypeMetaData *>{}(k.un_named));
             }
         };
 
@@ -310,7 +378,7 @@ namespace hgraph
             }
         };
 
-        /** Key for the ``tsb`` cache: ordered ``(name, ts-schema)`` fields. */
+        /** Key for the ``un_named_tsb`` cache: ordered ``(field_name, ts-schema)`` fields. TSB name is **not** part of the key. */
         struct TSBundleKey
         {
             struct Field
@@ -336,6 +404,22 @@ namespace hgraph
             }
         };
 
+        /** Key for the named-TSB cache: ``(name, un_named_pointer)``. */
+        struct NamedTSBundleKey
+        {
+            std::string name;
+            const TSValueTypeMetaData *un_named{nullptr};
+            bool operator==(const NamedTSBundleKey &) const noexcept = default;
+        };
+        struct NamedTSBundleKeyHash
+        {
+            size_t operator()(const NamedTSBundleKey &k) const noexcept
+            {
+                size_t seed = std::hash<std::string>{}(k.name);
+                return combine(seed, std::hash<const TSValueTypeMetaData *>{}(k.un_named));
+            }
+        };
+
         // Auxiliary memory referenced by metadata (display names, field arrays).
         std::vector<std::unique_ptr<std::string>> name_storage_;
         std::vector<std::unique_ptr<ValueFieldMetaData[]>> value_field_storage_;
@@ -347,6 +431,7 @@ namespace hgraph
         InternTable<std::string, ValueTypeMetaData> synthetic_scalar_cache_;
         InternTable<TupleKey, ValueTypeMetaData, TupleKeyHash> tuple_cache_;
         InternTable<BundleKey, ValueTypeMetaData, BundleKeyHash> bundle_cache_;
+        InternTable<NamedBundleKey, ValueTypeMetaData, NamedBundleKeyHash> named_bundle_cache_;
         InternTable<ListKey, ValueTypeMetaData, ListKeyHash> list_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> set_cache_;
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> map_cache_;
@@ -359,6 +444,7 @@ namespace hgraph
         InternTable<TSListKey, TSValueTypeMetaData, TSListKeyHash> tsl_cache_;
         InternTable<TSWindowKey, TSValueTypeMetaData, TSWindowKeyHash> tsw_cache_;
         InternTable<TSBundleKey, TSValueTypeMetaData, TSBundleKeyHash> tsb_cache_;
+        InternTable<NamedTSBundleKey, TSValueTypeMetaData, NamedTSBundleKeyHash> named_tsb_cache_;
         InternTable<const TSValueTypeMetaData *, TSValueTypeMetaData> ref_cache_;
 
         // Aliasing maps: borrow pointers to canonical metadata stored in the

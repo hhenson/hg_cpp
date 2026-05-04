@@ -172,7 +172,7 @@ TEST_CASE("ts_schemas: TSB<{f...}>.value_schema is Bundle{f.value...}, delta is 
     const auto *ts_double   = registry.ts(double_meta);
     const auto *ts_int      = registry.ts(int_meta);
 
-    const auto *tsb = registry.tsb({{"price", ts_double}, {"size", ts_int}}, "TSBSchemaTest");
+    const auto *tsb = registry.tsb("TSBSchemaTest", {{"price", ts_double}, {"size", ts_int}});
 
     // value_schema = Bundle{price: double, size: int}
     REQUIRE(tsb->value_schema != nullptr);

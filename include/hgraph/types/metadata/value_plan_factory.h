@@ -78,6 +78,12 @@ namespace hgraph
         /** Look up only; never synthesises. Returns ``nullptr`` when missing. */
         const MemoryUtils::StoragePlan *find(const ValueTypeMetaData *schema) const;
 
+        /**
+         * Drop every cached schema → plan mapping. Test-only helper used to
+         * isolate tests from each other; production code must not call it.
+         */
+        void reset() noexcept;
+
       private:
         ValuePlanFactory() = default;
 

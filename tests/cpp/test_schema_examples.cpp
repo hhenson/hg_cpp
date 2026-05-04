@@ -63,8 +63,8 @@ TEST_CASE("schema example: Bundle — named fields with display name")
 
     // A simple labelled 2D point.
     const auto *point = registry.bundle(
-        {{"x", double_meta}, {"y", double_meta}, {"label", str_meta}},
-        "ExamplePoint2D");
+        "ExamplePoint2D",
+        {{"x", double_meta}, {"y", double_meta}, {"label", str_meta}});
 
     REQUIRE(point->kind == ValueTypeKind::Bundle);
     REQUIRE(point->field_count == 3);
@@ -294,8 +294,8 @@ TEST_CASE("schema example: TSB — time-series bundle")
 
     // A market-data tick: bid, ask, and volume each as their own TS.
     const auto *tick = registry.tsb(
-        {{"bid", ts_double}, {"ask", ts_double}, {"volume", ts_int}},
-        "ExampleMarketTick");
+        "ExampleMarketTick",
+        {{"bid", ts_double}, {"ask", ts_double}, {"volume", ts_int}});
 
     REQUIRE(tick->kind == TSTypeKind::TSB);
     REQUIRE(tick->is_collection());
@@ -369,8 +369,8 @@ TEST_CASE("compositional example: bundle of bundles")
     const auto *str_meta    = registry.register_scalar<std::string>("string");
 
     // Inner: { x: double, y: double }. Outer: { label: string, location: Inner }.
-    const auto *point    = registry.bundle({{"x", double_meta}, {"y", double_meta}}, "ExamplePt");
-    const auto *labelled = registry.bundle({{"label", str_meta}, {"location", point}}, "ExampleLabelledPt");
+    const auto *point    = registry.bundle("ExamplePt", {{"x", double_meta}, {"y", double_meta}});
+    const auto *labelled = registry.bundle("ExampleLabelledPt", {{"label", str_meta}, {"location", point}});
 
     REQUIRE(labelled->kind == ValueTypeKind::Bundle);
     REQUIRE(labelled->field_count == 2);
@@ -389,7 +389,7 @@ TEST_CASE("compositional example: TSD with TSB value — keyed time-series of bu
     const auto *ts_double   = registry.ts(double_meta);
 
     // TSB { x: TS[double], y: TS[double] }
-    const auto *point_ts = registry.tsb({{"x", ts_double}, {"y", ts_double}}, "ExamplePointTS");
+    const auto *point_ts = registry.tsb("ExamplePointTS", {{"x", ts_double}, {"y", ts_double}});
 
     // TSD<string, ExamplePointTS> — named points evolving over time.
     const auto *named_points = registry.tsd(str_meta, point_ts);
@@ -406,7 +406,7 @@ TEST_CASE("compositional example: REF wrapping a TSB — reference to a time-ser
     auto       &registry = TypeRegistry::instance();
     const auto *int_meta = registry.register_scalar<int>("int");
     const auto *ts_int   = registry.ts(int_meta);
-    const auto *bundle   = registry.tsb({{"a", ts_int}, {"b", ts_int}}, "ExamplePairTS");
+    const auto *bundle   = registry.tsb("ExamplePairTS", {{"a", ts_int}, {"b", ts_int}});
 
     const auto *ref = registry.ref(bundle);
 

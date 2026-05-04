@@ -44,6 +44,12 @@ namespace hgraph
         return it == cache_.end() ? nullptr : it->second;
     }
 
+    void ValuePlanFactory::reset() noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cache_.clear();
+    }
+
     const MemoryUtils::StoragePlan *ValuePlanFactory::synthesise(const ValueTypeMetaData *schema)
     {
         const MemoryUtils::StoragePlan *plan = nullptr;

@@ -69,7 +69,7 @@ TEST_CASE("ValuePlanFactory: bundle synthesis preserves field names and shape")
     auto       &factory     = ValuePlanFactory::instance();
     const auto *int_meta    = registry.register_scalar<int>("int");
     const auto *float_meta  = registry.register_scalar<float>("float");
-    const auto *bundle_meta = registry.bundle({{"x", int_meta}, {"y", float_meta}}, "PlanFactoryBundleA");
+    const auto *bundle_meta = registry.bundle("PlanFactoryBundleA", {{"x", int_meta}, {"y", float_meta}});
     const auto *plan        = factory.plan_for(bundle_meta);
 
     REQUIRE(plan != nullptr);

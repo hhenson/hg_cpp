@@ -161,6 +161,26 @@ namespace hgraph
         size_t field_count{0};
         /** Fixed size for static lists, ring buffer capacity for ``CyclicBuffer``, max queue size for ``Queue``. */
         size_t fixed_size{0};
+        /**
+         * For a *named* ``Bundle``, points to the structural (un-named) bundle
+         * with the same field list. ``nullptr`` on the un-named bundle itself
+         * and on every non-bundle metadata. Used to distinguish nominal
+         * identity (two named bundles with the same fields but different
+         * names are separate) from structural identity (an un-named bundle is
+         * shared by every bundle that has its field list).
+         */
+        const ValueTypeMetaData *wrapped_un_named{nullptr};
+
+        /** True when this metadata is a named bundle (carries a name). */
+        [[nodiscard]] constexpr bool is_named_bundle() const noexcept
+        {
+            return kind == ValueTypeKind::Bundle && display_name != nullptr;
+        }
+        /** True when this metadata is a structural (un-named) bundle. */
+        [[nodiscard]] constexpr bool is_un_named_bundle() const noexcept
+        {
+            return kind == ValueTypeKind::Bundle && display_name == nullptr;
+        }
 
         /** True when ``fixed_size`` is non-zero. Note: this is a semantic property (capacity / staticness), not a layout property. */
         [[nodiscard]] constexpr bool is_fixed_size() const noexcept { return fixed_size > 0; }

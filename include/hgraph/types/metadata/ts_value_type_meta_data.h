@@ -122,12 +122,23 @@ namespace hgraph
             WindowParams window{};
         };
 
-        /** ``TSB`` payload: field array, count, and the bundle name. */
+        /**
+         * ``TSB`` payload: field array, count, and the bundle name.
+         *
+         * ``wrapped_un_named`` points to the structural (un-named) TSB
+         * with the same field list when this TSB is *named*. It is null
+         * for the un-named TSB itself. Used to distinguish nominal
+         * identity (named TSBs with different names but identical
+         * fields are separate schemas) from structural identity (the
+         * un-named TSB is the canonical structural form, shared by
+         * every named TSB that has its field list).
+         */
         struct TsbData
         {
             const TSFieldMetaData *fields{nullptr};
             size_t field_count{0};
             const char *bundle_name{nullptr};
+            const TSValueTypeMetaData *wrapped_un_named{nullptr};
         };
 
         /** ``REF`` payload: schema of the referenced time-series. */
@@ -249,10 +260,13 @@ namespace hgraph
             data.tsw.window.duration.min_time_range = min_time_range;
         }
 
-        /** Populate ``data.tsb`` for a ``TSB`` descriptor. */
-        constexpr void set_tsb(const TSFieldMetaData *fields, size_t field_count, const char *bundle_name) noexcept
+        /** Populate ``data.tsb`` for a ``TSB`` descriptor. ``wrapped_un_named`` is null on the un-named form. */
+        constexpr void set_tsb(const TSFieldMetaData *fields,
+                               size_t field_count,
+                               const char *bundle_name,
+                               const TSValueTypeMetaData *wrapped_un_named = nullptr) noexcept
         {
-            data.tsb = TsbData{fields, field_count, bundle_name};
+            data.tsb = TsbData{fields, field_count, bundle_name, wrapped_un_named};
         }
 
         /** Populate ``data.ref`` for a ``REF`` descriptor. */
@@ -337,6 +351,23 @@ namespace hgraph
         [[nodiscard]] constexpr const char *bundle_name() const noexcept
         {
             return kind == TSTypeKind::TSB ? data.tsb.bundle_name : nullptr;
+        }
+
+        /** For a *named* ``TSB``, the structural (un-named) twin; null on the un-named TSB itself or for non-TSB kinds. */
+        [[nodiscard]] constexpr const TSValueTypeMetaData *wrapped_un_named_tsb() const noexcept
+        {
+            return kind == TSTypeKind::TSB ? data.tsb.wrapped_un_named : nullptr;
+        }
+
+        /** True when this TS metadata is a named TSB (carries a name). */
+        [[nodiscard]] constexpr bool is_named_tsb() const noexcept
+        {
+            return kind == TSTypeKind::TSB && display_name != nullptr;
+        }
+        /** True when this TS metadata is a structural (un-named) TSB. */
+        [[nodiscard]] constexpr bool is_un_named_tsb() const noexcept
+        {
+            return kind == TSTypeKind::TSB && display_name == nullptr;
         }
 
         /** Schema referenced by a ``REF``; null for other kinds. */

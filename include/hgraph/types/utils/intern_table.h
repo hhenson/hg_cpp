@@ -88,6 +88,17 @@ namespace hgraph
             return it == m_cache.end() ? nullptr : it->second;
         }
 
+        /**
+         * Drop all interned values. Test-only helper for resetting registry
+         * state between unit tests; pointers previously returned by
+         * ``intern`` / ``emplace`` / ``find`` become invalid.
+         */
+        void clear() noexcept {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_cache.clear();
+            m_storage.clear();
+        }
+
       private:
         mutable std::mutex                                        m_mutex;
         std::unordered_map<Key, const Value *, KeyHash, KeyEqual> m_cache{};

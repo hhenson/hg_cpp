@@ -34,6 +34,7 @@ if(NOT Catch2_FOUND)
 endif()
 
 add_executable(hgraph_unit_tests
+    registry_test_listener.cpp
     test_intern_table.cpp
     test_memory_utils.cpp
     test_plan_factories.cpp

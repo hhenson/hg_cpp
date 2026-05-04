@@ -31,6 +31,12 @@ namespace hgraph
         return it == cache_.end() ? nullptr : it->second;
     }
 
+    void TSValuePlanFactory::reset() noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cache_.clear();
+    }
+
     void TSValuePlanFactory::unsupported(const TSValueTypeMetaData *)
     {
         throw std::logic_error(

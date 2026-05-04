@@ -169,6 +169,55 @@ namespace hgraph
         return it == ts_name_cache_.end() ? nullptr : it->second;
     }
 
+    const ValueTypeMetaData *TypeRegistry::named_bundle(std::string_view name) const
+    {
+        const ValueTypeMetaData *meta = value_type(name);
+        return (meta != nullptr && meta->is_named_bundle()) ? meta : nullptr;
+    }
+
+    const TSValueTypeMetaData *TypeRegistry::named_tsb(std::string_view name) const
+    {
+        const TSValueTypeMetaData *meta = time_series_type(name);
+        return (meta != nullptr && meta->is_named_tsb()) ? meta : nullptr;
+    }
+
+    void TypeRegistry::reset() noexcept
+    {
+        // Drop every interned identity cache.
+        scalar_cache_.clear();
+        synthetic_scalar_cache_.clear();
+        tuple_cache_.clear();
+        bundle_cache_.clear();
+        named_bundle_cache_.clear();
+        list_cache_.clear();
+        set_cache_.clear();
+        map_cache_.clear();
+        cyclic_buffer_cache_.clear();
+        queue_cache_.clear();
+        ts_cache_.clear();
+        tss_cache_.clear();
+        tsd_cache_.clear();
+        tsl_cache_.clear();
+        tsw_cache_.clear();
+        tsb_cache_.clear();
+        named_tsb_cache_.clear();
+        ref_cache_.clear();
+
+        // Drop the alias maps and the dereference cache.
+        value_name_cache_.clear();
+        ts_name_cache_.clear();
+        deref_cache_.clear();
+
+        // Drop auxiliary storage referenced by metadata.
+        name_storage_.clear();
+        value_field_storage_.clear();
+        ts_field_storage_.clear();
+
+        // Reset singletons that don't fit any of the keyed caches.
+        signal_meta_.reset();
+        time_series_reference_meta_ = nullptr;
+    }
+
     const char *TypeRegistry::store_name(std::string_view name)
     {
         auto stored = std::make_unique<std::string>(name);
@@ -281,7 +330,7 @@ namespace hgraph
     }
 
     const ValueTypeMetaData *
-    TypeRegistry::bundle(const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields, std::string_view name)
+    TypeRegistry::un_named_bundle(const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields)
     {
         BundleKey key;
         key.fields.reserve(fields.size());
@@ -301,9 +350,47 @@ namespace hgraph
             }
             ValueFieldMetaData *fields_ptr = stored_fields ? store_value_fields(std::move(stored_fields)) : nullptr;
 
-            ValueTypeMetaData m(ValueTypeKind::Bundle, compute_bundle_flags(fields), store_name_interned(name));
+            // Un-named bundle: name = nullptr, wrapped_un_named = nullptr.
+            ValueTypeMetaData m(ValueTypeKind::Bundle, compute_bundle_flags(fields), nullptr);
             m.fields = fields_ptr;
             m.field_count = fields.size();
+            return m;
+        });
+        return &meta;
+    }
+
+    const ValueTypeMetaData *
+    TypeRegistry::bundle(std::string_view name,
+                         const std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields)
+    {
+        if (name.empty())
+        {
+            throw std::invalid_argument("bundle requires a non-empty name; use un_named_bundle for the structural form");
+        }
+        const ValueTypeMetaData *un_named = un_named_bundle(fields);
+
+        // Bundle name namespace must be unique: a name already in use by a
+        // named bundle with a different field list is a conflict, not a
+        // re-registration. Same name + same fields is idempotent and falls
+        // through to the regular intern path below.
+        if (const ValueTypeMetaData *existing = named_bundle(name);
+            existing != nullptr && existing->wrapped_un_named != un_named)
+        {
+            throw std::invalid_argument(
+                std::string("named bundle '") + std::string(name) +
+                "' is already registered with a different schema");
+        }
+
+        NamedBundleKey key{std::string{name}, un_named};
+        const ValueTypeMetaData &meta = named_bundle_cache_.intern(std::move(key), [&]() {
+            // Named bundle wraps the un-named: shares the same field array
+            // (no duplication), records its own name, and sets
+            // wrapped_un_named so consumers can navigate to the structural
+            // twin.
+            ValueTypeMetaData m(ValueTypeKind::Bundle, un_named->flags, store_name_interned(name));
+            m.fields = un_named->fields;
+            m.field_count = un_named->field_count;
+            m.wrapped_un_named = un_named;
             return m;
         });
         register_value_alias(name, &meta);
@@ -455,7 +542,7 @@ namespace hgraph
     }
 
     const TSValueTypeMetaData *
-    TypeRegistry::tsb(const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> &fields, std::string_view name)
+    TypeRegistry::un_named_tsb(const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> &fields)
     {
         TSBundleKey ts_key;
         ts_key.fields.reserve(fields.size());
@@ -481,9 +568,51 @@ namespace hgraph
             }
             TSFieldMetaData *fields_ptr = stored_fields ? store_ts_fields(std::move(stored_fields)) : nullptr;
 
-            TSValueTypeMetaData m(
-                TSTypeKind::TSB, bundle(value_fields, name), store_name_interned(name));
-            m.set_tsb(fields_ptr, fields.size(), store_name_interned(name));
+            // Un-named TSB: value-side bundle is the matching un-named Bundle.
+            TSValueTypeMetaData m(TSTypeKind::TSB, un_named_bundle(value_fields), nullptr);
+            m.set_tsb(fields_ptr, fields.size(), nullptr, /*wrapped_un_named=*/nullptr);
+            populate_ts_schemas(m);
+            return m;
+        });
+        return &meta;
+    }
+
+    const TSValueTypeMetaData *
+    TypeRegistry::tsb(std::string_view name,
+                      const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> &fields)
+    {
+        if (name.empty())
+        {
+            throw std::invalid_argument("tsb requires a non-empty name; use un_named_tsb for the structural form");
+        }
+        const TSValueTypeMetaData *un_named = un_named_tsb(fields);
+
+        // TSB name namespace must be unique: same name with a different
+        // field list is a conflict.
+        if (const TSValueTypeMetaData *existing = named_tsb(name);
+            existing != nullptr && existing->wrapped_un_named_tsb() != un_named)
+        {
+            throw std::invalid_argument(
+                std::string("named tsb '") + std::string(name) +
+                "' is already registered with a different schema");
+        }
+
+        NamedTSBundleKey key{std::string{name}, un_named};
+        const TSValueTypeMetaData &meta = named_tsb_cache_.intern(std::move(key), [&]() {
+            // Build the matching named value-side bundle so the named TSB's
+            // value pointer carries the same nominal identity.
+            std::vector<std::pair<std::string, const ValueTypeMetaData *>> value_fields;
+            value_fields.reserve(fields.size());
+            for (const auto &[field_name, ts_type] : fields)
+            {
+                value_fields.emplace_back(field_name, ts_type ? ts_type->value_type : nullptr);
+            }
+            const ValueTypeMetaData *named_value_bundle = bundle(name, value_fields);
+
+            const char *interned_name = store_name_interned(name);
+            TSValueTypeMetaData m(TSTypeKind::TSB, named_value_bundle, interned_name);
+            // Field array is shared with the un-named twin (no duplication).
+            m.set_tsb(un_named->fields(), un_named->field_count(), interned_name, un_named);
             populate_ts_schemas(m);
             return m;
         });
@@ -540,7 +669,7 @@ namespace hgraph
                 {
                     const ValueTypeMetaData *element  = meta.value_type->element_type;
                     const ValueTypeMetaData *set_of_t = set(element);
-                    meta.delta_value_schema = bundle({{"added", set_of_t}, {"removed", set_of_t}});
+                    meta.delta_value_schema = un_named_bundle({{"added", set_of_t}, {"removed", set_of_t}});
                 }
                 break;
             }
@@ -555,7 +684,7 @@ namespace hgraph
                     const ValueTypeMetaData *delta_map   = map(key, value_delta);
                     const ValueTypeMetaData *removed_set = set(key);
                     meta.delta_value_schema =
-                        bundle({{"removed", removed_set}, {"modified", delta_map}});
+                        un_named_bundle({{"removed", removed_set}, {"modified", delta_map}});
                 }
                 break;
             }
@@ -584,7 +713,7 @@ namespace hgraph
                     delta_fields.emplace_back(field.name ? std::string(field.name) : std::string{},
                                               field.type ? field.type->delta_value_schema : nullptr);
                 }
-                meta.delta_value_schema = bundle(delta_fields);
+                meta.delta_value_schema = un_named_bundle(delta_fields);
                 break;
             }
 
@@ -650,12 +779,15 @@ namespace hgraph
                     deref_fields.emplace_back(meta->fields()[index].name, dereference(meta->fields()[index].type));
                 }
 
-                std::string deref_name = meta->bundle_name() ? std::string(meta->bundle_name()) : std::string{};
-                if (!deref_name.empty())
+                if (meta->is_un_named_tsb())
                 {
-                    deref_name += "_deref";
+                    result = un_named_tsb(deref_fields);
                 }
-                result = tsb(deref_fields, deref_name);
+                else
+                {
+                    std::string deref_name = std::string(meta->bundle_name()) + "_deref";
+                    result = tsb(deref_name, deref_fields);
+                }
                 break;
             }
 
