@@ -6,8 +6,8 @@ value participate in graph evaluation. It carries the universal
 time-series contract — modification time, validity, delta tracking — on
 top of a value-layer payload. The schema is represented at runtime by
 ``TSValueTypeMetaData``; the actual memory layout and storage strategy
-live on the matching plan and are described in *Allocation, Plans and
-Ops > Time-Series Plans and Ops*.
+live on the matching plan and are described in
+:doc:`../plans_and_ops/time_series`.
 
 This chapter describes:
 
@@ -20,7 +20,7 @@ This chapter describes:
 Time-Series Kinds
 -----------------
 
-``TS[T]``
+``TS``
     Scalar time-series of one atomic type.
 
 ``TSB``
@@ -55,7 +55,7 @@ output. The kind-specific view APIs add container-specific access on
 top of this base, but the base is always present.
 
 ``value``
-    The cumulative current state of the time-series. For a ``TS[T]`` this
+    The cumulative current state of the time-series. For a ``TS`` this
     is the scalar that has been written; for a ``TSB`` it is the bundle
     of all currently valid fields; for a ``TSD`` it is the map of all
     live keys to their current values. ``value`` persists across ticks
@@ -66,9 +66,9 @@ top of this base, but the base is always present.
     the time-series did not tick in the current engine cycle. When it
     did tick, the shape depends on the kind:
 
-    - ``TS[T]`` — ticks are atomic value replacements with no diffing,
+    - ``TS`` — ticks are atomic value replacements with no diffing,
       so ``delta_value`` is the new scalar (the same object as
-      ``value``). Setting a ``TS[T]`` to its current value still
+      ``value``). Setting a ``TS`` to its current value still
       produces a delta.
     - ``TSB`` — modified fields only.
     - ``TSL`` — modified elements with their indices.
@@ -160,7 +160,7 @@ Per-kind mapping:
      - ``Bundle{added: Set<T>, removed: Set<T>}``
    * - ``TSD<K, V>``
      - ``Map<K, V.value_schema>``
-     - ``Bundle{added: Map<K, V.delta>, removed: Set<K>, modified: Map<K, V.delta>}``
+     - ``Bundle{removed: Set<K>, modified: Map<K, V.delta>}``
    * - ``TSL<T>``
      - ``List<T.value_schema, fixed_size>``
      - ``Map<int64, T.delta_value_schema>``
@@ -199,8 +199,14 @@ A few notes on the cells that aren't immediate:
   registry auto-registers an ``int64`` scalar the first time it
   synthesises a TSL delta schema.
 - ``TSD`` and ``TSS`` deltas are bundles because the per-tick change
-  set has multiple categories (added / removed / modified). Each
-  category is its own value-layer container.
+  set carries more than one category. ``TSD`` collapses *added* and
+  *updated* into a single ``modified`` map: any key present in
+  ``modified`` carries the new or replacement value for that key, and
+  ``removed`` carries the keys that were dropped. This matches the
+  Python TSD delta surface and avoids the need to disambiguate added-
+  vs-updated at the schema level. ``TSS`` keeps the ``added`` /
+  ``removed`` split because membership-only sets have no notion of
+  *update*.
 - ``TSW`` (tick) has a fixed-size list as ``value_schema`` because the
   rolling window length is known up front; duration-based windows fall
   back to a dynamic list since the count of elements per window varies

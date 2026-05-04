@@ -33,6 +33,8 @@ current tick. Compacting storage cannot be used. The runtime instead
 uses chained, non-relocating slot blocks: new capacity is appended
 without moving previously published slot addresses.
 
+.. _ts-path-construction:
+
 Path Construction and the Slot Concept
 --------------------------------------
 
@@ -141,7 +143,7 @@ TSD is the time-series wrapper around a delta-tracking Map. It owns:
 - the time-series state common to every kind.
 
 The value side is itself a recursive time-series layer: each value-
-slot holds a complete time-series value (most often a ``TS[T]``, but
+slot holds a complete time-series value (most often a ``TS``, but
 ``TSB``, ``TSL``, or further nested ``TSD`` are all permitted by the
 schema). Memory stability is preserved by the underlying
 ``StableSlotStorage`` so consumers can bind to a specific slot's value

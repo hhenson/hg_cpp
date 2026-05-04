@@ -13,14 +13,14 @@ plan, ops, and builder.
 Concept role      Graph-layer name
 ================  ==========================================================
 Schema            ``GraphTypeMetaData`` — node entries, wiring entries,
-                  boundary descriptors, identity, optional parent-link
-                  metadata for nested graphs.
+                  boundary descriptors, and identity.
 Plan              ``GraphPlan`` — memory layout for the runtime graph:
                   flattened node array, schedule table, per-node state
                   storage, boundary-binding storage.
-Ops               ``GraphOps`` — graph-level lifecycle vtable:
-                  ``construct``, ``start``, ``evaluate``, ``stop``,
-                  ``dispose``.
+Ops               ``GraphOps`` — graph-level behaviour vtable:
+                  ``start``, ``evaluate``, ``stop``. Construction and
+                  destruction are handled by the plan's
+                  ``LifecycleOps``, not by ``GraphOps``.
 Binding           ``GraphTypeBinding`` — interned ``(schema, plan,
                   ops)`` triple.
 Builder           ``GraphBuilder`` — turns a schema into a runtime
@@ -64,12 +64,6 @@ A ``GraphTypeMetaData`` carries:
     external inputs and outputs (e.g. for an embedded runtime). Nested
     graphs always carry a boundary — that is what makes them nestable.
 
-``nested_children``
-    For graphs that themselves embed nested graphs, the list of child
-    graph schema pointers and how their boundaries bind to positions
-    in this graph. Nested-child resolution is recursive: a nested
-    graph can embed further nested graphs without bound.
-
 ``source_partition``
     Pre-computed boundary index that separates push-source nodes from
     rank-ordered nodes. The runtime uses this to drive its evaluation
@@ -96,8 +90,8 @@ schema stays free of runtime addresses:
 The graph builder turns each entry into the matching link state at
 construction time, threading the pointers through ``BoundaryBindings``
 and node input/output positions. The path representation matches the
-slot/index addressing scheme described in *Time-Series Plans and Ops >
-Path Construction*.
+slot/index addressing scheme described in
+:ref:`ts-path-construction`.
 
 The Graph Boundary
 ------------------
@@ -139,23 +133,33 @@ described in *Linking Strategies*.
 Nested Graphs
 -------------
 
-A nested graph schema is a graph schema whose boundary is meant to
-bind into a parent rather than to an external runtime. Two
-characteristics distinguish nested-graph schemas from top-level
-schemas:
+A graph schema does **not** record its children. Containment runs the
+other way: a graph that wishes to embed a nested graph does so
+through one of its **nodes** — specifically, a node whose
+``node_kind`` is ``NESTED``. The hosting node schema records the
+nested graph's schema pointer; the graph schema itself sees only the
+node entry and its wiring, exactly like any other node. This keeps
+the graph-schema vocabulary uniform: graph schemas describe a flat
+set of node entries plus the wiring between them, with no
+hierarchical "child graphs" list.
 
-1. **Mandatory boundary.** A nested graph must declare its
-   ``GraphBoundarySchema`` so the parent can wire its ports.
-2. **Parent-link metadata.** The nested schema records which parent
-   node owns it (``parent_node_index``) and which positions on that
-   parent provide the bound inputs / receive the bound outputs.
+What distinguishes a nested-graph schema from a top-level graph
+schema is therefore not its content but its *use*: a nested-graph
+schema must declare a ``GraphBoundarySchema`` so that the hosting
+node can wire its ports onto the surrounding graph. Top-level graphs
+optionally carry a boundary; nested graphs always do.
+
+The schema carries no parent reference. A *runtime* nested-graph
+instance may carry a back-pointer to the parent node that hosts it
+(useful for clock delegation and diagnostics), but that is runtime
+state, not schema content.
 
 The runtime instantiation of a nested graph is the *child graph
-template* that the 2603 branch already implemented (``ChildGraphTemplate``
-/ ``ChildGraphInstance``). The schema layer described here owns only
-the template's identity description; the actual runtime graph storage
-and the boundary-binding plan that maps ports to parent positions
-live in *Allocation, Plans and Ops*.
+template* that the 2603 branch already implemented
+(``ChildGraphTemplate`` / ``ChildGraphInstance``). The schema layer
+described here owns only the template's identity; the actual
+runtime graph storage and the boundary-binding plan that maps ports
+to parent positions live in *Allocation, Plans and Ops*.
 
 Dynamic Nested Graphs
 ~~~~~~~~~~~~~~~~~~~~~

@@ -104,7 +104,7 @@ The schema layer leaves a few related concerns to other chapters:
   representation — open topics, see *Refinement Topics*.
 
 Schema types
-------------
+============
 
 The four schema families covered in this chapter:
 

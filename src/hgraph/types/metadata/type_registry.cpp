@@ -555,7 +555,7 @@ namespace hgraph
                     const ValueTypeMetaData *delta_map   = map(key, value_delta);
                     const ValueTypeMetaData *removed_set = set(key);
                     meta.delta_value_schema =
-                        bundle({{"added", delta_map}, {"removed", removed_set}, {"modified", delta_map}});
+                        bundle({{"removed", removed_set}, {"modified", delta_map}});
                 }
                 break;
             }

@@ -19,10 +19,12 @@ Schema            ``NodeTypeMetaData`` — kind, input/output/error/state
 Plan              ``NodePlan`` — memory layout for the node's runtime
                   state: input slots, output slots, state buffer,
                   optional scheduler, optional error output.
-Ops               ``NodeOps`` — the lifecycle vtable: ``start``, ``eval``,
-                  ``stop``, plus error-handling and disposal hooks. The
-                  first parameter of every op is a pointer to the node's
-                  runtime memory.
+Ops               ``NodeOps`` — the behaviour vtable: ``start``, ``eval``,
+                  ``stop``, plus an optional error-handling hook. The
+                  first parameter of every op is a pointer to the
+                  node's runtime memory. Construction and destruction
+                  are handled by the plan's ``LifecycleOps``, not by
+                  ``NodeOps``.
 Binding           ``NodeTypeBinding`` — interned ``(schema, plan, ops)``
                   triple.
 Builder           ``NodeBuilder`` — wraps a binding and constructs a
@@ -84,6 +86,14 @@ A ``NodeTypeMetaData`` carries:
     push-source partition described in *Graph Layer*) and which
     boundary contract applies for nested graphs.
 
+``nested_graph_schema``
+    Optional. Set only when ``node_kind == NESTED``. Borrowed pointer
+    to the ``GraphTypeMetaData`` of the nested graph this node hosts.
+    Containment between graphs flows through the hosting node: the
+    parent graph schema sees a node entry; the node schema records
+    which graph schema lives inside it. The graph schema itself never
+    tracks its children.
+
 ``lifecycle_flags``
     Records which of ``start`` / ``eval`` / ``stop`` the node's ops
     table actually implements. Most compute nodes only need ``eval``;
@@ -117,11 +127,6 @@ The hooks are intentionally minimal:
     destruction. Symmetric counterpart to ``start``: releases anything
     ``start`` acquired. Most compute nodes do not need it.
 
-``dispose(node*)``
-    Final teardown hook, called by the destructor through the bound
-    plan's ``LifecycleOps``. Distinct from ``stop`` in that it runs
-    even if ``start`` failed.
-
 ``handle_error(node*, error_value*)``
     Optional. Called when an exception thrown by ``eval`` is captured
     by the runtime. Default behaviour is to surface the error on the
@@ -132,6 +137,15 @@ The first parameter of every op is a pointer to the node's runtime
 memory — the same pattern the value-layer ops table uses. This keeps
 nodes type-erased: the runtime evaluation loop dispatches against the
 ops vtable without knowing the concrete C++ type behind it.
+
+Construction and destruction of a node's runtime memory are not part
+of ``NodeOps``: they are the responsibility of the bound ``NodePlan``'s
+``LifecycleOps`` (``construct`` / ``destroy``), invoked by the
+allocator that owns the node's storage. Keeping them on the plan
+preserves the plan/ops separation described in *Allocation, Plans
+and Ops*: ``NodeOps`` describes runtime behaviour over already-
+constructed memory, ``LifecycleOps`` describes how that memory is
+brought into and out of existence.
 
 Generic Resolution
 ------------------
