@@ -150,6 +150,13 @@ namespace hgraph
             });
         }
 
+        /**
+         * Drop every interned binding. Test-only helper used by the
+         * registry-reset listener; pointers previously returned by
+         * ``intern`` / ``find`` become invalid.
+         */
+        static void clear() noexcept { registry().clear(); }
+
       private:
         [[nodiscard]] static InternTable<Key, TypeBinding, KeyHash> &registry() noexcept {
             static InternTable<Key, TypeBinding, KeyHash> registry;

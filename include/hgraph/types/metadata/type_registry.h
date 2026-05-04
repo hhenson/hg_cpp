@@ -9,6 +9,7 @@
 #include <hgraph/types/metadata/value_type_meta_data.h>
 #include <hgraph/types/utils/intern_table.h>
 #include <hgraph/types/utils/memory_utils.h>
+#include <hgraph/types/value/value_ops.h>
 
 #include <memory>
 #include <string>
@@ -158,6 +159,15 @@ namespace hgraph
          * lifetime is the process.
          */
         void reset() noexcept;
+
+        /**
+         * Look up the canonical ``ValueTypeBinding`` for a scalar type ``T``
+         * registered via ``register_scalar``. Returns ``nullptr`` when not
+         * registered. Implemented in the header tail so the binding type is
+         * visible (defined in ``hgraph/types/value/value_ops.h``).
+         */
+        template <typename T>
+        [[nodiscard]] const ValueTypeBinding *scalar_binding() const;
         /**
          * Return the ``REF``-stripped version of ``meta``. ``REF<T>`` becomes
          * ``T``; container kinds recurse; non-REF metadata returns the same
@@ -464,11 +474,31 @@ namespace hgraph
     template <typename T>
     const ValueTypeMetaData *TypeRegistry::register_scalar(std::string_view name, ValueTypeFlags extra_flags)
     {
-        return register_scalar_impl(
+        const ValueTypeMetaData *meta = register_scalar_impl(
             std::type_index(typeid(T)),
             name,
             compute_scalar_flags<T>() | extra_flags,
             &MemoryUtils::plan_for<T>());
+        // Pair the schema with the canonical (plan, ops) binding so
+        // ``Value(T{...})`` and ``scalar_binding<T>()`` resolve uniformly.
+        // ``ops_for<T>`` lives in ``value_ops.h``; we forward-declare the
+        // helper to avoid a circular header dependency.
+        const ValueTypeBinding &binding = ValueTypeBinding::intern(*meta, MemoryUtils::plan_for<T>(), ops_for<T>());
+        (void)binding;
+        return meta;
+    }
+
+    /**
+     * Convenience: look up the canonical binding for a scalar type ``T`` that
+     * has previously been registered through ``register_scalar``. Returns
+     * ``nullptr`` when no binding exists for the type.
+     */
+    template <typename T>
+    [[nodiscard]] inline const ValueTypeBinding *TypeRegistry::scalar_binding() const
+    {
+        const ValueTypeMetaData *meta = scalar_cache_.find(std::type_index(typeid(T)));
+        if (meta == nullptr) { return nullptr; }
+        return ValueTypeBinding::find(meta, &MemoryUtils::plan_for<T>(), &ops_for<T>());
     }
 }  // namespace hgraph
 
