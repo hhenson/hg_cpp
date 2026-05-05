@@ -16,6 +16,7 @@
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/value/compact_storage.h>
 #include <hgraph/types/value/value_ops.h>
 
 namespace
@@ -23,11 +24,13 @@ namespace
     void reset_registries() noexcept
     {
         // Plan factories hold borrowed schema pointers; bindings hold
-        // borrowed schema + plan + ops pointers. Both must be cleared
-        // before the type registry's reset destroys the underlying
-        // schemas.
+        // borrowed schema + plan + ops pointers; compact-container plan
+        // registries hold lifecycle context that references those
+        // bindings. Clear all of them before the type registry's reset
+        // destroys the underlying schemas.
         hgraph::ValuePlanFactory::instance().reset();
         hgraph::TSValuePlanFactory::instance().reset();
+        hgraph::clear_compact_container_plans();
         hgraph::ValueTypeBinding::clear();
         hgraph::TypeRegistry::instance().reset();
     }

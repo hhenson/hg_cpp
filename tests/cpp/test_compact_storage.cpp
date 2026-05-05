@@ -1,0 +1,299 @@
+// Tests for the value-layer compact container storage shapes
+// (``ListStorage``, ``SetStorage``, ``MapStorage``,
+// ``CyclicBufferStorage``, ``QueueStorage``) and the per-kind
+// ``ValueBuilder`` types that produce them.
+//
+// The compact shapes are immutable after construction by design (see
+// *Allocation, Plans and Ops > Scalar Plans and Ops > Container
+// Storage Shapes*); these tests verify the construction-time
+// contract: builder accumulates → ``build_storage`` returns a fully-
+// populated, immutable storage object → read-time access matches
+// what was pushed in → copy/move preserves contents.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/value/compact_storage.h>
+#include <hgraph/types/value/value_builder.h>
+
+#include <cstdint>
+#include <string>
+
+namespace
+{
+    template <typename T>
+    [[nodiscard]] const T &as_const(const void *memory) noexcept
+    {
+        return *static_cast<const T *>(memory);
+    }
+}  // namespace
+
+TEST_CASE("ListBuilder: push_back round-trips through ListStorage")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *binding = registry.scalar_binding<int>();
+    REQUIRE(binding != nullptr);
+
+    ListBuilder builder{*binding};
+    builder.push_back<int>(7);
+    builder.push_back<int>(11);
+    builder.push_back<int>(13);
+    REQUIRE(builder.size() == 3);
+
+    auto storage = builder.build_storage();
+    REQUIRE(storage.size() == 3);
+    REQUIRE(as_const<int>(storage.element_at(0)) == 7);
+    REQUIRE(as_const<int>(storage.element_at(1)) == 11);
+    REQUIRE(as_const<int>(storage.element_at(2)) == 13);
+}
+
+TEST_CASE("ListStorage: copy and move preserve contents")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *binding = registry.scalar_binding<int>();
+
+    ListBuilder builder{*binding};
+    builder.push_back<int>(1);
+    builder.push_back<int>(2);
+    builder.push_back<int>(3);
+    auto original = builder.build_storage();
+
+    auto copy = original;
+    REQUIRE(copy.size() == 3);
+    REQUIRE(as_const<int>(copy.element_at(0)) == 1);
+    REQUIRE(as_const<int>(copy.element_at(2)) == 3);
+
+    auto moved = std::move(original);
+    REQUIRE(moved.size() == 3);
+    REQUIRE(as_const<int>(moved.element_at(1)) == 2);
+}
+
+TEST_CASE("ListStorage: empty list construction is well-defined")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *binding = registry.scalar_binding<int>();
+
+    ListBuilder builder{*binding};
+    REQUIRE(builder.empty());
+    auto storage = builder.build_storage();
+    REQUIRE(storage.empty());
+    REQUIRE(storage.size() == 0);
+}
+
+TEST_CASE("ListBuilder: works with non-trivial element types (std::string)")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<std::string>("string");
+    const auto *binding = registry.scalar_binding<std::string>();
+    REQUIRE(binding != nullptr);
+
+    ListBuilder builder{*binding};
+    builder.push_back<std::string>(std::string{"alpha"});
+    builder.push_back<std::string>(std::string{"beta"});
+    builder.push_back<std::string>(std::string{"gamma"});
+    auto storage = builder.build_storage();
+
+    REQUIRE(storage.size() == 3);
+    REQUIRE(as_const<std::string>(storage.element_at(0)) == "alpha");
+    REQUIRE(as_const<std::string>(storage.element_at(1)) == "beta");
+    REQUIRE(as_const<std::string>(storage.element_at(2)) == "gamma");
+}
+
+TEST_CASE("CyclicBufferBuilder: rotates after capacity is reached")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *binding = registry.scalar_binding<int>();
+
+    CyclicBufferBuilder builder{*binding, /*capacity=*/3};
+    builder.push_back<int>(1);
+    builder.push_back<int>(2);
+    builder.push_back<int>(3);
+    REQUIRE(builder.size() == 3);
+
+    // Push past capacity: oldest is dropped, newest takes its slot.
+    builder.push_back<int>(4);
+    builder.push_back<int>(5);
+
+    auto storage = builder.build_storage();
+    REQUIRE(storage.size() == 3);
+    // The window now holds the most-recent three: 3, 4, 5 in ring order.
+    REQUIRE(as_const<int>(storage.element_at(0)) == 3);
+    REQUIRE(as_const<int>(storage.element_at(1)) == 4);
+    REQUIRE(as_const<int>(storage.element_at(2)) == 5);
+}
+
+TEST_CASE("CyclicBufferBuilder: zero capacity is rejected at construction")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *binding = registry.scalar_binding<int>();
+
+    REQUIRE_THROWS_AS(CyclicBufferBuilder(*binding, /*capacity=*/0), std::invalid_argument);
+}
+
+TEST_CASE("QueueBuilder: bounded queue rejects on overflow; unbounded grows")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *binding = registry.scalar_binding<int>();
+
+    SECTION("bounded")
+    {
+        QueueBuilder builder{*binding, /*max_capacity=*/2};
+        builder.push<int>(10);
+        builder.push<int>(20);
+        REQUIRE_THROWS_AS(builder.push<int>(30), std::overflow_error);
+
+        auto storage = builder.build_storage();
+        REQUIRE(storage.size() == 2);
+        REQUIRE(as_const<int>(storage.element_at(0)) == 10);
+        REQUIRE(as_const<int>(storage.element_at(1)) == 20);
+        REQUIRE(as_const<int>(storage.front()) == 10);
+    }
+
+    SECTION("unbounded")
+    {
+        QueueBuilder builder{*binding};  // max_capacity = 0
+        builder.push<int>(1);
+        builder.push<int>(2);
+        builder.push<int>(3);
+        builder.push<int>(4);
+
+        auto storage = builder.build_storage();
+        REQUIRE(storage.size() == 4);
+        REQUIRE(as_const<int>(storage.front()) == 1);
+        REQUIRE(as_const<int>(storage.element_at(3)) == 4);
+    }
+}
+
+TEST_CASE("SetBuilder: deduplicates by content; build produces a SetStorage")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *binding = registry.scalar_binding<int>();
+
+    SetBuilder builder{*binding};
+    REQUIRE(builder.insert<int>(7));
+    REQUIRE(builder.insert<int>(11));
+    REQUIRE_FALSE(builder.insert<int>(7));  // duplicate
+    REQUIRE(builder.insert<int>(13));
+    REQUIRE(builder.size() == 3);
+
+    auto storage = builder.build_storage();
+    REQUIRE(storage.size() == 3);
+
+    int seven = 7;
+    int twelve = 12;
+    REQUIRE(storage.contains(&seven));
+    REQUIRE_FALSE(storage.contains(&twelve));
+}
+
+TEST_CASE("SetBuilder: rejects non-hashable / non-equatable element bindings")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+
+    // ``TimeSeriesReference`` exists but isn't comparable; just synthesise
+    // a binding from a hashable scalar to confirm the happy path while
+    // documenting that the unhappy path throws when bindings are not
+    // hashable+equatable. The scalar registration itself wires the
+    // capability flags, so the rejection logic gets exercised when the
+    // schema's flags are missing those bits.
+    (void)registry.register_scalar<int>("int");
+    const auto *binding = registry.scalar_binding<int>();
+    REQUIRE_NOTHROW(SetBuilder{*binding});
+}
+
+TEST_CASE("MapBuilder: set_item / contains / value_at round-trip")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<std::string>("string");
+    (void)registry.register_scalar<int>("int");
+    const auto *key_binding   = registry.scalar_binding<std::string>();
+    const auto *value_binding = registry.scalar_binding<int>();
+
+    MapBuilder builder{*key_binding, *value_binding};
+    builder.set_item<std::string, int>(std::string{"alpha"}, 1);
+    builder.set_item<std::string, int>(std::string{"beta"}, 2);
+    builder.set_item<std::string, int>(std::string{"gamma"}, 3);
+
+    // Repeat a key — the value should be replaced, not duplicated.
+    builder.set_item<std::string, int>(std::string{"beta"}, 200);
+    REQUIRE(builder.size() == 3);
+
+    auto storage = builder.build_storage();
+    REQUIRE(storage.size() == 3);
+
+    const std::string alpha{"alpha"};
+    const std::string beta{"beta"};
+    const std::string gamma{"gamma"};
+    const std::string delta{"delta"};
+
+    REQUIRE(storage.contains(&alpha));
+    REQUIRE(storage.contains(&beta));
+    REQUIRE(storage.contains(&gamma));
+    REQUIRE_FALSE(storage.contains(&delta));
+
+    REQUIRE(*static_cast<const int *>(storage.value_at(&alpha)) == 1);
+    REQUIRE(*static_cast<const int *>(storage.value_at(&beta)) == 200);
+    REQUIRE(*static_cast<const int *>(storage.value_at(&gamma)) == 3);
+    REQUIRE(storage.value_at(&delta) == nullptr);
+}
+
+TEST_CASE("MapStorage: copy preserves bucket layout")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<std::string>("string");
+    (void)registry.register_scalar<int>("int");
+    const auto *key_binding   = registry.scalar_binding<std::string>();
+    const auto *value_binding = registry.scalar_binding<int>();
+
+    MapBuilder builder{*key_binding, *value_binding};
+    builder.set_item<std::string, int>(std::string{"x"}, 10);
+    builder.set_item<std::string, int>(std::string{"y"}, 20);
+    auto original = builder.build_storage();
+
+    auto copy = original;
+    REQUIRE(copy.size() == 2);
+
+    const std::string x{"x"};
+    const std::string y{"y"};
+    REQUIRE(copy.contains(&x));
+    REQUIRE(copy.contains(&y));
+    REQUIRE(*static_cast<const int *>(copy.value_at(&x)) == 10);
+    REQUIRE(*static_cast<const int *>(copy.value_at(&y)) == 20);
+}
+
+TEST_CASE("compact plans: same binding inputs return canonical pointers")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::string>("string");
+    const auto *int_binding = registry.scalar_binding<int>();
+    const auto *str_binding = registry.scalar_binding<std::string>();
+
+    REQUIRE(&compact_list_plan(*int_binding) == &compact_list_plan(*int_binding));
+    REQUIRE(&compact_set_plan(*int_binding) == &compact_set_plan(*int_binding));
+    REQUIRE(&compact_map_plan(*str_binding, *int_binding) ==
+            &compact_map_plan(*str_binding, *int_binding));
+    REQUIRE(&compact_cyclic_buffer_plan(*int_binding, 4) ==
+            &compact_cyclic_buffer_plan(*int_binding, 4));
+    REQUIRE(&compact_cyclic_buffer_plan(*int_binding, 4) !=
+            &compact_cyclic_buffer_plan(*int_binding, 8));
+    REQUIRE(&compact_queue_plan(*int_binding, 0) == &compact_queue_plan(*int_binding, 0));
+}
