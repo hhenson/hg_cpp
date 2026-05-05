@@ -14,23 +14,30 @@ A single kind can have several implementations, chosen by the caller's
 needs and bound at the value layer's resolution step.
 
 Pure-data callers — those that only need to store, hash, compare, and
-serialise values — use **compact** implementations. A pure-data Set is
-a hash-backed key store; a pure-data Map is a paired key/value slot
-store. These minimise memory and skip bookkeeping the caller does not
-need.
+serialise values atomically (read whole, replace whole) — use
+**compact** implementations. A pure-data Set is a hash-backed key
+store; a pure-data Map is a contiguous keyed map; pure-data
+List / CyclicBuffer / Queue use contiguous element arrays. These
+forms are described in *Scalar Plans and Ops > Container Storage
+Shapes*. They minimise memory and skip the per-element bookkeeping
+the value layer never needs.
 
-Time-series callers — those that need to observe insertions, removals,
-and modifications across ticks — use **delta-tracking**
-implementations. The delta-tracking Set is the storage substrate for
-``TSS``; the delta-tracking Map is the substrate for ``TSD``. They
-carry per-slot observers and pending-erase state so the time-series
-layer can produce coherent deltas.
+Time-series callers — those that need to observe insertions,
+removals, and modifications across ticks — use **slot-store-based**
+implementations. The slot-store-based Set is the storage substrate
+for ``TSS``; the slot-store-based Map is the substrate for ``TSD``.
+They carry per-slot observers, stable-address slots, and pending-
+erase state so the time-series layer can produce coherent deltas.
+These forms are described in *Time-Series Plans and Ops > The Slot
+Store Family*.
 
-Both implementations expose the same ``SetView`` / ``MapView`` shape.
-Code that walks a Set or a Map through its view does not need to know
+Both modes expose the same ``SetView`` / ``MapView`` shape, but with
+different mutation surfaces: the pure-data view does whole-container
+replace; the slot-store view does per-element insert / remove. Code
+that *reads* a Set or a Map through its view does not need to know
 which implementation it is looking at. The choice is made by the
-schema's bound ``StoragePlan`` and ``ValueOps``; the view contract is
-unchanged.
+schema's bound ``StoragePlan`` and ``ValueOps``; the read contract
+is unchanged.
 
 This is the load-bearing reason values are type-erased rather than
 generic-templated: it lets the time-series layer reuse the value-layer
@@ -184,3 +191,95 @@ with the same surface they would use for a standalone set, without
 copying or materialising a second container. The view is read-only
 because the keys belong to the map; structural changes go through the
 map's mutable view.
+
+Specialised Views
+-----------------
+
+Each kind has a specialised **read-only** view that adds kind-specific
+access on top of ``ValueView``. Views are still two-word handles —
+they hold the same ``(binding, data)`` context as ``ValueView`` — and
+most share an ``IndexedValueView`` base for the kinds that are
+addressed positionally.
+
+The base specialised views never expose mutation methods. Mutation
+goes through a separate **mutable** view obtained from the read-only
+view by calling ``begin_mutation()`` (see *Read-Only and Mutable
+Views* above). The mutable view is closed with ``end_mutation()`` (or
+its destructor as the RAII safety net) and is the only place
+per-element ``set`` / ``insert`` / ``remove`` / ``push_back`` style
+operations exist. Mutable views are only meaningful for the
+slot-store-backed time-series variants; for the compact value-layer
+storage there is no mutable counterpart — replacement happens at the
+``Value`` level (whole-container copy/move).
+
+Read-only views
+~~~~~~~~~~~~~~~
+
+``IndexedValueView``
+    Base for tuple, bundle, list, cyclic buffer, and queue views.
+    Adds ``size()``, ``at(index)``, ``operator[](index)``, and a
+    forward iterator over child ``ValueView`` handles. Resolves the
+    per-element ``ValueTypeMetaData`` either from the field array
+    (tuple, bundle) or from the homogeneous element type (list,
+    cyclic buffer, queue). Read-only — per-index ``set`` is on the
+    mutable variant.
+
+``TupleView``
+    Index-addressed positional fields. Field types may differ.
+
+``BundleView``
+    Named tuple. Adds ``at(name)`` / ``operator[](name)`` for name-
+    addressed access on top of the indexed surface.
+
+``ListView``
+    ``size()``, ``at(index)``, iteration. Read-only.
+
+``CyclicBufferView``
+    Read surface plus ``capacity()``, ``empty()`` / ``full()`` and
+    ``head`` (the ring's logical start). Iteration is in ring order.
+
+``QueueView``
+    Read surface plus ``size()``, ``empty()`` / ``full()``,
+    ``front()`` (returns a child view of the front element).
+
+``SetView``
+    ``contains(key)``, iteration over members.
+
+``MapView``
+    ``contains(key)``, ``at(key)`` / ``operator[](key)``, iteration
+    over ``(key, value)`` entries, ``key_set()`` returning a read-only
+    ``SetView`` over the live keys.
+
+Mutable views (slot-store-backed only)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each mutable counterpart is obtained from its read-only view via
+``begin_mutation()`` and adds the mutation methods listed below; the
+read surface stays available throughout the mutation scope. The
+methods listed are *additions* — read-only methods on the base view
+remain accessible through the mutable view.
+
+``MutableTupleView``
+    Adds ``set(index, value)``.
+
+``MutableBundleView``
+    Adds ``set(index, value)``, ``set(name, value)``.
+
+``MutableListView``
+    Adds ``set(index, value)``, ``push_back(value)``, ``resize(n)``.
+
+``MutableCyclicBufferView``
+    Adds ``push_back(value)`` (replaces oldest when full),
+    ``set(index, value)``.
+
+``MutableQueueView``
+    Adds ``push(value)``, ``pop()``.
+
+``MutableSetView``
+    Adds ``insert(key)``, ``remove(key)``.
+
+``MutableMapView``
+    Adds ``set_item(key, value)`` (insert-or-replace), ``remove(key)``.
+    The keys remain owned by the map; structural changes flow through
+    the mutable view rather than through the ``key_set()`` accessor
+    (which always returns a read-only ``SetView``).

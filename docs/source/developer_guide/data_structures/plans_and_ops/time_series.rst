@@ -62,10 +62,19 @@ relationship described below: a TSD exposes its keys as a TSS, and
 that TSS must use the same slot ids as the parent TSD. Putting slots
 at the TSS layer first lets TSD's value side reuse them directly.
 
+.. _ts-slot-store-family:
+
 The Slot Store Family
 ---------------------
 
-Three primitives in ``v2/types/utils/`` express the slot machinery:
+Three primitives in ``hgraph/types/utils/`` express the slot machinery.
+The time-series container shapes (the substrate for ``TSS`` / ``TSD``
+/ dynamic ``TSL`` / ``TSW`` etc.) build on these primitives so they
+can support per-element insert / remove / replace with stable
+addresses and the per-slot ``updated`` bit needed to surface deltas.
+The value-layer (scalar) container shapes are different — they are
+compact and atomic by design (see *Scalar Plans and Ops > Container
+Storage Shapes*) and do not use the slot stores.
 
 ``StableSlotStorage``
     Non-relocating, double-indexed slot storage. ``slots`` is a
@@ -98,12 +107,16 @@ Both stores expose a ``SlotObserver`` notification protocol —
 ``on_capacity``, ``on_insert``, ``on_remove``, ``on_erase``,
 ``on_clear`` — so parallel structures over the same slot ids stay
 synchronised without any of them needing to know about the others.
+The TS layer uses this for two purposes: a ``MapValueObserver``
+mirrors a key store's slot lifecycle onto a paired value store
+(``TSD`` keys → values); and a delta-recording observer captures
+``added`` / ``removed`` slot ids per cycle so the layer can publish
+``delta_value``.
 
-The Set and Map shapes used by the value layer's delta-tracking
-implementations are layered on these primitives. A delta-tracking Set
-owns one ``KeySlotStore``. A delta-tracking Map owns one
-``KeySlotStore`` for keys plus one ``ValueSlotStore`` for values, with
-the value store registered as a slot observer on the key store.
+The Set and Map shapes used by the time-series layer are layered on
+these primitives. A TS Set owns one ``KeySlotStore``. A TS Map owns
+one ``KeySlotStore`` for keys plus one ``ValueSlotStore`` for values,
+with the value store registered as a slot observer on the key store.
 
 Slot stores are deliberately **not** used for scalar values. The
 delayed-erase, per-slot-bit, and observer machinery exists to support
