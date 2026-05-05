@@ -44,6 +44,7 @@ add_executable(hgraph_unit_tests
     test_time_series_reference.cpp
     test_ts_schemas.cpp
     test_type_registry.cpp
+    test_value.cpp
 )
 
 target_link_libraries(hgraph_unit_tests

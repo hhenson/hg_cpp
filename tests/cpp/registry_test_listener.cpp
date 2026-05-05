@@ -13,18 +13,22 @@
 #include <catch2/reporters/catch_reporter_registrars.hpp>
 
 #include <hgraph/types/metadata/ts_value_plan_factory.h>
+#include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/value/value_ops.h>
 
 namespace
 {
     void reset_registries() noexcept
     {
-        // Reset plan factories first, then the type registry. Plan factories
-        // hold borrowed schema pointers that the type-registry reset will
-        // invalidate; clearing the factories first avoids dangling lookups.
+        // Plan factories hold borrowed schema pointers; bindings hold
+        // borrowed schema + plan + ops pointers. Both must be cleared
+        // before the type registry's reset destroys the underlying
+        // schemas.
         hgraph::ValuePlanFactory::instance().reset();
         hgraph::TSValuePlanFactory::instance().reset();
+        hgraph::ValueTypeBinding::clear();
         hgraph::TypeRegistry::instance().reset();
     }
 
