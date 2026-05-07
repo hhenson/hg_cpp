@@ -1,0 +1,827 @@
+#ifndef HGRAPH_CPP_ROOT_VALUE_COMPACT_CONTAINER_OPS_H
+#define HGRAPH_CPP_ROOT_VALUE_COMPACT_CONTAINER_OPS_H
+
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/value/compact_storage.h>
+#include <hgraph/types/value/container_ops.h>
+#include <hgraph/types/value/specialized_views.h>
+#include <hgraph/types/value/value_ops.h>
+#include <hgraph/types/value/value_range.h>
+#include <hgraph/types/value/value_view.h>
+
+#include <algorithm>
+#include <compare>
+#include <cstddef>
+#include <fmt/format.h>
+#include <iterator>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+namespace hgraph
+{
+    /**
+     * Compact-storage-backed implementations of the per-kind value-layer
+     * ops surfaces declared in ``container_ops.h``.
+     *
+     * The ops *types* (``ValueOps``, ``IndexedValueOps``,
+     * ``ListValueOps``, ``CyclicBufferValueOps``, ``QueueValueOps``,
+     * ``SetValueOps``, ``MapValueOps``) live in ``container_ops.h`` —
+     * those are layout-agnostic and shared across implementations. This
+     * header carries the *compact* implementation: thunks that downcast
+     * the data pointer to the matching ``compact_storage.h`` class, the
+     * canonical-ops factory functions, and the canonical-binding
+     * accessors that intern the (schema, plan, ops) triple.
+     *
+     * When a slot-store-backed time-series variant of a kind arrives it
+     * will live in its own ``ts_container_ops.h`` (or similar), reusing
+     * the same ops *types* but supplying its own thunks. View code does
+     * not change.
+     */
+
+    namespace container_ops_detail
+    {
+        [[nodiscard]] inline std::size_t combine_hash(std::size_t seed, std::size_t value) noexcept
+        {
+            seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+            return seed;
+        }
+
+        template <typename WriteElement>
+        [[nodiscard]] inline std::string format_delimited(char open,
+                                                          char close,
+                                                          std::size_t size,
+                                                          WriteElement write_element)
+        {
+            fmt::memory_buffer out;
+            fmt::format_to(std::back_inserter(out), "{}", open);
+            for (std::size_t i = 0; i < size; ++i)
+            {
+                if (i > 0) { fmt::format_to(std::back_inserter(out), ", "); }
+                write_element(out, i);
+            }
+            fmt::format_to(std::back_inserter(out), "{}", close);
+            return fmt::to_string(out);
+        }
+
+        // ----- List -----------------------------------------------------
+
+        inline std::size_t list_hash(const void *memory) noexcept
+        {
+            const auto *storage = static_cast<const ListStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
+            const auto &ops = storage->element_binding()->checked_ops();
+            std::size_t seed = 0;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                seed = combine_hash(seed, ops.hash(storage->element_at(i)));
+            }
+            return seed;
+        }
+
+        inline bool list_equals(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const ListStorage *>(lhs);
+            const auto *b = static_cast<const ListStorage *>(rhs);
+            if (a == nullptr || b == nullptr) { return a == b; }
+            if (a->size() != b->size()) { return false; }
+            if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
+            const auto &ops = a->element_binding()->checked_ops();
+            for (std::size_t i = 0; i < a->size(); ++i)
+            {
+                if (!ops.equals(a->element_at(i), b->element_at(i))) { return false; }
+            }
+            return true;
+        }
+
+        inline std::partial_ordering list_compare(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const ListStorage *>(lhs);
+            const auto *b = static_cast<const ListStorage *>(rhs);
+            if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
+
+            const auto *a_binding = a->element_binding();
+            const auto *b_binding = b->element_binding();
+            if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
+            if (a_binding != b_binding) { return std::partial_ordering::unordered; }
+
+            const auto &ops = a_binding->checked_ops();
+            const auto  n   = std::min(a->size(), b->size());
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                const auto c = ops.compare(a->element_at(i), b->element_at(i));
+                if (c != 0) { return c; }
+            }
+            if (a->size() < b->size()) { return std::partial_ordering::less; }
+            if (a->size() > b->size()) { return std::partial_ordering::greater; }
+            return std::partial_ordering::equivalent;
+        }
+
+        inline std::string list_to_string(const void *memory)
+        {
+            const auto *storage = static_cast<const ListStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr) { return "[]"; }
+            const auto &ops = storage->element_binding()->checked_ops();
+            return format_delimited('[', ']', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
+                fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
+            });
+        }
+
+        // ----- CyclicBuffer (read in ring order) ------------------------
+
+        inline std::size_t cyclic_buffer_hash(const void *memory) noexcept
+        {
+            const auto *storage = static_cast<const CyclicBufferStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
+            const auto &ops = storage->element_binding()->checked_ops();
+            std::size_t seed = 0;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                seed = combine_hash(seed, ops.hash(storage->element_at(i)));
+            }
+            return seed;
+        }
+
+        inline bool cyclic_buffer_equals(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const CyclicBufferStorage *>(lhs);
+            const auto *b = static_cast<const CyclicBufferStorage *>(rhs);
+            if (a == nullptr || b == nullptr) { return a == b; }
+            if (a->size() != b->size()) { return false; }
+            if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
+            const auto &ops = a->element_binding()->checked_ops();
+            for (std::size_t i = 0; i < a->size(); ++i)
+            {
+                if (!ops.equals(a->element_at(i), b->element_at(i))) { return false; }
+            }
+            return true;
+        }
+
+        inline std::partial_ordering cyclic_buffer_compare(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const CyclicBufferStorage *>(lhs);
+            const auto *b = static_cast<const CyclicBufferStorage *>(rhs);
+            if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
+
+            const auto *a_binding = a->element_binding();
+            const auto *b_binding = b->element_binding();
+            if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
+            if (a_binding != b_binding) { return std::partial_ordering::unordered; }
+
+            const auto &ops = a_binding->checked_ops();
+            const auto  n   = std::min(a->size(), b->size());
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                const auto c = ops.compare(a->element_at(i), b->element_at(i));
+                if (c != 0) { return c; }
+            }
+            if (a->size() < b->size()) { return std::partial_ordering::less; }
+            if (a->size() > b->size()) { return std::partial_ordering::greater; }
+            return std::partial_ordering::equivalent;
+        }
+
+        inline std::string cyclic_buffer_to_string(const void *memory)
+        {
+            const auto *storage = static_cast<const CyclicBufferStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr) { return "(empty)"; }
+            const auto &ops = storage->element_binding()->checked_ops();
+            return format_delimited('(', ')', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
+                fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
+            });
+        }
+
+        // ----- Queue (read in arrival order) ----------------------------
+
+        inline std::size_t queue_hash(const void *memory) noexcept
+        {
+            const auto *storage = static_cast<const QueueStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
+            const auto &ops = storage->element_binding()->checked_ops();
+            std::size_t seed = 0;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                seed = combine_hash(seed, ops.hash(storage->element_at(i)));
+            }
+            return seed;
+        }
+
+        inline bool queue_equals(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const QueueStorage *>(lhs);
+            const auto *b = static_cast<const QueueStorage *>(rhs);
+            if (a == nullptr || b == nullptr) { return a == b; }
+            if (a->size() != b->size()) { return false; }
+            if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
+            const auto &ops = a->element_binding()->checked_ops();
+            for (std::size_t i = 0; i < a->size(); ++i)
+            {
+                if (!ops.equals(a->element_at(i), b->element_at(i))) { return false; }
+            }
+            return true;
+        }
+
+        inline std::partial_ordering queue_compare(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const QueueStorage *>(lhs);
+            const auto *b = static_cast<const QueueStorage *>(rhs);
+            if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
+
+            const auto *a_binding = a->element_binding();
+            const auto *b_binding = b->element_binding();
+            if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
+            if (a_binding != b_binding) { return std::partial_ordering::unordered; }
+
+            const auto &ops = a_binding->checked_ops();
+            const auto  n   = std::min(a->size(), b->size());
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                const auto c = ops.compare(a->element_at(i), b->element_at(i));
+                if (c != 0) { return c; }
+            }
+            if (a->size() < b->size()) { return std::partial_ordering::less; }
+            if (a->size() > b->size()) { return std::partial_ordering::greater; }
+            return std::partial_ordering::equivalent;
+        }
+
+        inline std::string queue_to_string(const void *memory)
+        {
+            const auto *storage = static_cast<const QueueStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr) { return "<>"; }
+            const auto &ops = storage->element_binding()->checked_ops();
+            return format_delimited('<', '>', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
+                fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
+            });
+        }
+
+        // ----- Set (order-independent) ----------------------------------
+
+        inline std::size_t set_hash(const void *memory) noexcept
+        {
+            const auto *storage = static_cast<const SetStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
+            const auto &ops = storage->element_binding()->checked_ops();
+            std::size_t result = 0;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                result ^= ops.hash(storage->element_at(i));
+            }
+            return result;
+        }
+
+        inline bool set_equals(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const SetStorage *>(lhs);
+            const auto *b = static_cast<const SetStorage *>(rhs);
+            if (a == nullptr || b == nullptr) { return a == b; }
+            if (a->size() != b->size()) { return false; }
+            for (std::size_t i = 0; i < a->size(); ++i)
+            {
+                if (!b->contains(a->element_at(i))) { return false; }
+            }
+            return true;
+        }
+
+        inline std::partial_ordering set_compare(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const SetStorage *>(lhs);
+            const auto *b = static_cast<const SetStorage *>(rhs);
+            if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
+
+            const auto *a_binding = a->element_binding();
+            const auto *b_binding = b->element_binding();
+            if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
+            if (a_binding != b_binding) { return std::partial_ordering::unordered; }
+
+            // Sets are unordered; compare is not meaningful. Return an
+            // equivalent category for any pair so containers can still
+            // produce a stable (degenerate) ordering for sorting purposes.
+            return std::partial_ordering::equivalent;
+        }
+
+        inline std::string set_to_string(const void *memory)
+        {
+            const auto *storage = static_cast<const SetStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr) { return "{}"; }
+            const auto &ops = storage->element_binding()->checked_ops();
+            return format_delimited('{', '}', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
+                fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
+            });
+        }
+
+        // ----- Map (order-independent over keys) ------------------------
+
+        inline std::size_t map_hash(const void *memory) noexcept
+        {
+            const auto *storage = static_cast<const MapStorage *>(memory);
+            if (storage == nullptr || storage->key_binding() == nullptr || storage->value_binding() == nullptr)
+            {
+                return 0;
+            }
+            const auto &key_ops   = storage->key_binding()->checked_ops();
+            const auto &value_ops = storage->value_binding()->checked_ops();
+            std::size_t result    = 0;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                const std::size_t key_hash   = key_ops.hash(storage->key_at(i));
+                const std::size_t value_hash = value_ops.hash(storage->value_at_index(i));
+                result ^= combine_hash(key_hash, value_hash);
+            }
+            return result;
+        }
+
+        inline bool map_equals(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const MapStorage *>(lhs);
+            const auto *b = static_cast<const MapStorage *>(rhs);
+            if (a == nullptr || b == nullptr) { return a == b; }
+            if (a->size() != b->size()) { return false; }
+            if (a->value_binding() == nullptr || b->value_binding() == nullptr) { return false; }
+            const auto &val_ops = a->value_binding()->checked_ops();
+            for (std::size_t i = 0; i < a->size(); ++i)
+            {
+                const void *a_key   = a->key_at(i);
+                const void *b_value = b->value_at(a_key);
+                if (b_value == nullptr) { return false; }
+                if (!val_ops.equals(a->value_at_index(i), b_value)) { return false; }
+            }
+            return true;
+        }
+
+        inline std::partial_ordering map_compare(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const MapStorage *>(lhs);
+            const auto *b = static_cast<const MapStorage *>(rhs);
+            if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
+
+            const auto *a_key_binding = a->key_binding();
+            const auto *b_key_binding = b->key_binding();
+            if (const auto order = value_ops_detail::null_order(a_key_binding, b_key_binding)) { return *order; }
+            if (a_key_binding != b_key_binding) { return std::partial_ordering::unordered; }
+
+            const auto *a_value_binding = a->value_binding();
+            const auto *b_value_binding = b->value_binding();
+            if (const auto order = value_ops_detail::null_order(a_value_binding, b_value_binding)) { return *order; }
+            if (a_value_binding != b_value_binding) { return std::partial_ordering::unordered; }
+
+            return std::partial_ordering::equivalent;
+        }
+
+        inline std::string map_to_string(const void *memory)
+        {
+            const auto *storage = static_cast<const MapStorage *>(memory);
+            if (storage == nullptr || storage->key_binding() == nullptr || storage->value_binding() == nullptr)
+            {
+                return "{}";
+            }
+            const auto &key_ops   = storage->key_binding()->checked_ops();
+            const auto &value_ops = storage->value_binding()->checked_ops();
+            return format_delimited('{', '}', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
+                fmt::format_to(std::back_inserter(out),
+                               "{}: {}",
+                               key_ops.to_string(storage->key_at(i)),
+                               value_ops.to_string(storage->value_at_index(i)));
+            });
+        }
+
+        // ----- Read accessors that go through the storage's public surface.
+        // Each container kind has one of these per accessor; views call
+        // through the ops table rather than casting to a concrete storage
+        // type, which keeps the views layout-agnostic.
+
+        // ----- List -----
+        inline std::size_t list_size(const void *memory) noexcept
+        {
+            return static_cast<const ListStorage *>(memory)->size();
+        }
+        inline const void *list_element_at(const void *memory, std::size_t index)
+        {
+            return static_cast<const ListStorage *>(memory)->element_at(index);
+        }
+        inline const ValueTypeBinding *list_element_binding(const void *memory, std::size_t) noexcept
+        {
+            return static_cast<const ListStorage *>(memory)->element_binding();
+        }
+
+        // ----- CyclicBuffer -----
+        inline std::size_t cyclic_buffer_size(const void *memory) noexcept
+        {
+            return static_cast<const CyclicBufferStorage *>(memory)->size();
+        }
+        inline std::size_t cyclic_buffer_head(const void *memory) noexcept
+        {
+            return static_cast<const CyclicBufferStorage *>(memory)->head();
+        }
+        inline const void *cyclic_buffer_element_at(const void *memory, std::size_t index)
+        {
+            return static_cast<const CyclicBufferStorage *>(memory)->element_at(index);
+        }
+        inline const ValueTypeBinding *cyclic_buffer_element_binding(const void *memory, std::size_t) noexcept
+        {
+            return static_cast<const CyclicBufferStorage *>(memory)->element_binding();
+        }
+
+        // ----- Queue -----
+        inline std::size_t queue_size(const void *memory) noexcept
+        {
+            return static_cast<const QueueStorage *>(memory)->size();
+        }
+        inline const void *queue_front(const void *memory)
+        {
+            return static_cast<const QueueStorage *>(memory)->front();
+        }
+        inline const void *queue_element_at(const void *memory, std::size_t index)
+        {
+            return static_cast<const QueueStorage *>(memory)->element_at(index);
+        }
+        inline const ValueTypeBinding *queue_element_binding(const void *memory, std::size_t) noexcept
+        {
+            return static_cast<const QueueStorage *>(memory)->element_binding();
+        }
+
+        // ----- Set -----
+        inline std::size_t set_size(const void *memory) noexcept
+        {
+            return static_cast<const SetStorage *>(memory)->size();
+        }
+        inline bool set_contains(const void *memory, const void *key)
+        {
+            return static_cast<const SetStorage *>(memory)->contains(key);
+        }
+        inline const void *set_element_at(const void *memory, std::size_t index)
+        {
+            return static_cast<const SetStorage *>(memory)->element_at(index);
+        }
+        inline const ValueTypeBinding *set_element_binding(const void *memory, std::size_t) noexcept
+        {
+            return static_cast<const SetStorage *>(memory)->element_binding();
+        }
+
+        // ----- Range builders for the compact storage shapes -------
+        // For compact (dense) storage every ordinal is a live slot, so
+        // the predicate is null (the Range walks every index in
+        // [0, size)). The projector reads the element at the index
+        // and wraps it in a ``ValueView`` using the storage's element
+        // binding.
+
+        template <auto SizeFn, auto ElementAtFn, auto ElementBindingFn>
+        ValueView dense_range_projector(const void *context, std::size_t index)
+        {
+            return ValueView{ElementBindingFn(context, index), const_cast<void *>(ElementAtFn(context, index))};
+        }
+
+        template <auto SizeFn, auto ElementAtFn, auto ElementBindingFn>
+        Range<ValueView> dense_make_range(const void *memory)
+        {
+            return Range<ValueView>{
+                .context   = memory,
+                .limit     = SizeFn(memory),
+                .predicate = nullptr,
+                .projector = &dense_range_projector<SizeFn, ElementAtFn, ElementBindingFn>,
+            };
+        }
+
+        // Map-specific KV projector: pairs key with value at the same
+        // ordinal slot. ``KeyAtFn`` resolves the key memory;
+        // ``ValueAtIndexFn`` resolves the matching value memory.
+        template <auto SizeFn, auto KeyAtFn, auto ValueAtIndexFn, auto KeyBindingFn, auto ValueBindingFn>
+        std::pair<ValueView, ValueView> dense_kv_range_projector(const void *context, std::size_t index)
+        {
+            return std::pair<ValueView, ValueView>{
+                ValueView{KeyBindingFn(context, index), const_cast<void *>(KeyAtFn(context, index))},
+                ValueView{ValueBindingFn(context), const_cast<void *>(ValueAtIndexFn(context, index))},
+            };
+        }
+
+        template <auto SizeFn, auto KeyAtFn, auto ValueAtIndexFn, auto KeyBindingFn, auto ValueBindingFn>
+        KeyValueRange<ValueView, ValueView> dense_make_kv_range(const void *memory)
+        {
+            return KeyValueRange<ValueView, ValueView>{
+                .context   = memory,
+                .limit     = SizeFn(memory),
+                .predicate = nullptr,
+                .projector = &dense_kv_range_projector<SizeFn, KeyAtFn, ValueAtIndexFn, KeyBindingFn, ValueBindingFn>,
+            };
+        }
+
+        // ----- Map -----
+        // ``map_element_at`` and ``map_element_binding`` (filled into
+        // the IndexedValueOps base) point at the *key* surface so map
+        // iteration walks keys; the value side is reached via
+        // ``MapValueOps::value_at_index`` and ``value_binding``.
+        inline std::size_t map_size(const void *memory) noexcept
+        {
+            return static_cast<const MapStorage *>(memory)->size();
+        }
+        inline bool map_contains(const void *memory, const void *key)
+        {
+            return static_cast<const MapStorage *>(memory)->contains(key);
+        }
+        inline const void *map_value_at(const void *memory, const void *key)
+        {
+            return static_cast<const MapStorage *>(memory)->value_at(key);
+        }
+        inline const void *map_key_at_index(const void *memory, std::size_t index)
+        {
+            return static_cast<const MapStorage *>(memory)->key_at(index);
+        }
+        inline const void *map_value_at_index(const void *memory, std::size_t index)
+        {
+            return static_cast<const MapStorage *>(memory)->value_at_index(index);
+        }
+        inline const ValueTypeBinding *map_key_binding(const void *memory, std::size_t) noexcept
+        {
+            return static_cast<const MapStorage *>(memory)->key_binding();
+        }
+        inline const ValueTypeBinding *map_value_binding(const void *memory) noexcept
+        {
+            return static_cast<const MapStorage *>(memory)->value_binding();
+        }
+        inline const ValueTypeBinding *map_value_binding_indexed(const void *memory, std::size_t) noexcept
+        {
+            return map_value_binding(memory);
+        }
+
+        // ----- Map-as-Set adapter (used by ``MapView::key_set``) ---------
+        // The thunks delegate to the map's read accessors — they never
+        // access a separate ``SetStorage`` layout. Hash / equals /
+        // compare / to_string treat the map's keys as a logical set
+        // (order-independent xor of element hashes; subset+superset for
+        // equality; ``{a, b, c}`` for formatting).
+        inline std::size_t map_key_adapter_hash(const void *memory) noexcept
+        {
+            const auto *storage = static_cast<const MapStorage *>(memory);
+            if (storage->key_binding() == nullptr) { return 0; }
+            const auto &ops = storage->key_binding()->checked_ops();
+            std::size_t result = 0;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                result ^= ops.hash(storage->key_at(i));
+            }
+            return result;
+        }
+        inline bool map_key_adapter_equals(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const MapStorage *>(lhs);
+            const auto *b = static_cast<const MapStorage *>(rhs);
+            if (a->size() != b->size()) { return false; }
+            for (std::size_t i = 0; i < a->size(); ++i)
+            {
+                if (!b->contains(a->key_at(i))) { return false; }
+            }
+            return true;
+        }
+        inline std::partial_ordering map_key_adapter_compare(const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const MapStorage *>(lhs);
+            const auto *b = static_cast<const MapStorage *>(rhs);
+            if (const auto order = value_ops_detail::null_order(a, b)) { return *order; }
+
+            const auto *a_binding = a->key_binding();
+            const auto *b_binding = b->key_binding();
+            if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
+            if (a_binding != b_binding) { return std::partial_ordering::unordered; }
+
+            return std::partial_ordering::equivalent;
+        }
+        inline std::string map_key_adapter_to_string(const void *memory)
+        {
+            const auto *storage = static_cast<const MapStorage *>(memory);
+            if (storage == nullptr || storage->key_binding() == nullptr) { return "{}"; }
+            const auto &ops = storage->key_binding()->checked_ops();
+            return format_delimited('{', '}', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
+                fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->key_at(i)));
+            });
+        }
+    }  // namespace container_ops_detail
+
+    // -----------------------------------------------------------------
+    // Per-kind canonical ``ValueOps`` (function-local-static; stable
+    // address for the program lifetime).
+    //
+    // Aggregate init mirrors the ops hierarchy: the outer braces hold
+    // the kind-specific extensions; the next brace holds the
+    // IndexedValueOps additions; the innermost brace holds the base
+    // ValueOps slots.
+    // -----------------------------------------------------------------
+
+    // Forward declaration; ``compact_map_ops`` references the thunk,
+    // and the thunk's body references ``compact_map_key_set_binding``
+    // and ``SetView``. The definition follows the binding accessors.
+    SetView compact_map_key_set_thunk(const ValueTypeBinding *map_binding, const void *memory);
+
+    [[nodiscard]] inline const ListValueOps &compact_list_ops() noexcept
+    {
+        static const ListValueOps ops = {
+            {{// ValueOps:
+              &container_ops_detail::list_hash,
+              &container_ops_detail::list_equals,
+              &container_ops_detail::list_compare,
+              &container_ops_detail::list_to_string},
+             // IndexedValueOps:
+             &container_ops_detail::list_size,
+             &container_ops_detail::list_element_at,
+             &container_ops_detail::list_element_binding,
+             &container_ops_detail::dense_make_range<&container_ops_detail::list_size,
+                                                      &container_ops_detail::list_element_at,
+                                                      &container_ops_detail::list_element_binding>},
+            // ListValueOps: no additions
+        };
+        return ops;
+    }
+
+    [[nodiscard]] inline const SetValueOps &compact_set_ops() noexcept
+    {
+        static const SetValueOps ops = {
+            {{&container_ops_detail::set_hash,
+              &container_ops_detail::set_equals,
+              &container_ops_detail::set_compare,
+              &container_ops_detail::set_to_string},
+             &container_ops_detail::set_size,
+             &container_ops_detail::set_element_at,
+             &container_ops_detail::set_element_binding,
+             &container_ops_detail::dense_make_range<&container_ops_detail::set_size,
+                                                      &container_ops_detail::set_element_at,
+                                                      &container_ops_detail::set_element_binding>},
+            &container_ops_detail::set_contains,
+        };
+        return ops;
+    }
+
+    [[nodiscard]] inline const MapValueOps &compact_map_ops() noexcept
+    {
+        // ``element_at`` / ``element_binding`` / make_range on the
+        // indexed base point at the key surface so map iteration of
+        // the indexed kind yields keys. ``make_kv_range`` exposes the
+        // paired (key, value) surface.
+        static const MapValueOps ops = {
+            {{&container_ops_detail::map_hash,
+              &container_ops_detail::map_equals,
+              &container_ops_detail::map_compare,
+              &container_ops_detail::map_to_string},
+             &container_ops_detail::map_size,
+             &container_ops_detail::map_key_at_index,
+             &container_ops_detail::map_key_binding,
+             &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
+                                                      &container_ops_detail::map_key_at_index,
+                                                      &container_ops_detail::map_key_binding>},
+            &container_ops_detail::map_contains,
+            &container_ops_detail::map_value_at,
+            &container_ops_detail::map_value_at_index,
+            &container_ops_detail::map_value_binding,
+            // make_keys_range — same as the IndexedValueOps base
+            // since the indexed surface walks keys.
+            &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
+                                                     &container_ops_detail::map_key_at_index,
+                                                     &container_ops_detail::map_key_binding>,
+            // make_values_range — projector wraps the value side.
+            &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
+                                                     &container_ops_detail::map_value_at_index,
+                                                     &container_ops_detail::map_value_binding_indexed>,
+            &container_ops_detail::dense_make_kv_range<&container_ops_detail::map_size,
+                                                        &container_ops_detail::map_key_at_index,
+                                                        &container_ops_detail::map_value_at_index,
+                                                        &container_ops_detail::map_key_binding,
+                                                        &container_ops_detail::map_value_binding>,
+            &compact_map_key_set_thunk,
+        };
+        return ops;
+    }
+
+    [[nodiscard]] inline const CyclicBufferValueOps &compact_cyclic_buffer_ops() noexcept
+    {
+        static const CyclicBufferValueOps ops = {
+            {{&container_ops_detail::cyclic_buffer_hash,
+              &container_ops_detail::cyclic_buffer_equals,
+              &container_ops_detail::cyclic_buffer_compare,
+              &container_ops_detail::cyclic_buffer_to_string},
+             &container_ops_detail::cyclic_buffer_size,
+             &container_ops_detail::cyclic_buffer_element_at,
+             &container_ops_detail::cyclic_buffer_element_binding,
+             &container_ops_detail::dense_make_range<&container_ops_detail::cyclic_buffer_size,
+                                                      &container_ops_detail::cyclic_buffer_element_at,
+                                                      &container_ops_detail::cyclic_buffer_element_binding>},
+            &container_ops_detail::cyclic_buffer_head,
+        };
+        return ops;
+    }
+
+    [[nodiscard]] inline const QueueValueOps &compact_queue_ops() noexcept
+    {
+        static const QueueValueOps ops = {
+            {{&container_ops_detail::queue_hash,
+              &container_ops_detail::queue_equals,
+              &container_ops_detail::queue_compare,
+              &container_ops_detail::queue_to_string},
+             &container_ops_detail::queue_size,
+             &container_ops_detail::queue_element_at,
+             &container_ops_detail::queue_element_binding,
+             &container_ops_detail::dense_make_range<&container_ops_detail::queue_size,
+                                                      &container_ops_detail::queue_element_at,
+                                                      &container_ops_detail::queue_element_binding>},
+            &container_ops_detail::queue_front,
+        };
+        return ops;
+    }
+
+    [[nodiscard]] inline const SetValueOps &compact_map_key_set_ops() noexcept
+    {
+        // Reuses ``map_size`` / ``map_key_at_index`` / ``map_key_binding``
+        // / ``map_contains`` / range projector from the map ops
+        // because the underlying memory is still a ``MapStorage`` —
+        // the adapter just reframes the read surface as a Set.
+        static const SetValueOps ops = {
+            {{&container_ops_detail::map_key_adapter_hash,
+              &container_ops_detail::map_key_adapter_equals,
+              &container_ops_detail::map_key_adapter_compare,
+              &container_ops_detail::map_key_adapter_to_string},
+             &container_ops_detail::map_size,
+             &container_ops_detail::map_key_at_index,
+             &container_ops_detail::map_key_binding,
+             &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
+                                                      &container_ops_detail::map_key_at_index,
+                                                      &container_ops_detail::map_key_binding>},
+            &container_ops_detail::map_contains,
+        };
+        return ops;
+    }
+
+    // -----------------------------------------------------------------
+    // Canonical bindings — interned ``(schema, plan, ops)`` triples
+    // for each compact container kind. Use these to construct a
+    // ``Value`` over a container schema.
+    // -----------------------------------------------------------------
+
+    [[nodiscard]] inline const ValueTypeBinding &
+    compact_list_binding(const ValueTypeBinding &element_binding)
+    {
+        const auto *meta = TypeRegistry::instance().list(element_binding.type_meta, /*fixed_size=*/0);
+        return ValueTypeBinding::intern(*meta, compact_list_plan(element_binding), compact_list_ops());
+    }
+
+    [[nodiscard]] inline const ValueTypeBinding &compact_set_binding(const ValueTypeBinding &element_binding)
+    {
+        const auto *meta = TypeRegistry::instance().set(element_binding.type_meta);
+        return ValueTypeBinding::intern(*meta, compact_set_plan(element_binding), compact_set_ops());
+    }
+
+    [[nodiscard]] inline const ValueTypeBinding &compact_map_binding(const ValueTypeBinding &key_binding,
+                                                                     const ValueTypeBinding &value_binding)
+    {
+        const auto *meta = TypeRegistry::instance().map(key_binding.type_meta, value_binding.type_meta);
+        return ValueTypeBinding::intern(*meta, compact_map_plan(key_binding, value_binding), compact_map_ops());
+    }
+
+    [[nodiscard]] inline const ValueTypeBinding &
+    compact_cyclic_buffer_binding(const ValueTypeBinding &element_binding, std::size_t capacity)
+    {
+        const auto *meta = TypeRegistry::instance().cyclic_buffer(element_binding.type_meta, capacity);
+        return ValueTypeBinding::intern(*meta,
+                                        compact_cyclic_buffer_plan(element_binding, capacity),
+                                        compact_cyclic_buffer_ops());
+    }
+
+    [[nodiscard]] inline const ValueTypeBinding &compact_queue_binding(const ValueTypeBinding &element_binding,
+                                                                       std::size_t             max_capacity)
+    {
+        const auto *meta = TypeRegistry::instance().queue(element_binding.type_meta, max_capacity);
+        return ValueTypeBinding::intern(*meta,
+                                        compact_queue_plan(element_binding, max_capacity),
+                                        compact_queue_ops());
+    }
+
+    /**
+     * Binding for the read-only ``SetView`` returned by
+     * ``MapView::key_set()``. The schema is ``Set<KeyType>``; the plan
+     * is the *map's* plan (the underlying memory is still a
+     * ``MapStorage``); the ops are the set adapter that delegates
+     * into the map's read accessors. This binding lets the SetView
+     * coexist with the map's own binding without any layout
+     * unification.
+     */
+    [[nodiscard]] inline const ValueTypeBinding &
+    compact_map_key_set_binding(const ValueTypeBinding &key_binding, const ValueTypeBinding &value_binding)
+    {
+        const auto *set_meta = TypeRegistry::instance().set(key_binding.type_meta);
+        return ValueTypeBinding::intern(
+            *set_meta, compact_map_plan(key_binding, value_binding), compact_map_key_set_ops());
+    }
+
+    inline SetView compact_map_key_set_thunk(const ValueTypeBinding * /*map_binding*/, const void *memory)
+    {
+        // Compact-storage implementation of ``MapValueOps::key_set``;
+        // casting ``memory`` to ``MapStorage *`` is layout-correct
+        // here. The set-adapter binding is interned once per
+        // ``(key_binding, value_binding)`` pair and reused on every
+        // call.
+        const auto *storage = static_cast<const MapStorage *>(memory);
+        if (storage->key_binding() == nullptr || storage->value_binding() == nullptr)
+        {
+            throw std::logic_error("compact_map_key_set: map storage missing key/value binding");
+        }
+        const ValueTypeBinding &adapter =
+            compact_map_key_set_binding(*storage->key_binding(), *storage->value_binding());
+        return SetView{ValueView{&adapter, const_cast<void *>(memory)}};
+    }
+}  // namespace hgraph
+
+#endif  // HGRAPH_CPP_ROOT_VALUE_COMPACT_CONTAINER_OPS_H
