@@ -87,9 +87,11 @@ A view is the type-erased non-owning handle:
    };
 
 The binding gives the view its schema, plan, lifecycle, and ops; the
-data pointer addresses the live payload. Because the context is two
-pointers, a view is cheap to copy and pass through internal traversal
-code.
+data pointer addresses the live payload. The base ``ValueView`` context
+is two pointers, so it is cheap to copy and pass through internal
+traversal code. Specialised view adapters carry at least this context
+and may cache resolved ops or layout facts established at construction
+time.
 
 A view exposes:
 
@@ -97,19 +99,23 @@ A view exposes:
   …;
 - typed access: ``as<T>()``, ``try_as<T>()``, ``checked_as<T>()`` for
   atomic kinds;
-- generic ops: ``hash()``, ``equals()``, ``compare()``, ``to_string()``
+- generic ops: ``hash()``, ``equals()``, ``compare()``, ``to_string()``,
+  ``clone()``, ``copy_from()``, ``try_copy_from()``
   — routed through the binding; ``compare()`` returns
   ``std::partial_ordering`` as the common erased representation of
   ``operator<=>`` results. Compact containers use their bound ops table,
   while structured tuple/bundle/fixed-list views recurse through child
   views;
+- Python bridge conversion, when enabled: ``to_python()`` and
+  ``from_python()``;
 - read access for composite kinds via specialised adapters described
   below.
 
-Mutation, including atomic ``set<T>`` and structural assignment, is
-reserved for mutable views obtained via ``begin_mutation()`` (see
-*Read-Only and Mutable Views*). The compact value-layer views are
-read-only; whole-value replacement happens through ``Value``.
+Atomic ``set<T>`` is available on a live atomic ``ValueView`` as the
+direct scalar assignment path. Structural mutation and delta views are
+not part of the scalar value view. Delta views are reserved for the
+``TSValue`` / ``TSView`` infrastructure where per-tick modification
+state is meaningful.
 
 View Casting
 ------------
@@ -148,11 +154,12 @@ discipline:
 
 - A **read-only view** exposes inspection and iteration: typed
   access, ``hash``, ``equals``, ``compare``, ``to_string``, buffer
-  exposure, and structural reads.
+  exposure, structural reads, and direct scalar ``set<T>`` for atomic
+  payloads.
 - A **mutable view** adds the kind-specific mutation operations:
-  ``set`` for atomics, field mutation on bundles and tuples,
-  ``push_back`` / ``resize`` on lists, ``add`` / ``remove`` on sets,
-  key insertion and value updates on maps, and so on.
+  field mutation on bundles and tuples, ``push_back`` / ``resize`` on
+  lists, ``add`` / ``remove`` on sets, key insertion and value updates
+  on maps, and so on.
 
 The current compact value-layer implementation exposes the read-only
 variants. A mutable view is obtained from an existing view by calling
@@ -208,10 +215,11 @@ Specialised Views
 -----------------
 
 Each kind has a specialised **read-only** view that adds kind-specific
-access on top of ``ValueView``. Views are still two-word handles —
-they hold the same ``(binding, data)`` context as ``ValueView`` — and
-most share an ``IndexedValueView`` base for the kinds that are
-addressed positionally.
+access on top of ``ValueView``. Specialised views hold at least the
+same ``(binding, data)`` context as ``ValueView`` and may cache
+resolved ops pointers or other construction-time facts to keep later
+calls free of repeated validation. Most share an ``IndexedValueView``
+base for the kinds that are addressed positionally.
 
 The base specialised views never expose mutation methods. Mutation
 goes through a separate **mutable** view obtained from the read-only
@@ -240,11 +248,13 @@ Read-only views
     Index-addressed positional fields. Field types may differ.
 
 ``BundleView``
-    Named tuple. Adds ``at(name)`` / ``operator[](name)`` for name-
-    addressed access on top of the indexed surface.
+    Named tuple. Adds ``has_field(name)``, ``field(name)``,
+    ``at(name)`` / ``operator[](name)`` for name-addressed access on
+    top of the indexed surface.
 
 ``ListView``
-    ``size()``, ``at(index)``, iteration. Read-only.
+    ``size()``, ``at(index)``, ``front()``, ``back()``,
+    ``is_fixed()``, ``element_schema()``, iteration. Read-only.
 
 ``CyclicBufferView``
     Read surface plus ``capacity()``, ``empty()`` / ``full()`` and
@@ -255,18 +265,20 @@ Read-only views
     ``front()`` (returns a child view of the front element).
 
 ``SetView``
-    ``contains(key)``, iteration over members. ``contains`` is part of
-    the erased ops contract and must be average O(1) for set
+    ``contains(key)``, ``element_schema()``, ``values()``, iteration
+    over members. ``contains`` is part of the erased ops contract and
+    must be average O(1) for set
     implementations. Set comparison orders by size when sizes differ;
     same-sized sets compare equivalent when their members match and
     unordered otherwise.
 
 ``MapView``
     ``contains(key)``, ``at(key)`` / ``operator[](key)``, iteration
-    over ``(key, value)`` entries, ``key_set()`` returning a read-only
-    ``SetView`` over the live keys. ``contains`` and ``at`` are part
-    of the erased ops contract and must be average O(1) for map
-    implementations.
+    over ``(key, value)`` entries via ``entries()`` / ``items()``,
+    ``keys()``, ``values()``, ``key_schema()``, ``value_schema()``,
+    and ``key_set()`` returning a read-only ``SetView`` over the live
+    keys. ``contains`` and ``at`` are part of the erased ops contract
+    and must be average O(1) for map implementations.
 
 Mutable views (slot-store-backed only)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

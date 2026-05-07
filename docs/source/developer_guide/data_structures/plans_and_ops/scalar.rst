@@ -38,8 +38,10 @@ Builder           Per-kind value builders — wrap bindings, accumulate
                   single-use instance assemblers, not cached reusable
                   builders.
 Value             ``Value`` — owning handle over storage + binding + allocator
-View              ``ValueView`` — two-word reference: ``(binding, data)``.
-                  Specialized adapters extend it for composite kinds.
+View              ``ValueView`` — base two-word reference:
+                  ``(binding, data)``. Specialized adapters extend it
+                  for composite kinds and may cache resolved ops/layout
+                  facts.
 ================  ============================================================
 
 The schema-side details (``ValueTypeMetaData`` fields, kinds, composite
@@ -108,6 +110,13 @@ Owning Value
   ``std::partial_ordering`` to match the type-erased ``<=>``-style
   contract. ``Value`` itself only carries the minimum behaviour needed
   to live in a container.
+- ``clone()`` and construction from ``ValueView`` — copy the represented
+  binding and payload, preserving typed-null state when the view carries
+  a binding without a live payload.
+- ``to_python()`` / ``from_python()`` when the Python bridge is enabled.
+  ``Value::to_python()`` maps a typed-null value to ``None``;
+  ``Value::from_python(None)`` calls ``reset()``. Non-null conversion
+  rebuilds the owning value using the canonical scalar binding.
 
 Anything richer than container-membership operations is exposed through
 ``ValueView`` or one of its specialized adapters (see *Erased Types*),
@@ -160,7 +169,10 @@ Null is a *state*, not a schema or type. There is no null
   for map values. Map keys and set elements are non-null by design.
 
 Top-level null Values map to Python ``None`` at the bridge boundary;
-``from_python(None)`` calls ``reset()``.
+``Value::from_python(None)`` calls ``reset()``. A non-owning
+``ValueView`` cannot reset its source storage, so
+``ValueView::from_python(None)`` is rejected; use the owning ``Value``
+when top-level null assignment is required.
 
 Container Storage Shapes
 ------------------------
@@ -240,14 +252,15 @@ The compact storage shapes are:
     series variant supplies push / pop semantics over time.
 
 Mutation. The compact value-layer storage shapes do **not** expose
-per-element mutation. Whole-container replacement happens at the
-``Value`` level via copy / move assignment — the bound plan's
-``copy_construct`` / ``move_construct`` lifecycle ops swap one
-storage for another. The typed views described in
-*Erased Types > Specialised Views* therefore expose only the read
-surface for value-layer storage; per-element insert / remove / set
-methods only make sense for the slot-store-based time-series
-variants.
+per-element structural mutation. Whole-container replacement happens
+at the ``Value`` level via copy / move assignment or
+``from_python()`` — the bound plan's lifecycle ops swap one storage
+for another. Atomic ``ValueView::set<T>`` is the direct scalar
+assignment path for a live atomic payload. Structural per-element
+insert / remove / resize methods only make sense for the
+slot-store-based time-series variants and will live on the
+``MutableListView`` / ``MutableSetView`` / ``MutableMapView`` family,
+not on scalar views.
 
 Lifecycle context. Each storage shape pairs with a small ``*State``
 struct (``ListState``, ``SetState``, ``MapState``,
