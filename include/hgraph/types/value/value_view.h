@@ -4,12 +4,22 @@
 #include <hgraph/types/value/value_ops.h>
 
 #include <cassert>
+#include <compare>
 #include <cstddef>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
 namespace hgraph
 {
+    class TupleView;
+    class BundleView;
+    class ListView;
+    class SetView;
+    class MapView;
+    class CyclicBufferView;
+    class QueueView;
+
     /**
      * Non-owning two-word reference to a value.
      *
@@ -22,9 +32,9 @@ namespace hgraph
      * The first slice exposes the kind-agnostic surface used by every
      * value layer kind: ``hash``, ``equals``, ``compare``, ``to_string``
      * via the bound ops, plus typed scalar access through ``as<T>`` /
-     * ``try_as<T>`` / ``checked_as<T>``. Specialised views (TupleView,
-     * BundleView, ListView, …) and view casting will land alongside the
-     * per-kind storage shapes.
+     * ``try_as<T>`` / ``checked_as<T>``. Kind-specialised casts such as
+     * ``as_list()`` and ``as_map()`` are declared here and defined once
+     * the specialised view classes are complete.
      */
     class ValueView
     {
@@ -57,6 +67,11 @@ namespace hgraph
         [[nodiscard]] bool is_list()   const noexcept { return valid() && schema()->kind == ValueTypeKind::List; }
         [[nodiscard]] bool is_set()    const noexcept { return valid() && schema()->kind == ValueTypeKind::Set; }
         [[nodiscard]] bool is_map()    const noexcept { return valid() && schema()->kind == ValueTypeKind::Map; }
+        [[nodiscard]] bool is_cyclic_buffer() const noexcept
+        {
+            return valid() && schema()->kind == ValueTypeKind::CyclicBuffer;
+        }
+        [[nodiscard]] bool is_queue() const noexcept { return valid() && schema()->kind == ValueTypeKind::Queue; }
 
         /**
          * True when the bound ops vtable is the canonical ``ops_for<T>``
@@ -115,10 +130,34 @@ namespace hgraph
             return *static_cast<T *>(data_);
         }
 
-        // -- generic ops, dispatched via the bound ValueOps --
+        // -- kind-specialised view casts (definitions in specialised_views.h) --
+        [[nodiscard]] TupleView as_tuple() const;
+        [[nodiscard]] std::optional<TupleView> try_as_tuple() const;
+        [[nodiscard]] BundleView as_bundle() const;
+        [[nodiscard]] std::optional<BundleView> try_as_bundle() const;
+        [[nodiscard]] ListView as_list() const;
+        [[nodiscard]] std::optional<ListView> try_as_list() const;
+        [[nodiscard]] SetView as_set() const;
+        [[nodiscard]] std::optional<SetView> try_as_set() const;
+        [[nodiscard]] MapView as_map() const;
+        [[nodiscard]] std::optional<MapView> try_as_map() const;
+        [[nodiscard]] CyclicBufferView as_cyclic_buffer() const;
+        [[nodiscard]] std::optional<CyclicBufferView> try_as_cyclic_buffer() const;
+        [[nodiscard]] QueueView as_queue() const;
+        [[nodiscard]] std::optional<QueueView> try_as_queue() const;
+
+        // -- generic ops.
         [[nodiscard]] std::size_t hash() const noexcept
         {
-            return valid() ? binding_->checked_ops().hash(data_) : 0;
+            if (!valid()) { return 0; }
+            try
+            {
+                return binding_->checked_ops().hash(data_);
+            }
+            catch (...)
+            {
+                return 0;
+            }
         }
         [[nodiscard]] bool equals(const ValueView &other) const noexcept
         {
@@ -126,14 +165,17 @@ namespace hgraph
             if (binding_ != other.binding_) { return false; }
             return binding_->checked_ops().equals(data_, other.data_);
         }
-        [[nodiscard]] int compare(const ValueView &other) const noexcept
+        [[nodiscard]] std::partial_ordering compare(const ValueView &other) const noexcept
         {
-            if (!valid() || !other.valid() || binding_ != other.binding_) { return 0; }
+            if (const auto order = value_ops_detail::null_order(binding_, other.binding_)) { return *order; }
+            if (binding_ != other.binding_) { return std::partial_ordering::unordered; }
+            if (const auto order = value_ops_detail::null_order(data_, other.data_)) { return *order; }
             return binding_->checked_ops().compare(data_, other.data_);
         }
         [[nodiscard]] std::string to_string() const
         {
-            return valid() ? binding_->checked_ops().to_string(data_) : std::string{};
+            if (!valid()) { return std::string{}; }
+            return binding_->checked_ops().to_string(data_);
         }
 
       private:
