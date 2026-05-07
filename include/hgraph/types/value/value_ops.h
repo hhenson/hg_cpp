@@ -20,11 +20,12 @@ namespace hgraph
     /**
      * Runtime behaviour vtable for value-layer types.
      *
-     * Each entry is a function pointer whose first argument is the memory
-     * address of the value being operated on. ``ValueOps`` is deliberately
-     * independent of ``LifecycleOps`` (which lives on the storage plan):
-     * lifecycle ops bring the memory into and out of existence, behaviour
-     * ops act on already-constructed memory.
+     * Each entry is a function pointer whose first argument is the ops
+     * context and whose remaining arguments are the memory addresses being
+     * operated on. ``ValueOps`` is deliberately independent of
+     * ``LifecycleOps`` (which lives on the storage plan): lifecycle ops
+     * bring the memory into and out of existence, behaviour ops act on
+     * already-constructed memory.
      *
      * Slots:
      *
@@ -39,10 +40,39 @@ namespace hgraph
      */
     struct ValueOps
     {
-        std::size_t (*hash)(const void *memory) noexcept                             = nullptr;
-        bool (*equals)(const void *lhs, const void *rhs) noexcept                    = nullptr;
-        std::partial_ordering (*compare)(const void *lhs, const void *rhs) noexcept  = nullptr;
-        std::string (*to_string)(const void *memory)                                 = nullptr;
+        const void *context{nullptr};
+        std::size_t (*hash_impl)(const void *context, const void *memory) noexcept = nullptr;
+        bool (*equals_impl)(const void *context, const void *lhs, const void *rhs) noexcept = nullptr;
+        std::partial_ordering (*compare_impl)(const void *context, const void *lhs,
+                                              const void *rhs) noexcept = nullptr;
+        std::string (*to_string_impl)(const void *context, const void *memory) = nullptr;
+
+        [[nodiscard]] std::size_t hash(const void *memory) const noexcept
+        {
+            return hash_impl != nullptr ? hash_impl(context, memory) : 0;
+        }
+
+        [[nodiscard]] bool equals(const void *lhs, const void *rhs) const noexcept
+        {
+            return equals_impl != nullptr ? equals_impl(context, lhs, rhs) : lhs == rhs;
+        }
+
+        [[nodiscard]] std::partial_ordering compare(const void *lhs, const void *rhs) const noexcept
+        {
+            if (compare_impl == nullptr)
+            {
+                if (lhs == nullptr && rhs == nullptr) { return std::partial_ordering::equivalent; }
+                if (lhs == nullptr) { return std::partial_ordering::less; }
+                if (rhs == nullptr) { return std::partial_ordering::greater; }
+                return lhs == rhs ? std::partial_ordering::equivalent : std::partial_ordering::unordered;
+            }
+            return compare_impl(context, lhs, rhs);
+        }
+
+        [[nodiscard]] std::string to_string(const void *memory) const
+        {
+            return to_string_impl != nullptr ? to_string_impl(context, memory) : std::string{};
+        }
     };
 
     /** ``TypeBinding`` instantiated for the value layer. */
@@ -60,7 +90,7 @@ namespace hgraph
         }
 
         template <typename T>
-        std::size_t hash_thunk(const void *memory) noexcept
+        std::size_t hash_thunk(const void *, const void *memory) noexcept
         {
             if constexpr (std::is_same_v<T, bool>)
             {
@@ -86,7 +116,7 @@ namespace hgraph
         }
 
         template <typename T>
-        bool equals_thunk(const void *lhs, const void *rhs) noexcept
+        bool equals_thunk(const void *, const void *lhs, const void *rhs) noexcept
         {
             if constexpr (requires(const T &a, const T &b) { { a == b } -> std::convertible_to<bool>; })
             {
@@ -99,7 +129,7 @@ namespace hgraph
         }
 
         template <typename T>
-        std::partial_ordering compare_thunk(const void *lhs, const void *rhs) noexcept
+        std::partial_ordering compare_thunk(const void *, const void *lhs, const void *rhs) noexcept
         {
             if constexpr (requires(const T &a, const T &b) {
                               { a <=> b } -> std::convertible_to<std::partial_ordering>;
@@ -125,7 +155,7 @@ namespace hgraph
         }
 
         template <typename T>
-        std::string to_string_thunk(const void *memory)
+        std::string to_string_thunk(const void *, const void *memory)
         {
             if constexpr (std::is_same_v<T, std::string>)
             {
@@ -160,6 +190,7 @@ namespace hgraph
     [[nodiscard]] inline const ValueOps &ops_for() noexcept
     {
         static const ValueOps ops{
+            nullptr,
             &value_ops_detail::hash_thunk<T>,
             &value_ops_detail::equals_thunk<T>,
             &value_ops_detail::compare_thunk<T>,
