@@ -28,10 +28,14 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/slot_observer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/stable_slot_storage.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/value_slot_store.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_container_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_storage.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/container_ops.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/specialized_views.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/value.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/value_builder.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/value_ops.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/value_range.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/value_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/util/date_time.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/util/scope.h
