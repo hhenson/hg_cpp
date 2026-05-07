@@ -56,6 +56,7 @@ option(HGRAPH_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 option(HGRAPH_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(HGRAPH_BUILD_PYTHON_BINDINGS "Build the Python extension bridge" OFF)
 option(HGRAPH_ENABLE_PYTHON_USER_NODES "Enable C++ runtime support for Python user nodes" OFF)
+option(HGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS "Use local .venv Python/nanobind headers for IDE code models when Python support is disabled" ON)
 
 if(HGRAPH_ENABLE_TSAN AND (HGRAPH_ENABLE_ASAN OR HGRAPH_ENABLE_UBSAN))
     message(FATAL_ERROR "HGRAPH_ENABLE_TSAN is mutually exclusive with ASAN and UBSAN")
@@ -174,7 +175,12 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
         set(Python_EXECUTABLE "${Python3_EXECUTABLE}")
     endif()
 
-    find_package(Python 3.12 COMPONENTS Interpreter Development.Module REQUIRED)
+    set(_hgraph_python_components Interpreter Development.Module)
+    if(HGRAPH_ENABLE_PYTHON_USER_NODES)
+        list(APPEND _hgraph_python_components Development.Embed)
+    endif()
+
+    find_package(Python 3.12 COMPONENTS ${_hgraph_python_components} REQUIRED)
 
     execute_process(
         COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
@@ -188,8 +194,59 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     endif()
 
     find_package(nanobind CONFIG REQUIRED)
+    if(DEFINED NB_DIR AND EXISTS "${NB_DIR}/include")
+        target_include_directories(hgraph_options INTERFACE
+            $<BUILD_INTERFACE:${NB_DIR}/include>
+        )
+    endif()
+    target_include_directories(hgraph_options INTERFACE
+        $<BUILD_INTERFACE:${Python_INCLUDE_DIRS}>
+    )
+    target_link_libraries(hgraph_options INTERFACE Python::Module)
+    if(HGRAPH_ENABLE_PYTHON_USER_NODES AND TARGET Python::Python)
+        target_link_libraries(hgraph_options INTERFACE Python::Python)
+    endif()
+    if(COMMAND nanobind_build_library)
+        nanobind_build_library(nanobind-static AS_SYSINCLUDE)
+        target_link_libraries(hgraph_options INTERFACE $<BUILD_INTERFACE:nanobind-static>)
+    endif()
     target_compile_definitions(hgraph_options INTERFACE HGRAPH_ENABLE_PYTHON_USER_NODES=1)
 else()
+    if(HGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS)
+        if(WIN32)
+            set(_hgraph_ide_python "${PROJECT_SOURCE_DIR}/.venv/Scripts/python.exe")
+        else()
+            set(_hgraph_ide_python "${PROJECT_SOURCE_DIR}/.venv/bin/python")
+        endif()
+
+        if(EXISTS "${_hgraph_ide_python}")
+            execute_process(
+                COMMAND "${_hgraph_ide_python}" -m nanobind --include_dir
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                OUTPUT_VARIABLE _hgraph_ide_nanobind_include
+                RESULT_VARIABLE _hgraph_ide_nanobind_result
+                ERROR_QUIET
+            )
+            execute_process(
+                COMMAND "${_hgraph_ide_python}" -c "import sysconfig; print(sysconfig.get_path('include') or '')"
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                OUTPUT_VARIABLE _hgraph_ide_python_include
+                RESULT_VARIABLE _hgraph_ide_python_result
+                ERROR_QUIET
+            )
+
+            if(_hgraph_ide_nanobind_result EQUAL 0 AND EXISTS "${_hgraph_ide_nanobind_include}")
+                target_include_directories(hgraph_options INTERFACE
+                    $<BUILD_INTERFACE:${_hgraph_ide_nanobind_include}>
+                )
+            endif()
+            if(_hgraph_ide_python_result EQUAL 0 AND EXISTS "${_hgraph_ide_python_include}")
+                target_include_directories(hgraph_options INTERFACE
+                    $<BUILD_INTERFACE:${_hgraph_ide_python_include}>
+                )
+            endif()
+        endif()
+    endif()
     target_compile_definitions(hgraph_options INTERFACE HGRAPH_ENABLE_PYTHON_USER_NODES=0)
 endif()
 
@@ -231,12 +288,36 @@ write_basic_package_version_file(
     COMPATIBILITY SameMajorVersion
 )
 
-file(WRITE "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
-    "include(CMakeFindDependencyMacro)\n"
+set(_hgraph_config_dependencies
     "find_dependency(Threads)\n"
     "find_dependency(fmt CONFIG)\n"
+)
+if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
+    set(_hgraph_config_python_components "Interpreter Development.Module")
+    if(HGRAPH_ENABLE_PYTHON_USER_NODES)
+        set(_hgraph_config_python_components "Interpreter Development.Module Development.Embed")
+    endif()
+    string(APPEND _hgraph_config_dependencies
+        "find_dependency(Python 3.12 COMPONENTS ${_hgraph_config_python_components})\n"
+        "find_dependency(nanobind CONFIG)\n"
+    )
+endif()
+
+file(WRITE "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
+    "include(CMakeFindDependencyMacro)\n"
+    "${_hgraph_config_dependencies}"
     "include(\"\${CMAKE_CURRENT_LIST_DIR}/hgraphTargets.cmake\")\n"
 )
+if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
+    file(APPEND "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
+        "if(TARGET hgraph::options AND DEFINED NB_DIR AND EXISTS \"\${NB_DIR}/include\")\n"
+        "  target_include_directories(hgraph::options INTERFACE \"\${NB_DIR}/include\")\n"
+        "endif()\n"
+        "if(TARGET hgraph::options AND Python_INCLUDE_DIRS)\n"
+        "  target_include_directories(hgraph::options INTERFACE \${Python_INCLUDE_DIRS})\n"
+        "endif()\n"
+    )
+endif()
 
 install(EXPORT hgraphTargets
     NAMESPACE hgraph::

@@ -127,6 +127,26 @@ namespace hgraph
             });
         }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline nb::object list_to_python(const void *, const void *memory)
+        {
+            const auto *storage = static_cast<const ListStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr)
+            {
+                throw std::runtime_error("List to_python requires live storage with an element binding");
+            }
+            const auto &ops = storage->element_binding()->checked_ops();
+            nb::list result;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                result.append(ops.to_python(storage->element_at(i)));
+            }
+            return result;
+        }
+
+        void list_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source);
+#endif
+
         // ----- CyclicBuffer (read in ring order) ------------------------
 
         inline std::size_t cyclic_buffer_hash(const void *, const void *memory) noexcept
@@ -189,6 +209,27 @@ namespace hgraph
                 fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
             });
         }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline nb::object cyclic_buffer_to_python(const void *, const void *memory)
+        {
+            const auto *storage = static_cast<const CyclicBufferStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr)
+            {
+                throw std::runtime_error("CyclicBuffer to_python requires live storage with an element binding");
+            }
+            const auto &ops = storage->element_binding()->checked_ops();
+            nb::list result;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                result.append(ops.to_python(storage->element_at(i)));
+            }
+            return result;
+        }
+
+        void cyclic_buffer_from_python(const void *, const ValueTypeBinding &binding, void *memory,
+                                       nb::handle source);
+#endif
 
         // ----- Queue (read in arrival order) ----------------------------
 
@@ -253,6 +294,26 @@ namespace hgraph
             });
         }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline nb::object queue_to_python(const void *, const void *memory)
+        {
+            const auto *storage = static_cast<const QueueStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr)
+            {
+                throw std::runtime_error("Queue to_python requires live storage with an element binding");
+            }
+            const auto &ops = storage->element_binding()->checked_ops();
+            nb::list result;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                result.append(ops.to_python(storage->element_at(i)));
+            }
+            return result;
+        }
+
+        void queue_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source);
+#endif
+
         // ----- Set (order-independent) ----------------------------------
 
         inline std::size_t set_hash(const void *, const void *memory) noexcept
@@ -307,6 +368,26 @@ namespace hgraph
                 fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
             });
         }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline nb::object set_to_python(const void *, const void *memory)
+        {
+            const auto *storage = static_cast<const SetStorage *>(memory);
+            if (storage == nullptr || storage->element_binding() == nullptr)
+            {
+                throw std::runtime_error("Set to_python requires live storage with an element binding");
+            }
+            const auto &ops = storage->element_binding()->checked_ops();
+            nb::set result;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                result.add(ops.to_python(storage->element_at(i)));
+            }
+            return result;
+        }
+
+        void set_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source);
+#endif
 
         // ----- Map (order-independent over keys) ------------------------
 
@@ -383,6 +464,27 @@ namespace hgraph
                                value_ops.to_string(storage->value_at_index(i)));
             });
         }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline nb::object map_to_python(const void *, const void *memory)
+        {
+            const auto *storage = static_cast<const MapStorage *>(memory);
+            if (storage == nullptr || storage->key_binding() == nullptr || storage->value_binding() == nullptr)
+            {
+                throw std::runtime_error("Map to_python requires live storage with key/value bindings");
+            }
+            const auto &key_ops   = storage->key_binding()->checked_ops();
+            const auto &value_ops = storage->value_binding()->checked_ops();
+            nb::dict result;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                result[key_ops.to_python(storage->key_at(i))] = value_ops.to_python(storage->value_at_index(i));
+            }
+            return result;
+        }
+
+        void map_from_python(const void *, const ValueTypeBinding &binding, void *memory, nb::handle source);
+#endif
 
         // ----- Read accessors that go through the storage's public surface.
         // Each container kind has one of these per accessor; views call
@@ -605,6 +707,26 @@ namespace hgraph
                 fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->key_at(i)));
             });
         }
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline nb::object map_key_adapter_to_python(const void *, const void *memory)
+        {
+            const auto *storage = static_cast<const MapStorage *>(memory);
+            if (storage == nullptr || storage->key_binding() == nullptr)
+            {
+                throw std::runtime_error("Map key-set to_python requires live storage with a key binding");
+            }
+            const auto &ops = storage->key_binding()->checked_ops();
+            nb::set result;
+            for (std::size_t i = 0; i < storage->size(); ++i)
+            {
+                result.add(ops.to_python(storage->key_at(i)));
+            }
+            return result;
+        }
+
+        void map_key_adapter_from_python(const void *, const ValueTypeBinding &binding, void *memory,
+                                         nb::handle source);
+#endif
     }  // namespace container_ops_detail
 
     // -----------------------------------------------------------------
@@ -630,7 +752,13 @@ namespace hgraph
               &container_ops_detail::list_hash,
               &container_ops_detail::list_equals,
               &container_ops_detail::list_compare,
-              &container_ops_detail::list_to_string},
+              &container_ops_detail::list_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+              ,
+              &container_ops_detail::list_to_python,
+              &container_ops_detail::list_from_python
+#endif
+             },
              // IndexedValueOps:
              &container_ops_detail::list_size,
              &container_ops_detail::list_element_at,
@@ -650,7 +778,13 @@ namespace hgraph
               &container_ops_detail::set_hash,
               &container_ops_detail::set_equals,
               &container_ops_detail::set_compare,
-              &container_ops_detail::set_to_string},
+              &container_ops_detail::set_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+              ,
+              &container_ops_detail::set_to_python,
+              &container_ops_detail::set_from_python
+#endif
+             },
              &container_ops_detail::set_size,
              &container_ops_detail::set_element_at,
              &container_ops_detail::set_element_binding,
@@ -673,7 +807,13 @@ namespace hgraph
               &container_ops_detail::map_hash,
               &container_ops_detail::map_equals,
               &container_ops_detail::map_compare,
-              &container_ops_detail::map_to_string},
+              &container_ops_detail::map_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+              ,
+              &container_ops_detail::map_to_python,
+              &container_ops_detail::map_from_python
+#endif
+             },
              &container_ops_detail::map_size,
              &container_ops_detail::map_key_at_index,
              &container_ops_detail::map_key_binding,
@@ -710,7 +850,13 @@ namespace hgraph
               &container_ops_detail::cyclic_buffer_hash,
               &container_ops_detail::cyclic_buffer_equals,
               &container_ops_detail::cyclic_buffer_compare,
-              &container_ops_detail::cyclic_buffer_to_string},
+              &container_ops_detail::cyclic_buffer_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+              ,
+              &container_ops_detail::cyclic_buffer_to_python,
+              &container_ops_detail::cyclic_buffer_from_python
+#endif
+             },
              &container_ops_detail::cyclic_buffer_size,
              &container_ops_detail::cyclic_buffer_element_at,
              &container_ops_detail::cyclic_buffer_element_binding,
@@ -729,7 +875,13 @@ namespace hgraph
               &container_ops_detail::queue_hash,
               &container_ops_detail::queue_equals,
               &container_ops_detail::queue_compare,
-              &container_ops_detail::queue_to_string},
+              &container_ops_detail::queue_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+              ,
+              &container_ops_detail::queue_to_python,
+              &container_ops_detail::queue_from_python
+#endif
+             },
              &container_ops_detail::queue_size,
              &container_ops_detail::queue_element_at,
              &container_ops_detail::queue_element_binding,
@@ -752,7 +904,13 @@ namespace hgraph
               &container_ops_detail::map_key_adapter_hash,
               &container_ops_detail::map_key_adapter_equals,
               &container_ops_detail::map_key_adapter_compare,
-              &container_ops_detail::map_key_adapter_to_string},
+              &container_ops_detail::map_key_adapter_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+              ,
+              &container_ops_detail::map_key_adapter_to_python,
+              &container_ops_detail::map_key_adapter_from_python
+#endif
+             },
              &container_ops_detail::map_size,
              &container_ops_detail::map_key_at_index,
              &container_ops_detail::map_key_binding,

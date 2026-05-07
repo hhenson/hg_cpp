@@ -69,6 +69,17 @@ namespace hgraph
         {
         }
 
+        /** Copy or bind-null construct from a non-owning view. */
+        explicit Value(const ValueView &view)
+        {
+            if (view.binding() == nullptr)
+            {
+                throw std::invalid_argument("Value(ValueView): view has no binding");
+            }
+            storage_ = view.data() == nullptr ? storage_type::empty(*view.binding())
+                                              : storage_type::owning_copy(*view.binding(), view.data());
+        }
+
         /**
          * Construct an owning value for an atomic ``T`` whose schema has
          * been registered through ``TypeRegistry::register_scalar<T>``.
@@ -165,17 +176,44 @@ namespace hgraph
         [[nodiscard]] QueueView as_queue() const { return view().as_queue(); }
         [[nodiscard]] std::optional<QueueView> try_as_queue() const { return view().try_as_queue(); }
 
+        [[nodiscard]] TupleView tuple_view() const { return as_tuple(); }
+        [[nodiscard]] BundleView bundle_view() const { return as_bundle(); }
+        [[nodiscard]] ListView list_view() const { return as_list(); }
+        [[nodiscard]] SetView set_view() const { return as_set(); }
+        [[nodiscard]] MapView map_view() const { return as_map(); }
+        [[nodiscard]] CyclicBufferView cyclic_buffer_view() const { return as_cyclic_buffer(); }
+        [[nodiscard]] QueueView queue_view() const { return as_queue(); }
+
         // -- generic ops --
         [[nodiscard]] std::size_t hash() const noexcept { return view().hash(); }
         [[nodiscard]] bool equals(const Value &other) const noexcept
         {
             return view().equals(other.view());
         }
+        [[nodiscard]] bool equals(const ValueView &other) const noexcept
+        {
+            return view().equals(other);
+        }
         [[nodiscard]] std::partial_ordering compare(const Value &other) const noexcept
         {
             return view().compare(other.view());
         }
+        [[nodiscard]] std::partial_ordering compare(const ValueView &other) const noexcept
+        {
+            return view().compare(other);
+        }
+        [[nodiscard]] bool operator==(const Value &other) const noexcept { return equals(other); }
+        [[nodiscard]] std::partial_ordering operator<=>(const Value &other) const noexcept
+        {
+            return compare(other);
+        }
+        [[nodiscard]] Value clone() const { return binding() != nullptr ? Value{view()} : Value{}; }
         [[nodiscard]] std::string to_string() const { return view().to_string(); }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] nb::object to_python() const;
+        void from_python(nb::handle source);
+#endif
 
       private:
         storage_type storage_{};

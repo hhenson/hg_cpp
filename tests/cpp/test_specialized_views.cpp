@@ -51,12 +51,21 @@ TEST_CASE("ListView: size, at, iteration over a built list")
     ListView view{ValueView{&list_binding, &storage}};
     REQUIRE(view.valid());
     REQUIRE(view.size() == 3);
+    REQUIRE_FALSE(view.empty());
+    REQUIRE_FALSE(view.is_fixed());
+    REQUIRE(view.element_schema() == element_binding->type_meta);
+    REQUIRE(view.front().checked_as<int>() == 10);
+    REQUIRE(view.back().checked_as<int>() == 30);
     REQUIRE(view.at(0).checked_as<int>() == 10);
     REQUIRE(view[2].checked_as<int>() == 30);
 
     int sum = 0;
     for (const auto element : view) { sum += element.checked_as<int>(); }
     REQUIRE(sum == 60);
+
+    int values_sum = 0;
+    for (const auto element : view.values()) { values_sum += element.checked_as<int>(); }
+    REQUIRE(values_sum == 60);
 }
 
 TEST_CASE("compact_list_ops: hash / equals / compare / to_string walk elements")
@@ -148,8 +157,12 @@ TEST_CASE("CyclicBufferView: head, ring iteration, empty")
 
     CyclicBufferView view{ValueView{&binding, &storage}};
     REQUIRE(view.size() == 3);
+    REQUIRE(view.capacity() == 3);
+    REQUIRE(view.element_schema() == element_binding->type_meta);
     REQUIRE_FALSE(view.empty());
     // Read in ring order: oldest first.
+    REQUIRE(view.front().checked_as<int>() == 3);
+    REQUIRE(view.back().checked_as<int>() == 5);
     REQUIRE(view.at(0).checked_as<int>() == 3);
     REQUIRE(view.at(1).checked_as<int>() == 4);
     REQUIRE(view.at(2).checked_as<int>() == 5);
@@ -172,7 +185,10 @@ TEST_CASE("QueueView: front, size, iteration")
     QueueView view{ValueView{&binding, &storage}};
     REQUIRE_FALSE(view.empty());
     REQUIRE(view.size() == 3);
+    REQUIRE_FALSE(view.has_max_capacity());
+    REQUIRE(view.element_schema() == element_binding->type_meta);
     REQUIRE(view.front().checked_as<int>() == 100);
+    REQUIRE(view.back().checked_as<int>() == 300);
     REQUIRE(view.at(0).checked_as<int>() == 100);
     REQUIRE(view.at(2).checked_as<int>() == 300);
 }
@@ -191,6 +207,7 @@ TEST_CASE("SetView: contains, size, iteration; ops are order-independent")
 
     SetView view_a{ValueView{&binding, &storage_a}};
     REQUIRE(view_a.size() == 3);
+    REQUIRE(view_a.element_schema() == element_binding->type_meta);
 
     int seven = 7;
     int twelve = 12;
@@ -200,6 +217,10 @@ TEST_CASE("SetView: contains, size, iteration; ops are order-independent")
     int sum = 0;
     for (const auto member : view_a) { sum += member.checked_as<int>(); }
     REQUIRE(sum == (7 + 11 + 13));
+
+    int values_sum = 0;
+    for (const auto member : view_a.values()) { values_sum += member.checked_as<int>(); }
+    REQUIRE(values_sum == (7 + 11 + 13));
 
     // Sets compare order-independently via the ops table.
     SetBuilder b{*element_binding};
@@ -242,6 +263,8 @@ TEST_CASE("MapView: contains, at, iteration; ops are order-independent over keys
 
     MapView view{ValueView{&binding, &storage_a}};
     REQUIRE(view.size() == 3);
+    REQUIRE(view.key_schema() == key_binding->type_meta);
+    REQUIRE(view.value_schema() == value_binding->type_meta);
 
     const std::string alpha{"alpha"};
     const std::string beta{"beta"};
@@ -265,6 +288,10 @@ TEST_CASE("MapView: contains, at, iteration; ops are order-independent over keys
     }
     REQUIRE(count == 3);
     REQUIRE(total == (1 + 2 + 3));
+
+    int item_total = 0;
+    for (const auto entry : view.items()) { item_total += entry.second.checked_as<int>(); }
+    REQUIRE(item_total == (1 + 2 + 3));
 
     // Keys-only range.
     int key_count = 0;
@@ -441,8 +468,11 @@ TEST_CASE("TupleView, BundleView and fixed ListView read structured MemoryUtils 
     Value bundle_value{*bundle_binding};
     BundleView bundle = bundle_value.as_bundle();
     REQUIRE(bundle.size() == 2);
+    REQUIRE(bundle.has_field("count"));
+    REQUIRE_FALSE(bundle.has_field("missing"));
     bundle["count"].checked_as<int>() = 3;
     bundle["name"].checked_as<std::string>() = "items";
+    REQUIRE(bundle.field("count").checked_as<int>() == 3);
     REQUIRE(bundle.at("count").checked_as<int>() == 3);
     REQUIRE(bundle.at("name").checked_as<std::string>() == "items");
     REQUIRE(bundle_value.to_string() == "{count: 3, name: items}");
@@ -453,6 +483,7 @@ TEST_CASE("TupleView, BundleView and fixed ListView read structured MemoryUtils 
     Value fixed_list_value{*fixed_list_binding};
     ListView fixed_list = fixed_list_value.as_list();
     REQUIRE(fixed_list.size() == 3);
+    REQUIRE(fixed_list.is_fixed());
     fixed_list.at(0).checked_as<int>() = 1;
     fixed_list.at(1).checked_as<int>() = 2;
     fixed_list.at(2).checked_as<int>() = 3;

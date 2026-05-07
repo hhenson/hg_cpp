@@ -4,6 +4,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/metadata/ts_value_plan_factory.cpp
     hgraph/types/metadata/value_plan_factory.cpp
     hgraph/types/time_series_reference.cpp
+    hgraph/types/value/compact_container_ops.cpp
     hgraph/types/value/value_view.cpp
 )
 

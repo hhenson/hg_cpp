@@ -1,6 +1,7 @@
 #ifndef HGRAPH_CPP_ROOT_VALUE_OPS_H
 #define HGRAPH_CPP_ROOT_VALUE_OPS_H
 
+#include <hgraph/config.h>
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
 #include <hgraph/types/utils/memory_utils.h>
@@ -12,11 +13,23 @@
 #include <functional>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <typeinfo>
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+
+namespace nb = nanobind;
+#endif
 
 namespace hgraph
 {
+    struct ValueOps;
+    using ValueTypeBinding = TypeBinding<ValueTypeMetaData, ValueOps>;
+
     /**
      * Runtime behaviour vtable for value-layer types.
      *
@@ -46,6 +59,11 @@ namespace hgraph
         std::partial_ordering (*compare_impl)(const void *context, const void *lhs,
                                               const void *rhs) noexcept = nullptr;
         std::string (*to_string_impl)(const void *context, const void *memory) = nullptr;
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        nb::object (*to_python_impl)(const void *context, const void *memory) = nullptr;
+        void (*from_python_impl)(const void *context, const ValueTypeBinding &binding, void *memory,
+                                 nb::handle source) = nullptr;
+#endif
 
         [[nodiscard]] std::size_t hash(const void *memory) const noexcept
         {
@@ -73,10 +91,27 @@ namespace hgraph
         {
             return to_string_impl != nullptr ? to_string_impl(context, memory) : std::string{};
         }
-    };
 
-    /** ``TypeBinding`` instantiated for the value layer. */
-    using ValueTypeBinding = TypeBinding<ValueTypeMetaData, ValueOps>;
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] nb::object to_python(const void *memory) const
+        {
+            if (to_python_impl == nullptr)
+            {
+                throw std::logic_error("ValueOps::to_python is not available for this value type");
+            }
+            return to_python_impl(context, memory);
+        }
+
+        void from_python(const ValueTypeBinding &binding, void *memory, nb::handle source) const
+        {
+            if (from_python_impl == nullptr)
+            {
+                throw std::logic_error("ValueOps::from_python is not available for this value type");
+            }
+            from_python_impl(context, binding, memory, source);
+        }
+#endif
+    };
 
     namespace value_ops_detail
     {
@@ -176,6 +211,38 @@ namespace hgraph
                 return std::string{"<"} + typeid(T).name() + ">";
             }
         }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        template <typename T>
+        constexpr bool python_scalar_castable =
+            std::is_arithmetic_v<T> || std::is_same_v<T, std::string>;
+
+        template <typename T>
+        nb::object to_python_thunk(const void *, const void *memory)
+        {
+            if constexpr (python_scalar_castable<T>)
+            {
+                return nb::cast(*static_cast<const T *>(memory));
+            }
+            else
+            {
+                throw std::logic_error("ValueOps::to_python is not available for this scalar type");
+            }
+        }
+
+        template <typename T>
+        void from_python_thunk(const void *, const ValueTypeBinding &, void *memory, nb::handle source)
+        {
+            if constexpr (python_scalar_castable<T>)
+            {
+                *static_cast<T *>(memory) = nb::cast<T>(source);
+            }
+            else
+            {
+                throw std::logic_error("ValueOps::from_python is not available for this scalar type");
+            }
+        }
+#endif
     }  // namespace value_ops_detail
 
     /**
@@ -195,6 +262,10 @@ namespace hgraph
             &value_ops_detail::equals_thunk<T>,
             &value_ops_detail::compare_thunk<T>,
             &value_ops_detail::to_string_thunk<T>,
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+            &value_ops_detail::to_python_thunk<T>,
+            &value_ops_detail::from_python_thunk<T>,
+#endif
         };
         return ops;
     }

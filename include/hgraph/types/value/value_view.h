@@ -9,6 +9,8 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <utility>
 
 namespace hgraph
 {
@@ -19,6 +21,7 @@ namespace hgraph
     class MapView;
     class CyclicBufferView;
     class QueueView;
+    class Value;
 
     /**
      * Non-owning two-word reference to a value.
@@ -49,6 +52,11 @@ namespace hgraph
 
         explicit operator bool() const noexcept { return valid(); }
 
+        /** True when the view carries a binding/schema, even if the payload is currently absent. */
+        [[nodiscard]] bool bound() const noexcept { return binding_ != nullptr; }
+        /** True when the view references a live payload. */
+        [[nodiscard]] bool has_value() const noexcept { return data_ != nullptr; }
+
         [[nodiscard]] const ValueTypeBinding *binding() const noexcept { return binding_; }
         [[nodiscard]] const ValueTypeMetaData *schema() const noexcept
         {
@@ -72,6 +80,7 @@ namespace hgraph
             return valid() && schema()->kind == ValueTypeKind::CyclicBuffer;
         }
         [[nodiscard]] bool is_queue() const noexcept { return valid() && schema()->kind == ValueTypeKind::Queue; }
+        [[nodiscard]] bool is_type(const ValueTypeMetaData *type) const noexcept { return schema() == type; }
 
         /**
          * True when the bound ops vtable is the canonical ``ops_for<T>``
@@ -82,6 +91,12 @@ namespace hgraph
         [[nodiscard]] bool holds_alternative() const noexcept
         {
             return is_atomic() && binding_->ops == &ops_for<T>();
+        }
+
+        template <typename T>
+        [[nodiscard]] bool is_scalar_type() const noexcept
+        {
+            return holds_alternative<T>();
         }
 
         // -- typed atomic access (debug-asserted) --
@@ -130,6 +145,22 @@ namespace hgraph
             return *static_cast<T *>(data_);
         }
 
+        template <typename T>
+        void set(T &&value)
+        {
+            set_scalar(std::forward<T>(value));
+        }
+
+        template <typename T>
+        void set_scalar(T &&value)
+        {
+            using value_type = std::remove_cvref_t<T>;
+            if (!valid()) { throw std::logic_error("set_scalar<T> on invalid ValueView"); }
+            if (!is_atomic()) { throw std::logic_error("set_scalar<T> on non-atomic ValueView"); }
+            if (!holds_alternative<value_type>()) { throw std::logic_error("set_scalar<T> type mismatch"); }
+            *static_cast<value_type *>(data_) = std::forward<T>(value);
+        }
+
         // -- kind-specialised view casts (definitions in specialised_views.h) --
         [[nodiscard]] TupleView as_tuple() const;
         [[nodiscard]] std::optional<TupleView> try_as_tuple() const;
@@ -161,12 +192,26 @@ namespace hgraph
         }
         [[nodiscard]] bool equals(const ValueView &other) const noexcept;
         [[nodiscard]] std::partial_ordering compare(const ValueView &other) const noexcept;
+        [[nodiscard]] bool operator==(const ValueView &other) const noexcept { return equals(other); }
+        [[nodiscard]] std::partial_ordering operator<=>(const ValueView &other) const noexcept
+        {
+            return compare(other);
+        }
+
+        [[nodiscard]] Value clone() const;
+        void copy_from(const ValueView &other);
+        [[nodiscard]] bool try_copy_from(const ValueView &other);
 
         [[nodiscard]] std::string to_string() const
         {
             if (!valid()) { return std::string{}; }
             return binding_->checked_ops().to_string(data_);
         }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] nb::object to_python() const;
+        void from_python(nb::handle source);
+#endif
 
       private:
         const ValueTypeBinding *binding_{nullptr};

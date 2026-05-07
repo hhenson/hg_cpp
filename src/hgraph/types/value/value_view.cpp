@@ -1,13 +1,25 @@
 #include <hgraph/types/value/specialized_views.h>
 
+#include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/value/value.h>
+
 #include <algorithm>
 #include <compare>
 #include <cstddef>
+#include <fmt/format.h>
+#include <stdexcept>
+#include <string_view>
 
 namespace hgraph
 {
     namespace
     {
+        [[nodiscard]] const char *schema_name(const ValueTypeMetaData *schema) noexcept
+        {
+            if (schema == nullptr || schema->display_name == nullptr) { return "<unnamed>"; }
+            return schema->display_name;
+        }
+
         [[nodiscard]] const ValueTypeMetaData *structural_schema(const ValueTypeMetaData *schema) noexcept
         {
             if (schema != nullptr && schema->kind == ValueTypeKind::Bundle && schema->wrapped_un_named != nullptr)
@@ -170,6 +182,46 @@ namespace hgraph
         }
     }  // namespace
 
+    Value ValueView::clone() const
+    {
+        if (binding_ == nullptr) { throw std::logic_error("ValueView::clone requires a bound view"); }
+        return Value{*this};
+    }
+
+    void ValueView::copy_from(const ValueView &other)
+    {
+        if (!has_value() || !other.has_value())
+        {
+            throw std::runtime_error("ValueView::copy_from requires non-empty views");
+        }
+        if (data_ == other.data_) { return; }
+        if (schema() != other.schema())
+        {
+            throw std::invalid_argument(fmt::format("ValueView::copy_from requires matching schemas: {} != {}",
+                                                    schema_name(schema()),
+                                                    schema_name(other.schema())));
+        }
+        if (binding_ == nullptr || other.binding_ == nullptr || binding_->plan() != other.binding_->plan())
+        {
+            throw std::invalid_argument("ValueView::copy_from requires matching storage plans");
+        }
+
+        binding_->checked_plan().copy_assign(data_, other.data_);
+    }
+
+    bool ValueView::try_copy_from(const ValueView &other)
+    {
+        if (!has_value() || !other.has_value()) { return false; }
+        if (data_ == other.data_) { return true; }
+        if (schema() != other.schema()) { return false; }
+        if (binding_ == nullptr || other.binding_ == nullptr || binding_->plan() != other.binding_->plan())
+        {
+            return false;
+        }
+        binding_->checked_plan().copy_assign(data_, other.data_);
+        return true;
+    }
+
     bool ValueView::equals(const ValueView &other) const noexcept
     {
         if (binding_ == nullptr || other.binding_ == nullptr)
@@ -219,4 +271,46 @@ namespace hgraph
             return std::partial_ordering::unordered;
         }
     }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+    nb::object ValueView::to_python() const
+    {
+        if (!valid()) { throw std::runtime_error("ValueView::to_python requires a non-empty view"); }
+        return binding_->checked_ops().to_python(data_);
+    }
+
+    void ValueView::from_python(nb::handle source)
+    {
+        if (!valid()) { throw std::runtime_error("ValueView::from_python requires a non-empty view"); }
+        if (source.is_none())
+        {
+            throw std::invalid_argument("ValueView::from_python cannot reset a view from None");
+        }
+
+        binding_->checked_ops().from_python(*binding_, data_, source);
+    }
+
+    nb::object Value::to_python() const
+    {
+        if (!has_value()) { return nb::none(); }
+        return view().to_python();
+    }
+
+    void Value::from_python(nb::handle source)
+    {
+        if (source.is_none())
+        {
+            reset();
+            return;
+        }
+        if (binding() == nullptr)
+        {
+            throw std::logic_error("Value::from_python requires a schema-bound Value");
+        }
+
+        Value replacement{*binding()};
+        replacement.view().from_python(source);
+        *this = std::move(replacement);
+    }
+#endif
 }  // namespace hgraph

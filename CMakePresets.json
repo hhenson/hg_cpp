@@ -1,0 +1,22 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "python-user-nodes",
+      "displayName": "Python User Nodes",
+      "description": "Enable HGRAPH_ENABLE_PYTHON_USER_NODES for IDE indexing and Python bridge development.",
+      "binaryDir": "${sourceDir}/cmake-build-python-user-nodes",
+      "cacheVariables": {
+        "HGRAPH_ENABLE_PYTHON_USER_NODES": "ON",
+        "Python_EXECUTABLE": "${sourceDir}/.venv/bin/python",
+        "BUILD_TESTING": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "python-user-nodes",
+      "configurePreset": "python-user-nodes"
+    }
+  ]
+}

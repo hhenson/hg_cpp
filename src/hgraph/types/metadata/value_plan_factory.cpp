@@ -143,6 +143,146 @@ namespace hgraph
             return fmt::to_string(out);
         }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        void require_python_source(nb::handle source, const char *what)
+        {
+            if (source.is_none()) { throw std::invalid_argument(std::string{what} + " requires a non-None value"); }
+        }
+
+        [[nodiscard]] bool is_python_sequence(nb::handle source)
+        {
+            nb::object object = nb::borrow<nb::object>(source);
+            return nb::isinstance<nb::list>(object) || nb::isinstance<nb::tuple>(object);
+        }
+
+        void assign_child_from_python(const ValueTypeBinding &binding,
+                                      void                   *memory,
+                                      nb::handle              source,
+                                      const char             *what)
+        {
+            if (memory == nullptr) { throw std::runtime_error(std::string{what} + " child memory is not live"); }
+            if (source.is_none()) { throw std::invalid_argument(std::string{what} + " does not allow None elements"); }
+            binding.checked_ops().from_python(binding, memory, source);
+        }
+
+        [[nodiscard]] nb::object composite_value_to_python(const void *context, const void *memory)
+        {
+            if (memory == nullptr) { throw std::runtime_error("composite to_python requires live value memory"); }
+            const auto *state = static_cast<const CompositeIndexedContext *>(context);
+            const bool  bundle = state->schema != nullptr && state->schema->kind == ValueTypeKind::Bundle;
+
+            if (bundle)
+            {
+                nb::dict result;
+                for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
+                {
+                    const char *name = state->schema->fields[index].name;
+                    if (name == nullptr || *name == '\0') { continue; }
+                    const auto &ops = state->child_bindings[index]->checked_ops();
+                    const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
+                    result[nb::str{name}] = ops.to_python(child);
+                }
+                return result;
+            }
+
+            nb::list result;
+            for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
+            {
+                const auto &ops = state->child_bindings[index]->checked_ops();
+                const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
+                result.append(ops.to_python(child));
+            }
+            return nb::tuple(result);
+        }
+
+        void fill_composite_from_sequence(const CompositeIndexedContext *state,
+                                          void                          *memory,
+                                          nb::handle                     source,
+                                          const char                    *what)
+        {
+            if (!is_python_sequence(source))
+            {
+                throw std::invalid_argument(std::string{what} + " expects a Python list or tuple");
+            }
+
+            nb::object   object   = nb::borrow<nb::object>(source);
+            nb::sequence sequence = nb::cast<nb::sequence>(object);
+            const auto   count    = static_cast<std::size_t>(nb::len(sequence));
+            if (count != state->child_bindings.size())
+            {
+                throw std::invalid_argument(
+                    fmt::format("{} expects {} elements, got {}", what, state->child_bindings.size(), count));
+            }
+
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                nb::object element = sequence[index];
+                auto      *child   = static_cast<std::byte *>(memory) + state->offsets[index];
+                assign_child_from_python(*state->child_bindings[index], child, element, what);
+            }
+        }
+
+        void composite_value_from_python(const void *context, const ValueTypeBinding &, void *memory,
+                                         nb::handle source)
+        {
+            if (memory == nullptr) { throw std::runtime_error("composite from_python requires live value memory"); }
+            require_python_source(source, "Composite value");
+
+            const auto *state  = static_cast<const CompositeIndexedContext *>(context);
+            const bool  bundle = state->schema != nullptr && state->schema->kind == ValueTypeKind::Bundle;
+            if (!bundle)
+            {
+                fill_composite_from_sequence(state, memory, source, "Tuple value");
+                return;
+            }
+
+            nb::object object = nb::borrow<nb::object>(source);
+            if (nb::isinstance<nb::dict>(object))
+            {
+                nb::dict map = nb::cast<nb::dict>(object);
+                for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
+                {
+                    const char *name = state->schema->fields[index].name;
+                    if (name == nullptr || *name == '\0')
+                    {
+                        throw std::invalid_argument("Bundle value has an unnamed field and cannot be loaded from dict");
+                    }
+                    nb::str key{name};
+                    if (!map.contains(key))
+                    {
+                        throw std::invalid_argument(fmt::format("Bundle value missing field '{}'", name));
+                    }
+                    nb::object value = map[key];
+                    auto      *child = static_cast<std::byte *>(memory) + state->offsets[index];
+                    assign_child_from_python(*state->child_bindings[index], child, value, "Bundle value");
+                }
+                return;
+            }
+
+            if (is_python_sequence(source))
+            {
+                fill_composite_from_sequence(state, memory, source, "Bundle value");
+                return;
+            }
+
+            for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
+            {
+                const char *name = state->schema->fields[index].name;
+                if (name == nullptr || *name == '\0')
+                {
+                    throw std::invalid_argument("Bundle value has an unnamed field and cannot be loaded from attributes");
+                }
+                if (!nb::hasattr(object, name))
+                {
+                    throw std::invalid_argument(fmt::format("Bundle value missing attribute '{}'", name));
+                }
+                nb::object value = nb::getattr(object, name);
+                auto      *child = static_cast<std::byte *>(memory) + state->offsets[index];
+                assign_child_from_python(*state->child_bindings[index], child, value, "Bundle value");
+            }
+        }
+#endif
+
         [[nodiscard]] std::size_t array_indexed_size(const void *context, const void *) noexcept
         {
             return static_cast<const ArrayIndexedContext *>(context)->size;
@@ -242,6 +382,49 @@ namespace hgraph
             return fmt::to_string(out);
         }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] nb::object array_value_to_python(const void *context, const void *memory)
+        {
+            if (memory == nullptr) { throw std::runtime_error("array to_python requires live value memory"); }
+            const auto *state = static_cast<const ArrayIndexedContext *>(context);
+            const auto &ops   = state->element_binding->checked_ops();
+            nb::list result;
+            for (std::size_t index = 0; index < state->size; ++index)
+            {
+                const auto *child = static_cast<const std::byte *>(memory) + index * state->stride;
+                result.append(ops.to_python(child));
+            }
+            return result;
+        }
+
+        void array_value_from_python(const void *context, const ValueTypeBinding &, void *memory, nb::handle source)
+        {
+            if (memory == nullptr) { throw std::runtime_error("array from_python requires live value memory"); }
+            require_python_source(source, "Fixed List value");
+            if (!is_python_sequence(source))
+            {
+                throw std::invalid_argument("Fixed List value expects a Python list or tuple");
+            }
+
+            const auto *state    = static_cast<const ArrayIndexedContext *>(context);
+            nb::object  object   = nb::borrow<nb::object>(source);
+            nb::sequence sequence = nb::cast<nb::sequence>(object);
+            const auto   count    = static_cast<std::size_t>(nb::len(sequence));
+            if (count != state->size)
+            {
+                throw std::invalid_argument(
+                    fmt::format("Fixed List value expects {} elements, got {}", state->size, count));
+            }
+
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                nb::object element = sequence[index];
+                auto      *child   = static_cast<std::byte *>(memory) + index * state->stride;
+                assign_child_from_python(*state->element_binding, child, element, "Fixed List value");
+            }
+        }
+#endif
+
         struct CompositeIndexedOpsEntry
         {
             CompositeIndexedContext context{};
@@ -288,7 +471,13 @@ namespace hgraph
                      &composite_value_hash,
                      &composite_value_equals,
                      &composite_value_compare,
-                     &composite_value_to_string},
+                     &composite_value_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                     ,
+                     &composite_value_to_python,
+                     &composite_value_from_python
+#endif
+                    },
                     &composite_indexed_size,
                     &composite_indexed_element_at,
                     &composite_indexed_element_binding,
@@ -335,7 +524,13 @@ namespace hgraph
                 };
 
                 ops = IndexedValueOps{
-                    {&context, &array_value_hash, &array_value_equals, &array_value_compare, &array_value_to_string},
+                    {&context, &array_value_hash, &array_value_equals, &array_value_compare, &array_value_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                     ,
+                     &array_value_to_python,
+                     &array_value_from_python
+#endif
+                    },
                     &array_indexed_size,
                     &array_indexed_element_at,
                     &array_indexed_element_binding,
