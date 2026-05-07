@@ -111,10 +111,11 @@ TEST_CASE("InternTable::find returns null for missing keys and the value for pre
     hgraph::InternTable<int, std::string> table;
     REQUIRE(table.find(99) == nullptr);
 
-    table.emplace(7, "seven");
+    const auto &emplaced = table.emplace(7, "seven");
 
     const auto *found = table.find(7);
     REQUIRE(found != nullptr);
+    REQUIRE(&emplaced == found);
     REQUIRE(*found == "seven");
 }
 
@@ -173,9 +174,13 @@ TEST_CASE("InternTable concurrent intern of distinct keys stores all values")
     std::vector<std::thread>      threads;
     threads.reserve(thread_count);
 
+    std::vector<const int *> results(static_cast<size_t>(thread_count), nullptr);
+
     for (int i = 0; i < thread_count; ++i)
     {
-        threads.emplace_back([&, i]() { (void)table.emplace(i, i * 10); });
+        threads.emplace_back([&, i]() {
+            results[static_cast<size_t>(i)] = &table.emplace(i, i * 10);
+        });
     }
     for (auto &t : threads) { t.join(); }
 
@@ -183,6 +188,7 @@ TEST_CASE("InternTable concurrent intern of distinct keys stores all values")
     {
         const int *p = table.find(i);
         REQUIRE(p != nullptr);
+        REQUIRE(p == results[static_cast<size_t>(i)]);
         REQUIRE(*p == i * 10);
     }
 }
@@ -202,9 +208,13 @@ TEST_CASE("InternTable destroys interned values when the table goes out of scope
     Counter::reset();
     {
         hgraph::InternTable<int, Counter> table;
-        (void)table.emplace(1, 10);
-        (void)table.emplace(2, 20);
-        (void)table.emplace(3, 30);
+        const auto                       &c1 = table.emplace(1, 10);
+        const auto                       &c2 = table.emplace(2, 20);
+        const auto                       &c3 = table.emplace(3, 30);
+
+        REQUIRE(c1.value == 10);
+        REQUIRE(c2.value == 20);
+        REQUIRE(c3.value == 30);
         REQUIRE(Counter::value_constructed.load() == 3);
     }
     REQUIRE(Counter::destroyed.load() >= 3);
