@@ -5,9 +5,12 @@
 #include <hgraph/types/metadata/value_type_meta_data.h>
 #include <hgraph/types/utils/memory_utils.h>
 
+#include <compare>
+#include <concepts>
 #include <cstddef>
 #include <cstring>
 #include <functional>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -28,17 +31,18 @@ namespace hgraph
      * - ``hash(memory)`` — content hash; cached entries can drop to a
      *   shallow pointer hash if the type is non-hashable.
      * - ``equals(lhs, rhs)`` — deep equality.
-     * - ``compare(lhs, rhs)`` — strict weak ordering: returns
-     *   ``-1`` / ``0`` / ``+1``. Non-comparable types may return ``0``.
+     * - ``compare(lhs, rhs)`` — C++ comparison-category result following
+     *   ``operator<=>`` conventions. Non-comparable types may return
+     *   ``std::partial_ordering::equivalent``.
      * - ``to_string(memory)`` — diagnostic string. Non-streamable types
      *   may return the type name.
      */
     struct ValueOps
     {
-        std::size_t (*hash)(const void *memory) noexcept                      = nullptr;
-        bool        (*equals)(const void *lhs, const void *rhs) noexcept      = nullptr;
-        int         (*compare)(const void *lhs, const void *rhs) noexcept     = nullptr;
-        std::string (*to_string)(const void *memory)                          = nullptr;
+        std::size_t (*hash)(const void *memory) noexcept                             = nullptr;
+        bool (*equals)(const void *lhs, const void *rhs) noexcept                    = nullptr;
+        std::partial_ordering (*compare)(const void *lhs, const void *rhs) noexcept  = nullptr;
+        std::string (*to_string)(const void *memory)                                 = nullptr;
     };
 
     /** ``TypeBinding`` instantiated for the value layer. */
@@ -46,6 +50,15 @@ namespace hgraph
 
     namespace value_ops_detail
     {
+        template <typename T>
+        [[nodiscard]] std::optional<std::partial_ordering> null_order(const T *lhs, const T *rhs) noexcept
+        {
+            if (lhs == nullptr && rhs == nullptr) { return std::partial_ordering::equivalent; }
+            if (lhs == nullptr) { return std::partial_ordering::less; }
+            if (rhs == nullptr) { return std::partial_ordering::greater; }
+            return std::nullopt;
+        }
+
         template <typename T>
         std::size_t hash_thunk(const void *memory) noexcept
         {
@@ -86,19 +99,28 @@ namespace hgraph
         }
 
         template <typename T>
-        int compare_thunk(const void *lhs, const void *rhs) noexcept
+        std::partial_ordering compare_thunk(const void *lhs, const void *rhs) noexcept
         {
-            if constexpr (requires(const T &a, const T &b) { { a < b } -> std::convertible_to<bool>; })
+            if constexpr (requires(const T &a, const T &b) {
+                              { a <=> b } -> std::convertible_to<std::partial_ordering>;
+                          })
+            {
+                return *static_cast<const T *>(lhs) <=> *static_cast<const T *>(rhs);
+            }
+            else if constexpr (requires(const T &a, const T &b) { { a < b } -> std::convertible_to<bool>; })
             {
                 const T &a = *static_cast<const T *>(lhs);
                 const T &b = *static_cast<const T *>(rhs);
-                if (a < b) { return -1; }
-                if (b < a) { return +1; }
-                return 0;
+                if (a < b) { return std::partial_ordering::less; }
+                if (b < a) { return std::partial_ordering::greater; }
+                return std::partial_ordering::equivalent;
             }
             else
             {
-                return std::memcmp(lhs, rhs, sizeof(T));
+                const int cmp = std::memcmp(lhs, rhs, sizeof(T));
+                if (cmp < 0) { return std::partial_ordering::less; }
+                if (cmp > 0) { return std::partial_ordering::greater; }
+                return std::partial_ordering::equivalent;
             }
         }
 
