@@ -3,6 +3,7 @@
 
 #include <hgraph/types/metadata/value_type_meta_data.h>
 #include <hgraph/types/utils/memory_utils.h>
+#include <hgraph/types/value/value_ops.h>
 
 #include <mutex>
 #include <unordered_map>
@@ -11,7 +12,8 @@ namespace hgraph
 {
     /**
      * Factory that maps a value-layer ``ValueTypeMetaData`` schema to its
-     * canonical ``MemoryUtils::StoragePlan``.
+     * canonical ``MemoryUtils::StoragePlan`` and default
+     * ``ValueTypeBinding``.
      *
      * The schema describes *what* a value is; the plan describes *how* it
      * is laid out in memory. The factory bridges the two so callers never
@@ -34,10 +36,10 @@ namespace hgraph
      * lines up with the global plan cache.
      *
      * **Container kinds (Set, Map, CyclicBuffer, Queue, dynamic List).**
-     * These require the value-layer's container storage shapes
-     * (``DynamicListStorage``, ``SetStorage``, ``MapStorage``, etc.).
-     * Until that layer is ported, the factory throws
-     * ``std::logic_error`` for these kinds.
+     * These use the compact value-layer storage shapes by default. Their
+     * plans are resolved from the canonical bindings of their element/key
+     * schemas so the storage lifecycle hooks and view ops agree on the
+     * child layout.
      *
      * The factory is a process-wide singleton via ``instance()``;
      * non-copyable and non-movable.
@@ -65,18 +67,40 @@ namespace hgraph
         void register_atomic(const ValueTypeMetaData *schema, const MemoryUtils::StoragePlan *plan);
 
         /**
+         * Register the canonical binding for ``binding.type_meta``.
+         *
+         * ``TypeRegistry::register_scalar<T>`` calls this for atomics after
+         * interning the ``(schema, plan_for<T>, ops_for<T>)`` triple. The
+         * factory synthesises composite/container bindings lazily; callers
+         * normally do not register those by hand.
+         */
+        void register_binding(const ValueTypeBinding &binding);
+
+        /**
          * Look up or synthesise the canonical plan for ``schema``.
          *
          * Returns ``nullptr`` when ``schema`` is null. For atomic schemas
          * not previously registered, throws. For tuple / bundle / fixed
          * list schemas, recursively resolves component plans and
-         * synthesises via ``MemoryUtils`` builders. For other container
-         * kinds, throws (value-layer support not yet ported).
+         * synthesises via ``MemoryUtils`` builders. Dynamic list and
+         * container schemas use the compact value-layer storage shapes.
          */
         const MemoryUtils::StoragePlan *plan_for(const ValueTypeMetaData *schema);
 
         /** Look up only; never synthesises. Returns ``nullptr`` when missing. */
         const MemoryUtils::StoragePlan *find(const ValueTypeMetaData *schema) const;
+
+        /**
+         * Look up or synthesise the canonical default binding for ``schema``.
+         *
+         * Atomic bindings must have been registered by ``TypeRegistry``.
+         * Composite and container bindings are created lazily from child
+         * bindings and interned through ``ValueTypeBinding``.
+         */
+        const ValueTypeBinding *binding_for(const ValueTypeMetaData *schema);
+
+        /** Binding lookup only; never synthesises. Returns ``nullptr`` when missing. */
+        const ValueTypeBinding *find_binding(const ValueTypeMetaData *schema) const;
 
         /**
          * Drop every cached schema → plan mapping. Test-only helper used to
@@ -88,9 +112,11 @@ namespace hgraph
         ValuePlanFactory() = default;
 
         const MemoryUtils::StoragePlan *synthesise(const ValueTypeMetaData *schema);
+        const ValueTypeBinding         *synthesise_binding(const ValueTypeMetaData *schema);
 
         mutable std::mutex                                                              mutex_;
         std::unordered_map<const ValueTypeMetaData *, const MemoryUtils::StoragePlan *> cache_;
+        std::unordered_map<const ValueTypeMetaData *, const ValueTypeBinding *>          binding_cache_;
     };
 }  // namespace hgraph
 

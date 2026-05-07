@@ -25,8 +25,8 @@ namespace hgraph
      *   for ``TSS`` and ``TSD``, slot-backed dynamic storage for dynamic
      *   ``TSL``, and so on).
      *
-     * Implementation of those storage shapes lives in the value layer
-     * and the time-series layer; until those layers are ported, the
+     * The value-layer compact shapes are in place. The TS-layer state
+     * tree and slot-backed storage composition are still pending, so the
      * factory's interface is in place but ``plan_for`` throws
      * ``std::logic_error`` for every TS kind. The interface exists now
      * so callers can be written against the final shape.
@@ -49,8 +49,8 @@ namespace hgraph
          * Look up or synthesise the canonical plan for ``schema``.
          *
          * Returns ``nullptr`` when ``schema`` is null. For all TS kinds
-         * currently throws ``std::logic_error`` because the underlying
-         * value/TS-layer storage shapes are not yet ported.
+         * currently throws ``std::logic_error`` because the TS-layer
+         * storage/state composition is not yet ported.
          */
         const MemoryUtils::StoragePlan *plan_for(const TSValueTypeMetaData *schema);
 

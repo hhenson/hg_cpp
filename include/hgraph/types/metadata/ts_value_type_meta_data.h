@@ -221,7 +221,7 @@ namespace hgraph
          *
          * - ``TS<T>``     — ``T``
          * - ``TSS<T>``    — ``Bundle{added: Set<T>, removed: Set<T>}``
-         * - ``TSD<K, V>`` — ``Bundle{added: Map<K, V.delta>, removed: Set<K>, modified: Map<K, V.delta>}``
+         * - ``TSD<K, V>`` — ``Bundle{removed: Set<K>, modified: Map<K, V.delta>}``
          * - ``TSL<T>``    — ``Map<i64, T.delta_value_schema>``
          * - ``TSW<T>``    — ``T`` (the element added this tick)
          * - ``TSB{f...}`` — ``Bundle{f: f.delta_value_schema...}``

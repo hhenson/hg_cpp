@@ -6,6 +6,7 @@
 #define HGRAPH_CPP_ROOT_TYPE_REGISTRY_H
 
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
 #include <hgraph/types/utils/intern_table.h>
 #include <hgraph/types/utils/memory_utils.h>
@@ -484,7 +485,7 @@ namespace hgraph
         // ``ops_for<T>`` lives in ``value_ops.h``; we forward-declare the
         // helper to avoid a circular header dependency.
         const ValueTypeBinding &binding = ValueTypeBinding::intern(*meta, MemoryUtils::plan_for<T>(), ops_for<T>());
-        (void)binding;
+        ValuePlanFactory::instance().register_binding(binding);
         return meta;
     }
 
