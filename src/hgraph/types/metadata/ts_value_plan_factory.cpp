@@ -40,7 +40,7 @@ namespace hgraph
     void TSValuePlanFactory::unsupported(const TSValueTypeMetaData *)
     {
         throw std::logic_error(
-            "TSValuePlanFactory: time-series plan synthesis requires value-layer + TS-layer storage support "
+            "TSValuePlanFactory: time-series plan synthesis requires TS-layer storage/state support "
             "(not yet ported)");
     }
 }  // namespace hgraph
