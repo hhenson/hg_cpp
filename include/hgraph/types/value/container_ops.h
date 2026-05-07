@@ -71,9 +71,11 @@ namespace hgraph
 
     struct IndexedValueOps : ValueOps
     {
-        std::size_t (*size)(const void *memory) noexcept                       = nullptr;
-        const void *(*element_at)(const void *memory, std::size_t index) = nullptr;
-        const ValueTypeBinding *(*element_binding)(const void *memory, std::size_t index) noexcept = nullptr;
+        const void *context{nullptr};
+        std::size_t (*size)(const void *context, const void *memory) noexcept = nullptr;
+        const void *(*element_at)(const void *context, const void *memory, std::size_t index) = nullptr;
+        const ValueTypeBinding *(*element_binding)(const void *context, const void *memory,
+                                                   std::size_t index) noexcept = nullptr;
 
         /**
          * Iteration is exposed as a single op that returns a
@@ -83,12 +85,11 @@ namespace hgraph
          * optional ``predicate`` filter (null for dense layouts;
          * non-null for slot-stored layouts that need to skip dead
          * slots) and a ``projector`` that builds a ``ValueView`` from
-         * ``(context, index)``. Views never construct iterators
-         * directly — they call ``make_range(memory)`` and use the
-         * range's own iterator surface, which keeps the iteration
-         * layout-agnostic.
+         * ``(context, index)``. Range-based views call
+         * ``make_range(context, memory)`` and use the range's own
+         * iterator surface, which keeps iteration layout-agnostic.
          */
-        Range<ValueView> (*make_range)(const void *memory) = nullptr;
+        Range<ValueView> (*make_range)(const void *context, const void *memory) = nullptr;
     };
 
     struct ListValueOps : IndexedValueOps
@@ -114,8 +115,8 @@ namespace hgraph
     {
         bool (*contains)(const void *memory, const void *key)                = nullptr;
         const void *(*value_at)(const void *memory, const void *key)         = nullptr;
-        const void *(*value_at_index)(const void *memory, std::size_t index) = nullptr;
-        const ValueTypeBinding *(*value_binding)(const void *memory) noexcept = nullptr;
+        const void *(*value_at_index)(const void *context, const void *memory, std::size_t index) = nullptr;
+        const ValueTypeBinding *(*value_binding)(const void *context, const void *memory) noexcept = nullptr;
         /**
          * Three iteration surfaces. Each follows the predicate /
          * projector pattern; the bound thunks decide what the

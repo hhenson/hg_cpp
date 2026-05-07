@@ -389,21 +389,21 @@ namespace hgraph
         // type, which keeps the views layout-agnostic.
 
         // ----- List -----
-        inline std::size_t list_size(const void *memory) noexcept
+        inline std::size_t list_size(const void *, const void *memory) noexcept
         {
             return static_cast<const ListStorage *>(memory)->size();
         }
-        inline const void *list_element_at(const void *memory, std::size_t index)
+        inline const void *list_element_at(const void *, const void *memory, std::size_t index)
         {
             return static_cast<const ListStorage *>(memory)->element_at(index);
         }
-        inline const ValueTypeBinding *list_element_binding(const void *memory, std::size_t) noexcept
+        inline const ValueTypeBinding *list_element_binding(const void *, const void *memory, std::size_t) noexcept
         {
             return static_cast<const ListStorage *>(memory)->element_binding();
         }
 
         // ----- CyclicBuffer -----
-        inline std::size_t cyclic_buffer_size(const void *memory) noexcept
+        inline std::size_t cyclic_buffer_size(const void *, const void *memory) noexcept
         {
             return static_cast<const CyclicBufferStorage *>(memory)->size();
         }
@@ -411,17 +411,18 @@ namespace hgraph
         {
             return static_cast<const CyclicBufferStorage *>(memory)->head();
         }
-        inline const void *cyclic_buffer_element_at(const void *memory, std::size_t index)
+        inline const void *cyclic_buffer_element_at(const void *, const void *memory, std::size_t index)
         {
             return static_cast<const CyclicBufferStorage *>(memory)->element_at(index);
         }
-        inline const ValueTypeBinding *cyclic_buffer_element_binding(const void *memory, std::size_t) noexcept
+        inline const ValueTypeBinding *cyclic_buffer_element_binding(const void *, const void *memory,
+                                                                     std::size_t) noexcept
         {
             return static_cast<const CyclicBufferStorage *>(memory)->element_binding();
         }
 
         // ----- Queue -----
-        inline std::size_t queue_size(const void *memory) noexcept
+        inline std::size_t queue_size(const void *, const void *memory) noexcept
         {
             return static_cast<const QueueStorage *>(memory)->size();
         }
@@ -429,17 +430,17 @@ namespace hgraph
         {
             return static_cast<const QueueStorage *>(memory)->front();
         }
-        inline const void *queue_element_at(const void *memory, std::size_t index)
+        inline const void *queue_element_at(const void *, const void *memory, std::size_t index)
         {
             return static_cast<const QueueStorage *>(memory)->element_at(index);
         }
-        inline const ValueTypeBinding *queue_element_binding(const void *memory, std::size_t) noexcept
+        inline const ValueTypeBinding *queue_element_binding(const void *, const void *memory, std::size_t) noexcept
         {
             return static_cast<const QueueStorage *>(memory)->element_binding();
         }
 
         // ----- Set -----
-        inline std::size_t set_size(const void *memory) noexcept
+        inline std::size_t set_size(const void *, const void *memory) noexcept
         {
             return static_cast<const SetStorage *>(memory)->size();
         }
@@ -447,11 +448,11 @@ namespace hgraph
         {
             return static_cast<const SetStorage *>(memory)->contains(key);
         }
-        inline const void *set_element_at(const void *memory, std::size_t index)
+        inline const void *set_element_at(const void *, const void *memory, std::size_t index)
         {
             return static_cast<const SetStorage *>(memory)->element_at(index);
         }
-        inline const ValueTypeBinding *set_element_binding(const void *memory, std::size_t) noexcept
+        inline const ValueTypeBinding *set_element_binding(const void *, const void *memory, std::size_t) noexcept
         {
             return static_cast<const SetStorage *>(memory)->element_binding();
         }
@@ -466,18 +467,25 @@ namespace hgraph
         template <auto SizeFn, auto ElementAtFn, auto ElementBindingFn>
         ValueView dense_range_projector(const void *context, std::size_t index)
         {
-            return ValueView{ElementBindingFn(context, index), const_cast<void *>(ElementAtFn(context, index))};
+            return ValueView{ElementBindingFn(nullptr, context, index),
+                             const_cast<void *>(ElementAtFn(nullptr, context, index))};
         }
 
         template <auto SizeFn, auto ElementAtFn, auto ElementBindingFn>
-        Range<ValueView> dense_make_range(const void *memory)
+        Range<ValueView> dense_make_range(const void *, const void *memory)
         {
             return Range<ValueView>{
                 .context   = memory,
-                .limit     = SizeFn(memory),
+                .limit     = SizeFn(nullptr, memory),
                 .predicate = nullptr,
                 .projector = &dense_range_projector<SizeFn, ElementAtFn, ElementBindingFn>,
             };
+        }
+
+        template <auto SizeFn, auto ElementAtFn, auto ElementBindingFn>
+        Range<ValueView> dense_make_range_no_context(const void *memory)
+        {
+            return dense_make_range<SizeFn, ElementAtFn, ElementBindingFn>(nullptr, memory);
         }
 
         // Map-specific KV projector: pairs key with value at the same
@@ -487,8 +495,8 @@ namespace hgraph
         std::pair<ValueView, ValueView> dense_kv_range_projector(const void *context, std::size_t index)
         {
             return std::pair<ValueView, ValueView>{
-                ValueView{KeyBindingFn(context, index), const_cast<void *>(KeyAtFn(context, index))},
-                ValueView{ValueBindingFn(context), const_cast<void *>(ValueAtIndexFn(context, index))},
+                ValueView{KeyBindingFn(nullptr, context, index), const_cast<void *>(KeyAtFn(nullptr, context, index))},
+                ValueView{ValueBindingFn(nullptr, context), const_cast<void *>(ValueAtIndexFn(nullptr, context, index))},
             };
         }
 
@@ -497,7 +505,7 @@ namespace hgraph
         {
             return KeyValueRange<ValueView, ValueView>{
                 .context   = memory,
-                .limit     = SizeFn(memory),
+                .limit     = SizeFn(nullptr, memory),
                 .predicate = nullptr,
                 .projector = &dense_kv_range_projector<SizeFn, KeyAtFn, ValueAtIndexFn, KeyBindingFn, ValueBindingFn>,
             };
@@ -508,7 +516,7 @@ namespace hgraph
         // the IndexedValueOps base) point at the *key* surface so map
         // iteration walks keys; the value side is reached via
         // ``MapValueOps::value_at_index`` and ``value_binding``.
-        inline std::size_t map_size(const void *memory) noexcept
+        inline std::size_t map_size(const void *, const void *memory) noexcept
         {
             return static_cast<const MapStorage *>(memory)->size();
         }
@@ -520,25 +528,25 @@ namespace hgraph
         {
             return static_cast<const MapStorage *>(memory)->value_at(key);
         }
-        inline const void *map_key_at_index(const void *memory, std::size_t index)
+        inline const void *map_key_at_index(const void *, const void *memory, std::size_t index)
         {
             return static_cast<const MapStorage *>(memory)->key_at(index);
         }
-        inline const void *map_value_at_index(const void *memory, std::size_t index)
+        inline const void *map_value_at_index(const void *, const void *memory, std::size_t index)
         {
             return static_cast<const MapStorage *>(memory)->value_at_index(index);
         }
-        inline const ValueTypeBinding *map_key_binding(const void *memory, std::size_t) noexcept
+        inline const ValueTypeBinding *map_key_binding(const void *, const void *memory, std::size_t) noexcept
         {
             return static_cast<const MapStorage *>(memory)->key_binding();
         }
-        inline const ValueTypeBinding *map_value_binding(const void *memory) noexcept
+        inline const ValueTypeBinding *map_value_binding(const void *, const void *memory) noexcept
         {
             return static_cast<const MapStorage *>(memory)->value_binding();
         }
-        inline const ValueTypeBinding *map_value_binding_indexed(const void *memory, std::size_t) noexcept
+        inline const ValueTypeBinding *map_value_binding_indexed(const void *, const void *memory, std::size_t) noexcept
         {
-            return map_value_binding(memory);
+            return map_value_binding(nullptr, memory);
         }
 
         // ----- Map-as-Set adapter (used by ``MapView::key_set``) ---------
@@ -618,6 +626,7 @@ namespace hgraph
               &container_ops_detail::list_compare,
               &container_ops_detail::list_to_string},
              // IndexedValueOps:
+             nullptr,
              &container_ops_detail::list_size,
              &container_ops_detail::list_element_at,
              &container_ops_detail::list_element_binding,
@@ -636,6 +645,7 @@ namespace hgraph
               &container_ops_detail::set_equals,
               &container_ops_detail::set_compare,
               &container_ops_detail::set_to_string},
+             nullptr,
              &container_ops_detail::set_size,
              &container_ops_detail::set_element_at,
              &container_ops_detail::set_element_binding,
@@ -658,6 +668,7 @@ namespace hgraph
               &container_ops_detail::map_equals,
               &container_ops_detail::map_compare,
               &container_ops_detail::map_to_string},
+             nullptr,
              &container_ops_detail::map_size,
              &container_ops_detail::map_key_at_index,
              &container_ops_detail::map_key_binding,
@@ -670,13 +681,13 @@ namespace hgraph
             &container_ops_detail::map_value_binding,
             // make_keys_range — same as the IndexedValueOps base
             // since the indexed surface walks keys.
-            &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
-                                                     &container_ops_detail::map_key_at_index,
-                                                     &container_ops_detail::map_key_binding>,
+            &container_ops_detail::dense_make_range_no_context<&container_ops_detail::map_size,
+                                                                &container_ops_detail::map_key_at_index,
+                                                                &container_ops_detail::map_key_binding>,
             // make_values_range — projector wraps the value side.
-            &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
-                                                     &container_ops_detail::map_value_at_index,
-                                                     &container_ops_detail::map_value_binding_indexed>,
+            &container_ops_detail::dense_make_range_no_context<&container_ops_detail::map_size,
+                                                                &container_ops_detail::map_value_at_index,
+                                                                &container_ops_detail::map_value_binding_indexed>,
             &container_ops_detail::dense_make_kv_range<&container_ops_detail::map_size,
                                                         &container_ops_detail::map_key_at_index,
                                                         &container_ops_detail::map_value_at_index,
@@ -694,6 +705,7 @@ namespace hgraph
               &container_ops_detail::cyclic_buffer_equals,
               &container_ops_detail::cyclic_buffer_compare,
               &container_ops_detail::cyclic_buffer_to_string},
+             nullptr,
              &container_ops_detail::cyclic_buffer_size,
              &container_ops_detail::cyclic_buffer_element_at,
              &container_ops_detail::cyclic_buffer_element_binding,
@@ -712,6 +724,7 @@ namespace hgraph
               &container_ops_detail::queue_equals,
               &container_ops_detail::queue_compare,
               &container_ops_detail::queue_to_string},
+             nullptr,
              &container_ops_detail::queue_size,
              &container_ops_detail::queue_element_at,
              &container_ops_detail::queue_element_binding,
@@ -734,6 +747,7 @@ namespace hgraph
               &container_ops_detail::map_key_adapter_equals,
               &container_ops_detail::map_key_adapter_compare,
               &container_ops_detail::map_key_adapter_to_string},
+             nullptr,
              &container_ops_detail::map_size,
              &container_ops_detail::map_key_at_index,
              &container_ops_detail::map_key_binding,
