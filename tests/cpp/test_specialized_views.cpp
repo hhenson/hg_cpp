@@ -1,0 +1,430 @@
+// Tests for the read-only specialised views (``ListView``,
+// ``CyclicBufferView``, ``QueueView``, ``SetView``, ``MapView``) and
+// the per-kind ``ValueOps`` (``compact_list_ops`` / ``compact_set_ops``
+// / ``compact_map_ops`` / ``compact_cyclic_buffer_ops`` /
+// ``compact_queue_ops``).
+//
+// These tests exercise both the storage/ops layer directly and the
+// ``Value`` / ``ValueView`` casting surface that resolves canonical
+// bindings through ``ValuePlanFactory``.
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/value/compact_container_ops.h>
+#include <hgraph/types/value/compact_storage.h>
+#include <hgraph/types/value/container_ops.h>
+#include <hgraph/types/value/specialized_views.h>
+#include <hgraph/types/value/value.h>
+#include <hgraph/types/value/value_builder.h>
+#include <hgraph/types/value/value_view.h>
+
+#include <compare>
+#include <cstdint>
+#include <string>
+
+namespace
+{
+    template <typename T>
+    [[nodiscard]] const T &as_const(const void *memory) noexcept
+    {
+        return *static_cast<const T *>(memory);
+    }
+}  // namespace
+
+TEST_CASE("ListView: size, at, iteration over a built list")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *element_binding = registry.scalar_binding<int>();
+    const auto &list_binding    = compact_list_binding(*element_binding);
+
+    ListBuilder builder{*element_binding};
+    builder.push_back<int>(10);
+    builder.push_back<int>(20);
+    builder.push_back<int>(30);
+    auto storage = builder.build_storage();
+
+    ListView view{ValueView{&list_binding, &storage}};
+    REQUIRE(view.valid());
+    REQUIRE(view.size() == 3);
+    REQUIRE(view.at(0).checked_as<int>() == 10);
+    REQUIRE(view[2].checked_as<int>() == 30);
+
+    int sum = 0;
+    for (const auto element : view) { sum += element.checked_as<int>(); }
+    REQUIRE(sum == 60);
+}
+
+TEST_CASE("compact_list_ops: hash / equals / compare / to_string walk elements")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *element_binding = registry.scalar_binding<int>();
+
+    ListBuilder a{*element_binding};
+    a.push_back<int>(1); a.push_back<int>(2); a.push_back<int>(3);
+    auto storage_a = a.build_storage();
+
+    ListBuilder b{*element_binding};
+    b.push_back<int>(1); b.push_back<int>(2); b.push_back<int>(3);
+    auto storage_b = b.build_storage();
+
+    ListBuilder c{*element_binding};
+    c.push_back<int>(1); c.push_back<int>(2); c.push_back<int>(4);
+    auto storage_c = c.build_storage();
+
+    const ValueOps &ops = compact_list_ops();
+
+    REQUIRE(ops.hash(&storage_a) == ops.hash(&storage_b));
+    REQUIRE(ops.equals(&storage_a, &storage_b));
+    REQUIRE_FALSE(ops.equals(&storage_a, &storage_c));
+    REQUIRE(std::is_lt(ops.compare(&storage_a, &storage_c)));
+    REQUIRE(std::is_gt(ops.compare(&storage_c, &storage_a)));
+    REQUIRE(std::is_eq(ops.compare(&storage_a, &storage_b)));
+    REQUIRE(ops.to_string(&storage_a) == "[1, 2, 3]");
+}
+
+TEST_CASE("compact container compares order null storage consistently")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::string>("string");
+    const auto *int_binding = registry.scalar_binding<int>();
+    const auto *str_binding = registry.scalar_binding<std::string>();
+
+    auto assert_null_order = [](const ValueOps &ops, const void *storage) {
+        REQUIRE(std::is_eq(ops.compare(nullptr, nullptr)));
+        REQUIRE(std::is_lt(ops.compare(nullptr, storage)));
+        REQUIRE(std::is_gt(ops.compare(storage, nullptr)));
+    };
+
+    ListBuilder list_builder{*int_binding};
+    list_builder.push_back<int>(1);
+    auto list_storage = list_builder.build_storage();
+    assert_null_order(compact_list_ops(), &list_storage);
+
+    CyclicBufferBuilder cyclic_builder{*int_binding, 2};
+    cyclic_builder.push_back<int>(1);
+    auto cyclic_storage = cyclic_builder.build_storage();
+    assert_null_order(compact_cyclic_buffer_ops(), &cyclic_storage);
+
+    QueueBuilder queue_builder{*int_binding, 2};
+    queue_builder.push<int>(1);
+    auto queue_storage = queue_builder.build_storage();
+    assert_null_order(compact_queue_ops(), &queue_storage);
+
+    SetBuilder set_builder{*int_binding};
+    set_builder.insert<int>(1);
+    auto set_storage = set_builder.build_storage();
+    assert_null_order(compact_set_ops(), &set_storage);
+
+    MapBuilder map_builder{*str_binding, *int_binding};
+    map_builder.set_item<std::string, int>(std::string{"one"}, 1);
+    auto map_storage = map_builder.build_storage();
+    assert_null_order(compact_map_ops(), &map_storage);
+}
+
+TEST_CASE("CyclicBufferView: head, ring iteration, empty")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *element_binding = registry.scalar_binding<int>();
+    const auto &binding         = compact_cyclic_buffer_binding(*element_binding, 3);
+
+    CyclicBufferBuilder builder{*element_binding, 3};
+    builder.push_back<int>(1);
+    builder.push_back<int>(2);
+    builder.push_back<int>(3);
+    builder.push_back<int>(4);  // rotates: oldest (1) drops out
+    builder.push_back<int>(5);
+    auto storage = builder.build_storage();
+
+    CyclicBufferView view{ValueView{&binding, &storage}};
+    REQUIRE(view.size() == 3);
+    REQUIRE_FALSE(view.empty());
+    // Read in ring order: oldest first.
+    REQUIRE(view.at(0).checked_as<int>() == 3);
+    REQUIRE(view.at(1).checked_as<int>() == 4);
+    REQUIRE(view.at(2).checked_as<int>() == 5);
+}
+
+TEST_CASE("QueueView: front, size, iteration")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *element_binding = registry.scalar_binding<int>();
+    const auto &binding         = compact_queue_binding(*element_binding, /*max_capacity=*/0);
+
+    QueueBuilder builder{*element_binding};
+    builder.push<int>(100);
+    builder.push<int>(200);
+    builder.push<int>(300);
+    auto storage = builder.build_storage();
+
+    QueueView view{ValueView{&binding, &storage}};
+    REQUIRE_FALSE(view.empty());
+    REQUIRE(view.size() == 3);
+    REQUIRE(view.front().checked_as<int>() == 100);
+    REQUIRE(view.at(0).checked_as<int>() == 100);
+    REQUIRE(view.at(2).checked_as<int>() == 300);
+}
+
+TEST_CASE("SetView: contains, size, iteration; ops are order-independent")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *element_binding = registry.scalar_binding<int>();
+    const auto &binding         = compact_set_binding(*element_binding);
+
+    SetBuilder a{*element_binding};
+    a.insert<int>(7); a.insert<int>(11); a.insert<int>(13);
+    auto storage_a = a.build_storage();
+
+    SetView view_a{ValueView{&binding, &storage_a}};
+    REQUIRE(view_a.size() == 3);
+
+    int seven = 7;
+    int twelve = 12;
+    REQUIRE(view_a.contains(ValueView{element_binding, &seven}));
+    REQUIRE_FALSE(view_a.contains(ValueView{element_binding, &twelve}));
+
+    int sum = 0;
+    for (const auto member : view_a) { sum += member.checked_as<int>(); }
+    REQUIRE(sum == (7 + 11 + 13));
+
+    // Sets compare order-independently via the ops table.
+    SetBuilder b{*element_binding};
+    b.insert<int>(13); b.insert<int>(7); b.insert<int>(11);  // different insertion order
+    auto storage_b = b.build_storage();
+
+    const ValueOps &ops = compact_set_ops();
+    REQUIRE(ops.hash(&storage_a) == ops.hash(&storage_b));
+    REQUIRE(ops.equals(&storage_a, &storage_b));
+}
+
+TEST_CASE("MapView: contains, at, iteration; ops are order-independent over keys")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<std::string>("string");
+    (void)registry.register_scalar<int>("int");
+    const auto *key_binding   = registry.scalar_binding<std::string>();
+    const auto *value_binding = registry.scalar_binding<int>();
+    const auto &binding       = compact_map_binding(*key_binding, *value_binding);
+
+    MapBuilder a{*key_binding, *value_binding};
+    a.set_item<std::string, int>(std::string{"alpha"}, 1);
+    a.set_item<std::string, int>(std::string{"beta"}, 2);
+    a.set_item<std::string, int>(std::string{"gamma"}, 3);
+    auto storage_a = a.build_storage();
+
+    MapView view{ValueView{&binding, &storage_a}};
+    REQUIRE(view.size() == 3);
+
+    const std::string alpha{"alpha"};
+    const std::string beta{"beta"};
+    const std::string delta{"delta"};
+    REQUIRE(view.contains(ValueView{key_binding, const_cast<std::string *>(&alpha)}));
+    REQUIRE_FALSE(view.contains(ValueView{key_binding, const_cast<std::string *>(&delta)}));
+
+    REQUIRE(view.at(ValueView{key_binding, const_cast<std::string *>(&beta)}).checked_as<int>() == 2);
+    REQUIRE_THROWS_AS(view.at(ValueView{key_binding, const_cast<std::string *>(&delta)}),
+                      std::out_of_range);
+
+    // Iterate; verify we see all three entries (in some order). The
+    // map view yields ``std::pair<ValueView, ValueView>`` (key,
+    // value) through its KeyValueRange.
+    int total = 0;
+    int count = 0;
+    for (const auto entry : view)
+    {
+        total += entry.second.checked_as<int>();
+        ++count;
+    }
+    REQUIRE(count == 3);
+    REQUIRE(total == (1 + 2 + 3));
+
+    // Keys-only range.
+    int key_count = 0;
+    for (const auto key : view.keys())
+    {
+        REQUIRE(key.valid());
+        ++key_count;
+    }
+    REQUIRE(key_count == 3);
+
+    // Values-only range.
+    int value_total = 0;
+    for (const auto val : view.values()) { value_total += val.checked_as<int>(); }
+    REQUIRE(value_total == (1 + 2 + 3));
+
+    // Order-independent: same map built in different order has the same hash / equals.
+    MapBuilder b{*key_binding, *value_binding};
+    b.set_item<std::string, int>(std::string{"gamma"}, 3);
+    b.set_item<std::string, int>(std::string{"alpha"}, 1);
+    b.set_item<std::string, int>(std::string{"beta"}, 2);
+    auto storage_b = b.build_storage();
+
+    const ValueOps &ops = compact_map_ops();
+    REQUIRE(ops.hash(&storage_a) == ops.hash(&storage_b));
+    REQUIRE(ops.equals(&storage_a, &storage_b));
+}
+
+TEST_CASE("compact bindings: same inputs return the same canonical binding pointer")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::string>("string");
+    const auto *int_binding = registry.scalar_binding<int>();
+    const auto *str_binding = registry.scalar_binding<std::string>();
+
+    REQUIRE(&compact_list_binding(*int_binding) == &compact_list_binding(*int_binding));
+    REQUIRE(&compact_set_binding(*int_binding) == &compact_set_binding(*int_binding));
+    REQUIRE(&compact_map_binding(*str_binding, *int_binding) ==
+            &compact_map_binding(*str_binding, *int_binding));
+    REQUIRE(&compact_cyclic_buffer_binding(*int_binding, 4) ==
+            &compact_cyclic_buffer_binding(*int_binding, 4));
+    REQUIRE(&compact_queue_binding(*int_binding, 0) == &compact_queue_binding(*int_binding, 0));
+
+    // Different inputs → different bindings.
+    REQUIRE(&compact_list_binding(*int_binding) != &compact_list_binding(*str_binding));
+    REQUIRE(&compact_cyclic_buffer_binding(*int_binding, 4) !=
+            &compact_cyclic_buffer_binding(*int_binding, 8));
+}
+
+TEST_CASE("MapView::key_set: returns a SetView wrapping the map's keys")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<std::string>("string");
+    (void)registry.register_scalar<int>("int");
+    const auto *key_binding   = registry.scalar_binding<std::string>();
+    const auto *value_binding = registry.scalar_binding<int>();
+    const auto &binding       = compact_map_binding(*key_binding, *value_binding);
+
+    MapBuilder b{*key_binding, *value_binding};
+    b.set_item<std::string, int>(std::string{"a"}, 1);
+    b.set_item<std::string, int>(std::string{"b"}, 2);
+    b.set_item<std::string, int>(std::string{"c"}, 3);
+    auto storage = b.build_storage();
+
+    MapView map_view{ValueView{&binding, &storage}};
+    SetView keys = map_view.key_set();
+
+    REQUIRE(keys.valid());
+    REQUIRE(keys.size() == 3);
+
+    const std::string a{"a"};
+    const std::string b_key{"b"};
+    const std::string z{"z"};
+    REQUIRE(keys.contains(ValueView{key_binding, const_cast<std::string *>(&a)}));
+    REQUIRE(keys.contains(ValueView{key_binding, const_cast<std::string *>(&b_key)}));
+    REQUIRE_FALSE(keys.contains(ValueView{key_binding, const_cast<std::string *>(&z)}));
+
+    int count = 0;
+    for (const auto member : keys) { (void)member; ++count; }
+    REQUIRE(count == 3);
+}
+
+TEST_CASE("Value and ValueView expose direct specialized casts for compact containers")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::string>("string");
+    const auto *int_binding = registry.scalar_binding<int>();
+    const auto *str_binding = registry.scalar_binding<std::string>();
+
+    ListBuilder list_builder{*int_binding};
+    list_builder.push_back<int>(4);
+    list_builder.push_back<int>(5);
+    Value list_value = list_builder.build();
+    REQUIRE(list_value.as_list().size() == 2);
+    REQUIRE(list_value.as_list().at(1).checked_as<int>() == 5);
+    REQUIRE(list_value.view().try_as_list().has_value());
+    REQUIRE_FALSE(list_value.view().try_as_map().has_value());
+
+    SetBuilder set_builder{*int_binding};
+    set_builder.insert<int>(7);
+    set_builder.insert<int>(11);
+    Value set_value = set_builder.build();
+    int seven = 7;
+    REQUIRE(set_value.as_set().contains(ValueView{int_binding, &seven}));
+
+    MapBuilder map_builder{*str_binding, *int_binding};
+    map_builder.set_item<std::string, int>(std::string{"x"}, 10);
+    Value map_value = map_builder.build();
+    const std::string x{"x"};
+    REQUIRE(map_value.as_map().at(ValueView{str_binding, const_cast<std::string *>(&x)}).checked_as<int>() == 10);
+
+    CyclicBufferBuilder cyclic_builder{*int_binding, 2};
+    cyclic_builder.push_back<int>(1);
+    cyclic_builder.push_back<int>(2);
+    cyclic_builder.push_back<int>(3);
+    Value cyclic_value = cyclic_builder.build();
+    REQUIRE(cyclic_value.as_cyclic_buffer().size() == 2);
+    REQUIRE(cyclic_value.as_cyclic_buffer().at(0).checked_as<int>() == 2);
+    REQUIRE(cyclic_value.as_cyclic_buffer().full());
+
+    QueueBuilder queue_builder{*int_binding, 2};
+    queue_builder.push<int>(8);
+    queue_builder.push<int>(9);
+    Value queue_value = queue_builder.build();
+    REQUIRE(queue_value.as_queue().front().checked_as<int>() == 8);
+    REQUIRE(queue_value.as_queue().full());
+}
+
+TEST_CASE("TupleView, BundleView and fixed ListView read structured MemoryUtils storage")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = ValuePlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *str_meta = registry.register_scalar<std::string>("string");
+
+    const auto *tuple_meta = registry.tuple({int_meta, str_meta});
+    const auto *tuple_binding = factory.binding_for(tuple_meta);
+    REQUIRE(tuple_binding != nullptr);
+    Value tuple_value{*tuple_binding};
+    TupleView tuple = tuple_value.as_tuple();
+    REQUIRE(tuple.size() == 2);
+    tuple.at(0).checked_as<int>() = 42;
+    tuple.at(1).checked_as<std::string>() = "forty-two";
+    REQUIRE(tuple[0].checked_as<int>() == 42);
+    REQUIRE(tuple[1].checked_as<std::string>() == "forty-two");
+    REQUIRE(tuple_value.to_string() == "(42, forty-two)");
+
+    const auto *bundle_meta = registry.bundle("SpecializedViewBundle", {{"count", int_meta}, {"name", str_meta}});
+    const auto *bundle_binding = factory.binding_for(bundle_meta);
+    REQUIRE(bundle_binding != nullptr);
+    Value bundle_value{*bundle_binding};
+    BundleView bundle = bundle_value.as_bundle();
+    REQUIRE(bundle.size() == 2);
+    bundle["count"].checked_as<int>() = 3;
+    bundle["name"].checked_as<std::string>() = "items";
+    REQUIRE(bundle.at("count").checked_as<int>() == 3);
+    REQUIRE(bundle.at("name").checked_as<std::string>() == "items");
+    REQUIRE(bundle_value.to_string() == "{count: 3, name: items}");
+
+    const auto *fixed_list_meta = registry.list(int_meta, 3);
+    const auto *fixed_list_binding = factory.binding_for(fixed_list_meta);
+    REQUIRE(fixed_list_binding != nullptr);
+    Value fixed_list_value{*fixed_list_binding};
+    ListView fixed_list = fixed_list_value.as_list();
+    REQUIRE(fixed_list.size() == 3);
+    fixed_list.at(0).checked_as<int>() = 1;
+    fixed_list.at(1).checked_as<int>() = 2;
+    fixed_list.at(2).checked_as<int>() = 3;
+    int sum = 0;
+    for (const auto element : fixed_list) { sum += element.checked_as<int>(); }
+    REQUIRE(sum == 6);
+    REQUIRE(fixed_list_value.to_string() == "[1, 2, 3]");
+}

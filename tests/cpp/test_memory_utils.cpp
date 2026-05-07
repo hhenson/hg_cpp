@@ -196,6 +196,27 @@ TEST_CASE("memory utils keeps trivial pointer-sized payloads inline in owning ha
     REQUIRE(*moved.as<uint32_t>() == 7u);
 }
 
+TEST_CASE("memory utils empty handles can retain a bound plan", "[memory utils]") {
+    const auto &plan = MemoryUtils::plan_for<uint32_t>();
+
+    auto handle = MemoryUtils::StorageHandle<>::empty(plan);
+    REQUIRE_FALSE(handle.has_value());
+    REQUIRE(handle.plan() == &plan);
+    REQUIRE(handle.data() == nullptr);
+
+    auto copied = handle;
+    REQUIRE_FALSE(copied.has_value());
+    REQUIRE(copied.plan() == &plan);
+
+    auto cloned = handle.clone();
+    REQUIRE_FALSE(cloned.has_value());
+    REQUIRE(cloned.plan() == &plan);
+
+    handle.reset_payload();
+    REQUIRE_FALSE(handle.has_value());
+    REQUIRE(handle.plan() == &plan);
+}
+
 TEST_CASE("memory utils separates allocation through allocator ops", "[memory utils]") {
     const auto                     &plan = MemoryUtils::plan_for<TrackedValue>();
     const MemoryUtils::AllocatorOps allocator{

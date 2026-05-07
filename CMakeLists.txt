@@ -10,6 +10,7 @@ project(
 
 include(CMakePackageConfigHelpers)
 include(CTest)
+include(FetchContent)
 include(GNUInstallDirs)
 
 set(HGRAPH_GENERATED_INCLUDE_DIR "${PROJECT_BINARY_DIR}/generated/include")
@@ -108,6 +109,21 @@ endif()
 
 find_package(Threads REQUIRED)
 target_link_libraries(hgraph_options INTERFACE Threads::Threads)
+
+find_package(fmt CONFIG QUIET)
+if(NOT fmt_FOUND)
+    FetchContent_Declare(
+        fmt
+        GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+        GIT_TAG        12.1.0
+        GIT_SHALLOW    TRUE
+    )
+    set(FMT_DOC OFF CACHE BOOL "Build fmt documentation" FORCE)
+    set(FMT_INSTALL OFF CACHE BOOL "Generate fmt install target" FORCE)
+    set(FMT_TEST OFF CACHE BOOL "Build fmt tests" FORCE)
+    FetchContent_MakeAvailable(fmt)
+endif()
+target_link_libraries(hgraph_options INTERFACE fmt::fmt)
 
 set(HGRAPH_CORE_TARGET_TYPE STATIC)
 if(HGRAPH_BUILD_SHARED)
@@ -218,6 +234,7 @@ write_basic_package_version_file(
 file(WRITE "${PROJECT_BINARY_DIR}/hgraphConfig.cmake"
     "include(CMakeFindDependencyMacro)\n"
     "find_dependency(Threads)\n"
+    "find_dependency(fmt CONFIG)\n"
     "include(\"\${CMAKE_CURRENT_LIST_DIR}/hgraphTargets.cmake\")\n"
 )
 

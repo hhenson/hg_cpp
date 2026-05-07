@@ -4,6 +4,7 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/utils/memory_utils.h>
+#include <hgraph/types/value/compact_container_ops.h>
 
 #include <stdexcept>
 
@@ -138,28 +139,94 @@ TEST_CASE("ValuePlanFactory: caching returns the same pointer on repeat lookups"
     REQUIRE(first == via_find);
 }
 
-TEST_CASE("ValuePlanFactory: dynamic list throws (value-layer not yet ported)")
+TEST_CASE("ValuePlanFactory: dynamic list uses compact value-layer storage")
 {
     using namespace hgraph;
     auto       &registry  = TypeRegistry::instance();
     auto       &factory   = ValuePlanFactory::instance();
     const auto *int_meta  = registry.register_scalar<int>("int");
     const auto *list_meta = registry.list(int_meta, 0);
+    const auto *int_binding = registry.scalar_binding<int>();
 
-    REQUIRE_THROWS_AS(factory.plan_for(list_meta), std::logic_error);
+    const auto *plan = factory.plan_for(list_meta);
+    const auto *binding = factory.binding_for(list_meta);
+
+    REQUIRE(int_binding != nullptr);
+    REQUIRE(plan == &compact_list_plan(*int_binding));
+    REQUIRE(binding != nullptr);
+    REQUIRE(binding->type_meta == list_meta);
+    REQUIRE(binding->plan() == plan);
+    REQUIRE(binding->ops == &compact_list_ops());
 }
 
-TEST_CASE("ValuePlanFactory: container kinds throw (value-layer not yet ported)")
+TEST_CASE("ValuePlanFactory: container kinds use compact value-layer storage")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = ValuePlanFactory::instance();
     const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_binding = registry.scalar_binding<int>();
+    REQUIRE(int_binding != nullptr);
 
-    REQUIRE_THROWS_AS(factory.plan_for(registry.set(int_meta)), std::logic_error);
-    REQUIRE_THROWS_AS(factory.plan_for(registry.map(int_meta, int_meta)), std::logic_error);
-    REQUIRE_THROWS_AS(factory.plan_for(registry.cyclic_buffer(int_meta, 4)), std::logic_error);
-    REQUIRE_THROWS_AS(factory.plan_for(registry.queue(int_meta, 4)), std::logic_error);
+    const auto *set_meta = registry.set(int_meta);
+    const auto *set_plan = factory.plan_for(set_meta);
+    const auto *set_binding = factory.binding_for(set_meta);
+    REQUIRE(set_plan == &compact_set_plan(*int_binding));
+    REQUIRE(set_binding != nullptr);
+    REQUIRE(set_binding->type_meta == set_meta);
+    REQUIRE(set_binding->ops == &compact_set_ops());
+
+    const auto *map_meta = registry.map(int_meta, int_meta);
+    const auto *map_plan = factory.plan_for(map_meta);
+    const auto *map_binding = factory.binding_for(map_meta);
+    REQUIRE(map_plan == &compact_map_plan(*int_binding, *int_binding));
+    REQUIRE(map_binding != nullptr);
+    REQUIRE(map_binding->type_meta == map_meta);
+    REQUIRE(map_binding->ops == &compact_map_ops());
+
+    const auto *cyclic_meta = registry.cyclic_buffer(int_meta, 4);
+    const auto *cyclic_plan = factory.plan_for(cyclic_meta);
+    const auto *cyclic_binding = factory.binding_for(cyclic_meta);
+    REQUIRE(cyclic_plan == &compact_cyclic_buffer_plan(*int_binding, 4));
+    REQUIRE(cyclic_binding != nullptr);
+    REQUIRE(cyclic_binding->type_meta == cyclic_meta);
+    REQUIRE(cyclic_binding->ops == &compact_cyclic_buffer_ops());
+
+    const auto *queue_meta = registry.queue(int_meta, 4);
+    const auto *queue_plan = factory.plan_for(queue_meta);
+    const auto *queue_binding = factory.binding_for(queue_meta);
+    REQUIRE(queue_plan == &compact_queue_plan(*int_binding, 4));
+    REQUIRE(queue_binding != nullptr);
+    REQUIRE(queue_binding->type_meta == queue_meta);
+    REQUIRE(queue_binding->ops == &compact_queue_ops());
+}
+
+TEST_CASE("ValuePlanFactory: binding_for synthesises structured composite bindings")
+{
+    using namespace hgraph;
+    auto       &registry   = TypeRegistry::instance();
+    auto       &factory    = ValuePlanFactory::instance();
+    const auto *int_meta   = registry.register_scalar<int>("int");
+    const auto *float_meta = registry.register_scalar<float>("float");
+
+    const auto *tuple_meta = registry.tuple({int_meta, float_meta});
+    const auto *tuple_binding = factory.binding_for(tuple_meta);
+    REQUIRE(tuple_binding != nullptr);
+    REQUIRE(tuple_binding->type_meta == tuple_meta);
+    REQUIRE(tuple_binding->plan() == factory.plan_for(tuple_meta));
+
+    const auto *bundle_meta = registry.bundle("PlanFactoryBindingBundle", {{"x", int_meta}, {"y", float_meta}});
+    const auto *bundle_binding = factory.binding_for(bundle_meta);
+    REQUIRE(bundle_binding != nullptr);
+    REQUIRE(bundle_binding->type_meta == bundle_meta);
+    REQUIRE(bundle_binding->plan() == factory.plan_for(bundle_meta));
+
+    const auto *fixed_list_meta = registry.list(int_meta, 3);
+    const auto *fixed_list_binding = factory.binding_for(fixed_list_meta);
+    REQUIRE(fixed_list_binding != nullptr);
+    REQUIRE(fixed_list_binding->type_meta == fixed_list_meta);
+    REQUIRE(fixed_list_binding->plan() == factory.plan_for(fixed_list_meta));
+    REQUIRE(fixed_list_binding->plan()->is_array());
 }
 
 TEST_CASE("ValuePlanFactory::register_atomic is idempotent for the same plan")

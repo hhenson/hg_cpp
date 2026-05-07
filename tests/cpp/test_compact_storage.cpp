@@ -200,6 +200,46 @@ TEST_CASE("SetBuilder: deduplicates by content; build produces a SetStorage")
     REQUIRE_FALSE(storage.contains(&twelve));
 }
 
+TEST_CASE("SetStorage: direct duplicate construction is rejected")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *binding = registry.scalar_binding<int>();
+    const auto &plan    = binding->checked_plan();
+
+    int values[] = {7, 7};
+    REQUIRE_THROWS_AS(SetStorage(*binding,
+                                 ElementSpan{
+                                     .bytes  = values,
+                                     .size   = 2,
+                                     .stride = sizeof(int),
+                                     .plan   = &plan,
+                                 }),
+                      std::invalid_argument);
+}
+
+TEST_CASE("SetStorage: move preserves slot index lookups")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *binding = registry.scalar_binding<int>();
+
+    SetBuilder builder{*binding};
+    REQUIRE(builder.insert<int>(3));
+    REQUIRE(builder.insert<int>(5));
+    auto original = builder.build_storage();
+    auto moved    = std::move(original);
+
+    int three = 3;
+    int five  = 5;
+    int seven = 7;
+    REQUIRE(moved.contains(&three));
+    REQUIRE(moved.contains(&five));
+    REQUIRE_FALSE(moved.contains(&seven));
+}
+
 TEST_CASE("SetBuilder: rejects non-hashable / non-equatable element bindings")
 {
     using namespace hgraph;
@@ -253,7 +293,37 @@ TEST_CASE("MapBuilder: set_item / contains / value_at round-trip")
     REQUIRE(storage.value_at(&delta) == nullptr);
 }
 
-TEST_CASE("MapStorage: copy preserves bucket layout")
+TEST_CASE("SetBuilder and MapBuilder: indexes survive accumulator growth")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    const auto *binding = registry.scalar_binding<int>();
+
+    SetBuilder set_builder{*binding};
+    MapBuilder map_builder{*binding, *binding};
+    for (int i = 0; i < 40; ++i)
+    {
+        REQUIRE(set_builder.insert<int>(i));
+        map_builder.set_item<int, int>(i, i * 10);
+    }
+
+    int first = 0;
+    int last  = 39;
+    int miss  = 99;
+    REQUIRE(set_builder.contains(&first));
+    REQUIRE(set_builder.contains(&last));
+    REQUIRE_FALSE(set_builder.contains(&miss));
+    REQUIRE(map_builder.contains(&first));
+    REQUIRE(map_builder.contains(&last));
+    REQUIRE_FALSE(map_builder.contains(&miss));
+
+    auto map_storage = map_builder.build_storage();
+    REQUIRE(*static_cast<const int *>(map_storage.value_at(&first)) == 0);
+    REQUIRE(*static_cast<const int *>(map_storage.value_at(&last)) == 390);
+}
+
+TEST_CASE("MapStorage: copy and move preserve slot index lookups")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
@@ -276,6 +346,41 @@ TEST_CASE("MapStorage: copy preserves bucket layout")
     REQUIRE(copy.contains(&y));
     REQUIRE(*static_cast<const int *>(copy.value_at(&x)) == 10);
     REQUIRE(*static_cast<const int *>(copy.value_at(&y)) == 20);
+
+    auto moved = std::move(original);
+    REQUIRE(moved.contains(&x));
+    REQUIRE(moved.contains(&y));
+    REQUIRE(*static_cast<const int *>(moved.value_at(&x)) == 10);
+    REQUIRE(*static_cast<const int *>(moved.value_at(&y)) == 20);
+}
+
+TEST_CASE("MapStorage: direct duplicate key construction is rejected")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<std::string>("string");
+    (void)registry.register_scalar<int>("int");
+    const auto *key_binding   = registry.scalar_binding<std::string>();
+    const auto *value_binding = registry.scalar_binding<int>();
+    const auto &key_plan      = key_binding->checked_plan();
+    const auto &value_plan    = value_binding->checked_plan();
+
+    std::string keys[]   = {"same", "same"};
+    int         values[] = {1, 2};
+    REQUIRE_THROWS_AS(MapStorage(*key_binding, *value_binding,
+                                 ElementSpan{
+                                     .bytes  = keys,
+                                     .size   = 2,
+                                     .stride = sizeof(std::string),
+                                     .plan   = &key_plan,
+                                 },
+                                 ElementSpan{
+                                     .bytes  = values,
+                                     .size   = 2,
+                                     .stride = sizeof(int),
+                                     .plan   = &value_plan,
+                                 }),
+                      std::invalid_argument);
 }
 
 TEST_CASE("compact plans: same binding inputs return canonical pointers")
