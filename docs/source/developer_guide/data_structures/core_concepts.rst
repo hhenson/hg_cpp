@@ -43,13 +43,27 @@ Resolution Group
 ~~~~~~~~~~~~~~~~
 
 ``Builder``
-    The only place a Schema is bound to a specific Plan and Ops instance.
-    A Builder resolves a Schema into a concrete implementation, then
-    constructs Value instances. A Builder may itself be type-erased so that
-    generic graph-construction code can hold builders for unrelated concepts
-    uniformly.
+    Construction role for a concept. A Builder resolves, or is given, the
+    Schema / Plan / Ops / Binding needed to construct a concrete runtime
+    object. The lifetime of a Builder depends on which layer it belongs to:
 
-Anything that needs a Value for a given Schema goes through a Builder.
+    - A **reusable builder** is a cached blueprint. It binds the resolved
+      implementation once and can construct multiple runtime instances.
+      Time-series value builders, node builders, and graph builders are in
+      this category. Graph builders also pull double duty for nested graphs:
+      the parent graph can retain the child graph builder as the reusable
+      template for each nested instance.
+    - A **value builder** is an instance assembler. It owns mutable scratch
+      storage while a specific scalar/value-layer value is being assembled,
+      then produces one ``Value`` on ``build()``. It is not a canonical
+      implementation object and is not intended to be cached for repeated
+      construction of the same value.
+
+    A Builder may itself be type-erased so that generic construction code can
+    hold builders for unrelated concepts uniformly.
+
+Anything that needs a runtime object for a given Schema goes through the
+appropriate Builder category for that layer.
 
 Data Group
 ~~~~~~~~~~
@@ -74,16 +88,18 @@ Data Group
 Interning
 ~~~~~~~~~
 
-Plans, Schemas, Ops tables, and Builders are *interned*: there is only ever
-one true instance of each, kept alive by an intern table that returns stable
-references for structurally equivalent inputs. Any consumer—a View, a
-Builder, a node, a graph—holds a borrowed pointer to its Plan, Schema, Ops,
-or Builder for the artifact's whole lifetime without managing ownership.
+Plans, Schemas, Ops tables, Bindings, and reusable Builders are *interned*:
+there is only ever one true instance of each, kept alive by an intern table
+that returns stable references for structurally equivalent inputs. Any
+consumer—a View, a Builder, a node, a graph—holds a borrowed pointer to its
+Plan, Schema, Ops, Binding, or reusable Builder for the artifact's whole
+lifetime without managing ownership.
 
 The generic vehicle is ``InternTable<Key, Value>``, which guarantees stable
 addresses for the values it owns.
 
-Values are *not* interned. Each instance is independent.
+Values and value builders are *not* interned. Each ``Value`` instance is
+independent, and each value builder is local scratch state for one build.
 
 The Universal Pattern
 ~~~~~~~~~~~~~~~~~~~~~
@@ -96,8 +112,8 @@ Every layer below instantiates the same shape:
       Schema[Schema<br/>concept]
       Plan[Plan<br/>memory layout]
       Ops[Ops<br/>function pointers]
-      Builder[Builder<br/>resolves Schema with chosen Plan + Ops]
-      Value[Value<br/>holds data]
+      Builder[Builder<br/>resolved blueprint or instance assembler]
+      Value[Runtime instance<br/>Value / time-series / node / graph]
       View[View<br/>exposes behaviour]
 
       Schema --> Builder
@@ -108,10 +124,11 @@ Every layer below instantiates the same shape:
       Ops -.bound into.-> View
 
 A Builder is fed by a Schema (what it is), a Plan (how its memory is laid
-out), and an Ops table (how it behaves). The Builder constructs Values.
-A View is built from a Value and pulls in the same Ops table so that
-callers can act on the Value's data.
+out), and an Ops table (how it behaves). Reusable builders cache that
+resolved construction recipe and construct many instances; value builders
+hold one in-progress value's scratch data and are consumed by ``build()``.
+A View is built from an instance and pulls in the same Ops table so that
+callers can act on the instance's data where that layer exposes views.
 
 Subsequent sections name the concrete Schema, Plan, Ops, and Builder used
 for each layer rather than re-introduce the pattern.
-

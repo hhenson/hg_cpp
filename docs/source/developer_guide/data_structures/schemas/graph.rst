@@ -23,13 +23,21 @@ Ops               ``GraphOps`` — graph-level behaviour vtable:
                   ``LifecycleOps``, not by ``GraphOps``.
 Binding           ``GraphTypeBinding`` — interned ``(schema, plan,
                   ops)`` triple.
-Builder           ``GraphBuilder`` — turns a schema into a runtime
-                  ``Graph`` instance, recursively building member nodes
-                  and (for nested graphs) child graph templates.
+Builder           ``GraphBuilder`` — reusable builder that turns a
+                  schema into runtime ``Graph`` instances, recursively
+                  building member nodes and (for nested graphs) child
+                  graph templates.
 Value             ``Graph`` — the runtime graph object described in
                   *Overview > Graph Layer*.
 View              Graph access happens through the structural layer.
 ================  ==========================================================
+
+``GraphBuilder`` is cached as a reusable construction recipe. It can build a
+top-level graph instance, and when a graph appears as a nested node it also
+acts as the child graph template retained by the parent builder. Runtime
+instances still own their node storage, link state, schedulers, and boundary
+bindings independently; the builder is the shared recipe, not the runtime
+state.
 
 What a Graph Schema Records
 ---------------------------

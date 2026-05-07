@@ -34,7 +34,9 @@ Binding           ``ValueTypeBinding`` — interned ``(ValueTypeMetaData,
                   rest of the layer shares
 Builder           Per-kind value builders — wrap bindings, accumulate
                   construction-time scratch storage, and construct
-                  immutable ``Value`` instances
+                  immutable ``Value`` instances. These are local,
+                  single-use instance assemblers, not cached reusable
+                  builders.
 Value             ``Value`` — owning handle over storage + binding + allocator
 View              ``ValueView`` — two-word reference: ``(binding, data)``.
                   Specialized adapters extend it for composite kinds.
@@ -276,6 +278,13 @@ safe, moves — the accumulated elements into a freshly-constructed
 compact ``*Storage`` of the now-known size. The resulting ``Value``
 is immutable, matching the design contract above; the builder
 itself is single-use and local to the construction site.
+
+This is deliberately different from the reusable builders used above
+the value layer. A value builder represents the *one value currently
+being assembled*. It should not be interned or cached as a factory for
+repeatedly recreating the same value. If the same container value is
+needed again, construct a new value builder or copy the resulting
+``Value`` according to normal value semantics.
 
 This keeps the value-layer view contract free of mutation methods
 while still letting callers build a value in stages.

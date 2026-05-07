@@ -29,8 +29,9 @@ Ops               ``NodeOps`` — the behaviour vtable: ``start``,
                   plan's ``LifecycleOps``, not by ``NodeOps``.
 Binding           ``NodeTypeBinding`` — interned ``(schema, plan, ops)``
                   triple.
-Builder           ``NodeBuilder`` — wraps a binding and constructs a
-                  runtime node from a graph context.
+Builder           ``NodeBuilder`` — reusable builder that wraps a
+                  binding and constructs runtime node instances from
+                  graph contexts.
 Value             ``Node`` — the runtime node instance that lives in the
                   graph's flattened node array (see *Overview >
                   Structural Layers*).
@@ -38,6 +39,12 @@ View              Node access happens through the structural layer, not
                   through a type-erased view. Nodes are not values; they
                   are runtime participants.
 ================  ==========================================================
+
+``NodeBuilder`` is a reusable builder, not a value-builder-style scratch
+object. Once the node schema has been resolved to a binding, the builder can
+be cached and used to construct many node instances. The instance-specific
+inputs are the graph context, node position, boundary bindings, and any
+per-node configuration captured by the graph schema.
 
 What a Node Schema Records
 --------------------------

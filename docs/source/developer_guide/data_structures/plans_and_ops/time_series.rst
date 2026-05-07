@@ -12,6 +12,25 @@ exposure. The per-kind tick contract and the value/delta schema
 mappings are described in *Schemas > Time-Series Schemas*; the
 binding/redirect machinery is described in *Linking Strategies*.
 
+Builder Lifetime
+----------------
+
+Time-series value builders are reusable builders. They resolve a
+``TSValueTypeMetaData`` schema to the concrete plan, ops, value binding,
+delta binding, and child-builder graph needed to construct a time-series
+runtime object. Once resolved, they should be cached and reused to construct
+multiple time-series instances with the same schema. This is the opposite of
+the value-layer ``ListBuilder`` / ``MapBuilder`` family, which is local
+scratch storage for one immutable ``Value``.
+
+This distinction matters most for nested structures. A ``TSB`` builder owns
+the reusable builders for its fields; a fixed ``TSL`` builder owns the
+reusable builder for each element position; a ``TSD`` builder owns the
+reusable value-side time-series builder used whenever a new key appears. The
+builder graph is shared construction metadata, while each time-series
+instance owns its modification time, validity, binding state, delta state,
+and child storage independently.
+
 Memory Stability Invariant
 --------------------------
 
