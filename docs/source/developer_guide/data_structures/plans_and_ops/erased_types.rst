@@ -255,12 +255,16 @@ Read-only views
     ``front()`` (returns a child view of the front element).
 
 ``SetView``
-    ``contains(key)``, iteration over members.
+    ``contains(key)``, iteration over members. ``contains`` is part of
+    the erased ops contract and must be average O(1) for set
+    implementations.
 
 ``MapView``
     ``contains(key)``, ``at(key)`` / ``operator[](key)``, iteration
     over ``(key, value)`` entries, ``key_set()`` returning a read-only
-    ``SetView`` over the live keys.
+    ``SetView`` over the live keys. ``contains`` and ``at`` are part
+    of the erased ops contract and must be average O(1) for map
+    implementations.
 
 Mutable views (slot-store-backed only)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

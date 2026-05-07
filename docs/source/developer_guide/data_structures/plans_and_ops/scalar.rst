@@ -208,7 +208,10 @@ The compact storage shapes are:
     ``ankerl::unordered_dense`` slot index that stores element-slot
     ids, not copied keys. Hashing and equality come from the bound
     element ops. Direct construction rejects duplicate keys; the
-    builder deduplicates before storage is built.
+    builder deduplicates before storage is built. ``contains`` is
+    required to be average O(1); semantic equality for two different
+    set representations depends on iterating one side and performing
+    one lookup per element on the other side.
 
 ``MapStorage``
     Content-keyed hash map populated once at construction. Keys and
@@ -216,6 +219,10 @@ The compact storage shapes are:
     same ``ankerl::unordered_dense`` slot-index pattern over the key
     buffer. Direct construction rejects duplicate keys; the builder
     overwrites the value for an existing key before storage is built.
+    ``contains`` and ``value_at`` are required to be average O(1);
+    semantic equality for two different map representations depends
+    on iterating one side and performing one key lookup per entry on
+    the other side.
 
 ``CyclicBufferStorage``
     Sized contiguous buffer with a logical *head* offset that
