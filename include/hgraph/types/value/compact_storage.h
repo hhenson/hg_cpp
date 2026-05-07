@@ -5,12 +5,16 @@
 #include <hgraph/types/value/value_ops.h>
 #include <hgraph/util/scope.h>
 
+#include <ankerl/unordered_dense.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -100,47 +104,149 @@ namespace hgraph
             return seed;
         }
 
-        // Open-addressing bucket array used by SetStorage / MapStorage.
-        // Bucket values are signed indices into the keys buffer; -1 marks
-        // an empty bucket. Capacity is rounded to a power of two so the
-        // modulo collapses to a mask. Built once at construction time and
-        // never mutated thereafter.
-        struct OpenAddressTable
+        struct LookupKey
         {
-            std::vector<std::int32_t> buckets{};
+            const void *key{nullptr};
+        };
 
-            [[nodiscard]] std::size_t mask() const noexcept { return buckets.size() - 1; }
+        struct SlotIndexContext
+        {
+            const ValueTypeBinding *binding{nullptr};
+            const void             *owner{nullptr};
+            const void *(*at)(const void *owner, std::size_t slot) noexcept{nullptr};
+        };
 
-            void reset(std::size_t entries)
+        struct SlotHash
+        {
+            using is_transparent = void;
+
+            std::shared_ptr<SlotIndexContext> context{};
+
+            [[nodiscard]] std::size_t operator()(std::int32_t slot) const
             {
-                std::size_t cap = 8;
-                while (cap < entries * 2) { cap <<= 1U; }
-                buckets.assign(cap, -1);
+                return context->binding->checked_ops().hash(context->at(context->owner, static_cast<std::size_t>(slot)));
             }
 
-            template <typename Probe>
-            void insert(std::int32_t index, std::size_t hash, Probe &&probe)
+            [[nodiscard]] std::size_t operator()(LookupKey key) const
             {
-                std::size_t pos = hash & mask();
-                while (buckets[pos] != -1)
-                {
-                    (void)probe(buckets[pos], pos);
-                    pos = (pos + 1) & mask();
-                }
-                buckets[pos] = index;
+                return context->binding->checked_ops().hash(key.key);
+            }
+        };
+
+        struct SlotEqual
+        {
+            using is_transparent = void;
+
+            std::shared_ptr<SlotIndexContext> context{};
+
+            [[nodiscard]] bool operator()(std::int32_t lhs, std::int32_t rhs) const
+            {
+                const auto &ops = context->binding->checked_ops();
+                return ops.equals(context->at(context->owner, static_cast<std::size_t>(lhs)),
+                                  context->at(context->owner, static_cast<std::size_t>(rhs)));
             }
 
-            template <typename Match>
-            [[nodiscard]] std::int32_t find(std::size_t hash, Match &&match) const
+            [[nodiscard]] bool operator()(LookupKey lhs, std::int32_t rhs) const
             {
-                if (buckets.empty()) { return -1; }
-                std::size_t pos = hash & mask();
-                while (buckets[pos] != -1)
+                return context->binding->checked_ops().equals(
+                    lhs.key, context->at(context->owner, static_cast<std::size_t>(rhs)));
+            }
+
+            [[nodiscard]] bool operator()(std::int32_t lhs, LookupKey rhs) const
+            {
+                return context->binding->checked_ops().equals(
+                    context->at(context->owner, static_cast<std::size_t>(lhs)), rhs.key);
+            }
+
+            [[nodiscard]] bool operator()(LookupKey lhs, LookupKey rhs) const
+            {
+                return context->binding->checked_ops().equals(lhs.key, rhs.key);
+            }
+        };
+
+        class SlotIndex
+        {
+          public:
+            using slot_type = std::int32_t;
+
+            SlotIndex()
+                : context_{std::make_shared<SlotIndexContext>()}
+                , slots_{0, SlotHash{context_}, SlotEqual{context_}}
+            {
+            }
+
+            SlotIndex(const SlotIndex &)            = delete;
+            SlotIndex &operator=(const SlotIndex &) = delete;
+
+            SlotIndex(SlotIndex &&other)
+                : context_{std::move(other.context_)}
+                , slots_{std::move(other.slots_)}
+            {
+                other.reset_empty_context();
+            }
+
+            SlotIndex &operator=(SlotIndex &&other)
+            {
+                if (this != &other)
                 {
-                    if (match(buckets[pos])) { return buckets[pos]; }
-                    pos = (pos + 1) & mask();
+                    context_ = std::move(other.context_);
+                    slots_   = std::move(other.slots_);
+                    other.reset_empty_context();
                 }
-                return -1;
+                return *this;
+            }
+
+            void reset(SlotIndexContext context, std::size_t reserve)
+            {
+                *context_ = context;
+                slots_.clear();
+                slots_.reserve(reserve);
+            }
+
+            void rebind(SlotIndexContext context) noexcept { *context_ = context; }
+
+            void clear() noexcept
+            {
+                slots_.clear();
+                *context_ = {};
+            }
+
+            [[nodiscard]] bool empty() const noexcept { return slots_.empty(); }
+
+            [[nodiscard]] std::size_t size() const noexcept { return slots_.size(); }
+
+            [[nodiscard]] bool insert(std::size_t slot)
+            {
+                return slots_.insert(checked_slot(slot)).second;
+            }
+
+            [[nodiscard]] std::optional<slot_type> find(const void *key) const
+            {
+                const auto it = slots_.find(LookupKey{key});
+                if (it == slots_.end()) { return std::nullopt; }
+                return *it;
+            }
+
+            [[nodiscard]] bool contains(const void *key) const { return find(key).has_value(); }
+
+          private:
+            [[nodiscard]] static slot_type checked_slot(std::size_t slot)
+            {
+                if (slot > static_cast<std::size_t>(std::numeric_limits<slot_type>::max()))
+                {
+                    throw std::length_error("Compact slot index exceeds supported size");
+                }
+                return static_cast<slot_type>(slot);
+            }
+
+            std::shared_ptr<SlotIndexContext> context_;
+            ankerl::unordered_dense::set<slot_type, SlotHash, SlotEqual> slots_;
+
+            void reset_empty_context()
+            {
+                context_ = std::make_shared<SlotIndexContext>();
+                slots_   = ankerl::unordered_dense::set<slot_type, SlotHash, SlotEqual>{
+                    0, SlotHash{context_}, SlotEqual{context_}};
             }
         };
     }  // namespace compact_detail
@@ -160,12 +266,13 @@ namespace hgraph
       public:
         ListStorage() noexcept = default;
 
-        ListStorage(const MemoryUtils::StoragePlan &element_plan, const ElementSpan &source)
-            : size_{source.size}, element_plan_{&element_plan}
+        ListStorage(const ValueTypeBinding &element_binding, const ElementSpan &source)
+            : size_{source.size}, element_binding_{&element_binding}
         {
-            bytes_ = compact_detail::allocate_element_buffer(element_plan, size_);
+            const auto &plan = element_binding.checked_plan();
+            bytes_ = compact_detail::allocate_element_buffer(plan, size_);
             auto rollback = make_scope_exit([&]() noexcept {
-                compact_detail::deallocate_element_buffer(bytes_, element_plan, size_);
+                compact_detail::deallocate_element_buffer(bytes_, plan, size_);
             });
             compact_detail::copy_construct_elements(bytes_, source);
             rollback.release();
@@ -184,11 +291,11 @@ namespace hgraph
         }
 
         ListStorage(ListStorage &&other) noexcept
-            : bytes_{other.bytes_}, size_{other.size_}, element_plan_{other.element_plan_}
+            : bytes_{other.bytes_}, size_{other.size_}, element_binding_{other.element_binding_}
         {
-            other.bytes_        = nullptr;
-            other.size_         = 0;
-            other.element_plan_ = nullptr;
+            other.bytes_           = nullptr;
+            other.size_            = 0;
+            other.element_binding_ = nullptr;
         }
 
         ListStorage &operator=(ListStorage &&other) noexcept
@@ -196,69 +303,76 @@ namespace hgraph
             if (this != &other)
             {
                 clear();
-                bytes_              = other.bytes_;
-                size_               = other.size_;
-                element_plan_       = other.element_plan_;
-                other.bytes_        = nullptr;
-                other.size_         = 0;
-                other.element_plan_ = nullptr;
+                bytes_                 = other.bytes_;
+                size_                  = other.size_;
+                element_binding_       = other.element_binding_;
+                other.bytes_           = nullptr;
+                other.size_            = 0;
+                other.element_binding_ = nullptr;
             }
             return *this;
         }
 
         ~ListStorage() { clear(); }
 
-        [[nodiscard]] std::size_t size() const noexcept { return size_; }
-        [[nodiscard]] bool        empty() const noexcept { return size_ == 0; }
-        [[nodiscard]] const MemoryUtils::StoragePlan *element_plan() const noexcept { return element_plan_; }
+        [[nodiscard]] std::size_t              size() const noexcept { return size_; }
+        [[nodiscard]] bool                     empty() const noexcept { return size_ == 0; }
+        [[nodiscard]] const ValueTypeBinding  *element_binding() const noexcept { return element_binding_; }
+        [[nodiscard]] const MemoryUtils::StoragePlan *element_plan() const noexcept
+        {
+            return element_binding_ != nullptr ? element_binding_->plan() : nullptr;
+        }
 
         [[nodiscard]] void *element_at(std::size_t index)
         {
             if (index >= size_) { throw std::out_of_range("ListStorage index out of range"); }
-            return static_cast<std::byte *>(bytes_) + index * element_plan_->layout.size;
+            return static_cast<std::byte *>(bytes_) + index * element_binding_->checked_plan().layout.size;
         }
         [[nodiscard]] const void *element_at(std::size_t index) const
         {
             if (index >= size_) { throw std::out_of_range("ListStorage index out of range"); }
-            return static_cast<const std::byte *>(bytes_) + index * element_plan_->layout.size;
+            return static_cast<const std::byte *>(bytes_) +
+                   index * element_binding_->checked_plan().layout.size;
         }
 
       private:
         void clear() noexcept
         {
-            if (element_plan_ == nullptr) { return; }
-            compact_detail::destroy_elements_reverse(bytes_, *element_plan_, size_);
-            compact_detail::deallocate_element_buffer(bytes_, *element_plan_, size_);
-            bytes_        = nullptr;
-            size_         = 0;
-            element_plan_ = nullptr;
+            if (element_binding_ == nullptr) { return; }
+            const auto &plan = element_binding_->checked_plan();
+            compact_detail::destroy_elements_reverse(bytes_, plan, size_);
+            compact_detail::deallocate_element_buffer(bytes_, plan, size_);
+            bytes_           = nullptr;
+            size_            = 0;
+            element_binding_ = nullptr;
         }
 
         void copy_from(const ListStorage &other)
         {
-            element_plan_ = other.element_plan_;
-            size_         = other.size_;
-            if (element_plan_ == nullptr) { return; }
-            bytes_ = compact_detail::allocate_element_buffer(*element_plan_, size_);
+            element_binding_ = other.element_binding_;
+            size_            = other.size_;
+            if (element_binding_ == nullptr) { return; }
+            const auto &plan = element_binding_->checked_plan();
+            bytes_           = compact_detail::allocate_element_buffer(plan, size_);
             auto rollback = make_scope_exit([&]() noexcept {
-                compact_detail::deallocate_element_buffer(bytes_, *element_plan_, size_);
-                bytes_        = nullptr;
-                size_         = 0;
-                element_plan_ = nullptr;
+                compact_detail::deallocate_element_buffer(bytes_, plan, size_);
+                bytes_           = nullptr;
+                size_            = 0;
+                element_binding_ = nullptr;
             });
             compact_detail::copy_construct_elements(
                 bytes_, ElementSpan{
                             .bytes  = other.bytes_,
                             .size   = other.size_,
-                            .stride = element_plan_->layout.size,
-                            .plan   = element_plan_,
+                            .stride = plan.layout.size,
+                            .plan   = &plan,
                         });
             rollback.release();
         }
 
-        void                          *bytes_{nullptr};
-        std::size_t                    size_{0};
-        const MemoryUtils::StoragePlan *element_plan_{nullptr};
+        void                    *bytes_{nullptr};
+        std::size_t              size_{0};
+        const ValueTypeBinding  *element_binding_{nullptr};
     };
 
     // -----------------------------------------------------------------
@@ -278,16 +392,15 @@ namespace hgraph
       public:
         CyclicBufferStorage() noexcept = default;
 
-        CyclicBufferStorage(const MemoryUtils::StoragePlan &element_plan, const ElementSpan &source,
-                            std::size_t head)
-            : storage_{element_plan, source}, head_{source.size == 0 ? 0 : head % source.size}
+        CyclicBufferStorage(const ValueTypeBinding &element_binding, const ElementSpan &source, std::size_t head)
+            : storage_{element_binding, source}, head_{source.size == 0 ? 0 : head % source.size}
         {
         }
 
-        [[nodiscard]] std::size_t                     size() const noexcept { return storage_.size(); }
-        [[nodiscard]] bool                            empty() const noexcept { return storage_.empty(); }
-        [[nodiscard]] std::size_t                     head() const noexcept { return head_; }
-        [[nodiscard]] const MemoryUtils::StoragePlan *element_plan() const noexcept { return storage_.element_plan(); }
+        [[nodiscard]] std::size_t              size() const noexcept { return storage_.size(); }
+        [[nodiscard]] bool                     empty() const noexcept { return storage_.empty(); }
+        [[nodiscard]] std::size_t              head() const noexcept { return head_; }
+        [[nodiscard]] const ValueTypeBinding  *element_binding() const noexcept { return storage_.element_binding(); }
 
         [[nodiscard]] std::size_t physical_index(std::size_t logical_index) const
         {
@@ -324,14 +437,14 @@ namespace hgraph
       public:
         QueueStorage() noexcept = default;
 
-        QueueStorage(const MemoryUtils::StoragePlan &element_plan, const ElementSpan &source)
-            : storage_{element_plan, source}
+        QueueStorage(const ValueTypeBinding &element_binding, const ElementSpan &source)
+            : storage_{element_binding, source}
         {
         }
 
-        [[nodiscard]] std::size_t                     size() const noexcept { return storage_.size(); }
-        [[nodiscard]] bool                            empty() const noexcept { return storage_.empty(); }
-        [[nodiscard]] const MemoryUtils::StoragePlan *element_plan() const noexcept { return storage_.element_plan(); }
+        [[nodiscard]] std::size_t             size() const noexcept { return storage_.size(); }
+        [[nodiscard]] bool                    empty() const noexcept { return storage_.empty(); }
+        [[nodiscard]] const ValueTypeBinding *element_binding() const noexcept { return storage_.element_binding(); }
 
         [[nodiscard]] void       *front() { return storage_.element_at(0); }
         [[nodiscard]] const void *front() const { return storage_.element_at(0); }
@@ -344,15 +457,15 @@ namespace hgraph
     };
 
     // -----------------------------------------------------------------
-    // SetStorage — content-keyed open-addressing hash set, populated
-    // once at construction.
+    // SetStorage — content-keyed hash set, populated once at
+    // construction.
     // -----------------------------------------------------------------
 
     /**
      * Compact value-layer storage for the ``Set`` kind. Holds the keys
-     * in a contiguous buffer plus an open-addressing bucket array for
-     * lookup. Hash and equality are driven by the bound element ops via
-     * the borrowed binding.
+     * in a contiguous buffer plus a dense slot index for lookup. Hash
+     * and equality are driven by the bound element ops via the borrowed
+     * binding.
      *
      * Two sets are *equal* when they contain the same keys regardless of
      * insertion order; the underlying buffer's order is preserved as
@@ -365,10 +478,10 @@ namespace hgraph
         SetStorage() noexcept = default;
 
         SetStorage(const ValueTypeBinding &element_binding, const ElementSpan &source)
-            : element_binding_{&element_binding}, storage_{element_binding.checked_plan(), source}
+            : element_binding_{&element_binding}, storage_{element_binding, source}
         {
             ensure_ops();
-            build_table();
+            build_index();
         }
 
         SetStorage(const SetStorage &other) { copy_from(other); }
@@ -376,15 +489,34 @@ namespace hgraph
         {
             if (this != &other)
             {
-                table_.buckets.clear();
+                index_.clear();
                 storage_ = ListStorage{};
                 copy_from(other);
             }
             return *this;
         }
 
-        SetStorage(SetStorage &&) noexcept            = default;
-        SetStorage &operator=(SetStorage &&) noexcept = default;
+        SetStorage(SetStorage &&other)
+            : element_binding_{other.element_binding_}
+            , storage_{std::move(other.storage_)}
+            , index_{std::move(other.index_)}
+        {
+            index_.rebind(slot_context());
+            other.element_binding_ = nullptr;
+        }
+
+        SetStorage &operator=(SetStorage &&other)
+        {
+            if (this != &other)
+            {
+                element_binding_ = other.element_binding_;
+                storage_         = std::move(other.storage_);
+                index_           = std::move(other.index_);
+                index_.rebind(slot_context());
+                other.element_binding_ = nullptr;
+            }
+            return *this;
+        }
 
         [[nodiscard]] std::size_t              size() const noexcept { return storage_.size(); }
         [[nodiscard]] bool                     empty() const noexcept { return storage_.empty(); }
@@ -395,11 +527,7 @@ namespace hgraph
         [[nodiscard]] bool contains(const void *key) const
         {
             if (storage_.empty() || element_binding_ == nullptr) { return false; }
-            const auto &ops = element_binding_->checked_ops();
-            const auto  hash = ops.hash(key);
-            return table_.find(hash, [&](std::int32_t index) {
-                return ops.equals(storage_.element_at(static_cast<std::size_t>(index)), key);
-            }) != -1;
+            return index_.contains(key);
         }
 
       private:
@@ -412,14 +540,12 @@ namespace hgraph
             }
         }
 
-        void build_table()
+        void build_index()
         {
-            const auto &ops = element_binding_->checked_ops();
-            table_.reset(storage_.size());
+            index_.reset(slot_context(), storage_.size());
             for (std::size_t i = 0; i < storage_.size(); ++i)
             {
-                const auto hash = ops.hash(storage_.element_at(i));
-                table_.insert(static_cast<std::int32_t>(i), hash, [](std::int32_t, std::size_t) {});
+                if (!index_.insert(i)) { throw std::invalid_argument("SetStorage contains duplicate keys"); }
             }
         }
 
@@ -427,33 +553,47 @@ namespace hgraph
         {
             element_binding_ = other.element_binding_;
             if (element_binding_ == nullptr) { return; }
+            const auto &plan = element_binding_->checked_plan();
             storage_ = ListStorage{
-                element_binding_->checked_plan(),
+                *element_binding_,
                 ElementSpan{
                     .bytes  = other.storage_.size() == 0 ? nullptr : other.storage_.element_at(0),
                     .size   = other.storage_.size(),
-                    .stride = element_binding_->checked_plan().layout.size,
-                    .plan   = &element_binding_->checked_plan(),
+                    .stride = plan.layout.size,
+                    .plan   = &plan,
                 },
             };
-            build_table();
+            build_index();
         }
 
-        const ValueTypeBinding         *element_binding_{nullptr};
-        ListStorage                     storage_{};
-        compact_detail::OpenAddressTable table_{};
+        [[nodiscard]] compact_detail::SlotIndexContext slot_context() const noexcept
+        {
+            return compact_detail::SlotIndexContext{
+                .binding = element_binding_,
+                .owner   = this,
+                .at      = &SetStorage::slot_at_context,
+            };
+        }
+
+        [[nodiscard]] static const void *slot_at_context(const void *owner, std::size_t slot) noexcept
+        {
+            return static_cast<const SetStorage *>(owner)->storage_.element_at(slot);
+        }
+
+        const ValueTypeBinding   *element_binding_{nullptr};
+        ListStorage               storage_{};
+        compact_detail::SlotIndex index_{};
     };
 
     // -----------------------------------------------------------------
-    // MapStorage — content-keyed open-addressing hash map.
+    // MapStorage — content-keyed hash map.
     // -----------------------------------------------------------------
 
     /**
      * Compact value-layer storage for the ``Map`` kind. Pairs a key
      * buffer with a value buffer indexed by the same slot ids. Keys and
      * values are stored as parallel contiguous arrays; lookup goes
-     * through an open-addressing bucket array driven by the bound key
-     * ops.
+     * through a dense slot index driven by the bound key ops.
      */
     class MapStorage
     {
@@ -464,15 +604,15 @@ namespace hgraph
                    const ElementSpan &keys_source, const ElementSpan &values_source)
             : key_binding_{&key_binding}
             , value_binding_{&value_binding}
-            , keys_{key_binding.checked_plan(), keys_source}
-            , values_{value_binding.checked_plan(), values_source}
+            , keys_{key_binding, keys_source}
+            , values_{value_binding, values_source}
         {
             if (keys_source.size != values_source.size)
             {
                 throw std::invalid_argument("MapStorage requires keys and values of the same size");
             }
             ensure_key_ops();
-            build_table();
+            build_index();
         }
 
         MapStorage(const MapStorage &other) { copy_from(other); }
@@ -480,7 +620,7 @@ namespace hgraph
         {
             if (this != &other)
             {
-                table_.buckets.clear();
+                index_.clear();
                 keys_   = ListStorage{};
                 values_ = ListStorage{};
                 copy_from(other);
@@ -488,8 +628,33 @@ namespace hgraph
             return *this;
         }
 
-        MapStorage(MapStorage &&) noexcept            = default;
-        MapStorage &operator=(MapStorage &&) noexcept = default;
+        MapStorage(MapStorage &&other)
+            : key_binding_{other.key_binding_}
+            , value_binding_{other.value_binding_}
+            , keys_{std::move(other.keys_)}
+            , values_{std::move(other.values_)}
+            , index_{std::move(other.index_)}
+        {
+            index_.rebind(slot_context());
+            other.key_binding_   = nullptr;
+            other.value_binding_ = nullptr;
+        }
+
+        MapStorage &operator=(MapStorage &&other)
+        {
+            if (this != &other)
+            {
+                key_binding_   = other.key_binding_;
+                value_binding_ = other.value_binding_;
+                keys_          = std::move(other.keys_);
+                values_        = std::move(other.values_);
+                index_         = std::move(other.index_);
+                index_.rebind(slot_context());
+                other.key_binding_   = nullptr;
+                other.value_binding_ = nullptr;
+            }
+            return *this;
+        }
 
         [[nodiscard]] std::size_t             size() const noexcept { return keys_.size(); }
         [[nodiscard]] bool                    empty() const noexcept { return keys_.empty(); }
@@ -503,11 +668,7 @@ namespace hgraph
         [[nodiscard]] std::int32_t find_slot(const void *key) const
         {
             if (keys_.empty() || key_binding_ == nullptr) { return -1; }
-            const auto &ops  = key_binding_->checked_ops();
-            const auto  hash = ops.hash(key);
-            return table_.find(hash, [&](std::int32_t index) {
-                return ops.equals(keys_.element_at(static_cast<std::size_t>(index)), key);
-            });
+            return index_.find(key).value_or(-1);
         }
 
         [[nodiscard]] bool contains(const void *key) const { return find_slot(key) != -1; }
@@ -533,14 +694,12 @@ namespace hgraph
             }
         }
 
-        void build_table()
+        void build_index()
         {
-            const auto &ops = key_binding_->checked_ops();
-            table_.reset(keys_.size());
+            index_.reset(slot_context(), keys_.size());
             for (std::size_t i = 0; i < keys_.size(); ++i)
             {
-                const auto hash = ops.hash(keys_.element_at(i));
-                table_.insert(static_cast<std::int32_t>(i), hash, [](std::int32_t, std::size_t) {});
+                if (!index_.insert(i)) { throw std::invalid_argument("MapStorage contains duplicate keys"); }
             }
         }
 
@@ -551,23 +710,38 @@ namespace hgraph
             if (key_binding_ == nullptr || value_binding_ == nullptr) { return; }
             const auto &kp = key_binding_->checked_plan();
             const auto &vp = value_binding_->checked_plan();
-            keys_   = ListStorage{kp, ElementSpan{.bytes = other.keys_.size() == 0 ? nullptr : other.keys_.element_at(0),
-                                                  .size   = other.keys_.size(),
-                                                  .stride = kp.layout.size,
-                                                  .plan   = &kp}};
-            values_ = ListStorage{vp,
-                                  ElementSpan{.bytes  = other.values_.size() == 0 ? nullptr : other.values_.element_at(0),
+            keys_          = ListStorage{*key_binding_,
+                                ElementSpan{.bytes  = other.keys_.size() == 0 ? nullptr : other.keys_.element_at(0),
+                                            .size   = other.keys_.size(),
+                                            .stride = kp.layout.size,
+                                            .plan   = &kp}};
+            values_        = ListStorage{*value_binding_,
+                                  ElementSpan{.bytes = other.values_.size() == 0 ? nullptr : other.values_.element_at(0),
                                               .size   = other.values_.size(),
                                               .stride = vp.layout.size,
                                               .plan   = &vp}};
-            build_table();
+            build_index();
         }
 
-        const ValueTypeBinding          *key_binding_{nullptr};
-        const ValueTypeBinding          *value_binding_{nullptr};
-        ListStorage                       keys_{};
-        ListStorage                       values_{};
-        compact_detail::OpenAddressTable  table_{};
+        [[nodiscard]] compact_detail::SlotIndexContext slot_context() const noexcept
+        {
+            return compact_detail::SlotIndexContext{
+                .binding = key_binding_,
+                .owner   = this,
+                .at      = &MapStorage::key_at_context,
+            };
+        }
+
+        [[nodiscard]] static const void *key_at_context(const void *owner, std::size_t slot) noexcept
+        {
+            return static_cast<const MapStorage *>(owner)->keys_.element_at(slot);
+        }
+
+        const ValueTypeBinding   *key_binding_{nullptr};
+        const ValueTypeBinding   *value_binding_{nullptr};
+        ListStorage               keys_{};
+        ListStorage               values_{};
+        compact_detail::SlotIndex index_{};
     };
 
     // -----------------------------------------------------------------
