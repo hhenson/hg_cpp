@@ -257,7 +257,9 @@ Read-only views
 ``SetView``
     ``contains(key)``, iteration over members. ``contains`` is part of
     the erased ops contract and must be average O(1) for set
-    implementations.
+    implementations. Set comparison orders by size when sizes differ;
+    same-sized sets compare equivalent when their members match and
+    unordered otherwise.
 
 ``MapView``
     ``contains(key)``, ``at(key)`` / ``operator[](key)``, iteration

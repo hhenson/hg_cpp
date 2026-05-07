@@ -211,7 +211,9 @@ The compact storage shapes are:
     builder deduplicates before storage is built. ``contains`` is
     required to be average O(1); semantic equality for two different
     set representations depends on iterating one side and performing
-    one lookup per element on the other side.
+    one lookup per element on the other side. Set comparison orders by
+    size when sizes differ; same-sized sets compare equivalent when
+    their members match and unordered otherwise.
 
 ``MapStorage``
     Content-keyed hash map populated once at construction. Keys and
