@@ -66,7 +66,7 @@ namespace hgraph
 
         // ----- List -----------------------------------------------------
 
-        inline std::size_t list_hash(const void *memory) noexcept
+        inline std::size_t list_hash(const void *, const void *memory) noexcept
         {
             const auto *storage = static_cast<const ListStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
@@ -79,7 +79,7 @@ namespace hgraph
             return seed;
         }
 
-        inline bool list_equals(const void *lhs, const void *rhs) noexcept
+        inline bool list_equals(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const ListStorage *>(lhs);
             const auto *b = static_cast<const ListStorage *>(rhs);
@@ -94,7 +94,7 @@ namespace hgraph
             return true;
         }
 
-        inline std::partial_ordering list_compare(const void *lhs, const void *rhs) noexcept
+        inline std::partial_ordering list_compare(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const ListStorage *>(lhs);
             const auto *b = static_cast<const ListStorage *>(rhs);
@@ -117,7 +117,7 @@ namespace hgraph
             return std::partial_ordering::equivalent;
         }
 
-        inline std::string list_to_string(const void *memory)
+        inline std::string list_to_string(const void *, const void *memory)
         {
             const auto *storage = static_cast<const ListStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return "[]"; }
@@ -129,7 +129,7 @@ namespace hgraph
 
         // ----- CyclicBuffer (read in ring order) ------------------------
 
-        inline std::size_t cyclic_buffer_hash(const void *memory) noexcept
+        inline std::size_t cyclic_buffer_hash(const void *, const void *memory) noexcept
         {
             const auto *storage = static_cast<const CyclicBufferStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
@@ -142,7 +142,7 @@ namespace hgraph
             return seed;
         }
 
-        inline bool cyclic_buffer_equals(const void *lhs, const void *rhs) noexcept
+        inline bool cyclic_buffer_equals(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const CyclicBufferStorage *>(lhs);
             const auto *b = static_cast<const CyclicBufferStorage *>(rhs);
@@ -157,7 +157,7 @@ namespace hgraph
             return true;
         }
 
-        inline std::partial_ordering cyclic_buffer_compare(const void *lhs, const void *rhs) noexcept
+        inline std::partial_ordering cyclic_buffer_compare(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const CyclicBufferStorage *>(lhs);
             const auto *b = static_cast<const CyclicBufferStorage *>(rhs);
@@ -180,7 +180,7 @@ namespace hgraph
             return std::partial_ordering::equivalent;
         }
 
-        inline std::string cyclic_buffer_to_string(const void *memory)
+        inline std::string cyclic_buffer_to_string(const void *, const void *memory)
         {
             const auto *storage = static_cast<const CyclicBufferStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return "(empty)"; }
@@ -192,7 +192,7 @@ namespace hgraph
 
         // ----- Queue (read in arrival order) ----------------------------
 
-        inline std::size_t queue_hash(const void *memory) noexcept
+        inline std::size_t queue_hash(const void *, const void *memory) noexcept
         {
             const auto *storage = static_cast<const QueueStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
@@ -205,7 +205,7 @@ namespace hgraph
             return seed;
         }
 
-        inline bool queue_equals(const void *lhs, const void *rhs) noexcept
+        inline bool queue_equals(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const QueueStorage *>(lhs);
             const auto *b = static_cast<const QueueStorage *>(rhs);
@@ -220,7 +220,7 @@ namespace hgraph
             return true;
         }
 
-        inline std::partial_ordering queue_compare(const void *lhs, const void *rhs) noexcept
+        inline std::partial_ordering queue_compare(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const QueueStorage *>(lhs);
             const auto *b = static_cast<const QueueStorage *>(rhs);
@@ -243,7 +243,7 @@ namespace hgraph
             return std::partial_ordering::equivalent;
         }
 
-        inline std::string queue_to_string(const void *memory)
+        inline std::string queue_to_string(const void *, const void *memory)
         {
             const auto *storage = static_cast<const QueueStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return "<>"; }
@@ -255,7 +255,7 @@ namespace hgraph
 
         // ----- Set (order-independent) ----------------------------------
 
-        inline std::size_t set_hash(const void *memory) noexcept
+        inline std::size_t set_hash(const void *, const void *memory) noexcept
         {
             const auto *storage = static_cast<const SetStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
@@ -268,7 +268,7 @@ namespace hgraph
             return result;
         }
 
-        inline bool set_equals(const void *lhs, const void *rhs) noexcept
+        inline bool set_equals(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const SetStorage *>(lhs);
             const auto *b = static_cast<const SetStorage *>(rhs);
@@ -281,7 +281,7 @@ namespace hgraph
             return true;
         }
 
-        inline std::partial_ordering set_compare(const void *lhs, const void *rhs) noexcept
+        inline std::partial_ordering set_compare(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const SetStorage *>(lhs);
             const auto *b = static_cast<const SetStorage *>(rhs);
@@ -298,7 +298,7 @@ namespace hgraph
             return std::partial_ordering::equivalent;
         }
 
-        inline std::string set_to_string(const void *memory)
+        inline std::string set_to_string(const void *, const void *memory)
         {
             const auto *storage = static_cast<const SetStorage *>(memory);
             if (storage == nullptr || storage->element_binding() == nullptr) { return "{}"; }
@@ -310,7 +310,7 @@ namespace hgraph
 
         // ----- Map (order-independent over keys) ------------------------
 
-        inline std::size_t map_hash(const void *memory) noexcept
+        inline std::size_t map_hash(const void *, const void *memory) noexcept
         {
             const auto *storage = static_cast<const MapStorage *>(memory);
             if (storage == nullptr || storage->key_binding() == nullptr || storage->value_binding() == nullptr)
@@ -329,7 +329,7 @@ namespace hgraph
             return result;
         }
 
-        inline bool map_equals(const void *lhs, const void *rhs) noexcept
+        inline bool map_equals(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const MapStorage *>(lhs);
             const auto *b = static_cast<const MapStorage *>(rhs);
@@ -347,7 +347,7 @@ namespace hgraph
             return true;
         }
 
-        inline std::partial_ordering map_compare(const void *lhs, const void *rhs) noexcept
+        inline std::partial_ordering map_compare(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const MapStorage *>(lhs);
             const auto *b = static_cast<const MapStorage *>(rhs);
@@ -366,7 +366,7 @@ namespace hgraph
             return std::partial_ordering::equivalent;
         }
 
-        inline std::string map_to_string(const void *memory)
+        inline std::string map_to_string(const void *, const void *memory)
         {
             const auto *storage = static_cast<const MapStorage *>(memory);
             if (storage == nullptr || storage->key_binding() == nullptr || storage->value_binding() == nullptr)
@@ -555,7 +555,7 @@ namespace hgraph
         // compare / to_string treat the map's keys as a logical set
         // (order-independent xor of element hashes; subset+superset for
         // equality; ``{a, b, c}`` for formatting).
-        inline std::size_t map_key_adapter_hash(const void *memory) noexcept
+        inline std::size_t map_key_adapter_hash(const void *, const void *memory) noexcept
         {
             const auto *storage = static_cast<const MapStorage *>(memory);
             if (storage->key_binding() == nullptr) { return 0; }
@@ -567,7 +567,7 @@ namespace hgraph
             }
             return result;
         }
-        inline bool map_key_adapter_equals(const void *lhs, const void *rhs) noexcept
+        inline bool map_key_adapter_equals(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const MapStorage *>(lhs);
             const auto *b = static_cast<const MapStorage *>(rhs);
@@ -578,7 +578,7 @@ namespace hgraph
             }
             return true;
         }
-        inline std::partial_ordering map_key_adapter_compare(const void *lhs, const void *rhs) noexcept
+        inline std::partial_ordering map_key_adapter_compare(const void *, const void *lhs, const void *rhs) noexcept
         {
             const auto *a = static_cast<const MapStorage *>(lhs);
             const auto *b = static_cast<const MapStorage *>(rhs);
@@ -591,7 +591,7 @@ namespace hgraph
 
             return std::partial_ordering::equivalent;
         }
-        inline std::string map_key_adapter_to_string(const void *memory)
+        inline std::string map_key_adapter_to_string(const void *, const void *memory)
         {
             const auto *storage = static_cast<const MapStorage *>(memory);
             if (storage == nullptr || storage->key_binding() == nullptr) { return "{}"; }
@@ -621,12 +621,12 @@ namespace hgraph
     {
         static const ListValueOps ops = {
             {{// ValueOps:
+              nullptr,
               &container_ops_detail::list_hash,
               &container_ops_detail::list_equals,
               &container_ops_detail::list_compare,
               &container_ops_detail::list_to_string},
              // IndexedValueOps:
-             nullptr,
              &container_ops_detail::list_size,
              &container_ops_detail::list_element_at,
              &container_ops_detail::list_element_binding,
@@ -641,11 +641,11 @@ namespace hgraph
     [[nodiscard]] inline const SetValueOps &compact_set_ops() noexcept
     {
         static const SetValueOps ops = {
-            {{&container_ops_detail::set_hash,
+            {{nullptr,
+              &container_ops_detail::set_hash,
               &container_ops_detail::set_equals,
               &container_ops_detail::set_compare,
               &container_ops_detail::set_to_string},
-             nullptr,
              &container_ops_detail::set_size,
              &container_ops_detail::set_element_at,
              &container_ops_detail::set_element_binding,
@@ -664,11 +664,11 @@ namespace hgraph
         // the indexed kind yields keys. ``make_kv_range`` exposes the
         // paired (key, value) surface.
         static const MapValueOps ops = {
-            {{&container_ops_detail::map_hash,
+            {{nullptr,
+              &container_ops_detail::map_hash,
               &container_ops_detail::map_equals,
               &container_ops_detail::map_compare,
               &container_ops_detail::map_to_string},
-             nullptr,
              &container_ops_detail::map_size,
              &container_ops_detail::map_key_at_index,
              &container_ops_detail::map_key_binding,
@@ -701,11 +701,11 @@ namespace hgraph
     [[nodiscard]] inline const CyclicBufferValueOps &compact_cyclic_buffer_ops() noexcept
     {
         static const CyclicBufferValueOps ops = {
-            {{&container_ops_detail::cyclic_buffer_hash,
+            {{nullptr,
+              &container_ops_detail::cyclic_buffer_hash,
               &container_ops_detail::cyclic_buffer_equals,
               &container_ops_detail::cyclic_buffer_compare,
               &container_ops_detail::cyclic_buffer_to_string},
-             nullptr,
              &container_ops_detail::cyclic_buffer_size,
              &container_ops_detail::cyclic_buffer_element_at,
              &container_ops_detail::cyclic_buffer_element_binding,
@@ -720,11 +720,11 @@ namespace hgraph
     [[nodiscard]] inline const QueueValueOps &compact_queue_ops() noexcept
     {
         static const QueueValueOps ops = {
-            {{&container_ops_detail::queue_hash,
+            {{nullptr,
+              &container_ops_detail::queue_hash,
               &container_ops_detail::queue_equals,
               &container_ops_detail::queue_compare,
               &container_ops_detail::queue_to_string},
-             nullptr,
              &container_ops_detail::queue_size,
              &container_ops_detail::queue_element_at,
              &container_ops_detail::queue_element_binding,
@@ -743,11 +743,11 @@ namespace hgraph
         // because the underlying memory is still a ``MapStorage`` —
         // the adapter just reframes the read surface as a Set.
         static const SetValueOps ops = {
-            {{&container_ops_detail::map_key_adapter_hash,
+            {{nullptr,
+              &container_ops_detail::map_key_adapter_hash,
               &container_ops_detail::map_key_adapter_equals,
               &container_ops_detail::map_key_adapter_compare,
               &container_ops_detail::map_key_adapter_to_string},
-             nullptr,
              &container_ops_detail::map_size,
              &container_ops_detail::map_key_at_index,
              &container_ops_detail::map_key_binding,

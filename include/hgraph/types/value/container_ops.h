@@ -71,7 +71,6 @@ namespace hgraph
 
     struct IndexedValueOps : ValueOps
     {
-        const void *context{nullptr};
         std::size_t (*size)(const void *context, const void *memory) noexcept = nullptr;
         const void *(*element_at)(const void *context, const void *memory, std::size_t index) = nullptr;
         const ValueTypeBinding *(*element_binding)(const void *context, const void *memory,
