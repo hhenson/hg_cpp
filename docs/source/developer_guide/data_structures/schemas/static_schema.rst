@@ -19,11 +19,12 @@ same shapes as **types** at compile time:
 
 The compiler carries the shape; a small set of *descriptor* traits
 turn that compile-time type into the matching runtime metadata
-pointer (``TSValueTypeMetaData *``) by calling into ``TypeRegistry``
-on first use, with the result cached in a function-local-static. A
-node implementation written against these markers gets both type
-safety at the call site and one canonical interned schema at
-runtime.
+pointer (``TSValueTypeMetaData *``) by calling into ``TypeRegistry``.
+Descriptors deliberately do **not** maintain their own static caches:
+all canonicalisation and pointer stability comes from the registry's
+intern tables. A node implementation written against these markers
+gets both type safety at the call site and one canonical interned
+schema at runtime.
 
 This page describes the compile-time vocabulary, the descriptor
 bridge to the runtime registry, and the design choices that follow
@@ -124,16 +125,15 @@ place a static-schema type touches the registry.
     - ``is_concrete()`` — ``true`` for concrete scalar types, ``false``
       for ``ScalarVar``.
     - ``value_meta()`` — returns the canonical
-      ``ValueTypeMetaData *`` for the scalar (calls
-      ``TypeRegistry::register_scalar<T>(...)`` on first use).
+      ``ValueTypeMetaData *`` for the scalar by calling
+      ``TypeRegistry::register_scalar<T>(...)``.
 
 ``schema_descriptor<TSchema>``
     For a time-series schema type, exposes:
 
     - ``is_concrete()`` — recurses through component schemas.
     - ``ts_meta()`` — returns the canonical ``TSValueTypeMetaData *``
-      for ``TSchema``. Caches the result in a function-local-static
-      so repeated calls dispatch with no overhead.
+      for ``TSchema`` by resolving the shape through ``TypeRegistry``.
 
 ``field_descriptor<Field<Name, TSchema>>``
     Exposes the field's static name and forwards
@@ -157,10 +157,11 @@ Example (rendered as the doc lands alongside an actual implementation):
    // meta is the same pointer as
    //   registry.tsb("PriceTick", {{"bid", registry.ts(...)}, ...})
 
-Caching is per-type. ``schema_descriptor<PriceTick>::ts_meta()`` calls
-the registry once; every subsequent call returns the cached pointer.
-Two translation units that both name ``PriceTick`` resolve to the same
-canonical metadata.
+The registry intern tables are the only cache. Repeated descriptor
+calls may re-enter ``TypeRegistry``, but equivalent shapes resolve to
+the same canonical metadata pointer. This keeps static descriptors
+correct across test-only registry resets and avoids a second lifetime
+model outside the registry.
 
 Generic schemas
 ---------------

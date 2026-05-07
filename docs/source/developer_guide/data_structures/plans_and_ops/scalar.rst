@@ -19,19 +19,21 @@ Plan              ``MemoryUtils::StoragePlan`` — memory layout (size,
                   alignment, field offsets) plus a ``LifecycleOps`` table
                   (construct, copy/move construct and assign, destroy).
                   Carries no allocator reference.
-Plan factory      ``ValuePlanFactory`` — schema → plan mapping, with
-                  results cached against the schema. Atomic plans are
+Plan factory      ``ValuePlanFactory`` — schema → plan mapping and
+                  canonical default binding resolution, with results
+                  cached against the schema. Atomic plans/bindings are
                   pre-registered by ``TypeRegistry`` from
-                  ``MemoryUtils::plan_for<T>()``; tuple / bundle / fixed
-                  list plans are synthesised on first use.
+                  ``MemoryUtils::plan_for<T>()`` and ``ops_for<T>()``;
+                  composite and container plans/bindings are
+                  synthesised on first use.
 Ops               ``ValueOps`` — ``hash``, ``equals``, ``compare``,
                   ``to_string`` function pointers
 Binding           ``ValueTypeBinding`` — interned ``(ValueTypeMetaData,
                   StoragePlan, ValueOps)`` triple; the canonical handle the
                   rest of the layer shares
-Builder           ``ValueBuilder`` — wraps a binding; constructs ``Value``
-                  instances; cached in a ``ValueBuilderRegistry`` keyed by
-                  schema
+Builder           Per-kind value builders — wrap bindings, accumulate
+                  construction-time scratch storage, and construct
+                  immutable ``Value`` instances
 Value             ``Value`` — owning handle over storage + binding + allocator
 View              ``ValueView`` — two-word reference: ``(binding, data)``.
                   Specialized adapters extend it for composite kinds.
@@ -47,17 +49,20 @@ covered below.
 Plan Factory
 ------------
 
-``ValuePlanFactory`` is the schema → plan mapping. It is the value
-layer's answer to "the schema is independent of plan, but a builder
-needs to pick a plan": the factory hands back the canonical plan for a
-given schema, with results cached against the schema for stable
-addresses.
+``ValuePlanFactory`` is the schema → plan mapping and the default
+schema → binding resolver. It is the value layer's answer to "the
+schema is independent of plan, but a builder needs to pick a plan and
+ops surface": the factory hands back the canonical plan or canonical
+``ValueTypeBinding`` for a given schema, with results cached against
+the schema for stable addresses.
 
 - **Atomic schemas** are paired with their canonical plan at
   registration time. ``TypeRegistry::register_scalar<T>()`` calls
   ``ValuePlanFactory::register_atomic(schema, &MemoryUtils::plan_for<T>())``,
-  so subsequent ``plan_for(atomic_schema)`` calls return the
-  function-local-static plan without recomputation.
+  and registers the canonical ``ValueTypeBinding`` using
+  ``ops_for<T>()``. Subsequent ``plan_for(atomic_schema)`` and
+  ``binding_for(atomic_schema)`` calls return the registry-owned
+  canonical entries.
 - **Tuple, bundle, and fixed-size list schemas** are synthesised on
   first use. ``plan_for`` recursively resolves component schemas to
   their plans and feeds them into ``MemoryUtils::tuple_plan`` /
@@ -69,7 +74,8 @@ addresses.
   *Container Storage Shapes* below. ``plan_for`` synthesises the
   matching plan on first request, attaching a per-instantiation
   ``*State`` struct as the ``StoragePlan::lifecycle_context`` so the
-  lifecycle hooks know how to construct the storage.
+  lifecycle hooks know how to construct the storage. ``binding_for``
+  pairs the plan with the compact kind-specific ops table.
 
 The time-series layer has the matching ``TSValuePlanFactory``. It is
 declared with the same surface today; its synthesis logic is deferred
@@ -91,7 +97,7 @@ Owning Value
   given schema, in a typed-null state. Schema is preserved even when the
   payload is absent.
 - ``Value(T&&)`` — convenience for scalars; resolves to the canonical
-  scalar binding via ``value::scalar_type_meta<T>()``.
+  scalar binding via ``TypeRegistry::scalar_binding<T>()``.
 - ``has_value()`` / ``reset()`` — manage top-level payload presence.
 - ``view()`` — produces a ``ValueView`` over the live payload.
 - ``hash()`` / ``equals()`` / ``compare()`` / ``to_string()`` — route
@@ -158,16 +164,17 @@ The value layer's container kinds (List, Set, Map, CyclicBuffer,
 Queue) are deliberately **compact** and **immutable after
 construction**. At the scalar layer, a value is set atomically — read
 whole, replaced whole, hashed and compared whole — and never mutated
-piecemeal through the typed view. By definition, the size of every
-container is therefore known at the point of construction, and there
-is **no fixed-vs-dynamic distinction at the storage level**:
+piecemeal through the typed view.
 
-- A ``List`` schema with ``fixed_size = 5`` and one with
-  ``fixed_size = 0`` (declared "dynamic") use the same storage shape
-  — both hold *N* elements where *N* is fixed once the storage is
-  constructed. ``fixed_size`` becomes a *construction-time
-  constraint check*: a non-zero value rejects a constructed storage
-  whose actual size doesn't match.
+The default storage choice follows what is known from the schema:
+
+- A ``List`` schema with ``fixed_size > 0`` uses
+  ``MemoryUtils::array_plan``. The element count is part of the schema
+  and the default payload can be constructed directly in the fixed
+  array layout.
+- A ``List`` schema with ``fixed_size = 0`` uses ``ListStorage``. The
+  actual element count is known at construction time and remains fixed
+  for the lifetime of that value.
 - ``CyclicBuffer`` and ``Queue`` are the same: their length is fixed
   at construction and cannot change. The ring / FIFO interpretation
   is purely a read-time concern (where the head sits, what order
@@ -184,9 +191,11 @@ Family*). At the value layer, those concerns do not apply.
 The compact storage shapes are:
 
 ``ListStorage``
-    Sized contiguous buffer of element-plan-shaped slots. Holds
-    exactly the number of elements supplied at construction; cannot
-    be resized; individual elements cannot be replaced.
+    Sized contiguous buffer of element-plan-shaped slots for dynamic
+    list schemas. Holds exactly the number of elements supplied at
+    construction; cannot be resized; individual elements cannot be
+    replaced. Fixed-size list schemas use ``MemoryUtils::array_plan``
+    instead.
 
 ``SetStorage``
     Content-keyed hash set populated once at construction. Hashing
@@ -229,8 +238,8 @@ assemble the storage without knowing the C++ template arguments at
 the call site. The state structs are owned by the plan registry
 alongside the interned plan and live as long as it does.
 
-Building containers — the open question
----------------------------------------
+Building containers
+-------------------
 
 Constructing a compact, immutable container requires *all* of its
 elements to be available at the moment ``default_construct`` /
@@ -240,7 +249,7 @@ the construction site. For data accumulated piecemeal (e.g.
 generated by a graph wiring step that walks a set of inputs), the
 copy-once-finalised pattern is awkward.
 
-The proposed fix is a **value builder** — a per-kind builder type
+The implementation uses a **value builder** — a per-kind builder type
 that is mutable while it is being filled and produces an immutable
 ``Value`` on ``build()``:
 
@@ -261,12 +270,12 @@ itself is single-use and local to the construction site.
 This keeps the value-layer view contract free of mutation methods
 while still letting callers build a value in stages.
 
-Status. Neither the compact storage shapes nor the value builders
-are ported yet. ``ValuePlanFactory::plan_for`` throws for the
-container kinds. The slot-store-based shapes used by the time-
-series layer *are* described under *Time-Series Plans and Ops > The
-Slot Store Family*; they are not the value layer's compact form and
-should not be reused as such.
+Status. The compact value-layer storage shapes, builders, specialised
+read-only views, and ``ValuePlanFactory`` compact container bindings
+are ported. The slot-store-based shapes used by the time-series layer
+*are* described under *Time-Series Plans and Ops > The Slot Store
+Family*; they are not the value layer's compact form and should not be
+reused as such.
 
 Buffer and Arrow Interop
 ------------------------

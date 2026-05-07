@@ -102,7 +102,11 @@ top of this base, but the base is always present.
     - ``TSB`` — modified fields only.
     - ``TSL`` — modified elements with their indices.
     - ``TSS`` — added and removed sets.
-    - ``TSD`` — added entries, removed keys, and per-key modified values.
+    - ``TSD`` — removed keys and per-key modified values. Added and
+      updated keys and values both appear in the delta view api, as do removed values.
+      The delta value is a compacted version of the information and is sufficient to
+      recreate the changed state using repeated applications of the delta value to an
+      output TSD.
     - ``TSW`` — the element added in the current tick (if any).
 
     ``delta_value`` is logically present only for the engine cycle of
@@ -113,6 +117,9 @@ top of this base, but the base is always present.
     later at the next outermost ``begin_mutation()``. A subsequent
     engine cycle querying ``delta_value`` returns ``None`` if no new
     change has occurred, or the new change if one has.
+
+    The expectation of a delta value is that repeated applications of a delta value
+    on an output should cause the output to exactly represent the input state over time.
 
 ``modified``
     Whether the time-series ticked in the current evaluation cycle. For
@@ -236,6 +243,13 @@ A few notes on the cells that aren't immediate:
   vs-updated at the schema level. ``TSS`` keeps the ``added`` /
   ``removed`` split because membership-only sets have no notion of
   *update*.
+- The standard ``TSD`` delta value schema remains the compact
+  ``Bundle{removed, modified}`` shape above. The eventual TSD delta
+  view should still expose convenience queries for ``added``,
+  ``removed``, ``updated``, and ``modified``. ``added`` and
+  ``updated`` are view-level classifications derived from the current
+  slot state and the collapsed ``modified`` map; they are not separate
+  fields in the stored delta value.
 - ``TSW`` (tick) has a fixed-size list as ``value_schema`` because the
   rolling window length is known up front; duration-based windows fall
   back to a dynamic list since the count of elements per window varies

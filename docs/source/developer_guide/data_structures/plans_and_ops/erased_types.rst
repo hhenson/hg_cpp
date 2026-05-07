@@ -98,13 +98,16 @@ A view exposes:
 - typed access: ``as<T>()``, ``try_as<T>()``, ``checked_as<T>()`` for
   atomic kinds;
 - generic ops: ``hash()``, ``equals()``, ``compare()``, ``to_string()``
-  — always routed through the bound ops table;
+  — routed through the binding; compact containers use their bound ops
+  table, while structured tuple/bundle/fixed-list views recurse through
+  child views;
 - read access for composite kinds via specialised adapters described
   below.
 
-Mutation, including atomic ``set<T>`` and structural assignment,
-requires a mutable view obtained via ``begin_mutation()`` (see
-*Read-Only and Mutable Views*).
+Mutation, including atomic ``set<T>`` and structural assignment, is
+reserved for mutable views obtained via ``begin_mutation()`` (see
+*Read-Only and Mutable Views*). The compact value-layer views are
+read-only; whole-value replacement happens through ``Value``.
 
 View Casting
 ------------
@@ -130,11 +133,16 @@ do not change the underlying schema or copy the payload. Cross-schema
 adaptation — exposing one schema's value through a different schema —
 is a time-series concern, not a value-layer concern.
 
+Status: the read-only cast family is implemented for tuple, bundle,
+list, set, map, cyclic buffer, and queue views. Mutable-view casts land
+with the slot-store-backed time-series views.
+
 Read-Only and Mutable Views
 ---------------------------
 
-Views come in read-only and mutable variants. The distinction is part
-of the public contract, not just C++ ``const`` discipline:
+Views conceptually come in read-only and mutable variants. The
+distinction is part of the public contract, not just C++ ``const``
+discipline:
 
 - A **read-only view** exposes inspection and iteration: typed
   access, ``hash``, ``equals``, ``compare``, ``to_string``, buffer
@@ -144,11 +152,13 @@ of the public contract, not just C++ ``const`` discipline:
   ``push_back`` / ``resize`` on lists, ``add`` / ``remove`` on sets,
   key insertion and value updates on maps, and so on.
 
-A mutable view is obtained from an existing view by calling
-``begin_mutation()``. The transition is explicit so that consumers can
-reason about when mutation is in scope — the time-series layer in
-particular needs to know precisely when changes start and end so its
-delta accounting stays coherent.
+The current compact value-layer implementation exposes the read-only
+variants. A mutable view is obtained from an existing view by calling
+``begin_mutation()`` once the slot-store-backed time-series variants
+land. The transition is explicit so that consumers can reason about
+when mutation is in scope — the time-series layer in particular needs
+to know precisely when changes start and end so its delta accounting
+stays coherent.
 
 The mutation is closed by calling ``end_mutation()`` on the mutable
 view. If the caller does not call it, the mutable view's destructor
@@ -258,6 +268,10 @@ Each mutable counterpart is obtained from its read-only view via
 read surface stays available throughout the mutation scope. The
 methods listed are *additions* — read-only methods on the base view
 remain accessible through the mutable view.
+
+Status: these mutable counterparts are design/API targets for the
+time-series layer and are not implemented by the compact value-layer
+storage.
 
 ``MutableTupleView``
     Adds ``set(index, value)``.
