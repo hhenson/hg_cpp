@@ -98,9 +98,11 @@ A view exposes:
 - typed access: ``as<T>()``, ``try_as<T>()``, ``checked_as<T>()`` for
   atomic kinds;
 - generic ops: ``hash()``, ``equals()``, ``compare()``, ``to_string()``
-  — routed through the binding; compact containers use their bound ops
-  table, while structured tuple/bundle/fixed-list views recurse through
-  child views;
+  — routed through the binding; ``compare()`` returns
+  ``std::partial_ordering`` as the common erased representation of
+  ``operator<=>`` results. Compact containers use their bound ops table,
+  while structured tuple/bundle/fixed-list views recurse through child
+  views;
 - read access for composite kinds via specialised adapters described
   below.
 

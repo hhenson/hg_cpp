@@ -26,8 +26,9 @@ Plan factory      ``ValuePlanFactory`` — schema → plan mapping and
                   ``MemoryUtils::plan_for<T>()`` and ``ops_for<T>()``;
                   composite and container plans/bindings are
                   synthesised on first use.
-Ops               ``ValueOps`` — ``hash``, ``equals``, ``compare``,
-                  ``to_string`` function pointers
+Ops               ``ValueOps`` — ``hash``, ``equals``, ``compare``
+                  returning ``std::partial_ordering``, ``to_string``
+                  function pointers
 Binding           ``ValueTypeBinding`` — interned ``(ValueTypeMetaData,
                   StoragePlan, ValueOps)`` triple; the canonical handle the
                   rest of the layer shares
@@ -101,8 +102,10 @@ Owning Value
 - ``has_value()`` / ``reset()`` — manage top-level payload presence.
 - ``view()`` — produces a ``ValueView`` over the live payload.
 - ``hash()`` / ``equals()`` / ``compare()`` / ``to_string()`` — route
-  through ``view()`` and the bound ``ValueOps``. ``Value`` itself only
-  carries the minimum behaviour needed to live in a container.
+  through ``view()`` and the bound ``ValueOps``. ``compare()`` returns
+  ``std::partial_ordering`` to match the type-erased ``<=>``-style
+  contract. ``Value`` itself only carries the minimum behaviour needed
+  to live in a container.
 
 Anything richer than container-membership operations is exposed through
 ``ValueView`` or one of its specialized adapters (see *Erased Types*),
@@ -198,12 +201,19 @@ The compact storage shapes are:
     instead.
 
 ``SetStorage``
-    Content-keyed hash set populated once at construction. Hashing
-    and equality come from the bound element ops.
+    Content-keyed hash set populated once at construction. Elements
+    live in a contiguous buffer and lookup uses an
+    ``ankerl::unordered_dense`` slot index that stores element-slot
+    ids, not copied keys. Hashing and equality come from the bound
+    element ops. Direct construction rejects duplicate keys; the
+    builder deduplicates before storage is built.
 
 ``MapStorage``
-    Content-keyed hash map populated once at construction. Same
-    hash / equals contract as ``SetStorage``.
+    Content-keyed hash map populated once at construction. Keys and
+    values live in parallel contiguous buffers and lookup uses the
+    same ``ankerl::unordered_dense`` slot-index pattern over the key
+    buffer. Direct construction rejects duplicate keys; the builder
+    overwrites the value for an existing key before storage is built.
 
 ``CyclicBufferStorage``
     Sized contiguous buffer with a logical *head* offset that
