@@ -643,7 +643,10 @@ namespace hgraph
 
             /** Copy construction allocates fresh storage and copy-constructs the payload. */
             StorageHandle(const StorageHandle &other) {
-                if (!other.has_value()) { return; }
+                if (!other.has_value()) {
+                    m_identity = other.m_identity;
+                    return;
+                }
 
                 if constexpr (std::is_void_v<Binding>) {
                     construct_owned_copy(*other.plan(), other.data(), *other.allocator());
@@ -665,6 +668,8 @@ namespace hgraph
                         } else {
                             construct_owned_copy(*other.binding(), other.data(), *other.allocator());
                         }
+                    } else {
+                        m_identity = other.m_identity;
                     }
                 }
                 return *this;
@@ -695,6 +700,24 @@ namespace hgraph
                 requires(!std::is_void_v<B>)
             [[nodiscard]] static StorageHandle owning(const B &binding, const AllocatorOps &allocator = MemoryUtils::allocator()) {
                 return StorageHandle(binding, allocator);
+            }
+
+            /** Factory: create an empty handle that still retains a bound plan. */
+            [[nodiscard]] static StorageHandle empty(const StoragePlan &plan)
+                requires std::is_void_v<Binding>
+            {
+                StorageHandle handle;
+                handle.m_identity = &plan;
+                return handle;
+            }
+
+            /** Factory: create an empty handle that still retains a bound binding. */
+            template <typename B = Binding>
+                requires(!std::is_void_v<B>)
+            [[nodiscard]] static StorageHandle empty(const B &binding) {
+                StorageHandle handle;
+                handle.m_identity = &binding;
+                return handle;
             }
 
             /** Factory: copy-construct an owning handle from ``src`` using ``plan``. */
@@ -747,7 +770,7 @@ namespace hgraph
             [[nodiscard]] bool               stores_inline() const noexcept { return storage_state() == State::OwningInline; }
             /** True when the owned payload is held on the heap. */
             [[nodiscard]] bool               stores_heap() const noexcept { return storage_state() == State::OwningHeap; }
-            /** Bound storage plan, or ``nullptr`` if the handle is empty. */
+            /** Bound storage plan, or ``nullptr`` if the handle has no retained identity. */
             [[nodiscard]] const StoragePlan *plan() const noexcept {
                 if constexpr (std::is_void_v<Binding>) {
                     return m_identity;
@@ -755,7 +778,7 @@ namespace hgraph
                     return m_identity != nullptr ? m_identity->plan() : nullptr;
                 }
             }
-            /** Bound binding (when ``Binding`` is not ``void``); ``nullptr`` if empty. */
+            /** Bound binding (when ``Binding`` is not ``void``); ``nullptr`` if no identity is retained. */
             [[nodiscard]] const Binding *binding() const noexcept
                 requires(!std::is_void_v<Binding>)
             {
@@ -790,9 +813,17 @@ namespace hgraph
             /** Const overload of ``as``. */
             template <typename T> [[nodiscard]] const T *as() const noexcept { return MemoryUtils::cast<T>(data()); }
 
-            /** Make a copy of this handle, copy-constructing a fresh payload. Empty handles clone to empty. */
+            /**
+             * Make a copy of this handle, copy-constructing a fresh
+             * payload. Empty-but-bound handles clone to the same retained
+             * identity without constructing a payload.
+             */
             [[nodiscard]] StorageHandle clone() const {
-                if (!has_value()) { return StorageHandle{}; }
+                if (!has_value()) {
+                    StorageHandle handle;
+                    handle.m_identity = m_identity;
+                    return handle;
+                }
 
                 if constexpr (std::is_void_v<Binding>) {
                     return owning_copy(*plan(), data(), *allocator());
@@ -831,7 +862,18 @@ namespace hgraph
              * leaving the handle empty. Borrowed handles release the borrow
              * without touching the underlying memory.
              */
-            void reset() noexcept {
+            void reset() noexcept { reset_impl(false); }
+
+            /**
+             * Destroy and release the held payload while preserving the
+             * bound plan / binding identity. This is the storage-handle
+             * primitive for typed-null values.
+             */
+            void reset_payload() noexcept { reset_impl(true); }
+
+          private:
+            void reset_impl(bool preserve_identity) noexcept {
+                auto       *identity_before = m_identity;
                 const State state        = storage_state();
                 const auto *storage_plan = plan();
                 if (state == State::OwningInline || state == State::OwningHeap) {
@@ -844,11 +886,10 @@ namespace hgraph
                     m_storage.ptr = nullptr;
                 }
 
-                m_identity = nullptr;
+                m_identity = preserve_identity ? identity_before : nullptr;
                 m_allocator_state.clear();
             }
 
-          private:
             enum class State : uint8_t {
                 Empty,
                 OwningInline,
