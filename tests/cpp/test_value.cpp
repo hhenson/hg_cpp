@@ -160,7 +160,12 @@ TEST_CASE("Value: equality and ordering through bound ValueOps")
 
     Value null_int{*int_meta};
     Value null_int_2{*int_meta};
+    const auto *double_meta = registry.value_type("double");
+    Value null_double{*double_meta};
+    REQUIRE(null_int.equals(null_int_2));
+    REQUIRE_FALSE(null_int.equals(null_double));
     REQUIRE(std::is_eq(null_int.compare(null_int_2)));
+    REQUIRE(null_int.compare(null_double) == std::partial_ordering::unordered);
     REQUIRE(std::is_lt(null_int.compare(a)));
     REQUIRE(std::is_gt(a.compare(null_int)));
 }

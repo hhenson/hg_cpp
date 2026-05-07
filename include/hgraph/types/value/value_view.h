@@ -159,19 +159,9 @@ namespace hgraph
                 return 0;
             }
         }
-        [[nodiscard]] bool equals(const ValueView &other) const noexcept
-        {
-            if (!valid() || !other.valid()) { return false; }
-            if (binding_ != other.binding_) { return false; }
-            return binding_->checked_ops().equals(data_, other.data_);
-        }
-        [[nodiscard]] std::partial_ordering compare(const ValueView &other) const noexcept
-        {
-            if (const auto order = value_ops_detail::null_order(binding_, other.binding_)) { return *order; }
-            if (binding_ != other.binding_) { return std::partial_ordering::unordered; }
-            if (const auto order = value_ops_detail::null_order(data_, other.data_)) { return *order; }
-            return binding_->checked_ops().compare(data_, other.data_);
-        }
+        [[nodiscard]] bool equals(const ValueView &other) const noexcept;
+        [[nodiscard]] std::partial_ordering compare(const ValueView &other) const noexcept;
+
         [[nodiscard]] std::string to_string() const
         {
             if (!valid()) { return std::string{}; }

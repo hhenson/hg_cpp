@@ -292,10 +292,10 @@ namespace hgraph
             if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
             if (a_binding != b_binding) { return std::partial_ordering::unordered; }
 
-            // Sets are unordered; compare is not meaningful. Return an
-            // equivalent category for any pair so containers can still
-            // produce a stable (degenerate) ordering for sorting purposes.
-            return std::partial_ordering::equivalent;
+            if (a->size() < b->size()) { return std::partial_ordering::less; }
+            if (a->size() > b->size()) { return std::partial_ordering::greater; }
+            return set_equals(nullptr, lhs, rhs) ? std::partial_ordering::equivalent
+                                                 : std::partial_ordering::unordered;
         }
 
         inline std::string set_to_string(const void *, const void *memory)
@@ -363,7 +363,8 @@ namespace hgraph
             if (const auto order = value_ops_detail::null_order(a_value_binding, b_value_binding)) { return *order; }
             if (a_value_binding != b_value_binding) { return std::partial_ordering::unordered; }
 
-            return std::partial_ordering::equivalent;
+            return map_equals(nullptr, lhs, rhs) ? std::partial_ordering::equivalent
+                                                 : std::partial_ordering::unordered;
         }
 
         inline std::string map_to_string(const void *, const void *memory)
@@ -558,7 +559,7 @@ namespace hgraph
         inline std::size_t map_key_adapter_hash(const void *, const void *memory) noexcept
         {
             const auto *storage = static_cast<const MapStorage *>(memory);
-            if (storage->key_binding() == nullptr) { return 0; }
+            if (storage == nullptr || storage->key_binding() == nullptr) { return 0; }
             const auto &ops = storage->key_binding()->checked_ops();
             std::size_t result = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
@@ -571,6 +572,7 @@ namespace hgraph
         {
             const auto *a = static_cast<const MapStorage *>(lhs);
             const auto *b = static_cast<const MapStorage *>(rhs);
+            if (a == nullptr || b == nullptr) { return a == b; }
             if (a->size() != b->size()) { return false; }
             for (std::size_t i = 0; i < a->size(); ++i)
             {
@@ -589,7 +591,10 @@ namespace hgraph
             if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
             if (a_binding != b_binding) { return std::partial_ordering::unordered; }
 
-            return std::partial_ordering::equivalent;
+            if (a->size() < b->size()) { return std::partial_ordering::less; }
+            if (a->size() > b->size()) { return std::partial_ordering::greater; }
+            return map_key_adapter_equals(nullptr, lhs, rhs) ? std::partial_ordering::equivalent
+                                                             : std::partial_ordering::unordered;
         }
         inline std::string map_key_adapter_to_string(const void *, const void *memory)
         {

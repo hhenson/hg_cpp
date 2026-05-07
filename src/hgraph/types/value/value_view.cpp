@@ -1,0 +1,222 @@
+#include <hgraph/types/value/specialized_views.h>
+
+#include <algorithm>
+#include <compare>
+#include <cstddef>
+
+namespace hgraph
+{
+    namespace
+    {
+        [[nodiscard]] const ValueTypeMetaData *structural_schema(const ValueTypeMetaData *schema) noexcept
+        {
+            if (schema != nullptr && schema->kind == ValueTypeKind::Bundle && schema->wrapped_un_named != nullptr)
+            {
+                return schema->wrapped_un_named;
+            }
+            return schema;
+        }
+
+        [[nodiscard]] bool value_schema_equivalent(const ValueTypeMetaData *lhs,
+                                                   const ValueTypeMetaData *rhs) noexcept
+        {
+            lhs = structural_schema(lhs);
+            rhs = structural_schema(rhs);
+            if (lhs == rhs) { return true; }
+            if (lhs == nullptr || rhs == nullptr || lhs->kind != rhs->kind) { return false; }
+
+            switch (lhs->kind)
+            {
+                case ValueTypeKind::Atomic:
+                    return false;
+
+                case ValueTypeKind::Tuple:
+                case ValueTypeKind::Bundle:
+                    if (lhs->field_count != rhs->field_count) { return false; }
+                    for (std::size_t index = 0; index < lhs->field_count; ++index)
+                    {
+                        if (!value_schema_equivalent(lhs->fields[index].type, rhs->fields[index].type))
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
+
+                case ValueTypeKind::List:
+                case ValueTypeKind::Set:
+                case ValueTypeKind::CyclicBuffer:
+                case ValueTypeKind::Queue:
+                    return value_schema_equivalent(lhs->element_type, rhs->element_type);
+
+                case ValueTypeKind::Map:
+                    return value_schema_equivalent(lhs->key_type, rhs->key_type) &&
+                           value_schema_equivalent(lhs->element_type, rhs->element_type);
+            }
+
+            return false;
+        }
+
+        [[nodiscard]] bool ordered_indexed_kind(ValueTypeKind kind) noexcept
+        {
+            return kind == ValueTypeKind::Tuple || kind == ValueTypeKind::Bundle ||
+                   kind == ValueTypeKind::List || kind == ValueTypeKind::CyclicBuffer ||
+                   kind == ValueTypeKind::Queue;
+        }
+
+        [[nodiscard]] bool semantic_indexed_equals(ValueView lhs, ValueView rhs)
+        {
+            const IndexedValueView a{lhs};
+            const IndexedValueView b{rhs};
+            const auto             size = a.size();
+            if (size != b.size()) { return false; }
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                if (!a.at(index).equals(b.at(index))) { return false; }
+            }
+            return true;
+        }
+
+        [[nodiscard]] std::partial_ordering semantic_indexed_compare(ValueView lhs, ValueView rhs)
+        {
+            const IndexedValueView a{lhs};
+            const IndexedValueView b{rhs};
+            const auto             size = std::min(a.size(), b.size());
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                const auto child_order = a.at(index).compare(b.at(index));
+                if (child_order != 0) { return child_order; }
+            }
+            if (a.size() < b.size()) { return std::partial_ordering::less; }
+            if (a.size() > b.size()) { return std::partial_ordering::greater; }
+            return std::partial_ordering::equivalent;
+        }
+
+        [[nodiscard]] const ValueTypeBinding *first_indexed_element_binding(ValueView view)
+        {
+            const IndexedValueView indexed{view};
+            return indexed.size() == 0 ? nullptr : indexed.at(0).binding();
+        }
+
+        [[nodiscard]] bool semantic_set_equals(ValueView lhs, ValueView rhs)
+        {
+            const SetView a{lhs};
+            const SetView b{rhs};
+            if (a.size() != b.size()) { return false; }
+            if (a.size() == 0) { return true; }
+            if (first_indexed_element_binding(lhs) != first_indexed_element_binding(rhs)) { return false; }
+
+            for (const auto key : a)
+            {
+                if (!b.contains(key)) { return false; }
+            }
+            return true;
+        }
+
+        [[nodiscard]] std::partial_ordering semantic_set_compare(ValueView lhs, ValueView rhs)
+        {
+            const SetView a{lhs};
+            const SetView b{rhs};
+            if (a.size() < b.size()) { return std::partial_ordering::less; }
+            if (a.size() > b.size()) { return std::partial_ordering::greater; }
+            return semantic_set_equals(lhs, rhs) ? std::partial_ordering::equivalent
+                                                 : std::partial_ordering::unordered;
+        }
+
+        [[nodiscard]] bool semantic_map_equals(ValueView lhs, ValueView rhs)
+        {
+            const MapView a{lhs};
+            const MapView b{rhs};
+            if (a.size() != b.size()) { return false; }
+            if (a.size() == 0) { return true; }
+            if (first_indexed_element_binding(lhs) != first_indexed_element_binding(rhs)) { return false; }
+
+            for (const auto entry : a)
+            {
+                const auto &key   = entry.first;
+                const auto &value = entry.second;
+                if (!b.contains(key)) { return false; }
+                if (!value.equals(b.at(key))) { return false; }
+            }
+            return true;
+        }
+
+        [[nodiscard]] bool semantic_equals(ValueView lhs, ValueView rhs)
+        {
+            const auto *schema = structural_schema(lhs.schema());
+            if (schema == nullptr) { return false; }
+
+            if (ordered_indexed_kind(schema->kind)) { return semantic_indexed_equals(lhs, rhs); }
+            if (schema->kind == ValueTypeKind::Set) { return semantic_set_equals(lhs, rhs); }
+            if (schema->kind == ValueTypeKind::Map) { return semantic_map_equals(lhs, rhs); }
+            return false;
+        }
+
+        [[nodiscard]] std::partial_ordering semantic_compare(ValueView lhs, ValueView rhs)
+        {
+            const auto *schema = structural_schema(lhs.schema());
+            if (schema == nullptr) { return std::partial_ordering::unordered; }
+
+            if (ordered_indexed_kind(schema->kind)) { return semantic_indexed_compare(lhs, rhs); }
+
+            if (schema->kind == ValueTypeKind::Set) { return semantic_set_compare(lhs, rhs); }
+
+            if (schema->kind == ValueTypeKind::Map)
+            {
+                return semantic_equals(lhs, rhs) ? std::partial_ordering::equivalent
+                                                 : std::partial_ordering::unordered;
+            }
+
+            return std::partial_ordering::unordered;
+        }
+    }  // namespace
+
+    bool ValueView::equals(const ValueView &other) const noexcept
+    {
+        if (binding_ == nullptr || other.binding_ == nullptr)
+        {
+            return binding_ == nullptr && other.binding_ == nullptr && data_ == other.data_;
+        }
+        if (data_ == nullptr || other.data_ == nullptr)
+        {
+            if (data_ != other.data_) { return false; }
+            return binding_ == other.binding_ || value_schema_equivalent(schema(), other.schema());
+        }
+
+        try
+        {
+            if (binding_ == other.binding_) { return binding_->checked_ops().equals(data_, other.data_); }
+            if (!value_schema_equivalent(schema(), other.schema())) { return false; }
+            return semantic_equals(*this, other);
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    std::partial_ordering ValueView::compare(const ValueView &other) const noexcept
+    {
+        if (const auto order = value_ops_detail::null_order(binding_, other.binding_)) { return *order; }
+        if (data_ == nullptr || other.data_ == nullptr)
+        {
+            if (data_ != other.data_) { return data_ == nullptr ? std::partial_ordering::less
+                                                                : std::partial_ordering::greater; }
+            if (binding_ == other.binding_ || value_schema_equivalent(schema(), other.schema()))
+            {
+                return std::partial_ordering::equivalent;
+            }
+            return std::partial_ordering::unordered;
+        }
+
+        try
+        {
+            if (binding_ == other.binding_) { return binding_->checked_ops().compare(data_, other.data_); }
+            if (!value_schema_equivalent(schema(), other.schema())) { return std::partial_ordering::unordered; }
+            return semantic_compare(*this, other);
+        }
+        catch (...)
+        {
+            return std::partial_ordering::unordered;
+        }
+    }
+}  // namespace hgraph

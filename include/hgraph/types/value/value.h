@@ -118,11 +118,11 @@ namespace hgraph
         // -- view access --
         [[nodiscard]] ValueView view()
         {
-            return has_value() ? ValueView{binding(), storage_.data()} : ValueView{};
+            return ValueView{binding(), has_value() ? storage_.data() : nullptr};
         }
         [[nodiscard]] ValueView view() const
         {
-            return has_value() ? ValueView{binding(), const_cast<void *>(storage_.data())} : ValueView{};
+            return ValueView{binding(), has_value() ? const_cast<void *>(storage_.data()) : nullptr};
         }
 
         // -- atomic access shortcuts --
@@ -173,13 +173,6 @@ namespace hgraph
         }
         [[nodiscard]] std::partial_ordering compare(const Value &other) const noexcept
         {
-            const auto *lhs_binding = binding();
-            const auto *rhs_binding = other.binding();
-            if (const auto order = value_ops_detail::null_order(lhs_binding, rhs_binding)) { return *order; }
-            if (lhs_binding != rhs_binding) { return std::partial_ordering::unordered; }
-            if (!has_value() && !other.has_value()) { return std::partial_ordering::equivalent; }
-            if (!has_value()) { return std::partial_ordering::less; }
-            if (!other.has_value()) { return std::partial_ordering::greater; }
             return view().compare(other.view());
         }
         [[nodiscard]] std::string to_string() const { return view().to_string(); }

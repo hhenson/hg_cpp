@@ -22,6 +22,8 @@
 #include <compare>
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace
 {
@@ -207,6 +209,19 @@ TEST_CASE("SetView: contains, size, iteration; ops are order-independent")
     const ValueOps &ops = compact_set_ops();
     REQUIRE(ops.hash(&storage_a) == ops.hash(&storage_b));
     REQUIRE(ops.equals(&storage_a, &storage_b));
+    REQUIRE(std::is_eq(ops.compare(&storage_a, &storage_b)));
+
+    SetBuilder c{*element_binding};
+    c.insert<int>(7); c.insert<int>(11); c.insert<int>(17);
+    auto storage_c = c.build_storage();
+    REQUIRE_FALSE(ops.equals(&storage_a, &storage_c));
+    REQUIRE(ops.compare(&storage_a, &storage_c) == std::partial_ordering::unordered);
+
+    SetBuilder small{*element_binding};
+    small.insert<int>(7); small.insert<int>(11);
+    auto storage_small = small.build_storage();
+    REQUIRE(std::is_lt(ops.compare(&storage_small, &storage_a)));
+    REQUIRE(std::is_gt(ops.compare(&storage_a, &storage_small)));
 }
 
 TEST_CASE("MapView: contains, at, iteration; ops are order-independent over keys")
@@ -275,6 +290,15 @@ TEST_CASE("MapView: contains, at, iteration; ops are order-independent over keys
     const ValueOps &ops = compact_map_ops();
     REQUIRE(ops.hash(&storage_a) == ops.hash(&storage_b));
     REQUIRE(ops.equals(&storage_a, &storage_b));
+    REQUIRE(std::is_eq(ops.compare(&storage_a, &storage_b)));
+
+    MapBuilder c{*key_binding, *value_binding};
+    c.set_item<std::string, int>(std::string{"gamma"}, 30);
+    c.set_item<std::string, int>(std::string{"alpha"}, 1);
+    c.set_item<std::string, int>(std::string{"beta"}, 2);
+    auto storage_c = c.build_storage();
+    REQUIRE_FALSE(ops.equals(&storage_a, &storage_c));
+    REQUIRE(ops.compare(&storage_a, &storage_c) == std::partial_ordering::unordered);
 }
 
 TEST_CASE("compact bindings: same inputs return the same canonical binding pointer")
@@ -332,6 +356,15 @@ TEST_CASE("MapView::key_set: returns a SetView wrapping the map's keys")
     int count = 0;
     for (const auto member : keys) { (void)member; ++count; }
     REQUIRE(count == 3);
+
+    MapBuilder smaller{*key_binding, *value_binding};
+    smaller.set_item<std::string, int>(std::string{"a"}, 1);
+    smaller.set_item<std::string, int>(std::string{"b"}, 2);
+    auto smaller_storage = smaller.build_storage();
+    SetView smaller_keys = MapView{ValueView{&binding, &smaller_storage}}.key_set();
+
+    REQUIRE(std::is_lt(smaller_keys.compare(keys)));
+    REQUIRE(std::is_gt(keys.compare(smaller_keys)));
 }
 
 TEST_CASE("Value and ValueView expose direct specialized casts for compact containers")
@@ -427,4 +460,174 @@ TEST_CASE("TupleView, BundleView and fixed ListView read structured MemoryUtils 
     for (const auto element : fixed_list) { sum += element.checked_as<int>(); }
     REQUIRE(sum == 6);
     REQUIRE(fixed_list_value.to_string() == "[1, 2, 3]");
+}
+
+TEST_CASE("ValueView semantic fallback compares fixed and compact lists by index")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = ValuePlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_binding = registry.scalar_binding<int>();
+
+    const auto *fixed_list_meta = registry.list(int_meta, 3);
+    const auto *fixed_list_binding = factory.binding_for(fixed_list_meta);
+    REQUIRE(fixed_list_binding != nullptr);
+
+    Value fixed{*fixed_list_binding};
+    fixed.as_list().at(0).checked_as<int>() = 1;
+    fixed.as_list().at(1).checked_as<int>() = 2;
+    fixed.as_list().at(2).checked_as<int>() = 3;
+
+    ListBuilder same_builder{*int_binding};
+    same_builder.push_back<int>(1);
+    same_builder.push_back<int>(2);
+    same_builder.push_back<int>(3);
+    Value same = same_builder.build();
+
+    ListBuilder different_builder{*int_binding};
+    different_builder.push_back<int>(1);
+    different_builder.push_back<int>(2);
+    different_builder.push_back<int>(4);
+    Value different = different_builder.build();
+
+    REQUIRE(fixed.binding() != same.binding());
+    REQUIRE(fixed.view().equals(same.view()));
+    REQUIRE(std::is_eq(fixed.view().compare(same.view())));
+    REQUIRE_FALSE(fixed.view().equals(different.view()));
+    REQUIRE(std::is_lt(fixed.view().compare(different.view())));
+}
+
+TEST_CASE("ValueView semantic fallback compares named and structural bundles by index")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = ValuePlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *str_meta = registry.register_scalar<std::string>("string");
+
+    const auto fields = std::vector<std::pair<std::string, const ValueTypeMetaData *>>{
+        {"count", int_meta},
+        {"name", str_meta},
+    };
+    const auto *structural_meta = registry.un_named_bundle(fields);
+    const auto *named_meta      = registry.bundle("SemanticFallbackBundle", fields);
+    const auto *structural_binding = factory.binding_for(structural_meta);
+    const auto *named_binding      = factory.binding_for(named_meta);
+    REQUIRE(structural_binding != nullptr);
+    REQUIRE(named_binding != nullptr);
+
+    Value structural{*structural_binding};
+    structural.as_bundle().at("count").checked_as<int>() = 7;
+    structural.as_bundle().at("name").checked_as<std::string>() = "seven";
+
+    Value named{*named_binding};
+    named.as_bundle().at("count").checked_as<int>() = 7;
+    named.as_bundle().at("name").checked_as<std::string>() = "seven";
+
+    REQUIRE(structural.binding() != named.binding());
+    REQUIRE(structural.view().equals(named.view()));
+    REQUIRE(std::is_eq(structural.view().compare(named.view())));
+
+    named.as_bundle().at("count").checked_as<int>() = 8;
+    REQUIRE_FALSE(structural.view().equals(named.view()));
+    REQUIRE(std::is_lt(structural.view().compare(named.view())));
+}
+
+TEST_CASE("ValueView semantic fallback compares set-compatible lookup surfaces")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<std::string>("string");
+    (void)registry.register_scalar<int>("int");
+    const auto *key_binding   = registry.scalar_binding<std::string>();
+    const auto *value_binding = registry.scalar_binding<int>();
+
+    MapBuilder map_builder{*key_binding, *value_binding};
+    map_builder.set_item<std::string, int>(std::string{"a"}, 1);
+    map_builder.set_item<std::string, int>(std::string{"b"}, 2);
+    Value map_value = map_builder.build();
+    SetView keys = map_value.as_map().key_set();
+
+    SetBuilder set_builder{*key_binding};
+    set_builder.insert<std::string>(std::string{"b"});
+    set_builder.insert<std::string>(std::string{"a"});
+    Value set_value = set_builder.build();
+
+    SetBuilder different_builder{*key_binding};
+    different_builder.insert<std::string>(std::string{"a"});
+    different_builder.insert<std::string>(std::string{"c"});
+    Value different = different_builder.build();
+
+    REQUIRE(keys.binding() != set_value.binding());
+    REQUIRE(keys.equals(set_value.view()));
+    REQUIRE(std::is_eq(keys.compare(set_value.view())));
+    REQUIRE_FALSE(keys.equals(different.view()));
+    REQUIRE(keys.compare(different.view()) == std::partial_ordering::unordered);
+
+    SetBuilder smaller_builder{*key_binding};
+    smaller_builder.insert<std::string>(std::string{"a"});
+    Value smaller = smaller_builder.build();
+    REQUIRE(std::is_lt(smaller.view().compare(keys)));
+    REQUIRE(std::is_gt(keys.compare(smaller.view())));
+}
+
+TEST_CASE("ValueView semantic fallback compares maps with equivalent value layouts")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = ValuePlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::string>("string");
+    const auto *key_binding = registry.scalar_binding<std::string>();
+    const auto *int_binding = registry.scalar_binding<int>();
+
+    const auto *fixed_list_meta    = registry.list(int_meta, 3);
+    const auto *fixed_list_binding = factory.binding_for(fixed_list_meta);
+    REQUIRE(fixed_list_binding != nullptr);
+
+    auto make_fixed_list = [&](int a, int b, int c) {
+        Value value{*fixed_list_binding};
+        value.as_list().at(0).checked_as<int>() = a;
+        value.as_list().at(1).checked_as<int>() = b;
+        value.as_list().at(2).checked_as<int>() = c;
+        return value;
+    };
+
+    auto make_compact_list = [&](int a, int b, int c) {
+        ListBuilder builder{*int_binding};
+        builder.push_back<int>(a);
+        builder.push_back<int>(b);
+        builder.push_back<int>(c);
+        return builder.build();
+    };
+
+    const std::string alpha{"alpha"};
+    const std::string beta{"beta"};
+
+    Value fixed_alpha = make_fixed_list(1, 2, 3);
+    Value fixed_beta  = make_fixed_list(4, 5, 6);
+    MapBuilder fixed_map_builder{*key_binding, *fixed_list_binding};
+    fixed_map_builder.set_item_copy(&alpha, fixed_alpha.view().data());
+    fixed_map_builder.set_item_copy(&beta, fixed_beta.view().data());
+    Value fixed_map = fixed_map_builder.build();
+
+    Value compact_alpha = make_compact_list(1, 2, 3);
+    Value compact_beta  = make_compact_list(4, 5, 6);
+    MapBuilder compact_map_builder{*key_binding, *compact_alpha.binding()};
+    compact_map_builder.set_item_copy(&beta, compact_beta.view().data());
+    compact_map_builder.set_item_copy(&alpha, compact_alpha.view().data());
+    Value compact_map = compact_map_builder.build();
+
+    Value different_beta = make_compact_list(4, 5, 7);
+    MapBuilder different_map_builder{*key_binding, *compact_alpha.binding()};
+    different_map_builder.set_item_copy(&alpha, compact_alpha.view().data());
+    different_map_builder.set_item_copy(&beta, different_beta.view().data());
+    Value different_map = different_map_builder.build();
+
+    REQUIRE(fixed_map.binding() != compact_map.binding());
+    REQUIRE(fixed_map.view().equals(compact_map.view()));
+    REQUIRE(std::is_eq(fixed_map.view().compare(compact_map.view())));
+    REQUIRE_FALSE(fixed_map.view().equals(different_map.view()));
+    REQUIRE(fixed_map.view().compare(different_map.view()) == std::partial_ordering::unordered);
 }
