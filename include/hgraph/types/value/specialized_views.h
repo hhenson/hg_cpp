@@ -203,6 +203,8 @@ namespace hgraph
             return ElementRange{ValueView{binding(), const_cast<void *>(data())}, ops_, size()};
         }
 
+        [[nodiscard]] ElementRange values() const { return elements(); }
+
         // Convenience: ``begin()`` / ``end()`` go through ``elements()`` so
         // ``for (auto v : view)`` works directly. Each call to ``begin()``
         // builds a fresh range; callers that want a stable iterator
@@ -233,6 +235,9 @@ namespace hgraph
     class BundleView : public IndexedValueView
     {
       public:
+        using IndexedValueView::at;
+        using IndexedValueView::operator[];
+
         explicit BundleView(ValueView base)
             : IndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Bundle, "BundleView"))
         {
@@ -248,6 +253,17 @@ namespace hgraph
             throw std::out_of_range("BundleView::at: field not found");
         }
 
+        [[nodiscard]] bool has_field(std::string_view name) const noexcept
+        {
+            for (std::size_t index = 0; index < schema()->field_count; ++index)
+            {
+                const char *field_name = schema()->fields[index].name;
+                if (field_name != nullptr && name == field_name) { return true; }
+            }
+            return false;
+        }
+
+        [[nodiscard]] ValueView field(std::string_view name) const { return at(name); }
         [[nodiscard]] ValueView operator[](std::string_view name) const { return at(name); }
     };
 
@@ -260,7 +276,19 @@ namespace hgraph
         {
         }
 
+        [[nodiscard]] bool is_fixed() const noexcept { return schema()->fixed_size != 0; }
+        [[nodiscard]] const ValueTypeMetaData *element_schema() const noexcept { return schema()->element_type; }
         [[nodiscard]] bool empty() const { return size() == 0; }
+        [[nodiscard]] ValueView front() const
+        {
+            if (empty()) { throw std::out_of_range("ListView::front on empty list"); }
+            return at(0);
+        }
+        [[nodiscard]] ValueView back() const
+        {
+            if (empty()) { throw std::out_of_range("ListView::back on empty list"); }
+            return at(size() - 1);
+        }
     };
 
     /** Read-only view over a CyclicBuffer. Adds head / empty. */
@@ -280,8 +308,19 @@ namespace hgraph
         }
 
         [[nodiscard]] std::size_t capacity() const noexcept { return schema()->fixed_size; }
+        [[nodiscard]] const ValueTypeMetaData *element_schema() const noexcept { return schema()->element_type; }
         [[nodiscard]] bool empty() const { return size() == 0; }
         [[nodiscard]] bool full() const { return capacity() != 0 && size() == capacity(); }
+        [[nodiscard]] ValueView front() const
+        {
+            if (empty()) { throw std::out_of_range("CyclicBufferView::front on empty buffer"); }
+            return at(0);
+        }
+        [[nodiscard]] ValueView back() const
+        {
+            if (empty()) { throw std::out_of_range("CyclicBufferView::back on empty buffer"); }
+            return at(size() - 1);
+        }
 
       private:
         const CyclicBufferValueOps *cyclic_buffer_ops_{nullptr};
@@ -299,13 +338,21 @@ namespace hgraph
 
         [[nodiscard]] ValueView front() const
         {
+            if (empty()) { throw std::out_of_range("QueueView::front on empty queue"); }
             return ValueView{queue_ops_->element_binding(queue_ops_->context, data(), 0),
                              const_cast<void *>(queue_ops_->front(data()))};
         }
 
         [[nodiscard]] std::size_t max_capacity() const noexcept { return schema()->fixed_size; }
+        [[nodiscard]] bool has_max_capacity() const noexcept { return max_capacity() != 0; }
+        [[nodiscard]] const ValueTypeMetaData *element_schema() const noexcept { return schema()->element_type; }
         [[nodiscard]] bool empty() const { return size() == 0; }
         [[nodiscard]] bool full() const { return max_capacity() != 0 && size() == max_capacity(); }
+        [[nodiscard]] ValueView back() const
+        {
+            if (empty()) { throw std::out_of_range("QueueView::back on empty queue"); }
+            return at(size() - 1);
+        }
 
       private:
         const QueueValueOps *queue_ops_{nullptr};
@@ -331,6 +378,7 @@ namespace hgraph
         }
 
         [[nodiscard]] bool empty() const { return size() == 0; }
+        [[nodiscard]] const ValueTypeMetaData *element_schema() const noexcept { return schema()->element_type; }
 
         [[nodiscard]] bool contains(const ValueView &key) const
         {
@@ -342,6 +390,8 @@ namespace hgraph
         {
             return ops_->make_range(ops_->context, data());
         }
+
+        [[nodiscard]] Range<ValueView> values() const { return elements(); }
 
         [[nodiscard]] auto begin() const { return elements().begin(); }
         [[nodiscard]] auto end() const { return elements().end(); }
@@ -370,6 +420,8 @@ namespace hgraph
         }
 
         [[nodiscard]] bool empty() const { return size() == 0; }
+        [[nodiscard]] const ValueTypeMetaData *key_schema() const noexcept { return schema()->key_type; }
+        [[nodiscard]] const ValueTypeMetaData *value_schema() const noexcept { return schema()->element_type; }
 
         [[nodiscard]] bool contains(const ValueView &key) const
         {
@@ -409,6 +461,8 @@ namespace hgraph
         {
             return ops_->make_kv_range(data());
         }
+
+        [[nodiscard]] KeyValueRange<ValueView, ValueView> items() const { return entries(); }
 
         [[nodiscard]] auto begin() const { return entries().begin(); }
         [[nodiscard]] auto end() const { return entries().end(); }
