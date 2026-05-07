@@ -36,7 +36,9 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = []
+dependencies = [
+    "numpy>=2.0",
+]
 
 [project.optional-dependencies]
 python = [
@@ -71,7 +73,7 @@ Repository = "https://github.com/hhenson/hgraph"
 build.verbose = true
 cmake.source-dir = "."
 minimum-version = "build-system.requires"
-wheel.packages = []
+wheel.packages = ["python/hgraph"]
 
 [tool.scikit-build.cmake.define]
 HGRAPH_BUILD_PYTHON_BINDINGS = "ON"

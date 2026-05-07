@@ -388,6 +388,32 @@ namespace hgraph
             if (memory == nullptr) { throw std::runtime_error("array to_python requires live value memory"); }
             const auto *state = static_cast<const ArrayIndexedContext *>(context);
             const auto &ops   = state->element_binding->checked_ops();
+            if (ops.can_to_python_buffer(*state->element_binding))
+            {
+                struct ArrayBufferOwner
+                {
+                    const void                *memory{nullptr};
+                    const ArrayIndexedContext *state{nullptr};
+                };
+                const ArrayBufferOwner owner{memory, state};
+                const auto element_at = [](const void *owner_memory, std::size_t index) -> const void * {
+                    const auto *owner_state = static_cast<const ArrayBufferOwner *>(owner_memory);
+                    return static_cast<const std::byte *>(owner_state->memory) +
+                           index * owner_state->state->stride;
+                };
+                return ops.to_python_buffer(*state->element_binding,
+                                            ValueArraySource{
+                                                .owner      = &owner,
+                                                .size       = state->size,
+                                                .element_at = element_at,
+                                                .first      = ValueArraySpan{
+                                                    .data   = memory,
+                                                    .size   = state->size,
+                                                    .stride = state->stride,
+                                                },
+                                            });
+            }
+
             nb::list result;
             for (std::size_t index = 0; index < state->size; ++index)
             {

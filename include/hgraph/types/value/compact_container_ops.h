@@ -128,6 +128,31 @@ namespace hgraph
         }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline const void *list_value_array_element_at(const void *owner, std::size_t index)
+        {
+            return static_cast<const ListStorage *>(owner)->element_at(index);
+        }
+
+        inline nb::object sequence_to_python_buffer(const ValueTypeBinding &element_binding,
+                                                    ValueArraySource        source)
+        {
+            const auto &ops = element_binding.checked_ops();
+            return ops.can_to_python_buffer(element_binding)
+                       ? ops.to_python_buffer(element_binding, source)
+                       : nb::object{};
+        }
+
+        [[nodiscard]] inline ValueArraySpan compact_sequence_span(const ValueTypeBinding &element_binding,
+                                                                  const void             *data,
+                                                                  std::size_t             size)
+        {
+            return ValueArraySpan{
+                .data   = size == 0 ? nullptr : data,
+                .size   = size,
+                .stride = element_binding.checked_plan().layout.size,
+            };
+        }
+
         inline nb::object list_to_python(const void *, const void *memory)
         {
             const auto *storage = static_cast<const ListStorage *>(memory);
@@ -135,6 +160,22 @@ namespace hgraph
             {
                 throw std::runtime_error("List to_python requires live storage with an element binding");
             }
+            if (nb::object buffer = sequence_to_python_buffer(*storage->element_binding(),
+                                                              ValueArraySource{
+                                                                  .owner      = storage,
+                                                                  .size       = storage->size(),
+                                                                  .element_at = &list_value_array_element_at,
+                                                                  .first      = compact_sequence_span(
+                                                                      *storage->element_binding(),
+                                                                      storage->size() == 0 ? nullptr
+                                                                                            : storage->element_at(0),
+                                                                      storage->size()),
+                                                              });
+                buffer.is_valid())
+            {
+                return buffer;
+            }
+
             const auto &ops = storage->element_binding()->checked_ops();
             nb::list result;
             for (std::size_t i = 0; i < storage->size(); ++i)
@@ -211,6 +252,11 @@ namespace hgraph
         }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline const void *cyclic_buffer_value_array_element_at(const void *owner, std::size_t index)
+        {
+            return static_cast<const CyclicBufferStorage *>(owner)->element_at(index);
+        }
+
         inline nb::object cyclic_buffer_to_python(const void *, const void *memory)
         {
             const auto *storage = static_cast<const CyclicBufferStorage *>(memory);
@@ -218,6 +264,33 @@ namespace hgraph
             {
                 throw std::runtime_error("CyclicBuffer to_python requires live storage with an element binding");
             }
+            if (nb::object buffer = sequence_to_python_buffer(*storage->element_binding(),
+                                                              [&]() {
+                                                                  const auto size = storage->size();
+                                                                  const auto head = storage->head();
+                                                                  const auto first_size = size == 0 ? 0 : size - head;
+                                                                  return ValueArraySource{
+                                                                      .owner      = storage,
+                                                                      .size       = size,
+                                                                      .element_at = &cyclic_buffer_value_array_element_at,
+                                                                      .first = compact_sequence_span(
+                                                                          *storage->element_binding(),
+                                                                          first_size == 0 ? nullptr
+                                                                                          : storage->element_at(0),
+                                                                          first_size),
+                                                                      .second = compact_sequence_span(
+                                                                          *storage->element_binding(),
+                                                                          first_size == size
+                                                                              ? nullptr
+                                                                              : storage->element_at(first_size),
+                                                                          size - first_size),
+                                                                  };
+                                                              }());
+                buffer.is_valid())
+            {
+                return buffer;
+            }
+
             const auto &ops = storage->element_binding()->checked_ops();
             nb::list result;
             for (std::size_t i = 0; i < storage->size(); ++i)
@@ -295,6 +368,11 @@ namespace hgraph
         }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
+        inline const void *queue_value_array_element_at(const void *owner, std::size_t index)
+        {
+            return static_cast<const QueueStorage *>(owner)->element_at(index);
+        }
+
         inline nb::object queue_to_python(const void *, const void *memory)
         {
             const auto *storage = static_cast<const QueueStorage *>(memory);
@@ -302,6 +380,22 @@ namespace hgraph
             {
                 throw std::runtime_error("Queue to_python requires live storage with an element binding");
             }
+            if (nb::object buffer = sequence_to_python_buffer(*storage->element_binding(),
+                                                              ValueArraySource{
+                                                                  .owner      = storage,
+                                                                  .size       = storage->size(),
+                                                                  .element_at = &queue_value_array_element_at,
+                                                                  .first      = compact_sequence_span(
+                                                                      *storage->element_binding(),
+                                                                      storage->size() == 0 ? nullptr
+                                                                                            : storage->element_at(0),
+                                                                      storage->size()),
+                                                              });
+                buffer.is_valid())
+            {
+                return buffer;
+            }
+
             const auto &ops = storage->element_binding()->checked_ops();
             nb::list result;
             for (std::size_t i = 0; i < storage->size(); ++i)

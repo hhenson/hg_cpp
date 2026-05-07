@@ -55,12 +55,5 @@ target_link_libraries(hgraph_unit_tests
         Catch2::Catch2WithMain
 )
 
-if(HGRAPH_ENABLE_PYTHON_USER_NODES AND Python_EXECUTABLE)
-    target_compile_definitions(hgraph_unit_tests
-        PRIVATE
-            HGRAPH_TEST_PYTHON_EXECUTABLE="${Python_EXECUTABLE}"
-    )
-endif()
-
 include(Catch)
 catch_discover_tests(hgraph_unit_tests)
