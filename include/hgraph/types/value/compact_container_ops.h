@@ -86,6 +86,7 @@ namespace hgraph
             if (a == nullptr || b == nullptr) { return a == b; }
             if (a->size() != b->size()) { return false; }
             if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
+            if (a->element_binding() != b->element_binding()) { return false; }
             const auto &ops = a->element_binding()->checked_ops();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
@@ -210,6 +211,7 @@ namespace hgraph
             if (a == nullptr || b == nullptr) { return a == b; }
             if (a->size() != b->size()) { return false; }
             if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
+            if (a->element_binding() != b->element_binding()) { return false; }
             const auto &ops = a->element_binding()->checked_ops();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
@@ -326,6 +328,7 @@ namespace hgraph
             if (a == nullptr || b == nullptr) { return a == b; }
             if (a->size() != b->size()) { return false; }
             if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
+            if (a->element_binding() != b->element_binding()) { return false; }
             const auto &ops = a->element_binding()->checked_ops();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
@@ -429,6 +432,8 @@ namespace hgraph
             const auto *b = static_cast<const SetStorage *>(rhs);
             if (a == nullptr || b == nullptr) { return a == b; }
             if (a->size() != b->size()) { return false; }
+            if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
+            if (a->element_binding() != b->element_binding()) { return false; }
             for (std::size_t i = 0; i < a->size(); ++i)
             {
                 if (!b->contains(a->element_at(i))) { return false; }
@@ -510,7 +515,15 @@ namespace hgraph
             const auto *b = static_cast<const MapStorage *>(rhs);
             if (a == nullptr || b == nullptr) { return a == b; }
             if (a->size() != b->size()) { return false; }
-            if (a->value_binding() == nullptr || b->value_binding() == nullptr) { return false; }
+            if (a->key_binding() == nullptr || b->key_binding() == nullptr ||
+                a->value_binding() == nullptr || b->value_binding() == nullptr)
+            {
+                return false;
+            }
+            if (a->key_binding() != b->key_binding() || a->value_binding() != b->value_binding())
+            {
+                return false;
+            }
             const auto &val_ops = a->value_binding()->checked_ops();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
@@ -657,25 +670,45 @@ namespace hgraph
         // ----- Range builders for the compact storage shapes -------
         // For compact (dense) storage every ordinal is a live slot, so
         // the predicate is null (the Range walks every index in
-        // [0, size)). The projector reads the element at the index
-        // and wraps it in a ``ValueView`` using the storage's element
-        // binding.
+        // [0, size)). The projector reads the element from the range
+        // memory pointer and wraps it in a ``ValueView`` using the
+        // storage's element binding.
 
         template <auto SizeFn, auto ElementAtFn, auto ElementBindingFn>
-        ValueView dense_range_projector(const void *context, std::size_t index)
+        ValueView dense_range_projector(const void *, const void *memory, std::size_t index)
         {
-            return ValueView{ElementBindingFn(nullptr, context, index),
-                             const_cast<void *>(ElementAtFn(nullptr, context, index))};
+            return ValueView{ElementBindingFn(nullptr, memory, index),
+                             ElementAtFn(nullptr, memory, index)};
         }
 
         template <auto SizeFn, auto ElementAtFn, auto ElementBindingFn>
-        Range<ValueView> dense_make_range(const void *, const void *memory)
+        ValueView dense_mutable_range_projector(const void *, const void *memory, std::size_t index)
+        {
+            return ValueView{ElementBindingFn(nullptr, memory, index),
+                             const_cast<void *>(ElementAtFn(nullptr, memory, index))};
+        }
+
+        template <auto SizeFn, auto ElementAtFn, auto ElementBindingFn>
+        Range<ValueView> dense_make_range(const void *context, const void *memory)
         {
             return Range<ValueView>{
-                .context   = memory,
+                .context   = context,
+                .memory    = memory,
                 .limit     = SizeFn(nullptr, memory),
                 .predicate = nullptr,
                 .projector = &dense_range_projector<SizeFn, ElementAtFn, ElementBindingFn>,
+            };
+        }
+
+        template <auto SizeFn, auto ElementAtFn, auto ElementBindingFn>
+        Range<ValueView> dense_make_mutable_range(const void *context, void *memory)
+        {
+            return Range<ValueView>{
+                .context   = context,
+                .memory    = memory,
+                .limit     = SizeFn(nullptr, memory),
+                .predicate = nullptr,
+                .projector = &dense_mutable_range_projector<SizeFn, ElementAtFn, ElementBindingFn>,
             };
         }
 
@@ -689,11 +722,12 @@ namespace hgraph
         // ordinal slot. ``KeyAtFn`` resolves the key memory;
         // ``ValueAtIndexFn`` resolves the matching value memory.
         template <auto SizeFn, auto KeyAtFn, auto ValueAtIndexFn, auto KeyBindingFn, auto ValueBindingFn>
-        std::pair<ValueView, ValueView> dense_kv_range_projector(const void *context, std::size_t index)
+        std::pair<ValueView, ValueView> dense_kv_range_projector(const void *, const void *memory,
+                                                                  std::size_t index)
         {
             return std::pair<ValueView, ValueView>{
-                ValueView{KeyBindingFn(nullptr, context, index), const_cast<void *>(KeyAtFn(nullptr, context, index))},
-                ValueView{ValueBindingFn(nullptr, context), const_cast<void *>(ValueAtIndexFn(nullptr, context, index))},
+                ValueView{KeyBindingFn(nullptr, memory, index), KeyAtFn(nullptr, memory, index)},
+                ValueView{ValueBindingFn(nullptr, memory), ValueAtIndexFn(nullptr, memory, index)},
             };
         }
 
@@ -701,7 +735,8 @@ namespace hgraph
         KeyValueRange<ValueView, ValueView> dense_make_kv_range(const void *memory)
         {
             return KeyValueRange<ValueView, ValueView>{
-                .context   = memory,
+                .context   = nullptr,
+                .memory    = memory,
                 .limit     = SizeFn(nullptr, memory),
                 .predicate = nullptr,
                 .projector = &dense_kv_range_projector<SizeFn, KeyAtFn, ValueAtIndexFn, KeyBindingFn, ValueBindingFn>,
@@ -770,6 +805,8 @@ namespace hgraph
             const auto *b = static_cast<const MapStorage *>(rhs);
             if (a == nullptr || b == nullptr) { return a == b; }
             if (a->size() != b->size()) { return false; }
+            if (a->key_binding() == nullptr || b->key_binding() == nullptr) { return false; }
+            if (a->key_binding() != b->key_binding()) { return false; }
             for (std::size_t i = 0; i < a->size(); ++i)
             {
                 if (!b->contains(a->key_at(i))) { return false; }
@@ -859,7 +896,10 @@ namespace hgraph
              &container_ops_detail::list_element_binding,
              &container_ops_detail::dense_make_range<&container_ops_detail::list_size,
                                                       &container_ops_detail::list_element_at,
-                                                      &container_ops_detail::list_element_binding>},
+                                                      &container_ops_detail::list_element_binding>,
+             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::list_size,
+                                                             &container_ops_detail::list_element_at,
+                                                             &container_ops_detail::list_element_binding>},
             // ListValueOps: no additions
         };
         return ops;
@@ -883,8 +923,11 @@ namespace hgraph
              &container_ops_detail::set_element_at,
              &container_ops_detail::set_element_binding,
              &container_ops_detail::dense_make_range<&container_ops_detail::set_size,
-                                                      &container_ops_detail::set_element_at,
-                                                      &container_ops_detail::set_element_binding>},
+                                                     &container_ops_detail::set_element_at,
+                                                     &container_ops_detail::set_element_binding>,
+             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::set_size,
+                                                             &container_ops_detail::set_element_at,
+                                                             &container_ops_detail::set_element_binding>},
             &container_ops_detail::set_contains,
         };
         return ops;
@@ -913,7 +956,10 @@ namespace hgraph
              &container_ops_detail::map_key_binding,
              &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
                                                       &container_ops_detail::map_key_at_index,
-                                                      &container_ops_detail::map_key_binding>},
+                                                      &container_ops_detail::map_key_binding>,
+             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::map_size,
+                                                             &container_ops_detail::map_key_at_index,
+                                                             &container_ops_detail::map_key_binding>},
             &container_ops_detail::map_contains,
             &container_ops_detail::map_value_at,
             &container_ops_detail::map_value_at_index,
@@ -956,7 +1002,10 @@ namespace hgraph
              &container_ops_detail::cyclic_buffer_element_binding,
              &container_ops_detail::dense_make_range<&container_ops_detail::cyclic_buffer_size,
                                                       &container_ops_detail::cyclic_buffer_element_at,
-                                                      &container_ops_detail::cyclic_buffer_element_binding>},
+                                                      &container_ops_detail::cyclic_buffer_element_binding>,
+             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::cyclic_buffer_size,
+                                                             &container_ops_detail::cyclic_buffer_element_at,
+                                                             &container_ops_detail::cyclic_buffer_element_binding>},
             &container_ops_detail::cyclic_buffer_head,
         };
         return ops;
@@ -981,7 +1030,10 @@ namespace hgraph
              &container_ops_detail::queue_element_binding,
              &container_ops_detail::dense_make_range<&container_ops_detail::queue_size,
                                                       &container_ops_detail::queue_element_at,
-                                                      &container_ops_detail::queue_element_binding>},
+                                                      &container_ops_detail::queue_element_binding>,
+             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::queue_size,
+                                                             &container_ops_detail::queue_element_at,
+                                                             &container_ops_detail::queue_element_binding>},
             &container_ops_detail::queue_front,
         };
         return ops;
@@ -1010,7 +1062,10 @@ namespace hgraph
              &container_ops_detail::map_key_binding,
              &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
                                                       &container_ops_detail::map_key_at_index,
-                                                      &container_ops_detail::map_key_binding>},
+                                                      &container_ops_detail::map_key_binding>,
+             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::map_size,
+                                                             &container_ops_detail::map_key_at_index,
+                                                             &container_ops_detail::map_key_binding>},
             &container_ops_detail::map_contains,
         };
         return ops;
@@ -1085,13 +1140,17 @@ namespace hgraph
         // ``(key_binding, value_binding)`` pair and reused on every
         // call.
         const auto *storage = static_cast<const MapStorage *>(memory);
+        if (storage == nullptr)
+        {
+            throw std::logic_error("compact_map_key_set: map storage is null");
+        }
         if (storage->key_binding() == nullptr || storage->value_binding() == nullptr)
         {
             throw std::logic_error("compact_map_key_set: map storage missing key/value binding");
         }
         const ValueTypeBinding &adapter =
             compact_map_key_set_binding(*storage->key_binding(), *storage->value_binding());
-        return SetView{ValueView{&adapter, const_cast<void *>(memory)}};
+        return SetView{ValueView{&adapter, memory}};
     }
 }  // namespace hgraph
 

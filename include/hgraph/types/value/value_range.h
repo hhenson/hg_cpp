@@ -13,7 +13,9 @@ namespace hgraph
      * Carries four function-pointer-friendly fields:
      *
      * - ``context`` — opaque pointer the predicate / projector both
-     *   receive (typically the storage pointer).
+     *   receive (typically ops state).
+     * - ``memory``  — value storage pointer the predicate /
+     *   projector both receive.
      * - ``limit``   — bound of the ordinal index space the range
      *   walks.
      * - ``predicate`` — optional filter; when null the range yields
@@ -21,8 +23,8 @@ namespace hgraph
      *   which the predicate returns ``false`` are skipped (this is
      *   how slot-store-backed layouts skip dead slots, while compact
      *   layouts pass ``nullptr`` and walk every ordinal).
-     * - ``projector`` — given ``(context, index)`` returns the
-     *   yielded ``T`` (typically a ``ValueView`` built from the
+     * - ``projector`` — given ``(context, memory, index)`` returns
+     *   the yielded ``T`` (typically a ``ValueView`` built from the
      *   storage's element memory at that index).
      *
      * The range is allocation-free, copy-cheap, and decoupled from
@@ -33,15 +35,16 @@ namespace hgraph
     template <typename T>
     struct Range
     {
-        using predicate_fn = bool (*)(const void *context, std::size_t index);
-        using projector_fn = T (*)(const void *context, std::size_t index);
+        using predicate_fn = bool (*)(const void *context, const void *memory, std::size_t index);
+        using projector_fn = T (*)(const void *context, const void *memory, std::size_t index);
 
         const void  *context{nullptr};
+        const void  *memory{nullptr};
         std::size_t  limit{0};
         predicate_fn predicate{nullptr};
         projector_fn projector{nullptr};
 
-        // Self-contained iterator: copies the range's four fields so
+        // Self-contained iterator: copies the range's fields so
         // it remains valid even after the range it was built from goes
         // out of scope. This lets a view expose ``begin()``/``end()``
         // directly without forcing callers to materialise the range
@@ -55,12 +58,13 @@ namespace hgraph
             using pointer           = void;
 
             const void  *context{nullptr};
+            const void  *memory{nullptr};
             std::size_t  limit{0};
             predicate_fn predicate{nullptr};
             projector_fn projector{nullptr};
             std::size_t  index{0};
 
-            [[nodiscard]] T operator*() const { return projector(context, index); }
+            [[nodiscard]] T operator*() const { return projector(context, memory, index); }
 
             iterator &operator++() noexcept
             {
@@ -77,26 +81,26 @@ namespace hgraph
 
             [[nodiscard]] bool operator==(const iterator &other) const noexcept
             {
-                return context == other.context && index == other.index;
+                return context == other.context && memory == other.memory && index == other.index;
             }
 
             void advance_to_match() noexcept
             {
                 if (predicate == nullptr) { return; }
-                while (index < limit && !predicate(context, index)) { ++index; }
+                while (index < limit && !predicate(context, memory, index)) { ++index; }
             }
         };
 
         [[nodiscard]] iterator begin() const noexcept
         {
-            iterator it{context, limit, predicate, projector, 0};
+            iterator it{context, memory, limit, predicate, projector, 0};
             it.advance_to_match();
             return it;
         }
 
         [[nodiscard]] iterator end() const noexcept
         {
-            return iterator{context, limit, predicate, projector, limit};
+            return iterator{context, memory, limit, predicate, projector, limit};
         }
     };
 
@@ -108,10 +112,11 @@ namespace hgraph
     struct KeyValueRange
     {
         using value_type   = std::pair<K, V>;
-        using predicate_fn = bool (*)(const void *context, std::size_t index);
-        using projector_fn = value_type (*)(const void *context, std::size_t index);
+        using predicate_fn = bool (*)(const void *context, const void *memory, std::size_t index);
+        using projector_fn = value_type (*)(const void *context, const void *memory, std::size_t index);
 
         const void  *context{nullptr};
+        const void  *memory{nullptr};
         std::size_t  limit{0};
         predicate_fn predicate{nullptr};
         projector_fn projector{nullptr};
@@ -124,12 +129,13 @@ namespace hgraph
             using pointer           = void;
 
             const void  *context{nullptr};
+            const void  *memory{nullptr};
             std::size_t  limit{0};
             predicate_fn predicate{nullptr};
             projector_fn projector{nullptr};
             std::size_t  index{0};
 
-            [[nodiscard]] value_type operator*() const { return projector(context, index); }
+            [[nodiscard]] value_type operator*() const { return projector(context, memory, index); }
 
             iterator &operator++() noexcept
             {
@@ -146,26 +152,26 @@ namespace hgraph
 
             [[nodiscard]] bool operator==(const iterator &other) const noexcept
             {
-                return context == other.context && index == other.index;
+                return context == other.context && memory == other.memory && index == other.index;
             }
 
             void advance_to_match() noexcept
             {
                 if (predicate == nullptr) { return; }
-                while (index < limit && !predicate(context, index)) { ++index; }
+                while (index < limit && !predicate(context, memory, index)) { ++index; }
             }
         };
 
         [[nodiscard]] iterator begin() const noexcept
         {
-            iterator it{context, limit, predicate, projector, 0};
+            iterator it{context, memory, limit, predicate, projector, 0};
             it.advance_to_match();
             return it;
         }
 
         [[nodiscard]] iterator end() const noexcept
         {
-            return iterator{context, limit, predicate, projector, limit};
+            return iterator{context, memory, limit, predicate, projector, limit};
         }
     };
 }  // namespace hgraph
