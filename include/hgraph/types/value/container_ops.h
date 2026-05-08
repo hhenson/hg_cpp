@@ -79,16 +79,18 @@ namespace hgraph
         /**
          * Iteration is exposed as a single op that returns a
          * ``Range<ValueView>``. The range carries an opaque
-         * ``context`` (typically the storage pointer), an ordinal
-         * ``limit`` (the high water mark of the index space), an
-         * optional ``predicate`` filter (null for dense layouts;
-         * non-null for slot-stored layouts that need to skip dead
-         * slots) and a ``projector`` that builds a ``ValueView`` from
-         * ``(context, index)``. Range-based views call
-         * ``make_range(context, memory)`` and use the range's own
-         * iterator surface, which keeps iteration layout-agnostic.
+         * ``context`` (ops state), a ``memory`` pointer (value
+         * storage), an ordinal ``limit`` (the high water mark of the
+         * index space), an optional ``predicate`` filter (null for
+         * dense layouts; non-null for slot-stored layouts that need
+         * to skip dead slots) and a ``projector`` that builds a
+         * ``ValueView`` from ``(context, memory, index)``.
+         * Range-based views call ``make_range(context, memory)`` and
+         * use the range's own iterator surface, which keeps
+         * iteration layout-agnostic.
          */
         Range<ValueView> (*make_range)(const void *context, const void *memory) = nullptr;
+        Range<ValueView> (*make_mutable_range)(const void *context, void *memory) = nullptr;
     };
 
     struct ListValueOps : IndexedValueOps
