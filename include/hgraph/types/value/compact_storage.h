@@ -64,6 +64,10 @@ namespace hgraph
         [[nodiscard]] inline void *allocate_element_buffer(const MemoryUtils::StoragePlan &plan, std::size_t count)
         {
             if (count == 0) { return nullptr; }
+            if (plan.layout.size != 0 && count > std::numeric_limits<std::size_t>::max() / plan.layout.size)
+            {
+                throw std::bad_array_new_length();
+            }
             return ::operator new(count * plan.layout.size, std::align_val_t{plan.layout.alignment});
         }
 
