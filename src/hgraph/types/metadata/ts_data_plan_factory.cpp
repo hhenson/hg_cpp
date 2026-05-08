@@ -47,6 +47,7 @@ namespace hgraph
                     .mutable_value_memory_impl = &atomic_mutable_value_memory,
                     .delta_memory_impl         = &atomic_delta_memory,
                     .mutable_delta_memory_impl = &atomic_mutable_delta_memory,
+                    .reset_delta_impl          = &atomic_reset_delta,
                     .copy_value_from_impl      = &atomic_copy_value_from,
                 };
             }
@@ -125,6 +126,8 @@ namespace hgraph
                 plan.copy_assign(dst, src);
             }
 
+            static void atomic_reset_delta(const void *, void *) {}
+
             [[nodiscard]] static bool atomic_copy_value_from(const void      *context,
                                                              void            *memory,
                                                              const ValueView &source,
@@ -143,7 +146,7 @@ namespace hgraph
                     throw std::invalid_argument("TSData atomic copy requires the bound value schema and plan");
                 }
 
-                auto       *tracking      = atomic_mutable_tracking(context, memory);
+                const auto *tracking       = atomic_tracking(context, memory);
                 const bool  first_for_time = tracking->last_modified_time != modified_time;
 
                 const auto &delta_plan = layout->delta_binding->checked_plan();
@@ -158,7 +161,6 @@ namespace hgraph
 
                 const auto &value_plan = layout->value_binding->checked_plan();
                 copy_assign_required(value_plan, atomic_mutable_value_memory(context, memory), source.data());
-                if (first_for_time) { tracking->last_modified_time = modified_time; }
                 return first_for_time;
             }
         };

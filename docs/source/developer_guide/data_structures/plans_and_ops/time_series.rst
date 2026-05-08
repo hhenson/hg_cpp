@@ -38,11 +38,15 @@ The implementation uses the following names consistently:
     parent links, or scheduling state.
 
 ``TSDataOps``
-    The type-erased operations over a ``TSData`` memory region:
-    lifecycle, read access, mutation opening/closing, delta access,
-    and buffer exposure. These ops operate on the payload/delta
-    component only; notification is coordinated by the surrounding
-    ``TSState``.
+    The type-erased operation table over a ``TSData`` memory region:
+    layout access, read/write memory access, delta reset, copy, and
+    the per-kind hook used when a child time-series value reports that
+    it modified. The table is deliberately passive; generic mutation
+    sequencing and propagation rules live on ``TSDataView`` /
+    ``TSDataMutationView``. For a real bound ``TSData`` implementation
+    the table is total: required entries are never null, empty optional
+    behaviours use no-op thunks, and unsupported operations are explicit
+    throwing thunks rather than missing pointers.
 
 ``TSDataBinding``
     The interned binding for a ``TSData`` implementation: the
@@ -71,7 +75,7 @@ TSData implementation families
 ``CompactTSDataStorage``
     Used for atomic time-series data. The current payload uses the
     compact scalar ``StoragePlan`` for the value type, but the bound
-    ``TSDataOps`` allow mutation because a time-series output updates
+    ``TSDataView`` allows mutation because a time-series output updates
     in place during evaluation. Current value bytes, delta value bytes,
     and tracking stamps are separate memory regions in one TSData plan,
     so the current value can still be exposed as a compact buffer when
@@ -108,19 +112,42 @@ records the offsets of:
 - ``tracking`` — modification stamps and other transient delta
   metadata.
 
+Modification handling is deliberately split into three responsibilities.
+``TSData`` tracks what changed in its delta state; child data views are
+constructed with a reference to their parent view plus the
+parent-relative child id; and
+the parent data ops record child-level modification details through
+``record_child_modified(parent_data, child_id)`` before the parent marks
+itself modified. The later processing of completed modified elements
+belongs to the surrounding ``TSValue`` / state layer. TSData does not
+own external subscriber lists or graph scheduling fan-out.
+
 Atomic TSData is the first implemented form. ``TS<T>``, ``REF<T>``,
 and ``SIGNAL`` use ``CompactTSDataStorage``: the value and delta
 regions are compact value-layer storage, and ``TSDataTracking`` carries
-``last_modified_time``. A delta is present for evaluation time ``t``
-when ``last_modified_time == t``. The first write in engine time ``t``
-copies the value into the current and delta regions, sets
-``last_modified_time`` to ``t``, and returns "newly modified" to the
-caller so the surrounding ``TSState`` can notify subscribers. A later
-write to the same data field in the same engine time overwrites the
-current and delta regions but leaves ``last_modified_time`` unchanged
-and returns "not newly modified"; the earlier interim value is treated
-as if it never existed and no second modified notification should be
-sent.
+``last_modified_time`` plus mutation-depth state. A delta is present
+for evaluation time ``t`` when ``last_modified_time == t``. The first
+write in engine time ``t`` copies the value into the current and delta
+regions, sets the local dirty state, updates ``last_modified_time`` to
+``t``, and returns "newly modified" to the caller. A later write to the same
+data field in the same engine time overwrites the current and delta
+regions but leaves ``last_modified_time`` unchanged and returns "not
+newly modified"; the earlier interim value is treated as if it never
+existed and no second parent modification should be produced.
+
+Every view may open a mutation scope by creating a
+``TSDataMutationView``. The mutation view owns the begin/end lifecycle,
+while the scope count is stored on the underlying ``TSData`` object.
+The active engine time is carried by the short-lived mutation view
+rather than the tracking state.
+When a view first marks itself modified for the current engine time, it
+asks its parent view to mark the corresponding child id modified. The
+parent first runs its ``record_child_modified`` op so collection-shaped
+parents can update per-slot ``modified`` tracking, then marks itself
+modified and repeats the same process with its own parent. Mutation
+operations such as ``copy_value_from`` and ``mark_modified`` are exposed
+only on ``TSDataMutationView``; callers open a mutation scope explicitly
+before performing writes.
 
 Collection TSData will use ``SlotTSDataStorage``. For these shapes the
 same principle applies per slot: current payload, live/constructed
@@ -138,8 +165,12 @@ and adds a per-slot ``modified`` bitset for keys whose child value
 modified in the current engine time. ``TSS`` has no child value layer,
 so there is no per-key modification time to read there. Same-time
 rewrites update the bitsets in place and do not re-mark the
-collection-level ``last_modified_time`` or produce a second
-notification.
+collection-level ``last_modified_time`` or produce a second parent
+modification. When the outermost ``begin_mutation(t)`` starts for an
+engine time later than the collection's ``last_modified_time``, the
+collection resets its previous delta bitsets before accepting new
+changes. A small dirty marker is enough to skip that reset when no
+delta state is currently retained.
 
 Builder Lifetime
 ----------------
@@ -262,6 +293,14 @@ mirrors a key store's slot lifecycle onto a paired value store
 ``TSS`` ``added`` / ``removed`` slot ids plus ``TSD`` ``modified``
 slot ids for the current engine time so the layer can publish
 ``delta_value``.
+
+These structural slot observers are internal synchronisation hooks, not
+the public change-notification surface. Per-level change propagation
+uses the parent view reference constructed into child views plus the
+``record_child_modified`` hook on the parent ops table. The slot hooks
+may update bitsets immediately during mutation; processing of modified
+elements and external notification fan-out belongs to the surrounding
+state/value layer after the value-level mutation count returns to zero.
 
 The set and map ``SlotTSDataStorage`` shapes are layered on these
 primitives. A TS set data store owns one ``KeySlotStore``. A TS map

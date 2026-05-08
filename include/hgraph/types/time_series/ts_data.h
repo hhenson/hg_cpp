@@ -8,21 +8,34 @@
 #include <hgraph/util/date_time.h>
 
 #include <cstddef>
+#include <exception>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace hgraph
 {
+    struct TSDataOps;
+    using TSDataBinding = TypeBinding<TSValueTypeMetaData, TSDataOps>;
+
+    class TSDataView;
+    class TSDataMutationView;
+
+    inline constexpr std::size_t TS_DATA_NO_CHILD_ID = static_cast<std::size_t>(-1);
+
     /**
      * Per-TSData modification stamps.
      *
      * This lives in the TSData payload/delta memory component, not in the
-     * surrounding TSState. TSState still owns graph-level notification and
-     * parent propagation; TSData owns the timestamps needed to decide whether
-     * its local delta payload belongs to a given evaluation time.
+     * surrounding TSState. TSDataView owns local parent bubble-up, TSState owns
+     * graph-level notification, and TSData owns the timestamps needed to decide
+     * whether its local delta payload belongs to a given evaluation time.
      */
     struct TSDataTracking
     {
         engine_time_t last_modified_time{MIN_DT};
+        std::size_t   mutation_depth{0};
+        bool          delta_dirty{false};
     };
 
     /**
@@ -42,102 +55,91 @@ namespace hgraph
         std::size_t             tracking_offset{0};
     };
 
-    struct TSDataOps;
-    using TSDataBinding = TypeBinding<TSValueTypeMetaData, TSDataOps>;
+    namespace ts_data_detail
+    {
+        [[noreturn]] inline void missing_ts_data_op(const char *name)
+        {
+            throw std::logic_error(std::string{"TSDataOps is missing "} + name + " implementation");
+        }
+
+        [[nodiscard]] inline const TSDataLayout *missing_layout(const void *)
+        {
+            missing_ts_data_op("layout");
+        }
+
+        [[nodiscard]] inline const TSDataTracking *missing_tracking(const void *, const void *)
+        {
+            missing_ts_data_op("tracking");
+        }
+
+        [[nodiscard]] inline TSDataTracking *missing_mutable_tracking(const void *, void *)
+        {
+            missing_ts_data_op("mutable tracking");
+        }
+
+        [[nodiscard]] inline const void *missing_value_memory(const void *, const void *)
+        {
+            missing_ts_data_op("value memory");
+        }
+
+        [[nodiscard]] inline void *missing_mutable_value_memory(const void *, void *)
+        {
+            missing_ts_data_op("mutable value memory");
+        }
+
+        [[nodiscard]] inline const void *missing_delta_memory(const void *, const void *)
+        {
+            missing_ts_data_op("delta memory");
+        }
+
+        [[nodiscard]] inline void *missing_mutable_delta_memory(const void *, void *)
+        {
+            missing_ts_data_op("mutable delta memory");
+        }
+
+        inline void noop_reset_delta(const void *, void *) {}
+
+        inline void noop_record_child_modified(const void *, void *, std::size_t) {}
+
+        [[nodiscard]] inline bool missing_copy_value_from(const void *,
+                                                          void *,
+                                                          const ValueView &,
+                                                          engine_time_t)
+        {
+            missing_ts_data_op("copy value");
+        }
+    }  // namespace ts_data_detail
 
     /**
-     * Type-erased operations over a TSData memory region.
+     * Type-erased operation table over a TSData memory region.
      *
-     * These ops only manage the payload/delta component inside a full
-     * TSValue. Graph notifications, parent propagation, and subscriber lists
-     * are owned by the surrounding TSState layer.
+     * This is intentionally a passive table of function pointers plus context.
+     * Generic read, mutation, delta, and parent-propagation policy lives on
+     * TSDataView / TSDataMutationView.
      */
     struct TSDataOps
     {
         const void *context{nullptr};
 
-        const TSDataLayout *(*layout_impl)(const void *context) noexcept = nullptr;
-        const TSDataTracking *(*tracking_impl)(const void *context, const void *memory) noexcept = nullptr;
-        TSDataTracking *(*mutable_tracking_impl)(const void *context, void *memory) noexcept = nullptr;
-        const void *(*value_memory_impl)(const void *context, const void *memory) noexcept = nullptr;
-        void *(*mutable_value_memory_impl)(const void *context, void *memory) noexcept = nullptr;
-        const void *(*delta_memory_impl)(const void *context, const void *memory) noexcept = nullptr;
-        void *(*mutable_delta_memory_impl)(const void *context, void *memory) noexcept = nullptr;
+        const TSDataLayout *(*layout_impl)(const void *context) = &ts_data_detail::missing_layout;
+        const TSDataTracking *(*tracking_impl)(const void *context,
+                                               const void *memory) = &ts_data_detail::missing_tracking;
+        TSDataTracking *(*mutable_tracking_impl)(const void *context,
+                                                 void *memory) = &ts_data_detail::missing_mutable_tracking;
+        const void *(*value_memory_impl)(const void *context,
+                                         const void *memory) = &ts_data_detail::missing_value_memory;
+        void *(*mutable_value_memory_impl)(const void *context,
+                                           void *memory) = &ts_data_detail::missing_mutable_value_memory;
+        const void *(*delta_memory_impl)(const void *context,
+                                         const void *memory) = &ts_data_detail::missing_delta_memory;
+        void *(*mutable_delta_memory_impl)(const void *context,
+                                           void *memory) = &ts_data_detail::missing_mutable_delta_memory;
+        void (*reset_delta_impl)(const void *context, void *memory) = &ts_data_detail::noop_reset_delta;
+        void (*record_child_modified_impl)(const void *context,
+                                           void *memory,
+                                           std::size_t child_id) = &ts_data_detail::noop_record_child_modified;
         bool (*copy_value_from_impl)(const void *context, void *memory, const ValueView &source,
-                                     engine_time_t modified_time) = nullptr;
-
-        [[nodiscard]] const TSDataLayout &layout() const
-        {
-            if (layout_impl == nullptr) { throw std::logic_error("TSDataOps is missing layout access"); }
-            const auto *result = layout_impl(context);
-            if (result == nullptr) { throw std::logic_error("TSDataOps layout access returned null"); }
-            return *result;
-        }
-
-        [[nodiscard]] const TSDataTracking &tracking(const void *memory) const
-        {
-            if (memory == nullptr) { throw std::logic_error("TSDataOps::tracking requires live TSData memory"); }
-            if (tracking_impl == nullptr) { throw std::logic_error("TSDataOps is missing tracking access"); }
-            const auto *result = tracking_impl(context, memory);
-            if (result == nullptr) { throw std::logic_error("TSDataOps tracking access returned null"); }
-            return *result;
-        }
-
-        [[nodiscard]] TSDataTracking &mutable_tracking(void *memory) const
-        {
-            if (memory == nullptr) { throw std::logic_error("TSDataOps::mutable_tracking requires live TSData memory"); }
-            if (mutable_tracking_impl == nullptr)
-            {
-                throw std::logic_error("TSDataOps is missing mutable tracking access");
-            }
-            auto *result = mutable_tracking_impl(context, memory);
-            if (result == nullptr) { throw std::logic_error("TSDataOps mutable tracking access returned null"); }
-            return *result;
-        }
-
-        [[nodiscard]] ValueView value_view(const void *memory) const
-        {
-            if (memory == nullptr) { throw std::logic_error("TSDataOps::value_view requires live TSData memory"); }
-            if (value_memory_impl == nullptr) { throw std::logic_error("TSDataOps is missing value access"); }
-            const auto &data_layout = layout();
-            return ValueView{data_layout.value_binding, value_memory_impl(context, memory)};
-        }
-
-        [[nodiscard]] ValueView delta_value_view(const void *memory, engine_time_t evaluation_time) const
-        {
-            if (memory == nullptr)
-            {
-                throw std::logic_error("TSDataOps::delta_value_view requires live TSData memory");
-            }
-            const auto &data_layout = layout();
-            if (!has_delta(memory, evaluation_time)) { return ValueView{data_layout.delta_binding, nullptr}; }
-            if (delta_memory_impl == nullptr) { throw std::logic_error("TSDataOps is missing delta access"); }
-            return ValueView{data_layout.delta_binding, delta_memory_impl(context, memory)};
-        }
-
-        [[nodiscard]] engine_time_t last_modified_time(const void *memory) const
-        {
-            return tracking(memory).last_modified_time;
-        }
-
-        [[nodiscard]] bool has_delta(const void *memory, engine_time_t evaluation_time) const
-        {
-            return evaluation_time != MIN_DT && tracking(memory).last_modified_time == evaluation_time;
-        }
-
-        void mark_modified(void *memory, engine_time_t modified_time) const
-        {
-            mutable_tracking(memory).last_modified_time = modified_time;
-        }
-
-        [[nodiscard]] bool copy_value_from(void *memory, const ValueView &source, engine_time_t modified_time) const
-        {
-            if (copy_value_from_impl == nullptr)
-            {
-                throw std::logic_error("TSDataOps::copy_value_from is not available for this TSData kind");
-            }
-            return copy_value_from_impl(context, memory, source, modified_time);
-        }
+                                     engine_time_t modified_time) = &ts_data_detail::missing_copy_value_from;
     };
 
     /**
@@ -158,6 +160,22 @@ namespace hgraph
         {
         }
 
+        TSDataView(const TSDataBinding *binding, void *data, TSDataView &parent, std::size_t child_id)
+            : binding_(binding),
+              data_(data),
+              parent_(&parent),
+              child_id_(child_id),
+              writable_(data != nullptr)
+        {
+            require_parent_view(parent);
+        }
+
+        TSDataView(const TSDataBinding *binding, const void *data, TSDataView &parent, std::size_t child_id)
+            : binding_(binding), data_(data), parent_(&parent), child_id_(child_id)
+        {
+            require_parent_view(parent);
+        }
+
         [[nodiscard]] bool valid() const noexcept { return binding_ != nullptr && data_ != nullptr; }
         explicit operator bool() const noexcept { return valid(); }
         [[nodiscard]] const TSDataBinding *binding() const noexcept { return binding_; }
@@ -166,6 +184,8 @@ namespace hgraph
             return binding_ != nullptr ? binding_->type_meta : nullptr;
         }
         [[nodiscard]] const void *data() const noexcept { return data_; }
+        [[nodiscard]] std::size_t child_id() const noexcept { return child_id_; }
+        [[nodiscard]] bool has_parent() const noexcept { return parent_ != nullptr; }
         [[nodiscard]] void *mutable_data() const
         {
             if (!valid()) { throw std::logic_error("TSDataView::mutable_data requires a live view"); }
@@ -179,25 +199,215 @@ namespace hgraph
             return binding_->checked_ops();
         }
 
-        [[nodiscard]] ValueView value() const { return ops().value_view(data_); }
+        [[nodiscard]] const TSDataLayout &layout() const
+        {
+            const auto &table = ops();
+            return *table.layout_impl(table.context);
+        }
+
+        [[nodiscard]] const TSDataTracking &tracking() const
+        {
+            require_live("TSDataView::tracking");
+            const auto &table = ops();
+            return *table.tracking_impl(table.context, data_);
+        }
+
+        [[nodiscard]] ValueView value() const
+        {
+            require_live("TSDataView::value");
+            const auto &table = ops();
+            return ValueView{layout().value_binding, table.value_memory_impl(table.context, data_)};
+        }
+
         [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const
         {
-            return ops().delta_value_view(data_, evaluation_time);
-        }
-        [[nodiscard]] engine_time_t last_modified_time() const { return ops().last_modified_time(data_); }
-        [[nodiscard]] bool modified(engine_time_t evaluation_time) const { return ops().has_delta(data_, evaluation_time); }
+            require_live("TSDataView::delta_value");
+            const auto &data_layout = layout();
+            if (!modified(evaluation_time)) { return ValueView{data_layout.delta_binding, nullptr}; }
 
-        void mark_modified(engine_time_t modified_time) { ops().mark_modified(mutable_data(), modified_time); }
-        [[nodiscard]] bool copy_value_from(const ValueView &source, engine_time_t modified_time)
+            const auto &table = ops();
+            return ValueView{data_layout.delta_binding, table.delta_memory_impl(table.context, data_)};
+        }
+        [[nodiscard]] engine_time_t last_modified_time() const { return tracking().last_modified_time; }
+        [[nodiscard]] std::size_t mutation_depth() const { return tracking().mutation_depth; }
+        [[nodiscard]] bool delta_dirty() const { return tracking().delta_dirty; }
+        [[nodiscard]] bool modified(engine_time_t evaluation_time) const
         {
-            return ops().copy_value_from(mutable_data(), source, modified_time);
+            return tracking().last_modified_time == evaluation_time;
+        }
+
+        [[nodiscard]] TSDataMutationView begin_mutation(engine_time_t evaluation_time) const;
+
+      private:
+        friend class TSDataMutationView;
+
+        static void require_parent_view(const TSDataView &parent)
+        {
+            if (!parent.valid()) { throw std::logic_error("TSDataView child construction requires a live parent view"); }
+            if (!parent.writable_)
+            {
+                throw std::logic_error("TSDataView child construction requires a writable parent view");
+            }
+        }
+
+        void require_live(const char *what) const
+        {
+            if (!valid()) { throw std::logic_error(std::string{what} + " requires a live view"); }
+        }
+
+        [[nodiscard]] TSDataTracking &mutable_tracking() const
+        {
+            const auto &table = ops();
+            return *table.mutable_tracking_impl(table.context, mutable_data());
+        }
+
+        const TSDataBinding *binding_{nullptr};
+        const void          *data_{nullptr};
+        TSDataView          *parent_{nullptr};
+        std::size_t          child_id_{TS_DATA_NO_CHILD_ID};
+        bool                 writable_{false};
+    };
+
+    class TSDataMutationView
+    {
+      public:
+        TSDataMutationView(TSDataView view, engine_time_t evaluation_time)
+            : view_(view), mutation_time_(evaluation_time)
+        {
+            begin_scope();
+        }
+
+        TSDataMutationView(const TSDataMutationView &) = delete;
+        TSDataMutationView &operator=(const TSDataMutationView &) = delete;
+
+        TSDataMutationView(TSDataMutationView &&other) noexcept
+            : view_(other.view_),
+              mutation_time_(std::exchange(other.mutation_time_, MIN_DT)),
+              owns_scope_(std::exchange(other.owns_scope_, false))
+        {
+        }
+
+        TSDataMutationView &operator=(TSDataMutationView &&) = delete;
+
+        ~TSDataMutationView() noexcept
+        {
+            if (owns_scope_) { end_scope_noexcept(); }
+        }
+
+        [[nodiscard]] const TSDataView &view() const noexcept { return view_; }
+        [[nodiscard]] TSDataView &view() noexcept { return view_; }
+        [[nodiscard]] ValueView value() const { return view_.value(); }
+        [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const
+        {
+            return view_.delta_value(evaluation_time);
+        }
+        [[nodiscard]] engine_time_t current_mutation_time() const { return mutation_time_; }
+        [[nodiscard]] std::size_t mutation_depth() const { return view_.mutation_depth(); }
+
+        void mark_modified()
+        {
+            if (record_modified_local()) { notify_parent_modified(); }
+        }
+
+        [[nodiscard]] bool copy_value_from(const ValueView &source)
+        {
+            require_active_mutation();
+
+            const auto &table = view_.ops();
+            const bool newly_modified =
+                table.copy_value_from_impl(table.context, view_.mutable_data(), source, mutation_time_);
+            if (newly_modified && !record_modified_local())
+            {
+                throw std::logic_error(
+                    "TSDataMutationView::copy_value_from reported a new modification that was already recorded");
+            }
+            if (newly_modified) { notify_parent_modified(); }
+            return newly_modified;
+        }
+
+        void mark_child_modified(std::size_t child_id)
+        {
+            const auto &table = view_.ops();
+            table.record_child_modified_impl(table.context, view_.mutable_data(), child_id);
+            if (record_modified_local()) { notify_parent_modified(); }
         }
 
       private:
-        const TSDataBinding *binding_{nullptr};
-        const void          *data_{nullptr};
-        bool                 writable_{false};
+        void require_active_mutation() const
+        {
+            if (view_.tracking().mutation_depth == 0)
+            {
+                throw std::logic_error("TSData mutation requires an active mutation scope");
+            }
+        }
+
+        void begin_scope() const
+        {
+            if (mutation_time_ == MIN_DT)
+            {
+                throw std::invalid_argument("TSDataMutationView requires a concrete engine time");
+            }
+
+            auto       &state = view_.mutable_tracking();
+            const auto &table = view_.ops();
+            if (state.mutation_depth == 0 && state.delta_dirty && state.last_modified_time < mutation_time_)
+            {
+                table.reset_delta_impl(table.context, view_.mutable_data());
+                state.delta_dirty = false;
+            }
+
+            ++state.mutation_depth;
+        }
+
+        void end_scope() const
+        {
+            auto &state = view_.mutable_tracking();
+            if (state.mutation_depth == 0) { throw std::logic_error("TSDataMutationView depth underflow"); }
+
+            --state.mutation_depth;
+        }
+
+        void end_scope_noexcept() const noexcept
+        {
+            try
+            {
+                end_scope();
+            }
+            catch (...)
+            {
+                std::terminate();
+            }
+        }
+
+        [[nodiscard]] bool record_modified_local() const
+        {
+            require_active_mutation();
+
+            auto &state = view_.mutable_tracking();
+            if (state.last_modified_time == mutation_time_) { return false; }
+
+            state.last_modified_time = mutation_time_;
+            state.delta_dirty        = true;
+            return true;
+        }
+
+        void notify_parent_modified() const
+        {
+            if (view_.parent_ == nullptr) { return; }
+
+            auto parent_mutation = view_.parent_->begin_mutation(mutation_time_);
+            parent_mutation.mark_child_modified(view_.child_id_);
+        }
+
+        TSDataView    view_{};
+        engine_time_t mutation_time_{MIN_DT};
+        bool          owns_scope_{true};
     };
+
+    inline TSDataMutationView TSDataView::begin_mutation(engine_time_t evaluation_time) const
+    {
+        return TSDataMutationView{*this, evaluation_time};
+    }
 
     /**
      * Owning TSData storage handle.
@@ -224,6 +434,14 @@ namespace hgraph
 
         [[nodiscard]] TSDataView view() { return TSDataView{binding(), storage_.data()}; }
         [[nodiscard]] TSDataView view() const { return TSDataView{binding(), storage_.data()}; }
+        [[nodiscard]] TSDataView view(TSDataView &parent, std::size_t child_id)
+        {
+            return TSDataView{binding(), storage_.data(), parent, child_id};
+        }
+        [[nodiscard]] TSDataView view(TSDataView &parent, std::size_t child_id) const
+        {
+            return TSDataView{binding(), storage_.data(), parent, child_id};
+        }
 
       private:
         storage_type storage_{};

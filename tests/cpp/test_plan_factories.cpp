@@ -9,6 +9,27 @@
 
 #include <stdexcept>
 
+namespace
+{
+    struct RecordingChildModificationOps
+    {
+        static inline std::size_t count{0};
+        static inline std::size_t last_child_id{hgraph::TS_DATA_NO_CHILD_ID};
+
+        static void reset() noexcept
+        {
+            count         = 0;
+            last_child_id = hgraph::TS_DATA_NO_CHILD_ID;
+        }
+
+        static void record_child_modified(const void *, void *, std::size_t child_id)
+        {
+            ++count;
+            last_child_id = child_id;
+        }
+    };
+}  // namespace
+
 TEST_CASE("ValuePlanFactory: atomic round-trip via TypeRegistry")
 {
     using namespace hgraph;
@@ -288,8 +309,9 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses separate value, delta and track
     REQUIRE(binding != nullptr);
     REQUIRE(binding->type_meta == ts_int);
     REQUIRE(binding->plan() == plan);
-    REQUIRE(binding->checked_ops().layout().value_binding == registry.scalar_binding<int>());
-    REQUIRE(binding->checked_ops().layout().delta_binding == registry.scalar_binding<int>());
+    TSData data{*binding};
+    REQUIRE(data.view().layout().value_binding == registry.scalar_binding<int>());
+    REQUIRE(data.view().layout().delta_binding == registry.scalar_binding<int>());
 }
 
 TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified time")
@@ -306,6 +328,8 @@ TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified ti
     auto   view = data.view();
     REQUIRE(view.value().checked_as<int>() == 0);
     REQUIRE(view.last_modified_time() == MIN_DT);
+    REQUIRE(view.mutation_depth() == 0);
+    REQUIRE_FALSE(view.delta_dirty());
 
     const auto t1 = MIN_ST;
     const auto t2 = t1 + engine_time_delta_t{1};
@@ -313,24 +337,133 @@ TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified ti
     REQUIRE_FALSE(view.delta_value(t1).has_value());
 
     Value source{42};
-    REQUIRE(view.copy_value_from(source.view(), t1));
+    {
+        auto mutation = view.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(source.view()));
+    }
     REQUIRE(view.value().checked_as<int>() == 42);
     REQUIRE(view.delta_value(t1).checked_as<int>() == 42);
     REQUIRE(view.last_modified_time() == t1);
+    REQUIRE(view.delta_dirty());
     REQUIRE(view.modified(t1));
     REQUIRE_FALSE(view.modified(t2));
     REQUIRE_FALSE(view.delta_value(t2).has_value());
 
     Value same_tick_overwrite{99};
-    REQUIRE_FALSE(view.copy_value_from(same_tick_overwrite.view(), t1));
+    {
+        auto mutation = view.begin_mutation(t1);
+        REQUIRE_FALSE(mutation.copy_value_from(same_tick_overwrite.view()));
+    }
     REQUIRE(view.value().checked_as<int>() == 99);
     REQUIRE(view.delta_value(t1).checked_as<int>() == 99);
     REQUIRE(view.last_modified_time() == t1);
+    REQUIRE(view.delta_dirty());
 
-    REQUIRE(view.copy_value_from(source.view(), t2));
-    REQUIRE(view.value().checked_as<int>() == 42);
-    REQUIRE(view.delta_value(t2).checked_as<int>() == 42);
-    REQUIRE(view.last_modified_time() == t2);
+    {
+        auto mutation = view.begin_mutation(t2);
+        REQUIRE(view.mutation_depth() == 1);
+        REQUIRE_FALSE(view.delta_dirty());
+        REQUIRE(mutation.copy_value_from(source.view()));
+        REQUIRE(view.value().checked_as<int>() == 42);
+        REQUIRE(view.delta_value(t2).checked_as<int>() == 42);
+        REQUIRE(view.last_modified_time() == t2);
+    }
+    REQUIRE(view.mutation_depth() == 0);
+    REQUIRE(view.delta_dirty());
+}
+
+TEST_CASE("TSDataView: child modifications propagate through parent view")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *binding  = factory.binding_for(ts_int);
+    REQUIRE(binding != nullptr);
+
+    RecordingChildModificationOps::reset();
+    TSDataOps parent_ops = binding->checked_ops();
+    parent_ops.record_child_modified_impl = &RecordingChildModificationOps::record_child_modified;
+    TSDataBinding parent_binding{binding->type_meta, binding->plan(), &parent_ops};
+
+    TSData parent_data{parent_binding};
+    TSData child_data{*binding};
+    TSData sibling_data{*binding};
+    auto   parent = parent_data.view();
+    auto   child  = child_data.view(parent, 7);
+    auto   sibling = sibling_data.view(parent, 9);
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t3 = t2 + engine_time_delta_t{1};
+    Value      first{1};
+    Value      second{2};
+    Value      third{3};
+
+    {
+        auto outer = child.begin_mutation(t1);
+        REQUIRE(child.mutation_depth() == 1);
+        REQUIRE(outer.copy_value_from(first.view()));
+        REQUIRE(parent.last_modified_time() == t1);
+        REQUIRE(parent.modified(t1));
+        REQUIRE(RecordingChildModificationOps::count == 1);
+        REQUIRE(RecordingChildModificationOps::last_child_id == 7);
+
+        {
+            auto nested = child.begin_mutation(t1);
+            REQUIRE(child.mutation_depth() == 2);
+            REQUIRE_FALSE(nested.copy_value_from(second.view()));
+        }
+
+        REQUIRE(child.mutation_depth() == 1);
+        REQUIRE(parent.last_modified_time() == t1);
+        REQUIRE(child.value().checked_as<int>() == 2);
+        REQUIRE(child.delta_value(t1).checked_as<int>() == 2);
+        REQUIRE(RecordingChildModificationOps::count == 1);
+    }
+
+    REQUIRE(child.mutation_depth() == 0);
+    REQUIRE(parent.mutation_depth() == 0);
+    REQUIRE(parent.last_modified_time() == t1);
+
+    {
+        auto mutation = sibling.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(first.view()));
+    }
+    REQUIRE(parent.last_modified_time() == t1);
+    REQUIRE(RecordingChildModificationOps::count == 2);
+    REQUIRE(RecordingChildModificationOps::last_child_id == 9);
+
+    {
+        auto same_tick = child.begin_mutation(t1);
+        REQUIRE_FALSE(same_tick.copy_value_from(third.view()));
+    }
+
+    REQUIRE(parent.last_modified_time() == t1);
+    REQUIRE(RecordingChildModificationOps::count == 2);
+    REQUIRE(child.value().checked_as<int>() == 3);
+    REQUIRE(child.delta_value(t1).checked_as<int>() == 3);
+
+    {
+        auto next_tick = child.begin_mutation(t2);
+        REQUIRE(next_tick.copy_value_from(first.view()));
+        REQUIRE(parent.last_modified_time() == t2);
+        REQUIRE(RecordingChildModificationOps::count == 3);
+        REQUIRE(RecordingChildModificationOps::last_child_id == 7);
+    }
+
+    REQUIRE(parent.last_modified_time() == t2);
+    REQUIRE(parent.modified(t2));
+
+    {
+        auto mutation = child.begin_mutation(t3);
+        mutation.mark_modified();
+    }
+    REQUIRE(child.last_modified_time() == t3);
+    REQUIRE(parent.last_modified_time() == t3);
+    REQUIRE(RecordingChildModificationOps::count == 4);
+    REQUIRE(RecordingChildModificationOps::last_child_id == 7);
 }
 
 TEST_CASE("TSDataPlanFactory: REF and SIGNAL use compact atomic TSData")
