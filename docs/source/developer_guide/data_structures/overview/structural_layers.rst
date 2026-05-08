@@ -16,7 +16,7 @@ The runtime has five major structural layers:
     Holds node identity, runtime operations, lifecycle state, time-series inputs and outputs, optional node-local scheduler, and optional node-local state.
 
 ``TimeSeries``
-    Holds value validity, modification time, parent/child relationships, subscribers, structural delta state, and type-specific value storage.
+    Holds value validity, modification time, parent/child relationships, subscribers, structural delta state, and a separate TS data component containing the current payload plus delta payload.
 
 The high-level relationship is:
 

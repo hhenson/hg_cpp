@@ -82,16 +82,17 @@ the schema for stable addresses.
   lifecycle hooks know how to construct the storage. ``binding_for``
   pairs the plan with the compact kind-specific ops table.
 
-The time-series layer has the matching ``TSValuePlanFactory``. It is
-declared with the same surface today; its synthesis logic is deferred
-until the value-layer container shapes and the TS-layer state-tree
-storage are both in place.
+The time-series layer has the matching ``TSDataPlanFactory`` for the
+payload/delta component inside a full ``TSValue``. It is declared with
+the same surface today; its synthesis logic is deferred until the
+value-layer container shapes and the TS-layer state-tree storage are
+both in place.
 
 A builder may use the default factory to obtain a default plan, or
 swap in an alternative factory for a specialised implementation
-(e.g. a delta-tracking factory for time-series consumers wrapping the
-same set/map shape). The schema itself remains untouched in both
-cases.
+(e.g. the ``TSDataPlanFactory`` resolving slot-oriented time-series
+data for the same logical set/map schema). The schema itself remains
+untouched in both cases.
 
 Owning Value
 ------------

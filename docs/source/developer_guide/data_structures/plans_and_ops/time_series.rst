@@ -1,10 +1,11 @@
 Time-Series Plans and Ops
 =========================
 
-The time-series layer wraps value-layer storage with the additional
-state every output and input needs to participate in graph evaluation:
-modification time, subscribers, binding, delta tracking, and the path
-identity that makes output-to-input wiring possible.
+The time-series layer owns full runtime ``TSValue`` objects. A
+``TSValue`` is not just a scalar ``Value`` with a timestamp attached:
+it is split into separate components so the hot value payload, delta
+payload, and graph-evaluation state can be stored and accessed in the
+shape each one needs.
 
 This page focuses on the layout strategies — memory stability, the
 slot-store family, the storage shapes for TSS and TSD, and buffer
@@ -12,24 +13,103 @@ exposure. The per-kind tick contract and the value/delta schema
 mappings are described in *Schemas > Time-Series Schemas*; the
 binding/redirect machinery is described in *Linking Strategies*.
 
+Terminology: TSValue and TSData
+-------------------------------
+
+The implementation uses the following names consistently:
+
+``TSValue``
+    The full runtime time-series object owned by a node input or
+    output. It combines the current payload/delta component with
+    evaluation state and child time-series objects. This is the object
+    that participates in graph binding, notification, and traversal.
+
+``TSState``
+    The graph-evaluation state associated with a ``TSValue``:
+    validity, ``last_modified_time``, parent/child relationships,
+    subscribers, path identity, and kind-specific notification state.
+    ``TSState`` does not own the hot payload bytes.
+
+``TSData``
+    The payload/delta component inside a ``TSValue``. It owns the
+    current value storage and the per-tick delta information, laid out
+    so those two views stay aligned and can expose useful buffer /
+    NumPy representations. ``TSData`` does not own subscribers,
+    parent links, or scheduling state.
+
+``TSDataOps``
+    The type-erased operations over a ``TSData`` memory region:
+    lifecycle, read access, mutation opening/closing, delta access,
+    and buffer exposure. These ops operate on the payload/delta
+    component only; notification is coordinated by the surrounding
+    ``TSState``.
+
+``TSDataBinding``
+    The interned binding for a ``TSData`` implementation: the
+    ``TSValueTypeMetaData`` schema, the data ``StoragePlan``, and the
+    ``TSDataOps`` table. The schema is the time-series schema rather
+    than the scalar value schema because delta shape and mutation
+    behaviour depend on the time-series kind.
+
+``TSDataPlanFactory``
+    The schema → data-plan resolver for ``TSData``. It chooses the
+    compact mutable implementation for atomic time-series data and the
+    slot-oriented implementation for collection-shaped time-series
+    data. The factory does not plan the whole ``TSValue`` object, only
+    its payload/delta data component.
+
+``TSValueBuilder``
+    The reusable builder for full ``TSValue`` instances. It composes a
+    ``TSDataBinding`` / data plan with the separate ``TSState`` layout
+    and the reusable child-builder graph needed for nested
+    time-series. ``TSValueBuilder`` is the object cached by node and
+    graph construction code.
+
+TSData implementation families
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``CompactTSDataStorage``
+    Used for atomic time-series data. The current payload uses the
+    compact scalar ``StoragePlan`` for the value type, but the bound
+    ``TSDataOps`` allow mutation because a time-series output updates
+    in place during evaluation. Delta information is stored separately
+    from the current payload while remaining directly associated with
+    it.
+
+``SlotTSDataStorage``
+    Used for collection-shaped time-series data. The data store is
+    slot-oriented: every child or element has a stable slot id and the
+    current payload, validity, and delta information are aligned by
+    that slot id. Fixed-shape collections such as bundles and fixed
+    lists use static ordinal slots; dynamic and keyed collections use
+    non-relocating slot stores. The point is the same in both cases:
+    collection mutation changes slot state instead of compacting or
+    relocating already-published child addresses.
+
+The terms above keep three layers distinct: scalar ``Value`` storage,
+``TSData`` payload/delta storage, and the full ``TSValue`` runtime
+object. Code and docs should avoid using "TS value plan" unless they
+mean the complete object; payload/delta plans are ``TSData`` plans.
+
 Builder Lifetime
 ----------------
 
-Time-series value builders are reusable builders. They resolve a
-``TSValueTypeMetaData`` schema to the concrete plan, ops, value binding,
-delta binding, and child-builder graph needed to construct a time-series
-runtime object. Once resolved, they should be cached and reused to construct
-multiple time-series instances with the same schema. This is the opposite of
-the value-layer ``ListBuilder`` / ``MapBuilder`` family, which is local
-scratch storage for one immutable ``Value``.
+Time-series value builders are reusable builders. A
+``TSValueBuilder`` resolves a ``TSValueTypeMetaData`` schema to the
+``TSDataBinding`` / data plan, state layout, and child-builder graph
+needed to construct a full ``TSValue`` runtime object. Once resolved,
+it should be cached and reused to construct multiple time-series
+instances with the same schema. This is the opposite of the value-
+layer ``ListBuilder`` / ``MapBuilder`` family, which is local scratch
+storage for one immutable ``Value``.
 
 This distinction matters most for nested structures. A ``TSB`` builder owns
 the reusable builders for its fields; a fixed ``TSL`` builder owns the
 reusable builder for each element position; a ``TSD`` builder owns the
 reusable value-side time-series builder used whenever a new key appears. The
-builder graph is shared construction metadata, while each time-series
-instance owns its modification time, validity, binding state, delta state,
-and child storage independently.
+builder graph is shared construction metadata, while each ``TSValue``
+instance owns its ``TSState``, ``TSData``, and child storage
+independently.
 
 Memory Stability Invariant
 --------------------------
@@ -87,13 +167,13 @@ The Slot Store Family
 ---------------------
 
 Three primitives in ``hgraph/types/utils/`` express the slot machinery.
-The time-series container shapes (the substrate for ``TSS`` / ``TSD``
-/ dynamic ``TSL`` / ``TSW`` etc.) build on these primitives so they
-can support per-element insert / remove / replace with stable
-addresses and the per-slot ``updated`` bit needed to surface deltas.
-The value-layer (scalar) container shapes are different — they are
-compact and atomic by design (see *Scalar Plans and Ops > Container
-Storage Shapes*) and do not use the slot stores.
+The ``SlotTSDataStorage`` implementations for collection-shaped
+time-series data build on these primitives so they can support
+per-element insert / remove / replace with stable addresses and the
+per-slot ``updated`` bit needed to surface deltas. The value-layer
+(scalar) container shapes are different — they are compact and atomic
+by design (see *Scalar Plans and Ops > Container Storage Shapes*) and
+do not use the slot stores.
 
 ``StableSlotStorage``
     Non-relocating, double-indexed slot storage. ``slots`` is a
@@ -132,10 +212,11 @@ mirrors a key store's slot lifecycle onto a paired value store
 ``added`` / ``removed`` slot ids per cycle so the layer can publish
 ``delta_value``.
 
-The Set and Map shapes used by the time-series layer are layered on
-these primitives. A TS Set owns one ``KeySlotStore``. A TS Map owns
-one ``KeySlotStore`` for keys plus one ``ValueSlotStore`` for values,
-with the value store registered as a slot observer on the key store.
+The set and map ``SlotTSDataStorage`` shapes are layered on these
+primitives. A TS set data store owns one ``KeySlotStore``. A TS map
+data store owns one ``KeySlotStore`` for keys plus one
+``ValueSlotStore`` for values, with the value store registered as a
+slot observer on the key store.
 
 Slot stores are deliberately **not** used for scalar values. The
 delayed-erase, per-slot-bit, and observer machinery exists to support
