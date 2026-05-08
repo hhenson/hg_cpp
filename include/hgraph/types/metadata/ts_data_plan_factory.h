@@ -1,0 +1,90 @@
+#ifndef HGRAPH_CPP_ROOT_TS_DATA_PLAN_FACTORY_H
+#define HGRAPH_CPP_ROOT_TS_DATA_PLAN_FACTORY_H
+
+#include <hgraph/types/metadata/ts_value_type_meta_data.h>
+#include <hgraph/types/time_series/ts_data.h>
+#include <hgraph/types/utils/memory_utils.h>
+
+#include <mutex>
+#include <unordered_map>
+
+namespace hgraph
+{
+    /**
+     * Factory that maps a time-series ``TSValueTypeMetaData`` schema to the
+     * canonical ``MemoryUtils::StoragePlan`` and default ``TSDataBinding``
+     * for the TS data component.
+     *
+     * A ``TSValue`` is the full runtime time-series object. It combines
+     * evaluation state (modification time, validity, subscribers, parent
+     * links, path identity) with a payload/delta component named ``TSData``.
+     * This factory resolves only the ``TSData`` memory plan. Full
+     * ``TSValue`` construction is the responsibility of the reusable
+     * time-series value builder that composes this data plan with the
+     * separate state tree.
+     *
+     * Atomic TSData uses the compact value storage plan with mutable ops
+     * enabled. Collection TSData uses slot-oriented storage so the current
+     * value payload and delta bookkeeping stay aligned by stable slot id and
+     * can expose useful buffer/numpy views.
+     *
+     * The first implemented synthesis path covers atomic TSData:
+     * ``TS<T>``, ``REF<T>``, and ``SIGNAL``. Collection-shaped TSData is
+     * reserved for the slot-oriented storage work and currently throws
+     * ``std::logic_error`` so callers do not accidentally bind compact
+     * scalar containers into time-series collection storage.
+     *
+     * The factory is a process-wide singleton via ``instance()``;
+     * non-copyable and non-movable.
+     */
+    class TSDataPlanFactory
+    {
+      public:
+        /** Singleton accessor; returns a reference to the process-wide factory. */
+        static TSDataPlanFactory &instance();
+
+        TSDataPlanFactory(const TSDataPlanFactory &)            = delete;
+        TSDataPlanFactory &operator=(const TSDataPlanFactory &) = delete;
+        TSDataPlanFactory(TSDataPlanFactory &&)                 = delete;
+        TSDataPlanFactory &operator=(TSDataPlanFactory &&)      = delete;
+
+        /**
+         * Look up or synthesise the canonical plan for ``schema``.
+         *
+         * Returns ``nullptr`` when ``schema`` is null. Collection-shaped
+         * schemas currently throw ``std::logic_error`` until the
+         * slot-oriented TSData stores are ported.
+         */
+        const MemoryUtils::StoragePlan *plan_for(const TSValueTypeMetaData *schema);
+
+        /** Look up only; never synthesises. Returns ``nullptr`` when missing. */
+        const MemoryUtils::StoragePlan *find(const TSValueTypeMetaData *schema) const;
+
+        /**
+         * Look up or synthesise the canonical default TSData binding for
+         * ``schema``. Returns ``nullptr`` when ``schema`` is null.
+         */
+        const TSDataBinding *binding_for(const TSValueTypeMetaData *schema);
+
+        /** Binding lookup only; never synthesises. Returns ``nullptr`` when missing. */
+        const TSDataBinding *find_binding(const TSValueTypeMetaData *schema) const;
+
+        /**
+         * Drop every cached schema → plan mapping. Test-only helper used to
+         * isolate tests from each other; production code must not call it.
+         */
+        void reset() noexcept;
+
+      private:
+        TSDataPlanFactory() = default;
+
+        const MemoryUtils::StoragePlan *synthesise(const TSValueTypeMetaData *schema);
+        const TSDataBinding            *synthesise_binding(const TSValueTypeMetaData *schema);
+
+        mutable std::mutex                                                                mutex_;
+        std::unordered_map<const TSValueTypeMetaData *, const MemoryUtils::StoragePlan *> cache_;
+        std::unordered_map<const TSValueTypeMetaData *, const TSDataBinding *>             binding_cache_;
+    };
+}  // namespace hgraph
+
+#endif  // HGRAPH_CPP_ROOT_TS_DATA_PLAN_FACTORY_H

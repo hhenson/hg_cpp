@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <hgraph/types/metadata/ts_value_plan_factory.h>
+#include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/utils/memory_utils.h>
@@ -261,11 +261,11 @@ TEST_CASE("ValuePlanFactory::register_atomic ignores null inputs")
     REQUIRE_NOTHROW(factory.register_atomic(&orphan, nullptr));
 }
 
-TEST_CASE("TSValuePlanFactory::plan_for throws (TS layer not yet ported)")
+TEST_CASE("TSDataPlanFactory::plan_for throws (TS data layer not yet ported)")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    auto       &factory  = TSValuePlanFactory::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
     const auto *int_meta = registry.register_scalar<int>("int");
     const auto *ts_int   = registry.ts(int_meta);
 
@@ -276,11 +276,11 @@ TEST_CASE("TSValuePlanFactory::plan_for throws (TS layer not yet ported)")
     REQUIRE_THROWS_AS(factory.plan_for(registry.signal()), std::logic_error);
 }
 
-TEST_CASE("TSValuePlanFactory::find returns null and null schemas return null")
+TEST_CASE("TSDataPlanFactory::find returns null and null schemas return null")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    auto       &factory  = TSValuePlanFactory::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
     const auto *int_meta = registry.register_scalar<int>("int");
     const auto *ts_int   = registry.ts(int_meta);
 
@@ -289,7 +289,7 @@ TEST_CASE("TSValuePlanFactory::find returns null and null schemas return null")
     REQUIRE(factory.plan_for(nullptr) == nullptr);
 }
 
-TEST_CASE("TSValuePlanFactory::instance is a stable singleton")
+TEST_CASE("TSDataPlanFactory::instance is a stable singleton")
 {
-    REQUIRE(&hgraph::TSValuePlanFactory::instance() == &hgraph::TSValuePlanFactory::instance());
+    REQUIRE(&hgraph::TSDataPlanFactory::instance() == &hgraph::TSDataPlanFactory::instance());
 }

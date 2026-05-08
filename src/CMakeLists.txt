@@ -1,7 +1,7 @@
 set(HGRAPH_CORE_SOURCES
     hgraph/version.cpp
     hgraph/types/metadata/type_registry.cpp
-    hgraph/types/metadata/ts_value_plan_factory.cpp
+    hgraph/types/metadata/ts_data_plan_factory.cpp
     hgraph/types/metadata/value_plan_factory.cpp
     hgraph/types/time_series_reference.cpp
     hgraph/types/value/compact_container_ops.cpp
@@ -17,7 +17,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/hgraph_export.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_schema.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series_reference.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_value_plan_factory.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_data_plan_factory.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_value_type_meta_data.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/type_binding.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/type_meta_data.h
@@ -30,6 +30,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/slot_observer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/stable_slot_storage.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/value_slot_store.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_container_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_storage.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/container_ops.h

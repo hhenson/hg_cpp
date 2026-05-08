@@ -12,10 +12,11 @@
 #include <catch2/reporters/catch_reporter_event_listener.hpp>
 #include <catch2/reporters/catch_reporter_registrars.hpp>
 
-#include <hgraph/types/metadata/ts_value_plan_factory.h>
+#include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/time_series/ts_data.h>
 #include <hgraph/types/value/compact_storage.h>
 #include <hgraph/types/value/value_ops.h>
 
@@ -29,8 +30,9 @@ namespace
         // bindings. Clear all of them before the type registry's reset
         // destroys the underlying schemas.
         hgraph::ValuePlanFactory::instance().reset();
-        hgraph::TSValuePlanFactory::instance().reset();
+        hgraph::TSDataPlanFactory::instance().reset();
         hgraph::clear_compact_container_plans();
+        hgraph::TSDataBinding::clear();
         hgraph::ValueTypeBinding::clear();
         hgraph::TypeRegistry::instance().reset();
     }
