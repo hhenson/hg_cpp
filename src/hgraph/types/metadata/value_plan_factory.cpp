@@ -55,25 +55,55 @@ namespace hgraph
             return static_cast<const CompositeIndexedContext *>(context)->child_bindings[index];
         }
 
-        [[nodiscard]] std::size_t composite_value_hash(const void *context, const void *memory) noexcept
+        [[nodiscard]] ValueView composite_indexed_range_projector(const void *context, const void *memory,
+                                                                  std::size_t index)
         {
-            if (memory == nullptr) { return 0; }
-            try
+            return ValueView{composite_indexed_element_binding(context, memory, index),
+                             composite_indexed_element_at(context, memory, index)};
+        }
+
+        [[nodiscard]] ValueView composite_indexed_mutable_range_projector(const void *context,
+                                                                          const void *memory,
+                                                                          std::size_t index)
+        {
+            return ValueView{composite_indexed_element_binding(context, memory, index),
+                             const_cast<void *>(composite_indexed_element_at(context, memory, index))}
+                .begin_mutation();
+        }
+
+        [[nodiscard]] Range<ValueView> composite_indexed_make_range(const void *context, const void *memory)
+        {
+            return Range<ValueView>{
+                .context   = context,
+                .memory    = memory,
+                .limit     = composite_indexed_size(context, memory),
+                .predicate = nullptr,
+                .projector = &composite_indexed_range_projector,
+            };
+        }
+
+        [[nodiscard]] Range<ValueView> composite_indexed_make_mutable_range(const void *context, void *memory)
+        {
+            return Range<ValueView>{
+                .context   = context,
+                .memory    = memory,
+                .limit     = composite_indexed_size(context, memory),
+                .predicate = nullptr,
+                .projector = &composite_indexed_mutable_range_projector,
+            };
+        }
+
+        [[nodiscard]] std::size_t composite_value_hash(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const CompositeIndexedContext *>(context);
+            std::size_t seed  = 0;
+            for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
             {
-                const auto *state = static_cast<const CompositeIndexedContext *>(context);
-                std::size_t seed  = 0;
-                for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
-                {
-                    const auto &ops = state->child_bindings[index]->checked_ops();
-                    const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
-                    seed = combine_hash(seed, ops.hash(child));
-                }
-                return seed;
+                const auto &ops = state->child_bindings[index]->checked_ops();
+                const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
+                seed = combine_hash(seed, ops.hash(child));
             }
-            catch (...)
-            {
-                return 0;
-            }
+            return seed;
         }
 
         [[nodiscard]] bool composite_value_equals(const void *context, const void *lhs, const void *rhs) noexcept
@@ -300,25 +330,54 @@ namespace hgraph
             return static_cast<const ArrayIndexedContext *>(context)->element_binding;
         }
 
-        [[nodiscard]] std::size_t array_value_hash(const void *context, const void *memory) noexcept
+        [[nodiscard]] ValueView array_indexed_range_projector(const void *context, const void *memory,
+                                                              std::size_t index)
         {
-            if (memory == nullptr) { return 0; }
-            try
+            return ValueView{array_indexed_element_binding(context, memory, index),
+                             array_indexed_element_at(context, memory, index)};
+        }
+
+        [[nodiscard]] ValueView array_indexed_mutable_range_projector(const void *context, const void *memory,
+                                                                      std::size_t index)
+        {
+            return ValueView{array_indexed_element_binding(context, memory, index),
+                             const_cast<void *>(array_indexed_element_at(context, memory, index))}
+                .begin_mutation();
+        }
+
+        [[nodiscard]] Range<ValueView> array_indexed_make_range(const void *context, const void *memory)
+        {
+            return Range<ValueView>{
+                .context   = context,
+                .memory    = memory,
+                .limit     = array_indexed_size(context, memory),
+                .predicate = nullptr,
+                .projector = &array_indexed_range_projector,
+            };
+        }
+
+        [[nodiscard]] Range<ValueView> array_indexed_make_mutable_range(const void *context, void *memory)
+        {
+            return Range<ValueView>{
+                .context   = context,
+                .memory    = memory,
+                .limit     = array_indexed_size(context, memory),
+                .predicate = nullptr,
+                .projector = &array_indexed_mutable_range_projector,
+            };
+        }
+
+        [[nodiscard]] std::size_t array_value_hash(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const ArrayIndexedContext *>(context);
+            const auto &ops   = state->element_binding->checked_ops();
+            std::size_t seed  = 0;
+            for (std::size_t index = 0; index < state->size; ++index)
             {
-                const auto *state = static_cast<const ArrayIndexedContext *>(context);
-                const auto &ops   = state->element_binding->checked_ops();
-                std::size_t seed  = 0;
-                for (std::size_t index = 0; index < state->size; ++index)
-                {
-                    const auto *child = static_cast<const std::byte *>(memory) + index * state->stride;
-                    seed = combine_hash(seed, ops.hash(child));
-                }
-                return seed;
+                const auto *child = static_cast<const std::byte *>(memory) + index * state->stride;
+                seed = combine_hash(seed, ops.hash(child));
             }
-            catch (...)
-            {
-                return 0;
-            }
+            return seed;
         }
 
         [[nodiscard]] bool array_value_equals(const void *context, const void *lhs, const void *rhs) noexcept
@@ -494,7 +553,8 @@ namespace hgraph
 
                 ops = IndexedValueOps{
                     {&context,
-                     &composite_value_hash,
+                     true,
+                     schema.is_hashable() ? &composite_value_hash : nullptr,
                      &composite_value_equals,
                      &composite_value_compare,
                      &composite_value_to_string
@@ -507,7 +567,8 @@ namespace hgraph
                     &composite_indexed_size,
                     &composite_indexed_element_at,
                     &composite_indexed_element_binding,
-                    nullptr,
+                    &composite_indexed_make_range,
+                    &composite_indexed_make_mutable_range,
                 };
             }
         };
@@ -550,7 +611,12 @@ namespace hgraph
                 };
 
                 ops = IndexedValueOps{
-                    {&context, &array_value_hash, &array_value_equals, &array_value_compare, &array_value_to_string
+                    {&context,
+                     true,
+                     schema.is_hashable() ? &array_value_hash : nullptr,
+                     &array_value_equals,
+                     &array_value_compare,
+                     &array_value_to_string
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                      ,
                      &array_value_to_python,
@@ -560,7 +626,8 @@ namespace hgraph
                     &array_indexed_size,
                     &array_indexed_element_at,
                     &array_indexed_element_binding,
-                    nullptr,
+                    &array_indexed_make_range,
+                    &array_indexed_make_mutable_range,
                 };
             }
         };

@@ -149,6 +149,33 @@ namespace hgraph
             }
             return flags;
         }
+
+        [[nodiscard]] ValueTypeFlags ordered_container_flags(const ValueTypeMetaData *element_type) noexcept
+        {
+            if (!element_type)
+            {
+                return ValueTypeFlags::None;
+            }
+
+            ValueTypeFlags flags = ValueTypeFlags::None;
+            if (element_type->is_hashable())
+            {
+                flags |= ValueTypeFlags::Hashable;
+            }
+            if (element_type->is_equatable())
+            {
+                flags |= ValueTypeFlags::Equatable;
+            }
+            if (element_type->is_comparable())
+            {
+                flags |= ValueTypeFlags::Comparable;
+            }
+            if (element_type->is_buffer_compatible())
+            {
+                flags |= ValueTypeFlags::BufferCompatible;
+            }
+            return flags;
+        }
     }  // namespace
 
     TypeRegistry &TypeRegistry::instance()
@@ -436,7 +463,7 @@ namespace hgraph
     {
         const SizedKey key{element_type, capacity};
         const ValueTypeMetaData &meta = cyclic_buffer_cache_.intern(key, [&]() {
-            ValueTypeMetaData m(ValueTypeKind::CyclicBuffer, ValueTypeFlags::None);
+            ValueTypeMetaData m(ValueTypeKind::CyclicBuffer, ordered_container_flags(element_type));
             m.element_type = element_type;
             m.fixed_size = capacity;
             return m;
@@ -448,7 +475,7 @@ namespace hgraph
     {
         const SizedKey key{element_type, max_capacity};
         const ValueTypeMetaData &meta = queue_cache_.intern(key, [&]() {
-            ValueTypeMetaData m(ValueTypeKind::Queue, ValueTypeFlags::None);
+            ValueTypeMetaData m(ValueTypeKind::Queue, ordered_container_flags(element_type));
             m.element_type = element_type;
             m.fixed_size = max_capacity;
             return m;
