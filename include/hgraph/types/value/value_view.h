@@ -2,10 +2,12 @@
 #define HGRAPH_CPP_ROOT_VALUE_VIEW_H
 
 #include <hgraph/types/value/value_ops.h>
+#include <hgraph/util/tagged_ptr.h>
 
 #include <cassert>
 #include <compare>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -21,6 +23,11 @@ namespace hgraph
     class MapView;
     class CyclicBufferView;
     class QueueView;
+    class MutableTupleView;
+    class MutableBundleView;
+    class MutableListView;
+    class MutableCyclicBufferView;
+    class MutableQueueView;
     class Value;
 
     /**
@@ -45,25 +52,45 @@ namespace hgraph
         constexpr ValueView() noexcept = default;
 
         ValueView(const ValueTypeBinding *binding, void *data) noexcept
-            : binding_{binding}, data_{data} {}
+            : binding_{binding, tag_for(binding, data, true)}, data_{data} {}
+
+        ValueView(const ValueTypeBinding *binding, const void *data) noexcept
+            : binding_{binding, BindingTag::ReadOnly}, data_{data} {}
+
+        ValueView(const ValueTypeBinding *binding, std::nullptr_t) noexcept
+            : binding_{binding, BindingTag::ReadOnly}, data_{nullptr} {}
 
         /** True when both the binding and the data pointer are non-null. */
-        [[nodiscard]] bool valid() const noexcept { return binding_ != nullptr && data_ != nullptr; }
+        [[nodiscard]] bool valid() const noexcept { return binding() != nullptr && data_ != nullptr; }
 
         explicit operator bool() const noexcept { return valid(); }
 
         /** True when the view carries a binding/schema, even if the payload is currently absent. */
-        [[nodiscard]] bool bound() const noexcept { return binding_ != nullptr; }
+        [[nodiscard]] bool bound() const noexcept { return binding() != nullptr; }
         /** True when the view references a live payload. */
         [[nodiscard]] bool has_value() const noexcept { return data_ != nullptr; }
+        /** True when the view may write through the payload pointer. */
+        [[nodiscard]] bool mutable_payload() const noexcept
+        {
+            return valid() && binding_.has_enum(BindingTag::Mutable);
+        }
 
-        [[nodiscard]] const ValueTypeBinding *binding() const noexcept { return binding_; }
+        [[nodiscard]] const ValueTypeBinding *binding() const noexcept { return binding_.ptr(); }
         [[nodiscard]] const ValueTypeMetaData *schema() const noexcept
         {
-            return binding_ != nullptr ? binding_->type_meta : nullptr;
+            const auto *bound = binding();
+            return bound != nullptr ? bound->type_meta : nullptr;
         }
-        [[nodiscard]] void *data() noexcept { return data_; }
         [[nodiscard]] const void *data() const noexcept { return data_; }
+        [[nodiscard]] void *mutable_data() const
+        {
+            if (!valid()) { throw std::logic_error("ValueView::mutable_data on invalid view"); }
+            if (!binding_.has_enum(BindingTag::Mutable))
+            {
+                throw std::logic_error("ValueView::mutable_data on read-only view");
+            }
+            return const_cast<void *>(data_);
+        }
 
         // -- kind queries --
         [[nodiscard]] bool is_atomic() const noexcept
@@ -90,7 +117,8 @@ namespace hgraph
         template <typename T>
         [[nodiscard]] bool holds_alternative() const noexcept
         {
-            return is_atomic() && binding_->ops == &ops_for<T>();
+            const auto *bound = binding();
+            return is_atomic() && bound->ops == &ops_for<T>();
         }
 
         template <typename T>
@@ -108,11 +136,9 @@ namespace hgraph
             return *static_cast<const T *>(data_);
         }
         template <typename T>
-        [[nodiscard]] T &as() noexcept
+        [[nodiscard]] T &as()
         {
-            assert(valid() && "as<T>() on invalid ValueView");
-            assert(holds_alternative<T>() && "as<T>() type mismatch");
-            return *static_cast<T *>(data_);
+            return checked_mutable_as<T>();
         }
 
         /** ``try_as<T>`` returns ``nullptr`` on invalid view, non-atomic kind, or type mismatch. */
@@ -121,10 +147,13 @@ namespace hgraph
         {
             return holds_alternative<T>() ? static_cast<const T *>(data_) : nullptr;
         }
+
+        /** Mutable variant of ``try_as<T>``; returns ``nullptr`` for read-only views. */
         template <typename T>
-        [[nodiscard]] T *try_as() noexcept
+        [[nodiscard]] T *try_mutable_as() noexcept
         {
-            return holds_alternative<T>() ? static_cast<T *>(data_) : nullptr;
+            return holds_alternative<T>() && mutable_payload() ? static_cast<T *>(const_cast<void *>(data_))
+                                                               : nullptr;
         }
 
         /** ``checked_as<T>`` throws when the view is invalid, non-atomic, or T doesn't match. */
@@ -137,12 +166,13 @@ namespace hgraph
             return *static_cast<const T *>(data_);
         }
         template <typename T>
-        [[nodiscard]] T &checked_as()
+        [[nodiscard]] T &checked_mutable_as()
         {
-            if (!valid()) { throw std::logic_error("checked_as<T> on invalid ValueView"); }
-            if (!is_atomic()) { throw std::logic_error("checked_as<T> on non-atomic ValueView"); }
-            if (!holds_alternative<T>()) { throw std::logic_error("checked_as<T> type mismatch"); }
-            return *static_cast<T *>(data_);
+            if (!valid()) { throw std::logic_error("checked_mutable_as<T> on invalid ValueView"); }
+            if (!mutable_payload()) { throw std::logic_error("checked_mutable_as<T> on read-only ValueView"); }
+            if (!is_atomic()) { throw std::logic_error("checked_mutable_as<T> on non-atomic ValueView"); }
+            if (!holds_alternative<T>()) { throw std::logic_error("checked_mutable_as<T> type mismatch"); }
+            return *static_cast<T *>(const_cast<void *>(data_));
         }
 
         template <typename T>
@@ -156,9 +186,10 @@ namespace hgraph
         {
             using value_type = std::remove_cvref_t<T>;
             if (!valid()) { throw std::logic_error("set_scalar<T> on invalid ValueView"); }
+            if (!mutable_payload()) { throw std::logic_error("set_scalar<T> on read-only ValueView"); }
             if (!is_atomic()) { throw std::logic_error("set_scalar<T> on non-atomic ValueView"); }
             if (!holds_alternative<value_type>()) { throw std::logic_error("set_scalar<T> type mismatch"); }
-            *static_cast<value_type *>(data_) = std::forward<T>(value);
+            *static_cast<value_type *>(const_cast<void *>(data_)) = std::forward<T>(value);
         }
 
         // -- kind-specialised view casts (definitions in specialised_views.h) --
@@ -176,6 +207,16 @@ namespace hgraph
         [[nodiscard]] std::optional<CyclicBufferView> try_as_cyclic_buffer() const;
         [[nodiscard]] QueueView as_queue() const;
         [[nodiscard]] std::optional<QueueView> try_as_queue() const;
+        [[nodiscard]] MutableTupleView as_mutable_tuple() const;
+        [[nodiscard]] std::optional<MutableTupleView> try_as_mutable_tuple() const;
+        [[nodiscard]] MutableBundleView as_mutable_bundle() const;
+        [[nodiscard]] std::optional<MutableBundleView> try_as_mutable_bundle() const;
+        [[nodiscard]] MutableListView as_mutable_list() const;
+        [[nodiscard]] std::optional<MutableListView> try_as_mutable_list() const;
+        [[nodiscard]] MutableCyclicBufferView as_mutable_cyclic_buffer() const;
+        [[nodiscard]] std::optional<MutableCyclicBufferView> try_as_mutable_cyclic_buffer() const;
+        [[nodiscard]] MutableQueueView as_mutable_queue() const;
+        [[nodiscard]] std::optional<MutableQueueView> try_as_mutable_queue() const;
 
         // -- generic ops.
         [[nodiscard]] std::size_t hash() const noexcept
@@ -183,7 +224,7 @@ namespace hgraph
             if (!valid()) { return 0; }
             try
             {
-                return binding_->checked_ops().hash(data_);
+                return binding()->checked_ops().hash(data_);
             }
             catch (...)
             {
@@ -205,7 +246,7 @@ namespace hgraph
         [[nodiscard]] std::string to_string() const
         {
             if (!valid()) { return std::string{}; }
-            return binding_->checked_ops().to_string(data_);
+            return binding()->checked_ops().to_string(data_);
         }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -214,9 +255,27 @@ namespace hgraph
 #endif
 
       private:
-        const ValueTypeBinding *binding_{nullptr};
-        void                   *data_{nullptr};
+        enum class BindingTag : std::uintptr_t
+        {
+            ReadOnly = 0,
+            Mutable  = 1,
+        };
+
+        using BindingPtr = tagged_ptr<const ValueTypeBinding, 1, BindingTag>;
+
+        [[nodiscard]] static constexpr BindingTag tag_for(const ValueTypeBinding *binding,
+                                                          const void             *data,
+                                                          bool                    writable) noexcept
+        {
+            return binding != nullptr && data != nullptr && writable ? BindingTag::Mutable
+                                                                     : BindingTag::ReadOnly;
+        }
+
+        BindingPtr  binding_{nullptr};
+        const void *data_{nullptr};
     };
+
+    static_assert(sizeof(ValueView) == sizeof(void *) * 2, "ValueView must remain a two-word handle");
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_VALUE_VIEW_H
