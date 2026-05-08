@@ -66,10 +66,14 @@ namespace hgraph
 
         // ----- List -----------------------------------------------------
 
-        inline std::size_t list_hash(const void *, const void *memory) noexcept
+        inline std::size_t list_hash(const void *, const void *memory)
         {
             const auto *storage = static_cast<const ListStorage *>(memory);
-            if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
+            if (storage == nullptr) { throw std::logic_error("List hash requires live storage"); }
+            if (storage->element_binding() == nullptr)
+            {
+                throw std::logic_error("List hash requires an element binding");
+            }
             const auto &ops = storage->element_binding()->checked_ops();
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
@@ -191,10 +195,14 @@ namespace hgraph
 
         // ----- CyclicBuffer (read in ring order) ------------------------
 
-        inline std::size_t cyclic_buffer_hash(const void *, const void *memory) noexcept
+        inline std::size_t cyclic_buffer_hash(const void *, const void *memory)
         {
             const auto *storage = static_cast<const CyclicBufferStorage *>(memory);
-            if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
+            if (storage == nullptr) { throw std::logic_error("CyclicBuffer hash requires live storage"); }
+            if (storage->element_binding() == nullptr)
+            {
+                throw std::logic_error("CyclicBuffer hash requires an element binding");
+            }
             const auto &ops = storage->element_binding()->checked_ops();
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
@@ -308,10 +316,14 @@ namespace hgraph
 
         // ----- Queue (read in arrival order) ----------------------------
 
-        inline std::size_t queue_hash(const void *, const void *memory) noexcept
+        inline std::size_t queue_hash(const void *, const void *memory)
         {
             const auto *storage = static_cast<const QueueStorage *>(memory);
-            if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
+            if (storage == nullptr) { throw std::logic_error("Queue hash requires live storage"); }
+            if (storage->element_binding() == nullptr)
+            {
+                throw std::logic_error("Queue hash requires an element binding");
+            }
             const auto &ops = storage->element_binding()->checked_ops();
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
@@ -413,10 +425,14 @@ namespace hgraph
 
         // ----- Set (order-independent) ----------------------------------
 
-        inline std::size_t set_hash(const void *, const void *memory) noexcept
+        inline std::size_t set_hash(const void *, const void *memory)
         {
             const auto *storage = static_cast<const SetStorage *>(memory);
-            if (storage == nullptr || storage->element_binding() == nullptr) { return 0; }
+            if (storage == nullptr) { throw std::logic_error("Set hash requires live storage"); }
+            if (storage->element_binding() == nullptr)
+            {
+                throw std::logic_error("Set hash requires an element binding");
+            }
             const auto &ops = storage->element_binding()->checked_ops();
             std::size_t result = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
@@ -490,12 +506,13 @@ namespace hgraph
 
         // ----- Map (order-independent over keys) ------------------------
 
-        inline std::size_t map_hash(const void *, const void *memory) noexcept
+        inline std::size_t map_hash(const void *, const void *memory)
         {
             const auto *storage = static_cast<const MapStorage *>(memory);
-            if (storage == nullptr || storage->key_binding() == nullptr || storage->value_binding() == nullptr)
+            if (storage == nullptr) { throw std::logic_error("Map hash requires live storage"); }
+            if (storage->key_binding() == nullptr || storage->value_binding() == nullptr)
             {
-                return 0;
+                throw std::logic_error("Map hash requires key and value bindings");
             }
             const auto &key_ops   = storage->key_binding()->checked_ops();
             const auto &value_ops = storage->value_binding()->checked_ops();
@@ -685,7 +702,8 @@ namespace hgraph
         ValueView dense_mutable_range_projector(const void *, const void *memory, std::size_t index)
         {
             return ValueView{ElementBindingFn(nullptr, memory, index),
-                             const_cast<void *>(ElementAtFn(nullptr, memory, index))};
+                             const_cast<void *>(ElementAtFn(nullptr, memory, index))}
+                .begin_mutation();
         }
 
         template <auto SizeFn, auto ElementAtFn, auto ElementBindingFn>
@@ -787,10 +805,14 @@ namespace hgraph
         // compare / to_string treat the map's keys as a logical set
         // (order-independent xor of element hashes; subset+superset for
         // equality; ``{a, b, c}`` for formatting).
-        inline std::size_t map_key_adapter_hash(const void *, const void *memory) noexcept
+        inline std::size_t map_key_adapter_hash(const void *, const void *memory)
         {
             const auto *storage = static_cast<const MapStorage *>(memory);
-            if (storage == nullptr || storage->key_binding() == nullptr) { return 0; }
+            if (storage == nullptr) { throw std::logic_error("Map key-set hash requires live storage"); }
+            if (storage->key_binding() == nullptr)
+            {
+                throw std::logic_error("Map key-set hash requires a key binding");
+            }
             const auto &ops = storage->key_binding()->checked_ops();
             std::size_t result = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
@@ -880,6 +902,7 @@ namespace hgraph
         static const ListValueOps ops = {
             {{// ValueOps:
               nullptr,
+              false,
               &container_ops_detail::list_hash,
               &container_ops_detail::list_equals,
               &container_ops_detail::list_compare,
@@ -897,9 +920,7 @@ namespace hgraph
              &container_ops_detail::dense_make_range<&container_ops_detail::list_size,
                                                       &container_ops_detail::list_element_at,
                                                       &container_ops_detail::list_element_binding>,
-             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::list_size,
-                                                             &container_ops_detail::list_element_at,
-                                                             &container_ops_detail::list_element_binding>},
+             nullptr},
             // ListValueOps: no additions
         };
         return ops;
@@ -909,6 +930,7 @@ namespace hgraph
     {
         static const SetValueOps ops = {
             {{nullptr,
+              false,
               &container_ops_detail::set_hash,
               &container_ops_detail::set_equals,
               &container_ops_detail::set_compare,
@@ -925,9 +947,7 @@ namespace hgraph
              &container_ops_detail::dense_make_range<&container_ops_detail::set_size,
                                                      &container_ops_detail::set_element_at,
                                                      &container_ops_detail::set_element_binding>,
-             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::set_size,
-                                                             &container_ops_detail::set_element_at,
-                                                             &container_ops_detail::set_element_binding>},
+             nullptr},
             &container_ops_detail::set_contains,
         };
         return ops;
@@ -941,6 +961,7 @@ namespace hgraph
         // paired (key, value) surface.
         static const MapValueOps ops = {
             {{nullptr,
+              false,
               &container_ops_detail::map_hash,
               &container_ops_detail::map_equals,
               &container_ops_detail::map_compare,
@@ -957,9 +978,7 @@ namespace hgraph
              &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
                                                       &container_ops_detail::map_key_at_index,
                                                       &container_ops_detail::map_key_binding>,
-             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::map_size,
-                                                             &container_ops_detail::map_key_at_index,
-                                                             &container_ops_detail::map_key_binding>},
+             nullptr},
             &container_ops_detail::map_contains,
             &container_ops_detail::map_value_at,
             &container_ops_detail::map_value_at_index,
@@ -987,6 +1006,7 @@ namespace hgraph
     {
         static const CyclicBufferValueOps ops = {
             {{nullptr,
+              false,
               &container_ops_detail::cyclic_buffer_hash,
               &container_ops_detail::cyclic_buffer_equals,
               &container_ops_detail::cyclic_buffer_compare,
@@ -1003,9 +1023,7 @@ namespace hgraph
              &container_ops_detail::dense_make_range<&container_ops_detail::cyclic_buffer_size,
                                                       &container_ops_detail::cyclic_buffer_element_at,
                                                       &container_ops_detail::cyclic_buffer_element_binding>,
-             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::cyclic_buffer_size,
-                                                             &container_ops_detail::cyclic_buffer_element_at,
-                                                             &container_ops_detail::cyclic_buffer_element_binding>},
+             nullptr},
             &container_ops_detail::cyclic_buffer_head,
         };
         return ops;
@@ -1015,6 +1033,7 @@ namespace hgraph
     {
         static const QueueValueOps ops = {
             {{nullptr,
+              false,
               &container_ops_detail::queue_hash,
               &container_ops_detail::queue_equals,
               &container_ops_detail::queue_compare,
@@ -1031,9 +1050,7 @@ namespace hgraph
              &container_ops_detail::dense_make_range<&container_ops_detail::queue_size,
                                                       &container_ops_detail::queue_element_at,
                                                       &container_ops_detail::queue_element_binding>,
-             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::queue_size,
-                                                             &container_ops_detail::queue_element_at,
-                                                             &container_ops_detail::queue_element_binding>},
+             nullptr},
             &container_ops_detail::queue_front,
         };
         return ops;
@@ -1047,6 +1064,7 @@ namespace hgraph
         // the adapter just reframes the read surface as a Set.
         static const SetValueOps ops = {
             {{nullptr,
+              false,
               &container_ops_detail::map_key_adapter_hash,
               &container_ops_detail::map_key_adapter_equals,
               &container_ops_detail::map_key_adapter_compare,
@@ -1063,9 +1081,7 @@ namespace hgraph
              &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
                                                       &container_ops_detail::map_key_at_index,
                                                       &container_ops_detail::map_key_binding>,
-             &container_ops_detail::dense_make_mutable_range<&container_ops_detail::map_size,
-                                                             &container_ops_detail::map_key_at_index,
-                                                             &container_ops_detail::map_key_binding>},
+             nullptr},
             &container_ops_detail::map_contains,
         };
         return ops;
