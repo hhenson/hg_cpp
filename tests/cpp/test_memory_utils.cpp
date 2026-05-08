@@ -408,6 +408,14 @@ TEST_CASE("memory utils supports custom inline policies and aligned heap ownersh
     MemoryUtils::StorageHandle<> over_aligned_handle(over_aligned_plan);
     REQUIRE(over_aligned_handle.stores_heap());
     REQUIRE(reinterpret_cast<std::uintptr_t>(over_aligned_handle.data()) % alignof(OverAlignedValue) == 0u);
+
+    using OverAlignedInlinePolicy =
+        MemoryUtils::InlineStoragePolicy<sizeof(OverAlignedValue), alignof(OverAlignedValue)>;
+    REQUIRE(over_aligned_plan.template stores_inline<OverAlignedInlinePolicy>());
+
+    MemoryUtils::StorageHandle<OverAlignedInlinePolicy> over_aligned_inline(over_aligned_plan);
+    REQUIRE(over_aligned_inline.stores_inline());
+    REQUIRE(reinterpret_cast<std::uintptr_t>(over_aligned_inline.data()) % alignof(OverAlignedValue) == 0u);
 }
 
 TEST_CASE("memory utils caches tuple and named tuple plans and supports nesting", "[memory utils]") {

@@ -68,7 +68,7 @@ namespace hgraph
             {
                 require_non_none(source, "from_python");
                 Value out{binding};
-                binding.checked_ops().from_python(binding, out.view().data(), source);
+                binding.checked_ops().from_python(binding, const_cast<void *>(out.view().data()), source);
                 return out;
             }
         }  // namespace

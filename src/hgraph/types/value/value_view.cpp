@@ -184,7 +184,7 @@ namespace hgraph
 
     Value ValueView::clone() const
     {
-        if (binding_ == nullptr) { throw std::logic_error("ValueView::clone requires a bound view"); }
+        if (binding() == nullptr) { throw std::logic_error("ValueView::clone requires a bound view"); }
         return Value{*this};
     }
 
@@ -194,6 +194,7 @@ namespace hgraph
         {
             throw std::runtime_error("ValueView::copy_from requires non-empty views");
         }
+        if (!mutable_payload()) { throw std::logic_error("ValueView::copy_from requires a mutable destination"); }
         if (data_ == other.data_) { return; }
         if (schema() != other.schema())
         {
@@ -201,42 +202,49 @@ namespace hgraph
                                                     schema_name(schema()),
                                                     schema_name(other.schema())));
         }
-        if (binding_ == nullptr || other.binding_ == nullptr || binding_->plan() != other.binding_->plan())
+        const auto *bound       = binding();
+        const auto *other_bound = other.binding();
+        if (bound == nullptr || other_bound == nullptr || bound->plan() != other_bound->plan())
         {
             throw std::invalid_argument("ValueView::copy_from requires matching storage plans");
         }
 
-        binding_->checked_plan().copy_assign(data_, other.data_);
+        bound->checked_plan().copy_assign(mutable_data(), other.data_);
     }
 
     bool ValueView::try_copy_from(const ValueView &other)
     {
         if (!has_value() || !other.has_value()) { return false; }
+        if (!mutable_payload()) { return false; }
         if (data_ == other.data_) { return true; }
         if (schema() != other.schema()) { return false; }
-        if (binding_ == nullptr || other.binding_ == nullptr || binding_->plan() != other.binding_->plan())
+        const auto *bound       = binding();
+        const auto *other_bound = other.binding();
+        if (bound == nullptr || other_bound == nullptr || bound->plan() != other_bound->plan())
         {
             return false;
         }
-        binding_->checked_plan().copy_assign(data_, other.data_);
+        bound->checked_plan().copy_assign(mutable_data(), other.data_);
         return true;
     }
 
     bool ValueView::equals(const ValueView &other) const noexcept
     {
-        if (binding_ == nullptr || other.binding_ == nullptr)
+        const auto *bound       = binding();
+        const auto *other_bound = other.binding();
+        if (bound == nullptr || other_bound == nullptr)
         {
-            return binding_ == nullptr && other.binding_ == nullptr && data_ == other.data_;
+            return bound == nullptr && other_bound == nullptr && data_ == other.data_;
         }
         if (data_ == nullptr || other.data_ == nullptr)
         {
             if (data_ != other.data_) { return false; }
-            return binding_ == other.binding_ || value_schema_equivalent(schema(), other.schema());
+            return bound == other_bound || value_schema_equivalent(schema(), other.schema());
         }
 
         try
         {
-            if (binding_ == other.binding_) { return binding_->checked_ops().equals(data_, other.data_); }
+            if (bound == other_bound) { return bound->checked_ops().equals(data_, other.data_); }
             if (!value_schema_equivalent(schema(), other.schema())) { return false; }
             return semantic_equals(*this, other);
         }
@@ -248,12 +256,14 @@ namespace hgraph
 
     std::partial_ordering ValueView::compare(const ValueView &other) const noexcept
     {
-        if (const auto order = value_ops_detail::null_order(binding_, other.binding_)) { return *order; }
+        const auto *bound       = binding();
+        const auto *other_bound = other.binding();
+        if (const auto order = value_ops_detail::null_order(bound, other_bound)) { return *order; }
         if (data_ == nullptr || other.data_ == nullptr)
         {
             if (data_ != other.data_) { return data_ == nullptr ? std::partial_ordering::less
                                                                 : std::partial_ordering::greater; }
-            if (binding_ == other.binding_ || value_schema_equivalent(schema(), other.schema()))
+            if (bound == other_bound || value_schema_equivalent(schema(), other.schema()))
             {
                 return std::partial_ordering::equivalent;
             }
@@ -262,7 +272,7 @@ namespace hgraph
 
         try
         {
-            if (binding_ == other.binding_) { return binding_->checked_ops().compare(data_, other.data_); }
+            if (bound == other_bound) { return bound->checked_ops().compare(data_, other.data_); }
             if (!value_schema_equivalent(schema(), other.schema())) { return std::partial_ordering::unordered; }
             return semantic_compare(*this, other);
         }
@@ -276,7 +286,7 @@ namespace hgraph
     nb::object ValueView::to_python() const
     {
         if (!valid()) { throw std::runtime_error("ValueView::to_python requires a non-empty view"); }
-        return binding_->checked_ops().to_python(data_);
+        return binding()->checked_ops().to_python(data_);
     }
 
     void ValueView::from_python(nb::handle source)
@@ -287,7 +297,8 @@ namespace hgraph
             throw std::invalid_argument("ValueView::from_python cannot reset a view from None");
         }
 
-        binding_->checked_ops().from_python(*binding_, data_, source);
+        const auto *bound = binding();
+        bound->checked_ops().from_python(*bound, mutable_data(), source);
     }
 
     nb::object Value::to_python() const
@@ -309,7 +320,7 @@ namespace hgraph
         }
 
         Value replacement{*binding()};
-        replacement.view().from_python(source);
+        binding()->checked_ops().from_python(*binding(), const_cast<void *>(replacement.view().data()), source);
         *this = std::move(replacement);
     }
 #endif

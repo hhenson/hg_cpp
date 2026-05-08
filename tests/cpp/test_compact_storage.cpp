@@ -26,6 +26,18 @@ namespace
     {
         return *static_cast<const T *>(memory);
     }
+
+    struct CopyConstructOnlyValue
+    {
+        int value{0};
+
+        CopyConstructOnlyValue()                                              = default;
+        explicit CopyConstructOnlyValue(int v) : value{v} {}
+        CopyConstructOnlyValue(const CopyConstructOnlyValue &)                = default;
+        CopyConstructOnlyValue(CopyConstructOnlyValue &&) noexcept            = default;
+        CopyConstructOnlyValue &operator=(const CopyConstructOnlyValue &)     = delete;
+        CopyConstructOnlyValue &operator=(CopyConstructOnlyValue &&) noexcept = delete;
+    };
 }  // namespace
 
 TEST_CASE("ListBuilder: push_back round-trips through ListStorage")
@@ -139,6 +151,24 @@ TEST_CASE("CyclicBufferBuilder: zero capacity is rejected at construction")
     const auto *binding = registry.scalar_binding<int>();
 
     REQUIRE_THROWS_AS(CyclicBufferBuilder(*binding, /*capacity=*/0), std::invalid_argument);
+}
+
+TEST_CASE("CyclicBufferBuilder: replacement requires copy assignment and preserves existing slot on rejection")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<CopyConstructOnlyValue>("CopyConstructOnlyValue");
+    const auto *binding = registry.scalar_binding<CopyConstructOnlyValue>();
+
+    CyclicBufferBuilder builder{*binding, /*capacity=*/1};
+    const CopyConstructOnlyValue first{1};
+    const CopyConstructOnlyValue second{2};
+    builder.push_back(first);
+    REQUIRE_THROWS_AS(builder.push_back(second), std::logic_error);
+
+    auto storage = builder.build_storage();
+    REQUIRE(storage.size() == 1);
+    REQUIRE(as_const<CopyConstructOnlyValue>(storage.element_at(0)).value == 1);
 }
 
 TEST_CASE("QueueBuilder: bounded queue rejects on overflow; unbounded grows")
@@ -291,6 +321,27 @@ TEST_CASE("MapBuilder: set_item / contains / value_at round-trip")
     REQUIRE(*static_cast<const int *>(storage.value_at(&beta)) == 200);
     REQUIRE(*static_cast<const int *>(storage.value_at(&gamma)) == 3);
     REQUIRE(storage.value_at(&delta) == nullptr);
+}
+
+TEST_CASE("MapBuilder: value replacement requires copy assignment and preserves existing value on rejection")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<CopyConstructOnlyValue>("CopyConstructOnlyValue");
+    const auto *key_binding   = registry.scalar_binding<int>();
+    const auto *value_binding = registry.scalar_binding<CopyConstructOnlyValue>();
+
+    MapBuilder builder{*key_binding, *value_binding};
+    const CopyConstructOnlyValue first{10};
+    const CopyConstructOnlyValue second{20};
+    builder.set_item<int, CopyConstructOnlyValue>(1, first);
+    REQUIRE_THROWS_AS((builder.set_item<int, CopyConstructOnlyValue>(1, second)), std::logic_error);
+
+    auto storage = builder.build_storage();
+    REQUIRE(storage.size() == 1);
+    int key = 1;
+    REQUIRE(as_const<CopyConstructOnlyValue>(storage.value_at(&key)).value == 10);
 }
 
 TEST_CASE("SetBuilder and MapBuilder: indexes survive accumulator growth")

@@ -21,6 +21,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,6 +40,7 @@ TEST_CASE("ListView: size, at, iteration over a built list")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::string>("string");
     const auto *element_binding = registry.scalar_binding<int>();
     const auto &list_binding    = compact_list_binding(*element_binding);
 
@@ -211,8 +213,10 @@ TEST_CASE("SetView: contains, size, iteration; ops are order-independent")
 
     int seven = 7;
     int twelve = 12;
+    std::string wrong_type{"7"};
     REQUIRE(view_a.contains(ValueView{element_binding, &seven}));
     REQUIRE_FALSE(view_a.contains(ValueView{element_binding, &twelve}));
+    REQUIRE_FALSE(view_a.contains(ValueView{registry.scalar_binding<std::string>(), &wrong_type}));
 
     int sum = 0;
     for (const auto member : view_a) { sum += member.checked_as<int>(); }
@@ -269,12 +273,15 @@ TEST_CASE("MapView: contains, at, iteration; ops are order-independent over keys
     const std::string alpha{"alpha"};
     const std::string beta{"beta"};
     const std::string delta{"delta"};
+    int wrong_key_type = 1;
     REQUIRE(view.contains(ValueView{key_binding, const_cast<std::string *>(&alpha)}));
     REQUIRE_FALSE(view.contains(ValueView{key_binding, const_cast<std::string *>(&delta)}));
+    REQUIRE_FALSE(view.contains(ValueView{value_binding, &wrong_key_type}));
 
     REQUIRE(view.at(ValueView{key_binding, const_cast<std::string *>(&beta)}).checked_as<int>() == 2);
     REQUIRE_THROWS_AS(view.at(ValueView{key_binding, const_cast<std::string *>(&delta)}),
                       std::out_of_range);
+    REQUIRE_THROWS_AS(view.at(ValueView{value_binding, &wrong_key_type}), std::out_of_range);
 
     // Iterate; verify we see all three entries (in some order). The
     // map view yields ``std::pair<ValueView, ValueView>`` (key,
@@ -381,7 +388,11 @@ TEST_CASE("MapView::key_set: returns a SetView wrapping the map's keys")
     REQUIRE_FALSE(keys.contains(ValueView{key_binding, const_cast<std::string *>(&z)}));
 
     int count = 0;
-    for (const auto member : keys) { (void)member; ++count; }
+    for (auto member : keys)
+    {
+        REQUIRE_THROWS_AS(member.checked_mutable_as<std::string>() = "mutated", std::logic_error);
+        ++count;
+    }
     REQUIRE(count == 3);
 
     MapBuilder smaller{*key_binding, *value_binding};
@@ -411,6 +422,9 @@ TEST_CASE("Value and ValueView expose direct specialized casts for compact conta
     REQUIRE(list_value.as_list().at(1).checked_as<int>() == 5);
     REQUIRE(list_value.view().try_as_list().has_value());
     REQUIRE_FALSE(list_value.view().try_as_map().has_value());
+    REQUIRE_FALSE(list_value.view().can_begin_mutation());
+    REQUIRE_THROWS_AS(list_value.view().begin_mutation(), std::logic_error);
+    REQUIRE_THROWS_AS(list_value.as_list().begin_mutation(), std::logic_error);
 
     SetBuilder set_builder{*int_binding};
     set_builder.insert<int>(7);
@@ -418,12 +432,16 @@ TEST_CASE("Value and ValueView expose direct specialized casts for compact conta
     Value set_value = set_builder.build();
     int seven = 7;
     REQUIRE(set_value.as_set().contains(ValueView{int_binding, &seven}));
+    REQUIRE_FALSE(set_value.view().can_begin_mutation());
+    REQUIRE_THROWS_AS(set_value.view().begin_mutation(), std::logic_error);
 
     MapBuilder map_builder{*str_binding, *int_binding};
     map_builder.set_item<std::string, int>(std::string{"x"}, 10);
     Value map_value = map_builder.build();
     const std::string x{"x"};
     REQUIRE(map_value.as_map().at(ValueView{str_binding, const_cast<std::string *>(&x)}).checked_as<int>() == 10);
+    REQUIRE_FALSE(map_value.view().can_begin_mutation());
+    REQUIRE_THROWS_AS(map_value.view().begin_mutation(), std::logic_error);
 
     CyclicBufferBuilder cyclic_builder{*int_binding, 2};
     cyclic_builder.push_back<int>(1);
@@ -433,6 +451,8 @@ TEST_CASE("Value and ValueView expose direct specialized casts for compact conta
     REQUIRE(cyclic_value.as_cyclic_buffer().size() == 2);
     REQUIRE(cyclic_value.as_cyclic_buffer().at(0).checked_as<int>() == 2);
     REQUIRE(cyclic_value.as_cyclic_buffer().full());
+    REQUIRE_FALSE(cyclic_value.view().can_begin_mutation());
+    REQUIRE_THROWS_AS(cyclic_value.as_cyclic_buffer().begin_mutation(), std::logic_error);
 
     QueueBuilder queue_builder{*int_binding, 2};
     queue_builder.push<int>(8);
@@ -440,6 +460,8 @@ TEST_CASE("Value and ValueView expose direct specialized casts for compact conta
     Value queue_value = queue_builder.build();
     REQUIRE(queue_value.as_queue().front().checked_as<int>() == 8);
     REQUIRE(queue_value.as_queue().full());
+    REQUIRE_FALSE(queue_value.view().can_begin_mutation());
+    REQUIRE_THROWS_AS(queue_value.as_queue().begin_mutation(), std::logic_error);
 }
 
 TEST_CASE("TupleView, BundleView and fixed ListView read structured MemoryUtils storage")
@@ -456,8 +478,12 @@ TEST_CASE("TupleView, BundleView and fixed ListView read structured MemoryUtils 
     Value tuple_value{*tuple_binding};
     TupleView tuple = tuple_value.as_tuple();
     REQUIRE(tuple.size() == 2);
-    tuple.at(0).checked_as<int>() = 42;
-    tuple.at(1).checked_as<std::string>() = "forty-two";
+    auto readonly_tuple_child = tuple.at(0);
+    REQUIRE_FALSE(readonly_tuple_child.mutable_payload());
+    REQUIRE_THROWS_AS(readonly_tuple_child.checked_mutable_as<int>() = 42, std::logic_error);
+    auto mutable_tuple = tuple_value.as_tuple().begin_mutation();
+    mutable_tuple.at(0).checked_mutable_as<int>() = 42;
+    mutable_tuple.at(1).checked_mutable_as<std::string>() = "forty-two";
     REQUIRE(tuple[0].checked_as<int>() == 42);
     REQUIRE(tuple[1].checked_as<std::string>() == "forty-two");
     REQUIRE(tuple_value.to_string() == "(42, forty-two)");
@@ -470,8 +496,12 @@ TEST_CASE("TupleView, BundleView and fixed ListView read structured MemoryUtils 
     REQUIRE(bundle.size() == 2);
     REQUIRE(bundle.has_field("count"));
     REQUIRE_FALSE(bundle.has_field("missing"));
-    bundle["count"].checked_as<int>() = 3;
-    bundle["name"].checked_as<std::string>() = "items";
+    auto readonly_bundle_child = bundle["count"];
+    REQUIRE_FALSE(readonly_bundle_child.mutable_payload());
+    REQUIRE_THROWS_AS(readonly_bundle_child.checked_mutable_as<int>() = 3, std::logic_error);
+    auto mutable_bundle = bundle_value.as_bundle().begin_mutation();
+    mutable_bundle["count"].checked_mutable_as<int>() = 3;
+    mutable_bundle["name"].checked_mutable_as<std::string>() = "items";
     REQUIRE(bundle.field("count").checked_as<int>() == 3);
     REQUIRE(bundle.at("count").checked_as<int>() == 3);
     REQUIRE(bundle.at("name").checked_as<std::string>() == "items");
@@ -484,13 +514,18 @@ TEST_CASE("TupleView, BundleView and fixed ListView read structured MemoryUtils 
     ListView fixed_list = fixed_list_value.as_list();
     REQUIRE(fixed_list.size() == 3);
     REQUIRE(fixed_list.is_fixed());
-    fixed_list.at(0).checked_as<int>() = 1;
-    fixed_list.at(1).checked_as<int>() = 2;
-    fixed_list.at(2).checked_as<int>() = 3;
+    auto readonly_list_child = fixed_list.at(0);
+    REQUIRE_FALSE(readonly_list_child.mutable_payload());
+    REQUIRE_THROWS_AS(readonly_list_child.checked_mutable_as<int>() = 1, std::logic_error);
+    auto mutable_fixed_list = fixed_list_value.as_list().begin_mutation();
+    mutable_fixed_list.at(0).checked_mutable_as<int>() = 1;
+    mutable_fixed_list.at(1).checked_mutable_as<int>() = 2;
+    mutable_fixed_list.at(2).checked_mutable_as<int>() = 3;
+    for (auto element : mutable_fixed_list) { element.checked_mutable_as<int>() += 10; }
     int sum = 0;
     for (const auto element : fixed_list) { sum += element.checked_as<int>(); }
-    REQUIRE(sum == 6);
-    REQUIRE(fixed_list_value.to_string() == "[1, 2, 3]");
+    REQUIRE(sum == 36);
+    REQUIRE(fixed_list_value.to_string() == "[11, 12, 13]");
 }
 
 TEST_CASE("ValueView semantic fallback compares fixed and compact lists by index")
@@ -506,9 +541,10 @@ TEST_CASE("ValueView semantic fallback compares fixed and compact lists by index
     REQUIRE(fixed_list_binding != nullptr);
 
     Value fixed{*fixed_list_binding};
-    fixed.as_list().at(0).checked_as<int>() = 1;
-    fixed.as_list().at(1).checked_as<int>() = 2;
-    fixed.as_list().at(2).checked_as<int>() = 3;
+    auto fixed_mutation = fixed.as_list().begin_mutation();
+    fixed_mutation.at(0).checked_mutable_as<int>() = 1;
+    fixed_mutation.at(1).checked_mutable_as<int>() = 2;
+    fixed_mutation.at(2).checked_mutable_as<int>() = 3;
 
     ListBuilder same_builder{*int_binding};
     same_builder.push_back<int>(1);
@@ -549,18 +585,20 @@ TEST_CASE("ValueView semantic fallback compares named and structural bundles by 
     REQUIRE(named_binding != nullptr);
 
     Value structural{*structural_binding};
-    structural.as_bundle().at("count").checked_as<int>() = 7;
-    structural.as_bundle().at("name").checked_as<std::string>() = "seven";
+    auto structural_mutation = structural.as_bundle().begin_mutation();
+    structural_mutation.at("count").checked_mutable_as<int>() = 7;
+    structural_mutation.at("name").checked_mutable_as<std::string>() = "seven";
 
     Value named{*named_binding};
-    named.as_bundle().at("count").checked_as<int>() = 7;
-    named.as_bundle().at("name").checked_as<std::string>() = "seven";
+    auto named_mutation = named.as_bundle().begin_mutation();
+    named_mutation.at("count").checked_mutable_as<int>() = 7;
+    named_mutation.at("name").checked_mutable_as<std::string>() = "seven";
 
     REQUIRE(structural.binding() != named.binding());
     REQUIRE(structural.view().equals(named.view()));
     REQUIRE(std::is_eq(structural.view().compare(named.view())));
 
-    named.as_bundle().at("count").checked_as<int>() = 8;
+    named.as_bundle().begin_mutation().at("count").checked_mutable_as<int>() = 8;
     REQUIRE_FALSE(structural.view().equals(named.view()));
     REQUIRE(std::is_lt(structural.view().compare(named.view())));
 }
@@ -619,9 +657,10 @@ TEST_CASE("ValueView semantic fallback compares maps with equivalent value layou
 
     auto make_fixed_list = [&](int a, int b, int c) {
         Value value{*fixed_list_binding};
-        value.as_list().at(0).checked_as<int>() = a;
-        value.as_list().at(1).checked_as<int>() = b;
-        value.as_list().at(2).checked_as<int>() = c;
+        auto mutation = value.as_list().begin_mutation();
+        mutation.at(0).checked_mutable_as<int>() = a;
+        mutation.at(1).checked_mutable_as<int>() = b;
+        mutation.at(2).checked_mutable_as<int>() = c;
         return value;
     };
 

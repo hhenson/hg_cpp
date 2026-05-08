@@ -17,6 +17,15 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
+
+namespace
+{
+    struct NoValueOpsScalar
+    {
+        int value{0};
+    };
+}
 
 TEST_CASE("ValueOps: ops_for<T> returns a stable canonical vtable")
 {
@@ -65,6 +74,33 @@ TEST_CASE("ValueOps: bool to_string and string round-trip use type-specific path
 
     std::string s{"hello"};
     REQUIRE(ops_for<std::string>().to_string(&s) == "hello");
+}
+
+TEST_CASE("ValueOps: unsupported scalar operations do not use object bytes as fallback")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    const auto *meta = registry.register_scalar<NoValueOpsScalar>("NoValueOpsScalar");
+    REQUIRE_FALSE(meta->is_hashable());
+    REQUIRE_FALSE(meta->is_equatable());
+    REQUIRE_FALSE(meta->is_comparable());
+
+    const ValueOps &ops = ops_for<NoValueOpsScalar>();
+    REQUIRE(ops.hash_impl == nullptr);
+    REQUIRE(ops.equals_impl == nullptr);
+    REQUIRE(ops.compare_impl == nullptr);
+
+    NoValueOpsScalar a{1};
+    NoValueOpsScalar b{1};
+    REQUIRE_THROWS_AS(ops.hash(&a), std::logic_error);
+    REQUIRE_FALSE(ops.equals(&a, &b));
+    REQUIRE(ops.equals(&a, &a));
+    REQUIRE(ops.compare(&a, &b) == std::partial_ordering::unordered);
+    REQUIRE(std::is_eq(ops.compare(&a, &a)));
+
+    Value value{NoValueOpsScalar{1}};
+    REQUIRE_THROWS_AS(value.hash(), std::logic_error);
+    REQUIRE_THROWS_AS(ValueView{}.hash(), std::logic_error);
 }
 
 TEST_CASE("TypeRegistry::register_scalar pairs the schema with a binding")
@@ -121,15 +157,32 @@ TEST_CASE("Value: atomic round-trip — construct, view, hash/equals/to_string")
     REQUIRE(view.hash() == ops_for<int>().hash(view.data()));
     REQUIRE(view.to_string() == "42");
 
-    // Mutate through the view; the owning Value sees the new value.
-    view.as<int>() = 99;
+    // Mutating access is explicit: a writable view is not mutable until
+    // begin_mutation() has opened the scope.
+    REQUIRE(view.writable_payload());
+    REQUIRE_FALSE(view.mutable_payload());
+    REQUIRE(view.can_begin_mutation());
+    REQUIRE_THROWS_AS(view.set<int>(99), std::logic_error);
+
+    auto mutation = view.begin_mutation();
+    REQUIRE(mutation.mutable_payload());
+    mutation.as<int>() = 99;
     REQUIRE(v.as<int>() == 99);
 
-    view.set<int>(123);
+    mutation.set<int>(123);
     REQUIRE(v.as<int>() == 123);
     REQUIRE(view.is_scalar_type<int>());
     REQUIRE_FALSE(view.is_scalar_type<double>());
     REQUIRE(view.is_type(v.schema()));
+
+    const Value &const_ref = v;
+    ValueView read_only = const_ref.view();
+    REQUIRE(read_only.valid());
+    REQUIRE_FALSE(read_only.mutable_payload());
+    REQUIRE(std::as_const(read_only).checked_as<int>() == 123);
+    REQUIRE_THROWS_AS(read_only.set<int>(456), std::logic_error);
+    REQUIRE_THROWS_AS(read_only.checked_mutable_as<int>() = 456, std::logic_error);
+    REQUIRE(v.as<int>() == 123);
 }
 
 TEST_CASE("Value: equality and ordering through bound ValueOps")
@@ -186,16 +239,16 @@ TEST_CASE("ValueView: clone and copy_from preserve binding and payload")
     Value cloned = source.view().clone();
     REQUIRE(cloned.binding() == source.binding());
     REQUIRE(cloned.as<int>() == 42);
-    cloned.as<int>() = 7;
+    cloned.begin_mutation().as<int>() = 7;
     REQUIRE(source.as<int>() == 42);
 
     Value target{0};
-    target.view().copy_from(source.view());
+    target.begin_mutation().copy_from(source.view());
     REQUIRE(target.as<int>() == 42);
 
     Value other_type{3.0};
-    REQUIRE_FALSE(target.view().try_copy_from(other_type.view()));
-    REQUIRE_THROWS_AS(target.view().copy_from(other_type.view()), std::invalid_argument);
+    REQUIRE_FALSE(target.begin_mutation().try_copy_from(other_type.view()));
+    REQUIRE_THROWS_AS(target.begin_mutation().copy_from(other_type.view()), std::invalid_argument);
 
     Value typed_null{*int_meta};
     Value typed_null_clone = typed_null.view().clone();

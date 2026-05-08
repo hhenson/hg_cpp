@@ -177,11 +177,19 @@ TEST_CASE("TypeRegistry: set, map, cyclic_buffer and queue intern correctly")
     const auto *cb = registry.cyclic_buffer(int_meta, 8);
     REQUIRE(cb->kind == ValueTypeKind::CyclicBuffer);
     REQUIRE(cb->fixed_size == 8);
+    REQUIRE(cb->is_hashable());
+    REQUIRE(cb->is_equatable());
+    REQUIRE(cb->is_comparable());
+    REQUIRE(cb->is_buffer_compatible());
     REQUIRE(cb == registry.cyclic_buffer(int_meta, 8));
 
     const auto *q = registry.queue(int_meta, 16);
     REQUIRE(q->kind == ValueTypeKind::Queue);
     REQUIRE(q->fixed_size == 16);
+    REQUIRE(q->is_hashable());
+    REQUIRE(q->is_equatable());
+    REQUIRE(q->is_comparable());
+    REQUIRE(q->is_buffer_compatible());
     REQUIRE(q == registry.queue(int_meta, 16));
 }
 

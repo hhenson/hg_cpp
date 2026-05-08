@@ -7,8 +7,10 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/string_view.h>
 
 #include <chrono>
+#include <compare>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -252,6 +254,64 @@ namespace hgraph
             return result;
         }
 
+        [[nodiscard]] nb::object ordering_to_python(std::partial_ordering order)
+        {
+            if (order == std::partial_ordering::less) { return nb::cast(-1); }
+            if (order == std::partial_ordering::greater) { return nb::cast(1); }
+            if (order == std::partial_ordering::equivalent) { return nb::cast(0); }
+            return nb::none();
+        }
+
+        [[nodiscard]] nb::list indexed_values_to_python(const IndexedValueView &view)
+        {
+            nb::list result;
+            for (std::size_t index = 0; index < view.size(); ++index)
+            {
+                result.append(view.at(index).to_python());
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::list set_values_to_python(const SetView &view)
+        {
+            nb::list result;
+            for (const auto value : view.values())
+            {
+                result.append(value.to_python());
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::list map_keys_to_python(const MapView &view)
+        {
+            nb::list result;
+            for (const auto key : view.keys())
+            {
+                result.append(key.to_python());
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::list map_values_to_python(const MapView &view)
+        {
+            nb::list result;
+            for (const auto value : view.values())
+            {
+                result.append(value.to_python());
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::list map_items_to_python(const MapView &view)
+        {
+            nb::list result;
+            for (const auto entry : view.items())
+            {
+                result.append(nb::make_tuple(entry.first.to_python(), entry.second.to_python()));
+            }
+            return result;
+        }
+
         void register_value_bindings(nb::module_ &m)
         {
             nb::module_ value_mod = m.def_submodule("value", "Value-layer C++ abstractions");
@@ -333,12 +393,121 @@ namespace hgraph
                          return self.queue(&element_schema, max_capacity);
                      }, "element_schema"_a, "max_capacity"_a = 0, nb::rv_policy::reference);
 
+            nb::class_<ValueView>(value_mod, "ValueView")
+                .def("valid", &ValueView::valid)
+                .def("bound", &ValueView::bound)
+                .def("has_value", &ValueView::has_value)
+                .def("mutable_payload", &ValueView::mutable_payload)
+                .def("writable_payload", &ValueView::writable_payload)
+                .def("can_begin_mutation", &ValueView::can_begin_mutation)
+                .def("begin_mutation", &ValueView::begin_mutation, nb::keep_alive<0, 1>())
+                .def("end_mutation", &ValueView::end_mutation)
+                .def("__bool__", &ValueView::valid)
+                .def_prop_ro("schema", [](const ValueView &self) { return self.schema(); }, nb::rv_policy::reference)
+                .def("to_python", &ValueView::to_python)
+                .def("from_python", [](ValueView &self, nb::handle source) -> ValueView & {
+                    self.from_python(source);
+                    return self;
+                }, "source"_a, nb::rv_policy::reference_internal)
+                .def("to_string", &ValueView::to_string)
+                .def("equals", &ValueView::equals, "other"_a)
+                .def("compare", [](const ValueView &self, const ValueView &other) {
+                    return ordering_to_python(self.compare(other));
+                }, "other"_a)
+                .def("clone", &ValueView::clone)
+                .def("as_tuple", &ValueView::as_tuple, nb::keep_alive<0, 1>())
+                .def("as_bundle", &ValueView::as_bundle, nb::keep_alive<0, 1>())
+                .def("as_list", &ValueView::as_list, nb::keep_alive<0, 1>())
+                .def("as_set", &ValueView::as_set, nb::keep_alive<0, 1>())
+                .def("as_map", &ValueView::as_map, nb::keep_alive<0, 1>())
+                .def("as_cyclic_buffer", &ValueView::as_cyclic_buffer, nb::keep_alive<0, 1>())
+                .def("as_queue", &ValueView::as_queue, nb::keep_alive<0, 1>());
+
+            nb::class_<IndexedValueView, ValueView>(value_mod, "IndexedValueView")
+                .def("__len__", &IndexedValueView::size)
+                .def("size", &IndexedValueView::size)
+                .def("at", &IndexedValueView::at, "index"_a, nb::keep_alive<0, 1>())
+                .def("__getitem__", &IndexedValueView::at, "index"_a, nb::keep_alive<0, 1>())
+                .def("values", &indexed_values_to_python)
+                .def("to_python_values", &indexed_values_to_python);
+
+            nb::class_<TupleView, IndexedValueView>(value_mod, "TupleView")
+                .def("to_python", [](const TupleView &self) { return nb::tuple(indexed_values_to_python(self)); });
+
+            nb::class_<BundleView, IndexedValueView>(value_mod, "BundleView")
+                .def("has_field", &BundleView::has_field, "name"_a)
+                .def("field", &BundleView::field, "name"_a, nb::keep_alive<0, 1>())
+                .def("at_name",
+                     static_cast<const ValueView (BundleView::*)(std::string_view) const>(&BundleView::at),
+                     "name"_a,
+                     nb::keep_alive<0, 1>())
+                .def("to_python", [](const BundleView &self) {
+                    nb::dict result;
+                    const auto *schema = self.schema();
+                    for (std::size_t index = 0; index < schema->field_count; ++index)
+                    {
+                        const char *name = schema->fields[index].name;
+                        if (name != nullptr) { result[nb::str{name}] = self.at(index).to_python(); }
+                    }
+                    return result;
+                });
+
+            nb::class_<ListView, IndexedValueView>(value_mod, "ListView")
+                .def("is_fixed", &ListView::is_fixed)
+                .def_prop_ro("element_schema", &ListView::element_schema, nb::rv_policy::reference)
+                .def("empty", &ListView::empty)
+                .def("front", &ListView::front, nb::keep_alive<0, 1>())
+                .def("back", &ListView::back, nb::keep_alive<0, 1>());
+
+            nb::class_<CyclicBufferView, IndexedValueView>(value_mod, "CyclicBufferView")
+                .def("head", &CyclicBufferView::head)
+                .def("capacity", &CyclicBufferView::capacity)
+                .def_prop_ro("element_schema", &CyclicBufferView::element_schema, nb::rv_policy::reference)
+                .def("empty", &CyclicBufferView::empty)
+                .def("full", &CyclicBufferView::full)
+                .def("front", &CyclicBufferView::front, nb::keep_alive<0, 1>())
+                .def("back", &CyclicBufferView::back, nb::keep_alive<0, 1>());
+
+            nb::class_<QueueView, IndexedValueView>(value_mod, "QueueView")
+                .def("max_capacity", &QueueView::max_capacity)
+                .def("has_max_capacity", &QueueView::has_max_capacity)
+                .def_prop_ro("element_schema", &QueueView::element_schema, nb::rv_policy::reference)
+                .def("empty", &QueueView::empty)
+                .def("full", &QueueView::full)
+                .def("front", &QueueView::front, nb::keep_alive<0, 1>())
+                .def("back", &QueueView::back, nb::keep_alive<0, 1>());
+
+            nb::class_<SetView, ValueView>(value_mod, "SetView")
+                .def("__len__", &SetView::size)
+                .def("size", &SetView::size)
+                .def("empty", &SetView::empty)
+                .def_prop_ro("element_schema", &SetView::element_schema, nb::rv_policy::reference)
+                .def("contains", &SetView::contains, "key"_a)
+                .def("values", &set_values_to_python)
+                .def("to_python", &ValueView::to_python);
+
+            nb::class_<MapView, ValueView>(value_mod, "MapView")
+                .def("__len__", &MapView::size)
+                .def("size", &MapView::size)
+                .def("empty", &MapView::empty)
+                .def_prop_ro("key_schema", &MapView::key_schema, nb::rv_policy::reference)
+                .def_prop_ro("value_schema", &MapView::value_schema, nb::rv_policy::reference)
+                .def("contains", &MapView::contains, "key"_a)
+                .def("at", &MapView::at, "key"_a, nb::keep_alive<0, 1>())
+                .def("key_set", &MapView::key_set, nb::keep_alive<0, 1>())
+                .def("keys", &map_keys_to_python)
+                .def("values", &map_values_to_python)
+                .def("items", &map_items_to_python)
+                .def("to_python", &ValueView::to_python);
+
             nb::class_<Value>(value_mod, "Value")
                 .def(nb::init<>())
                 .def_static("create", &value_from_python_schema, "schema"_a, "source"_a)
                 .def("has_value", &Value::has_value)
                 .def("__bool__", &Value::has_value)
                 .def_prop_ro("schema", [](const Value &self) { return self.schema(); }, nb::rv_policy::reference)
+                .def("view", [](Value &self) { return self.view(); }, nb::keep_alive<0, 1>())
+                .def("begin_mutation", &Value::begin_mutation, nb::keep_alive<0, 1>())
                 .def("to_python", &Value::to_python)
                 .def("from_python", [](Value &self, nb::handle source) -> Value & {
                     self.from_python(source);
@@ -347,6 +516,18 @@ namespace hgraph
                 .def("clone", &Value::clone)
                 .def("to_string", &Value::to_string)
                 .def("equals", static_cast<bool (Value::*)(const Value &) const>(&Value::equals), "other"_a)
+                .def("compare", [](const Value &self, const Value &other) {
+                    return ordering_to_python(self.compare(other));
+                }, "other"_a)
+                .def("as_tuple", static_cast<TupleView (Value::*)() const>(&Value::as_tuple), nb::keep_alive<0, 1>())
+                .def("as_bundle", static_cast<BundleView (Value::*)() const>(&Value::as_bundle), nb::keep_alive<0, 1>())
+                .def("as_list", static_cast<ListView (Value::*)() const>(&Value::as_list), nb::keep_alive<0, 1>())
+                .def("as_set", static_cast<SetView (Value::*)() const>(&Value::as_set), nb::keep_alive<0, 1>())
+                .def("as_map", static_cast<MapView (Value::*)() const>(&Value::as_map), nb::keep_alive<0, 1>())
+                .def("as_cyclic_buffer",
+                     static_cast<CyclicBufferView (Value::*)() const>(&Value::as_cyclic_buffer),
+                     nb::keep_alive<0, 1>())
+                .def("as_queue", static_cast<QueueView (Value::*)() const>(&Value::as_queue), nb::keep_alive<0, 1>())
                 .def("__repr__", [](const Value &self) {
                     return self.has_value() ? std::string{"Value("} + self.to_string() + ")"
                                             : std::string{"Value(None)"};
@@ -373,6 +554,15 @@ namespace hgraph
             m.attr("ValueTypeMetaData") = value_mod.attr("ValueTypeMetaData");
             m.attr("TypeRegistry")     = value_mod.attr("TypeRegistry");
             m.attr("Value")            = value_mod.attr("Value");
+            m.attr("ValueView")        = value_mod.attr("ValueView");
+            m.attr("IndexedValueView") = value_mod.attr("IndexedValueView");
+            m.attr("TupleView")        = value_mod.attr("TupleView");
+            m.attr("BundleView")       = value_mod.attr("BundleView");
+            m.attr("ListView")         = value_mod.attr("ListView");
+            m.attr("SetView")          = value_mod.attr("SetView");
+            m.attr("MapView")          = value_mod.attr("MapView");
+            m.attr("CyclicBufferView") = value_mod.attr("CyclicBufferView");
+            m.attr("QueueView")        = value_mod.attr("QueueView");
 
             m.def("register_builtin_value_types", &register_builtin_value_types);
             m.def("value_from_python", &value_from_python_schema, "schema"_a, "source"_a);
