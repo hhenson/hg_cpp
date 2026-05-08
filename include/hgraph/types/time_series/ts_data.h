@@ -63,7 +63,7 @@ namespace hgraph
         void *(*mutable_value_memory_impl)(const void *context, void *memory) noexcept = nullptr;
         const void *(*delta_memory_impl)(const void *context, const void *memory) noexcept = nullptr;
         void *(*mutable_delta_memory_impl)(const void *context, void *memory) noexcept = nullptr;
-        void (*copy_value_from_impl)(const void *context, void *memory, const ValueView &source,
+        bool (*copy_value_from_impl)(const void *context, void *memory, const ValueView &source,
                                      engine_time_t modified_time) = nullptr;
 
         [[nodiscard]] const TSDataLayout &layout() const
@@ -103,17 +103,6 @@ namespace hgraph
             return ValueView{data_layout.value_binding, value_memory_impl(context, memory)};
         }
 
-        [[nodiscard]] ValueView writable_value_view(void *memory) const
-        {
-            if (memory == nullptr)
-            {
-                throw std::logic_error("TSDataOps::writable_value_view requires live TSData memory");
-            }
-            if (mutable_value_memory_impl == nullptr) { throw std::logic_error("TSDataOps is missing value access"); }
-            const auto &data_layout = layout();
-            return ValueView{data_layout.value_binding, mutable_value_memory_impl(context, memory)};
-        }
-
         [[nodiscard]] ValueView delta_value_view(const void *memory, engine_time_t evaluation_time) const
         {
             if (memory == nullptr)
@@ -141,13 +130,13 @@ namespace hgraph
             mutable_tracking(memory).last_modified_time = modified_time;
         }
 
-        void copy_value_from(void *memory, const ValueView &source, engine_time_t modified_time) const
+        [[nodiscard]] bool copy_value_from(void *memory, const ValueView &source, engine_time_t modified_time) const
         {
             if (copy_value_from_impl == nullptr)
             {
                 throw std::logic_error("TSDataOps::copy_value_from is not available for this TSData kind");
             }
-            copy_value_from_impl(context, memory, source, modified_time);
+            return copy_value_from_impl(context, memory, source, modified_time);
         }
     };
 
@@ -191,7 +180,6 @@ namespace hgraph
         }
 
         [[nodiscard]] ValueView value() const { return ops().value_view(data_); }
-        [[nodiscard]] ValueView writable_value() { return ops().writable_value_view(mutable_data()); }
         [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const
         {
             return ops().delta_value_view(data_, evaluation_time);
@@ -200,9 +188,9 @@ namespace hgraph
         [[nodiscard]] bool modified(engine_time_t evaluation_time) const { return ops().has_delta(data_, evaluation_time); }
 
         void mark_modified(engine_time_t modified_time) { ops().mark_modified(mutable_data(), modified_time); }
-        void copy_value_from(const ValueView &source, engine_time_t modified_time)
+        [[nodiscard]] bool copy_value_from(const ValueView &source, engine_time_t modified_time)
         {
-            ops().copy_value_from(mutable_data(), source, modified_time);
+            return ops().copy_value_from(mutable_data(), source, modified_time);
         }
 
       private:

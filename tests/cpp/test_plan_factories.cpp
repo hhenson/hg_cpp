@@ -5,6 +5,7 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/compact_container_ops.h>
+#include <hgraph/types/value/value.h>
 
 #include <stdexcept>
 
@@ -261,7 +262,7 @@ TEST_CASE("ValuePlanFactory::register_atomic ignores null inputs")
     REQUIRE_NOTHROW(factory.register_atomic(&orphan, nullptr));
 }
 
-TEST_CASE("TSDataPlanFactory::plan_for throws (TS data layer not yet ported)")
+TEST_CASE("TSDataPlanFactory: atomic TSData uses separate value, delta and tracking plan regions")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
@@ -269,11 +270,92 @@ TEST_CASE("TSDataPlanFactory::plan_for throws (TS data layer not yet ported)")
     const auto *int_meta = registry.register_scalar<int>("int");
     const auto *ts_int   = registry.ts(int_meta);
 
-    REQUIRE_THROWS_AS(factory.plan_for(ts_int), std::logic_error);
+    const auto *plan    = factory.plan_for(ts_int);
+    const auto *binding = factory.binding_for(ts_int);
+
+    REQUIRE(plan != nullptr);
+    REQUIRE(plan->is_named_tuple());
+    REQUIRE(plan->component_count() == 3);
+    REQUIRE(plan->find_component("value") != nullptr);
+    REQUIRE(plan->find_component("delta") != nullptr);
+    REQUIRE(plan->find_component("tracking") != nullptr);
+    REQUIRE(plan->component("value").plan == &MemoryUtils::plan_for<int>());
+    REQUIRE(plan->component("delta").plan == &MemoryUtils::plan_for<int>());
+    REQUIRE(plan->component("tracking").plan == &MemoryUtils::plan_for<TSDataTracking>());
+    REQUIRE(plan->component("value").offset != plan->component("delta").offset);
+    REQUIRE(plan->component("tracking").offset != plan->component("value").offset);
+
+    REQUIRE(binding != nullptr);
+    REQUIRE(binding->type_meta == ts_int);
+    REQUIRE(binding->plan() == plan);
+    REQUIRE(binding->checked_ops().layout().value_binding == registry.scalar_binding<int>());
+    REQUIRE(binding->checked_ops().layout().delta_binding == registry.scalar_binding<int>());
+}
+
+TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified time")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *binding  = factory.binding_for(ts_int);
+    REQUIRE(binding != nullptr);
+
+    TSData data{*binding};
+    auto   view = data.view();
+    REQUIRE(view.value().checked_as<int>() == 0);
+    REQUIRE(view.last_modified_time() == MIN_DT);
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + engine_time_delta_t{1};
+    REQUIRE_FALSE(view.modified(t1));
+    REQUIRE_FALSE(view.delta_value(t1).has_value());
+
+    Value source{42};
+    REQUIRE(view.copy_value_from(source.view(), t1));
+    REQUIRE(view.value().checked_as<int>() == 42);
+    REQUIRE(view.delta_value(t1).checked_as<int>() == 42);
+    REQUIRE(view.last_modified_time() == t1);
+    REQUIRE(view.modified(t1));
+    REQUIRE_FALSE(view.modified(t2));
+    REQUIRE_FALSE(view.delta_value(t2).has_value());
+
+    Value same_tick_overwrite{99};
+    REQUIRE_FALSE(view.copy_value_from(same_tick_overwrite.view(), t1));
+    REQUIRE(view.value().checked_as<int>() == 99);
+    REQUIRE(view.delta_value(t1).checked_as<int>() == 99);
+    REQUIRE(view.last_modified_time() == t1);
+
+    REQUIRE(view.copy_value_from(source.view(), t2));
+    REQUIRE(view.value().checked_as<int>() == 42);
+    REQUIRE(view.delta_value(t2).checked_as<int>() == 42);
+    REQUIRE(view.last_modified_time() == t2);
+}
+
+TEST_CASE("TSDataPlanFactory: REF and SIGNAL use compact atomic TSData")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    REQUIRE(factory.binding_for(registry.signal()) != nullptr);
+    REQUIRE(factory.binding_for(registry.ref(ts_int)) != nullptr);
+}
+
+TEST_CASE("TSDataPlanFactory::plan_for throws for collection-shaped TSData until slot stores are ported")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
     REQUIRE_THROWS_AS(factory.plan_for(registry.tss(int_meta)), std::logic_error);
     REQUIRE_THROWS_AS(factory.plan_for(registry.tsd(int_meta, ts_int)), std::logic_error);
     REQUIRE_THROWS_AS(factory.plan_for(registry.tsl(ts_int, 4)), std::logic_error);
-    REQUIRE_THROWS_AS(factory.plan_for(registry.signal()), std::logic_error);
 }
 
 TEST_CASE("TSDataPlanFactory::find returns null and null schemas return null")

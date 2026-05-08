@@ -68,16 +68,14 @@ namespace hgraph
                 return static_cast<const TSDataLayout *>(context);
             }
 
-            [[nodiscard]] static const void *advance(const TSDataLayout *layout,
-                                                     const void         *memory,
+            [[nodiscard]] static const void *advance(const void         *memory,
                                                      std::size_t         offset) noexcept
             {
                 return static_cast<const std::byte *>(memory) + offset;
             }
 
-            [[nodiscard]] static void *advance(const TSDataLayout *layout, void *memory, std::size_t offset) noexcept
+            [[nodiscard]] static void *advance(void *memory, std::size_t offset) noexcept
             {
-                (void) layout;
                 return static_cast<std::byte *>(memory) + offset;
             }
 
@@ -85,61 +83,59 @@ namespace hgraph
                                                                        const void *memory) noexcept
             {
                 const auto *layout = atomic_layout(context);
-                return MemoryUtils::cast<TSDataTracking>(advance(layout, memory, layout->tracking_offset));
+                return MemoryUtils::cast<TSDataTracking>(advance(memory, layout->tracking_offset));
             }
 
             [[nodiscard]] static TSDataTracking *atomic_mutable_tracking(const void *context, void *memory) noexcept
             {
                 const auto *layout = atomic_layout(context);
-                return MemoryUtils::cast<TSDataTracking>(advance(layout, memory, layout->tracking_offset));
+                return MemoryUtils::cast<TSDataTracking>(advance(memory, layout->tracking_offset));
             }
 
             [[nodiscard]] static const void *atomic_value_memory(const void *context, const void *memory) noexcept
             {
                 const auto *layout = atomic_layout(context);
-                return advance(layout, memory, layout->value_offset);
+                return advance(memory, layout->value_offset);
             }
 
             [[nodiscard]] static void *atomic_mutable_value_memory(const void *context, void *memory) noexcept
             {
                 const auto *layout = atomic_layout(context);
-                return advance(layout, memory, layout->value_offset);
+                return advance(memory, layout->value_offset);
             }
 
             [[nodiscard]] static const void *atomic_delta_memory(const void *context, const void *memory) noexcept
             {
                 const auto *layout = atomic_layout(context);
-                return advance(layout, memory, layout->delta_offset);
+                return advance(memory, layout->delta_offset);
             }
 
             [[nodiscard]] static void *atomic_mutable_delta_memory(const void *context, void *memory) noexcept
             {
                 const auto *layout = atomic_layout(context);
-                return advance(layout, memory, layout->delta_offset);
+                return advance(memory, layout->delta_offset);
             }
 
-            static void assign_or_reconstruct(const MemoryUtils::StoragePlan &plan, void *dst, const void *src)
+            static void copy_assign_required(const MemoryUtils::StoragePlan &plan, void *dst, const void *src)
             {
-                if (plan.can_copy_assign())
+                if (!plan.can_copy_assign())
                 {
-                    plan.copy_assign(dst, src);
-                    return;
+                    throw std::logic_error("TSData atomic assignment requires copy-assignable value storage");
                 }
-                if (!plan.can_copy_construct())
-                {
-                    throw std::logic_error("TSData atomic assignment requires copy assignment or copy construction");
-                }
-                plan.destroy(dst);
-                plan.copy_construct(dst, src);
+                plan.copy_assign(dst, src);
             }
 
-            static void atomic_copy_value_from(const void *context,
-                                               void       *memory,
-                                               const ValueView &source,
-                                               engine_time_t    modified_time)
+            [[nodiscard]] static bool atomic_copy_value_from(const void      *context,
+                                                             void            *memory,
+                                                             const ValueView &source,
+                                                             engine_time_t    modified_time)
             {
                 if (memory == nullptr) { throw std::logic_error("TSData atomic copy requires live TSData memory"); }
                 if (!source.has_value()) { throw std::invalid_argument("TSData atomic copy requires a live source value"); }
+                if (modified_time == MIN_DT)
+                {
+                    throw std::invalid_argument("TSData atomic copy requires a concrete engine time");
+                }
 
                 const auto *layout = atomic_layout(context);
                 if (source.binding() != layout->value_binding)
@@ -147,20 +143,23 @@ namespace hgraph
                     throw std::invalid_argument("TSData atomic copy requires the bound value schema and plan");
                 }
 
-                const auto &value_plan = layout->value_binding->checked_plan();
-                assign_or_reconstruct(value_plan, atomic_mutable_value_memory(context, memory), source.data());
+                auto       *tracking      = atomic_mutable_tracking(context, memory);
+                const bool  first_for_time = tracking->last_modified_time != modified_time;
 
                 const auto &delta_plan = layout->delta_binding->checked_plan();
                 if (layout->delta_binding == layout->value_binding)
                 {
-                    assign_or_reconstruct(delta_plan, atomic_mutable_delta_memory(context, memory), source.data());
+                    copy_assign_required(delta_plan, atomic_mutable_delta_memory(context, memory), source.data());
                 }
                 else
                 {
                     throw std::logic_error("TSData atomic copy currently requires value and delta bindings to match");
                 }
 
-                atomic_mutable_tracking(context, memory)->last_modified_time = modified_time;
+                const auto &value_plan = layout->value_binding->checked_plan();
+                copy_assign_required(value_plan, atomic_mutable_value_memory(context, memory), source.data());
+                if (first_for_time) { tracking->last_modified_time = modified_time; }
+                return first_for_time;
             }
         };
 
