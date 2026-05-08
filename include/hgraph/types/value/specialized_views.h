@@ -41,14 +41,30 @@ namespace hgraph
             return binding != nullptr ? static_cast<const Ops *>(binding->ops) : nullptr;
         }
 
+        inline void require_indexed_ops(const IndexedValueOps *ops, const char *what)
+        {
+            if (ops == nullptr || ops->size == nullptr || ops->element_at == nullptr ||
+                ops->element_binding == nullptr || ops->make_range == nullptr)
+            {
+                throw std::logic_error(std::string{what} + ": binding does not expose indexed ops");
+            }
+        }
+
         [[nodiscard]] inline const IndexedValueOps *checked_indexed_ops(const ValueTypeBinding *binding,
                                                                         const char *what)
         {
             const auto *ops = kind_ops<IndexedValueOps>(binding);
-            if (ops == nullptr || ops->size == nullptr || ops->element_at == nullptr ||
-                ops->element_binding == nullptr)
+            require_indexed_ops(ops, what);
+            return ops;
+        }
+
+        [[nodiscard]] inline const IndexedValueOps *checked_mutable_indexed_ops(const ValueTypeBinding *binding,
+                                                                                const char *what)
+        {
+            const auto *ops = checked_indexed_ops(binding, what);
+            if (ops->make_mutable_range == nullptr)
             {
-                throw std::logic_error(std::string{what} + ": binding does not expose indexed ops");
+                throw std::logic_error(std::string{what} + ": binding does not expose mutable indexed ops");
             }
             return ops;
         }
@@ -56,8 +72,8 @@ namespace hgraph
         [[nodiscard]] inline const CyclicBufferValueOps *checked_cyclic_buffer_ops(const ValueTypeBinding *binding,
                                                                                    const char *what)
         {
-            (void)checked_indexed_ops(binding, what);
             const auto *ops = kind_ops<CyclicBufferValueOps>(binding);
+            require_indexed_ops(ops, what);
             if (ops == nullptr || ops->head == nullptr)
             {
                 throw std::logic_error(std::string{what} + ": binding does not expose cyclic-buffer ops");
@@ -68,8 +84,8 @@ namespace hgraph
         [[nodiscard]] inline const QueueValueOps *checked_queue_ops(const ValueTypeBinding *binding,
                                                                     const char *what)
         {
-            (void)checked_indexed_ops(binding, what);
             const auto *ops = kind_ops<QueueValueOps>(binding);
+            require_indexed_ops(ops, what);
             if (ops == nullptr || ops->front == nullptr)
             {
                 throw std::logic_error(std::string{what} + ": binding does not expose queue ops");
@@ -79,9 +95,9 @@ namespace hgraph
 
         [[nodiscard]] inline const SetValueOps *checked_set_ops(const ValueTypeBinding *binding, const char *what)
         {
-            const auto *indexed = checked_indexed_ops(binding, what);
-            const auto *ops     = kind_ops<SetValueOps>(binding);
-            if (ops == nullptr || indexed->make_range == nullptr || ops->contains == nullptr)
+            const auto *ops = kind_ops<SetValueOps>(binding);
+            require_indexed_ops(ops, what);
+            if (ops == nullptr || ops->contains == nullptr)
             {
                 throw std::logic_error(std::string{what} + ": binding does not expose set ops");
             }
@@ -90,10 +106,10 @@ namespace hgraph
 
         [[nodiscard]] inline const MapValueOps *checked_map_ops(const ValueTypeBinding *binding, const char *what)
         {
-            const auto *indexed = checked_indexed_ops(binding, what);
-            const auto *ops     = kind_ops<MapValueOps>(binding);
-            if (ops == nullptr || indexed->make_range == nullptr || ops->contains == nullptr ||
-                ops->value_at == nullptr || ops->value_at_index == nullptr || ops->value_binding == nullptr ||
+            const auto *ops = kind_ops<MapValueOps>(binding);
+            require_indexed_ops(ops, what);
+            if (ops == nullptr || ops->contains == nullptr || ops->value_at == nullptr ||
+                ops->value_at_index == nullptr || ops->value_binding == nullptr ||
                 ops->make_keys_range == nullptr || ops->make_values_range == nullptr ||
                 ops->make_kv_range == nullptr || ops->key_set == nullptr)
             {
@@ -110,6 +126,19 @@ namespace hgraph
                 throw std::logic_error(std::string{what} + " on wrong value kind");
             }
             return base;
+        }
+
+        [[nodiscard]] inline ValueView require_mutable(ValueView base, const char *what)
+        {
+            require_valid(base.valid(), what);
+            if (!base.mutable_payload()) { throw std::logic_error(std::string{what} + " on read-only view"); }
+            return base;
+        }
+
+        [[nodiscard]] inline bool binding_matches(const ValueView &view,
+                                                  const ValueTypeBinding *expected) noexcept
+        {
+            return view.valid() && expected != nullptr && view.binding() == expected;
         }
     }  // namespace specialized_view_detail
 
@@ -132,78 +161,22 @@ namespace hgraph
             return ops_->size(ops_->context, data());
         }
 
-        [[nodiscard]] ValueView at(std::size_t index) const
+        [[nodiscard]] const ValueView at(std::size_t index) const
         {
             const auto n = ops_->size(ops_->context, data());
             if (index >= n) { throw std::out_of_range("IndexedValueView::at: index out of range"); }
             return ValueView{ops_->element_binding(ops_->context, data(), index),
-                             const_cast<void *>(ops_->element_at(ops_->context, data(), index))};
+                             ops_->element_at(ops_->context, data(), index)};
         }
 
-        [[nodiscard]] ValueView operator[](std::size_t index) const { return at(index); }
+        [[nodiscard]] const ValueView operator[](std::size_t index) const { return at(index); }
 
-        /**
-         * Lazy element range over the bound indexed ops. The range is
-         * held by value so callers can both range-for and take its
-         * ``begin``/``end`` independently.
-         */
-        class iterator
+        [[nodiscard]] Range<ValueView> elements() const
         {
-          public:
-            using iterator_category = std::forward_iterator_tag;
-            using difference_type   = std::ptrdiff_t;
-            using value_type        = ValueView;
-            using reference         = ValueView;
-            using pointer           = void;
-
-            iterator() = default;
-            iterator(ValueView base, const IndexedValueOps *ops, std::size_t index)
-                : base_{base}, ops_{ops}, index_{index}
-            {
-            }
-
-            [[nodiscard]] ValueView operator*() const { return IndexedValueView{base_, ops_}.at(index_); }
-
-            iterator &operator++() noexcept
-            {
-                ++index_;
-                return *this;
-            }
-            iterator operator++(int) noexcept
-            {
-                auto cur = *this;
-                ++(*this);
-                return cur;
-            }
-
-            [[nodiscard]] bool operator==(const iterator &other) const noexcept
-            {
-                return base_.binding() == other.base_.binding() && base_.data() == other.base_.data() &&
-                       index_ == other.index_;
-            }
-
-          private:
-            ValueView              base_{};
-            const IndexedValueOps *ops_{nullptr};
-            std::size_t            index_{0};
-        };
-
-        struct ElementRange
-        {
-            ValueView              base{};
-            const IndexedValueOps *ops{nullptr};
-            std::size_t            limit{0};
-
-            [[nodiscard]] iterator begin() const noexcept { return iterator{base, ops, 0}; }
-            [[nodiscard]] iterator end() const noexcept { return iterator{base, ops, limit}; }
-        };
-
-        [[nodiscard]] ElementRange elements() const
-        {
-            return ElementRange{ValueView{binding(), const_cast<void *>(data())}, ops_, size()};
+            return ops_->make_range(ops_->context, data());
         }
 
-        [[nodiscard]] ElementRange values() const { return elements(); }
+        [[nodiscard]] Range<ValueView> values() const { return elements(); }
 
         // Convenience: ``begin()`` / ``end()`` go through ``elements()`` so
         // ``for (auto v : view)`` works directly. Each call to ``begin()``
@@ -221,12 +194,61 @@ namespace hgraph
         const IndexedValueOps *ops_{nullptr};
     };
 
+    class MutableIndexedValueView : public IndexedValueView
+    {
+      public:
+        explicit MutableIndexedValueView(ValueView base)
+            : IndexedValueView(specialized_view_detail::require_mutable(base, "MutableIndexedValueView"),
+                               specialized_view_detail::checked_mutable_indexed_ops(base.binding(),
+                                                                                    "MutableIndexedValueView"))
+        {
+        }
+
+        [[nodiscard]] ValueView at(std::size_t index) const
+        {
+            const auto n = ops_->size(ops_->context, data());
+            if (index >= n) { throw std::out_of_range("MutableIndexedValueView::at: index out of range"); }
+            return ValueView{ops_->element_binding(ops_->context, data(), index),
+                             const_cast<void *>(ops_->element_at(ops_->context, data(), index))}
+                .begin_mutation();
+        }
+
+        [[nodiscard]] ValueView operator[](std::size_t index) const { return at(index); }
+
+        [[nodiscard]] Range<ValueView> elements() const
+        {
+            return ops_->make_mutable_range(ops_->context, mutable_data());
+        }
+
+        [[nodiscard]] Range<ValueView> values() const { return elements(); }
+        [[nodiscard]] auto begin() const { return elements().begin(); }
+        [[nodiscard]] auto end() const { return elements().end(); }
+
+      protected:
+        MutableIndexedValueView(ValueView base, const IndexedValueOps *ops) noexcept
+            : IndexedValueView(base, ops)
+        {
+        }
+    };
+
     /** Read-only view over a positional Tuple. */
     class TupleView : public IndexedValueView
     {
       public:
         explicit TupleView(ValueView base)
             : IndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Tuple, "TupleView"))
+        {
+        }
+
+        [[nodiscard]] MutableTupleView begin_mutation() const;
+    };
+
+    class MutableTupleView : public MutableIndexedValueView
+    {
+      public:
+        explicit MutableTupleView(ValueView base)
+            : MutableIndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Tuple,
+                                                                            "MutableTupleView"))
         {
         }
     };
@@ -243,7 +265,9 @@ namespace hgraph
         {
         }
 
-        [[nodiscard]] ValueView at(std::string_view name) const
+        [[nodiscard]] MutableBundleView begin_mutation() const;
+
+        [[nodiscard]] const ValueView at(std::string_view name) const
         {
             for (std::size_t index = 0; index < schema()->field_count; ++index)
             {
@@ -251,6 +275,42 @@ namespace hgraph
                 if (field_name != nullptr && name == field_name) { return IndexedValueView::at(index); }
             }
             throw std::out_of_range("BundleView::at: field not found");
+        }
+
+        [[nodiscard]] bool has_field(std::string_view name) const noexcept
+        {
+            for (std::size_t index = 0; index < schema()->field_count; ++index)
+            {
+                const char *field_name = schema()->fields[index].name;
+                if (field_name != nullptr && name == field_name) { return true; }
+            }
+            return false;
+        }
+
+        [[nodiscard]] const ValueView field(std::string_view name) const { return at(name); }
+        [[nodiscard]] const ValueView operator[](std::string_view name) const { return at(name); }
+    };
+
+    class MutableBundleView : public MutableIndexedValueView
+    {
+      public:
+        using MutableIndexedValueView::at;
+        using MutableIndexedValueView::operator[];
+
+        explicit MutableBundleView(ValueView base)
+            : MutableIndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Bundle,
+                                                                            "MutableBundleView"))
+        {
+        }
+
+        [[nodiscard]] ValueView at(std::string_view name) const
+        {
+            for (std::size_t index = 0; index < schema()->field_count; ++index)
+            {
+                const char *field_name = schema()->fields[index].name;
+                if (field_name != nullptr && name == field_name) { return MutableIndexedValueView::at(index); }
+            }
+            throw std::out_of_range("MutableBundleView::at: field not found");
         }
 
         [[nodiscard]] bool has_field(std::string_view name) const noexcept
@@ -276,17 +336,43 @@ namespace hgraph
         {
         }
 
+        [[nodiscard]] MutableListView begin_mutation() const;
+
         [[nodiscard]] bool is_fixed() const noexcept { return schema()->fixed_size != 0; }
         [[nodiscard]] const ValueTypeMetaData *element_schema() const noexcept { return schema()->element_type; }
         [[nodiscard]] bool empty() const { return size() == 0; }
-        [[nodiscard]] ValueView front() const
+        [[nodiscard]] const ValueView front() const
         {
             if (empty()) { throw std::out_of_range("ListView::front on empty list"); }
             return at(0);
         }
-        [[nodiscard]] ValueView back() const
+        [[nodiscard]] const ValueView back() const
         {
             if (empty()) { throw std::out_of_range("ListView::back on empty list"); }
+            return at(size() - 1);
+        }
+    };
+
+    class MutableListView : public MutableIndexedValueView
+    {
+      public:
+        explicit MutableListView(ValueView base)
+            : MutableIndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::List,
+                                                                            "MutableListView"))
+        {
+        }
+
+        [[nodiscard]] bool is_fixed() const noexcept { return schema()->fixed_size != 0; }
+        [[nodiscard]] const ValueTypeMetaData *element_schema() const noexcept { return schema()->element_type; }
+        [[nodiscard]] bool empty() const { return size() == 0; }
+        [[nodiscard]] const ValueView front() const
+        {
+            if (empty()) { throw std::out_of_range("MutableListView::front on empty list"); }
+            return at(0);
+        }
+        [[nodiscard]] const ValueView back() const
+        {
+            if (empty()) { throw std::out_of_range("MutableListView::back on empty list"); }
             return at(size() - 1);
         }
     };
@@ -302,6 +388,8 @@ namespace hgraph
             cyclic_buffer_ops_ = specialized_view_detail::checked_cyclic_buffer_ops(binding(), "CyclicBufferView");
         }
 
+        [[nodiscard]] MutableCyclicBufferView begin_mutation() const;
+
         [[nodiscard]] std::size_t head() const
         {
             return cyclic_buffer_ops_->head(data());
@@ -311,14 +399,45 @@ namespace hgraph
         [[nodiscard]] const ValueTypeMetaData *element_schema() const noexcept { return schema()->element_type; }
         [[nodiscard]] bool empty() const { return size() == 0; }
         [[nodiscard]] bool full() const { return capacity() != 0 && size() == capacity(); }
-        [[nodiscard]] ValueView front() const
+        [[nodiscard]] const ValueView front() const
         {
             if (empty()) { throw std::out_of_range("CyclicBufferView::front on empty buffer"); }
             return at(0);
         }
-        [[nodiscard]] ValueView back() const
+        [[nodiscard]] const ValueView back() const
         {
             if (empty()) { throw std::out_of_range("CyclicBufferView::back on empty buffer"); }
+            return at(size() - 1);
+        }
+
+      private:
+        const CyclicBufferValueOps *cyclic_buffer_ops_{nullptr};
+    };
+
+    class MutableCyclicBufferView : public MutableIndexedValueView
+    {
+      public:
+        explicit MutableCyclicBufferView(ValueView base)
+            : MutableIndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::CyclicBuffer,
+                                                                            "MutableCyclicBufferView"))
+        {
+            cyclic_buffer_ops_ = specialized_view_detail::checked_cyclic_buffer_ops(binding(),
+                                                                                    "MutableCyclicBufferView");
+        }
+
+        [[nodiscard]] std::size_t head() const { return cyclic_buffer_ops_->head(data()); }
+        [[nodiscard]] std::size_t capacity() const noexcept { return schema()->fixed_size; }
+        [[nodiscard]] const ValueTypeMetaData *element_schema() const noexcept { return schema()->element_type; }
+        [[nodiscard]] bool empty() const { return size() == 0; }
+        [[nodiscard]] bool full() const { return capacity() != 0 && size() == capacity(); }
+        [[nodiscard]] ValueView front() const
+        {
+            if (empty()) { throw std::out_of_range("MutableCyclicBufferView::front on empty buffer"); }
+            return at(0);
+        }
+        [[nodiscard]] ValueView back() const
+        {
+            if (empty()) { throw std::out_of_range("MutableCyclicBufferView::back on empty buffer"); }
             return at(size() - 1);
         }
 
@@ -336,11 +455,13 @@ namespace hgraph
             queue_ops_ = specialized_view_detail::checked_queue_ops(binding(), "QueueView");
         }
 
+        [[nodiscard]] MutableQueueView begin_mutation() const;
+
         [[nodiscard]] ValueView front() const
         {
             if (empty()) { throw std::out_of_range("QueueView::front on empty queue"); }
             return ValueView{queue_ops_->element_binding(queue_ops_->context, data(), 0),
-                             const_cast<void *>(queue_ops_->front(data()))};
+                             queue_ops_->front(data())};
         }
 
         [[nodiscard]] std::size_t max_capacity() const noexcept { return schema()->fixed_size; }
@@ -351,6 +472,39 @@ namespace hgraph
         [[nodiscard]] ValueView back() const
         {
             if (empty()) { throw std::out_of_range("QueueView::back on empty queue"); }
+            return at(size() - 1);
+        }
+
+      private:
+        const QueueValueOps *queue_ops_{nullptr};
+    };
+
+    class MutableQueueView : public MutableIndexedValueView
+    {
+      public:
+        explicit MutableQueueView(ValueView base)
+            : MutableIndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Queue,
+                                                                            "MutableQueueView"))
+        {
+            queue_ops_ = specialized_view_detail::checked_queue_ops(binding(), "MutableQueueView");
+        }
+
+        [[nodiscard]] ValueView front() const
+        {
+            if (empty()) { throw std::out_of_range("MutableQueueView::front on empty queue"); }
+            return ValueView{queue_ops_->element_binding(queue_ops_->context, data(), 0),
+                             const_cast<void *>(queue_ops_->front(data()))}
+                .begin_mutation();
+        }
+
+        [[nodiscard]] std::size_t max_capacity() const noexcept { return schema()->fixed_size; }
+        [[nodiscard]] bool has_max_capacity() const noexcept { return max_capacity() != 0; }
+        [[nodiscard]] const ValueTypeMetaData *element_schema() const noexcept { return schema()->element_type; }
+        [[nodiscard]] bool empty() const { return size() == 0; }
+        [[nodiscard]] bool full() const { return max_capacity() != 0 && size() == max_capacity(); }
+        [[nodiscard]] ValueView back() const
+        {
+            if (empty()) { throw std::out_of_range("MutableQueueView::back on empty queue"); }
             return at(size() - 1);
         }
 
@@ -382,7 +536,11 @@ namespace hgraph
 
         [[nodiscard]] bool contains(const ValueView &key) const
         {
-            if (!key.valid()) { return false; }
+            if (!specialized_view_detail::binding_matches(
+                    key, ops_->element_binding(ops_->context, data(), 0)))
+            {
+                return false;
+            }
             return ops_->contains(data(), key.data());
         }
 
@@ -425,18 +583,18 @@ namespace hgraph
 
         [[nodiscard]] bool contains(const ValueView &key) const
         {
-            if (!key.valid()) { return false; }
+            if (!key_compatible(key)) { return false; }
             return ops_->contains(data(), key.data());
         }
 
-        [[nodiscard]] ValueView at(const ValueView &key) const
+        [[nodiscard]] const ValueView at(const ValueView &key) const
         {
-            const void *found = key.valid() ? ops_->value_at(data(), key.data()) : nullptr;
+            const void *found = key_compatible(key) ? ops_->value_at(data(), key.data()) : nullptr;
             if (found == nullptr) { throw std::out_of_range("MapView::at: key not present"); }
-            return ValueView{ops_->value_binding(ops_->context, data()), const_cast<void *>(found)};
+            return ValueView{ops_->value_binding(ops_->context, data()), found};
         }
 
-        [[nodiscard]] ValueView operator[](const ValueView &key) const { return at(key); }
+        [[nodiscard]] const ValueView operator[](const ValueView &key) const { return at(key); }
 
         /** Returns a read-only ``SetView`` over the live keys. */
         [[nodiscard]] SetView key_set() const
@@ -468,6 +626,12 @@ namespace hgraph
         [[nodiscard]] auto end() const { return entries().end(); }
 
       private:
+        [[nodiscard]] bool key_compatible(const ValueView &key) const noexcept
+        {
+            return specialized_view_detail::binding_matches(
+                key, ops_->element_binding(ops_->context, data(), 0));
+        }
+
         const MapValueOps *ops_{nullptr};
     };
 
@@ -475,6 +639,11 @@ namespace hgraph
     {
         if (!is_tuple()) { throw std::logic_error("ValueView::as_tuple on non-tuple view"); }
         return TupleView{*this};
+    }
+
+    inline MutableTupleView TupleView::begin_mutation() const
+    {
+        return MutableTupleView{ValueView::begin_mutation()};
     }
 
     inline std::optional<TupleView> ValueView::try_as_tuple() const
@@ -488,6 +657,11 @@ namespace hgraph
         return BundleView{*this};
     }
 
+    inline MutableBundleView BundleView::begin_mutation() const
+    {
+        return MutableBundleView{ValueView::begin_mutation()};
+    }
+
     inline std::optional<BundleView> ValueView::try_as_bundle() const
     {
         return is_bundle() ? std::optional<BundleView>{BundleView{*this}} : std::nullopt;
@@ -497,6 +671,11 @@ namespace hgraph
     {
         if (!is_list()) { throw std::logic_error("ValueView::as_list on non-list view"); }
         return ListView{*this};
+    }
+
+    inline MutableListView ListView::begin_mutation() const
+    {
+        return MutableListView{ValueView::begin_mutation()};
     }
 
     inline std::optional<ListView> ValueView::try_as_list() const
@@ -535,6 +714,11 @@ namespace hgraph
         return CyclicBufferView{*this};
     }
 
+    inline MutableCyclicBufferView CyclicBufferView::begin_mutation() const
+    {
+        return MutableCyclicBufferView{ValueView::begin_mutation()};
+    }
+
     inline std::optional<CyclicBufferView> ValueView::try_as_cyclic_buffer() const
     {
         return is_cyclic_buffer() ? std::optional<CyclicBufferView>{CyclicBufferView{*this}} : std::nullopt;
@@ -546,9 +730,78 @@ namespace hgraph
         return QueueView{*this};
     }
 
+    inline MutableQueueView QueueView::begin_mutation() const
+    {
+        return MutableQueueView{ValueView::begin_mutation()};
+    }
+
     inline std::optional<QueueView> ValueView::try_as_queue() const
     {
         return is_queue() ? std::optional<QueueView>{QueueView{*this}} : std::nullopt;
+    }
+
+    inline MutableTupleView ValueView::as_mutable_tuple() const
+    {
+        if (!is_tuple()) { throw std::logic_error("ValueView::as_mutable_tuple on non-tuple view"); }
+        return MutableTupleView{*this};
+    }
+
+    inline std::optional<MutableTupleView> ValueView::try_as_mutable_tuple() const
+    {
+        return is_tuple() && mutable_payload() ? std::optional<MutableTupleView>{MutableTupleView{*this}}
+                                               : std::nullopt;
+    }
+
+    inline MutableBundleView ValueView::as_mutable_bundle() const
+    {
+        if (!is_bundle()) { throw std::logic_error("ValueView::as_mutable_bundle on non-bundle view"); }
+        return MutableBundleView{*this};
+    }
+
+    inline std::optional<MutableBundleView> ValueView::try_as_mutable_bundle() const
+    {
+        return is_bundle() && mutable_payload() ? std::optional<MutableBundleView>{MutableBundleView{*this}}
+                                                : std::nullopt;
+    }
+
+    inline MutableListView ValueView::as_mutable_list() const
+    {
+        if (!is_list()) { throw std::logic_error("ValueView::as_mutable_list on non-list view"); }
+        return MutableListView{*this};
+    }
+
+    inline std::optional<MutableListView> ValueView::try_as_mutable_list() const
+    {
+        return is_list() && mutable_payload() ? std::optional<MutableListView>{MutableListView{*this}}
+                                              : std::nullopt;
+    }
+
+    inline MutableCyclicBufferView ValueView::as_mutable_cyclic_buffer() const
+    {
+        if (!is_cyclic_buffer())
+        {
+            throw std::logic_error("ValueView::as_mutable_cyclic_buffer on non-cyclic-buffer view");
+        }
+        return MutableCyclicBufferView{*this};
+    }
+
+    inline std::optional<MutableCyclicBufferView> ValueView::try_as_mutable_cyclic_buffer() const
+    {
+        return is_cyclic_buffer() && mutable_payload()
+                   ? std::optional<MutableCyclicBufferView>{MutableCyclicBufferView{*this}}
+                   : std::nullopt;
+    }
+
+    inline MutableQueueView ValueView::as_mutable_queue() const
+    {
+        if (!is_queue()) { throw std::logic_error("ValueView::as_mutable_queue on non-queue view"); }
+        return MutableQueueView{*this};
+    }
+
+    inline std::optional<MutableQueueView> ValueView::try_as_mutable_queue() const
+    {
+        return is_queue() && mutable_payload() ? std::optional<MutableQueueView>{MutableQueueView{*this}}
+                                               : std::nullopt;
     }
 
 }  // namespace hgraph
