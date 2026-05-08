@@ -897,7 +897,7 @@ namespace hgraph
                 Borrowed,
             };
 
-            union Storage {
+            union alignas(Policy::storage_alignment()) Storage {
                 std::array<std::byte, Policy::inline_bytes> inline_bytes;
                 void                                       *ptr;
 
