@@ -252,15 +252,18 @@ The compact storage shapes are:
     series variant supplies push / pop semantics over time.
 
 Mutation. The compact value-layer storage shapes do **not** expose
-per-element structural mutation. Whole-container replacement happens
-at the ``Value`` level via copy / move assignment or
-``from_python()`` — the bound plan's lifecycle ops swap one storage
-for another. Atomic ``ValueView::set<T>`` is the direct scalar
-assignment path for a live atomic payload. Structural per-element
-insert / remove / resize methods only make sense for the
+per-element structural mutation. Their ops tables set
+``allows_mutation = false``, so ``begin_mutation()`` fails even if the
+erased view was created from writable storage. Whole-container
+replacement happens at the ``Value`` level via copy / move assignment
+or ``from_python()`` — the bound plan's lifecycle ops swap one storage
+for another. Atomic scalar assignment is still explicit: open a
+mutable view with ``begin_mutation()`` and then call
+``ValueView::set<T>`` or ``checked_mutable_as<T>()``. Structural
+per-element insert / remove / resize methods only make sense for the
 slot-store-based time-series variants and will live on the
 ``MutableListView`` / ``MutableSetView`` / ``MutableMapView`` family,
-not on scalar views.
+not on compact scalar container storage.
 
 Lifecycle context. Each storage shape pairs with a small ``*State``
 struct (``ListState``, ``SetState``, ``MapState``,
@@ -308,7 +311,7 @@ repeatedly recreating the same value. If the same container value is
 needed again, construct a new value builder or copy the resulting
 ``Value`` according to normal value semantics.
 
-This keeps the value-layer view contract free of mutation methods
+This keeps compact container storage immutable after construction
 while still letting callers build a value in stages.
 
 Status. The compact value-layer storage shapes, builders, specialised

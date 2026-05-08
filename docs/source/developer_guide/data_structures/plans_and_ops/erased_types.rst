@@ -111,9 +111,9 @@ A view exposes:
 - read access for composite kinds via specialised adapters described
   below.
 
-Atomic ``set<T>`` is available on a live atomic ``ValueView`` as the
-direct scalar assignment path. Structural mutation and delta views are
-not part of the scalar value view. Delta views are reserved for the
+Atomic ``set<T>`` is available only on a mutable ``ValueView`` opened
+with ``begin_mutation()``. Structural mutation and delta views are not
+part of the scalar value view. Delta views are reserved for the
 ``TSValue`` / ``TSView`` infrastructure where per-tick modification
 state is meaningful.
 
@@ -142,8 +142,10 @@ adaptation — exposing one schema's value through a different schema —
 is a time-series concern, not a value-layer concern.
 
 Status: the read-only cast family is implemented for tuple, bundle,
-list, set, map, cyclic buffer, and queue views. Mutable-view casts land
-with the slot-store-backed time-series views.
+list, set, map, cyclic buffer, and queue views. Mutable-view casts are
+implemented as casts from an already-open mutable erased view; opening
+that mutable view is always done by ``begin_mutation()`` and is gated
+by the bound ops table.
 
 Read-Only and Mutable Views
 ---------------------------
@@ -154,28 +156,37 @@ discipline:
 
 - A **read-only view** exposes inspection and iteration: typed
   access, ``hash``, ``equals``, ``compare``, ``to_string``, buffer
-  exposure, structural reads, and direct scalar ``set<T>`` for atomic
-  payloads.
+  exposure, and structural reads.
+- A **writable view** is a read-only view that was created from
+  writable storage, but mutation has not been opened yet. Mutating
+  methods still fail in this state.
 - A **mutable view** adds the kind-specific mutation operations:
-  field mutation on bundles and tuples, ``push_back`` / ``resize`` on
-  lists, ``add`` / ``remove`` on sets, key insertion and value updates
-  on maps, and so on.
+  scalar ``set<T>``, field mutation on bundles and tuples,
+  ``push_back`` / ``resize`` on lists, ``add`` / ``remove`` on sets,
+  key insertion and value updates on maps, and so on.
 
-The current compact value-layer implementation exposes the read-only
-variants. A mutable view is obtained from an existing view by calling
-``begin_mutation()`` once the slot-store-backed time-series variants
-land. The transition is explicit so that consumers can reason about
-when mutation is in scope — the time-series layer in particular needs
-to know precisely when changes start and end so its delta accounting
-stays coherent.
+The generic erased handle can represent writable and mutable states
+without adding a third pointer word: the binding pointer carries a
+small tag. A mutable view is obtained from a writable view by calling
+``begin_mutation()``. The transition is explicit so that consumers can
+reason about when mutation is in scope — the time-series layer in
+particular needs to know precisely when changes start and end so its
+delta accounting stays coherent.
+
+Whether ``begin_mutation()`` is legal is a property of the bound ops
+table. Atomic, tuple/bundle, and fixed-array ops may allow direct
+in-place mutation. Compact container storage ops deliberately set this
+flag to false, so ``ListStorage``, ``SetStorage``, ``MapStorage``,
+``CyclicBufferStorage``, ``QueueStorage``, and map-key-set adapters
+remain immutable from the public API.
 
 The mutation is closed by calling ``end_mutation()`` on the mutable
-view. If the caller does not call it, the mutable view's destructor
-closes the mutation when the view goes out of scope. Explicit
-``end_mutation()`` gives the caller deterministic control over when
-the runtime sees the mutation complete; RAII closure is the safety net
-that guarantees no mutation is left dangling if a caller forgets or an
-exception unwinds the stack.
+view. For the current scalar value-layer ops this is a no-op; the
+method exists so the same view contract can be used by slot-store-
+backed time-series ops, where close-time hooks update delta state.
+Those future mutable views should also provide RAII closure so a
+mutation is not left dangling if a caller forgets to close it
+explicitly or an exception unwinds the stack.
 
 .. note::
 
@@ -221,16 +232,15 @@ resolved ops pointers or other construction-time facts to keep later
 calls free of repeated validation. Most share an ``IndexedValueView``
 base for the kinds that are addressed positionally.
 
-The base specialised views never expose mutation methods. Mutation
-goes through a separate **mutable** view obtained from the read-only
-view by calling ``begin_mutation()`` (see *Read-Only and Mutable
-Views* above). The mutable view is closed with ``end_mutation()`` (or
-its destructor as the RAII safety net) and is the only place
+The base specialised views never expose mutation methods other than
+the explicit transition call. Mutation goes through a separate
+**mutable** view obtained from the read-only/writable view by calling
+``begin_mutation()`` (see *Read-Only and Mutable Views* above). The
+mutable view is closed with ``end_mutation()`` and is the only place
 per-element ``set`` / ``insert`` / ``remove`` / ``push_back`` style
-operations exist. Mutable views are only meaningful for the
-slot-store-backed time-series variants; for the compact value-layer
-storage there is no mutable counterpart — replacement happens at the
-``Value`` level (whole-container copy/move).
+operations exist. Compact value-layer container storage does not allow
+that transition; replacement happens at the ``Value`` level
+(whole-container copy/move or ``from_python()``).
 
 Read-only views
 ~~~~~~~~~~~~~~~
@@ -280,8 +290,8 @@ Read-only views
     keys. ``contains`` and ``at`` are part of the erased ops contract
     and must be average O(1) for map implementations.
 
-Mutable views (slot-store-backed only)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Mutable views (ops-gated)
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Each mutable counterpart is obtained from its read-only view via
 ``begin_mutation()`` and adds the mutation methods listed below; the
@@ -289,25 +299,32 @@ read surface stays available throughout the mutation scope. The
 methods listed are *additions* — read-only methods on the base view
 remain accessible through the mutable view.
 
-Status: these mutable counterparts are design/API targets for the
-time-series layer and are not implemented by the compact value-layer
-storage.
+Status: atomic views, tuple/bundle views, and fixed-array list views
+currently support explicit mutation when their ops table allows
+``begin_mutation()``. Compact container storage ops do not allow it.
+The structural methods listed below remain design/API targets for the
+slot-store-backed time-series layer.
 
 ``MutableTupleView``
-    Adds ``set(index, value)``.
+    Adds mutable child access by index. ``set(index, value)`` is a
+    time-series-layer target.
 
 ``MutableBundleView``
-    Adds ``set(index, value)``, ``set(name, value)``.
+    Adds mutable child access by index/name. ``set(index, value)`` and
+    ``set(name, value)`` are time-series-layer targets.
 
 ``MutableListView``
-    Adds ``set(index, value)``, ``push_back(value)``, ``resize(n)``.
+    Adds mutable child access by index when the underlying ops allow
+    mutation. ``set(index, value)``, ``push_back(value)``, and
+    ``resize(n)`` are time-series-layer targets.
 
 ``MutableCyclicBufferView``
-    Adds ``push_back(value)`` (replaces oldest when full),
-    ``set(index, value)``.
+    Structural ``push_back(value)`` (replaces oldest when full) and
+    ``set(index, value)`` are time-series-layer targets.
 
 ``MutableQueueView``
-    Adds ``push(value)``, ``pop()``.
+    Structural ``push(value)`` and ``pop()`` are time-series-layer
+    targets.
 
 ``MutableSetView``
     Adds ``insert(key)``, ``remove(key)``.
