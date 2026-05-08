@@ -72,9 +72,10 @@ TSData implementation families
     Used for atomic time-series data. The current payload uses the
     compact scalar ``StoragePlan`` for the value type, but the bound
     ``TSDataOps`` allow mutation because a time-series output updates
-    in place during evaluation. Delta information is stored separately
-    from the current payload while remaining directly associated with
-    it.
+    in place during evaluation. Current value bytes, delta value bytes,
+    and tracking stamps are separate memory regions in one TSData plan,
+    so the current value can still be exposed as a compact buffer when
+    the scalar type supports that.
 
 ``SlotTSDataStorage``
     Used for collection-shaped time-series data. The data store is
@@ -90,6 +91,55 @@ The terms above keep three layers distinct: scalar ``Value`` storage,
 ``TSData`` payload/delta storage, and the full ``TSValue`` runtime
 object. Code and docs should avoid using "TS value plan" unless they
 mean the complete object; payload/delta plans are ``TSData`` plans.
+
+TSData Memory Layout and Delta Tracking
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every ``TSData`` plan keeps the current value representation separate
+from the delta-management representation. The two regions may live in
+one owning allocation for locality and lifecycle simplicity, but they
+are not interleaved in a way that would prevent a current-value buffer
+view from being exported. The layout context carried by ``TSDataOps``
+records the offsets of:
+
+- ``value`` — the current payload in the value-layer representation;
+- ``delta`` — the per-tick delta payload, using
+  ``delta_value_schema``;
+- ``tracking`` — modification stamps and other transient delta
+  metadata.
+
+Atomic TSData is the first implemented form. ``TS<T>``, ``REF<T>``,
+and ``SIGNAL`` use ``CompactTSDataStorage``: the value and delta
+regions are compact value-layer storage, and ``TSDataTracking`` carries
+``last_modified_time``. A delta is present for evaluation time ``t``
+when ``last_modified_time == t``. The first write in engine time ``t``
+copies the value into the current and delta regions, sets
+``last_modified_time`` to ``t``, and returns "newly modified" to the
+caller so the surrounding ``TSState`` can notify subscribers. A later
+write to the same data field in the same engine time overwrites the
+current and delta regions but leaves ``last_modified_time`` unchanged
+and returns "not newly modified"; the earlier interim value is treated
+as if it never existed and no second modified notification should be
+sent.
+
+Collection TSData will use ``SlotTSDataStorage``. For these shapes the
+same principle applies per slot: current payload, live/constructed
+state, and delta tracking stay aligned by stable slot id. The
+collection object has its own ``last_modified_time`` describing the
+collection-level change time. Per-key modification times are not
+duplicated in the collection; when a keyed collection needs the
+modification time for a value, it reads that from the child time-series
+value stored in the corresponding slot.
+
+``TSS`` tracks membership deltas with per-slot bitsets for ``added``
+and ``removed``. ``TSD`` extends the same key-set structure, so it gets
+the ``added`` / ``removed`` key tracking from the TSS-shaped key side
+and adds a per-slot ``modified`` bitset for keys whose child value
+modified in the current engine time. ``TSS`` has no child value layer,
+so there is no per-key modification time to read there. Same-time
+rewrites update the bitsets in place and do not re-mark the
+collection-level ``last_modified_time`` or produce a second
+notification.
 
 Builder Lifetime
 ----------------
@@ -170,7 +220,7 @@ Three primitives in ``hgraph/types/utils/`` express the slot machinery.
 The ``SlotTSDataStorage`` implementations for collection-shaped
 time-series data build on these primitives so they can support
 per-element insert / remove / replace with stable addresses and the
-per-slot ``updated`` bit needed to surface deltas. The value-layer
+per-slot bitsets needed to surface deltas. The value-layer
 (scalar) container shapes are different — they are compact and atomic
 by design (see *Scalar Plans and Ops > Container Storage Shapes*) and
 do not use the slot stores.
@@ -208,8 +258,9 @@ Both stores expose a ``SlotObserver`` notification protocol —
 synchronised without any of them needing to know about the others.
 The TS layer uses this for two purposes: a ``MapValueObserver``
 mirrors a key store's slot lifecycle onto a paired value store
-(``TSD`` keys → values); and a delta-recording observer captures
-``added`` / ``removed`` slot ids per cycle so the layer can publish
+(``TSD`` keys → values); and delta-recording observers capture
+``TSS`` ``added`` / ``removed`` slot ids plus ``TSD`` ``modified``
+slot ids for the current engine time so the layer can publish
 ``delta_value``.
 
 The set and map ``SlotTSDataStorage`` shapes are layered on these
@@ -231,12 +282,14 @@ TSS is the time-series wrapper around a delta-tracking Set. It owns:
 
 - a ``KeySlotStore`` for the keys, providing stable per-slot addresses
   and delayed-erase semantics;
-- the time-series state common to every kind (modification time,
-  subscribers, validity);
-- per-slot insertion and removal records that drive ``delta_value``.
+- collection-level tracking, including ``last_modified_time``;
+- per-slot ``added`` and ``removed`` bitsets that drive
+  ``delta_value``.
 
 The slot ids assigned by the ``KeySlotStore`` are the path identifiers
-used throughout the rest of the time-series layer.
+used throughout the rest of the time-series layer. A TSS has no child
+time-series values, so key-level modification time is not a concept on
+this storage shape.
 
 A TSS instance can be **owning** — a TSS output written by a node — or
 **read-only** — a TSS view exposed by another container (see TSD).
@@ -253,7 +306,10 @@ TSD is the time-series wrapper around a delta-tracking Map. It owns:
 - a ``KeySlotStore`` for the keys, identical in shape to a TSS's;
 - a ``ValueSlotStore`` whose slot ids match the key store's, holding
   the per-key time-series values;
-- the time-series state common to every kind.
+- collection-level tracking, including ``last_modified_time``;
+- the TSS-shaped per-slot ``added`` and ``removed`` key bitsets;
+- a per-slot ``modified`` bitset for keys whose child time-series
+  value modified in the current engine time.
 
 The value side is itself a recursive time-series layer: each value-
 slot holds a complete time-series value (most often a ``TS``, but
@@ -261,6 +317,11 @@ slot holds a complete time-series value (most often a ``TS``, but
 schema). Memory stability is preserved by the underlying
 ``StableSlotStorage`` so consumers can bind to a specific slot's value
 without worrying about future structural changes.
+
+Per-key modification time is read from the child value stored in the
+matching value slot. The TSD-level ``modified`` bitset is the current
+delta membership surface; it is not the source of the child's
+``last_modified_time``.
 
 Key-Set Exposure
 ~~~~~~~~~~~~~~~~
@@ -270,6 +331,7 @@ TSS is **read-only**:
 
 - it shares the parent TSD's ``KeySlotStore`` directly, so slot ids
   match one-to-one with the parent's value side;
+- it shares the parent TSD's key ``added`` / ``removed`` tracking;
 - it can be subscribed to and exposes ``value`` and ``delta_value``
   like any other TSS;
 - it rejects write operations — keys are owned by the TSD and only
@@ -286,6 +348,7 @@ Buffer Exposure
 Because keys and values live in slot stores backed by stable
 contiguous blocks, both TSS and the value side of TSD can expose
 buffer views the same way the value layer does — over live keys, over
-live values, and over the per-slot ``updated`` mask for the current
-tick. This matters for adaptors and analytics paths that consume
-large keyed time-series in bulk.
+live values, and over the per-slot delta masks for the current tick:
+``added`` / ``removed`` for TSS-shaped key storage and ``modified`` for
+TSD value changes. This matters for adaptors and analytics paths that
+consume large keyed time-series in bulk.
