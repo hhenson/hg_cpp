@@ -133,7 +133,11 @@ namespace hgraph
         }
         [[nodiscard]] ValueView view() const
         {
-            return ValueView{binding(), has_value() ? const_cast<void *>(storage_.data()) : nullptr};
+            return ValueView{binding(), has_value() ? storage_.data() : nullptr};
+        }
+        [[nodiscard]] ValueView begin_mutation()
+        {
+            return view().begin_mutation();
         }
 
         // -- atomic access shortcuts --
@@ -143,49 +147,75 @@ namespace hgraph
             return view().template checked_as<T>();
         }
         template <typename T>
-        [[nodiscard]] T &as()
+        [[nodiscard]] const T &as()
         {
             return view().template checked_as<T>();
         }
         template <typename T>
         [[nodiscard]] const T *try_as() const noexcept
         {
-            return view().template try_as<T>();
+            const ValueView v = view();
+            return v.template try_as<T>();
         }
         template <typename T>
-        [[nodiscard]] T *try_as() noexcept
+        [[nodiscard]] const T *try_as() noexcept
         {
-            return view().template try_as<T>();
+            const ValueView v = view();
+            return v.template try_as<T>();
         }
 
         [[nodiscard]] TupleView as_tuple() const { return view().as_tuple(); }
+        [[nodiscard]] TupleView as_tuple() { return view().as_tuple(); }
         [[nodiscard]] std::optional<TupleView> try_as_tuple() const { return view().try_as_tuple(); }
+        [[nodiscard]] std::optional<TupleView> try_as_tuple() { return view().try_as_tuple(); }
         [[nodiscard]] BundleView as_bundle() const { return view().as_bundle(); }
+        [[nodiscard]] BundleView as_bundle() { return view().as_bundle(); }
         [[nodiscard]] std::optional<BundleView> try_as_bundle() const { return view().try_as_bundle(); }
+        [[nodiscard]] std::optional<BundleView> try_as_bundle() { return view().try_as_bundle(); }
         [[nodiscard]] ListView as_list() const { return view().as_list(); }
+        [[nodiscard]] ListView as_list() { return view().as_list(); }
         [[nodiscard]] std::optional<ListView> try_as_list() const { return view().try_as_list(); }
+        [[nodiscard]] std::optional<ListView> try_as_list() { return view().try_as_list(); }
         [[nodiscard]] SetView as_set() const { return view().as_set(); }
+        [[nodiscard]] SetView as_set() { return view().as_set(); }
         [[nodiscard]] std::optional<SetView> try_as_set() const { return view().try_as_set(); }
+        [[nodiscard]] std::optional<SetView> try_as_set() { return view().try_as_set(); }
         [[nodiscard]] MapView as_map() const { return view().as_map(); }
+        [[nodiscard]] MapView as_map() { return view().as_map(); }
         [[nodiscard]] std::optional<MapView> try_as_map() const { return view().try_as_map(); }
+        [[nodiscard]] std::optional<MapView> try_as_map() { return view().try_as_map(); }
         [[nodiscard]] CyclicBufferView as_cyclic_buffer() const { return view().as_cyclic_buffer(); }
+        [[nodiscard]] CyclicBufferView as_cyclic_buffer() { return view().as_cyclic_buffer(); }
         [[nodiscard]] std::optional<CyclicBufferView> try_as_cyclic_buffer() const
         {
             return view().try_as_cyclic_buffer();
         }
+        [[nodiscard]] std::optional<CyclicBufferView> try_as_cyclic_buffer()
+        {
+            return view().try_as_cyclic_buffer();
+        }
         [[nodiscard]] QueueView as_queue() const { return view().as_queue(); }
+        [[nodiscard]] QueueView as_queue() { return view().as_queue(); }
         [[nodiscard]] std::optional<QueueView> try_as_queue() const { return view().try_as_queue(); }
+        [[nodiscard]] std::optional<QueueView> try_as_queue() { return view().try_as_queue(); }
 
         [[nodiscard]] TupleView tuple_view() const { return as_tuple(); }
+        [[nodiscard]] TupleView tuple_view() { return as_tuple(); }
         [[nodiscard]] BundleView bundle_view() const { return as_bundle(); }
+        [[nodiscard]] BundleView bundle_view() { return as_bundle(); }
         [[nodiscard]] ListView list_view() const { return as_list(); }
+        [[nodiscard]] ListView list_view() { return as_list(); }
         [[nodiscard]] SetView set_view() const { return as_set(); }
+        [[nodiscard]] SetView set_view() { return as_set(); }
         [[nodiscard]] MapView map_view() const { return as_map(); }
+        [[nodiscard]] MapView map_view() { return as_map(); }
         [[nodiscard]] CyclicBufferView cyclic_buffer_view() const { return as_cyclic_buffer(); }
+        [[nodiscard]] CyclicBufferView cyclic_buffer_view() { return as_cyclic_buffer(); }
         [[nodiscard]] QueueView queue_view() const { return as_queue(); }
+        [[nodiscard]] QueueView queue_view() { return as_queue(); }
 
         // -- generic ops --
-        [[nodiscard]] std::size_t hash() const noexcept { return view().hash(); }
+        [[nodiscard]] std::size_t hash() const { return view().hash(); }
         [[nodiscard]] bool equals(const Value &other) const noexcept
         {
             return view().equals(other.view());

@@ -75,8 +75,13 @@ namespace hgraph
      *
      * Slots:
      *
-     * - ``hash(memory)`` — content hash; cached entries can drop to a
-     *   shallow pointer hash if the type is non-hashable.
+     * - ``allows_mutation`` — whether a writable view may be opened
+     *   with ``begin_mutation()``. Compact immutable storage leaves
+     *   this false even when the generic view machinery can represent
+     *   mutability.
+     * - ``hash(memory)`` — content hash. Types without hash support do
+     *   not install a hash implementation; callers get an exception
+     *   rather than a sentinel value.
      * - ``equals(lhs, rhs)`` — deep equality.
      * - ``compare(lhs, rhs)`` — C++ comparison-category result following
      *   ``operator<=>`` conventions. Non-comparable types may return
@@ -87,7 +92,8 @@ namespace hgraph
     struct ValueOps
     {
         const void *context{nullptr};
-        std::size_t (*hash_impl)(const void *context, const void *memory) noexcept = nullptr;
+        bool        allows_mutation{false};
+        std::size_t (*hash_impl)(const void *context, const void *memory) = nullptr;
         bool (*equals_impl)(const void *context, const void *lhs, const void *rhs) noexcept = nullptr;
         std::partial_ordering (*compare_impl)(const void *context, const void *lhs,
                                               const void *rhs) noexcept = nullptr;
@@ -100,10 +106,17 @@ namespace hgraph
                                             const ValueArraySource &source) = nullptr;
 #endif
 
-        [[nodiscard]] std::size_t hash(const void *memory) const noexcept
+        [[nodiscard]] std::size_t hash(const void *memory) const
         {
-            return hash_impl != nullptr ? hash_impl(context, memory) : 0;
+            if (memory == nullptr) { throw std::logic_error("ValueOps::hash requires live value memory"); }
+            if (hash_impl == nullptr)
+            {
+                throw std::logic_error("ValueOps::hash is not available for this value type");
+            }
+            return hash_impl(context, memory);
         }
+
+        [[nodiscard]] bool can_begin_mutation() const noexcept { return allows_mutation; }
 
         [[nodiscard]] bool equals(const void *lhs, const void *rhs) const noexcept
         {
@@ -179,30 +192,10 @@ namespace hgraph
             return std::nullopt;
         }
 
-        template <typename T>
-        std::size_t hash_thunk(const void *, const void *memory) noexcept
+        template <detail::Hashable T>
+        std::size_t hash_thunk(const void *, const void *memory)
         {
-            if constexpr (std::is_same_v<T, bool>)
-            {
-                return std::hash<bool>{}(*static_cast<const bool *>(memory));
-            }
-            else if constexpr (requires(const T &v) { std::hash<T>{}(v); })
-            {
-                return std::hash<T>{}(*static_cast<const T *>(memory));
-            }
-            else
-            {
-                // Fallback: byte-wise hash. Better than an unhashable type
-                // crashing through the vtable; rarely exercised because the
-                // schema flags signal non-hashability up-front.
-                std::size_t seed = 0;
-                const auto *bytes = static_cast<const unsigned char *>(memory);
-                for (std::size_t i = 0; i < sizeof(T); ++i)
-                {
-                    seed = seed ^ (bytes[i] + 0x9e3779b9U + (seed << 6U) + (seed >> 2U));
-                }
-                return seed;
-            }
+            return std::hash<T>{}(*static_cast<const T *>(memory));
         }
 
         template <typename T>
@@ -214,7 +207,7 @@ namespace hgraph
             }
             else
             {
-                return std::memcmp(lhs, rhs, sizeof(T)) == 0;
+                return lhs == rhs;
             }
         }
 
@@ -237,10 +230,47 @@ namespace hgraph
             }
             else
             {
-                const int cmp = std::memcmp(lhs, rhs, sizeof(T));
-                if (cmp < 0) { return std::partial_ordering::less; }
-                if (cmp > 0) { return std::partial_ordering::greater; }
-                return std::partial_ordering::equivalent;
+                return lhs == rhs ? std::partial_ordering::equivalent : std::partial_ordering::unordered;
+            }
+        }
+
+        template <typename T>
+        [[nodiscard]] constexpr auto hash_impl_for() noexcept
+        {
+            if constexpr (detail::Hashable<T>)
+            {
+                return &hash_thunk<T>;
+            }
+            else
+            {
+                return static_cast<std::size_t (*)(const void *, const void *)>(nullptr);
+            }
+        }
+
+        template <typename T>
+        [[nodiscard]] constexpr auto equals_impl_for() noexcept
+        {
+            if constexpr (detail::Equatable<T>)
+            {
+                return &equals_thunk<T>;
+            }
+            else
+            {
+                return static_cast<bool (*)(const void *, const void *, const void *) noexcept>(nullptr);
+            }
+        }
+
+        template <typename T>
+        [[nodiscard]] constexpr auto compare_impl_for() noexcept
+        {
+            if constexpr (detail::Comparable<T>)
+            {
+                return &compare_thunk<T>;
+            }
+            else
+            {
+                return static_cast<std::partial_ordering (*)(const void *, const void *, const void *) noexcept>(
+                    nullptr);
             }
         }
 
@@ -462,9 +492,10 @@ namespace hgraph
     {
         static const ValueOps ops{
             nullptr,
-            &value_ops_detail::hash_thunk<T>,
-            &value_ops_detail::equals_thunk<T>,
-            &value_ops_detail::compare_thunk<T>,
+            true,
+            value_ops_detail::hash_impl_for<T>(),
+            value_ops_detail::equals_impl_for<T>(),
+            value_ops_detail::compare_impl_for<T>(),
             &value_ops_detail::to_string_thunk<T>,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
             &value_ops_detail::to_python_thunk<T>,

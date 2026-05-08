@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <new>
 #include <optional>
@@ -132,12 +133,17 @@ namespace hgraph
             void grow(std::size_t new_capacity)
             {
                 const std::size_t element_size = plan_->layout.size;
+                if (element_size != 0 &&
+                    new_capacity > std::numeric_limits<std::size_t>::max() / element_size)
+                {
+                    throw std::bad_array_new_length();
+                }
                 void *new_bytes =
                     ::operator new(new_capacity * element_size, std::align_val_t{plan_->layout.alignment});
 
-                if (plan_->trivially_move_constructible)
+                if (plan_->trivially_move_constructible && plan_->trivially_destructible)
                 {
-                    std::memcpy(new_bytes, bytes_, size_ * element_size);
+                    if (size_ != 0) { std::memcpy(new_bytes, bytes_, size_ * element_size); }
                 }
                 else
                 {
@@ -267,15 +273,12 @@ namespace hgraph
                 // by destroying it in place and copy-constructing into
                 // its memory; advance the head.
                 const auto &plan = element_binding_->checked_plan();
-                plan.destroy(accumulator_.at(head_));
-                // If copy_construct throws, the slot is uninitialised;
-                // default-construct so the accumulator's destructor
-                // doesn't double-free. The rollback runs only on
-                // unwind; the success path releases it.
-                auto rollback = make_scope_exit(
-                    [&]() noexcept { plan.default_construct(accumulator_.at(head_)); });
-                plan.copy_construct(accumulator_.at(head_), src);
-                rollback.release();
+                if (!plan.can_copy_assign())
+                {
+                    throw std::logic_error(
+                        "CyclicBufferBuilder replacement requires a copy-assignable element plan");
+                }
+                plan.copy_assign(accumulator_.at(head_), src);
                 head_ = (head_ + 1) % capacity_;
             }
         }
@@ -573,14 +576,11 @@ namespace hgraph
             if (auto found = find_slot(key); found.has_value())
             {
                 const auto &vp = value_binding_->checked_plan();
-                vp.destroy(value_acc_.at(*found));
-                // If copy_construct throws the slot is uninitialised;
-                // default-construct so the accumulator's destructor
-                // doesn't double-free.
-                auto rollback = make_scope_exit(
-                    [&]() noexcept { vp.default_construct(value_acc_.at(*found)); });
-                vp.copy_construct(value_acc_.at(*found), value);
-                rollback.release();
+                if (!vp.can_copy_assign())
+                {
+                    throw std::logic_error("MapBuilder value replacement requires a copy-assignable value plan");
+                }
+                vp.copy_assign(value_acc_.at(*found), value);
                 return;
             }
             const auto slot = key_acc_.size();
