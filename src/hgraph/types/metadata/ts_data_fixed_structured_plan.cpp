@@ -99,7 +99,7 @@ namespace hgraph::ts_data_plan_factory_detail
         if (!is_fixed_structured_ts_data(schema))
         {
             throw std::logic_error(
-                fmt::format("TSDataPlanFactory: slot-oriented TSData storage is not yet ported for kind {}",
+                fmt::format("TSDataPlanFactory: slot-oriented TSData storage is not implemented for kind {}",
                             static_cast<int>(schema.kind)));
         }
 
@@ -208,7 +208,7 @@ namespace hgraph::ts_data_plan_factory_detail
         if (!is_fixed_structured_ts_data(schema))
         {
             throw std::logic_error(
-                fmt::format("TSDataPlanFactory: slot-oriented TSData storage is not yet ported for kind {}",
+                fmt::format("TSDataPlanFactory: slot-oriented TSData storage is not implemented for kind {}",
                             static_cast<int>(schema.kind)));
         }
 
