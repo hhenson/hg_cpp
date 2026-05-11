@@ -48,6 +48,25 @@ namespace hgraph {
     scope_exit<F> make_scope_exit(F &&f) { return scope_exit<F>(std::forward<F>(f)); }
 
     /**
+     * Run ``f`` and return its result. If ``f`` throws, suppress the
+     * exception and return ``fallback`` instead.
+     *
+     * Use this only at deliberate exception boundaries where the fallback is a
+     * valid domain result, such as a comparison operation returning
+     * ``std::partial_ordering::unordered`` when a structural fallback cannot be
+     * evaluated.
+     */
+    template <typename Result, typename F>
+    [[nodiscard]] Result fallback_on_exception(Result fallback, F &&f) noexcept
+    {
+        try {
+            return std::forward<F>(f)();
+        } catch (...) {
+            return fallback;
+        }
+    }
+
+    /**
      * Single-use cleanup guard that distinguishes normal completion from
      * exception unwinding.
      *

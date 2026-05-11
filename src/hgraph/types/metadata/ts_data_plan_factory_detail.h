@@ -19,9 +19,11 @@ namespace hgraph::ts_data_plan_factory_detail
 
     [[nodiscard]] bool is_compact_atomic_ts_data(const TSValueTypeMetaData &schema) noexcept;
     [[nodiscard]] bool is_fixed_structured_ts_data(const TSValueTypeMetaData &schema) noexcept;
+    [[nodiscard]] bool is_window_ts_data(const TSValueTypeMetaData &schema) noexcept;
 
     [[nodiscard]] const MemoryUtils::StoragePlan &ts_data_aux_plan(const TSValueTypeMetaData &schema);
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_fixed_plan(const TSValueTypeMetaData &schema);
+    [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_window_plan(const TSValueTypeMetaData &schema);
 
     [[nodiscard]] const TSDataBinding *embedded_ts_data_binding(const TSValueTypeMetaData      &schema,
                                                                 const MemoryUtils::StoragePlan &root_plan,
@@ -33,7 +35,13 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                 std::size_t tracking_offset,
                                                                 std::vector<const TSDataBinding *> element_bindings);
 
+    [[nodiscard]] const TSDataOps &window_ts_data_ops(const TSValueTypeMetaData      &schema,
+                                                      const MemoryUtils::StoragePlan &plan,
+                                                      std::size_t value_offset,
+                                                      std::size_t tracking_offset);
+
     void clear_fixed_ts_data_contexts() noexcept;
+    void clear_window_ts_data_contexts() noexcept;
 } // namespace hgraph::ts_data_plan_factory_detail
 
 #endif // HGRAPH_CPP_ROOT_TS_DATA_PLAN_FACTORY_DETAIL_H

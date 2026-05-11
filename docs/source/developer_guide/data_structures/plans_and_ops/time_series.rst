@@ -64,6 +64,17 @@ The implementation uses the following names consistently:
     Other major TSData families use their own specialised layouts rather
     than adding more shape fields to ``TSDataLayout``.
 
+``TSWDataLayout`` / ``SizeTSWDataLayout`` / ``TimeTSWDataLayout``
+    Specialised layouts for window TSData. ``TSWDataLayout`` is only
+    the common window prefix: payload element binding, timestamp
+    element binding, plus the normal value, delta, and tracking offsets
+    inherited from ``TSDataLayout``.
+    ``SizeTSWDataLayout`` carries ``period`` and ``min_period`` for
+    tick-count windows. ``TimeTSWDataLayout`` carries ``time_range`` and
+    ``min_time_range`` for duration windows. A concrete ``TSW`` schema
+    resolves to exactly one of those layouts; it never switches between
+    the two models at runtime.
+
 ``IndexedTSDataOps``
     The shared view-facing indexed access surface for TSData
     shapes. ``TSB`` and ``TSL`` can expose common indexed operations
@@ -81,10 +92,11 @@ The implementation uses the following names consistently:
 
 ``TSDataPlanFactory``
     The schema → data-plan resolver for ``TSData``. It chooses the
-    compact mutable implementation for atomic time-series data and the
-    slot-oriented implementation for collection-shaped time-series
-    data. The factory does not plan the whole ``TSValue`` object, only
-    its payload/delta data component.
+    compact mutable implementation for atomic time-series data, fixed
+    structured plans for ``TSB`` / fixed ``TSL``, window plans for
+    ``TSW``, and slot-oriented plans for keyed or dynamically-sized
+    collection-shaped time-series data. The factory does not plan the
+    whole ``TSValue`` object, only its payload/delta data component.
 
 ``TSValueBuilder``
     The reusable builder for full ``TSValue`` instances. It composes a
@@ -114,6 +126,19 @@ TSData implementation families
     of the parent and all fixed children is known before allocation, and
     child views use embedded TSData bindings whose offsets point into the
     shared value and auxiliary regions.
+
+``WindowTSDataStorage``
+    Used for ``TSW``. It exposes one common ``TSWDataView`` surface but
+    has two concrete storage models: a fixed-capacity cyclic buffer for
+    tick-count windows and a timestamped queue for duration windows.
+    ``SizeTSWindowStorage`` and ``TimeTSWindowStorage`` share only the
+    low-level timestamp/payload buffer management; push, pruning, and
+    capacity policy are selected by the concrete storage type. Both
+    models store two aligned value-element buffers: an ``engine_time_t``
+    timestamp buffer and a payload ``T`` buffer. The current-value
+    surface is list-shaped over the payload buffer, but the bound value
+    ops project directly over the window storage instead of
+    materialising a compact immutable value-layer ``ListStorage``.
 
 ``SlotTSDataStorage``
     Used for keyed or dynamically-sized collection time-series data
@@ -342,6 +367,94 @@ first recorded for an engine time, the child bubbles that id to the
 parent; the parent then records its own ``last_modified_time`` for the
 same engine time.
 
+Window TSData
+^^^^^^^^^^^^^
+
+``TSW<T>`` stores the current rolling window and exposes a scalar delta:
+the element pushed at the current evaluation time. The value schema is
+still list-shaped:
+
+- tick-count windows expose ``List<T, period>``;
+- duration windows expose ``List<T, 0>`` because the number of elements
+  in the time range depends on tick rate.
+
+The TSData plan has a window storage component plus the common tracking
+stamp. There is no separate delta region. ``delta_value(t)`` returns the
+latest element in the window when ``last_modified_time == t``; otherwise
+it returns a typed-null scalar view.
+
+.. code-block:: text
+
+   TSW TSData allocation
+   +--------------------------------------------------------------+
+   | window region                                                |
+   | SizeTSWindowStorage or TimeTSWindowStorage                   |
+   | - fixed tick: cyclic timestamp/value buffers                 |
+   | - duration: timestamp/value queue buffers                    |
+   | - timestamps are engine_time_t value elements                |
+   | - payload values are T value elements                        |
+   +--------------------------------------------------------------+
+   | tracking region                                              |
+   | TSDataTracking { last_modified_time }                        |
+   +--------------------------------------------------------------+
+
+Both models share ``TSWDataView``. The view reports elements in logical
+oldest-to-newest order and exposes the same operations for size, indexed
+value access, timestamps, timestamp value access, first/last element,
+readiness, and mutation. ``time_at(index)`` returns the raw
+``engine_time_t`` and ``time_value_at(index)`` returns the same stored
+timestamp as a ``ValueView`` backed by the timestamp element buffer.
+The layout and ops behind the view differ by schema:
+
+.. mermaid::
+
+   flowchart LR
+      View["TSWDataView"]
+      FixedOps["tick-count ops<br/>SizeTSWDataLayout<br/>fixed cyclic buffer"]
+      DurationOps["duration ops<br/>TimeTSWDataLayout<br/>timestamped queue"]
+      Value["value()<br/>list-shaped ValueView"]
+      Delta["delta_value(t)<br/>latest element if modified at t"]
+
+      View --> FixedOps
+      View --> DurationOps
+      View --> Value
+      View --> Delta
+
+For a tick-count ``TSW<T, period, min_period>``, the window is a
+fixed-capacity cyclic buffer. Pushing appends while there is free
+capacity and overwrites the oldest element after the period is reached.
+The exposed order remains oldest-to-newest:
+
+.. code-block:: text
+
+   tick TSW, period = 3
+   push 1 @ t1        [1]
+   push 2 @ t2        [1, 2]
+   push 3 @ t3        [1, 2, 3]
+   push 4 @ t4        [2, 3, 4]
+
+``all_valid()`` for this model is ``size() >= min_period``. The
+``value()`` view is bound to custom list ops over the window component,
+so ``value().as_list()`` has the documented list schema while reading
+directly from the cyclic storage.
+
+For a duration ``TSW<T, time_range, min_time_range>``, the window is a
+queue paired with per-element timestamps. Before each push, elements
+older than ``evaluation_time - time_range`` are removed. The queue may
+grow to match the number of ticks observed inside the time range:
+
+.. code-block:: text
+
+   duration TSW, time_range = 10us
+   push 1 @ 1us       [1 @ 1us]
+   push 2 @ 6us       [1 @ 1us, 2 @ 6us]
+   push 3 @ 16us      [2 @ 6us, 3 @ 16us]
+
+``all_valid()`` for this model is false while empty; once non-empty, a
+zero ``min_time_range`` is immediately valid and a positive
+``min_time_range`` requires ``last_element_time - first_element_time``
+to cover that duration.
+
 View Handles
 ^^^^^^^^^^^^
 
@@ -403,7 +516,8 @@ belongs to the surrounding ``TSValue`` / state layer. TSData does not
 own external subscriber lists or graph scheduling fan-out.
 
 The implemented atomic plan follows the compact layout above. ``TSB``
-and fixed-size ``TSL`` use the fixed structured layout above. The
+and fixed-size ``TSL`` use the fixed structured layout above. ``TSW``
+uses the window layout above. The
 remaining dynamic/keyed collection-shaped TSData will use the
 slot-oriented layout below: ``TSS`` tracks membership deltas with
 per-slot bitsets for ``added`` and ``removed``, while ``TSD`` reuses
@@ -552,9 +666,13 @@ is implemented by recording pointers — to the value, to the ops, to
 per-element state — and those pointers must remain valid across
 ticks, rebinds, and structural mutation of containers.
 
-For fixed-shape time-series (TS, TSB, fixed-size TSL, TSW), stability
-is trivial: the value lives in node-owned storage and survives until
-the owning node is destroyed.
+For fixed-shape time-series (``TS``, ``TSB``, and fixed-size ``TSL``),
+stability is trivial: the value lives in node-owned storage and
+survives until the owning node is destroyed. Tick-count ``TSW`` also
+has a fixed-capacity window. Duration ``TSW`` keeps the owning TSData
+object stable, but its internal queue may grow; callers should treat
+element ``ValueView`` handles as short-lived projections rather than
+stable child time-series addresses.
 
 For TSD and dynamic TSL, stability is harder. Elements are added and
 removed during evaluation, but a consumer that bound to one of them

@@ -65,6 +65,7 @@ namespace hgraph
         binding_cache_.clear();
         plan_detail::clear_atomic_ts_data_ops();
         plan_detail::clear_fixed_ts_data_contexts();
+        plan_detail::clear_window_ts_data_contexts();
     }
 
     const TSDataBinding *TSDataPlanFactory::binding_for(const TSValueTypeMetaData *schema)
@@ -106,6 +107,18 @@ namespace hgraph
         if (plan_detail::is_fixed_structured_ts_data(*schema))
         {
             const auto *plan = plan_detail::synthesise_fixed_plan(*schema);
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (const auto it = cache_.find(schema); it != cache_.end())
+            {
+                return it->second;
+            }
+            cache_.emplace(schema, plan);
+            return plan;
+        }
+        if (plan_detail::is_window_ts_data(*schema))
+        {
+            const auto *plan = plan_detail::synthesise_window_plan(*schema);
 
             std::lock_guard<std::mutex> lock(mutex_);
             if (const auto it = cache_.find(schema); it != cache_.end())
@@ -183,6 +196,44 @@ namespace hgraph
                 cache_.emplace(schema, binding->plan());
             }
             return binding;
+        }
+        if (plan_detail::is_window_ts_data(*schema))
+        {
+            const auto *plan = plan_for(schema);
+            if (plan == nullptr)
+            {
+                throw std::logic_error("TSDataPlanFactory: TSW TSData plan is not resolvable");
+            }
+
+            const auto *window_component   = plan->find_component("window");
+            const auto *tracking_component = plan->find_component("tracking");
+            if (window_component == nullptr || tracking_component == nullptr)
+            {
+                throw std::logic_error("TSDataPlanFactory: TSW TSData plan is missing required components");
+            }
+
+            const auto &ops =
+                plan_detail::window_ts_data_ops(*schema, *plan, window_component->offset, tracking_component->offset);
+            const auto &binding = TSDataBinding::intern(*schema, *plan, ops);
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (const auto it = binding_cache_.find(schema); it != binding_cache_.end())
+            {
+                return it->second;
+            }
+            binding_cache_.emplace(schema, &binding);
+            if (const auto plan_it = cache_.find(schema); plan_it != cache_.end())
+            {
+                if (plan_it->second != binding.plan())
+                {
+                    throw std::logic_error("TSDataPlanFactory: synthesised binding does not match cached plan");
+                }
+            }
+            else
+            {
+                cache_.emplace(schema, binding.plan());
+            }
+            return &binding;
         }
         if (!plan_detail::is_compact_atomic_ts_data(*schema))
         {

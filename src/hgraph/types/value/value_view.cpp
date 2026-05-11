@@ -2,6 +2,7 @@
 
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/value.h>
+#include <hgraph/util/scope.h>
 
 #include <algorithm>
 #include <compare>
@@ -270,16 +271,11 @@ namespace hgraph
             return std::partial_ordering::unordered;
         }
 
-        try
-        {
+        return fallback_on_exception(std::partial_ordering::unordered, [&]() {
             if (bound == other_bound) { return bound->checked_ops().compare(data_, other.data_); }
             if (!value_schema_equivalent(schema(), other.schema())) { return std::partial_ordering::unordered; }
             return semantic_compare(*this, other);
-        }
-        catch (...)
-        {
-            return std::partial_ordering::unordered;
-        }
+        });
     }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES

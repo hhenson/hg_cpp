@@ -642,6 +642,195 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
     REQUIRE(delta.key_set().contains(key_view));
 }
 
+TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *tsw      = registry.tsw(int_meta, 3, 2);
+
+    const auto *binding = factory.binding_for(tsw);
+    REQUIRE(binding != nullptr);
+    REQUIRE(binding->plan()->is_named_tuple());
+    const auto *window_component   = binding->plan()->find_component("window");
+    const auto *tracking_component = binding->plan()->find_component("tracking");
+    REQUIRE(window_component != nullptr);
+    REQUIRE(tracking_component != nullptr);
+    REQUIRE(window_component->offset == 0);
+    REQUIRE(tracking_component->plan == &MemoryUtils::plan_for<TSDataTracking>());
+
+    TSData data{*binding};
+    auto   view = data.view();
+    auto   window = view.as_window();
+    REQUIRE(window.size_based());
+    const auto &layout = window.size_layout();
+    REQUIRE(layout.period == 3);
+    REQUIRE(layout.min_period == 2);
+    REQUIRE(layout.element_binding == registry.scalar_binding<int>());
+    REQUIRE(layout.time_binding == registry.scalar_binding<engine_time_t>());
+    REQUIRE_THROWS_AS(window.time_layout(), std::logic_error);
+    REQUIRE(window.value().binding()->plan() == window_component->plan);
+    REQUIRE(window.value().is_list());
+    REQUIRE(window.value().as_list().size() == 0);
+    REQUIRE(window.size() == 0);
+    REQUIRE(window.empty());
+    REQUIRE_FALSE(window.full());
+    REQUIRE_FALSE(window.all_valid());
+    REQUIRE_FALSE(window.delta_value(MIN_ST).has_value());
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t4 = t3 + engine_time_delta_t{1};
+
+    Value one{1};
+    {
+        auto mutation = window.begin_mutation(t1);
+        mutation.push(one.view());
+        REQUIRE(mutation.size() == 1);
+        REQUIRE(mutation.back().checked_as<int>() == 1);
+    }
+    REQUIRE(window.size() == 1);
+    REQUIRE_FALSE(window.all_valid());
+    REQUIRE(window.front().checked_as<int>() == 1);
+    REQUIRE(window.back().checked_as<int>() == 1);
+    REQUIRE(window.time_at(0) == t1);
+    REQUIRE(window.time_value_at(0).checked_as<engine_time_t>() == t1);
+    REQUIRE(window.delta_value(t1).checked_as<int>() == 1);
+
+    Value two{2};
+    {
+        auto mutation = window.begin_mutation(t2);
+        mutation.push(two.view());
+    }
+    REQUIRE(window.size() == 2);
+    REQUIRE(window.all_valid());
+    REQUIRE(window.value().as_list().at(0).checked_as<int>() == 1);
+    REQUIRE(window.value().as_list().at(1).checked_as<int>() == 2);
+
+    Value three{3};
+    {
+        auto mutation = window.begin_mutation(t3);
+        mutation.push(three.view());
+    }
+    REQUIRE(window.size() == 3);
+    REQUIRE(window.full());
+    REQUIRE(window.back().checked_as<int>() == 3);
+
+    Value four{4};
+    {
+        auto mutation = window.begin_mutation(t4);
+        mutation.push(four.view());
+    }
+    REQUIRE(window.size() == 3);
+    REQUIRE(window.full());
+    REQUIRE(window.first_modified_time() == t2);
+    REQUIRE(window.time_at(0) == t2);
+    REQUIRE(window.time_at(1) == t3);
+    REQUIRE(window.time_at(2) == t4);
+    REQUIRE(window.time_value_at(0).binding() == layout.time_binding);
+    REQUIRE(window.time_value_at(0).checked_as<engine_time_t>() == t2);
+    REQUIRE(window.time_value_at(2).checked_as<engine_time_t>() == t4);
+    auto times = window.value_times();
+    auto time_it = times.begin();
+    REQUIRE(*time_it == t2);
+    ++time_it;
+    REQUIRE(*time_it == t3);
+    ++time_it;
+    REQUIRE(*time_it == t4);
+    ++time_it;
+    REQUIRE(time_it == times.end());
+    REQUIRE(window.at(0).checked_as<int>() == 2);
+    REQUIRE(window.at(1).checked_as<int>() == 3);
+    REQUIRE(window.at(2).checked_as<int>() == 4);
+    REQUIRE(window.value().as_list().at(0).checked_as<int>() == 2);
+    REQUIRE(window.value().as_list().at(2).checked_as<int>() == 4);
+    REQUIRE(window.delta_value(t4).checked_as<int>() == 4);
+    REQUIRE_FALSE(window.delta_value(t3).has_value());
+
+    Value duplicate{5};
+    auto  duplicate_mutation = window.begin_mutation(t4);
+    REQUIRE_THROWS_AS(duplicate_mutation.push(duplicate.view()), std::logic_error);
+}
+
+TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current window")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *tsw      = registry.tsw_duration(int_meta, engine_time_delta_t{10}, engine_time_delta_t{5});
+
+    const auto *binding = factory.binding_for(tsw);
+    REQUIRE(binding != nullptr);
+    const auto *window_component = binding->plan()->find_component("window");
+    REQUIRE(window_component != nullptr);
+
+    TSData data{*binding};
+    auto   view = data.view();
+    auto   window = view.as_window();
+    REQUIRE(window.time_based());
+    const auto &layout = window.time_layout();
+    REQUIRE(layout.time_range == engine_time_delta_t{10});
+    REQUIRE(layout.min_time_range == engine_time_delta_t{5});
+    REQUIRE(layout.element_binding == registry.scalar_binding<int>());
+    REQUIRE(layout.time_binding == registry.scalar_binding<engine_time_t>());
+    REQUIRE_THROWS_AS(window.size_layout(), std::logic_error);
+    REQUIRE(window.value().binding()->plan() == window_component->plan);
+    REQUIRE(window.value().is_list());
+    REQUIRE(window.size() == 0);
+    REQUIRE_FALSE(window.all_valid());
+    REQUIRE(window.capacity() == 0);
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + engine_time_delta_t{5};
+    const auto t3 = t1 + engine_time_delta_t{15};
+
+    Value one{1};
+    {
+        auto mutation = window.begin_mutation(t1);
+        mutation.push(one.view());
+        REQUIRE(mutation.size() == 1);
+        REQUIRE(mutation.back().checked_as<int>() == 1);
+    }
+    REQUIRE(window.size() == 1);
+    REQUIRE_FALSE(window.all_valid());
+    REQUIRE(window.time_at(0) == t1);
+    REQUIRE(window.time_value_at(0).checked_as<engine_time_t>() == t1);
+    REQUIRE(window.delta_value(t1).checked_as<int>() == 1);
+
+    Value two{2};
+    {
+        auto mutation = window.begin_mutation(t2);
+        mutation.push(two.view());
+    }
+    REQUIRE(window.size() == 2);
+    REQUIRE(window.all_valid());
+    REQUIRE(window.at(0).checked_as<int>() == 1);
+    REQUIRE(window.at(1).checked_as<int>() == 2);
+
+    Value three{3};
+    {
+        auto mutation = window.begin_mutation(t3);
+        mutation.push(three.view());
+    }
+    REQUIRE(window.size() == 2);
+    REQUIRE(window.first_modified_time() == t2);
+    REQUIRE(window.time_at(0) == t2);
+    REQUIRE(window.time_at(1) == t3);
+    REQUIRE(window.time_value_at(0).binding() == layout.time_binding);
+    REQUIRE(window.time_value_at(0).checked_as<engine_time_t>() == t2);
+    REQUIRE(window.time_value_at(1).checked_as<engine_time_t>() == t3);
+    REQUIRE(window.at(0).checked_as<int>() == 2);
+    REQUIRE(window.at(1).checked_as<int>() == 3);
+    REQUIRE(window.value().as_list().size() == 2);
+    REQUIRE(window.value().as_list().at(0).checked_as<int>() == 2);
+    REQUIRE(window.value().as_list().at(1).checked_as<int>() == 3);
+    REQUIRE(window.delta_value(t3).checked_as<int>() == 3);
+    REQUIRE_FALSE(window.delta_value(t2).has_value());
+}
+
 TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child layouts")
 {
     using namespace hgraph;

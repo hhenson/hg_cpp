@@ -253,7 +253,10 @@ A few notes on the cells that aren't immediate:
 - ``TSW`` (tick) has a fixed-size list as ``value_schema`` because the
   rolling window length is known up front; duration-based windows fall
   back to a dynamic list since the count of elements per window varies
-  with tick rate.
+  with tick rate. In TSData, that list schema is exposed by custom
+  window-backed list ops: tick windows read from fixed cyclic storage
+  and duration windows read from timestamped queue storage. The delta
+  remains the scalar element added at the current evaluation time.
 
 Recursion is automatic: the metadata for a nested ``TSD<string,
 TSL<TS<double>>>`` reads its inner ``TSL``'s ``delta_value_schema``

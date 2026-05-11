@@ -3,6 +3,7 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/specialized_views.h>
+#include <hgraph/util/scope.h>
 
 #include <fmt/format.h>
 
@@ -500,23 +501,20 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 return *order;
             }
-            try
-            {
+
+            return fallback_on_exception(std::partial_ordering::unordered, [&]() {
                 const auto *state = ctx(context);
                 for (std::size_t index = 0; index < state->element_count(); ++index)
                 {
-                    const auto order = child_delta_view(state, lhs, index).compare(child_delta_view(state, rhs, index));
+                    const auto order =
+                        child_delta_view(state, lhs, index).compare(child_delta_view(state, rhs, index));
                     if (order != 0)
                     {
                         return order;
                     }
                 }
                 return std::partial_ordering::equivalent;
-            }
-            catch (...)
-            {
-                return std::partial_ordering::unordered;
-            }
+            });
         }
 
         [[nodiscard]] static std::string fixed_delta_bundle_to_string(const void *context, const void *memory)

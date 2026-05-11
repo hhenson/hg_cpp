@@ -26,6 +26,8 @@ namespace hgraph
     class IndexedTSDataView;
     class TSBDataView;
     class TSLDataView;
+    class TSWDataView;
+    class TSWDataMutationView;
 
     inline constexpr std::size_t TS_DATA_NO_CHILD_ID = static_cast<std::size_t>(-1);
 
@@ -249,6 +251,37 @@ namespace hgraph
             std::size_t index) = &ts_data_detail::missing_mutable_indexed_element_memory;
     };
 
+    struct TSWDataLayout : TSDataLayout
+    {
+        const ValueTypeBinding *element_binding{nullptr};
+        const ValueTypeBinding *time_binding{nullptr};
+    };
+
+    struct SizeTSWDataLayout : TSWDataLayout
+    {
+        std::size_t period{0};
+        std::size_t min_period{0};
+    };
+
+    struct TimeTSWDataLayout : TSWDataLayout
+    {
+        engine_time_delta_t     time_range{};
+        engine_time_delta_t     min_time_range{};
+    };
+
+    struct TSWDataOps : TSDataOps
+    {
+        std::size_t (*size_impl)(const void *context, const void *memory) = nullptr;
+        const void *(*element_at_impl)(const void *context, const void *memory, std::size_t index) = nullptr;
+        engine_time_t (*time_at_impl)(const void *context, const void *memory, std::size_t index) = nullptr;
+        const void *(*time_element_at_impl)(const void *context, const void *memory, std::size_t index) = nullptr;
+        std::size_t (*capacity_impl)(const void *context, const void *memory) = nullptr;
+        bool (*full_impl)(const void *context, const void *memory) = nullptr;
+        bool (*all_valid_impl)(const void *context, const void *memory) = nullptr;
+        void (*push_impl)(const void *context, void *memory, const ValueView &source,
+                          engine_time_t modified_time) = nullptr;
+    };
+
     /**
      * Parent-owned identity carried by a child TSData view.
      *
@@ -367,6 +400,10 @@ namespace hgraph
         [[nodiscard]] TSLDataView as_list() const &;
         void as_list() && = delete;
         void as_list() const && = delete;
+        [[nodiscard]] TSWDataView as_window() &;
+        [[nodiscard]] TSWDataView as_window() const &;
+        void as_window() && = delete;
+        void as_window() const && = delete;
 
         [[nodiscard]] TSDataMutationView begin_mutation(engine_time_t evaluation_time) const;
 
@@ -413,12 +450,19 @@ namespace hgraph
 
         [[nodiscard]] const TSDataView &view() const noexcept { return view_; }
         [[nodiscard]] TSDataView &view() noexcept { return view_; }
+        [[nodiscard]] const TSDataOps &ops() const { return view_.ops(); }
+        [[nodiscard]] void *mutable_data() const
+        {
+            require_active_mutation();
+            return view_.mutable_data();
+        }
         [[nodiscard]] ValueView value() const { return view_.value(); }
         [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const
         {
             return view_.delta_value(evaluation_time);
         }
         [[nodiscard]] engine_time_t current_mutation_time() const { return mutation_time_; }
+        [[nodiscard]] bool modified(engine_time_t evaluation_time) const { return view_.modified(evaluation_time); }
 
         void mark_modified()
         {
@@ -700,6 +744,221 @@ namespace hgraph
         explicit TSLDataView(TSDataView &view) : IndexedTSDataView(view, TSTypeKind::TSL, "TSLDataView") {}
     };
 
+    class TSWDataView
+    {
+      public:
+        explicit TSWDataView(TSDataView view)
+            : view_(view)
+        {
+            validate_kind(view_);
+        }
+
+        [[nodiscard]] const TSDataView &base() const noexcept { return view_; }
+        [[nodiscard]] TSDataView &base() noexcept { return view_; }
+        [[nodiscard]] const TSDataBinding *binding() const noexcept { return view_.binding(); }
+        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return view_.schema(); }
+        [[nodiscard]] const TSWDataLayout &layout() const
+        {
+            return static_cast<const TSWDataLayout &>(view_.layout());
+        }
+        [[nodiscard]] const SizeTSWDataLayout &size_layout() const
+        {
+            if (duration_based()) { throw std::logic_error("TSWDataView::size_layout requires a size-based TSW"); }
+            return static_cast<const SizeTSWDataLayout &>(view_.layout());
+        }
+        [[nodiscard]] const TimeTSWDataLayout &time_layout() const
+        {
+            if (!duration_based()) { throw std::logic_error("TSWDataView::time_layout requires a time-based TSW"); }
+            return static_cast<const TimeTSWDataLayout &>(view_.layout());
+        }
+        [[nodiscard]] ValueView value() const { return view_.value(); }
+        [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const
+        {
+            return view_.delta_value(evaluation_time);
+        }
+        [[nodiscard]] engine_time_t last_modified_time() const { return view_.last_modified_time(); }
+        [[nodiscard]] bool modified(engine_time_t evaluation_time) const { return view_.modified(evaluation_time); }
+        [[nodiscard]] bool duration_based() const noexcept { return schema()->is_duration_based(); }
+        [[nodiscard]] bool size_based() const noexcept { return !duration_based(); }
+        [[nodiscard]] bool time_based() const noexcept { return duration_based(); }
+        [[nodiscard]] std::size_t period() const { return size_layout().period; }
+        [[nodiscard]] std::size_t min_period() const { return size_layout().min_period; }
+        [[nodiscard]] engine_time_delta_t time_range() const { return time_layout().time_range; }
+        [[nodiscard]] engine_time_delta_t min_time_range() const { return time_layout().min_time_range; }
+        [[nodiscard]] std::size_t capacity() const
+        {
+            const auto &ops = window_ops();
+            return ops.capacity_impl(ops.context, view_.data());
+        }
+
+        [[nodiscard]] std::size_t size() const
+        {
+            const auto &ops = window_ops();
+            return ops.size_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] bool empty() const { return size() == 0; }
+        [[nodiscard]] bool full() const
+        {
+            const auto &ops = window_ops();
+            return ops.full_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] bool all_valid() const
+        {
+            const auto &ops = window_ops();
+            return ops.all_valid_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] engine_time_t first_modified_time() const
+        {
+            return empty() ? MIN_DT : time_at(0);
+        }
+        [[nodiscard]] engine_time_t time_at(std::size_t index) const
+        {
+            const auto &ops = window_ops();
+            if (index >= size()) { throw std::out_of_range("TSWDataView::time_at: index out of range"); }
+            return ops.time_at_impl(ops.context, view_.data(), index);
+        }
+        [[nodiscard]] ValueView time_value_at(std::size_t index) const
+        {
+            const auto &ops = window_ops();
+            if (index >= size()) { throw std::out_of_range("TSWDataView::time_value_at: index out of range"); }
+            return ValueView{layout().time_binding, ops.time_element_at_impl(ops.context, view_.data(), index)};
+        }
+        [[nodiscard]] ValueView at(std::size_t index) const
+        {
+            const auto &ops = window_ops();
+            if (index >= size()) { throw std::out_of_range("TSWDataView::at: index out of range"); }
+            return ValueView{layout().element_binding, ops.element_at_impl(ops.context, view_.data(), index)};
+        }
+        [[nodiscard]] ValueView operator[](std::size_t index) const { return at(index); }
+        [[nodiscard]] ValueView front() const
+        {
+            if (empty()) { throw std::out_of_range("TSWDataView::front on empty window"); }
+            return at(0);
+        }
+        [[nodiscard]] ValueView back() const
+        {
+            if (empty()) { throw std::out_of_range("TSWDataView::back on empty window"); }
+            return at(size() - 1);
+        }
+
+        [[nodiscard]] Range<ValueView> values() const
+        {
+            return Range<ValueView>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = size(),
+                .predicate = nullptr,
+                .projector = &project_value,
+            };
+        }
+
+        [[nodiscard]] Range<ValueView> time_values() const
+        {
+            return Range<ValueView>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = size(),
+                .predicate = nullptr,
+                .projector = &project_time_value,
+            };
+        }
+
+        [[nodiscard]] Range<engine_time_t> value_times() const
+        {
+            return Range<engine_time_t>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = size(),
+                .predicate = nullptr,
+                .projector = &project_time,
+            };
+        }
+
+        [[nodiscard]] auto begin() const { return values().begin(); }
+        [[nodiscard]] auto end() const { return values().end(); }
+
+        [[nodiscard]] TSWDataMutationView begin_mutation(engine_time_t evaluation_time) const;
+
+      private:
+        static void validate_kind(const TSDataView &view)
+        {
+            if (!view.valid()) { throw std::logic_error("TSWDataView requires a live view"); }
+            const auto *schema = view.schema();
+            if (schema == nullptr || schema->kind != TSTypeKind::TSW)
+            {
+                throw std::invalid_argument("TSWDataView requires a TSW TSData kind");
+            }
+            (void)static_cast<const TSWDataOps &>(view.ops());
+        }
+
+        [[nodiscard]] const TSWDataOps &window_ops() const
+        {
+            return static_cast<const TSWDataOps &>(view_.ops());
+        }
+
+        [[nodiscard]] static ValueView project_value(const void *context, const void *, std::size_t index)
+        {
+            return static_cast<const TSWDataView *>(context)->at(index);
+        }
+
+        [[nodiscard]] static ValueView project_time_value(const void *context, const void *, std::size_t index)
+        {
+            return static_cast<const TSWDataView *>(context)->time_value_at(index);
+        }
+
+        [[nodiscard]] static engine_time_t project_time(const void *context, const void *, std::size_t index)
+        {
+            return static_cast<const TSWDataView *>(context)->time_at(index);
+        }
+
+        TSDataView view_{};
+    };
+
+    class TSWDataMutationView : public TSWDataView
+    {
+      public:
+        TSWDataMutationView(TSDataView view, engine_time_t evaluation_time)
+            : TSWDataView(view),
+              mutation_(view.begin_mutation(evaluation_time))
+        {
+            if (view.schema() == nullptr || view.schema()->kind != TSTypeKind::TSW)
+            {
+                throw std::invalid_argument("TSWDataMutationView requires a TSW TSData kind");
+            }
+        }
+
+        TSWDataMutationView(const TSWDataMutationView &) = delete;
+        TSWDataMutationView &operator=(const TSWDataMutationView &) = delete;
+        TSWDataMutationView(TSWDataMutationView &&) noexcept = default;
+        TSWDataMutationView &operator=(TSWDataMutationView &&) = delete;
+
+        [[nodiscard]] TSWDataView view() { return TSWDataView{base()}; }
+        [[nodiscard]] engine_time_t current_mutation_time() const { return mutation_.current_mutation_time(); }
+
+        void push(const ValueView &source)
+        {
+            if (mutation_.modified(current_mutation_time()))
+            {
+                throw std::logic_error("TSWDataMutationView::push allows only one window tick per engine time");
+            }
+            const auto &ops = static_cast<const TSWDataOps &>(mutation_.ops());
+            if (ops.push_impl == nullptr)
+            {
+                throw std::logic_error("TSWDataMutationView::push is not supported by this TSW ops");
+            }
+            ops.push_impl(ops.context, mutation_.mutable_data(), source, current_mutation_time());
+            mutation_.mark_modified();
+        }
+
+        [[nodiscard]] bool copy_value_from(const ValueView &source)
+        {
+            return mutation_.copy_value_from(source);
+        }
+
+      private:
+        TSDataMutationView mutation_;
+    };
+
     inline TSDataParentLink::TSDataParentLink(TSDataView &parent_view, std::size_t parent_child_id)
         : parent(&parent_view), child_id(parent_child_id)
     {
@@ -749,6 +1008,21 @@ namespace hgraph
     inline TSLDataView TSDataView::as_list() const &
     {
         return TSLDataView{const_cast<TSDataView &>(*this)};
+    }
+
+    inline TSWDataView TSDataView::as_window() &
+    {
+        return TSWDataView{*this};
+    }
+
+    inline TSWDataView TSDataView::as_window() const &
+    {
+        return TSWDataView{const_cast<TSDataView &>(*this)};
+    }
+
+    inline TSWDataMutationView TSWDataView::begin_mutation(engine_time_t evaluation_time) const
+    {
+        return TSWDataMutationView{view_, evaluation_time};
     }
 
     /**

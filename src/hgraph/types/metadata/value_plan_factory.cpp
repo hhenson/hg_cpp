@@ -2,6 +2,7 @@
 
 #include <hgraph/types/utils/intern_table.h>
 #include <hgraph/types/value/compact_container_ops.h>
+#include <hgraph/util/scope.h>
 
 #include <compare>
 #include <cstddef>
@@ -131,8 +132,8 @@ namespace hgraph
                                                                     const void *rhs) noexcept
         {
             if (const auto order = value_ops_detail::null_order(lhs, rhs)) { return *order; }
-            try
-            {
+
+            return fallback_on_exception(std::partial_ordering::unordered, [&]() {
                 const auto *state = static_cast<const CompositeIndexedContext *>(context);
                 for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
                 {
@@ -143,11 +144,7 @@ namespace hgraph
                     if (c != 0) { return c; }
                 }
                 return std::partial_ordering::equivalent;
-            }
-            catch (...)
-            {
-                return std::partial_ordering::unordered;
-            }
+            });
         }
 
         [[nodiscard]] std::string composite_value_to_string(const void *context, const void *memory)
@@ -405,8 +402,8 @@ namespace hgraph
                                                                 const void *rhs) noexcept
         {
             if (const auto order = value_ops_detail::null_order(lhs, rhs)) { return *order; }
-            try
-            {
+
+            return fallback_on_exception(std::partial_ordering::unordered, [&]() {
                 const auto *state = static_cast<const ArrayIndexedContext *>(context);
                 const auto &ops   = state->element_binding->checked_ops();
                 for (std::size_t index = 0; index < state->size; ++index)
@@ -417,11 +414,7 @@ namespace hgraph
                     if (c != 0) { return c; }
                 }
                 return std::partial_ordering::equivalent;
-            }
-            catch (...)
-            {
-                return std::partial_ordering::unordered;
-            }
+            });
         }
 
         [[nodiscard]] std::string array_value_to_string(const void *context, const void *memory)
