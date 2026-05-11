@@ -100,25 +100,24 @@ namespace hgraph
      * - `live[slot]` means that constructed key is currently present
      * - `constructed && !live` means the key is pending physical erase
      *
-     * Pending removals remain addressable by slot and key until they are
-     * flushed, either explicitly with `erase_pending()` or automatically when
-     * the next outermost mutation begins.
+     * Pending removals remain addressable by slot and key until the owner
+     * explicitly flushes them with `erase_pending()`. The store deliberately
+     * does not define mutation epochs; callers such as TSData decide when an
+     * epoch rolls over.
      *
      * Example:
      * ```c++
      * KeySlotStore store(MemoryUtils::plan_for<int>(), key_slot_store_ops_for<int>());
      * store.insert(3);
      *
-     * store.begin_mutation();
      * store.remove(3);
-     * store.end_mutation();
      *
      * // The key is no longer live, but it still exists until the next batch.
      * assert(!store.slot_live(0));
      * assert(store.slot_constructed(0));
      * assert(store.slot_pending_erase(0));
      *
-     * store.begin_mutation();  // flushes pending removals from the prior batch
+     * store.erase_pending();  // flushes pending removals from the prior batch
      * assert(!store.slot_constructed(0));
      * ```
      */
@@ -177,8 +176,8 @@ namespace hgraph
             : key_storage(std::move(other.key_storage)), constructed(std::move(other.constructed)), live(std::move(other.live)),
               observers(std::move(other.observers)), m_size(std::exchange(other.m_size, 0)),
               m_pending_erase_count(std::exchange(other.m_pending_erase_count, 0)),
-              m_mutation_depth(std::exchange(other.m_mutation_depth, 0)), m_key_plan(std::exchange(other.m_key_plan, nullptr)),
-              m_ops(other.m_ops), m_free_slots(std::move(other.m_free_slots)) {
+              m_key_plan(std::exchange(other.m_key_plan, nullptr)), m_ops(other.m_ops),
+              m_free_slots(std::move(other.m_free_slots)) {
             rebuild_index();
             other.constructed.clear();
             other.live.clear();
@@ -195,7 +194,6 @@ namespace hgraph
                 observers             = std::move(other.observers);
                 m_size                = std::exchange(other.m_size, 0);
                 m_pending_erase_count = std::exchange(other.m_pending_erase_count, 0);
-                m_mutation_depth      = std::exchange(other.m_mutation_depth, 0);
                 m_key_plan            = std::exchange(other.m_key_plan, nullptr);
                 m_ops                 = other.m_ops;
                 m_free_slots          = std::move(other.m_free_slots);
@@ -216,8 +214,6 @@ namespace hgraph
         [[nodiscard]] size_t                           slot_capacity() const noexcept { return key_storage.slot_capacity(); }
         /** Number of constructed keys that are no longer live, awaiting physical erase. */
         [[nodiscard]] size_t                           pending_erase_count() const noexcept { return m_pending_erase_count; }
-        /** Current depth of nested ``begin_mutation`` / ``end_mutation`` scopes. */
-        [[nodiscard]] size_t                           mutation_depth() const noexcept { return m_mutation_depth; }
         /** Bound storage plan; never null after successful construction. */
         [[nodiscard]] const MemoryUtils::StoragePlan  *plan() const noexcept { return m_key_plan; }
         /** Allocator carried through to the underlying ``StableSlotStorage``. */
@@ -283,8 +279,7 @@ namespace hgraph
          *
          * Example:
          * After `remove(3)`, `find_stored_slot(&three)` still returns the old
-         * slot until `erase_pending()` or the next outermost
-         * `begin_mutation()`.
+         * slot until `erase_pending()`.
          */
         [[nodiscard]] size_t find_stored_slot(const void *key) const {
             if (m_index == nullptr) { return npos; }
@@ -345,30 +340,6 @@ namespace hgraph
             reserve_to(capacity);
         }
 
-        /**
-         * Enter a batch mutation scope.
-         *
-         * The outermost begin flushes removals left pending by the previous
-         * batch, so current-batch changes can still inspect their own removed
-         * slots until the batch is closed.
-         */
-        void begin_mutation() noexcept {
-            if (m_mutation_depth++ == 0) { erase_pending(); }
-        }
-
-        /**
-         * Leave a batch mutation scope.
-         *
-         * Pending removals are intentionally retained here and are only
-         * erased at the next outermost `begin_mutation()` or by an explicit
-         * `erase_pending()` call.
-         */
-        void end_mutation() {
-            if (m_mutation_depth == 0) { throw std::logic_error("KeySlotStore mutation depth underflow"); }
-
-            --m_mutation_depth;
-        }
-
         /** Typed overload of ``find_stored_slot`` that asserts the bound plan matches ``T``. */
         template <typename T> [[nodiscard]] size_t find_stored_slot(const T &key) const {
             require_type<T>();
@@ -406,7 +377,6 @@ namespace hgraph
                 return {.slot = existing, .inserted = true};
             }
 
-            if (m_free_slots.empty() && has_pending_erase() && m_mutation_depth == 0) { erase_pending(); }
             if (m_free_slots.empty()) { reserve_to(std::max<size_t>(m_size + 1, std::max<size_t>(8, slot_capacity() * 2))); }
 
             const size_t slot = m_free_slots.back();
@@ -578,7 +548,6 @@ namespace hgraph
 
             m_size                = 0;
             m_pending_erase_count = 0;
-            m_mutation_depth      = 0;
             constructed.reset();
             live.reset();
             m_free_slots.clear();
@@ -587,7 +556,6 @@ namespace hgraph
 
         size_t                          m_size{0};
         size_t                          m_pending_erase_count{0};
-        size_t                          m_mutation_depth{0};
         const MemoryUtils::StoragePlan *m_key_plan{nullptr};
         KeySlotStoreOps                 m_ops{};
         std::vector<size_t>             m_free_slots{};

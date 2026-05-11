@@ -314,7 +314,6 @@ TEST_CASE("key mirrored value slot store derives lifetime from key construction"
     values.mark_updated(first.slot);
     REQUIRE(values.slot_updated(first.slot));
 
-    keys.begin_mutation();
     REQUIRE(keys.remove(11));
     REQUIRE(keys.slot_constructed(first.slot));
     REQUIRE_FALSE(keys.slot_live(first.slot));
@@ -322,17 +321,15 @@ TEST_CASE("key mirrored value slot store derives lifetime from key construction"
     REQUIRE(values.try_value<std::string>(first.slot) != nullptr);
     REQUIRE(*values.try_value<std::string>(first.slot) == "eleven");
     REQUIRE(values.mirrors_key_construction());
-    keys.end_mutation();
 
-    keys.begin_mutation();
+    keys.erase_pending();
     REQUIRE_FALSE(keys.slot_constructed(first.slot));
     REQUIRE_FALSE(values.has_slot(first.slot));
     REQUIRE(values.try_value<std::string>(first.slot) == nullptr);
     REQUIRE(values.mirrors_key_construction());
-    keys.end_mutation();
 }
 
-TEST_CASE("key slot store tracks pending removals and erases them at the next batch start", "[v2 slot utils]") {
+TEST_CASE("key slot store tracks pending removals until explicit erase", "[v2 slot utils]") {
     KeySlotStore      store(MemoryUtils::plan_for<int>(), key_slot_store_ops_for<int>());
     RecordingObserver observer;
 
@@ -352,9 +349,6 @@ TEST_CASE("key slot store tracks pending removals and erases them at the next ba
     REQUIRE(store.try_key<int>(first.slot) != nullptr);
     REQUIRE(*store.try_key<int>(first.slot) == 11);
 
-    store.begin_mutation();
-    REQUIRE(store.mutation_depth() == 1);
-
     REQUIRE(store.remove(22));
     REQUIRE(store.size() == 1);
     REQUIRE_FALSE(store.slot_live(second.slot));
@@ -370,9 +364,6 @@ TEST_CASE("key slot store tracks pending removals and erases them at the next ba
 
     CHECK(observer.events == std::vector<std::string>{"capacity:0->4", "insert:0", "insert:1", "remove:1"});
 
-    store.end_mutation();
-
-    REQUIRE(store.mutation_depth() == 0);
     REQUIRE_FALSE(store.slot_live(second.slot));
     REQUIRE(store.slot_constructed(second.slot));
     REQUIRE(store.slot_pending_erase(second.slot));
@@ -381,9 +372,8 @@ TEST_CASE("key slot store tracks pending removals and erases them at the next ba
     REQUIRE(store.find_stored_slot(22) == second.slot);
     REQUIRE(store.try_key<int>(second.slot) != nullptr);
 
-    store.begin_mutation();
+    store.erase_pending();
 
-    REQUIRE(store.mutation_depth() == 1);
     REQUIRE_FALSE(store.slot_live(second.slot));
     REQUIRE_FALSE(store.slot_constructed(second.slot));
     REQUIRE_FALSE(store.slot_pending_erase(second.slot));
@@ -393,8 +383,6 @@ TEST_CASE("key slot store tracks pending removals and erases them at the next ba
     REQUIRE(store.try_key<int>(second.slot) == nullptr);
 
     CHECK(observer.events == std::vector<std::string>{"capacity:0->4", "insert:0", "insert:1", "remove:1", "erase:1"});
-
-    store.end_mutation();
 }
 
 TEST_CASE("key slot store resurrects removed keys before erase and reuses slots after explicit erase", "[v2 slot utils]") {

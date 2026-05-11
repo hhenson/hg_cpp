@@ -170,8 +170,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     return;
                 }
 
-                keys_.begin_mutation();
-                auto close_keys = make_scope_exit<true>([&] { keys_.end_mutation(); });
+                keys_.erase_pending();
                 reset_delta();
                 delta_time_ = modified_time;
                 ensure_delta_capacity();
@@ -333,8 +332,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     return;
                 }
 
-                keys_.begin_mutation();
-                auto close_keys = make_scope_exit<true>([&] { keys_.end_mutation(); });
+                keys_.erase_pending();
                 reset_delta();
                 delta_time_ = modified_time;
                 ensure_delta_capacity();

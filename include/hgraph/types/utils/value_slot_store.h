@@ -25,7 +25,7 @@ namespace hgraph
      *
      * - non-moving slot-backed value memory
      * - one stable bound storage plan
-     * - per-slot ``updated`` flags for the current mutation epoch
+     * - per-slot ``updated`` flags owned and reset by the caller
      * - per-slot ``constructed`` flags for live payload ownership
      * - structural observers mirroring capacity / insert / remove / erase /
      *   clear events
@@ -86,7 +86,7 @@ namespace hgraph
 
         /** Stable per-slot byte storage for the bound plan. */
         StableSlotStorage value_storage{};
-        /** Per-slot ``updated`` bit driving the current mutation epoch. */
+        /** Per-slot caller-managed ``updated`` bit. */
         sul::dynamic_bitset<> updated{};
         /** Per-slot ``constructed`` bit indicating live payload ownership. */
         sul::dynamic_bitset<> constructed{};
@@ -127,7 +127,7 @@ namespace hgraph
             reserve_to(capacity);
         }
 
-        /** True if ``slot`` was marked updated in the current mutation epoch. */
+        /** True if ``slot`` is currently marked updated by the caller. */
         [[nodiscard]] bool slot_updated(size_t slot) const noexcept
         {
             return slot < updated.size() && updated.test(slot);
@@ -139,7 +139,7 @@ namespace hgraph
             return slot < constructed.size() && constructed.test(slot);
         }
 
-        /** Mark ``slot`` as updated for the current mutation epoch. */
+        /** Mark ``slot`` as updated. */
         void mark_updated(size_t slot) noexcept
         {
             if (slot < updated.size()) {

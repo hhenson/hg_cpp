@@ -526,9 +526,13 @@ values that changed in the current engine time. The collection owns
 only its collection-level ``last_modified_time``; keyed value
 modification times are read from the child time-series values. The
 bitset delta surface is reset at the first collection mutation for a
-new engine time. The implementation keeps a small internal
-``delta_time`` marker for that reset decision; the public modification
-answer still comes only from ``last_modified_time == evaluation_time``.
+new engine time. That owner-level reset explicitly calls
+``erase_pending()`` on the key store before clearing the per-slot delta
+masks, so pending erases from the previous tick are released without
+making the slot utility track mutation epochs. The implementation keeps
+a small internal ``delta_time`` marker for that reset decision; the
+public modification answer still comes only from
+``last_modified_time == evaluation_time``.
 
 Slot-Oriented Collection TSData
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -739,10 +743,12 @@ do not use the slot stores.
     - ``live[slot]`` — payload is currently a member of the set
 
     A slot in ``constructed && !live`` is *pending erase*: still
-    addressable and inspectable until the next outermost
-    ``begin_mutation()`` or an explicit ``erase_pending()`` flush. This
-    is what lets a consumer that bound on the previous tick inspect
-    the slot's last value during the tick of its removal.
+    addressable and inspectable until the owner explicitly calls
+    ``erase_pending()``. TSData calls this when a new engine-time delta
+    epoch begins, before resetting its per-slot delta masks. This is
+    what lets a consumer that bound on the previous tick inspect the
+    slot's last value during the tick of its removal without making the
+    utility store track mutation epochs.
 
 ``ValueSlotStore``
     Standalone parallel value memory keyed off externally supplied slot
