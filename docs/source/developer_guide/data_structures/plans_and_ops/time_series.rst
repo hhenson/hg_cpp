@@ -82,15 +82,22 @@ TSData implementation families
     so the current value can still be exposed as a compact buffer when
     the scalar type supports that.
 
+``FixedStructuredTSDataStorage``
+    Used for fixed-shape structured time-series data: ``TSB`` and
+    fixed-size ``TSL``. The parent plan allocates the complete current
+    value as one canonical value-layer region, followed by an auxiliary
+    tree containing child and parent tracking. The full memory footprint
+    of the parent and all fixed children is known before allocation, and
+    child views use embedded TSData bindings whose offsets point into the
+    shared value and auxiliary regions.
+
 ``SlotTSDataStorage``
-    Used for collection-shaped time-series data. The data store is
+    Used for keyed or dynamically-sized collection time-series data
+    such as ``TSS``, ``TSD``, and dynamic ``TSL``. The data store is
     slot-oriented: every child or element has a stable slot id and the
     current payload, validity, and delta information are aligned by
-    that slot id. Fixed-shape collections such as bundles and fixed
-    lists use static ordinal slots; dynamic and keyed collections use
-    non-relocating slot stores. The point is the same in both cases:
-    collection mutation changes slot state instead of compacting or
-    relocating already-published child addresses.
+    that slot id. Collection mutation changes slot state instead of
+    compacting or relocating already-published child addresses.
 
 The terms above keep three layers distinct: scalar ``Value`` storage,
 ``TSData`` payload/delta storage, and the full ``TSValue`` runtime
@@ -201,6 +208,107 @@ second parent notification:
    | source2  |   | last_modified_time = t     |
    +----------+   +----------------------------+
 
+Fixed Structured TSData
+^^^^^^^^^^^^^^^^^^^^^^^
+
+``TSB`` and fixed-size ``TSL`` use a recursive fixed layout. The parent
+storage plan starts with one canonical value-layer region for the full
+current value, followed by an auxiliary tracking tree. This keeps all
+current value bytes collected together under the same recursive layout
+that the value layer uses. For example ``TSL[TS[int], Size[2]]`` stores
+its current values as the exact fixed ``List[int, 2]`` value plan, so
+the value region is suitable for buffer-oriented access.
+
+.. code-block:: text
+
+   Fixed structured TSData allocation
+   +--------------------------------------------------------------+
+   | value region                                                 |
+   | canonical ValuePlanFactory plan for TSData.value_schema      |
+   | e.g. TSL[TS[int], Size[2]] -> fixed List[int, 2]             |
+   +--------------------------------------------------------------+
+   | auxiliary region                                             |
+   | child_0 auxiliary tracking tree                              |
+   | child_1 auxiliary tracking tree                              |
+   | ...                                                          |
+   | parent TSDataTracking { last_modified_time }                 |
+   +--------------------------------------------------------------+
+
+For ``TSL[TS[int], Size[2]]`` the current-value part is therefore:
+
+.. code-block:: text
+
+   value region
+   +-------------------------+
+   | int[0] | int[1]         |
+   +-------------------------+
+   | stride == sizeof(int)   |
+   +-------------------------+
+
+and the tracking side is separate:
+
+.. code-block:: text
+
+   auxiliary region
+   +--------------------------------------------------------------+
+   | child_0 tracking                                             |
+   | child_1 tracking                                             |
+   | parent tracking                                              |
+   +--------------------------------------------------------------+
+
+For nested fixed structures the same rule is applied recursively inside
+the value region. A ``TSB`` field that is a fixed ``TSL`` points into a
+bundle field whose payload is the fixed list value plan; the child and
+grandchild TSData views use embedded bindings with offsets into the
+shared value and auxiliary regions.
+
+.. mermaid::
+
+   flowchart LR
+      Root["root TSData allocation"]
+      Value["value region<br/>Bundle/List value plan"]
+      Aux["auxiliary region<br/>child tracking trees + parent tracking"]
+      ChildView["child TSDataView<br/>data = root base<br/>binding offsets select child value/tracking"]
+
+      Root --> Value
+      Root --> Aux
+      ChildView --> Value
+      ChildView --> Aux
+
+Child storage is therefore prepared and default-constructed as part of
+parent construction; no child region is allocated lazily on first
+access.
+
+The parent ``value()`` view is the canonical value-layer view over the
+value region. ``TSB.value()`` exposes the bundle binding for the full
+current value. Fixed ``TSL.value()`` exposes the fixed list binding for
+the full current value.
+
+.. code-block:: text
+
+   fixed TSL current value memory
+   +--------------------------------------------------------------+
+   | root.value()                                                 |
+   | ValueView{List[int, 2], value_offset}                        |
+   +--------------------------------------------------------------+
+   | child_at(0).value() -> element 0 within the value region     |
+   | child_at(1).value() -> element 1 within the value region     |
+   +--------------------------------------------------------------+
+
+The parent ``delta_value(t)`` view is valid when the parent
+``last_modified_time == t``. For ``TSB`` it exposes a bundle-shaped
+delta where each field projects to the matching child's delta if that
+child also modified at ``t``; unmodified fields are typed-null. For
+fixed ``TSL`` it exposes the documented map-shaped delta
+``Map<int64, child.delta>`` and iterates only child indices modified at
+``t``.
+
+Child views are constructed with a ``TSDataParentLink`` that records
+the parent view and the field/index id. When a child modification is
+first recorded for an engine time, the child bubbles that id to the
+parent; the parent then records its own ``last_modified_time`` for the
+same engine time.
+
 View Handles
 ^^^^^^^^^^^^
 
@@ -258,17 +366,19 @@ itself modified. The later processing of completed modified elements
 belongs to the surrounding ``TSValue`` / state layer. TSData does not
 own external subscriber lists or graph scheduling fan-out.
 
-The implemented atomic plan follows the compact layout above.
-Collection-shaped TSData will use the slot-oriented layout below:
-``TSS`` tracks membership deltas with per-slot bitsets for ``added`` and
-``removed``, while ``TSD`` reuses the same key side and adds a per-slot
-``modified`` bitset for child values that changed in the current engine
-time. The collection owns only its collection-level
-``last_modified_time``; keyed value modification times are read from
-the child time-series values. When the root mutation coordinator starts
-an outermost mutation for an engine time later than the collection's
-``last_modified_time``, the collection resets any retained delta
-bitsets before accepting new changes.
+The implemented atomic plan follows the compact layout above. ``TSB``
+and fixed-size ``TSL`` use the fixed structured layout above. The
+remaining dynamic/keyed collection-shaped TSData will use the
+slot-oriented layout below: ``TSS`` tracks membership deltas with
+per-slot bitsets for ``added`` and ``removed``, while ``TSD`` reuses
+the same key side and adds a per-slot ``modified`` bitset for child
+values that changed in the current engine time. The collection owns
+only its collection-level ``last_modified_time``; keyed value
+modification times are read from the child time-series values. When
+the root mutation coordinator starts an outermost mutation for an
+engine time later than the collection's ``last_modified_time``, the
+collection resets any retained delta bitsets before accepting new
+changes.
 
 Slot-Oriented Collection TSData
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
