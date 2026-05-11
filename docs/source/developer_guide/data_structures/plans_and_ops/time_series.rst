@@ -39,15 +39,38 @@ The implementation uses the following names consistently:
 
 ``TSDataOps``
     The type-erased operation table over a ``TSData`` memory region:
-    the literal ``allows_mutation`` property, layout access, read/write
-    memory access, delta reset, copy, and the per-kind hook used when a
-    child time-series value reports that it modified. The table is
-    deliberately passive; generic mutation sequencing and propagation
-    rules live on ``TSDataView`` / ``TSDataMutationView``. For a real
-    bound ``TSData`` implementation the table is total: required entries
-    are never null, empty optional behaviours use no-op thunks, and
-    unsupported operations are explicit throwing thunks rather than
-    missing pointers.
+    the literal ``allows_mutation`` property, common layout access,
+    read/write memory access, delta reset, copy, and the per-kind hook
+    used when a child time-series value reports that it modified. The
+    table is deliberately passive; generic mutation sequencing and
+    propagation rules live on ``TSDataView`` /
+    ``TSDataMutationView``. For a real bound ``TSData``
+    implementation the table is total: required entries are never null,
+    empty optional behaviours use no-op thunks, and unsupported
+    operations are explicit throwing thunks rather than missing
+    pointers.
+
+``TSDataLayout``
+    The common layout prefix for every TSData kind. It records only the
+    offsets/bindings required at the "this is a time-series payload"
+    layer: current value, delta value, and local tracking. It does not
+    describe every possible collection shape.
+
+``FixedTSBDataLayout`` / ``FixedTSLDataLayout``
+    Specialised layouts for fixed structured TSData. ``TSB`` keeps
+    per-field entries because each field can have its own schema and
+    offset. Fixed ``TSL`` keeps the element count and value/auxiliary
+    strides because every element has the same schema and fixed span.
+    Other major TSData families use their own specialised layouts rather
+    than adding more shape fields to ``TSDataLayout``.
+
+``IndexedTSDataOps``
+    The shared view-facing indexed access surface for TSData
+    shapes. ``TSB`` and ``TSL`` can expose common indexed operations
+    such as ``size()``, ``at(index)``, and value/item iteration while
+    still using different concrete storage ops. Fixed ``TSL`` and
+    dynamic ``TSL`` therefore share ``TSLDataView`` but do not have to
+    share the same layout or mutation implementation.
 
 ``TSDataBinding``
     The interned binding for a ``TSData`` implementation: the
@@ -77,10 +100,11 @@ TSData implementation families
     Used for atomic time-series data. The current payload uses the
     compact scalar ``StoragePlan`` for the value type, but the bound
     ``TSDataView`` allows mutation because a time-series output updates
-    in place during evaluation. Current value bytes, delta value bytes,
-    and tracking stamps are separate memory regions in one TSData plan,
-    so the current value can still be exposed as a compact buffer when
-    the scalar type supports that.
+    in place during evaluation. Current value bytes and tracking stamps
+    are separate memory regions in one TSData plan. The atomic delta
+    view aliases the current value when ``last_modified_time`` matches
+    the evaluation time, so no duplicate scalar delta payload is
+    allocated.
 
 ``FixedStructuredTSDataStorage``
     Used for fixed-shape structured time-series data: ``TSB`` and
@@ -211,7 +235,7 @@ second parent notification:
 Fixed Structured TSData
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-``TSB`` and fixed-size ``TSL`` use a recursive fixed layout. The parent
+``TSB`` and fixed-size ``TSL`` use recursive fixed layouts. The parent
 storage plan starts with one canonical value-layer region for the full
 current value, followed by an auxiliary tracking tree. This keeps all
 current value bytes collected together under the same recursive layout
@@ -228,9 +252,8 @@ the value region is suitable for buffer-oriented access.
    | e.g. TSL[TS[int], Size[2]] -> fixed List[int, 2]             |
    +--------------------------------------------------------------+
    | auxiliary region                                             |
-   | child_0 auxiliary tracking tree                              |
-   | child_1 auxiliary tracking tree                              |
-   | ...                                                          |
+   | TSB: field_0/field_1/... auxiliary tracking trees            |
+   | TSL: elements auxiliary array with fixed element stride       |
    | parent TSDataTracking { last_modified_time }                 |
    +--------------------------------------------------------------+
 
@@ -251,10 +274,15 @@ and the tracking side is separate:
 
    auxiliary region
    +--------------------------------------------------------------+
-   | child_0 tracking                                             |
-   | child_1 tracking                                             |
+   | elements[0] tracking | elements[1] tracking                  |
    | parent tracking                                              |
    +--------------------------------------------------------------+
+
+The concrete layouts reflect that difference. ``FixedTSBDataLayout``
+keeps per-field entries because each field may have a different TSData
+schema and offset. ``FixedTSLDataLayout`` stores the element count plus
+the current-value and auxiliary strides; element offsets are computed as
+``base + index * stride``.
 
 For nested fixed structures the same rule is applied recursively inside
 the value region. A ``TSB`` field that is a fixed ``TSL`` points into a
@@ -282,7 +310,12 @@ access.
 The parent ``value()`` view is the canonical value-layer view over the
 value region. ``TSB.value()`` exposes the bundle binding for the full
 current value. Fixed ``TSL.value()`` exposes the fixed list binding for
-the full current value.
+the full current value. Fixed elements are reached through specialised
+views using the same naming as the time-series API in 2603:
+``as_bundle()`` for ``TSB`` and ``as_list()`` for ``TSL``. Generic
+``TSDataView`` does not expose indexed traversal. Fixed and dynamic
+``TSL`` may use different data ops and layouts, but callers use the
+same ``TSLDataView`` surface for indexed list semantics.
 
 .. code-block:: text
 
@@ -291,8 +324,8 @@ the full current value.
    | root.value()                                                 |
    | ValueView{List[int, 2], value_offset}                        |
    +--------------------------------------------------------------+
-   | child_at(0).value() -> element 0 within the value region     |
-   | child_at(1).value() -> element 1 within the value region     |
+   | as_list().at(0).value() -> element 0                         |
+   | as_list().at(1).value() -> element 1                         |
    +--------------------------------------------------------------+
 
 The parent ``delta_value(t)`` view is valid when the parent
@@ -314,9 +347,12 @@ View Handles
 
 View objects are handles over TSData memory; they are not embedded
 inside the TSData allocation. A plain data view needs the binding and
-data pointer. A child view additionally carries a ``TSDataParentLink``:
-the parent view reference plus the parent-owned child id used for
-bubble-up:
+data pointer, and exposes only the common time-series operations.
+Specialised views, for example ``TSBDataView`` and ``TSLDataView``,
+wrap the plain view and provide kind-specific child access. A child
+view additionally carries a
+``TSDataParentLink``: the parent view reference plus the parent-owned
+child id used for bubble-up:
 
 .. mermaid::
 

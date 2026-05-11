@@ -1,6 +1,9 @@
 set(HGRAPH_CORE_SOURCES
     hgraph/version.cpp
     hgraph/types/metadata/type_registry.cpp
+    hgraph/types/metadata/ts_data_atomic_ops.cpp
+    hgraph/types/metadata/ts_data_fixed_structured_ops.cpp
+    hgraph/types/metadata/ts_data_fixed_structured_plan.cpp
     hgraph/types/metadata/ts_data_plan_factory.cpp
     hgraph/types/metadata/value_plan_factory.cpp
     hgraph/types/time_series_reference.cpp

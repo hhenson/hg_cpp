@@ -5,8 +5,11 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/compact_container_ops.h>
+#include <hgraph/types/value/specialized_views.h>
 #include <hgraph/types/value/value.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 
 namespace
@@ -495,7 +498,198 @@ TEST_CASE("TSDataPlanFactory: REF and SIGNAL use compact atomic TSData")
     REQUIRE(factory.binding_for(registry.ref(ts_int)) != nullptr);
 }
 
-TEST_CASE("TSDataPlanFactory::plan_for throws for collection-shaped TSData until slot stores are ported")
+TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child tracking")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *tsb      = registry.tsb("PlanFactoryTSB", {{"a", ts_int}, {"b", ts_int}});
+
+    const auto *binding = factory.binding_for(tsb);
+    REQUIRE(binding != nullptr);
+    REQUIRE(binding->plan()->is_named_tuple());
+    const auto *value_component = binding->plan()->find_component("value");
+    const auto *aux_component   = binding->plan()->find_component("aux");
+    REQUIRE(value_component != nullptr);
+    REQUIRE(aux_component != nullptr);
+    REQUIRE(value_component->offset == 0);
+    REQUIRE(value_component->plan == ValuePlanFactory::instance().plan_for(tsb->value_schema));
+    REQUIRE(aux_component->plan->find_component("field_0") != nullptr);
+    REQUIRE(aux_component->plan->find_component("field_1") != nullptr);
+    REQUIRE(aux_component->plan->find_component("tracking") != nullptr);
+
+    TSData data{*binding};
+    auto   view = data.view();
+    auto   tsb_view = view.as_bundle();
+    REQUIRE(tsb_view.size() == 2);
+    REQUIRE_FALSE(tsb_view.empty());
+    REQUIRE(tsb_view.has_field("a"));
+    REQUIRE_FALSE(tsb_view.has_field("missing"));
+    auto first_child = tsb_view.at(0);
+    REQUIRE(tsb_view.field("a").binding() == first_child.binding());
+    REQUIRE(tsb_view["a"].binding() == first_child.binding());
+    REQUIRE(first_child.binding()->type_meta == ts_int);
+    REQUIRE(first_child.binding()->plan() == binding->plan());
+    const auto &child_ops = first_child.binding()->checked_ops();
+    REQUIRE(&first_child.layout() == child_ops.layout_impl(child_ops.context));
+    REQUIRE(view.value().is_bundle());
+    REQUIRE(view.value().binding() == ValuePlanFactory::instance().binding_for(tsb->value_schema));
+
+    auto current = view.value().as_bundle();
+    REQUIRE(current.at("a").checked_as<int>() == 0);
+    REQUIRE(current.at("b").checked_as<int>() == 0);
+    std::size_t keyed_items = 0;
+    for (const auto [name, element] : tsb_view.items())
+    {
+        REQUIRE(element.binding() != nullptr);
+        if (keyed_items == 0) { REQUIRE(std::string{name} == "a"); }
+        if (keyed_items == 1) { REQUIRE(std::string{name} == "b"); }
+        ++keyed_items;
+    }
+    REQUIRE(keyed_items == 2);
+
+    const auto t1 = MIN_ST;
+    Value      seven{7};
+    {
+        auto mutation = first_child.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(seven.view()));
+    }
+
+    REQUIRE(view.modified(t1));
+    REQUIRE(view.last_modified_time() == t1);
+    REQUIRE(view.value().as_bundle().at("a").checked_as<int>() == 7);
+
+    auto delta = view.delta_value(t1).as_bundle();
+    REQUIRE(delta.at("a").checked_as<int>() == 7);
+    REQUIRE_FALSE(delta.at("b").has_value());
+}
+
+TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-layer list")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *tsl      = registry.tsl(ts_int, 3);
+
+    const auto *binding = factory.binding_for(tsl);
+    REQUIRE(binding != nullptr);
+    REQUIRE(binding->plan()->is_named_tuple());
+    const auto *value_component = binding->plan()->find_component("value");
+    const auto *aux_component   = binding->plan()->find_component("aux");
+    REQUIRE(value_component != nullptr);
+    REQUIRE(aux_component != nullptr);
+    REQUIRE(value_component->offset == 0);
+    REQUIRE(value_component->plan == ValuePlanFactory::instance().plan_for(tsl->value_schema));
+    REQUIRE(value_component->plan->is_array());
+    REQUIRE(value_component->plan->array_count() == 3);
+    REQUIRE(value_component->plan->array_stride() == sizeof(int));
+    const auto *elements_component = aux_component->plan->find_component("elements");
+    REQUIRE(elements_component != nullptr);
+    REQUIRE(elements_component->plan != nullptr);
+    REQUIRE(elements_component->plan->is_array());
+    REQUIRE(elements_component->plan->array_count() == 3);
+    REQUIRE(elements_component->plan->array_element_plan().find_component("tracking") != nullptr);
+    REQUIRE(aux_component->plan->find_component("tracking") != nullptr);
+
+    TSData data{*binding};
+    auto   view = data.view();
+    auto   tsl_view = view.as_list();
+    REQUIRE(tsl_view.size() == 3);
+    REQUIRE_FALSE(tsl_view.empty());
+    const auto &tsl_layout = static_cast<const FixedTSLDataLayout &>(view.layout());
+    REQUIRE(tsl_layout.size() == 3);
+    REQUIRE(tsl_layout.element_value_stride == value_component->plan->array_stride());
+    REQUIRE(tsl_layout.element_value_offset(2) ==
+            value_component->offset + 2 * value_component->plan->array_stride());
+    REQUIRE(tsl_layout.element_auxiliary_offset == aux_component->offset + elements_component->offset);
+    REQUIRE(tsl_layout.element_auxiliary_stride == elements_component->plan->array_stride());
+    REQUIRE(tsl_layout.element_auxiliary_offset_at(2) ==
+            aux_component->offset + elements_component->offset + 2 * elements_component->plan->array_stride());
+    REQUIRE(view.value().is_list());
+    REQUIRE(view.value().as_list().size() == 3);
+    REQUIRE(view.value().as_list().at(2).checked_as<int>() == 0);
+
+    const auto list = view.value().as_list();
+    const auto *first = static_cast<const std::byte *>(list.at(0).data());
+    const auto *second = static_cast<const std::byte *>(list.at(1).data());
+    REQUIRE(static_cast<std::size_t>(second - first) == value_component->plan->array_stride());
+
+    const auto t1 = MIN_ST;
+    Value      eleven{11};
+    {
+        auto child = tsl_view.at(2);
+        REQUIRE(child.value().data() == list.at(2).data());
+        auto mutation = child.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(eleven.view()));
+    }
+
+    REQUIRE(view.modified(t1));
+    REQUIRE(view.value().as_list().at(2).checked_as<int>() == 11);
+
+    auto        delta = view.delta_value(t1).as_map();
+    Value       key{std::int64_t{2}};
+    Value       miss{std::int64_t{1}};
+    const auto  key_view  = key.view();
+    const auto  miss_view = miss.view();
+    REQUIRE(delta.size() == 1);
+    REQUIRE(delta.contains(key_view));
+    REQUIRE_FALSE(delta.contains(miss_view));
+    REQUIRE(delta.at(key_view).checked_as<int>() == 11);
+    REQUIRE(delta.key_set().contains(key_view));
+}
+
+TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child layouts")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *tsl      = registry.tsl(ts_int, 2);
+    const auto *tsb      = registry.tsb("NestedPlanFactoryTSB", {{"xs", tsl}});
+
+    const auto *binding = factory.binding_for(tsb);
+    REQUIRE(binding != nullptr);
+    const auto *root_value_component = binding->plan()->find_component("value");
+    REQUIRE(root_value_component != nullptr);
+    REQUIRE(root_value_component->offset == 0);
+    REQUIRE(root_value_component->plan->is_named_tuple());
+    const auto &xs_value_component = root_value_component->plan->component(0);
+    REQUIRE(xs_value_component.plan->is_array());
+    REQUIRE(xs_value_component.plan->array_count() == 2);
+    REQUIRE(xs_value_component.plan->array_stride() == sizeof(int));
+
+    TSData data{*binding};
+    auto   root = data.view();
+    auto   root_tsb = root.as_bundle();
+    REQUIRE(root_tsb.size() == 1);
+    auto list_child = root_tsb.field("xs");
+    auto list_view = list_child.as_list();
+    REQUIRE(list_view.size() == 2);
+
+    const auto t1 = MIN_ST;
+    Value      value{23};
+    {
+        auto item = list_view.at(1);
+        auto mutation = item.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(value.view()));
+    }
+
+    REQUIRE(root.modified(t1));
+    REQUIRE(list_child.modified(t1));
+    REQUIRE(root.value().as_bundle().at("xs").as_list().at(1).checked_as<int>() == 23);
+
+    auto  nested_delta = root.delta_value(t1).as_bundle().at("xs").as_map();
+    Value key{std::int64_t{1}};
+    REQUIRE(nested_delta.size() == 1);
+    REQUIRE(nested_delta.at(key.view()).checked_as<int>() == 23);
+}
+
+TEST_CASE("TSDataPlanFactory::plan_for throws for dynamic or keyed collection TSData until slot stores are ported")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
@@ -505,7 +699,7 @@ TEST_CASE("TSDataPlanFactory::plan_for throws for collection-shaped TSData until
 
     REQUIRE_THROWS_AS(factory.plan_for(registry.tss(int_meta)), std::logic_error);
     REQUIRE_THROWS_AS(factory.plan_for(registry.tsd(int_meta, ts_int)), std::logic_error);
-    REQUIRE_THROWS_AS(factory.plan_for(registry.tsl(ts_int, 4)), std::logic_error);
+    REQUIRE_THROWS_AS(factory.plan_for(registry.tsl(ts_int, 0)), std::logic_error);
 }
 
 TEST_CASE("TSDataPlanFactory::find returns null and null schemas return null")

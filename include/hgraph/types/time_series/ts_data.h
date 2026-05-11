@@ -4,6 +4,7 @@
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/utils/memory_utils.h>
+#include <hgraph/types/value/value_range.h>
 #include <hgraph/types/value/value_view.h>
 #include <hgraph/util/date_time.h>
 
@@ -11,7 +12,9 @@
 #include <exception>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace hgraph
 {
@@ -20,6 +23,9 @@ namespace hgraph
 
     class TSDataView;
     class TSDataMutationView;
+    class IndexedTSDataView;
+    class TSBDataView;
+    class TSLDataView;
 
     inline constexpr std::size_t TS_DATA_NO_CHILD_ID = static_cast<std::size_t>(-1);
 
@@ -50,6 +56,74 @@ namespace hgraph
         const ValueTypeBinding *delta_binding{nullptr};
         std::size_t             value_offset{0};
         std::size_t             tracking_offset{0};
+    };
+
+    /**
+     * Field layout entry for fixed-size bundle TSData.
+     *
+     * The child binding owns its own TSData ops/layout. The parent layout only
+     * records where that field's data pointer starts inside the parent
+     * allocation.
+     */
+    struct FixedTSDataFieldLayout
+    {
+        const TSDataBinding *binding{nullptr};
+        const TSDataLayout  *layout{nullptr};
+        std::size_t          data_offset{0};
+
+        [[nodiscard]] const ValueTypeBinding *value_binding() const noexcept
+        {
+            return layout != nullptr ? layout->value_binding : nullptr;
+        }
+
+        [[nodiscard]] const ValueTypeBinding *delta_binding() const noexcept
+        {
+            return layout != nullptr ? layout->delta_binding : nullptr;
+        }
+    };
+
+    /**
+     * Layout for fixed-size bundle TSData.
+     *
+     * TSB fields may have different TSData schemas and therefore different
+     * embedded offsets/layouts.
+     */
+    struct FixedTSBDataLayout : TSDataLayout
+    {
+        std::vector<FixedTSDataFieldLayout> fields{};
+
+        [[nodiscard]] std::size_t size() const noexcept { return fields.size(); }
+        [[nodiscard]] const FixedTSDataFieldLayout &field(std::size_t index) const { return fields.at(index); }
+    };
+
+    /**
+     * Layout for fixed-size list TSData.
+     *
+     * All elements have the same TSData schema. The current value bytes live in
+     * a fixed value-layer array and the auxiliary element state lives in a
+     * matching fixed array, so element offsets are computed from strides rather
+     * than stored as one layout entry per element.
+     */
+    struct FixedTSLDataLayout : TSDataLayout
+    {
+        const TSDataBinding *element_binding{nullptr};
+        const TSDataLayout  *element_layout{nullptr};
+        std::size_t          element_count{0};
+        std::size_t          element_value_stride{0};
+        std::size_t          element_auxiliary_offset{0};
+        std::size_t          element_auxiliary_stride{0};
+
+        [[nodiscard]] std::size_t size() const noexcept { return element_count; }
+        [[nodiscard]] std::size_t element_value_offset(std::size_t index) const
+        {
+            if (index >= element_count) { throw std::out_of_range("FixedTSLDataLayout element index out of range"); }
+            return value_offset + index * element_value_stride;
+        }
+        [[nodiscard]] std::size_t element_auxiliary_offset_at(std::size_t index) const
+        {
+            if (index >= element_count) { throw std::out_of_range("FixedTSLDataLayout element index out of range"); }
+            return element_auxiliary_offset + index * element_auxiliary_stride;
+        }
     };
 
     namespace ts_data_detail
@@ -105,6 +179,22 @@ namespace hgraph
         {
             missing_ts_data_op("copy value");
         }
+
+        [[nodiscard]] inline std::size_t missing_indexed_size(const void *, const void *)
+        {
+            missing_ts_data_op("indexed size");
+        }
+
+        [[nodiscard]] inline const TSDataBinding *missing_indexed_element_binding(const void *, const void *,
+                                                                                  std::size_t)
+        {
+            missing_ts_data_op("indexed element binding");
+        }
+
+        [[nodiscard]] inline void *missing_mutable_indexed_element_memory(const void *, void *, std::size_t)
+        {
+            missing_ts_data_op("mutable indexed element memory");
+        }
     }  // namespace ts_data_detail
 
     /**
@@ -138,6 +228,25 @@ namespace hgraph
                                            std::size_t child_id) = &ts_data_detail::noop_record_child_modified;
         bool (*copy_value_from_impl)(const void *context, void *memory, const ValueView &source,
                                      engine_time_t modified_time) = &ts_data_detail::missing_copy_value_from;
+    };
+
+    /**
+     * Extension ops for TSData shapes with indexed element access.
+     *
+     * Fixed and dynamic TSL can share this view-facing surface while keeping
+     * separate storage-specific implementations underneath.
+     */
+    struct IndexedTSDataOps : TSDataOps
+    {
+        std::size_t (*size_impl)(const void *context, const void *memory) = &ts_data_detail::missing_indexed_size;
+        const TSDataBinding *(*element_binding_impl)(
+            const void *context,
+            const void *memory,
+            std::size_t index) = &ts_data_detail::missing_indexed_element_binding;
+        void *(*mutable_element_memory_impl)(
+            const void *context,
+            void *memory,
+            std::size_t index) = &ts_data_detail::missing_mutable_indexed_element_memory;
     };
 
     /**
@@ -250,6 +359,14 @@ namespace hgraph
         {
             return tracking().last_modified_time == evaluation_time;
         }
+        [[nodiscard]] TSBDataView as_bundle() &;
+        [[nodiscard]] TSBDataView as_bundle() const &;
+        void as_bundle() && = delete;
+        void as_bundle() const && = delete;
+        [[nodiscard]] TSLDataView as_list() &;
+        [[nodiscard]] TSLDataView as_list() const &;
+        void as_list() && = delete;
+        void as_list() const && = delete;
 
         [[nodiscard]] TSDataMutationView begin_mutation(engine_time_t evaluation_time) const;
 
@@ -370,6 +487,219 @@ namespace hgraph
         engine_time_t mutation_time_{MIN_DT};
     };
 
+    class IndexedTSDataView
+    {
+      public:
+        [[nodiscard]] const TSDataView &base() const noexcept { return *view_; }
+        [[nodiscard]] TSDataView &base() noexcept { return *view_; }
+        [[nodiscard]] const TSDataBinding *binding() const noexcept { return view_->binding(); }
+        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return view_->schema(); }
+        [[nodiscard]] const TSDataLayout &layout() const { return view_->layout(); }
+        [[nodiscard]] ValueView value() const { return view_->value(); }
+        [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const
+        {
+            return view_->delta_value(evaluation_time);
+        }
+        [[nodiscard]] engine_time_t last_modified_time() const { return view_->last_modified_time(); }
+        [[nodiscard]] bool modified(engine_time_t evaluation_time) const { return view_->modified(evaluation_time); }
+        [[nodiscard]] std::size_t size() const
+        {
+            const auto &ops = indexed_ops();
+            return ops.size_impl(ops.context, view_->data());
+        }
+        [[nodiscard]] bool empty() const { return size() == 0; }
+
+        [[nodiscard]] TSDataView at(std::size_t index) & { return at_impl(index); }
+        [[nodiscard]] TSDataView at(std::size_t index) const &
+        {
+            return const_cast<IndexedTSDataView *>(this)->at_impl(index);
+        }
+        TSDataView at(std::size_t) && = delete;
+        [[nodiscard]] TSDataView operator[](std::size_t index) & { return at(index); }
+        [[nodiscard]] TSDataView operator[](std::size_t index) const & { return at(index); }
+        TSDataView operator[](std::size_t) && = delete;
+
+        [[nodiscard]] Range<TSDataView> values() const
+        {
+            return Range<TSDataView>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = size(),
+                .predicate = nullptr,
+                .projector = &project_value,
+            };
+        }
+
+        [[nodiscard]] KeyValueRange<std::size_t, TSDataView> items() const
+        {
+            return KeyValueRange<std::size_t, TSDataView>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = size(),
+                .predicate = nullptr,
+                .projector = &project_item,
+            };
+        }
+
+      protected:
+        IndexedTSDataView(TSDataView &view, TSTypeKind expected_kind, const char *what)
+            : view_(&view)
+        {
+            validate_kind(view, expected_kind, what);
+        }
+
+      private:
+        static void validate_kind(const TSDataView &view, TSTypeKind expected_kind, const char *what)
+        {
+            if (!view.valid()) { throw std::logic_error(std::string{what} + " requires a live view"); }
+            const auto *schema = view.schema();
+            if (schema == nullptr || schema->kind != expected_kind)
+            {
+                throw std::invalid_argument(std::string{what} + " requires the matching TSData kind");
+            }
+            (void)static_cast<const IndexedTSDataOps &>(view.ops());
+        }
+
+        [[nodiscard]] const IndexedTSDataOps &indexed_ops() const
+        {
+            return static_cast<const IndexedTSDataOps &>(view_->ops());
+        }
+
+        [[nodiscard]] TSDataView at_impl(std::size_t index)
+        {
+            const auto &ops = indexed_ops();
+            if (index >= ops.size_impl(ops.context, view_->data()))
+            {
+                throw std::out_of_range("IndexedTSDataView::at: index out of range");
+            }
+            const auto *element_binding = ops.element_binding_impl(ops.context, view_->data(), index);
+            if (element_binding == nullptr)
+            {
+                throw std::logic_error("IndexedTSDataView::at: element binding is not resolved");
+            }
+            auto *element_memory = ops.mutable_element_memory_impl(ops.context, view_->mutable_data(), index);
+            if (element_memory == nullptr)
+            {
+                throw std::logic_error("IndexedTSDataView::at: element memory is not resolved");
+            }
+            return TSDataView{element_binding, element_memory, *view_, index};
+        }
+
+        [[nodiscard]] static TSDataView project_value(const void *context, const void *, std::size_t index)
+        {
+            return const_cast<IndexedTSDataView *>(static_cast<const IndexedTSDataView *>(context))->at(index);
+        }
+
+        [[nodiscard]] static std::pair<std::size_t, TSDataView> project_item(const void *context, const void *,
+                                                                             std::size_t index)
+        {
+            return {index, project_value(context, nullptr, index)};
+        }
+
+        TSDataView *view_{nullptr};
+    };
+
+    class TSBDataView : public IndexedTSDataView
+    {
+      public:
+        using IndexedTSDataView::at;
+        using IndexedTSDataView::operator[];
+
+        explicit TSBDataView(TSDataView &view) : IndexedTSDataView(view, TSTypeKind::TSB, "TSBDataView") {}
+
+        [[nodiscard]] TSDataView at(std::string_view name) &
+        {
+            return IndexedTSDataView::at(field_index(name));
+        }
+        [[nodiscard]] TSDataView at(std::string_view name) const &
+        {
+            return const_cast<TSBDataView *>(this)->at(name);
+        }
+        TSDataView at(std::string_view) && = delete;
+        [[nodiscard]] TSDataView field(std::string_view name) & { return at(name); }
+        [[nodiscard]] TSDataView field(std::string_view name) const & { return at(name); }
+        TSDataView field(std::string_view) && = delete;
+        [[nodiscard]] TSDataView operator[](std::string_view name) & { return at(name); }
+        [[nodiscard]] TSDataView operator[](std::string_view name) const & { return at(name); }
+        TSDataView operator[](std::string_view) && = delete;
+
+        [[nodiscard]] bool has_field(std::string_view name) const noexcept
+        {
+            return find_field_index(name) != npos;
+        }
+
+        [[nodiscard]] Range<std::string_view> keys() const
+        {
+            return Range<std::string_view>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = size(),
+                .predicate = nullptr,
+                .projector = &project_key,
+            };
+        }
+
+        [[nodiscard]] KeyValueRange<std::string_view, TSDataView> items() const
+        {
+            return KeyValueRange<std::string_view, TSDataView>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = size(),
+                .predicate = nullptr,
+                .projector = &project_named_item,
+            };
+        }
+
+      private:
+        static constexpr std::size_t npos = static_cast<std::size_t>(-1);
+
+        [[nodiscard]] std::size_t field_index(std::string_view name) const
+        {
+            const auto index = find_field_index(name);
+            if (index == npos) { throw std::out_of_range("TSBDataView::at: field not found"); }
+            return index;
+        }
+
+        [[nodiscard]] std::size_t find_field_index(std::string_view name) const noexcept
+        {
+            const auto *meta = schema();
+            if (meta == nullptr || meta->kind != TSTypeKind::TSB) { return npos; }
+            for (std::size_t index = 0; index < meta->field_count(); ++index)
+            {
+                const char *field_name = meta->fields()[index].name;
+                if (field_name != nullptr && name == field_name) { return index; }
+            }
+            return npos;
+        }
+
+        [[nodiscard]] std::string_view key_at(std::size_t index) const noexcept
+        {
+            const auto *meta = schema();
+            if (meta == nullptr || meta->kind != TSTypeKind::TSB || index >= meta->field_count()) { return {}; }
+            const char *field_name = meta->fields()[index].name;
+            return field_name != nullptr ? std::string_view{field_name} : std::string_view{};
+        }
+
+        [[nodiscard]] static std::string_view project_key(const void *context, const void *, std::size_t index)
+        {
+            return static_cast<const TSBDataView *>(context)->key_at(index);
+        }
+
+        [[nodiscard]] static std::pair<std::string_view, TSDataView> project_named_item(const void *context,
+                                                                                        const void *,
+                                                                                        std::size_t index)
+        {
+            auto *self = const_cast<TSBDataView *>(static_cast<const TSBDataView *>(context));
+            return {self->key_at(index), self->IndexedTSDataView::at(index)};
+        }
+    };
+
+    class TSLDataView : public IndexedTSDataView
+    {
+      public:
+        explicit TSLDataView(TSDataView &view) : IndexedTSDataView(view, TSTypeKind::TSL, "TSLDataView") {}
+    };
+
     inline TSDataParentLink::TSDataParentLink(TSDataView &parent_view, std::size_t parent_child_id)
         : parent(&parent_view), child_id(parent_child_id)
     {
@@ -399,6 +729,26 @@ namespace hgraph
     inline TSDataMutationView TSDataView::begin_mutation(engine_time_t evaluation_time) const
     {
         return TSDataMutationView{*this, evaluation_time};
+    }
+
+    inline TSBDataView TSDataView::as_bundle() &
+    {
+        return TSBDataView{*this};
+    }
+
+    inline TSBDataView TSDataView::as_bundle() const &
+    {
+        return TSBDataView{const_cast<TSDataView &>(*this)};
+    }
+
+    inline TSLDataView TSDataView::as_list() &
+    {
+        return TSLDataView{*this};
+    }
+
+    inline TSLDataView TSDataView::as_list() const &
+    {
+        return TSLDataView{const_cast<TSDataView &>(*this)};
     }
 
     /**
