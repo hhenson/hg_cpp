@@ -26,14 +26,15 @@ namespace hgraph
      * Atomic TSData uses the compact value storage plan with mutable ops
      * enabled. Fixed ``TSB`` and fixed-size ``TSL`` allocate the complete
      * current value as the first canonical value-layer region, then store
-     * child/parent tracking in a separate auxiliary tree. Dynamic/keyed
-     * collection TSData will use slot-oriented storage so current payload and
-     * delta bookkeeping stay aligned by stable slot id.
+     * child/parent tracking in a separate auxiliary tree. Keyed collection
+     * TSData uses slot-oriented storage so current payload and delta
+     * bookkeeping stay aligned by stable slot id.
      *
      * Implemented synthesis paths cover atomic TSData (``TS<T>``, ``REF<T>``,
-     * and ``SIGNAL``) plus fixed structured TSData (``TSB`` and fixed-size
-     * ``TSL``). Dynamic ``TSL``, ``TSS``, and ``TSD`` currently throw
-     * ``std::logic_error`` until their slot-oriented storage is ported.
+     * and ``SIGNAL``), fixed structured TSData (``TSB`` and fixed-size
+     * ``TSL``), and keyed slot TSData (``TSS`` and ``TSD``). Dynamic ``TSL``
+     * currently throws ``std::logic_error`` until its slot-oriented storage is
+     * implemented.
      *
      * The factory is a process-wide singleton via ``instance()``;
      * non-copyable and non-movable.
@@ -52,9 +53,9 @@ namespace hgraph
         /**
          * Look up or synthesise the canonical plan for ``schema``.
          *
-         * Returns ``nullptr`` when ``schema`` is null. Dynamic/keyed
-         * collection-shaped schemas currently throw ``std::logic_error``
-         * until their slot-oriented TSData stores are ported.
+         * Returns ``nullptr`` when ``schema`` is null. Dynamic ``TSL``
+         * currently throws ``std::logic_error`` until its slot-oriented
+         * TSData store is implemented.
          */
         const MemoryUtils::StoragePlan *plan_for(const TSValueTypeMetaData *schema);
 
