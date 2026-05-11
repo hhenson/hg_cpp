@@ -541,7 +541,7 @@ namespace hgraph
             {
                 return false;
             }
-            return ops_->contains(data(), key.data());
+            return ops_->contains(ops_->context, data(), key.data());
         }
 
         [[nodiscard]] Range<ValueView> elements() const
@@ -584,12 +584,12 @@ namespace hgraph
         [[nodiscard]] bool contains(const ValueView &key) const
         {
             if (!key_compatible(key)) { return false; }
-            return ops_->contains(data(), key.data());
+            return ops_->contains(ops_->context, data(), key.data());
         }
 
         [[nodiscard]] const ValueView at(const ValueView &key) const
         {
-            const void *found = key_compatible(key) ? ops_->value_at(data(), key.data()) : nullptr;
+            const void *found = key_compatible(key) ? ops_->value_at(ops_->context, data(), key.data()) : nullptr;
             if (found == nullptr) { throw std::out_of_range("MapView::at: key not present"); }
             return ValueView{ops_->value_binding(ops_->context, data()), found};
         }
@@ -599,25 +599,25 @@ namespace hgraph
         /** Returns a read-only ``SetView`` over the live keys. */
         [[nodiscard]] SetView key_set() const
         {
-            return ops_->key_set(binding(), data());
+            return ops_->key_set(ops_->context, binding(), data());
         }
 
         /** Lazy range over the map's keys. */
         [[nodiscard]] Range<ValueView> keys() const
         {
-            return ops_->make_keys_range(data());
+            return ops_->make_keys_range(ops_->context, data());
         }
 
         /** Lazy range over the map's values. */
         [[nodiscard]] Range<ValueView> values() const
         {
-            return ops_->make_values_range(data());
+            return ops_->make_values_range(ops_->context, data());
         }
 
         /** Lazy paired ``(key, value)`` range over live entries. */
         [[nodiscard]] KeyValueRange<ValueView, ValueView> entries() const
         {
-            return ops_->make_kv_range(data());
+            return ops_->make_kv_range(ops_->context, data());
         }
 
         [[nodiscard]] KeyValueRange<ValueView, ValueView> items() const { return entries(); }

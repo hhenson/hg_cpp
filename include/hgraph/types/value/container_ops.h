@@ -109,13 +109,13 @@ namespace hgraph
 
     struct SetValueOps : IndexedValueOps
     {
-        bool (*contains)(const void *memory, const void *key) = nullptr;
+        bool (*contains)(const void *context, const void *memory, const void *key) = nullptr;
     };
 
     struct MapValueOps : IndexedValueOps
     {
-        bool (*contains)(const void *memory, const void *key)                = nullptr;
-        const void *(*value_at)(const void *memory, const void *key)         = nullptr;
+        bool (*contains)(const void *context, const void *memory, const void *key) = nullptr;
+        const void *(*value_at)(const void *context, const void *memory, const void *key) = nullptr;
         const void *(*value_at_index)(const void *context, const void *memory, std::size_t index) = nullptr;
         const ValueTypeBinding *(*value_binding)(const void *context, const void *memory) noexcept = nullptr;
         /**
@@ -127,15 +127,18 @@ namespace hgraph
          *   only. Equivalent to the ``IndexedValueOps::make_range``
          *   inherited from the base (the map's indexed surface
          *   walks keys), but exposed on ``MapValueOps`` for
-         *   discoverability.
+         *   discoverability. The map-specific range builders receive the
+         *   same ops context as the indexed base so non-compact layouts can
+         *   project through type-erased layout state.
          * - ``make_values_range`` — yields ``ValueView`` over
          *   values only.
          * - ``make_kv_range`` — yields ``std::pair<ValueView,
          *   ValueView>`` (key, value) pairs.
          */
-        Range<ValueView> (*make_keys_range)(const void *memory)                  = nullptr;
-        Range<ValueView> (*make_values_range)(const void *memory)                = nullptr;
-        KeyValueRange<ValueView, ValueView> (*make_kv_range)(const void *memory) = nullptr;
+        Range<ValueView> (*make_keys_range)(const void *context, const void *memory) = nullptr;
+        Range<ValueView> (*make_values_range)(const void *context, const void *memory) = nullptr;
+        KeyValueRange<ValueView, ValueView> (*make_kv_range)(const void *context,
+                                                             const void *memory) = nullptr;
         /**
          * Build a read-only ``SetView`` over the map's keys. The
          * returned view is a *wrapper* over the map's memory — it
@@ -145,7 +148,7 @@ namespace hgraph
          * own ``key_set`` thunk paired with a SetValueOps adapter
          * that knows that map's layout.
          */
-        SetView (*key_set)(const ValueTypeBinding *map_binding, const void *memory) = nullptr;
+        SetView (*key_set)(const void *context, const ValueTypeBinding *map_binding, const void *memory) = nullptr;
     };
 }  // namespace hgraph
 

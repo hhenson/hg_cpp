@@ -671,7 +671,7 @@ namespace hgraph
         {
             return static_cast<const SetStorage *>(memory)->size();
         }
-        inline bool set_contains(const void *memory, const void *key)
+        inline bool set_contains(const void *, const void *memory, const void *key)
         {
             return static_cast<const SetStorage *>(memory)->contains(key);
         }
@@ -750,10 +750,10 @@ namespace hgraph
         }
 
         template <auto SizeFn, auto KeyAtFn, auto ValueAtIndexFn, auto KeyBindingFn, auto ValueBindingFn>
-        KeyValueRange<ValueView, ValueView> dense_make_kv_range(const void *memory)
+        KeyValueRange<ValueView, ValueView> dense_make_kv_range(const void *context, const void *memory)
         {
             return KeyValueRange<ValueView, ValueView>{
-                .context   = nullptr,
+                .context   = context,
                 .memory    = memory,
                 .limit     = SizeFn(nullptr, memory),
                 .predicate = nullptr,
@@ -770,11 +770,11 @@ namespace hgraph
         {
             return static_cast<const MapStorage *>(memory)->size();
         }
-        inline bool map_contains(const void *memory, const void *key)
+        inline bool map_contains(const void *, const void *memory, const void *key)
         {
             return static_cast<const MapStorage *>(memory)->contains(key);
         }
-        inline const void *map_value_at(const void *memory, const void *key)
+        inline const void *map_value_at(const void *, const void *memory, const void *key)
         {
             return static_cast<const MapStorage *>(memory)->value_at(key);
         }
@@ -895,7 +895,7 @@ namespace hgraph
     // Forward declaration; ``compact_map_ops`` references the thunk,
     // and the thunk's body references ``compact_map_key_set_binding``
     // and ``SetView``. The definition follows the binding accessors.
-    SetView compact_map_key_set_thunk(const ValueTypeBinding *map_binding, const void *memory);
+    SetView compact_map_key_set_thunk(const void *context, const ValueTypeBinding *map_binding, const void *memory);
 
     [[nodiscard]] inline const ListValueOps &compact_list_ops() noexcept
     {
@@ -985,13 +985,13 @@ namespace hgraph
             &container_ops_detail::map_value_binding,
             // make_keys_range — same as the IndexedValueOps base
             // since the indexed surface walks keys.
-            &container_ops_detail::dense_make_range_no_context<&container_ops_detail::map_size,
-                                                                &container_ops_detail::map_key_at_index,
-                                                                &container_ops_detail::map_key_binding>,
+            &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
+                                                     &container_ops_detail::map_key_at_index,
+                                                     &container_ops_detail::map_key_binding>,
             // make_values_range — projector wraps the value side.
-            &container_ops_detail::dense_make_range_no_context<&container_ops_detail::map_size,
-                                                                &container_ops_detail::map_value_at_index,
-                                                                &container_ops_detail::map_value_binding_indexed>,
+            &container_ops_detail::dense_make_range<&container_ops_detail::map_size,
+                                                     &container_ops_detail::map_value_at_index,
+                                                     &container_ops_detail::map_value_binding_indexed>,
             &container_ops_detail::dense_make_kv_range<&container_ops_detail::map_size,
                                                         &container_ops_detail::map_key_at_index,
                                                         &container_ops_detail::map_value_at_index,
@@ -1148,7 +1148,7 @@ namespace hgraph
             *set_meta, compact_map_plan(key_binding, value_binding), compact_map_key_set_ops());
     }
 
-    inline SetView compact_map_key_set_thunk(const ValueTypeBinding * /*map_binding*/, const void *memory)
+    inline SetView compact_map_key_set_thunk(const void *, const ValueTypeBinding * /*map_binding*/, const void *memory)
     {
         // Compact-storage implementation of ``MapValueOps::key_set``;
         // casting ``memory`` to ``MapStorage *`` is layout-correct
