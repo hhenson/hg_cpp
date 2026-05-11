@@ -3,6 +3,7 @@
 #define HGRAPH_CPP_ENGINE_SCOPE_H
 
 #include <exception>
+#include <type_traits>
 #include <utility>
 
 namespace hgraph {
@@ -13,16 +14,21 @@ namespace hgraph {
      * a TS implementation.
      *
      * Construct via ``make_scope_exit`` so the function type is deduced.
+     * The optional ``HideExceptions`` template parameter makes destruction
+     * suppress cleanup failures. Use that only for best-effort rollback during
+     * an already-failing path where a cleanup exception must not replace the
+     * primary failure.
      */
-    template<class F>
+    template<class F, bool HideExceptions = false>
     class scope_exit {
     public:
         /** Capture ``f`` and arm the guard. */
-        explicit scope_exit(F &&f) noexcept : fn_(std::move(f)), active_(true) {
+        explicit scope_exit(F f) noexcept(std::is_nothrow_move_constructible_v<F>) : fn_(std::move(f)), active_(true) {
         }
 
         /** Move construction transfers ownership of the cleanup; the source is released. */
-        scope_exit(scope_exit &&other) noexcept : fn_(std::move(other.fn_)), active_(other.active_) { other.release(); }
+        scope_exit(scope_exit &&other) noexcept(std::is_nothrow_move_constructible_v<F>)
+            : fn_(std::move(other.fn_)), active_(other.active_) { other.release(); }
 
         scope_exit(const scope_exit &) = delete;
 
@@ -31,8 +37,16 @@ namespace hgraph {
         scope_exit &operator=(scope_exit &&) = delete;
 
         /** Invoke the cleanup if still armed. */
-        ~scope_exit() {
-            if (active_) { fn_(); }
+        ~scope_exit() noexcept(HideExceptions || std::is_nothrow_invocable_v<F &>) {
+            if (!active_) { return; }
+            if constexpr (HideExceptions) {
+                try {
+                    fn_();
+                } catch (...) {
+                }
+            } else {
+                fn_();
+            }
         }
 
         /** Disarm the guard so the destructor does not run the cleanup. */
@@ -44,8 +58,11 @@ namespace hgraph {
     };
 
     /** Deduction helper that constructs a ``scope_exit`` from a callable. */
-    template<class F>
-    scope_exit<F> make_scope_exit(F &&f) { return scope_exit<F>(std::forward<F>(f)); }
+    template<bool HideExceptions = false, class F>
+    scope_exit<std::decay_t<F>, HideExceptions> make_scope_exit(F &&f)
+    {
+        return scope_exit<std::decay_t<F>, HideExceptions>(std::forward<F>(f));
+    }
 
     /**
      * Run ``f`` and return its result. If ``f`` throws, suppress the

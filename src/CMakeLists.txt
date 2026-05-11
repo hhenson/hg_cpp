@@ -4,6 +4,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/metadata/ts_data_atomic_ops.cpp
     hgraph/types/metadata/ts_data_fixed_structured_ops.cpp
     hgraph/types/metadata/ts_data_fixed_structured_plan.cpp
+    hgraph/types/metadata/ts_data_slot_ops.cpp
     hgraph/types/metadata/ts_data_window_ops.cpp
     hgraph/types/metadata/ts_data_plan_factory.cpp
     hgraph/types/metadata/value_plan_factory.cpp

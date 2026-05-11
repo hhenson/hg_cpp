@@ -18,3 +18,19 @@ TEST_CASE("fallback_on_exception returns the fallback on failure")
 
     REQUIRE(result == 7);
 }
+
+TEST_CASE("scope_exit propagates cleanup exceptions by default")
+{
+    REQUIRE_THROWS_AS(
+        [] {
+            auto cleanup = hgraph::make_scope_exit([] { throw std::runtime_error("cleanup failed"); });
+        }(),
+        std::runtime_error);
+}
+
+TEST_CASE("scope_exit can suppress cleanup exceptions")
+{
+    REQUIRE_NOTHROW([] {
+        auto cleanup = hgraph::make_scope_exit<true>([] { throw std::runtime_error("cleanup failed"); });
+    }());
+}

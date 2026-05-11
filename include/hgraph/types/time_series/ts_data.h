@@ -24,6 +24,10 @@ namespace hgraph
     class TSDataView;
     class TSDataMutationView;
     class IndexedTSDataView;
+    class TSSDataView;
+    class TSSDataMutationView;
+    class TSDDataView;
+    class TSDDataMutationView;
     class TSBDataView;
     class TSLDataView;
     class TSWDataView;
@@ -128,6 +132,26 @@ namespace hgraph
         }
     };
 
+    struct TSSDataLayout : TSDataLayout
+    {
+        const ValueTypeBinding *key_binding{nullptr};
+    };
+
+    struct TSDDataLayout : TSSDataLayout
+    {
+        const TSDataBinding    *element_binding{nullptr};
+        const TSDataLayout     *element_layout{nullptr};
+        const TSDataBinding    *key_set_binding{nullptr};
+        const ValueTypeBinding *element_value_binding{nullptr};
+        const ValueTypeBinding *element_delta_binding{nullptr};
+    };
+
+    struct SlotTSDataMutationResult
+    {
+        std::size_t slot{TS_DATA_NO_CHILD_ID};
+        bool        changed{false};
+    };
+
     namespace ts_data_detail
     {
         [[noreturn]] inline void missing_ts_data_op(const char *name)
@@ -172,7 +196,7 @@ namespace hgraph
 
         inline void noop_reset_delta(const void *, void *) {}
 
-        inline void noop_record_child_modified(const void *, void *, std::size_t) {}
+        inline void noop_record_child_modified(const void *, void *, std::size_t, engine_time_t) {}
 
         [[nodiscard]] inline bool missing_copy_value_from(const void *,
                                                           void *,
@@ -197,6 +221,74 @@ namespace hgraph
         {
             missing_ts_data_op("mutable indexed element memory");
         }
+
+        [[nodiscard]] inline std::size_t missing_slot_size(const void *, const void *)
+        {
+            missing_ts_data_op("slot collection size");
+        }
+
+        [[nodiscard]] inline std::size_t missing_slot_capacity(const void *, const void *)
+        {
+            missing_ts_data_op("slot collection capacity");
+        }
+
+        [[nodiscard]] inline bool missing_slot_predicate(const void *, const void *, std::size_t)
+        {
+            missing_ts_data_op("slot predicate");
+        }
+
+        [[nodiscard]] inline const void *missing_key_at_slot(const void *, const void *, std::size_t)
+        {
+            missing_ts_data_op("key at slot");
+        }
+
+        [[nodiscard]] inline bool missing_contains_key(const void *, const void *, const ValueView &)
+        {
+            missing_ts_data_op("key containment");
+        }
+
+        [[nodiscard]] inline std::size_t missing_find_key_slot(const void *, const void *, const ValueView &)
+        {
+            missing_ts_data_op("key slot lookup");
+        }
+
+        [[nodiscard]] inline Range<ValueView> missing_value_range(const void *, const void *)
+        {
+            missing_ts_data_op("value range");
+        }
+
+        [[nodiscard]] inline KeyValueRange<ValueView, TSDataView> missing_ts_data_kv_range(const void *, const void *)
+        {
+            missing_ts_data_op("TSData key/value range");
+        }
+
+        [[nodiscard]] inline Range<TSDataView> missing_ts_data_range(const void *, const void *)
+        {
+            missing_ts_data_op("TSData value range");
+        }
+
+        [[nodiscard]] inline SlotTSDataMutationResult missing_insert_key(const void *, void *, const ValueView &,
+                                                                         engine_time_t)
+        {
+            missing_ts_data_op("key insertion");
+        }
+
+        [[nodiscard]] inline SlotTSDataMutationResult missing_remove_key(const void *, void *, const ValueView &,
+                                                                         engine_time_t)
+        {
+            missing_ts_data_op("key removal");
+        }
+
+        inline void missing_reserve_slots(const void *, void *, std::size_t)
+        {
+            missing_ts_data_op("slot reservation");
+        }
+
+        [[nodiscard]] inline const void *missing_child_at_slot(const void *, const void *, std::size_t)
+        {
+            missing_ts_data_op("child at slot");
+        }
+
     }  // namespace ts_data_detail
 
     /**
@@ -227,9 +319,84 @@ namespace hgraph
         void (*reset_delta_impl)(const void *context, void *memory) = &ts_data_detail::noop_reset_delta;
         void (*record_child_modified_impl)(const void *context,
                                            void *memory,
-                                           std::size_t child_id) = &ts_data_detail::noop_record_child_modified;
+                                           std::size_t child_id,
+                                           engine_time_t modified_time) = &ts_data_detail::noop_record_child_modified;
         bool (*copy_value_from_impl)(const void *context, void *memory, const ValueView &source,
                                      engine_time_t modified_time) = &ts_data_detail::missing_copy_value_from;
+    };
+
+    struct TSSDataOps : TSDataOps
+    {
+        std::size_t (*size_impl)(const void *context, const void *memory) = &ts_data_detail::missing_slot_size;
+        std::size_t (*slot_capacity_impl)(const void *context,
+                                          const void *memory) = &ts_data_detail::missing_slot_capacity;
+        bool (*slot_occupied_impl)(const void *context, const void *memory,
+                                   std::size_t slot) = &ts_data_detail::missing_slot_predicate;
+        bool (*slot_live_impl)(const void *context, const void *memory,
+                               std::size_t slot) = &ts_data_detail::missing_slot_predicate;
+        bool (*slot_added_impl)(const void *context, const void *memory,
+                                std::size_t slot) = &ts_data_detail::missing_slot_predicate;
+        bool (*slot_removed_impl)(const void *context, const void *memory,
+                                  std::size_t slot) = &ts_data_detail::missing_slot_predicate;
+        const void *(*key_at_slot_impl)(const void *context, const void *memory,
+                                        std::size_t slot) = &ts_data_detail::missing_key_at_slot;
+        bool (*contains_impl)(const void *context, const void *memory,
+                              const ValueView &key) = &ts_data_detail::missing_contains_key;
+        std::size_t (*find_slot_impl)(const void *context, const void *memory,
+                                      const ValueView &key) = &ts_data_detail::missing_find_key_slot;
+        Range<ValueView> (*make_values_range_impl)(const void *context,
+                                                   const void *memory) = &ts_data_detail::missing_value_range;
+        Range<ValueView> (*make_added_values_range_impl)(const void *context,
+                                                         const void *memory) = &ts_data_detail::missing_value_range;
+        Range<ValueView> (*make_removed_values_range_impl)(const void *context,
+                                                           const void *memory) = &ts_data_detail::missing_value_range;
+        SlotTSDataMutationResult (*insert_key_impl)(const void *context, void *memory, const ValueView &key,
+                                                    engine_time_t modified_time) = &ts_data_detail::missing_insert_key;
+        SlotTSDataMutationResult (*remove_key_impl)(const void *context, void *memory, const ValueView &key,
+                                                    engine_time_t modified_time) = &ts_data_detail::missing_remove_key;
+        void (*reserve_impl)(const void *context, void *memory,
+                             std::size_t capacity) = &ts_data_detail::missing_reserve_slots;
+    };
+
+    struct TSDDataOps : TSSDataOps
+    {
+        const void *(*child_at_slot_impl)(const void *context, const void *memory,
+                                          std::size_t slot) = &ts_data_detail::missing_child_at_slot;
+        bool (*slot_modified_impl)(const void *context, const void *memory,
+                                   std::size_t slot) = &ts_data_detail::missing_slot_predicate;
+        Range<TSDataView> (*make_ts_values_range_impl)(const void *context,
+                                                       const void *memory) = &ts_data_detail::missing_ts_data_range;
+        Range<ValueView> (*make_valid_keys_range_impl)(const void *context,
+                                                       const void *memory) = &ts_data_detail::missing_value_range;
+        Range<TSDataView> (*make_valid_ts_values_range_impl)(
+            const void *context,
+            const void *memory) = &ts_data_detail::missing_ts_data_range;
+        Range<ValueView> (*make_modified_keys_range_impl)(const void *context,
+                                                          const void *memory) = &ts_data_detail::missing_value_range;
+        Range<TSDataView> (*make_modified_ts_values_range_impl)(
+            const void *context,
+            const void *memory) = &ts_data_detail::missing_ts_data_range;
+        Range<TSDataView> (*make_added_ts_values_range_impl)(
+            const void *context,
+            const void *memory) = &ts_data_detail::missing_ts_data_range;
+        Range<TSDataView> (*make_removed_ts_values_range_impl)(
+            const void *context,
+            const void *memory) = &ts_data_detail::missing_ts_data_range;
+        KeyValueRange<ValueView, TSDataView> (*make_ts_kv_range_impl)(const void *context,
+                                                                      const void *memory) =
+            &ts_data_detail::missing_ts_data_kv_range;
+        KeyValueRange<ValueView, TSDataView> (*make_valid_ts_kv_range_impl)(const void *context,
+                                                                            const void *memory) =
+            &ts_data_detail::missing_ts_data_kv_range;
+        KeyValueRange<ValueView, TSDataView> (*make_modified_ts_kv_range_impl)(const void *context,
+                                                                               const void *memory) =
+            &ts_data_detail::missing_ts_data_kv_range;
+        KeyValueRange<ValueView, TSDataView> (*make_added_ts_kv_range_impl)(const void *context,
+                                                                            const void *memory) =
+            &ts_data_detail::missing_ts_data_kv_range;
+        KeyValueRange<ValueView, TSDataView> (*make_removed_ts_kv_range_impl)(const void *context,
+                                                                              const void *memory) =
+            &ts_data_detail::missing_ts_data_kv_range;
     };
 
     /**
@@ -392,6 +559,14 @@ namespace hgraph
         {
             return tracking().last_modified_time == evaluation_time;
         }
+        [[nodiscard]] TSSDataView as_set() &;
+        [[nodiscard]] TSSDataView as_set() const &;
+        void as_set() && = delete;
+        void as_set() const && = delete;
+        [[nodiscard]] TSDDataView as_dict() &;
+        [[nodiscard]] TSDDataView as_dict() const &;
+        void as_dict() && = delete;
+        void as_dict() const && = delete;
         [[nodiscard]] TSBDataView as_bundle() &;
         [[nodiscard]] TSBDataView as_bundle() const &;
         void as_bundle() && = delete;
@@ -488,7 +663,7 @@ namespace hgraph
         void mark_child_modified(std::size_t child_id)
         {
             const auto &table = view_.ops();
-            table.record_child_modified_impl(table.context, view_.mutable_data(), child_id);
+            table.record_child_modified_impl(table.context, view_.mutable_data(), child_id, mutation_time_);
             if (record_modified_local()) { notify_parent_modified(); }
         }
 
@@ -641,6 +816,332 @@ namespace hgraph
         }
 
         TSDataView *view_{nullptr};
+    };
+
+    class TSSDataView
+    {
+      public:
+        explicit TSSDataView(TSDataView view)
+            : view_(view)
+        {
+            validate_kind(view_);
+        }
+
+        [[nodiscard]] const TSDataView &base() const noexcept { return view_; }
+        [[nodiscard]] TSDataView &base() noexcept { return view_; }
+        [[nodiscard]] const TSDataBinding *binding() const noexcept { return view_.binding(); }
+        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return view_.schema(); }
+        [[nodiscard]] const TSSDataLayout &layout() const
+        {
+            return static_cast<const TSSDataLayout &>(view_.layout());
+        }
+        [[nodiscard]] ValueView value() const { return view_.value(); }
+        [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const
+        {
+            return view_.delta_value(evaluation_time);
+        }
+        [[nodiscard]] engine_time_t last_modified_time() const { return view_.last_modified_time(); }
+        [[nodiscard]] bool modified(engine_time_t evaluation_time) const { return view_.modified(evaluation_time); }
+
+        [[nodiscard]] std::size_t size() const
+        {
+            const auto &ops = set_ops();
+            return ops.size_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] bool empty() const { return size() == 0; }
+        [[nodiscard]] std::size_t slot_capacity() const
+        {
+            const auto &ops = set_ops();
+            return ops.slot_capacity_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] bool slot_occupied(std::size_t slot) const
+        {
+            const auto &ops = set_ops();
+            return ops.slot_occupied_impl(ops.context, view_.data(), slot);
+        }
+        [[nodiscard]] bool slot_live(std::size_t slot) const
+        {
+            const auto &ops = set_ops();
+            return ops.slot_live_impl(ops.context, view_.data(), slot);
+        }
+        [[nodiscard]] bool slot_added(std::size_t slot) const
+        {
+            const auto &ops = set_ops();
+            return ops.slot_added_impl(ops.context, view_.data(), slot);
+        }
+        [[nodiscard]] bool slot_removed(std::size_t slot) const
+        {
+            const auto &ops = set_ops();
+            return ops.slot_removed_impl(ops.context, view_.data(), slot);
+        }
+        [[nodiscard]] ValueView at_slot(std::size_t slot) const
+        {
+            if (!slot_occupied(slot)) { throw std::out_of_range("TSSDataView::at_slot: slot is not occupied"); }
+            const auto &ops = set_ops();
+            return ValueView{layout().key_binding, ops.key_at_slot_impl(ops.context, view_.data(), slot)};
+        }
+        [[nodiscard]] bool contains(const ValueView &key) const
+        {
+            const auto &ops = set_ops();
+            return ops.contains_impl(ops.context, view_.data(), key);
+        }
+        [[nodiscard]] std::size_t find_slot(const ValueView &key) const
+        {
+            const auto &ops = set_ops();
+            return ops.find_slot_impl(ops.context, view_.data(), key);
+        }
+        [[nodiscard]] Range<ValueView> values() const
+        {
+            const auto &ops = set_ops();
+            return ops.make_values_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] Range<ValueView> added() const
+        {
+            const auto &ops = set_ops();
+            return ops.make_added_values_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] Range<ValueView> removed() const
+        {
+            const auto &ops = set_ops();
+            return ops.make_removed_values_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] auto begin() const { return values().begin(); }
+        [[nodiscard]] auto end() const { return values().end(); }
+
+        [[nodiscard]] TSSDataMutationView begin_mutation(engine_time_t evaluation_time) const;
+
+      protected:
+        [[nodiscard]] const TSSDataOps &set_ops() const
+        {
+            return static_cast<const TSSDataOps &>(view_.ops());
+        }
+
+        static void validate_kind(const TSDataView &view)
+        {
+            if (!view.valid()) { throw std::logic_error("TSSDataView requires a live view"); }
+            const auto *schema = view.schema();
+            if (schema == nullptr || schema->kind != TSTypeKind::TSS)
+            {
+                throw std::invalid_argument("TSSDataView requires a TSS TSData kind");
+            }
+            (void)static_cast<const TSSDataOps &>(view.ops());
+        }
+
+        TSDataView view_{};
+    };
+
+    class TSDDataView
+    {
+      public:
+        explicit TSDDataView(TSDataView view)
+            : view_(view)
+        {
+            validate_kind(view_);
+        }
+
+        [[nodiscard]] const TSDataView &base() const noexcept { return view_; }
+        [[nodiscard]] TSDataView &base() noexcept { return view_; }
+        [[nodiscard]] const TSDataBinding *binding() const noexcept { return view_.binding(); }
+        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return view_.schema(); }
+        [[nodiscard]] const TSDDataLayout &layout() const
+        {
+            return static_cast<const TSDDataLayout &>(view_.layout());
+        }
+        [[nodiscard]] ValueView value() const { return view_.value(); }
+        [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const
+        {
+            return view_.delta_value(evaluation_time);
+        }
+        [[nodiscard]] engine_time_t last_modified_time() const { return view_.last_modified_time(); }
+        [[nodiscard]] bool modified(engine_time_t evaluation_time) const { return view_.modified(evaluation_time); }
+
+        [[nodiscard]] std::size_t size() const
+        {
+            const auto &ops = dict_ops();
+            return ops.size_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] bool empty() const { return size() == 0; }
+        [[nodiscard]] std::size_t slot_capacity() const
+        {
+            const auto &ops = dict_ops();
+            return ops.slot_capacity_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] bool slot_occupied(std::size_t slot) const
+        {
+            const auto &ops = dict_ops();
+            return ops.slot_occupied_impl(ops.context, view_.data(), slot);
+        }
+        [[nodiscard]] bool slot_live(std::size_t slot) const
+        {
+            const auto &ops = dict_ops();
+            return ops.slot_live_impl(ops.context, view_.data(), slot);
+        }
+        [[nodiscard]] bool slot_added(std::size_t slot) const
+        {
+            const auto &ops = dict_ops();
+            return ops.slot_added_impl(ops.context, view_.data(), slot);
+        }
+        [[nodiscard]] bool slot_removed(std::size_t slot) const
+        {
+            const auto &ops = dict_ops();
+            return ops.slot_removed_impl(ops.context, view_.data(), slot);
+        }
+        [[nodiscard]] bool slot_modified(std::size_t slot) const
+        {
+            const auto &ops = dict_ops();
+            return ops.slot_modified_impl(ops.context, view_.data(), slot);
+        }
+        [[nodiscard]] ValueView key_at_slot(std::size_t slot) const
+        {
+            if (!slot_occupied(slot)) { throw std::out_of_range("TSDDataView::key_at_slot: slot is not occupied"); }
+            const auto &ops = dict_ops();
+            return ValueView{layout().key_binding, ops.key_at_slot_impl(ops.context, view_.data(), slot)};
+        }
+        [[nodiscard]] bool contains(const ValueView &key) const
+        {
+            const auto &ops = dict_ops();
+            return ops.contains_impl(ops.context, view_.data(), key);
+        }
+        [[nodiscard]] std::size_t find_slot(const ValueView &key) const
+        {
+            const auto &ops = dict_ops();
+            return ops.find_slot_impl(ops.context, view_.data(), key);
+        }
+        [[nodiscard]] TSDataView at_slot(std::size_t slot) const
+        {
+            if (!slot_occupied(slot)) { throw std::out_of_range("TSDDataView::at_slot: slot is not occupied"); }
+            const auto &ops = dict_ops();
+            return TSDataView{layout().element_binding, ops.child_at_slot_impl(ops.context, view_.data(), slot),
+                              const_cast<TSDataView &>(view_), slot};
+        }
+        [[nodiscard]] TSDataView at(const ValueView &key) const
+        {
+            const auto slot = find_slot(key);
+            if (slot == TS_DATA_NO_CHILD_ID)
+            {
+                return TSDataView{layout().element_binding, static_cast<const void *>(nullptr)};
+            }
+            return at_slot(slot);
+        }
+        [[nodiscard]] TSDataView operator[](const ValueView &key) const { return at(key); }
+        [[nodiscard]] Range<ValueView> keys() const
+        {
+            const auto &ops = dict_ops();
+            return ops.make_values_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] Range<TSDataView> values() const
+        {
+            const auto &ops = dict_ops();
+            return ops.make_ts_values_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] KeyValueRange<ValueView, TSDataView> items() const
+        {
+            const auto &ops = dict_ops();
+            return ops.make_ts_kv_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] Range<ValueView> valid_keys() const
+        {
+            const auto &ops = dict_ops();
+            return ops.make_valid_keys_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] Range<TSDataView> valid_values() const
+        {
+            const auto &ops = dict_ops();
+            return ops.make_valid_ts_values_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] KeyValueRange<ValueView, TSDataView> valid_items() const
+        {
+            const auto &ops = dict_ops();
+            return ops.make_valid_ts_kv_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] Range<ValueView> modified_keys(engine_time_t evaluation_time) const
+        {
+            if (!modified(evaluation_time)) { return empty_value_range(); }
+            const auto &ops = dict_ops();
+            return ops.make_modified_keys_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] Range<TSDataView> modified_values(engine_time_t evaluation_time) const
+        {
+            if (!modified(evaluation_time)) { return empty_ts_data_range(); }
+            const auto &ops = dict_ops();
+            return ops.make_modified_ts_values_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] KeyValueRange<ValueView, TSDataView> modified_items(engine_time_t evaluation_time) const
+        {
+            if (!modified(evaluation_time)) { return empty_ts_data_kv_range(); }
+            const auto &ops = dict_ops();
+            return ops.make_modified_ts_kv_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] Range<ValueView> added_keys() const { return key_set().added(); }
+        [[nodiscard]] Range<TSDataView> added_values() const
+        {
+            const auto &ops = dict_ops();
+            return ops.make_added_ts_values_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] KeyValueRange<ValueView, TSDataView> added_items() const
+        {
+            const auto &ops = dict_ops();
+            return ops.make_added_ts_kv_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] Range<ValueView> removed_keys() const { return key_set().removed(); }
+        [[nodiscard]] Range<TSDataView> removed_values() const
+        {
+            const auto &ops = dict_ops();
+            return ops.make_removed_ts_values_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] KeyValueRange<ValueView, TSDataView> removed_items() const
+        {
+            const auto &ops = dict_ops();
+            return ops.make_removed_ts_kv_range_impl(ops.context, view_.data());
+        }
+        [[nodiscard]] TSSDataView key_set() const
+        {
+            const auto *key_set_binding = layout().key_set_binding;
+            if (key_set_binding == nullptr)
+            {
+                throw std::logic_error("TSDDataView::key_set requires a key-set binding");
+            }
+            return TSSDataView{TSDataView{key_set_binding, view_.data()}};
+        }
+
+        [[nodiscard]] TSDDataMutationView begin_mutation(engine_time_t evaluation_time) const;
+
+      private:
+        [[nodiscard]] static Range<ValueView> empty_value_range() noexcept
+        {
+            return Range<ValueView>{.context = nullptr, .memory = nullptr, .limit = 0, .predicate = nullptr,
+                                    .projector = nullptr};
+        }
+
+        [[nodiscard]] static Range<TSDataView> empty_ts_data_range() noexcept
+        {
+            return Range<TSDataView>{.context = nullptr, .memory = nullptr, .limit = 0, .predicate = nullptr,
+                                     .projector = nullptr};
+        }
+
+        [[nodiscard]] static KeyValueRange<ValueView, TSDataView> empty_ts_data_kv_range() noexcept
+        {
+            return KeyValueRange<ValueView, TSDataView>{.context = nullptr, .memory = nullptr, .limit = 0,
+                                                        .predicate = nullptr, .projector = nullptr};
+        }
+
+        [[nodiscard]] const TSDDataOps &dict_ops() const
+        {
+            return static_cast<const TSDDataOps &>(view_.ops());
+        }
+
+        static void validate_kind(const TSDataView &view)
+        {
+            if (!view.valid()) { throw std::logic_error("TSDDataView requires a live view"); }
+            const auto *schema = view.schema();
+            if (schema == nullptr || schema->kind != TSTypeKind::TSD)
+            {
+                throw std::invalid_argument("TSDDataView requires a TSD TSData kind");
+            }
+            (void)static_cast<const TSDDataOps &>(view.ops());
+        }
+
+        TSDataView view_{};
     };
 
     class TSBDataView : public IndexedTSDataView
@@ -959,6 +1460,148 @@ namespace hgraph
         TSDataMutationView mutation_;
     };
 
+    class TSSDataMutationView : public TSSDataView
+    {
+      public:
+        TSSDataMutationView(TSDataView view, engine_time_t evaluation_time)
+            : TSSDataView(view),
+              mutation_(view.begin_mutation(evaluation_time))
+        {
+            if (view.schema() == nullptr || view.schema()->kind != TSTypeKind::TSS)
+            {
+                throw std::invalid_argument("TSSDataMutationView requires a TSS TSData kind");
+            }
+        }
+
+        TSSDataMutationView(const TSSDataMutationView &) = delete;
+        TSSDataMutationView &operator=(const TSSDataMutationView &) = delete;
+        TSSDataMutationView(TSSDataMutationView &&) noexcept = default;
+        TSSDataMutationView &operator=(TSSDataMutationView &&) = delete;
+
+        [[nodiscard]] TSSDataView view() { return TSSDataView{base()}; }
+        [[nodiscard]] engine_time_t current_mutation_time() const { return mutation_.current_mutation_time(); }
+
+        void reserve(std::size_t capacity)
+        {
+            const auto &ops = static_cast<const TSSDataOps &>(mutation_.ops());
+            ops.reserve_impl(ops.context, mutation_.mutable_data(), capacity);
+        }
+
+        [[nodiscard]] bool add(const ValueView &key)
+        {
+            const auto &ops    = static_cast<const TSSDataOps &>(mutation_.ops());
+            const auto  result = ops.insert_key_impl(ops.context, mutation_.mutable_data(), key,
+                                                     current_mutation_time());
+            if (result.changed) { mutation_.mark_modified(); }
+            return result.changed;
+        }
+
+        [[nodiscard]] bool remove(const ValueView &key)
+        {
+            const auto &ops    = static_cast<const TSSDataOps &>(mutation_.ops());
+            const auto  result = ops.remove_key_impl(ops.context, mutation_.mutable_data(), key,
+                                                     current_mutation_time());
+            if (result.changed) { mutation_.mark_modified(); }
+            return result.changed;
+        }
+
+        void clear()
+        {
+            std::vector<ValueView> keys;
+            for (const auto key : values()) { keys.push_back(key); }
+            for (const auto key : keys) { static_cast<void>(remove(key)); }
+        }
+
+        [[nodiscard]] bool copy_value_from(const ValueView &source)
+        {
+            return mutation_.copy_value_from(source);
+        }
+
+      private:
+        TSDataMutationView mutation_;
+    };
+
+    class TSDDataMutationView : public TSDDataView
+    {
+      public:
+        TSDDataMutationView(TSDataView view, engine_time_t evaluation_time)
+            : TSDDataView(view),
+              mutation_(view.begin_mutation(evaluation_time))
+        {
+            if (view.schema() == nullptr || view.schema()->kind != TSTypeKind::TSD)
+            {
+                throw std::invalid_argument("TSDDataMutationView requires a TSD TSData kind");
+            }
+        }
+
+        TSDDataMutationView(const TSDDataMutationView &) = delete;
+        TSDDataMutationView &operator=(const TSDDataMutationView &) = delete;
+        TSDDataMutationView(TSDDataMutationView &&) noexcept = default;
+        TSDDataMutationView &operator=(TSDDataMutationView &&) = delete;
+
+        [[nodiscard]] TSDDataView view() { return TSDDataView{base()}; }
+        [[nodiscard]] engine_time_t current_mutation_time() const { return mutation_.current_mutation_time(); }
+
+        void reserve(std::size_t capacity)
+        {
+            const auto &ops = static_cast<const TSDDataOps &>(mutation_.ops());
+            ops.reserve_impl(ops.context, mutation_.mutable_data(), capacity);
+        }
+
+        [[nodiscard]] TSDataView at(const ValueView &key)
+        {
+            const auto &ops    = static_cast<const TSDDataOps &>(mutation_.ops());
+            const auto  result = ops.insert_key_impl(ops.context, mutation_.mutable_data(), key,
+                                                     current_mutation_time());
+            if (result.changed) { mutation_.mark_modified(); }
+            return at_slot(result.slot);
+        }
+
+        [[nodiscard]] TSDataView operator[](const ValueView &key) { return at(key); }
+
+        void set(const ValueView &key, const ValueView &value)
+        {
+            auto child = at(key);
+            auto child_mutation = child.begin_mutation(current_mutation_time());
+            static_cast<void>(child_mutation.copy_value_from(value));
+        }
+
+        [[nodiscard]] bool erase(const ValueView &key)
+        {
+            const auto &ops    = static_cast<const TSDDataOps &>(mutation_.ops());
+            const auto  result = ops.remove_key_impl(ops.context, mutation_.mutable_data(), key,
+                                                     current_mutation_time());
+            if (result.changed) { mutation_.mark_modified(); }
+            return result.changed;
+        }
+
+        void clear()
+        {
+            std::vector<ValueView> current_keys;
+            for (const auto key : keys()) { current_keys.push_back(key); }
+            for (const auto key : current_keys) { static_cast<void>(erase(key)); }
+        }
+
+        [[nodiscard]] bool copy_value_from(const ValueView &source)
+        {
+            return mutation_.copy_value_from(source);
+        }
+
+      private:
+        TSDataView at_slot(std::size_t slot)
+        {
+            const auto &ops = static_cast<const TSDDataOps &>(mutation_.ops());
+            if (!ops.slot_occupied_impl(ops.context, mutation_.mutable_data(), slot))
+            {
+                throw std::out_of_range("TSDDataMutationView::at_slot: slot is not occupied");
+            }
+            const auto *child_memory = ops.child_at_slot_impl(ops.context, mutation_.mutable_data(), slot);
+            return TSDataView{layout().element_binding, child_memory, mutation_.view(), slot};
+        }
+
+        TSDataMutationView mutation_;
+    };
+
     inline TSDataParentLink::TSDataParentLink(TSDataView &parent_view, std::size_t parent_child_id)
         : parent(&parent_view), child_id(parent_child_id)
     {
@@ -988,6 +1631,26 @@ namespace hgraph
     inline TSDataMutationView TSDataView::begin_mutation(engine_time_t evaluation_time) const
     {
         return TSDataMutationView{*this, evaluation_time};
+    }
+
+    inline TSSDataView TSDataView::as_set() &
+    {
+        return TSSDataView{*this};
+    }
+
+    inline TSSDataView TSDataView::as_set() const &
+    {
+        return TSSDataView{const_cast<TSDataView &>(*this)};
+    }
+
+    inline TSDDataView TSDataView::as_dict() &
+    {
+        return TSDDataView{*this};
+    }
+
+    inline TSDDataView TSDataView::as_dict() const &
+    {
+        return TSDDataView{const_cast<TSDataView &>(*this)};
     }
 
     inline TSBDataView TSDataView::as_bundle() &
@@ -1023,6 +1686,16 @@ namespace hgraph
     inline TSWDataMutationView TSWDataView::begin_mutation(engine_time_t evaluation_time) const
     {
         return TSWDataMutationView{view_, evaluation_time};
+    }
+
+    inline TSSDataMutationView TSSDataView::begin_mutation(engine_time_t evaluation_time) const
+    {
+        return TSSDataMutationView{view_, evaluation_time};
+    }
+
+    inline TSDDataMutationView TSDDataView::begin_mutation(engine_time_t evaluation_time) const
+    {
+        return TSDDataMutationView{view_, evaluation_time};
     }
 
     /**

@@ -1,4 +1,4 @@
-// Ensures the ported foundation headers compile cleanly together.
+// Ensures the foundation headers compile cleanly together.
 // This test instantiates a few of the templated entry points so the
 // compiler chases through the heavier portions of memory_utils, the
 // slot stores, and intern_table.

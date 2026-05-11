@@ -20,7 +20,7 @@ target_link_libraries(hgraph_header_compile_check
 
 add_test(NAME hgraph.header_compile_check COMMAND hgraph_header_compile_check)
 
-# Catch2 for the ported utility test suites.
+# Catch2 for the utility test suites.
 find_package(Catch2 3 CONFIG QUIET)
 if(NOT Catch2_FOUND)
     include(FetchContent)

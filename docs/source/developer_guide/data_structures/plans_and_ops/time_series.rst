@@ -824,7 +824,7 @@ container.
 The C++ TSData API uses the standard set-view names:
 ``TSDataView::as_set()``
 returns ``TSSDataView`` with ``size()``, ``empty()``, ``contains()``,
-``find_slot()``, ``values()``, ``added_values()``, ``removed_values()``,
+``find_slot()``, ``values()``, ``added()``, ``removed()``,
 ``slot_added()``, and ``slot_removed()``. ``TSSDataMutationView`` adds
 ``add()``, ``remove()``, ``clear()``, and ``reserve()``.
 
@@ -876,11 +876,16 @@ stream, not just structural read access.
 The C++ TSData API uses the standard dictionary-view names:
 ``TSDataView::as_dict()`` returns ``TSDDataView`` with keyed
 ``contains()``, ``find_slot()``, ``at(key)``, ``keys()``, ``values()``,
-``items()``, ``valid_items()``, ``modified_items(evaluation_time)``,
-and ``key_set()``. ``TSDDataMutationView`` adds ``set(key, value)``,
-``erase(key)``, ``clear()``, and ``reserve()``. Child mutation bubbles
-through the child view's parent link and records the parent's
-``modified`` bit for the child slot.
+``items()``, ``valid_keys()``, ``valid_values()``, ``valid_items()``,
+``modified_keys(evaluation_time)``, ``modified_values(evaluation_time)``,
+``modified_items(evaluation_time)``, ``added_keys()``,
+``added_values()``, ``added_items()``, ``removed_keys()``,
+``removed_values()``, ``removed_items()``, and ``key_set()``.
+``TSDDataMutationView`` adds ``set(key, value)``, ``erase(key)``,
+``clear()``, and ``reserve()``. Child mutation bubbles through the
+child view's parent link and records the parent's ``modified`` bit for
+the child slot. The explicit ``evaluation_time`` on modified ranges is
+the TSData-layer form of the runtime API's current-engine-time query.
 
 Buffer Exposure
 ~~~~~~~~~~~~~~~

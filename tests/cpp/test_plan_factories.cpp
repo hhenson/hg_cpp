@@ -25,7 +25,7 @@ namespace
             last_child_id = hgraph::TS_DATA_NO_CHILD_ID;
         }
 
-        static void record_child_modified(const void *, void *, std::size_t child_id)
+        static void record_child_modified(const void *, void *, std::size_t child_id, hgraph::engine_time_t)
         {
             ++count;
             last_child_id = child_id;
@@ -878,7 +878,120 @@ TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child l
     REQUIRE(nested_delta.at(key.view()).checked_as<int>() == 23);
 }
 
-TEST_CASE("TSDataPlanFactory::plan_for throws for dynamic or keyed collection TSData until slot stores are ported")
+TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed deltas")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *tss      = registry.tss(int_meta);
+
+    const auto *binding = factory.binding_for(tss);
+    REQUIRE(binding != nullptr);
+
+    TSData data{*binding};
+    auto   view = data.view();
+    auto   set  = view.as_set();
+    REQUIRE(set.empty());
+    REQUIRE(view.value().is_set());
+
+    const auto t1 = MIN_ST;
+    Value      one{1};
+    Value      two{2};
+    {
+        auto mutation = set.begin_mutation(t1);
+        REQUIRE(mutation.add(one.view()));
+        REQUIRE(mutation.add(two.view()));
+        REQUIRE_FALSE(mutation.add(one.view()));
+    }
+
+    REQUIRE(view.modified(t1));
+    REQUIRE(set.size() == 2);
+    REQUIRE(set.contains(one.view()));
+    REQUIRE(view.value().as_set().contains(two.view()));
+
+    auto delta = view.delta_value(t1).as_bundle();
+    REQUIRE(delta.at("added").as_set().contains(one.view()));
+    REQUIRE(delta.at("added").as_set().contains(two.view()));
+    REQUIRE(delta.at("removed").as_set().empty());
+
+    const auto t2 = t1 + engine_time_delta_t{1};
+    {
+        auto mutation = set.begin_mutation(t2);
+        REQUIRE(mutation.remove(one.view()));
+    }
+
+    REQUIRE_FALSE(set.contains(one.view()));
+    REQUIRE(set.contains(two.view()));
+    auto next_delta = view.delta_value(t2).as_bundle();
+    REQUIRE(next_delta.at("added").as_set().empty());
+    REQUIRE(next_delta.at("removed").as_set().contains(one.view()));
+}
+
+TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified deltas")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *tsd      = registry.tsd(int_meta, ts_int);
+
+    const auto *binding = factory.binding_for(tsd);
+    REQUIRE(binding != nullptr);
+
+    TSData data{*binding};
+    auto   view = data.view();
+    auto   dict = view.as_dict();
+    REQUIRE(dict.empty());
+    REQUIRE(view.value().is_map());
+
+    const auto t1 = MIN_ST;
+    Value      key{7};
+    Value      value{42};
+    {
+        auto mutation = dict.begin_mutation(t1);
+        mutation.set(key.view(), value.view());
+    }
+
+    REQUIRE(view.modified(t1));
+    REQUIRE(dict.size() == 1);
+    REQUIRE(dict.contains(key.view()));
+    REQUIRE(dict.at(key.view()).value().checked_as<int>() == 42);
+    REQUIRE(view.value().as_map().at(key.view()).checked_as<int>() == 42);
+    REQUIRE(dict.key_set().contains(key.view()));
+    REQUIRE(dict.key_set().added().begin() != dict.key_set().added().end());
+    REQUIRE(dict.added_keys().begin() != dict.added_keys().end());
+    REQUIRE(dict.added_values().begin() != dict.added_values().end());
+    REQUIRE(dict.added_items().begin() != dict.added_items().end());
+    REQUIRE(dict.valid_keys().begin() != dict.valid_keys().end());
+    REQUIRE(dict.valid_values().begin() != dict.valid_values().end());
+    REQUIRE(dict.valid_items().begin() != dict.valid_items().end());
+    REQUIRE(dict.modified_keys(t1).begin() != dict.modified_keys(t1).end());
+    REQUIRE(dict.modified_values(t1).begin() != dict.modified_values(t1).end());
+    REQUIRE(dict.modified_items(t1).begin() != dict.modified_items(t1).end());
+
+    auto delta = view.delta_value(t1).as_bundle();
+    REQUIRE(delta.at("removed").as_set().empty());
+    REQUIRE(delta.at("modified").as_map().contains(key.view()));
+    REQUIRE(delta.at("modified").as_map().at(key.view()).checked_as<int>() == 42);
+
+    const auto t2 = t1 + engine_time_delta_t{1};
+    {
+        auto mutation = dict.begin_mutation(t2);
+        REQUIRE(mutation.erase(key.view()));
+    }
+
+    REQUIRE_FALSE(dict.contains(key.view()));
+    REQUIRE(dict.removed_keys().begin() != dict.removed_keys().end());
+    REQUIRE(dict.removed_values().begin() != dict.removed_values().end());
+    REQUIRE(dict.removed_items().begin() != dict.removed_items().end());
+    auto next_delta = view.delta_value(t2).as_bundle();
+    REQUIRE(next_delta.at("removed").as_set().contains(key.view()));
+    REQUIRE_FALSE(next_delta.at("modified").as_map().contains(key.view()));
+}
+
+TEST_CASE("TSDataPlanFactory::plan_for throws for dynamic TSL until slot list storage is implemented")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
@@ -886,8 +999,6 @@ TEST_CASE("TSDataPlanFactory::plan_for throws for dynamic or keyed collection TS
     const auto *int_meta = registry.register_scalar<int>("int");
     const auto *ts_int   = registry.ts(int_meta);
 
-    REQUIRE_THROWS_AS(factory.plan_for(registry.tss(int_meta)), std::logic_error);
-    REQUIRE_THROWS_AS(factory.plan_for(registry.tsd(int_meta, ts_int)), std::logic_error);
     REQUIRE_THROWS_AS(factory.plan_for(registry.tsl(ts_int, 0)), std::logic_error);
 }
 

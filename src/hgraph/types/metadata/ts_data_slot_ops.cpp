@@ -1,0 +1,1964 @@
+#include "ts_data_plan_factory_detail.h"
+
+#include <hgraph/types/metadata/ts_data_plan_factory.h>
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/utils/key_slot_store.h>
+#include <hgraph/types/utils/value_slot_store.h>
+#include <hgraph/types/value/specialized_views.h>
+#include <hgraph/util/scope.h>
+
+#include <sul/dynamic_bitset.hpp>
+
+#include <algorithm>
+#include <compare>
+#include <cstddef>
+#include <fmt/format.h>
+#include <iterator>
+#include <memory>
+#include <mutex>
+#include <new>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+namespace hgraph::ts_data_plan_factory_detail
+{
+    namespace
+    {
+        [[nodiscard]] std::size_t combine_hash(std::size_t seed, std::size_t value) noexcept
+        {
+            seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+            return seed;
+        }
+
+        [[nodiscard]] std::size_t value_key_hash(const void *key, const void *context)
+        {
+            const auto *binding = static_cast<const ValueTypeBinding *>(context);
+            if (binding == nullptr) { throw std::logic_error("slot TSData key hash requires a key binding"); }
+            return binding->checked_ops().hash(key);
+        }
+
+        [[nodiscard]] bool value_key_equal(const void *lhs, const void *rhs, const void *context)
+        {
+            const auto *binding = static_cast<const ValueTypeBinding *>(context);
+            if (binding == nullptr) { throw std::logic_error("slot TSData key equality requires a key binding"); }
+            return binding->checked_ops().equals(lhs, rhs);
+        }
+
+        [[nodiscard]] KeySlotStoreOps key_store_ops(const ValueTypeBinding &key_binding) noexcept
+        {
+            return KeySlotStoreOps{
+                .hash    = &value_key_hash,
+                .equal   = &value_key_equal,
+                .context = &key_binding,
+            };
+        }
+
+        class TSSSlotStorage
+        {
+          public:
+            explicit TSSSlotStorage(const ValueTypeBinding &key_binding)
+                : key_binding_(&key_binding),
+                  keys_(key_binding.checked_plan(), key_store_ops(key_binding))
+            {}
+
+            TSSSlotStorage(const TSSSlotStorage &)            = delete;
+            TSSSlotStorage &operator=(const TSSSlotStorage &) = delete;
+            TSSSlotStorage(TSSSlotStorage &&) noexcept        = default;
+            TSSSlotStorage &operator=(TSSSlotStorage &&) noexcept = default;
+            ~TSSSlotStorage() = default;
+
+            [[nodiscard]] const ValueTypeBinding &key_binding() const { return *key_binding_; }
+            [[nodiscard]] const TSDataTracking &tracking() const noexcept { return tracking_; }
+            [[nodiscard]] TSDataTracking &mutable_tracking() noexcept { return tracking_; }
+            [[nodiscard]] const KeySlotStore &keys() const noexcept { return keys_; }
+            [[nodiscard]] KeySlotStore &keys() noexcept { return keys_; }
+            [[nodiscard]] std::size_t size() const noexcept { return keys_.size(); }
+            [[nodiscard]] std::size_t slot_capacity() const noexcept { return keys_.slot_capacity(); }
+            [[nodiscard]] bool slot_occupied(std::size_t slot) const noexcept { return keys_.slot_constructed(slot); }
+            [[nodiscard]] bool slot_live(std::size_t slot) const noexcept { return keys_.slot_live(slot); }
+            [[nodiscard]] bool slot_added(std::size_t slot) const noexcept
+            {
+                return slot < added_.size() && added_.test(slot);
+            }
+            [[nodiscard]] bool slot_removed(std::size_t slot) const noexcept
+            {
+                return slot < removed_.size() && removed_.test(slot);
+            }
+            [[nodiscard]] const void *key_at_slot(std::size_t slot) const { return keys_[slot]; }
+            [[nodiscard]] std::size_t find_slot(const ValueView &key) const
+            {
+                validate_key(key);
+                const auto slot = keys_.find_slot(key.data());
+                return slot == KeySlotStore::npos ? TS_DATA_NO_CHILD_ID : slot;
+            }
+            [[nodiscard]] bool contains(const ValueView &key) const
+            {
+                validate_key(key);
+                return keys_.contains(key.data());
+            }
+
+            void reserve(std::size_t capacity)
+            {
+                keys_.reserve_to(capacity);
+                ensure_delta_capacity();
+            }
+
+            [[nodiscard]] SlotTSDataMutationResult insert_key(const ValueView &key, engine_time_t modified_time)
+            {
+                validate_mutation_key(key, modified_time);
+                prepare_delta(modified_time);
+
+                const auto result = keys_.insert(key.data());
+                ensure_delta_capacity();
+                if (!result.inserted) { return {.slot = result.slot, .changed = false}; }
+
+                if (slot_removed(result.slot)) { removed_.reset(result.slot); }
+                else { added_.set(result.slot); }
+                return {.slot = result.slot, .changed = true};
+            }
+
+            [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, engine_time_t modified_time)
+            {
+                validate_mutation_key(key, modified_time);
+                prepare_delta(modified_time);
+
+                const auto slot = keys_.find_slot(key.data());
+                if (slot == KeySlotStore::npos) { return {.slot = TS_DATA_NO_CHILD_ID, .changed = false}; }
+                if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
+
+                ensure_delta_capacity();
+                if (slot_added(slot)) { added_.reset(slot); }
+                else { removed_.set(slot); }
+                return {.slot = slot, .changed = true};
+            }
+
+            void reset_delta() noexcept
+            {
+                added_.reset();
+                removed_.reset();
+                delta_time_ = MIN_DT;
+            }
+
+          protected:
+            void validate_key(const ValueView &key) const
+            {
+                if (!key.has_value()) { throw std::invalid_argument("slot TSData requires a live key"); }
+                if (key.binding() != key_binding_)
+                {
+                    throw std::invalid_argument("slot TSData key has the wrong binding");
+                }
+            }
+
+            void validate_mutation_key(const ValueView &key, engine_time_t modified_time) const
+            {
+                if (modified_time == MIN_DT)
+                {
+                    throw std::invalid_argument("slot TSData mutation requires a concrete engine time");
+                }
+                validate_key(key);
+            }
+
+            void prepare_delta(engine_time_t modified_time)
+            {
+                if (delta_time_ == modified_time)
+                {
+                    ensure_delta_capacity();
+                    return;
+                }
+
+                keys_.begin_mutation();
+                auto close_keys = make_scope_exit<true>([&] { keys_.end_mutation(); });
+                reset_delta();
+                delta_time_ = modified_time;
+                ensure_delta_capacity();
+            }
+
+            void ensure_delta_capacity()
+            {
+                const auto capacity = keys_.slot_capacity();
+                added_.resize(capacity);
+                removed_.resize(capacity);
+            }
+
+            const ValueTypeBinding *key_binding_{nullptr};
+            TSDataTracking         tracking_{};
+            KeySlotStore           keys_;
+            sul::dynamic_bitset<>  added_{};
+            sul::dynamic_bitset<>  removed_{};
+            engine_time_t          delta_time_{MIN_DT};
+        };
+
+        class TSDSlotStorage
+        {
+          public:
+            TSDSlotStorage(const ValueTypeBinding &key_binding, const TSDataBinding &element_binding)
+                : key_binding_(&key_binding),
+                  element_binding_(&element_binding),
+                  keys_(key_binding.checked_plan(), key_store_ops(key_binding)),
+                  values_(keys_, element_binding.checked_plan())
+            {}
+
+            TSDSlotStorage(const TSDSlotStorage &)            = delete;
+            TSDSlotStorage &operator=(const TSDSlotStorage &) = delete;
+            TSDSlotStorage(TSDSlotStorage &&)                 = delete;
+            TSDSlotStorage &operator=(TSDSlotStorage &&)      = delete;
+            ~TSDSlotStorage() = default;
+
+            [[nodiscard]] const ValueTypeBinding &key_binding() const { return *key_binding_; }
+            [[nodiscard]] const TSDataBinding &element_binding() const { return *element_binding_; }
+            [[nodiscard]] const TSDataTracking &tracking() const noexcept { return tracking_; }
+            [[nodiscard]] TSDataTracking &mutable_tracking() noexcept { return tracking_; }
+            [[nodiscard]] const KeySlotStore &keys() const noexcept { return keys_; }
+            [[nodiscard]] KeySlotStore &keys() noexcept { return keys_; }
+            [[nodiscard]] std::size_t size() const noexcept { return keys_.size(); }
+            [[nodiscard]] std::size_t slot_capacity() const noexcept { return keys_.slot_capacity(); }
+            [[nodiscard]] bool slot_occupied(std::size_t slot) const noexcept { return keys_.slot_constructed(slot); }
+            [[nodiscard]] bool slot_live(std::size_t slot) const noexcept { return keys_.slot_live(slot); }
+            [[nodiscard]] bool slot_added(std::size_t slot) const noexcept
+            {
+                return slot < added_.size() && added_.test(slot);
+            }
+            [[nodiscard]] bool slot_removed(std::size_t slot) const noexcept
+            {
+                return slot < removed_.size() && removed_.test(slot);
+            }
+            [[nodiscard]] bool slot_modified(std::size_t slot) const noexcept
+            {
+                return slot < modified_.size() && modified_.test(slot);
+            }
+            [[nodiscard]] const void *key_at_slot(std::size_t slot) const { return keys_[slot]; }
+            [[nodiscard]] std::size_t find_slot(const ValueView &key) const
+            {
+                validate_key(key);
+                const auto slot = keys_.find_slot(key.data());
+                return slot == KeySlotStore::npos ? TS_DATA_NO_CHILD_ID : slot;
+            }
+            [[nodiscard]] bool contains(const ValueView &key) const
+            {
+                validate_key(key);
+                return keys_.contains(key.data());
+            }
+            [[nodiscard]] const void *child_at_slot(std::size_t slot) const
+            {
+                return values_.value_memory(slot);
+            }
+            [[nodiscard]] void *child_memory_for_write(std::size_t slot)
+            {
+                return values_.value_memory(slot);
+            }
+
+            void reserve(std::size_t capacity)
+            {
+                keys_.reserve_to(capacity);
+                ensure_delta_capacity();
+            }
+
+            [[nodiscard]] SlotTSDataMutationResult insert_key(const ValueView &key, engine_time_t modified_time)
+            {
+                validate_mutation_key(key, modified_time);
+                prepare_delta(modified_time);
+
+                const auto result = keys_.insert(key.data());
+                ensure_delta_capacity();
+                if (!result.inserted) { return {.slot = result.slot, .changed = false}; }
+
+                if (slot_removed(result.slot)) { removed_.reset(result.slot); }
+                else { added_.set(result.slot); }
+                return {.slot = result.slot, .changed = true};
+            }
+
+            [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, engine_time_t modified_time)
+            {
+                validate_mutation_key(key, modified_time);
+                prepare_delta(modified_time);
+
+                const auto slot = keys_.find_slot(key.data());
+                if (slot == KeySlotStore::npos) { return {.slot = TS_DATA_NO_CHILD_ID, .changed = false}; }
+                if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
+
+                ensure_delta_capacity();
+                if (slot_added(slot)) { added_.reset(slot); }
+                else { removed_.set(slot); }
+                modified_.reset(slot);
+                return {.slot = slot, .changed = true};
+            }
+
+            void record_child_modified(std::size_t slot, engine_time_t modified_time)
+            {
+                if (modified_time == MIN_DT)
+                {
+                    throw std::invalid_argument("TSD child modification requires a concrete engine time");
+                }
+                if (!slot_live(slot)) { return; }
+                prepare_delta(modified_time);
+                modified_.set(slot);
+            }
+
+            void reset_delta() noexcept
+            {
+                added_.reset();
+                removed_.reset();
+                modified_.reset();
+                delta_time_ = MIN_DT;
+            }
+
+          private:
+            void validate_key(const ValueView &key) const
+            {
+                if (!key.has_value()) { throw std::invalid_argument("TSD TSData requires a live key"); }
+                if (key.binding() != key_binding_)
+                {
+                    throw std::invalid_argument("TSD TSData key has the wrong binding");
+                }
+            }
+
+            void validate_mutation_key(const ValueView &key, engine_time_t modified_time) const
+            {
+                if (modified_time == MIN_DT)
+                {
+                    throw std::invalid_argument("TSD TSData mutation requires a concrete engine time");
+                }
+                validate_key(key);
+            }
+
+            void prepare_delta(engine_time_t modified_time)
+            {
+                if (delta_time_ == modified_time)
+                {
+                    ensure_delta_capacity();
+                    return;
+                }
+
+                keys_.begin_mutation();
+                auto close_keys = make_scope_exit<true>([&] { keys_.end_mutation(); });
+                reset_delta();
+                delta_time_ = modified_time;
+                ensure_delta_capacity();
+            }
+
+            void ensure_delta_capacity()
+            {
+                const auto capacity = keys_.slot_capacity();
+                added_.resize(capacity);
+                removed_.resize(capacity);
+                modified_.resize(capacity);
+            }
+
+            const ValueTypeBinding     *key_binding_{nullptr};
+            const TSDataBinding        *element_binding_{nullptr};
+            TSDataTracking              tracking_{};
+            KeySlotStore                keys_;
+            KeyMirroredValueSlotStore   values_;
+            sul::dynamic_bitset<>       added_{};
+            sul::dynamic_bitset<>       removed_{};
+            sul::dynamic_bitset<>       modified_{};
+            engine_time_t               delta_time_{MIN_DT};
+        };
+
+        struct TSSStoragePlanContext
+        {
+            const ValueTypeBinding *key_binding{nullptr};
+        };
+
+        struct TSDStoragePlanContext
+        {
+            const ValueTypeBinding *key_binding{nullptr};
+            const TSDataBinding    *element_binding{nullptr};
+        };
+
+        [[nodiscard]] const TSSStoragePlanContext &tss_plan_context(const void *context)
+        {
+            if (context == nullptr) { throw std::logic_error("TSS storage requires lifecycle context"); }
+            return *static_cast<const TSSStoragePlanContext *>(context);
+        }
+
+        [[nodiscard]] const TSDStoragePlanContext &tsd_plan_context(const void *context)
+        {
+            if (context == nullptr) { throw std::logic_error("TSD storage requires lifecycle context"); }
+            return *static_cast<const TSDStoragePlanContext *>(context);
+        }
+
+        void tss_storage_construct(void *dst, const void *context)
+        {
+            const auto &state = tss_plan_context(context);
+            if (state.key_binding == nullptr) { throw std::logic_error("TSS key binding is not resolved"); }
+            std::construct_at(static_cast<TSSSlotStorage *>(dst), *state.key_binding);
+        }
+
+        void tsd_storage_construct(void *dst, const void *context)
+        {
+            const auto &state = tsd_plan_context(context);
+            if (state.key_binding == nullptr) { throw std::logic_error("TSD key binding is not resolved"); }
+            if (state.element_binding == nullptr) { throw std::logic_error("TSD element binding is not resolved"); }
+            std::construct_at(static_cast<TSDSlotStorage *>(dst), *state.key_binding, *state.element_binding);
+        }
+
+        template <typename Storage>
+        void slot_storage_destroy(void *memory, const void *) noexcept
+        {
+            std::destroy_at(static_cast<Storage *>(memory));
+        }
+
+        void tss_storage_move_construct(void *dst, void *src, const void *)
+        {
+            std::construct_at(static_cast<TSSSlotStorage *>(dst), std::move(*static_cast<TSSSlotStorage *>(src)));
+        }
+
+        void tss_storage_move_assign(void *dst, void *src, const void *)
+        {
+            *static_cast<TSSSlotStorage *>(dst) = std::move(*static_cast<TSSSlotStorage *>(src));
+        }
+
+        struct SlotPlanEntry
+        {
+            TSSStoragePlanContext                        tss_context{};
+            TSDStoragePlanContext                        tsd_context{};
+            std::unique_ptr<MemoryUtils::StoragePlan>    storage_plan{};
+            const MemoryUtils::StoragePlan              *root_plan{nullptr};
+        };
+
+        [[nodiscard]] std::unordered_map<const TSValueTypeMetaData *, std::unique_ptr<SlotPlanEntry>> &
+        slot_plan_entries() noexcept
+        {
+            static std::unordered_map<const TSValueTypeMetaData *, std::unique_ptr<SlotPlanEntry>> entries;
+            return entries;
+        }
+
+        [[nodiscard]] std::mutex &slot_plan_mutex() noexcept
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        template <typename Storage>
+        [[nodiscard]] const Storage &storage(const void *memory)
+        {
+            if (memory == nullptr) { throw std::logic_error("slot TSData requires live storage"); }
+            return *MemoryUtils::cast<Storage>(memory);
+        }
+
+        template <typename Storage>
+        [[nodiscard]] Storage &storage(void *memory)
+        {
+            if (memory == nullptr) { throw std::logic_error("slot TSData requires live storage"); }
+            return *MemoryUtils::cast<Storage>(memory);
+        }
+
+        enum class SlotSetSurface
+        {
+            Live,
+            Added,
+            Removed,
+        };
+
+        enum class SlotMapSurface
+        {
+            Live,
+            Modified,
+        };
+
+        struct SlotContextBase
+        {
+            const TSValueTypeMetaData      *schema{nullptr};
+            const MemoryUtils::StoragePlan *plan{nullptr};
+            TSSDataOps                      set_ops{};
+            TSSDataLayout                   set_layout{};
+            SetValueOps                     value_set_ops{};
+            IndexedValueOps                 delta_bundle_ops{};
+            SetValueOps                     added_set_ops{};
+            SetValueOps                     removed_set_ops{};
+            const ValueTypeBinding         *added_set_binding{nullptr};
+            const ValueTypeBinding         *removed_set_binding{nullptr};
+
+            virtual ~SlotContextBase() = default;
+            virtual const TSDataOps &ops_ref() const noexcept = 0;
+            virtual const TSDataBinding *key_set_binding() const noexcept { return nullptr; }
+        };
+
+        template <typename Storage>
+        struct TSSContextBase : SlotContextBase
+        {
+            void initialise_tss_common(const TSValueTypeMetaData &schema_,
+                                       const MemoryUtils::StoragePlan &plan_,
+                                       const ValueTypeBinding &key_binding,
+                                       bool mutable_storage)
+            {
+                schema = &schema_;
+                plan   = &plan_;
+                set_layout.key_binding     = &key_binding;
+                set_layout.tracking_offset = 0;
+
+                configure_set_value_ops();
+                configure_delta_ops();
+                set_layout.value_binding   = &ValueTypeBinding::intern(*schema->value_schema, *plan, value_set_ops);
+                configure_tss_ops(mutable_storage);
+                bind_tss_delta_surfaces();
+            }
+
+            const TSDataOps &ops_ref() const noexcept override { return set_ops; }
+
+          protected:
+            void configure_tss_ops(bool mutable_storage)
+            {
+                set_ops = TSSDataOps{};
+                TSDataOps &base_ops = set_ops;
+                base_ops = TSDataOps{
+                    .context                   = this,
+                    .allows_mutation           = mutable_storage,
+                    .layout_impl               = &tss_layout,
+                    .tracking_impl             = &tss_tracking,
+                    .mutable_tracking_impl     = &tss_mutable_tracking,
+                    .value_memory_impl         = &tss_value_memory,
+                    .mutable_value_memory_impl = &tss_mutable_value_memory,
+                    .delta_memory_impl         = &tss_delta_memory,
+                    .mutable_delta_memory_impl = &tss_mutable_delta_memory,
+                    .reset_delta_impl          = &tss_reset_delta,
+                    .copy_value_from_impl      = &tss_copy_value_from,
+                };
+                set_ops.size_impl                      = &tss_size;
+                set_ops.slot_capacity_impl             = &tss_slot_capacity;
+                set_ops.slot_occupied_impl             = &tss_slot_occupied;
+                set_ops.slot_live_impl                 = &tss_slot_live;
+                set_ops.slot_added_impl                = &tss_slot_added;
+                set_ops.slot_removed_impl              = &tss_slot_removed;
+                set_ops.key_at_slot_impl               = &tss_key_at_slot;
+                set_ops.contains_impl                  = &tss_contains;
+                set_ops.find_slot_impl                 = &tss_find_slot;
+                set_ops.make_values_range_impl         = &tss_live_keys_range;
+                set_ops.make_added_values_range_impl   = &tss_added_keys_range;
+                set_ops.make_removed_values_range_impl = &tss_removed_keys_range;
+                set_ops.insert_key_impl                = &tss_insert_key;
+                set_ops.remove_key_impl                = &tss_remove_key;
+                set_ops.reserve_impl                   = &tss_reserve;
+            }
+
+            void configure_set_value_ops()
+            {
+                value_set_ops = set_ops_for_surface<SlotSetSurface::Live>();
+            }
+
+            void configure_delta_ops()
+            {
+                added_set_ops   = set_ops_for_surface<SlotSetSurface::Added>();
+                removed_set_ops = set_ops_for_surface<SlotSetSurface::Removed>();
+                delta_bundle_ops = IndexedValueOps{
+                    {this, false, &delta_bundle_hash, &delta_bundle_equals, &delta_bundle_compare,
+                     &delta_bundle_to_string},
+                    &delta_bundle_size,
+                    &delta_bundle_element_at,
+                    &delta_bundle_element_binding,
+                    &delta_bundle_make_range,
+                    nullptr,
+                };
+            }
+
+            void bind_tss_delta_surfaces()
+            {
+                const auto *delta_schema = schema->delta_value_schema;
+                if (delta_schema == nullptr || delta_schema->kind != ValueTypeKind::Bundle ||
+                    delta_schema->field_count != 2)
+                {
+                    throw std::logic_error("TSS TSData delta schema must be Bundle{added, removed}");
+                }
+                added_set_binding   = &ValueTypeBinding::intern(*delta_schema->fields[0].type, *plan, added_set_ops);
+                removed_set_binding = &ValueTypeBinding::intern(*delta_schema->fields[1].type, *plan, removed_set_ops);
+                set_layout.delta_binding = &ValueTypeBinding::intern(*delta_schema, *plan, delta_bundle_ops);
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] SetValueOps set_ops_for_surface()
+            {
+                return SetValueOps{
+                    {{this, false, &set_hash<Surface>, &set_equals<Surface>, &set_compare<Surface>,
+                      &set_to_string<Surface>},
+                     &set_size<Surface>,
+                     &set_element_at<Surface>,
+                     &set_element_binding<Surface>,
+                     &set_make_range<Surface>,
+                     nullptr},
+                    &set_contains<Surface>,
+                };
+            }
+
+            [[nodiscard]] static const TSSContextBase *ctx(const void *context) noexcept
+            {
+                return static_cast<const TSSContextBase *>(context);
+            }
+
+            [[nodiscard]] static const TSDataLayout *tss_layout(const void *context) noexcept
+            {
+                return &ctx(context)->set_layout;
+            }
+
+            [[nodiscard]] static const TSDataTracking *tss_tracking(const void *, const void *memory) noexcept
+            {
+                return &storage<Storage>(memory).tracking();
+            }
+
+            [[nodiscard]] static TSDataTracking *tss_mutable_tracking(const void *, void *memory) noexcept
+            {
+                return &storage<Storage>(memory).mutable_tracking();
+            }
+
+            [[nodiscard]] static const void *tss_value_memory(const void *, const void *memory) noexcept
+            {
+                return memory;
+            }
+
+            [[nodiscard]] static void *tss_mutable_value_memory(const void *, void *memory) noexcept
+            {
+                return memory;
+            }
+
+            [[nodiscard]] static const void *tss_delta_memory(const void *, const void *memory) noexcept
+            {
+                return memory;
+            }
+
+            [[nodiscard]] static void *tss_mutable_delta_memory(const void *, void *memory) noexcept
+            {
+                return memory;
+            }
+
+            static void tss_reset_delta(const void *, void *memory)
+            {
+                storage<Storage>(memory).reset_delta();
+            }
+
+            [[nodiscard]] static bool tss_copy_value_from(const void *context, void *memory, const ValueView &source,
+                                                          engine_time_t modified_time)
+            {
+                if (!source.has_value()) { throw std::invalid_argument("TSS copy requires a live source value"); }
+                if (source.schema() != ctx(context)->schema->value_schema)
+                {
+                    throw std::invalid_argument("TSS copy requires the set value schema");
+                }
+
+                auto &target = storage<Storage>(memory);
+                SetView source_set{source};
+                bool changed = false;
+                for (const auto key : source_set.values())
+                {
+                    changed = target.insert_key(key, modified_time).changed || changed;
+                }
+
+                std::vector<ValueView> removals;
+                for (const auto key : set_make_range<SlotSetSurface::Live>(context, memory))
+                {
+                    if (!source_set.contains(key)) { removals.push_back(key); }
+                }
+                for (const auto key : removals)
+                {
+                    changed = target.remove_key(key, modified_time).changed || changed;
+                }
+                return changed;
+            }
+
+            [[nodiscard]] static std::size_t tss_size(const void *, const void *memory) noexcept
+            {
+                return storage<Storage>(memory).size();
+            }
+
+            [[nodiscard]] static std::size_t tss_slot_capacity(const void *, const void *memory) noexcept
+            {
+                return storage<Storage>(memory).slot_capacity();
+            }
+
+            [[nodiscard]] static bool tss_slot_occupied(const void *, const void *memory, std::size_t slot)
+            {
+                return storage<Storage>(memory).slot_occupied(slot);
+            }
+
+            [[nodiscard]] static bool tss_slot_live(const void *, const void *memory, std::size_t slot)
+            {
+                return storage<Storage>(memory).slot_live(slot);
+            }
+
+            [[nodiscard]] static bool tss_slot_added(const void *, const void *memory, std::size_t slot)
+            {
+                return storage<Storage>(memory).slot_added(slot);
+            }
+
+            [[nodiscard]] static bool tss_slot_removed(const void *, const void *memory, std::size_t slot)
+            {
+                return storage<Storage>(memory).slot_removed(slot);
+            }
+
+            [[nodiscard]] static const void *tss_key_at_slot(const void *, const void *memory, std::size_t slot)
+            {
+                return storage<Storage>(memory).key_at_slot(slot);
+            }
+
+            [[nodiscard]] static bool tss_contains(const void *, const void *memory, const ValueView &key)
+            {
+                return storage<Storage>(memory).contains(key);
+            }
+
+            [[nodiscard]] static std::size_t tss_find_slot(const void *, const void *memory, const ValueView &key)
+            {
+                return storage<Storage>(memory).find_slot(key);
+            }
+
+            [[nodiscard]] static SlotTSDataMutationResult tss_insert_key(const void *, void *memory,
+                                                                         const ValueView &key,
+                                                                         engine_time_t modified_time)
+            {
+                return storage<Storage>(memory).insert_key(key, modified_time);
+            }
+
+            [[nodiscard]] static SlotTSDataMutationResult tss_remove_key(const void *, void *memory,
+                                                                         const ValueView &key,
+                                                                         engine_time_t modified_time)
+            {
+                return storage<Storage>(memory).remove_key(key, modified_time);
+            }
+
+            static void tss_reserve(const void *, void *memory, std::size_t capacity)
+            {
+                storage<Storage>(memory).reserve(capacity);
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static bool set_slot_in_surface(const Storage &store, std::size_t slot) noexcept
+            {
+                if constexpr (Surface == SlotSetSurface::Live) { return store.slot_live(slot); }
+                if constexpr (Surface == SlotSetSurface::Added) { return store.slot_added(slot); }
+                return store.slot_removed(slot);
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static std::size_t set_size(const void *, const void *memory) noexcept
+            {
+                const auto &store = storage<Storage>(memory);
+                if constexpr (Surface == SlotSetSurface::Live) { return store.size(); }
+                std::size_t count = 0;
+                for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
+                {
+                    if (set_slot_in_surface<Surface>(store, slot)) { ++count; }
+                }
+                return count;
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static const void *set_element_at(const void *, const void *memory, std::size_t index)
+            {
+                const auto &store = storage<Storage>(memory);
+                std::size_t seen = 0;
+                for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
+                {
+                    if (!set_slot_in_surface<Surface>(store, slot)) { continue; }
+                    if (seen++ == index) { return store.key_at_slot(slot); }
+                }
+                throw std::out_of_range("slot set element index out of range");
+            }
+
+            template <SlotSetSurface>
+            [[nodiscard]] static const ValueTypeBinding *set_element_binding(const void *context, const void *,
+                                                                             std::size_t) noexcept
+            {
+                return ctx(context)->set_layout.key_binding;
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static bool set_contains(const void *, const void *memory, const void *key)
+            {
+                const auto &store = storage<Storage>(memory);
+                const auto  slot  = store.keys().find_stored_slot(key);
+                return slot != KeySlotStore::npos && set_slot_in_surface<Surface>(store, slot);
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static bool set_range_predicate(const void *, const void *memory, std::size_t slot)
+            {
+                return set_slot_in_surface<Surface>(storage<Storage>(memory), slot);
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static ValueView set_range_projector(const void *context, const void *memory,
+                                                               std::size_t slot)
+            {
+                return ValueView{ctx(context)->set_layout.key_binding, storage<Storage>(memory).key_at_slot(slot)};
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static Range<ValueView> set_make_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<Storage>(memory).slot_capacity(),
+                    .predicate = &set_range_predicate<Surface>,
+                    .projector = &set_range_projector<Surface>,
+                };
+            }
+
+            [[nodiscard]] static Range<ValueView> tss_live_keys_range(const void *context, const void *memory)
+            {
+                return set_make_range<SlotSetSurface::Live>(context, memory);
+            }
+
+            [[nodiscard]] static Range<ValueView> tss_added_keys_range(const void *context, const void *memory)
+            {
+                return set_make_range<SlotSetSurface::Added>(context, memory);
+            }
+
+            [[nodiscard]] static Range<ValueView> tss_removed_keys_range(const void *context, const void *memory)
+            {
+                return set_make_range<SlotSetSurface::Removed>(context, memory);
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static std::size_t set_hash(const void *context, const void *memory)
+            {
+                const auto *state = ctx(context);
+                const auto &ops   = state->set_layout.key_binding->checked_ops();
+                std::size_t result = 0;
+                for (const auto key : set_make_range<Surface>(context, memory))
+                {
+                    result ^= ops.hash(key.data());
+                }
+                return result;
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static bool set_equals(const void *context, const void *lhs, const void *rhs) noexcept
+            {
+                if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
+                try
+                {
+                    if (set_size<Surface>(context, lhs) != set_size<Surface>(context, rhs)) { return false; }
+                    for (const auto key : set_make_range<Surface>(context, lhs))
+                    {
+                        if (!set_contains<Surface>(context, rhs, key.data())) { return false; }
+                    }
+                    return true;
+                }
+                catch (...) { return false; }
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static std::partial_ordering set_compare(const void *context, const void *lhs,
+                                                                    const void *rhs) noexcept
+            {
+                if (const auto order = value_ops_detail::null_order(static_cast<const void *>(lhs),
+                                                                     static_cast<const void *>(rhs)))
+                {
+                    return *order;
+                }
+                const auto lhs_size = set_size<Surface>(context, lhs);
+                const auto rhs_size = set_size<Surface>(context, rhs);
+                if (lhs_size < rhs_size) { return std::partial_ordering::less; }
+                if (lhs_size > rhs_size) { return std::partial_ordering::greater; }
+                return set_equals<Surface>(context, lhs, rhs) ? std::partial_ordering::equivalent
+                                                              : std::partial_ordering::unordered;
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static std::string set_to_string(const void *context, const void *memory)
+            {
+                const auto *state = ctx(context);
+                const auto &ops   = state->set_layout.key_binding->checked_ops();
+                fmt::memory_buffer out;
+                fmt::format_to(std::back_inserter(out), "{{");
+                bool first = true;
+                for (const auto key : set_make_range<Surface>(context, memory))
+                {
+                    if (!first) { fmt::format_to(std::back_inserter(out), ", "); }
+                    first = false;
+                    fmt::format_to(std::back_inserter(out), "{}", ops.to_string(key.data()));
+                }
+                fmt::format_to(std::back_inserter(out), "}}");
+                return fmt::to_string(out);
+            }
+
+            [[nodiscard]] static std::size_t delta_bundle_size(const void *, const void *) noexcept { return 2; }
+
+            [[nodiscard]] static const void *delta_bundle_element_at(const void *, const void *memory,
+                                                                     std::size_t index)
+            {
+                if (index >= 2) { throw std::out_of_range("TSS delta bundle index out of range"); }
+                return memory;
+            }
+
+            [[nodiscard]] static const ValueTypeBinding *delta_bundle_element_binding(const void *context,
+                                                                                      const void *,
+                                                                                      std::size_t index) noexcept
+            {
+                const auto *state = ctx(context);
+                return index == 0 ? state->added_set_binding : state->removed_set_binding;
+            }
+
+            [[nodiscard]] static ValueView delta_bundle_projector(const void *context, const void *memory,
+                                                                  std::size_t index)
+            {
+                return ValueView{delta_bundle_element_binding(context, memory, index),
+                                 delta_bundle_element_at(context, memory, index)};
+            }
+
+            [[nodiscard]] static Range<ValueView> delta_bundle_make_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = 2,
+                    .predicate = nullptr,
+                    .projector = &delta_bundle_projector,
+                };
+            }
+
+            [[nodiscard]] static std::size_t delta_bundle_hash(const void *context, const void *memory)
+            {
+                const auto *state = ctx(context);
+                return combine_hash(state->added_set_binding->checked_ops().hash(memory),
+                                    state->removed_set_binding->checked_ops().hash(memory));
+            }
+
+            [[nodiscard]] static bool delta_bundle_equals(const void *context, const void *lhs,
+                                                          const void *rhs) noexcept
+            {
+                if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
+                try
+                {
+                    const auto *state = ctx(context);
+                    return state->added_set_binding->checked_ops().equals(lhs, rhs) &&
+                           state->removed_set_binding->checked_ops().equals(lhs, rhs);
+                }
+                catch (...) { return false; }
+            }
+
+            [[nodiscard]] static std::partial_ordering delta_bundle_compare(const void *context, const void *lhs,
+                                                                            const void *rhs) noexcept
+            {
+                if (const auto order = value_ops_detail::null_order(static_cast<const void *>(lhs),
+                                                                     static_cast<const void *>(rhs)))
+                {
+                    return *order;
+                }
+                return delta_bundle_equals(context, lhs, rhs) ? std::partial_ordering::equivalent
+                                                              : std::partial_ordering::unordered;
+            }
+
+            [[nodiscard]] static std::string delta_bundle_to_string(const void *context, const void *memory)
+            {
+                const auto *state = ctx(context);
+                return fmt::format("{{added: {}, removed: {}}}",
+                                   state->added_set_binding->checked_ops().to_string(memory),
+                                   state->removed_set_binding->checked_ops().to_string(memory));
+            }
+        };
+
+        struct TSSContext final : TSSContextBase<TSSSlotStorage>
+        {
+            TSSContext(const TSValueTypeMetaData &schema,
+                       const MemoryUtils::StoragePlan &plan,
+                       const ValueTypeBinding &key_binding)
+            {
+                initialise_tss_common(schema, plan, key_binding, true);
+            }
+        };
+
+        struct TSDContext final : TSSContextBase<TSDSlotStorage>
+        {
+            const TSValueTypeMetaData *dict_schema{nullptr};
+            TSDDataOps              dict_ops{};
+            TSDDataLayout           dict_layout{};
+            MapValueOps             value_map_ops{};
+            MapValueOps             modified_map_ops{};
+            SetValueOps             key_set_value_ops{};
+            IndexedValueOps          dict_delta_bundle_ops{};
+            const ValueTypeBinding *modified_map_binding{nullptr};
+            const ValueTypeBinding *key_set_value_binding{nullptr};
+            const TSDataBinding    *key_set_ts_binding{nullptr};
+
+            TSDContext(const TSValueTypeMetaData &schema,
+                       const MemoryUtils::StoragePlan &plan,
+                       const ValueTypeBinding &key_binding,
+                       const TSDataBinding &element_binding)
+            {
+                dict_schema = &schema;
+                const auto *key_set_schema = TypeRegistry::instance().tss(schema.key_type());
+                if (key_set_schema == nullptr)
+                {
+                    throw std::logic_error("TSD key-set schema is not resolved");
+                }
+                initialise_tss_common(*key_set_schema, plan, key_binding, false);
+                initialise_tsd(schema, plan, key_binding, element_binding);
+            }
+
+            const TSDataOps &ops_ref() const noexcept override { return dict_ops; }
+            const TSDataBinding *key_set_binding() const noexcept override { return key_set_ts_binding; }
+
+          private:
+            void initialise_tsd(const TSValueTypeMetaData &schema_,
+                                const MemoryUtils::StoragePlan &plan_,
+                                const ValueTypeBinding &key_binding,
+                                const TSDataBinding &element_binding)
+            {
+                const auto &element_ops = element_binding.checked_ops();
+                const auto *element_layout = element_ops.layout_impl(element_ops.context);
+                if (element_layout == nullptr)
+                {
+                    throw std::logic_error("TSD element layout is not resolved");
+                }
+
+                dict_layout.key_binding           = &key_binding;
+                dict_layout.element_binding       = &element_binding;
+                dict_layout.element_layout        = element_layout;
+                dict_layout.element_value_binding = element_layout->value_binding;
+                dict_layout.element_delta_binding = element_layout->delta_binding;
+                dict_layout.tracking_offset       = 0;
+
+                configure_map_value_ops();
+                configure_modified_map_ops();
+                configure_tsd_ops();
+                bind_tsd_surfaces(schema_, plan_);
+            }
+
+            void configure_tsd_ops()
+            {
+                dict_ops = TSDDataOps{};
+                TSSDataOps &set_part = dict_ops;
+                set_part = set_ops;
+                TSDataOps &base_ops = dict_ops;
+                base_ops.context = this;
+                base_ops.allows_mutation = true;
+                base_ops.layout_impl = &tsd_layout;
+                base_ops.tracking_impl = &tsd_tracking;
+                base_ops.mutable_tracking_impl = &tsd_mutable_tracking;
+                base_ops.value_memory_impl = &tsd_value_memory;
+                base_ops.mutable_value_memory_impl = &tsd_mutable_value_memory;
+                base_ops.delta_memory_impl = &tsd_delta_memory;
+                base_ops.mutable_delta_memory_impl = &tsd_mutable_delta_memory;
+                base_ops.reset_delta_impl = &tsd_reset_delta;
+                base_ops.record_child_modified_impl = &tsd_record_child_modified;
+                base_ops.copy_value_from_impl = &tsd_copy_value_from;
+
+                dict_ops.child_at_slot_impl = &tsd_child_at_slot;
+                dict_ops.slot_modified_impl = &tsd_slot_modified;
+                dict_ops.make_ts_values_range_impl = &tsd_ts_values_range;
+                dict_ops.make_valid_keys_range_impl = &tsd_valid_keys_range;
+                dict_ops.make_valid_ts_values_range_impl = &tsd_valid_ts_values_range;
+                dict_ops.make_modified_keys_range_impl = &tsd_modified_keys_range;
+                dict_ops.make_modified_ts_values_range_impl = &tsd_modified_ts_values_range;
+                dict_ops.make_added_ts_values_range_impl = &tsd_added_ts_values_range;
+                dict_ops.make_removed_ts_values_range_impl = &tsd_removed_ts_values_range;
+                dict_ops.make_ts_kv_range_impl = &tsd_ts_kv_range;
+                dict_ops.make_valid_ts_kv_range_impl = &tsd_valid_ts_kv_range;
+                dict_ops.make_modified_ts_kv_range_impl = &tsd_modified_ts_kv_range;
+                dict_ops.make_added_ts_kv_range_impl = &tsd_added_ts_kv_range;
+                dict_ops.make_removed_ts_kv_range_impl = &tsd_removed_ts_kv_range;
+            }
+
+            void configure_map_value_ops()
+            {
+                value_map_ops = map_ops_for_surface<SlotMapSurface::Live>();
+                key_set_value_ops = SetValueOps{
+                    {{this, false, &map_key_set_hash, &map_key_set_equals, &map_key_set_compare,
+                      &map_key_set_to_string},
+                     &map_live_size,
+                     &map_key_at_index,
+                     &map_key_binding,
+                     &map_keys_range,
+                     nullptr},
+                    &map_contains_key,
+                };
+            }
+
+            void configure_modified_map_ops()
+            {
+                modified_map_ops = map_ops_for_surface<SlotMapSurface::Modified>();
+                dict_delta_bundle_ops = IndexedValueOps{
+                    {this, false, &dict_delta_hash, &dict_delta_equals, &dict_delta_compare,
+                     &dict_delta_to_string},
+                    &dict_delta_size,
+                    &dict_delta_element_at,
+                    &dict_delta_element_binding,
+                    &dict_delta_make_range,
+                    nullptr,
+                };
+            }
+
+            void bind_tsd_surfaces(const TSValueTypeMetaData &schema_, const MemoryUtils::StoragePlan &plan_)
+            {
+                const auto *value_schema = schema_.value_schema;
+                const auto *delta_schema = schema_.delta_value_schema;
+                if (value_schema == nullptr || delta_schema == nullptr)
+                {
+                    throw std::logic_error("TSD schemas are not populated");
+                }
+                dict_layout.value_binding = &ValueTypeBinding::intern(*value_schema, plan_, value_map_ops);
+
+                if (delta_schema->kind != ValueTypeKind::Bundle || delta_schema->field_count != 2)
+                {
+                    throw std::logic_error("TSD delta schema must be Bundle{removed, modified}");
+                }
+                removed_set_binding = &ValueTypeBinding::intern(*delta_schema->fields[0].type, plan_, removed_set_ops);
+                modified_map_binding = &ValueTypeBinding::intern(*delta_schema->fields[1].type, plan_, modified_map_ops);
+                added_set_binding = &ValueTypeBinding::intern(*TypeRegistry::instance().set(schema_.key_type()),
+                                                              plan_, added_set_ops);
+                dict_layout.delta_binding = &ValueTypeBinding::intern(*delta_schema, plan_, dict_delta_bundle_ops);
+
+                key_set_value_binding = &ValueTypeBinding::intern(*TypeRegistry::instance().set(schema_.key_type()),
+                                                                  plan_, key_set_value_ops);
+                set_layout.value_binding = key_set_value_binding;
+
+                key_set_ts_binding = &TSDataBinding::intern(*TypeRegistry::instance().tss(schema_.key_type()),
+                                                            plan_, set_ops);
+                dict_layout.key_set_binding = key_set_ts_binding;
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] MapValueOps map_ops_for_surface()
+            {
+                return MapValueOps{
+                    {{this, false, &map_hash<Surface>, &map_equals<Surface>, &map_compare<Surface>,
+                      &map_to_string<Surface>},
+                     &map_size<Surface>,
+                     &map_key_at_index<Surface>,
+                     &map_key_binding,
+                     &map_keys_range<Surface>,
+                     nullptr},
+                    &map_contains<Surface>,
+                    &map_value_at<Surface>,
+                    &map_value_at_index<Surface>,
+                    &map_value_binding<Surface>,
+                    &map_keys_range<Surface>,
+                    &map_values_range<Surface>,
+                    &map_kv_range<Surface>,
+                    &map_key_set,
+                };
+            }
+
+            [[nodiscard]] static const TSDContext *ctxd(const void *context) noexcept
+            {
+                return static_cast<const TSDContext *>(context);
+            }
+
+            [[nodiscard]] static const TSDataLayout *tsd_layout(const void *context) noexcept
+            {
+                return &ctxd(context)->dict_layout;
+            }
+
+            [[nodiscard]] static const TSDataTracking *tsd_tracking(const void *, const void *memory) noexcept
+            {
+                return &storage<TSDSlotStorage>(memory).tracking();
+            }
+
+            [[nodiscard]] static TSDataTracking *tsd_mutable_tracking(const void *, void *memory) noexcept
+            {
+                return &storage<TSDSlotStorage>(memory).mutable_tracking();
+            }
+
+            [[nodiscard]] static const void *tsd_value_memory(const void *, const void *memory) noexcept
+            {
+                return memory;
+            }
+
+            [[nodiscard]] static void *tsd_mutable_value_memory(const void *, void *memory) noexcept
+            {
+                return memory;
+            }
+
+            [[nodiscard]] static const void *tsd_delta_memory(const void *, const void *memory) noexcept
+            {
+                return memory;
+            }
+
+            [[nodiscard]] static void *tsd_mutable_delta_memory(const void *, void *memory) noexcept
+            {
+                return memory;
+            }
+
+            static void tsd_reset_delta(const void *, void *memory)
+            {
+                storage<TSDSlotStorage>(memory).reset_delta();
+            }
+
+            static void tsd_record_child_modified(const void *, void *memory, std::size_t child_id,
+                                                  engine_time_t modified_time)
+            {
+                storage<TSDSlotStorage>(memory).record_child_modified(child_id, modified_time);
+            }
+
+            [[nodiscard]] static bool tsd_copy_value_from(const void *context, void *memory, const ValueView &source,
+                                                          engine_time_t modified_time)
+            {
+                if (!source.has_value()) { throw std::invalid_argument("TSD copy requires a live source value"); }
+                const auto *state = ctxd(context);
+                if (source.schema() != state->dict_schema->value_schema)
+                {
+                    throw std::invalid_argument("TSD copy requires the map value schema");
+                }
+
+                auto &target = storage<TSDSlotStorage>(memory);
+                MapView source_map{source};
+                bool changed = false;
+                for (const auto [key, value] : source_map.items())
+                {
+                    const auto result = target.insert_key(key, modified_time);
+                    changed = result.changed || changed;
+                    auto *child_memory = target.child_memory_for_write(result.slot);
+                    const auto &child_ops = state->dict_layout.element_binding->checked_ops();
+                    if (child_ops.copy_value_from_impl(child_ops.context, child_memory, value, modified_time))
+                    {
+                        child_ops.mutable_tracking_impl(child_ops.context, child_memory)->last_modified_time =
+                            modified_time;
+                        target.record_child_modified(result.slot, modified_time);
+                        changed = true;
+                    }
+                }
+
+                std::vector<ValueView> removals;
+                for (const auto key : map_keys_range<SlotMapSurface::Live>(context, memory))
+                {
+                    if (!source_map.contains(key)) { removals.push_back(key); }
+                }
+                for (const auto key : removals)
+                {
+                    changed = target.remove_key(key, modified_time).changed || changed;
+                }
+                return changed;
+            }
+
+            [[nodiscard]] static const void *tsd_child_at_slot(const void *, const void *memory, std::size_t slot)
+            {
+                return storage<TSDSlotStorage>(memory).child_at_slot(slot);
+            }
+
+            [[nodiscard]] static bool tsd_slot_modified(const void *, const void *memory, std::size_t slot)
+            {
+                return storage<TSDSlotStorage>(memory).slot_modified(slot);
+            }
+
+            [[nodiscard]] static bool live_slot_predicate(const void *, const void *memory, std::size_t slot)
+            {
+                return storage<TSDSlotStorage>(memory).slot_live(slot);
+            }
+
+            [[nodiscard]] static bool valid_slot_predicate(const void *context, const void *memory, std::size_t slot)
+            {
+                const auto *state = ctxd(context);
+                const auto &store = storage<TSDSlotStorage>(memory);
+                if (!store.slot_live(slot)) { return false; }
+                const auto &child_ops = state->dict_layout.element_binding->checked_ops();
+                const auto *child_memory = store.child_at_slot(slot);
+                return child_ops.tracking_impl(child_ops.context, child_memory)->last_modified_time != MIN_DT;
+            }
+
+            [[nodiscard]] static bool modified_slot_predicate(const void *, const void *memory, std::size_t slot)
+            {
+                const auto &store = storage<TSDSlotStorage>(memory);
+                return store.slot_live(slot) && store.slot_modified(slot);
+            }
+
+            [[nodiscard]] static bool added_slot_predicate(const void *, const void *memory, std::size_t slot)
+            {
+                const auto &store = storage<TSDSlotStorage>(memory);
+                return store.slot_occupied(slot) && store.slot_added(slot);
+            }
+
+            [[nodiscard]] static bool removed_slot_predicate(const void *, const void *memory, std::size_t slot)
+            {
+                const auto &store = storage<TSDSlotStorage>(memory);
+                return store.slot_occupied(slot) && store.slot_removed(slot);
+            }
+
+            [[nodiscard]] static ValueView ts_key_projector(const void *context, const void *memory,
+                                                            std::size_t slot)
+            {
+                const auto *state = ctxd(context);
+                return ValueView{state->dict_layout.key_binding, storage<TSDSlotStorage>(memory).key_at_slot(slot)};
+            }
+
+            [[nodiscard]] static TSDataView ts_value_projector(const void *context, const void *memory,
+                                                               std::size_t slot)
+            {
+                const auto *state = ctxd(context);
+                return TSDataView{state->dict_layout.element_binding,
+                                  storage<TSDSlotStorage>(memory).child_at_slot(slot)};
+            }
+
+            [[nodiscard]] static std::pair<ValueView, TSDataView> ts_kv_projector(const void *context,
+                                                                                  const void *memory,
+                                                                                  std::size_t slot)
+            {
+                const auto *state = ctxd(context);
+                const auto &store = storage<TSDSlotStorage>(memory);
+                return {ValueView{state->dict_layout.key_binding, store.key_at_slot(slot)},
+                        TSDataView{state->dict_layout.element_binding, store.child_at_slot(slot)}};
+            }
+
+            [[nodiscard]] static Range<TSDataView> tsd_ts_values_range(const void *context, const void *memory)
+            {
+                return Range<TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &live_slot_predicate,
+                    .projector = &ts_value_projector,
+                };
+            }
+
+            [[nodiscard]] static Range<ValueView> tsd_valid_keys_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &valid_slot_predicate,
+                    .projector = &ts_key_projector,
+                };
+            }
+
+            [[nodiscard]] static Range<TSDataView> tsd_valid_ts_values_range(const void *context,
+                                                                             const void *memory)
+            {
+                return Range<TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &valid_slot_predicate,
+                    .projector = &ts_value_projector,
+                };
+            }
+
+            [[nodiscard]] static KeyValueRange<ValueView, TSDataView> tsd_ts_kv_range(const void *context,
+                                                                                      const void *memory)
+            {
+                return KeyValueRange<ValueView, TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &live_slot_predicate,
+                    .projector = &ts_kv_projector,
+                };
+            }
+
+            [[nodiscard]] static KeyValueRange<ValueView, TSDataView> tsd_valid_ts_kv_range(const void *context,
+                                                                                            const void *memory)
+            {
+                return KeyValueRange<ValueView, TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &valid_slot_predicate,
+                    .projector = &ts_kv_projector,
+                };
+            }
+
+            [[nodiscard]] static Range<ValueView> tsd_modified_keys_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &modified_slot_predicate,
+                    .projector = &ts_key_projector,
+                };
+            }
+
+            [[nodiscard]] static Range<TSDataView> tsd_modified_ts_values_range(const void *context,
+                                                                                const void *memory)
+            {
+                return Range<TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &modified_slot_predicate,
+                    .projector = &ts_value_projector,
+                };
+            }
+
+            [[nodiscard]] static KeyValueRange<ValueView, TSDataView> tsd_modified_ts_kv_range(const void *context,
+                                                                                               const void *memory)
+            {
+                return KeyValueRange<ValueView, TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &modified_slot_predicate,
+                    .projector = &ts_kv_projector,
+                };
+            }
+
+            [[nodiscard]] static Range<TSDataView> tsd_added_ts_values_range(const void *context, const void *memory)
+            {
+                return Range<TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &added_slot_predicate,
+                    .projector = &ts_value_projector,
+                };
+            }
+
+            [[nodiscard]] static Range<TSDataView> tsd_removed_ts_values_range(const void *context, const void *memory)
+            {
+                return Range<TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &removed_slot_predicate,
+                    .projector = &ts_value_projector,
+                };
+            }
+
+            [[nodiscard]] static KeyValueRange<ValueView, TSDataView> tsd_added_ts_kv_range(const void *context,
+                                                                                            const void *memory)
+            {
+                return KeyValueRange<ValueView, TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &added_slot_predicate,
+                    .projector = &ts_kv_projector,
+                };
+            }
+
+            [[nodiscard]] static KeyValueRange<ValueView, TSDataView> tsd_removed_ts_kv_range(const void *context,
+                                                                                              const void *memory)
+            {
+                return KeyValueRange<ValueView, TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &removed_slot_predicate,
+                    .projector = &ts_kv_projector,
+                };
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static bool map_slot_in_surface(const TSDSlotStorage &store, std::size_t slot) noexcept
+            {
+                if constexpr (Surface == SlotMapSurface::Live) { return store.slot_live(slot); }
+                return store.slot_live(slot) && store.slot_modified(slot);
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static std::size_t map_size(const void *, const void *memory) noexcept
+            {
+                const auto &store = storage<TSDSlotStorage>(memory);
+                if constexpr (Surface == SlotMapSurface::Live) { return store.size(); }
+                std::size_t count = 0;
+                for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
+                {
+                    if (map_slot_in_surface<Surface>(store, slot)) { ++count; }
+                }
+                return count;
+            }
+
+            [[nodiscard]] static std::size_t map_live_size(const void *context, const void *memory) noexcept
+            {
+                return map_size<SlotMapSurface::Live>(context, memory);
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static std::size_t nth_map_slot(const void *memory, std::size_t index)
+            {
+                const auto &store = storage<TSDSlotStorage>(memory);
+                std::size_t seen = 0;
+                for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
+                {
+                    if (!map_slot_in_surface<Surface>(store, slot)) { continue; }
+                    if (seen++ == index) { return slot; }
+                }
+                throw std::out_of_range("slot map index out of range");
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static const void *map_key_at_index(const void *, const void *memory, std::size_t index)
+            {
+                return storage<TSDSlotStorage>(memory).key_at_slot(nth_map_slot<Surface>(memory, index));
+            }
+
+            [[nodiscard]] static const void *map_key_at_index(const void *context, const void *memory,
+                                                              std::size_t index)
+            {
+                return map_key_at_index<SlotMapSurface::Live>(context, memory, index);
+            }
+
+            [[nodiscard]] static const ValueTypeBinding *map_key_binding(const void *context, const void *,
+                                                                         std::size_t) noexcept
+            {
+                return ctxd(context)->dict_layout.key_binding;
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static const ValueTypeBinding *map_value_binding(const void *context, const void *) noexcept
+            {
+                const auto *state = ctxd(context);
+                if constexpr (Surface == SlotMapSurface::Live) { return state->dict_layout.element_value_binding; }
+                return state->dict_layout.element_delta_binding;
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static const void *map_value_at_slot(const void *context, const void *memory,
+                                                               std::size_t slot)
+            {
+                const auto *state = ctxd(context);
+                const auto &store = storage<TSDSlotStorage>(memory);
+                const auto &child_ops = state->dict_layout.element_binding->checked_ops();
+                const auto *child_memory = store.child_at_slot(slot);
+                if constexpr (Surface == SlotMapSurface::Live)
+                {
+                    return child_ops.value_memory_impl(child_ops.context, child_memory);
+                }
+                return child_ops.delta_memory_impl(child_ops.context, child_memory);
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static const void *map_value_at_index(const void *context, const void *memory,
+                                                                std::size_t index)
+            {
+                return map_value_at_slot<Surface>(context, memory, nth_map_slot<Surface>(memory, index));
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static bool map_contains(const void *, const void *memory, const void *key)
+            {
+                const auto &store = storage<TSDSlotStorage>(memory);
+                const auto  slot  = store.keys().find_stored_slot(key);
+                return slot != KeySlotStore::npos && map_slot_in_surface<Surface>(store, slot);
+            }
+
+            [[nodiscard]] static bool map_contains_key(const void *context, const void *memory, const void *key)
+            {
+                return map_contains<SlotMapSurface::Live>(context, memory, key);
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static const void *map_value_at(const void *context, const void *memory, const void *key)
+            {
+                const auto &store = storage<TSDSlotStorage>(memory);
+                const auto  slot  = store.keys().find_stored_slot(key);
+                if (slot == KeySlotStore::npos || !map_slot_in_surface<Surface>(store, slot)) { return nullptr; }
+                return map_value_at_slot<Surface>(context, memory, slot);
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static bool map_range_predicate(const void *, const void *memory, std::size_t slot)
+            {
+                return map_slot_in_surface<Surface>(storage<TSDSlotStorage>(memory), slot);
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static ValueView map_key_projector(const void *context, const void *memory,
+                                                             std::size_t slot)
+            {
+                return ValueView{ctxd(context)->dict_layout.key_binding,
+                                 storage<TSDSlotStorage>(memory).key_at_slot(slot)};
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static ValueView map_value_projector(const void *context, const void *memory,
+                                                               std::size_t slot)
+            {
+                return ValueView{map_value_binding<Surface>(context, memory),
+                                 map_value_at_slot<Surface>(context, memory, slot)};
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static std::pair<ValueView, ValueView> map_kv_projector(const void *context,
+                                                                                  const void *memory,
+                                                                                  std::size_t slot)
+            {
+                return {map_key_projector<Surface>(context, memory, slot),
+                        map_value_projector<Surface>(context, memory, slot)};
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static Range<ValueView> map_keys_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &map_range_predicate<Surface>,
+                    .projector = &map_key_projector<Surface>,
+                };
+            }
+
+            [[nodiscard]] static Range<ValueView> map_keys_range(const void *context, const void *memory)
+            {
+                return map_keys_range<SlotMapSurface::Live>(context, memory);
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static Range<ValueView> map_values_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &map_range_predicate<Surface>,
+                    .projector = &map_value_projector<Surface>,
+                };
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static KeyValueRange<ValueView, ValueView> map_kv_range(const void *context,
+                                                                                  const void *memory)
+            {
+                return KeyValueRange<ValueView, ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = storage<TSDSlotStorage>(memory).slot_capacity(),
+                    .predicate = &map_range_predicate<Surface>,
+                    .projector = &map_kv_projector<Surface>,
+                };
+            }
+
+            [[nodiscard]] static SetView map_key_set(const void *context, const ValueTypeBinding *, const void *memory)
+            {
+                return SetView{ValueView{ctxd(context)->key_set_value_binding, memory}};
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static std::size_t map_hash(const void *context, const void *memory)
+            {
+                const auto *state = ctxd(context);
+                const auto &key_ops = state->dict_layout.key_binding->checked_ops();
+                const auto &value_ops = map_value_binding<Surface>(context, memory)->checked_ops();
+                std::size_t result = 0;
+                for (const auto [key, value] : map_kv_range<Surface>(context, memory))
+                {
+                    result ^= combine_hash(key_ops.hash(key.data()), value_ops.hash(value.data()));
+                }
+                return result;
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static bool map_equals(const void *context, const void *lhs, const void *rhs) noexcept
+            {
+                if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
+                try
+                {
+                    if (map_size<Surface>(context, lhs) != map_size<Surface>(context, rhs)) { return false; }
+                    const auto &value_ops = map_value_binding<Surface>(context, lhs)->checked_ops();
+                    for (const auto [key, value] : map_kv_range<Surface>(context, lhs))
+                    {
+                        const auto *rhs_value = map_value_at<Surface>(context, rhs, key.data());
+                        if (rhs_value == nullptr || !value_ops.equals(value.data(), rhs_value)) { return false; }
+                    }
+                    return true;
+                }
+                catch (...) { return false; }
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static std::partial_ordering map_compare(const void *context, const void *lhs,
+                                                                    const void *rhs) noexcept
+            {
+                if (const auto order = value_ops_detail::null_order(static_cast<const void *>(lhs),
+                                                                     static_cast<const void *>(rhs)))
+                {
+                    return *order;
+                }
+                return map_equals<Surface>(context, lhs, rhs) ? std::partial_ordering::equivalent
+                                                              : std::partial_ordering::unordered;
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static std::string map_to_string(const void *context, const void *memory)
+            {
+                const auto *state = ctxd(context);
+                const auto &key_ops = state->dict_layout.key_binding->checked_ops();
+                const auto &value_ops = map_value_binding<Surface>(context, memory)->checked_ops();
+                fmt::memory_buffer out;
+                fmt::format_to(std::back_inserter(out), "{{");
+                bool first = true;
+                for (const auto [key, value] : map_kv_range<Surface>(context, memory))
+                {
+                    if (!first) { fmt::format_to(std::back_inserter(out), ", "); }
+                    first = false;
+                    fmt::format_to(std::back_inserter(out), "{}: {}",
+                                   key_ops.to_string(key.data()),
+                                   value_ops.to_string(value.data()));
+                }
+                fmt::format_to(std::back_inserter(out), "}}");
+                return fmt::to_string(out);
+            }
+
+            [[nodiscard]] static std::size_t map_key_set_hash(const void *context, const void *memory)
+            {
+                return set_hash<SlotSetSurface::Live>(context, memory);
+            }
+
+            [[nodiscard]] static bool map_key_set_equals(const void *context, const void *lhs,
+                                                         const void *rhs) noexcept
+            {
+                return set_equals<SlotSetSurface::Live>(context, lhs, rhs);
+            }
+
+            [[nodiscard]] static std::partial_ordering map_key_set_compare(const void *context, const void *lhs,
+                                                                           const void *rhs) noexcept
+            {
+                return set_compare<SlotSetSurface::Live>(context, lhs, rhs);
+            }
+
+            [[nodiscard]] static std::string map_key_set_to_string(const void *context, const void *memory)
+            {
+                return set_to_string<SlotSetSurface::Live>(context, memory);
+            }
+
+            [[nodiscard]] static std::size_t dict_delta_size(const void *, const void *) noexcept { return 2; }
+
+            [[nodiscard]] static const void *dict_delta_element_at(const void *, const void *memory,
+                                                                   std::size_t index)
+            {
+                if (index >= 2) { throw std::out_of_range("TSD delta bundle index out of range"); }
+                return memory;
+            }
+
+            [[nodiscard]] static const ValueTypeBinding *dict_delta_element_binding(const void *context,
+                                                                                    const void *,
+                                                                                    std::size_t index) noexcept
+            {
+                const auto *state = ctxd(context);
+                return index == 0 ? state->removed_set_binding : state->modified_map_binding;
+            }
+
+            [[nodiscard]] static ValueView dict_delta_projector(const void *context, const void *memory,
+                                                                std::size_t index)
+            {
+                return ValueView{dict_delta_element_binding(context, memory, index),
+                                 dict_delta_element_at(context, memory, index)};
+            }
+
+            [[nodiscard]] static Range<ValueView> dict_delta_make_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = 2,
+                    .predicate = nullptr,
+                    .projector = &dict_delta_projector,
+                };
+            }
+
+            [[nodiscard]] static std::size_t dict_delta_hash(const void *context, const void *memory)
+            {
+                const auto *state = ctxd(context);
+                return combine_hash(state->removed_set_binding->checked_ops().hash(memory),
+                                    state->modified_map_binding->checked_ops().hash(memory));
+            }
+
+            [[nodiscard]] static bool dict_delta_equals(const void *context, const void *lhs,
+                                                        const void *rhs) noexcept
+            {
+                if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
+                try
+                {
+                    const auto *state = ctxd(context);
+                    return state->removed_set_binding->checked_ops().equals(lhs, rhs) &&
+                           state->modified_map_binding->checked_ops().equals(lhs, rhs);
+                }
+                catch (...) { return false; }
+            }
+
+            [[nodiscard]] static std::partial_ordering dict_delta_compare(const void *context, const void *lhs,
+                                                                          const void *rhs) noexcept
+            {
+                if (const auto order = value_ops_detail::null_order(static_cast<const void *>(lhs),
+                                                                     static_cast<const void *>(rhs)))
+                {
+                    return *order;
+                }
+                return dict_delta_equals(context, lhs, rhs) ? std::partial_ordering::equivalent
+                                                            : std::partial_ordering::unordered;
+            }
+
+            [[nodiscard]] static std::string dict_delta_to_string(const void *context, const void *memory)
+            {
+                const auto *state = ctxd(context);
+                return fmt::format("{{removed: {}, modified: {}}}",
+                                   state->removed_set_binding->checked_ops().to_string(memory),
+                                   state->modified_map_binding->checked_ops().to_string(memory));
+            }
+        };
+
+        struct SlotContextKey
+        {
+            const TSValueTypeMetaData      *schema{nullptr};
+            const MemoryUtils::StoragePlan *plan{nullptr};
+            std::size_t                     storage_offset{0};
+
+            [[nodiscard]] bool operator==(const SlotContextKey &) const noexcept = default;
+        };
+
+        struct SlotContextKeyHash
+        {
+            [[nodiscard]] std::size_t operator()(const SlotContextKey &key) const noexcept
+            {
+                auto seed = combine_hash(std::hash<const TSValueTypeMetaData *>{}(key.schema),
+                                         std::hash<const MemoryUtils::StoragePlan *>{}(key.plan));
+                return combine_hash(seed, key.storage_offset);
+            }
+        };
+
+        using SlotContextMap =
+            std::unordered_map<SlotContextKey, std::unique_ptr<SlotContextBase>, SlotContextKeyHash>;
+
+        [[nodiscard]] SlotContextMap &slot_contexts() noexcept
+        {
+            static SlotContextMap contexts;
+            return contexts;
+        }
+
+        [[nodiscard]] std::mutex &slot_context_mutex() noexcept
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        [[nodiscard]] const ValueTypeBinding &key_binding_for(const TSValueTypeMetaData &schema)
+        {
+            const ValueTypeMetaData *key_schema = nullptr;
+            if (schema.kind == TSTypeKind::TSS)
+            {
+                key_schema = schema.value_schema != nullptr ? schema.value_schema->element_type : nullptr;
+            }
+            else if (schema.kind == TSTypeKind::TSD)
+            {
+                key_schema = schema.key_type();
+            }
+            if (key_schema == nullptr) { throw std::logic_error("slot TSData key schema is not resolved"); }
+            const auto *binding = ValuePlanFactory::instance().binding_for(key_schema);
+            if (binding == nullptr) { throw std::logic_error("slot TSData key binding is not resolved"); }
+            return *binding;
+        }
+
+        [[nodiscard]] const TSDataBinding &element_binding_for(const TSValueTypeMetaData &schema)
+        {
+            const auto *element_schema = schema.element_ts();
+            if (element_schema == nullptr) { throw std::logic_error("TSD element TS schema is not resolved"); }
+            const auto *binding = TSDataPlanFactory::instance().binding_for(element_schema);
+            if (binding == nullptr) { throw std::logic_error("TSD element TSData binding is not resolved"); }
+            return *binding;
+        }
+    } // namespace
+
+    [[nodiscard]] bool is_slot_ts_data(const TSValueTypeMetaData &schema) noexcept
+    {
+        switch (schema.kind)
+        {
+        case TSTypeKind::TSS:
+            return schema.value_schema != nullptr && schema.delta_value_schema != nullptr &&
+                   schema.value_schema->kind == ValueTypeKind::Set;
+        case TSTypeKind::TSD:
+            return schema.value_schema != nullptr && schema.delta_value_schema != nullptr &&
+                   schema.value_schema->kind == ValueTypeKind::Map && schema.element_ts() != nullptr;
+        default:
+            return false;
+        }
+    }
+
+    [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_plan(const TSValueTypeMetaData &schema)
+    {
+        if (!is_slot_ts_data(schema))
+        {
+            throw std::logic_error("TSDataPlanFactory: slot storage requires TSS or TSD schema");
+        }
+
+        const auto &key_binding = key_binding_for(schema);
+
+        std::lock_guard<std::mutex> lock(slot_plan_mutex());
+        auto                       &entries = slot_plan_entries();
+        if (const auto it = entries.find(&schema); it != entries.end()) { return it->second->root_plan; }
+
+        auto entry = std::make_unique<SlotPlanEntry>();
+        if (schema.kind == TSTypeKind::TSS)
+        {
+            entry->tss_context = TSSStoragePlanContext{.key_binding = &key_binding};
+            entry->storage_plan = std::make_unique<MemoryUtils::StoragePlan>(MemoryUtils::StoragePlan{
+                .layout                       = MemoryUtils::layout_for<TSSSlotStorage>(),
+                .lifecycle                    = {.construct      = &tss_storage_construct,
+                                                 .destroy        = &slot_storage_destroy<TSSSlotStorage>,
+                                                 .copy_construct = nullptr,
+                                                 .move_construct = &tss_storage_move_construct,
+                                                 .copy_assign    = nullptr,
+                                                 .move_assign    = &tss_storage_move_assign},
+                .lifecycle_context            = &entry->tss_context,
+                .composite_kind_tag           = MemoryUtils::CompositeKind::None,
+                .trivially_destructible       = false,
+                .trivially_copyable           = false,
+                .trivially_move_constructible = false,
+            });
+        }
+        else
+        {
+            const auto &element_binding = element_binding_for(schema);
+            entry->tsd_context = TSDStoragePlanContext{.key_binding = &key_binding,
+                                                       .element_binding = &element_binding};
+            entry->storage_plan = std::make_unique<MemoryUtils::StoragePlan>(MemoryUtils::StoragePlan{
+                .layout                       = MemoryUtils::layout_for<TSDSlotStorage>(),
+                .lifecycle                    = {.construct      = &tsd_storage_construct,
+                                                 .destroy        = &slot_storage_destroy<TSDSlotStorage>,
+                                                 .copy_construct = nullptr,
+                                                 .move_construct = nullptr,
+                                                 .copy_assign    = nullptr,
+                                                 .move_assign    = nullptr},
+                .lifecycle_context            = &entry->tsd_context,
+                .composite_kind_tag           = MemoryUtils::CompositeKind::None,
+                .trivially_destructible       = false,
+                .trivially_copyable           = false,
+                .trivially_move_constructible = false,
+            });
+        }
+
+        entry->root_plan = entry->storage_plan.get();
+        const auto *result = entry->root_plan;
+        entries.emplace(&schema, std::move(entry));
+        return result;
+    }
+
+    [[nodiscard]] const TSDataOps &slot_ts_data_ops(const TSValueTypeMetaData      &schema,
+                                                    const MemoryUtils::StoragePlan &plan,
+                                                    std::size_t storage_offset)
+    {
+        if (storage_offset != 0)
+        {
+            throw std::logic_error("slot TSData currently expects the storage object at the root");
+        }
+
+        std::lock_guard<std::mutex> lock(slot_context_mutex());
+        auto                       &contexts = slot_contexts();
+        const SlotContextKey        key{&schema, &plan, storage_offset};
+        if (const auto it = contexts.find(key); it != contexts.end()) { return it->second->ops_ref(); }
+
+        const auto &key_binding = key_binding_for(schema);
+        std::unique_ptr<SlotContextBase> context;
+        if (schema.kind == TSTypeKind::TSS)
+        {
+            context = std::make_unique<TSSContext>(schema, plan, key_binding);
+        }
+        else if (schema.kind == TSTypeKind::TSD)
+        {
+            context = std::make_unique<TSDContext>(schema, plan, key_binding, element_binding_for(schema));
+        }
+        else
+        {
+            throw std::logic_error("slot TSData ops require TSS or TSD schema");
+        }
+
+        auto *result = context.get();
+        contexts.emplace(key, std::move(context));
+        return result->ops_ref();
+    }
+
+    void clear_slot_ts_data_contexts() noexcept
+    {
+        {
+            std::lock_guard<std::mutex> lock(slot_context_mutex());
+            slot_contexts().clear();
+        }
+        {
+            std::lock_guard<std::mutex> lock(slot_plan_mutex());
+            slot_plan_entries().clear();
+        }
+    }
+} // namespace hgraph::ts_data_plan_factory_detail
