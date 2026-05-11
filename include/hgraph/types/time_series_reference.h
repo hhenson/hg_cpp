@@ -113,7 +113,7 @@ namespace hgraph
         std::vector<TimeSeriesReference> items_{};
         // PEERED target binding payload (LinkedTSContext / output handle /
         // observed_time / invalidator) is added when the runtime layer is
-        // ported. Today PEERED is a tag carrying only kind + target_schema.
+        // implemented. Today PEERED is a tag carrying only kind + target_schema.
     };
 }  // namespace hgraph
 
