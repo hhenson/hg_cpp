@@ -1,11 +1,13 @@
 #ifndef HGRAPH_CPP_ROOT_V2_VALUE_SLOT_STORE_H
 #define HGRAPH_CPP_ROOT_V2_VALUE_SLOT_STORE_H
 
+#include <hgraph/types/utils/key_slot_store.h>
 #include <hgraph/types/utils/slot_observer.h>
 #include <hgraph/types/utils/stable_slot_storage.h>
 
 #include <sul/dynamic_bitset.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <memory>
 #include <new>
@@ -314,6 +316,157 @@ namespace hgraph
                 throw std::logic_error("ValueSlotStore slot is already constructed");
             }
         }
+    };
+
+    /**
+     * Value-side storage whose payload lifetime mirrors a ``KeySlotStore``.
+     *
+     * ``ValueSlotStore`` is intentionally reusable and owns an internal
+     * constructed bitmap. TSD-style storage should not expose that bitmap as a
+     * second source of truth. This wrapper registers as a key-store observer
+     * and keeps the value payload constructed exactly when the key slot is
+     * constructed, including pending-erase slots. The referenced key store
+     * must outlive the mirror so the observer can be unregistered during
+     * destruction.
+     */
+    class KeyMirroredValueSlotStore final : private SlotObserver
+    {
+      public:
+        KeyMirroredValueSlotStore(KeySlotStore &keys,
+                                  const MemoryUtils::StoragePlan &value_plan,
+                                  const MemoryUtils::AllocatorOps &allocator = MemoryUtils::allocator())
+            : m_keys(keys), m_values(value_plan, allocator)
+        {
+            mirror_existing_keys();
+            m_keys.add_slot_observer(this);
+        }
+
+        KeyMirroredValueSlotStore(const KeyMirroredValueSlotStore &)            = delete;
+        KeyMirroredValueSlotStore &operator=(const KeyMirroredValueSlotStore &) = delete;
+        KeyMirroredValueSlotStore(KeyMirroredValueSlotStore &&)                 = delete;
+        KeyMirroredValueSlotStore &operator=(KeyMirroredValueSlotStore &&)      = delete;
+
+        ~KeyMirroredValueSlotStore() override
+        {
+            m_keys.remove_slot_observer(this);
+        }
+
+        /** Key store whose constructed bitmap owns value payload lifetime. */
+        [[nodiscard]] const KeySlotStore &key_store() const noexcept { return m_keys; }
+        /** Number of value slots currently addressable. */
+        [[nodiscard]] size_t slot_capacity() const noexcept { return m_values.slot_capacity(); }
+        /** Bound value payload plan. */
+        [[nodiscard]] const MemoryUtils::StoragePlan *plan() const noexcept { return m_values.plan(); }
+
+        /**
+         * True when the key slot is constructed. This is the public lifetime
+         * answer for mirrored storage; the wrapped ``ValueSlotStore`` bitmap is
+         * only an internal mirror.
+         */
+        [[nodiscard]] bool has_slot(size_t slot) const noexcept
+        {
+            return m_keys.slot_constructed(slot);
+        }
+
+        /** True when the internal value bitmap matches the key store. */
+        [[nodiscard]] bool mirrors_key_construction() const noexcept
+        {
+            const size_t capacity = std::max(m_keys.slot_capacity(), m_values.slot_capacity());
+            for (size_t slot = 0; slot < capacity; ++slot) {
+                if (m_keys.slot_constructed(slot) != m_values.has_slot(slot)) { return false; }
+            }
+            return true;
+        }
+
+        /** Mutable payload memory for a constructed key slot. */
+        [[nodiscard]] void *value_memory(size_t slot)
+        {
+            require_mirrored_slot(slot);
+            return m_values.value_memory(slot);
+        }
+
+        /** Const payload memory for a constructed key slot. */
+        [[nodiscard]] const void *value_memory(size_t slot) const
+        {
+            require_mirrored_slot(slot);
+            return m_values.value_memory(slot);
+        }
+
+        /** Typed pointer to a value for a constructed key slot, or null otherwise. */
+        template <typename T>
+        [[nodiscard]] T *try_value(size_t slot)
+        {
+            if (!has_slot(slot)) { return nullptr; }
+            auto *value = m_values.template try_value<T>(slot);
+            if (value == nullptr) { throw std::logic_error("KeyMirroredValueSlotStore mirror is missing a value slot"); }
+            return value;
+        }
+
+        /** Const overload of ``try_value``. */
+        template <typename T>
+        [[nodiscard]] const T *try_value(size_t slot) const
+        {
+            if (!has_slot(slot)) { return nullptr; }
+            const auto *value = m_values.template try_value<T>(slot);
+            if (value == nullptr) { throw std::logic_error("KeyMirroredValueSlotStore mirror is missing a value slot"); }
+            return value;
+        }
+
+        /** Mark a constructed value slot as updated. */
+        void mark_updated(size_t slot)
+        {
+            require_mirrored_slot(slot);
+            m_values.mark_updated(slot);
+        }
+
+        /** True when a constructed value slot was marked updated. */
+        [[nodiscard]] bool slot_updated(size_t slot) const noexcept
+        {
+            return has_slot(slot) && m_values.slot_updated(slot);
+        }
+
+        /** Clear one update bit. */
+        void clear_updated(size_t slot) noexcept { m_values.clear_updated(slot); }
+        /** Clear every update bit. */
+        void clear_all_updated() noexcept { m_values.clear_all_updated(); }
+
+      private:
+        KeySlotStore  &m_keys;
+        ValueSlotStore m_values;
+
+        void mirror_existing_keys()
+        {
+            m_values.reserve_to(m_keys.slot_capacity());
+            for (size_t slot = 0; slot < m_keys.slot_capacity(); ++slot) {
+                if (m_keys.slot_constructed(slot)) { construct_value_slot(slot); }
+            }
+        }
+
+        void construct_value_slot(size_t slot)
+        {
+            if (!m_values.has_slot(slot)) { m_values.construct_at(slot); }
+        }
+
+        void require_mirrored_slot(size_t slot) const
+        {
+            if (slot >= m_keys.slot_capacity()) { throw std::out_of_range("KeyMirroredValueSlotStore slot out of range"); }
+            if (!m_keys.slot_constructed(slot)) {
+                throw std::logic_error("KeyMirroredValueSlotStore slot is not constructed by the key store");
+            }
+            if (!m_values.has_slot(slot)) {
+                throw std::logic_error("KeyMirroredValueSlotStore mirror is missing a value slot");
+            }
+        }
+
+        void on_capacity(size_t, size_t new_capacity) override { m_values.reserve_to(new_capacity); }
+
+        void on_insert(size_t slot) override { construct_value_slot(slot); }
+
+        void on_remove(size_t) override {}
+
+        void on_erase(size_t slot) override { m_values.destroy_at(slot); }
+
+        void on_clear() override { m_values.destroy_all(); }
     };
 }  // namespace hgraph
 

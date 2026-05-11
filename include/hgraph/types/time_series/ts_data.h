@@ -28,30 +28,27 @@ namespace hgraph
      *
      * This lives in the TSData payload/delta memory component, not in the
      * surrounding TSState. TSDataView owns local parent bubble-up, TSState owns
-     * graph-level notification, and TSData owns the timestamps needed to decide
-     * whether its local delta payload belongs to a given evaluation time.
+     * graph-level notification, and TSData owns the timestamp needed to decide
+     * whether its local delta view belongs to a given evaluation time.
      */
     struct TSDataTracking
     {
         engine_time_t last_modified_time{MIN_DT};
-        std::size_t   mutation_depth{0};
-        bool          delta_dirty{false};
     };
 
     /**
      * Memory offsets for one TSData implementation.
      *
-     * Current value bytes, delta bytes, and tracking bytes are separate plan
-     * regions. Keeping the offsets in the ops context lets views expose the
-     * current value as a contiguous value-layer view while still retaining
-     * delta metadata beside it.
+     * Current value bytes and tracking bytes are separate plan regions. Some
+     * implementations also expose a separate delta memory region; compact
+     * atomic TSData aliases ``delta_value(t)`` to the current value region
+     * when ``last_modified_time == t``.
      */
     struct TSDataLayout
     {
         const ValueTypeBinding *value_binding{nullptr};
         const ValueTypeBinding *delta_binding{nullptr};
         std::size_t             value_offset{0};
-        std::size_t             delta_offset{0};
         std::size_t             tracking_offset{0};
     };
 
@@ -120,6 +117,7 @@ namespace hgraph
     struct TSDataOps
     {
         const void *context{nullptr};
+        bool        allows_mutation{false};
 
         const TSDataLayout *(*layout_impl)(const void *context) = &ts_data_detail::missing_layout;
         const TSDataTracking *(*tracking_impl)(const void *context,
@@ -143,6 +141,28 @@ namespace hgraph
     };
 
     /**
+     * Parent-owned identity carried by a child TSData view.
+     *
+     * The ``child_id`` is meaningful only to the parent view. Keeping it with
+     * the parent reference makes that ownership explicit and keeps bubble-up
+     * notification logic out of the generic mutation view.
+     */
+    struct TSDataParentLink
+    {
+        TSDataView *parent{nullptr};
+        std::size_t child_id{TS_DATA_NO_CHILD_ID};
+
+        constexpr TSDataParentLink() noexcept = default;
+        TSDataParentLink(TSDataView &parent_view, std::size_t parent_child_id);
+
+        [[nodiscard]] bool has_parent() const noexcept { return parent != nullptr; }
+        void notify_child_modified(engine_time_t mutation_time) const;
+
+      private:
+        static void require_parent_view(const TSDataView &parent_view);
+    };
+
+    /**
      * Non-owning view over TSData.
      */
     class TSDataView
@@ -151,7 +171,7 @@ namespace hgraph
         constexpr TSDataView() noexcept = default;
 
         TSDataView(const TSDataBinding *binding, void *data) noexcept
-            : binding_(binding), data_(data), writable_(data != nullptr)
+            : binding_(binding), data_(data)
         {
         }
 
@@ -163,17 +183,13 @@ namespace hgraph
         TSDataView(const TSDataBinding *binding, void *data, TSDataView &parent, std::size_t child_id)
             : binding_(binding),
               data_(data),
-              parent_(&parent),
-              child_id_(child_id),
-              writable_(data != nullptr)
+              parent_link_(parent, child_id)
         {
-            require_parent_view(parent);
         }
 
         TSDataView(const TSDataBinding *binding, const void *data, TSDataView &parent, std::size_t child_id)
-            : binding_(binding), data_(data), parent_(&parent), child_id_(child_id)
+            : binding_(binding), data_(data), parent_link_(parent, child_id)
         {
-            require_parent_view(parent);
         }
 
         [[nodiscard]] bool valid() const noexcept { return binding_ != nullptr && data_ != nullptr; }
@@ -184,12 +200,13 @@ namespace hgraph
             return binding_ != nullptr ? binding_->type_meta : nullptr;
         }
         [[nodiscard]] const void *data() const noexcept { return data_; }
-        [[nodiscard]] std::size_t child_id() const noexcept { return child_id_; }
-        [[nodiscard]] bool has_parent() const noexcept { return parent_ != nullptr; }
+        [[nodiscard]] const TSDataParentLink &parent_link() const noexcept { return parent_link_; }
+        [[nodiscard]] std::size_t child_id() const noexcept { return parent_link_.child_id; }
+        [[nodiscard]] bool has_parent() const noexcept { return parent_link_.has_parent(); }
         [[nodiscard]] void *mutable_data() const
         {
             if (!valid()) { throw std::logic_error("TSDataView::mutable_data requires a live view"); }
-            if (!writable_) { throw std::logic_error("TSDataView::mutable_data requires writable storage"); }
+            if (!ops().allows_mutation) { throw std::logic_error("TSDataView::mutable_data requires mutable TSData ops"); }
             return const_cast<void *>(data_);
         }
 
@@ -229,8 +246,6 @@ namespace hgraph
             return ValueView{data_layout.delta_binding, table.delta_memory_impl(table.context, data_)};
         }
         [[nodiscard]] engine_time_t last_modified_time() const { return tracking().last_modified_time; }
-        [[nodiscard]] std::size_t mutation_depth() const { return tracking().mutation_depth; }
-        [[nodiscard]] bool delta_dirty() const { return tracking().delta_dirty; }
         [[nodiscard]] bool modified(engine_time_t evaluation_time) const
         {
             return tracking().last_modified_time == evaluation_time;
@@ -240,15 +255,6 @@ namespace hgraph
 
       private:
         friend class TSDataMutationView;
-
-        static void require_parent_view(const TSDataView &parent)
-        {
-            if (!parent.valid()) { throw std::logic_error("TSDataView child construction requires a live parent view"); }
-            if (!parent.writable_)
-            {
-                throw std::logic_error("TSDataView child construction requires a writable parent view");
-            }
-        }
 
         void require_live(const char *what) const
         {
@@ -263,9 +269,7 @@ namespace hgraph
 
         const TSDataBinding *binding_{nullptr};
         const void          *data_{nullptr};
-        TSDataView          *parent_{nullptr};
-        std::size_t          child_id_{TS_DATA_NO_CHILD_ID};
-        bool                 writable_{false};
+        TSDataParentLink     parent_link_{};
     };
 
     class TSDataMutationView
@@ -274,7 +278,7 @@ namespace hgraph
         TSDataMutationView(TSDataView view, engine_time_t evaluation_time)
             : view_(view), mutation_time_(evaluation_time)
         {
-            begin_scope();
+            validate_mutation_view();
         }
 
         TSDataMutationView(const TSDataMutationView &) = delete;
@@ -282,17 +286,13 @@ namespace hgraph
 
         TSDataMutationView(TSDataMutationView &&other) noexcept
             : view_(other.view_),
-              mutation_time_(std::exchange(other.mutation_time_, MIN_DT)),
-              owns_scope_(std::exchange(other.owns_scope_, false))
+              mutation_time_(std::exchange(other.mutation_time_, MIN_DT))
         {
         }
 
         TSDataMutationView &operator=(TSDataMutationView &&) = delete;
 
-        ~TSDataMutationView() noexcept
-        {
-            if (owns_scope_) { end_scope_noexcept(); }
-        }
+        ~TSDataMutationView() noexcept = default;
 
         [[nodiscard]] const TSDataView &view() const noexcept { return view_; }
         [[nodiscard]] TSDataView &view() noexcept { return view_; }
@@ -302,7 +302,6 @@ namespace hgraph
             return view_.delta_value(evaluation_time);
         }
         [[nodiscard]] engine_time_t current_mutation_time() const { return mutation_time_; }
-        [[nodiscard]] std::size_t mutation_depth() const { return view_.mutation_depth(); }
 
         void mark_modified()
         {
@@ -335,48 +334,20 @@ namespace hgraph
       private:
         void require_active_mutation() const
         {
-            if (view_.tracking().mutation_depth == 0)
+            if (mutation_time_ == MIN_DT)
             {
                 throw std::logic_error("TSData mutation requires an active mutation scope");
             }
+            (void)view_.mutable_data();
         }
 
-        void begin_scope() const
+        void validate_mutation_view() const
         {
             if (mutation_time_ == MIN_DT)
             {
                 throw std::invalid_argument("TSDataMutationView requires a concrete engine time");
             }
-
-            auto       &state = view_.mutable_tracking();
-            const auto &table = view_.ops();
-            if (state.mutation_depth == 0 && state.delta_dirty && state.last_modified_time < mutation_time_)
-            {
-                table.reset_delta_impl(table.context, view_.mutable_data());
-                state.delta_dirty = false;
-            }
-
-            ++state.mutation_depth;
-        }
-
-        void end_scope() const
-        {
-            auto &state = view_.mutable_tracking();
-            if (state.mutation_depth == 0) { throw std::logic_error("TSDataMutationView depth underflow"); }
-
-            --state.mutation_depth;
-        }
-
-        void end_scope_noexcept() const noexcept
-        {
-            try
-            {
-                end_scope();
-            }
-            catch (...)
-            {
-                std::terminate();
-            }
+            (void)view_.mutable_data();
         }
 
         [[nodiscard]] bool record_modified_local() const
@@ -387,22 +358,43 @@ namespace hgraph
             if (state.last_modified_time == mutation_time_) { return false; }
 
             state.last_modified_time = mutation_time_;
-            state.delta_dirty        = true;
             return true;
         }
 
         void notify_parent_modified() const
         {
-            if (view_.parent_ == nullptr) { return; }
-
-            auto parent_mutation = view_.parent_->begin_mutation(mutation_time_);
-            parent_mutation.mark_child_modified(view_.child_id_);
+            view_.parent_link_.notify_child_modified(mutation_time_);
         }
 
         TSDataView    view_{};
         engine_time_t mutation_time_{MIN_DT};
-        bool          owns_scope_{true};
     };
+
+    inline TSDataParentLink::TSDataParentLink(TSDataView &parent_view, std::size_t parent_child_id)
+        : parent(&parent_view), child_id(parent_child_id)
+    {
+        require_parent_view(parent_view);
+    }
+
+    inline void TSDataParentLink::require_parent_view(const TSDataView &parent_view)
+    {
+        if (!parent_view.valid())
+        {
+            throw std::logic_error("TSDataParentLink requires a live parent view");
+        }
+        if (!parent_view.ops().allows_mutation)
+        {
+            throw std::logic_error("TSDataParentLink requires mutable parent TSData ops");
+        }
+    }
+
+    inline void TSDataParentLink::notify_child_modified(engine_time_t mutation_time) const
+    {
+        if (parent == nullptr) { return; }
+
+        auto parent_mutation = parent->begin_mutation(mutation_time);
+        parent_mutation.mark_child_modified(child_id);
+    }
 
     inline TSDataMutationView TSDataView::begin_mutation(engine_time_t evaluation_time) const
     {

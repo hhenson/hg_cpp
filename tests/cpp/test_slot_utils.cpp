@@ -297,6 +297,41 @@ TEST_CASE("value slot stores can share a custom allocator", "[v2 slot utils]") {
     REQUIRE(AllocationProbe::deallocations == 1);
 }
 
+TEST_CASE("key mirrored value slot store derives lifetime from key construction", "[v2 slot utils]") {
+    KeySlotStore             keys(MemoryUtils::plan_for<int>(), key_slot_store_ops_for<int>());
+    KeyMirroredValueSlotStore values(keys, MemoryUtils::plan_for<std::string>());
+
+    REQUIRE(values.mirrors_key_construction());
+
+    const auto first = keys.insert(11);
+    REQUIRE(first.inserted);
+    REQUIRE(values.has_slot(first.slot));
+    REQUIRE(values.mirrors_key_construction());
+
+    auto *value = values.try_value<std::string>(first.slot);
+    REQUIRE(value != nullptr);
+    *value = "eleven";
+    values.mark_updated(first.slot);
+    REQUIRE(values.slot_updated(first.slot));
+
+    keys.begin_mutation();
+    REQUIRE(keys.remove(11));
+    REQUIRE(keys.slot_constructed(first.slot));
+    REQUIRE_FALSE(keys.slot_live(first.slot));
+    REQUIRE(values.has_slot(first.slot));
+    REQUIRE(values.try_value<std::string>(first.slot) != nullptr);
+    REQUIRE(*values.try_value<std::string>(first.slot) == "eleven");
+    REQUIRE(values.mirrors_key_construction());
+    keys.end_mutation();
+
+    keys.begin_mutation();
+    REQUIRE_FALSE(keys.slot_constructed(first.slot));
+    REQUIRE_FALSE(values.has_slot(first.slot));
+    REQUIRE(values.try_value<std::string>(first.slot) == nullptr);
+    REQUIRE(values.mirrors_key_construction());
+    keys.end_mutation();
+}
+
 TEST_CASE("key slot store tracks pending removals and erases them at the next batch start", "[v2 slot utils]") {
     KeySlotStore      store(MemoryUtils::plan_for<int>(), key_slot_store_ops_for<int>());
     RecordingObserver observer;

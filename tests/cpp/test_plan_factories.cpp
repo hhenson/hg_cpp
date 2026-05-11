@@ -283,7 +283,7 @@ TEST_CASE("ValuePlanFactory::register_atomic ignores null inputs")
     REQUIRE_NOTHROW(factory.register_atomic(&orphan, nullptr));
 }
 
-TEST_CASE("TSDataPlanFactory: atomic TSData uses separate value, delta and tracking plan regions")
+TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified tracking")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
@@ -296,22 +296,44 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses separate value, delta and track
 
     REQUIRE(plan != nullptr);
     REQUIRE(plan->is_named_tuple());
-    REQUIRE(plan->component_count() == 3);
+    REQUIRE(plan->component_count() == 2);
     REQUIRE(plan->find_component("value") != nullptr);
-    REQUIRE(plan->find_component("delta") != nullptr);
+    REQUIRE(plan->find_component("delta") == nullptr);
     REQUIRE(plan->find_component("tracking") != nullptr);
     REQUIRE(plan->component("value").plan == &MemoryUtils::plan_for<int>());
-    REQUIRE(plan->component("delta").plan == &MemoryUtils::plan_for<int>());
     REQUIRE(plan->component("tracking").plan == &MemoryUtils::plan_for<TSDataTracking>());
-    REQUIRE(plan->component("value").offset != plan->component("delta").offset);
     REQUIRE(plan->component("tracking").offset != plan->component("value").offset);
 
     REQUIRE(binding != nullptr);
     REQUIRE(binding->type_meta == ts_int);
     REQUIRE(binding->plan() == plan);
+    REQUIRE(binding->checked_ops().allows_mutation);
     TSData data{*binding};
     REQUIRE(data.view().layout().value_binding == registry.scalar_binding<int>());
     REQUIRE(data.view().layout().delta_binding == registry.scalar_binding<int>());
+}
+
+TEST_CASE("TSDataView: mutation capability is supplied by TSDataOps")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *binding  = factory.binding_for(ts_int);
+    REQUIRE(binding != nullptr);
+
+    TSDataOps immutable_ops = binding->checked_ops();
+    immutable_ops.allows_mutation = false;
+    TSDataBinding immutable_binding{binding->type_meta, binding->plan(), &immutable_ops};
+
+    TSData immutable_data{immutable_binding};
+    auto   immutable_view = immutable_data.view();
+    REQUIRE_THROWS_AS(immutable_view.mutable_data(), std::logic_error);
+    REQUIRE_THROWS_AS(immutable_view.begin_mutation(MIN_ST), std::logic_error);
+
+    TSData child_data{*binding};
+    REQUIRE_THROWS_AS(child_data.view(immutable_view, 1), std::logic_error);
 }
 
 TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified time")
@@ -328,8 +350,6 @@ TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified ti
     auto   view = data.view();
     REQUIRE(view.value().checked_as<int>() == 0);
     REQUIRE(view.last_modified_time() == MIN_DT);
-    REQUIRE(view.mutation_depth() == 0);
-    REQUIRE_FALSE(view.delta_dirty());
 
     const auto t1 = MIN_ST;
     const auto t2 = t1 + engine_time_delta_t{1};
@@ -343,8 +363,8 @@ TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified ti
     }
     REQUIRE(view.value().checked_as<int>() == 42);
     REQUIRE(view.delta_value(t1).checked_as<int>() == 42);
+    REQUIRE(view.delta_value(t1).data() == view.value().data());
     REQUIRE(view.last_modified_time() == t1);
-    REQUIRE(view.delta_dirty());
     REQUIRE(view.modified(t1));
     REQUIRE_FALSE(view.modified(t2));
     REQUIRE_FALSE(view.delta_value(t2).has_value());
@@ -357,19 +377,14 @@ TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified ti
     REQUIRE(view.value().checked_as<int>() == 99);
     REQUIRE(view.delta_value(t1).checked_as<int>() == 99);
     REQUIRE(view.last_modified_time() == t1);
-    REQUIRE(view.delta_dirty());
 
     {
         auto mutation = view.begin_mutation(t2);
-        REQUIRE(view.mutation_depth() == 1);
-        REQUIRE_FALSE(view.delta_dirty());
         REQUIRE(mutation.copy_value_from(source.view()));
         REQUIRE(view.value().checked_as<int>() == 42);
         REQUIRE(view.delta_value(t2).checked_as<int>() == 42);
         REQUIRE(view.last_modified_time() == t2);
     }
-    REQUIRE(view.mutation_depth() == 0);
-    REQUIRE(view.delta_dirty());
 }
 
 TEST_CASE("TSDataView: child modifications propagate through parent view")
@@ -393,6 +408,13 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
     auto   parent = parent_data.view();
     auto   child  = child_data.view(parent, 7);
     auto   sibling = sibling_data.view(parent, 9);
+    REQUIRE_FALSE(parent.has_parent());
+    REQUIRE(child.has_parent());
+    REQUIRE(child.child_id() == 7);
+    REQUIRE(child.parent_link().parent == &parent);
+    REQUIRE(child.parent_link().child_id == 7);
+    REQUIRE(sibling.has_parent());
+    REQUIRE(sibling.child_id() == 9);
 
     const auto t1 = MIN_ST;
     const auto t2 = t1 + engine_time_delta_t{1};
@@ -403,7 +425,6 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
 
     {
         auto outer = child.begin_mutation(t1);
-        REQUIRE(child.mutation_depth() == 1);
         REQUIRE(outer.copy_value_from(first.view()));
         REQUIRE(parent.last_modified_time() == t1);
         REQUIRE(parent.modified(t1));
@@ -412,19 +433,15 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
 
         {
             auto nested = child.begin_mutation(t1);
-            REQUIRE(child.mutation_depth() == 2);
             REQUIRE_FALSE(nested.copy_value_from(second.view()));
         }
 
-        REQUIRE(child.mutation_depth() == 1);
         REQUIRE(parent.last_modified_time() == t1);
         REQUIRE(child.value().checked_as<int>() == 2);
         REQUIRE(child.delta_value(t1).checked_as<int>() == 2);
         REQUIRE(RecordingChildModificationOps::count == 1);
     }
 
-    REQUIRE(child.mutation_depth() == 0);
-    REQUIRE(parent.mutation_depth() == 0);
     REQUIRE(parent.last_modified_time() == t1);
 
     {

@@ -39,14 +39,15 @@ The implementation uses the following names consistently:
 
 ``TSDataOps``
     The type-erased operation table over a ``TSData`` memory region:
-    layout access, read/write memory access, delta reset, copy, and
-    the per-kind hook used when a child time-series value reports that
-    it modified. The table is deliberately passive; generic mutation
-    sequencing and propagation rules live on ``TSDataView`` /
-    ``TSDataMutationView``. For a real bound ``TSData`` implementation
-    the table is total: required entries are never null, empty optional
-    behaviours use no-op thunks, and unsupported operations are explicit
-    throwing thunks rather than missing pointers.
+    the literal ``allows_mutation`` property, layout access, read/write
+    memory access, delta reset, copy, and the per-kind hook used when a
+    child time-series value reports that it modified. The table is
+    deliberately passive; generic mutation sequencing and propagation
+    rules live on ``TSDataView`` / ``TSDataMutationView``. For a real
+    bound ``TSData`` implementation the table is total: required entries
+    are never null, empty optional behaviours use no-op thunks, and
+    unsupported operations are explicit throwing thunks rather than
+    missing pointers.
 
 ``TSDataBinding``
     The interned binding for a ``TSData`` implementation: the
@@ -99,78 +100,281 @@ mean the complete object; payload/delta plans are ``TSData`` plans.
 TSData Memory Layout and Delta Tracking
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Every ``TSData`` plan keeps the current value representation separate
-from the delta-management representation. The two regions may live in
-one owning allocation for locality and lifecycle simplicity, but they
-are not interleaved in a way that would prevent a current-value buffer
-view from being exported. The layout context carried by ``TSDataOps``
-records the offsets of:
+Every ``TSData`` plan makes current-value access and delta-management
+rules explicit. For compact atomic ``TS<T>``-style data, the delta
+value is the current value and is valid only when
+``last_modified_time == evaluation_time``. Collection storage adds
+separate delta masks or payloads where the delta shape is not the
+current value. The layout context carried by ``TSDataOps`` records the
+bindings and memory offsets needed by the concrete implementation:
 
 - ``value`` — the current payload in the value-layer representation;
-- ``delta`` — the per-tick delta payload, using
-  ``delta_value_schema``;
+- ``delta`` — optional per-tick delta payload or masks, using
+  ``delta_value_schema`` when the delta is not an alias of the current
+  value;
 - ``tracking`` — modification stamps and other transient delta
   metadata.
 
+The diagrams below are conceptual. ``StoragePlan`` still owns the
+exact byte offsets, padding, and alignment decisions for the target
+platform. The invariant is the shape and ownership of each region, not
+the literal byte numbers shown in a diagram.
+
+Compact Atomic TSData
+^^^^^^^^^^^^^^^^^^^^^
+
+``TS<T>``, ``REF<T>``, and ``SIGNAL`` currently use a compact TSData
+plan. The owning memory is one storage object with two separately
+addressable regions:
+
+.. code-block:: text
+
+   TSData storage allocation
+   +---------------------------------------------------------------+
+   | value region                                                  |
+   | Value storage for T, also used as delta(T) when modified      |
+   | layout.value_offset                                           |
+   +---------------------------------------------------------------+
+   | tracking region                                                |
+   | TSDataTracking {                                                |
+   |   last_modified_time                                           |
+   | }                                                              |
+   | layout.tracking_offset                                         |
+   +---------------------------------------------------------------+
+
+The current-value read path points directly at the ``value`` region.
+The delta read path returns an empty typed view unless
+``tracking.last_modified_time == evaluation_time``; when it matches,
+the delta view points directly at the current ``value`` region:
+
+.. mermaid::
+
+   flowchart LR
+      View["TSDataView"]
+      ValueCall["value()"]
+      DeltaCall["delta_value(t)"]
+      Current["value region<br/>current T bytes"]
+      Tracking["tracking region<br/>last_modified_time"]
+      Check{"last_modified_time == t"}
+      Null["typed null ValueView"]
+
+      View --> ValueCall --> Current
+      View --> DeltaCall --> Check
+      Tracking -.read.-> Check
+      Check -->|yes| Current
+      Check -->|no| Null
+
+During mutation, the first write for an engine time copies the source
+payload into the current value region, then updates
+``last_modified_time``. A same-time overwrite writes the value region again
+but does not advance ``last_modified_time`` and does not produce a
+second parent notification:
+
+.. mermaid::
+
+   flowchart TD
+      Write["write source at engine time t"]
+      Check{"already modified at t?"}
+      FirstCopy["copy source into<br/>current value"]
+      FirstMark["last_modified_time = t<br/>parent notification may bubble"]
+      OverwriteCopy["overwrite<br/>current value"]
+      NoNotify["last_modified_time unchanged<br/>no second parent notification"]
+
+      Write --> Check
+      Check -->|no| FirstCopy --> FirstMark
+      Check -->|yes| OverwriteCopy --> NoNotify
+
+.. code-block:: text
+
+   before write at t
+   +----------+   +----------------------------+
+   | current  |   | last_modified_time = t - 1 |
+   +----------+   +----------------------------+
+
+   first write at t
+   +----------+   +----------------------------+
+   | source   |   | last_modified_time = t     |
+   +----------+   +----------------------------+
+
+   overwrite again at t
+   +----------+   +----------------------------+
+   | source2  |   | last_modified_time = t     |
+   +----------+   +----------------------------+
+
+View Handles
+^^^^^^^^^^^^
+
+View objects are handles over TSData memory; they are not embedded
+inside the TSData allocation. A plain data view needs the binding and
+data pointer. A child view additionally carries a ``TSDataParentLink``:
+the parent view reference plus the parent-owned child id used for
+bubble-up:
+
+.. mermaid::
+
+   flowchart LR
+      View["TSDataView handle<br/>binding_<br/>data_<br/>parent_link_"]
+      Link["TSDataParentLink<br/>parent<br/>child_id"]
+      Binding["TSDataBinding<br/>schema + plan + ops"]
+      Data["TSData storage allocation<br/>value + optional delta + tracking"]
+      Parent["parent TSDataView<br/>for bubble-up"]
+
+      View -->|binding_| Binding
+      View -->|data_| Data
+      View -->|parent_link_| Link
+      Link -->|parent| Parent
+      Link -.child_id belongs to parent.-> Parent
+
+``TSDataMutationView`` is the mutation-only handle. It carries a view
+copy plus the current engine time and validates that the bound
+``TSDataOps::allows_mutation`` property is true. Mutation depth is
+tracked by the owning root ``TSValue`` / state object, not by each
+TSData element:
+
+.. mermaid::
+
+   flowchart TD
+      Mutation["TSDataMutationView<br/>view_<br/>mutation_time_"]
+      Tracking["view_.tracking()<br/>TSDataTracking"]
+      EngineTime["active engine time"]
+      Root["root TSValue mutation state<br/>tracks mutation depth"]
+
+      Mutation -->|references through view_| Tracking
+      Mutation -->|carries| EngineTime
+      Root -.coordinates mutation lifetime.-> Mutation
+
+The active mutation time is deliberately not stored in
+``TSDataTracking``. The tracking state records what happened to the
+data; the mutation view records the engine time for the in-flight
+operation.
+
 Modification handling is deliberately split into three responsibilities.
-``TSData`` tracks what changed in its delta state; child data views are
-constructed with a reference to their parent view plus the
-parent-relative child id; and
+``TSData`` tracks local modification state; child data views are
+constructed with a ``TSDataParentLink`` that owns the parent reference
+and parent-relative child id; and
 the parent data ops record child-level modification details through
 ``record_child_modified(parent_data, child_id)`` before the parent marks
 itself modified. The later processing of completed modified elements
 belongs to the surrounding ``TSValue`` / state layer. TSData does not
 own external subscriber lists or graph scheduling fan-out.
 
-Atomic TSData is the first implemented form. ``TS<T>``, ``REF<T>``,
-and ``SIGNAL`` use ``CompactTSDataStorage``: the value and delta
-regions are compact value-layer storage, and ``TSDataTracking`` carries
-``last_modified_time`` plus mutation-depth state. A delta is present
-for evaluation time ``t`` when ``last_modified_time == t``. The first
-write in engine time ``t`` copies the value into the current and delta
-regions, sets the local dirty state, updates ``last_modified_time`` to
-``t``, and returns "newly modified" to the caller. A later write to the same
-data field in the same engine time overwrites the current and delta
-regions but leaves ``last_modified_time`` unchanged and returns "not
-newly modified"; the earlier interim value is treated as if it never
-existed and no second parent modification should be produced.
+The implemented atomic plan follows the compact layout above.
+Collection-shaped TSData will use the slot-oriented layout below:
+``TSS`` tracks membership deltas with per-slot bitsets for ``added`` and
+``removed``, while ``TSD`` reuses the same key side and adds a per-slot
+``modified`` bitset for child values that changed in the current engine
+time. The collection owns only its collection-level
+``last_modified_time``; keyed value modification times are read from
+the child time-series values. When the root mutation coordinator starts
+an outermost mutation for an engine time later than the collection's
+``last_modified_time``, the collection resets any retained delta
+bitsets before accepting new changes.
 
-Every view may open a mutation scope by creating a
-``TSDataMutationView``. The mutation view owns the begin/end lifecycle,
-while the scope count is stored on the underlying ``TSData`` object.
-The active engine time is carried by the short-lived mutation view
-rather than the tracking state.
-When a view first marks itself modified for the current engine time, it
-asks its parent view to mark the corresponding child id modified. The
-parent first runs its ``record_child_modified`` op so collection-shaped
-parents can update per-slot ``modified`` tracking, then marks itself
-modified and repeats the same process with its own parent. Mutation
-operations such as ``copy_value_from`` and ``mark_modified`` are exposed
-only on ``TSDataMutationView``; callers open a mutation scope explicitly
-before performing writes.
+Slot-Oriented Collection TSData
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Collection TSData will use ``SlotTSDataStorage``. For these shapes the
-same principle applies per slot: current payload, live/constructed
-state, and delta tracking stay aligned by stable slot id. The
-collection object has its own ``last_modified_time`` describing the
-collection-level change time. Per-key modification times are not
-duplicated in the collection; when a keyed collection needs the
-modification time for a value, it reads that from the child time-series
-value stored in the corresponding slot.
+Collection TSData uses stable slot ids so child addresses and binding
+paths do not change when the collection grows or when other keys are
+removed. A slot id indexes parallel structures: key or child payload,
+live/constructed state, and delta masks.
 
-``TSS`` tracks membership deltas with per-slot bitsets for ``added``
-and ``removed``. ``TSD`` extends the same key-set structure, so it gets
-the ``added`` / ``removed`` key tracking from the TSS-shaped key side
-and adds a per-slot ``modified`` bitset for keys whose child value
-modified in the current engine time. ``TSS`` has no child value layer,
-so there is no per-key modification time to read there. Same-time
-rewrites update the bitsets in place and do not re-mark the
-collection-level ``last_modified_time`` or produce a second parent
-modification. When the outermost ``begin_mutation(t)`` starts for an
-engine time later than the collection's ``last_modified_time``, the
-collection resets its previous delta bitsets before accepting new
-changes. A small dirty marker is enough to skip that reset when no
-delta state is currently retained.
+.. mermaid::
+
+   flowchart TD
+      Slot["stable slot id"]
+      KeyPayload["key payload<br/>or positional child"]
+      ChildPayload["child TSData / TSValue<br/>where the shape has children"]
+      LiveState["key constructed/live state"]
+      DeltaMasks["delta masks<br/>added / removed / modified"]
+      Path["binding path component"]
+
+      Slot --> KeyPayload
+      Slot --> ChildPayload
+      Slot --> LiveState
+      Slot --> DeltaMasks
+      Slot --> Path
+
+For a TSS, the key store owns the scalar key payload and membership
+state. Added and removed deltas are bitsets indexed by the same slot
+ids:
+
+.. code-block:: text
+
+   TSS SlotTSDataStorage
+   +--------------------------------------------------------------+
+   | collection tracking                                          |
+   | last_modified_time                                           |
+   +--------------------------------------------------------------+
+   | KeySlotStore                                                 |
+   |                                                              |
+   | slot id        0        1        2        3        ...       |
+   | key bytes    [K0]     [K1]     [K2]     [K3]       ...       |
+   | constructed   1        1        1        0         ...       |
+   | live          1        0        1        0         ...       |
+   +--------------------------------------------------------------+
+   | delta bitsets for current evaluation time                    |
+   | added       [bit0]   [bit1]   [bit2]   [bit3]     ...       |
+   | removed     [bit0]   [bit1]   [bit2]   [bit3]     ...       |
+   +--------------------------------------------------------------+
+
+``constructed && !live`` represents a pending-erase slot. The payload
+is still inspectable for the tick in which it was removed, and the
+slot can be erased later without invalidating any other slot address.
+
+For a TSD, the key side is TSS-shaped and the value side is parallel
+payload storage indexed by the same slot ids. The key store's
+``constructed`` bit is authoritative for both key and value payload
+lifetime: a TSD must construct the child time-series value with the key
+and destroy it when the key slot is physically erased. There is no
+independent value-side constructed state in the TSData layout:
+
+.. code-block:: text
+
+   TSD SlotTSDataStorage
+   +--------------------------------------------------------------+
+   | collection tracking                                          |
+   | last_modified_time                                           |
+   +--------------------------------------------------------------+
+   | KeySlotStore                                                 |
+   | slot id        0        1        2        3        ...       |
+   | key bytes    [K0]     [K1]     [K2]     [K3]       ...       |
+   | constructed   1        1        1        0         ...       |
+   | live          1        0        1        0         ...       |
+   +--------------------------------------------------------------+
+   | Value payload slots                                          |
+   | slot id        0        1        2        3        ...       |
+   | child TS     [V0]     [V1]     [V2]     [--]       ...       |
+   | lifetime      follows KeySlotStore.constructed               |
+   +--------------------------------------------------------------+
+   | delta bitsets                                                |
+   | added       [bit0]   [bit1]   [bit2]   [bit3]     ...       |
+   | removed     [bit0]   [bit1]   [bit2]   [bit3]     ...       |
+   | modified    [bit0]   [bit1]   [bit2]   [bit3]     ...       |
+   +--------------------------------------------------------------+
+
+The ``modified`` bitset records which child slots reported a
+modification during the current engine time. The child's own
+``last_modified_time`` still lives with the child time-series value;
+the parent bitset is the parent's delta surface, not a duplicate
+timestamp store.
+
+The bubble-up path uses the slot id carried by the child view:
+
+.. mermaid::
+
+   flowchart TD
+      ChildMutation["child TSDataMutationView<br/>slot s"]
+      Mark["mark_modified() / copy_value_from()"]
+      ParentHook["parent ops<br/>record_child_modified(parent_data, s)"]
+      ModifiedBit["parent modified bitset[s] = 1"]
+      ParentTime["parent last_modified_time<br/>= current engine time"]
+      Bubble["repeat with parent's parent"]
+
+      ChildMutation --> Mark
+      Mark --> ParentHook
+      ParentHook --> ModifiedBit
+      ModifiedBit --> ParentTime
+      ParentTime --> Bubble
 
 Builder Lifetime
 ----------------
@@ -277,11 +481,22 @@ do not use the slot stores.
     the slot's last value during the tick of its removal.
 
 ``ValueSlotStore``
-    Parallel value memory keyed off the same slot ids as a
-    ``KeySlotStore``. The owning store decides which slot ids are live;
-    ``ValueSlotStore`` owns the value payload, the per-slot
-    ``constructed`` bit, and a per-slot ``updated`` bit used to drive
-    the current mutation epoch.
+    Standalone parallel value memory keyed off externally supplied slot
+    ids. As a reusable utility it owns a per-slot ``constructed`` bit
+    so it can be used independently and still destroy its payloads
+    correctly. A TSD-specific value side should not treat that bit as a
+    second source of truth: TSD key construction and value construction
+    happen together, so ``KeySlotStore.constructed`` is authoritative
+    and any reused value-store constructed bit is only a derived mirror.
+
+``KeyMirroredValueSlotStore``
+    Wrapper for keyed value storage that enforces the TSD-style
+    lifetime rule in code. It registers as a ``KeySlotStore`` observer,
+    constructs value payloads when key slots are constructed, keeps
+    pending-erase value payloads alive while the key slot remains
+    constructed, and destroys value payloads only when the key slot is
+    physically erased or cleared. Its public ``has_slot`` answer is
+    derived from ``KeySlotStore.constructed``.
 
 Both stores expose a ``SlotObserver`` notification protocol —
 ``on_capacity``, ``on_insert``, ``on_remove``, ``on_erase``,
@@ -296,17 +511,22 @@ slot ids for the current engine time so the layer can publish
 
 These structural slot observers are internal synchronisation hooks, not
 the public change-notification surface. Per-level change propagation
-uses the parent view reference constructed into child views plus the
-``record_child_modified`` hook on the parent ops table. The slot hooks
-may update bitsets immediately during mutation; processing of modified
-elements and external notification fan-out belongs to the surrounding
-state/value layer after the value-level mutation count returns to zero.
+uses the ``TSDataParentLink`` constructed into child views plus the
+``record_child_modified`` hook on the parent ops table. The parent link
+owns the child id because that id is a parent-local slot/path
+identifier. The slot hooks may update bitsets immediately during
+mutation; processing of modified elements and external notification
+fan-out belongs to the surrounding state/value layer after the
+value-level mutation count returns to zero.
 
 The set and map ``SlotTSDataStorage`` shapes are layered on these
 primitives. A TS set data store owns one ``KeySlotStore``. A TS map
-data store owns one ``KeySlotStore`` for keys plus one
-``ValueSlotStore`` for values, with the value store registered as a
-slot observer on the key store.
+data store owns one ``KeySlotStore`` for keys plus value payload
+storage indexed by the key slots. If the generic ``ValueSlotStore`` is
+reused for that value side, use ``KeyMirroredValueSlotStore`` or the
+same rule internally: its constructed bitmap must be kept as a strict
+mirror of the key store's constructed bitmap rather than a separate
+state surface.
 
 Slot stores are deliberately **not** used for scalar values. The
 delayed-erase, per-slot-bit, and observer machinery exists to support
@@ -343,8 +563,9 @@ TSD Storage
 TSD is the time-series wrapper around a delta-tracking Map. It owns:
 
 - a ``KeySlotStore`` for the keys, identical in shape to a TSS's;
-- a ``ValueSlotStore`` whose slot ids match the key store's, holding
-  the per-key time-series values;
+- value payload storage whose slot ids match the key store's, holding
+  the per-key time-series values and deriving payload lifetime from
+  ``KeySlotStore.constructed``;
 - collection-level tracking, including ``last_modified_time``;
 - the TSS-shaped per-slot ``added`` and ``removed`` key bitsets;
 - a per-slot ``modified`` bitset for keys whose child time-series

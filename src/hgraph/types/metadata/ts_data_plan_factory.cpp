@@ -23,9 +23,8 @@ namespace hgraph
                                  const MemoryUtils::StoragePlan &plan)
             {
                 const auto *value_component    = plan.find_component("value");
-                const auto *delta_component    = plan.find_component("delta");
                 const auto *tracking_component = plan.find_component("tracking");
-                if (value_component == nullptr || delta_component == nullptr || tracking_component == nullptr)
+                if (value_component == nullptr || tracking_component == nullptr)
                 {
                     throw std::logic_error("TSDataPlanFactory: atomic TSData plan is missing required components");
                 }
@@ -34,12 +33,12 @@ namespace hgraph
                     .value_binding   = &value_binding,
                     .delta_binding   = &delta_binding,
                     .value_offset    = value_component->offset,
-                    .delta_offset    = delta_component->offset,
                     .tracking_offset = tracking_component->offset,
                 };
 
                 ops = TSDataOps{
                     .context                   = &layout,
+                    .allows_mutation           = true,
                     .layout_impl               = &atomic_layout,
                     .tracking_impl             = &atomic_tracking,
                     .mutable_tracking_impl     = &atomic_mutable_tracking,
@@ -47,7 +46,6 @@ namespace hgraph
                     .mutable_value_memory_impl = &atomic_mutable_value_memory,
                     .delta_memory_impl         = &atomic_delta_memory,
                     .mutable_delta_memory_impl = &atomic_mutable_delta_memory,
-                    .reset_delta_impl          = &atomic_reset_delta,
                     .copy_value_from_impl      = &atomic_copy_value_from,
                 };
             }
@@ -107,14 +105,12 @@ namespace hgraph
 
             [[nodiscard]] static const void *atomic_delta_memory(const void *context, const void *memory) noexcept
             {
-                const auto *layout = atomic_layout(context);
-                return advance(memory, layout->delta_offset);
+                return atomic_value_memory(context, memory);
             }
 
             [[nodiscard]] static void *atomic_mutable_delta_memory(const void *context, void *memory) noexcept
             {
-                const auto *layout = atomic_layout(context);
-                return advance(memory, layout->delta_offset);
+                return atomic_mutable_value_memory(context, memory);
             }
 
             static void copy_assign_required(const MemoryUtils::StoragePlan &plan, void *dst, const void *src)
@@ -125,8 +121,6 @@ namespace hgraph
                 }
                 plan.copy_assign(dst, src);
             }
-
-            static void atomic_reset_delta(const void *, void *) {}
 
             [[nodiscard]] static bool atomic_copy_value_from(const void      *context,
                                                              void            *memory,
@@ -148,16 +142,6 @@ namespace hgraph
 
                 const auto *tracking       = atomic_tracking(context, memory);
                 const bool  first_for_time = tracking->last_modified_time != modified_time;
-
-                const auto &delta_plan = layout->delta_binding->checked_plan();
-                if (layout->delta_binding == layout->value_binding)
-                {
-                    copy_assign_required(delta_plan, atomic_mutable_delta_memory(context, memory), source.data());
-                }
-                else
-                {
-                    throw std::logic_error("TSData atomic copy currently requires value and delta bindings to match");
-                }
 
                 const auto &value_plan = layout->value_binding->checked_plan();
                 copy_assign_required(value_plan, atomic_mutable_value_memory(context, memory), source.data());
@@ -216,6 +200,7 @@ namespace hgraph
                 case TSTypeKind::REF:
                 case TSTypeKind::SIGNAL:
                     return schema.value_schema != nullptr && schema.delta_value_schema != nullptr &&
+                           schema.value_schema == schema.delta_value_schema &&
                            schema.value_schema->kind == ValueTypeKind::Atomic &&
                            schema.delta_value_schema->kind == ValueTypeKind::Atomic;
                 default:
@@ -293,16 +278,14 @@ namespace hgraph
         if (!is_compact_atomic_ts_data(*schema)) { unsupported(schema); }
 
         const auto *value_plan = ValuePlanFactory::instance().plan_for(schema->value_schema);
-        const auto *delta_plan = ValuePlanFactory::instance().plan_for(schema->delta_value_schema);
-        if (value_plan == nullptr || delta_plan == nullptr)
+        if (value_plan == nullptr)
         {
-            throw std::logic_error("TSDataPlanFactory: atomic TSData value/delta plans are not resolvable");
+            throw std::logic_error("TSDataPlanFactory: atomic TSData value plan is not resolvable");
         }
 
         auto builder = MemoryUtils::named_tuple();
-        builder.reserve(3);
+        builder.reserve(2);
         builder.add_field("value", *value_plan);
-        builder.add_field("delta", *delta_plan);
         builder.add_field("tracking", MemoryUtils::plan_for<TSDataTracking>());
         const auto *plan = &builder.build();
 

@@ -59,13 +59,17 @@ void instantiate_intern_table() {
 void instantiate_slot_stores() {
     using hgraph::MemoryUtils;
     using hgraph::KeySlotStore;
+    using hgraph::KeyMirroredValueSlotStore;
     using hgraph::ValueSlotStore;
 
     KeySlotStore keys(MemoryUtils::plan_for<int>(), hgraph::key_slot_store_ops_for<int>());
+    KeyMirroredValueSlotStore mirrored_values(keys, MemoryUtils::plan_for<int>());
     int          k = 42;
     auto         result = keys.insert(k);
     assert(result.inserted);
     assert(keys.contains(k));
+    assert(mirrored_values.has_slot(result.slot));
+    assert(mirrored_values.mirrors_key_construction());
 
     ValueSlotStore values(MemoryUtils::plan_for<int>());
     values.reserve_to(8);
