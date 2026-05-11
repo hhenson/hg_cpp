@@ -142,7 +142,8 @@ TSData implementation families
 
 ``SlotTSDataStorage``
     Used for keyed or dynamically-sized collection time-series data
-    such as ``TSS``, ``TSD``, and dynamic ``TSL``. The data store is
+    such as ``TSS`` and ``TSD``. Dynamic ``TSL`` will use the same
+    family when its dynamic storage is implemented. The data store is
     slot-oriented: every child or element has a stable slot id and the
     current payload, validity, and delta information are aligned by
     that slot id. Collection mutation changes slot state instead of
@@ -336,7 +337,7 @@ The parent ``value()`` view is the canonical value-layer view over the
 value region. ``TSB.value()`` exposes the bundle binding for the full
 current value. Fixed ``TSL.value()`` exposes the fixed list binding for
 the full current value. Fixed elements are reached through specialised
-views using the same naming as the time-series API in 2603:
+views using the standard time-series API names:
 ``as_bundle()`` for ``TSB`` and ``as_list()`` for ``TSL``. Generic
 ``TSDataView`` does not expose indexed traversal. Fixed and dynamic
 ``TSL`` may use different data ops and layouts, but callers use the
@@ -517,18 +518,17 @@ own external subscriber lists or graph scheduling fan-out.
 
 The implemented atomic plan follows the compact layout above. ``TSB``
 and fixed-size ``TSL`` use the fixed structured layout above. ``TSW``
-uses the window layout above. The
-remaining dynamic/keyed collection-shaped TSData will use the
+uses the window layout above. ``TSS`` and ``TSD`` use the
 slot-oriented layout below: ``TSS`` tracks membership deltas with
 per-slot bitsets for ``added`` and ``removed``, while ``TSD`` reuses
 the same key side and adds a per-slot ``modified`` bitset for child
 values that changed in the current engine time. The collection owns
 only its collection-level ``last_modified_time``; keyed value
-modification times are read from the child time-series values. When
-the root mutation coordinator starts an outermost mutation for an
-engine time later than the collection's ``last_modified_time``, the
-collection resets any retained delta bitsets before accepting new
-changes.
+modification times are read from the child time-series values. The
+bitset delta surface is reset at the first collection mutation for a
+new engine time. The implementation keeps a small internal
+``delta_time`` marker for that reset decision; the public modification
+answer still comes only from ``last_modified_time == evaluation_time``.
 
 Slot-Oriented Collection TSData
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -821,6 +821,13 @@ subscription, and slot-based path access. The read-only mode rejects
 write operations because the underlying storage belongs to the parent
 container.
 
+The C++ TSData API uses the standard set-view names:
+``TSDataView::as_set()``
+returns ``TSSDataView`` with ``size()``, ``empty()``, ``contains()``,
+``find_slot()``, ``values()``, ``added_values()``, ``removed_values()``,
+``slot_added()``, and ``slot_removed()``. ``TSSDataMutationView`` adds
+``add()``, ``remove()``, ``clear()``, and ``reserve()``.
+
 TSD Storage
 -----------
 
@@ -865,6 +872,15 @@ This is the value-layer Map → read-only Set view (described in
 *Erased Types*) lifted into the time-series layer. The difference is
 that the time-series version carries modification time and a delta
 stream, not just structural read access.
+
+The C++ TSData API uses the standard dictionary-view names:
+``TSDataView::as_dict()`` returns ``TSDDataView`` with keyed
+``contains()``, ``find_slot()``, ``at(key)``, ``keys()``, ``values()``,
+``items()``, ``valid_items()``, ``modified_items(evaluation_time)``,
+and ``key_set()``. ``TSDDataMutationView`` adds ``set(key, value)``,
+``erase(key)``, ``clear()``, and ``reserve()``. Child mutation bubbles
+through the child view's parent link and records the parent's
+``modified`` bit for the child slot.
 
 Buffer Exposure
 ~~~~~~~~~~~~~~~

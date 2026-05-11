@@ -317,7 +317,7 @@ while still letting callers build a value in stages.
 
 Status. The compact value-layer storage shapes, builders, specialised
 read-only views, and ``ValuePlanFactory`` compact container bindings
-are ported. The slot-store-based shapes used by the time-series layer
+are implemented. The slot-store-based shapes used by the time-series layer
 *are* described under *Time-Series Plans and Ops > The Slot Store
 Family*; they are not the value layer's compact form and should not be
 reused as such.

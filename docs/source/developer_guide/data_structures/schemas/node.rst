@@ -207,12 +207,10 @@ member nodes by pointer without worrying about identity drift.
 Status
 ------
 
-The node-schema vocabulary above is being refined from the prior
-``StaticNodeSignature`` / ``static_schema.h`` work in the 2603 branch.
-The 2603 design conflated compile-time C++ reflection with runtime
-schema metadata; the rewrite separates them: the compile-time layer
-becomes a *generator* that produces ``NodeTypeMetaData`` entries in
-the registry, and the runtime evaluation path consults the registry
-directly. Several details — exact ``NodeError`` schema, exact
-representation of ``unresolved_args``, error-handling hook signature —
-are still in flight and will be filled in alongside the implementation.
+The node-schema vocabulary separates compile-time C++ descriptors from
+runtime schema metadata. The compile-time layer is a *generator* that
+produces ``NodeTypeMetaData`` entries in the registry, and the runtime
+evaluation path consults the registry directly. Several details —
+exact ``NodeError`` schema, exact representation of
+``unresolved_args``, error-handling hook signature — are still in
+flight and will be filled in alongside the implementation.

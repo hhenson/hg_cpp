@@ -6,7 +6,7 @@ hgraph is a C++ first implementation of the HGraph runtime model. It preserves t
 This documentation is split into two tracks:
 
 User Guide
-    The programming model, core concepts, and expected user-facing behavior. The initial material is adapted from the Python-first HGraph documentation in the 2603 reference branch and will be revised as the C++ API matures.
+    The programming model, core concepts, and expected user-facing behavior.
 
 Developer Guide
     Internal design notes for implementing the runtime, memory model, data structures, schema system, wiring boundary, and Python integration.

@@ -146,7 +146,10 @@ Lifecycle observer lists should be processed consistently across handlers in reg
 
 One-shot before-evaluation and after-evaluation callbacks are drained until complete. If a callback registers additional callbacks of the same phase while draining, the newly registered callbacks must also run before that drain operation returns.
 
-The current Python and C++ reference branches process after-evaluation callbacks in reverse order while most lifecycle handlers process observers in registration order. The intended C++ contract should normalize this so handlers are consistent; if reverse after-evaluation ordering is required for compatibility, that exception should be documented explicitly before implementation.
+The intended C++ contract is that after-evaluation callbacks follow the
+same registration-order rule as other lifecycle observer lists. If
+compatibility requires a different after-evaluation ordering, that
+exception must be documented explicitly before implementation.
 
 Expected Runtime Phases
 -----------------------
@@ -168,4 +171,5 @@ Open Design Items
 
 - Define the exact graph IR passed from wiring to runtime construction.
 - Define how nested graphs share clocks, schedulers, and memory resources.
-- Decide whether after-evaluation callback ordering must preserve the current reference-branch reverse ordering or move to uniform registration order.
+- Confirm whether after-evaluation callback ordering can remain uniform
+  with the registration-order observer rule.

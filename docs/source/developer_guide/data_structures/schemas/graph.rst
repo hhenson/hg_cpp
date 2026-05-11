@@ -163,11 +163,10 @@ instance may carry a back-pointer to the parent node that hosts it
 state, not schema content.
 
 The runtime instantiation of a nested graph is the *child graph
-template* that the 2603 branch already implemented
-(``ChildGraphTemplate`` / ``ChildGraphInstance``). The schema layer
-described here owns only the template's identity; the actual
-runtime graph storage and the boundary-binding plan that maps ports
-to parent positions live in *Allocation, Plans and Ops*.
+template* (``ChildGraphTemplate`` / ``ChildGraphInstance``). The
+schema layer described here owns only the template's identity; the
+actual runtime graph storage and the boundary-binding plan that maps
+ports to parent positions live in *Allocation, Plans and Ops*.
 
 Dynamic Nested Graphs
 ~~~~~~~~~~~~~~~~~~~~~
@@ -200,11 +199,10 @@ same time.
 Status
 ------
 
-The graph-schema vocabulary is in active design. Pieces already
-prototyped in the 2603 branch — the ``ChildGraphTemplate``,
-``BoundaryBindingPlan``, and the boundary mode list above — feed
-into this rewrite, but the schema-versus-plan separation here is
-new and several details (exact wiring-entry shape, exact form of the
-nested generic-resolution map, exact registry key for graph schemas)
-are not yet fixed. Subsequent passes will fill these in and update
-this page.
+The graph-schema vocabulary is in active design. The
+``ChildGraphTemplate``, ``BoundaryBindingPlan``, and boundary mode list
+above are part of the intended design, with schema identity separated
+from allocation and boundary-binding plans. Several details (exact
+wiring-entry shape, exact form of the nested generic-resolution map,
+exact registry key for graph schemas) are not yet fixed. Subsequent
+passes will fill these in and update this page.

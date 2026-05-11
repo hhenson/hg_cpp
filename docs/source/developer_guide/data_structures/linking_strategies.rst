@@ -102,8 +102,8 @@ ForwardingLink
 --------------
 
 ForwardingLink redirects one output position to another output
-position. The state type is the output-only ``OutputLinkState`` (the
-2603 branch's name; "forwarding link" describes its role). It carries:
+position. The state type is the output-only ``OutputLinkState``. It
+carries:
 
 - a stable handle to the forwarded-to output;
 - a ``TargetNotifiable`` subscribed to that output so ticks propagate

@@ -210,9 +210,9 @@ The selectors planned are:
   wiring layer.
 
 These depend on the ``TSInputView`` / ``TSOutputView`` machinery and
-the node-builder, neither of which has been ported yet. The marker +
+the node-builder, which are not implemented yet. The marker +
 descriptor layer described above is independent of those and is
-landing first.
+implemented first.
 
 Status
 ------
