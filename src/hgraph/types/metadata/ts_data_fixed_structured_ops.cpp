@@ -232,6 +232,7 @@ namespace hgraph::ts_data_plan_factory_detail
             };
             ops.size_impl                   = &fixed_indexed_size;
             ops.element_binding_impl        = &fixed_indexed_element_binding;
+            ops.element_memory_impl         = &fixed_indexed_element_memory;
             ops.mutable_element_memory_impl = &fixed_mutable_indexed_element_memory;
         }
 
@@ -383,6 +384,12 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                                 std::size_t index) noexcept
         {
             return ctx(context)->element_binding(index);
+        }
+
+        [[nodiscard]] static const void *fixed_indexed_element_memory(const void *context, const void *memory,
+                                                                      std::size_t index) noexcept
+        {
+            return child_data(ctx(context), memory, index);
         }
 
         [[nodiscard]] static void *fixed_mutable_indexed_element_memory(const void *context, void *memory,

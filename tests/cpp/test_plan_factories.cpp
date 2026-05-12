@@ -7,29 +7,33 @@
 #include <hgraph/types/value/compact_container_ops.h>
 #include <hgraph/types/value/specialized_views.h>
 #include <hgraph/types/value/value.h>
+#include <hgraph/types/value/value_builder.h>
 
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <vector>
 
 namespace
 {
-    struct RecordingChildModificationOps
+    struct MoveAssignableOnlyScalar
     {
-        static inline std::size_t count{0};
-        static inline std::size_t last_child_id{hgraph::TS_DATA_NO_CHILD_ID};
+        int value{0};
 
-        static void reset() noexcept
+        MoveAssignableOnlyScalar() = default;
+        explicit MoveAssignableOnlyScalar(int v) : value(v) {}
+        MoveAssignableOnlyScalar(const MoveAssignableOnlyScalar &) = default;
+        MoveAssignableOnlyScalar(MoveAssignableOnlyScalar &&) noexcept = default;
+        MoveAssignableOnlyScalar &operator=(const MoveAssignableOnlyScalar &) = delete;
+        MoveAssignableOnlyScalar &operator=(MoveAssignableOnlyScalar &&other) noexcept
         {
-            count         = 0;
-            last_child_id = hgraph::TS_DATA_NO_CHILD_ID;
+            value = other.value;
+            return *this;
         }
 
-        static void record_child_modified(const void *, void *, std::size_t child_id, hgraph::engine_time_t)
-        {
-            ++count;
-            last_child_id = child_id;
-        }
+        [[nodiscard]] bool operator==(const MoveAssignableOnlyScalar &) const = default;
+        [[nodiscard]] auto operator<=>(const MoveAssignableOnlyScalar &) const = default;
     };
 }  // namespace
 
@@ -314,6 +318,7 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified
     TSData data{*binding};
     REQUIRE(data.view().layout().value_binding == registry.scalar_binding<int>());
     REQUIRE(data.view().layout().delta_binding == registry.scalar_binding<int>());
+    REQUIRE_FALSE(data.view().parent_link().has_parent());
 }
 
 TEST_CASE("TSDataView: mutation capability is supplied by TSDataOps")
@@ -334,9 +339,6 @@ TEST_CASE("TSDataView: mutation capability is supplied by TSDataOps")
     auto   immutable_view = immutable_data.view();
     REQUIRE_THROWS_AS(immutable_view.mutable_data(), std::logic_error);
     REQUIRE_THROWS_AS(immutable_view.begin_mutation(MIN_ST), std::logic_error);
-
-    TSData child_data{*binding};
-    REQUIRE_THROWS_AS(child_data.view(immutable_view, 1), std::logic_error);
 }
 
 TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified time")
@@ -397,27 +399,23 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
     auto       &factory  = TSDataPlanFactory::instance();
     const auto *int_meta = registry.register_scalar<int>("int");
     const auto *ts_int   = registry.ts(int_meta);
-    const auto *binding  = factory.binding_for(ts_int);
+    const auto *tsl      = registry.tsl(ts_int, 2);
+    const auto *binding  = factory.binding_for(tsl);
     REQUIRE(binding != nullptr);
 
-    RecordingChildModificationOps::reset();
-    TSDataOps parent_ops = binding->checked_ops();
-    parent_ops.record_child_modified_impl = &RecordingChildModificationOps::record_child_modified;
-    TSDataBinding parent_binding{binding->type_meta, binding->plan(), &parent_ops};
-
-    TSData parent_data{parent_binding};
-    TSData child_data{*binding};
-    TSData sibling_data{*binding};
-    auto   parent = parent_data.view();
-    auto   child  = child_data.view(parent, 7);
-    auto   sibling = sibling_data.view(parent, 9);
+    TSData data{*binding};
+    auto   parent = data.view();
+    auto   list   = parent.as_list();
+    auto   child  = list.at(0);
+    auto   sibling = list.at(1);
     REQUIRE_FALSE(parent.has_parent());
     REQUIRE(child.has_parent());
-    REQUIRE(child.child_id() == 7);
-    REQUIRE(child.parent_link().parent == &parent);
-    REQUIRE(child.parent_link().child_id == 7);
+    REQUIRE(child.child_id() == 0);
+    REQUIRE(child.parent_link().parent_binding == parent.binding());
+    REQUIRE(child.parent_link().parent_data == parent.data());
+    REQUIRE(child.parent_link().child_id == 0);
     REQUIRE(sibling.has_parent());
-    REQUIRE(sibling.child_id() == 9);
+    REQUIRE(sibling.child_id() == 1);
 
     const auto t1 = MIN_ST;
     const auto t2 = t1 + engine_time_delta_t{1};
@@ -431,8 +429,6 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
         REQUIRE(outer.copy_value_from(first.view()));
         REQUIRE(parent.last_modified_time() == t1);
         REQUIRE(parent.modified(t1));
-        REQUIRE(RecordingChildModificationOps::count == 1);
-        REQUIRE(RecordingChildModificationOps::last_child_id == 7);
 
         {
             auto nested = child.begin_mutation(t1);
@@ -442,7 +438,6 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
         REQUIRE(parent.last_modified_time() == t1);
         REQUIRE(child.value().checked_as<int>() == 2);
         REQUIRE(child.delta_value(t1).checked_as<int>() == 2);
-        REQUIRE(RecordingChildModificationOps::count == 1);
     }
 
     REQUIRE(parent.last_modified_time() == t1);
@@ -452,8 +447,13 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
         REQUIRE(mutation.copy_value_from(first.view()));
     }
     REQUIRE(parent.last_modified_time() == t1);
-    REQUIRE(RecordingChildModificationOps::count == 2);
-    REQUIRE(RecordingChildModificationOps::last_child_id == 9);
+    auto        t1_delta = parent.delta_value(t1).as_map();
+    Value       key_zero{std::int64_t{0}};
+    Value       key_one{std::int64_t{1}};
+    const auto  key_zero_view = key_zero.view();
+    const auto  key_one_view  = key_one.view();
+    REQUIRE(t1_delta.contains(key_zero_view));
+    REQUIRE(t1_delta.contains(key_one_view));
 
     {
         auto same_tick = child.begin_mutation(t1);
@@ -461,7 +461,6 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
     }
 
     REQUIRE(parent.last_modified_time() == t1);
-    REQUIRE(RecordingChildModificationOps::count == 2);
     REQUIRE(child.value().checked_as<int>() == 3);
     REQUIRE(child.delta_value(t1).checked_as<int>() == 3);
 
@@ -469,12 +468,13 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
         auto next_tick = child.begin_mutation(t2);
         REQUIRE(next_tick.copy_value_from(first.view()));
         REQUIRE(parent.last_modified_time() == t2);
-        REQUIRE(RecordingChildModificationOps::count == 3);
-        REQUIRE(RecordingChildModificationOps::last_child_id == 7);
     }
 
     REQUIRE(parent.last_modified_time() == t2);
     REQUIRE(parent.modified(t2));
+    auto t2_delta = parent.delta_value(t2).as_map();
+    REQUIRE(t2_delta.contains(key_zero_view));
+    REQUIRE_FALSE(t2_delta.contains(key_one_view));
 
     {
         auto mutation = child.begin_mutation(t3);
@@ -482,8 +482,59 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
     }
     REQUIRE(child.last_modified_time() == t3);
     REQUIRE(parent.last_modified_time() == t3);
-    REQUIRE(RecordingChildModificationOps::count == 4);
-    REQUIRE(RecordingChildModificationOps::last_child_id == 7);
+    REQUIRE(parent.delta_value(t3).as_map().contains(key_zero_view));
+}
+
+TEST_CASE("TSDataView: child parent link is stored in TSData tracking")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *tsd      = registry.tsd(int_meta, ts_int);
+    const auto *binding  = factory.binding_for(tsd);
+    REQUIRE(binding != nullptr);
+
+    TSData data{*binding};
+    Value  key{7};
+    Value  initial{1};
+    Value  updated{12};
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + engine_time_delta_t{1};
+
+    {
+        auto view = data.view();
+        auto dict = view.as_dict();
+        auto mutation = dict.begin_mutation(t1);
+        mutation.set(key.view(), initial.view());
+    }
+
+    TSDataView child;
+    {
+        auto view = data.view();
+        auto dict = view.as_dict();
+        child = dict.at(key.view());
+        REQUIRE(child.has_parent());
+        REQUIRE(child.parent_link().parent_binding == dict.binding());
+        REQUIRE(child.parent_link().parent_data == dict.base().data());
+    }
+
+    REQUIRE(child.has_parent());
+    REQUIRE(child.path_from_root() == std::vector<std::size_t>{child.child_id()});
+    auto root = child.root_view();
+    REQUIRE(root.binding() == data.binding());
+    REQUIRE(root.data() == data.view().data());
+    {
+        auto mutation = child.begin_mutation(t2);
+        REQUIRE(mutation.copy_value_from(updated.view()));
+    }
+
+    auto view = data.view();
+    auto dict = view.as_dict();
+    REQUIRE(dict.modified(t2));
+    REQUIRE(dict.modified_keys(t2).begin() != dict.modified_keys(t2).end());
+    REQUIRE(dict.at(key.view()).value().checked_as<int>() == 12);
 }
 
 TEST_CASE("TSDataPlanFactory: REF and SIGNAL use compact atomic TSData")
@@ -540,6 +591,15 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     auto current = view.value().as_bundle();
     REQUIRE(current.at("a").checked_as<int>() == 0);
     REQUIRE(current.at("b").checked_as<int>() == 0);
+
+    auto immutable_ops = static_cast<const IndexedTSDataOps &>(binding->checked_ops());
+    immutable_ops.allows_mutation = false;
+    TSDataBinding immutable_binding{binding->type_meta, binding->plan(), &immutable_ops};
+    TSData        immutable_data{immutable_binding};
+    auto          immutable_view   = immutable_data.view();
+    auto          immutable_bundle = immutable_view.as_bundle();
+    REQUIRE(immutable_bundle.at(0).value().checked_as<int>() == 0);
+
     std::size_t keyed_items = 0;
     for (const auto [name, element] : tsb_view.items())
     {
@@ -752,6 +812,28 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     Value duplicate{5};
     auto  duplicate_mutation = window.begin_mutation(t4);
     REQUIRE_THROWS_AS(duplicate_mutation.push(duplicate.view()), std::logic_error);
+
+    const auto *move_assign_meta = registry.register_scalar<MoveAssignableOnlyScalar>("move_assign_only");
+    const auto *move_assign_tsw  = registry.tsw(move_assign_meta, 1, 1);
+    const auto *move_binding     = factory.binding_for(move_assign_tsw);
+    REQUIRE(move_binding != nullptr);
+
+    TSData move_data{*move_binding};
+    auto   move_view   = move_data.view();
+    auto   move_window = move_view.as_window();
+    Value  first_custom{MoveAssignableOnlyScalar{1}};
+    Value  second_custom{MoveAssignableOnlyScalar{2}};
+    {
+        auto mutation = move_window.begin_mutation(t1);
+        mutation.push(first_custom.view());
+    }
+    {
+        auto mutation = move_window.begin_mutation(t2);
+        REQUIRE_THROWS_AS(mutation.push(second_custom.view()), std::logic_error);
+    }
+    REQUIRE(move_window.size() == 1);
+    REQUIRE(move_window.time_at(0) == t1);
+    REQUIRE(move_window.back().checked_as<MoveAssignableOnlyScalar>().value == 1);
 }
 
 TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current window")
@@ -859,6 +941,11 @@ TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child l
     auto list_child = root_tsb.field("xs");
     auto list_view = list_child.as_list();
     REQUIRE(list_view.size() == 2);
+    auto item_path_probe = list_view.at(1);
+    REQUIRE(item_path_probe.path_from_root() == std::vector<std::size_t>{0, 1});
+    auto resolved_root = item_path_probe.root_view();
+    REQUIRE(resolved_root.binding() == root.binding());
+    REQUIRE(resolved_root.data() == root.data());
 
     const auto t1 = MIN_ST;
     Value      value{23};
@@ -926,6 +1013,20 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     auto next_delta = view.delta_value(t2).as_bundle();
     REQUIRE(next_delta.at("added").as_set().empty());
     REQUIRE(next_delta.at("removed").as_set().contains(one.view()));
+    REQUIRE(view.last_modified_time() == t2);
+
+    const auto t3 = t2 + engine_time_delta_t{1};
+    Value      three{3};
+    {
+        auto mutation = set.begin_mutation(t3);
+        REQUIRE(mutation.add(three.view()));
+        REQUIRE(mutation.remove(three.view()));
+    }
+
+    REQUIRE_FALSE(set.contains(three.view()));
+    REQUIRE_FALSE(view.modified(t3));
+    REQUIRE_FALSE(view.delta_value(t3).has_value());
+    REQUIRE(view.last_modified_time() == t2);
 }
 
 TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified deltas")
@@ -949,6 +1050,13 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     const auto t1 = MIN_ST;
     Value      key{7};
     Value      value{42};
+    MapBuilder source_builder{*registry.scalar_binding<int>(), *registry.scalar_binding<int>()};
+    source_builder.set_item<int, int>(7, 42);
+    auto source_map = source_builder.build();
+    {
+        auto generic_mutation = view.begin_mutation(t1);
+        REQUIRE_THROWS_AS(generic_mutation.copy_value_from(source_map.view()), std::logic_error);
+    }
     {
         auto mutation = dict.begin_mutation(t1);
         mutation.set(key.view(), value.view());
@@ -959,6 +1067,17 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     REQUIRE(dict.contains(key.view()));
     REQUIRE(dict.at(key.view()).value().checked_as<int>() == 42);
     REQUIRE(view.value().as_map().at(key.view()).checked_as<int>() == 42);
+
+    auto immutable_ops = static_cast<const TSDDataOps &>(binding->checked_ops());
+    immutable_ops.allows_mutation = false;
+    TSDataBinding immutable_binding{binding->type_meta, binding->plan(), &immutable_ops};
+    auto          immutable_view = TSDataView{&immutable_binding, view.data()};
+    auto          immutable_child = immutable_view.as_dict().at(key.view());
+    REQUIRE(immutable_child.value().checked_as<int>() == 42);
+    REQUIRE(immutable_child.has_parent());
+    REQUIRE(immutable_child.parent_link().parent_binding == binding);
+    REQUIRE(immutable_child.root_view().data() == view.data());
+
     REQUIRE(dict.key_set().contains(key.view()));
     REQUIRE(dict.key_set().added().begin() != dict.key_set().added().end());
     REQUIRE(dict.added_keys().begin() != dict.added_keys().end());
@@ -977,8 +1096,31 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     REQUIRE(delta.at("modified").as_map().at(key.view()).checked_as<int>() == 42);
 
     const auto t2 = t1 + engine_time_delta_t{1};
+    Value      updated{84};
     {
-        auto mutation = dict.begin_mutation(t2);
+        auto values = dict.values();
+        auto it     = values.begin();
+        REQUIRE(it != values.end());
+        auto child = *it;
+        REQUIRE(child.has_parent());
+        REQUIRE(child.parent_link().parent_binding == dict.binding());
+        REQUIRE(child.parent_link().parent_data == dict.base().data());
+        REQUIRE(child.child_id() == dict.find_slot(key.view()));
+        auto mutation = child.begin_mutation(t2);
+        REQUIRE(mutation.copy_value_from(updated.view()));
+    }
+
+    REQUIRE(view.modified(t2));
+    REQUIRE(dict.at(key.view()).value().checked_as<int>() == 84);
+    REQUIRE(dict.modified_keys(t2).begin() != dict.modified_keys(t2).end());
+    auto modified_delta = view.delta_value(t2).as_bundle();
+    REQUIRE(modified_delta.at("removed").as_set().empty());
+    REQUIRE(modified_delta.at("modified").as_map().contains(key.view()));
+    REQUIRE(modified_delta.at("modified").as_map().at(key.view()).checked_as<int>() == 84);
+
+    const auto t3 = t2 + engine_time_delta_t{1};
+    {
+        auto mutation = dict.begin_mutation(t3);
         REQUIRE(mutation.erase(key.view()));
     }
 
@@ -986,9 +1128,24 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     REQUIRE(dict.removed_keys().begin() != dict.removed_keys().end());
     REQUIRE(dict.removed_values().begin() != dict.removed_values().end());
     REQUIRE(dict.removed_items().begin() != dict.removed_items().end());
-    auto next_delta = view.delta_value(t2).as_bundle();
+    auto next_delta = view.delta_value(t3).as_bundle();
     REQUIRE(next_delta.at("removed").as_set().contains(key.view()));
     REQUIRE_FALSE(next_delta.at("modified").as_map().contains(key.view()));
+    REQUIRE(view.last_modified_time() == t3);
+
+    const auto t4 = t3 + engine_time_delta_t{1};
+    Value      other_key{8};
+    Value      other_value{11};
+    {
+        auto mutation = dict.begin_mutation(t4);
+        mutation.set(other_key.view(), other_value.view());
+        REQUIRE(mutation.erase(other_key.view()));
+    }
+
+    REQUIRE_FALSE(dict.contains(other_key.view()));
+    REQUIRE_FALSE(view.modified(t4));
+    REQUIRE_FALSE(view.delta_value(t4).has_value());
+    REQUIRE(view.last_modified_time() == t3);
 }
 
 TEST_CASE("TSDataPlanFactory::plan_for throws for dynamic TSL until slot list storage is implemented")

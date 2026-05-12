@@ -4,10 +4,12 @@
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/utils/memory_utils.h>
+#include <hgraph/types/value/specialized_views.h>
 #include <hgraph/types/value/value_range.h>
 #include <hgraph/types/value/value_view.h>
 #include <hgraph/util/date_time.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <exception>
 #include <stdexcept>
@@ -21,6 +23,7 @@ namespace hgraph
     struct TSDataOps;
     using TSDataBinding = TypeBinding<TSValueTypeMetaData, TSDataOps>;
 
+    struct TSDataTracking;
     class TSDataView;
     class TSDataMutationView;
     class IndexedTSDataView;
@@ -36,16 +39,54 @@ namespace hgraph
     inline constexpr std::size_t TS_DATA_NO_CHILD_ID = static_cast<std::size_t>(-1);
 
     /**
-     * Per-TSData modification stamps.
+     * Stable parent identity for one TSData node.
      *
-     * This lives in the TSData payload/delta memory component, not in the
-     * surrounding TSState. TSDataView owns local parent bubble-up, TSState owns
-     * graph-level notification, and TSData owns the timestamp needed to decide
-     * whether its local delta view belongs to a given evaluation time.
+     * This is stored in the child node's value-owned tracking region. It does
+     * not point at transient view objects, so a child view may outlive the
+     * parent view that projected it.
+     */
+    struct TSDataParentLink
+    {
+        const TSDataBinding *parent_binding{nullptr};
+        const void          *parent_data{nullptr};
+        std::size_t          child_id{TS_DATA_NO_CHILD_ID};
+
+        constexpr TSDataParentLink() noexcept = default;
+        constexpr TSDataParentLink(const TSDataBinding *binding,
+                                   const void          *data,
+                                   std::size_t          parent_child_id) noexcept
+            : parent_binding(binding),
+              parent_data(data),
+              child_id(parent_child_id)
+        {
+        }
+
+        [[nodiscard]] bool has_parent() const noexcept
+        {
+            return parent_binding != nullptr && parent_data != nullptr;
+        }
+        void notify_child_modified(engine_time_t mutation_time) const;
+        [[nodiscard]] std::vector<std::size_t> path_from_root() const;
+        [[nodiscard]] TSDataView root_view() const;
+
+      private:
+        [[nodiscard]] const TSDataTracking &parent_tracking() const;
+        [[nodiscard]] TSDataTracking &mutable_parent_tracking() const;
+    };
+
+    /**
+     * Common per-TSData tracking state.
+     *
+     * Every TSData shape, including compact atomic TSData, stores this in its
+     * value-owned memory. Root values keep ``parent`` empty; projected child
+     * values use it for local bubble-up. TSState owns graph-level notification,
+     * and TSData owns the timestamp needed to decide whether its local delta
+     * view belongs to a given evaluation time.
      */
     struct TSDataTracking
     {
         engine_time_t last_modified_time{MIN_DT};
+        TSDataParentLink parent{};
     };
 
     /**
@@ -150,6 +191,8 @@ namespace hgraph
     {
         std::size_t slot{TS_DATA_NO_CHILD_ID};
         bool        changed{false};
+        bool        has_delta{false};
+        engine_time_t previous_modified_time{MIN_DT};
     };
 
     namespace ts_data_detail
@@ -215,6 +258,11 @@ namespace hgraph
                                                                                   std::size_t)
         {
             missing_ts_data_op("indexed element binding");
+        }
+
+        [[nodiscard]] inline const void *missing_indexed_element_memory(const void *, const void *, std::size_t)
+        {
+            missing_ts_data_op("indexed element memory");
         }
 
         [[nodiscard]] inline void *missing_mutable_indexed_element_memory(const void *, void *, std::size_t)
@@ -412,6 +460,10 @@ namespace hgraph
             const void *context,
             const void *memory,
             std::size_t index) = &ts_data_detail::missing_indexed_element_binding;
+        const void *(*element_memory_impl)(
+            const void *context,
+            const void *memory,
+            std::size_t index) = &ts_data_detail::missing_indexed_element_memory;
         void *(*mutable_element_memory_impl)(
             const void *context,
             void *memory,
@@ -450,28 +502,6 @@ namespace hgraph
     };
 
     /**
-     * Parent-owned identity carried by a child TSData view.
-     *
-     * The ``child_id`` is meaningful only to the parent view. Keeping it with
-     * the parent reference makes that ownership explicit and keeps bubble-up
-     * notification logic out of the generic mutation view.
-     */
-    struct TSDataParentLink
-    {
-        TSDataView *parent{nullptr};
-        std::size_t child_id{TS_DATA_NO_CHILD_ID};
-
-        constexpr TSDataParentLink() noexcept = default;
-        TSDataParentLink(TSDataView &parent_view, std::size_t parent_child_id);
-
-        [[nodiscard]] bool has_parent() const noexcept { return parent != nullptr; }
-        void notify_child_modified(engine_time_t mutation_time) const;
-
-      private:
-        static void require_parent_view(const TSDataView &parent_view);
-    };
-
-    /**
      * Non-owning view over TSData.
      */
     class TSDataView
@@ -489,18 +519,6 @@ namespace hgraph
         {
         }
 
-        TSDataView(const TSDataBinding *binding, void *data, TSDataView &parent, std::size_t child_id)
-            : binding_(binding),
-              data_(data),
-              parent_link_(parent, child_id)
-        {
-        }
-
-        TSDataView(const TSDataBinding *binding, const void *data, TSDataView &parent, std::size_t child_id)
-            : binding_(binding), data_(data), parent_link_(parent, child_id)
-        {
-        }
-
         [[nodiscard]] bool valid() const noexcept { return binding_ != nullptr && data_ != nullptr; }
         explicit operator bool() const noexcept { return valid(); }
         [[nodiscard]] const TSDataBinding *binding() const noexcept { return binding_; }
@@ -509,9 +527,23 @@ namespace hgraph
             return binding_ != nullptr ? binding_->type_meta : nullptr;
         }
         [[nodiscard]] const void *data() const noexcept { return data_; }
-        [[nodiscard]] const TSDataParentLink &parent_link() const noexcept { return parent_link_; }
-        [[nodiscard]] std::size_t child_id() const noexcept { return parent_link_.child_id; }
-        [[nodiscard]] bool has_parent() const noexcept { return parent_link_.has_parent(); }
+        [[nodiscard]] const TSDataParentLink &parent_link() const { return tracking().parent; }
+        [[nodiscard]] std::size_t child_id() const
+        {
+            if (!valid()) { return TS_DATA_NO_CHILD_ID; }
+            const auto &link = tracking().parent;
+            return link.has_parent() ? link.child_id : TS_DATA_NO_CHILD_ID;
+        }
+        [[nodiscard]] bool has_parent() const { return valid() && tracking().parent.has_parent(); }
+        [[nodiscard]] std::vector<std::size_t> path_from_root() const
+        {
+            return valid() ? tracking().parent.path_from_root() : std::vector<std::size_t>{};
+        }
+        [[nodiscard]] TSDataView root_view() const
+        {
+            if (!valid() || !has_parent()) { return *this; }
+            return tracking().parent.root_view();
+        }
         [[nodiscard]] void *mutable_data() const
         {
             if (!valid()) { throw std::logic_error("TSDataView::mutable_data requires a live view"); }
@@ -584,6 +616,22 @@ namespace hgraph
 
       private:
         friend class TSDataMutationView;
+        friend class IndexedTSDataView;
+        friend class TSDDataView;
+        friend class TSDDataMutationView;
+
+        TSDataView(const TSDataBinding *binding, void *data, TSDataView &parent, std::size_t child_id)
+            : binding_(binding),
+              data_(data)
+        {
+            bind_parent(parent, child_id);
+        }
+
+        TSDataView(const TSDataBinding *binding, const void *data, TSDataView &parent, std::size_t child_id)
+            : binding_(binding), data_(data)
+        {
+            bind_parent(parent, child_id);
+        }
 
         void require_live(const char *what) const
         {
@@ -596,9 +644,19 @@ namespace hgraph
             return *table.mutable_tracking_impl(table.context, mutable_data());
         }
 
+        void bind_parent(const TSDataView &parent, std::size_t child_id) const
+        {
+            if (!valid()) { throw std::logic_error("TSDataView child requires a live view"); }
+            if (!parent.valid()) { throw std::logic_error("TSDataView child requires a live parent view"); }
+            if (!parent.ops().allows_mutation)
+            {
+                throw std::logic_error("TSDataView child requires mutable parent TSData ops");
+            }
+            mutable_tracking().parent = TSDataParentLink{parent.binding(), parent.data(), child_id};
+        }
+
         const TSDataBinding *binding_{nullptr};
         const void          *data_{nullptr};
-        TSDataParentLink     parent_link_{};
     };
 
     class TSDataMutationView
@@ -644,6 +702,14 @@ namespace hgraph
             if (record_modified_local()) { notify_parent_modified(); }
         }
 
+        void restore_last_modified_time(engine_time_t previous_modified_time)
+        {
+            require_active_mutation();
+
+            auto &state = view_.mutable_tracking();
+            if (state.last_modified_time == mutation_time_) { state.last_modified_time = previous_modified_time; }
+        }
+
         [[nodiscard]] bool copy_value_from(const ValueView &source)
         {
             require_active_mutation();
@@ -658,13 +724,6 @@ namespace hgraph
             }
             if (newly_modified) { notify_parent_modified(); }
             return newly_modified;
-        }
-
-        void mark_child_modified(std::size_t child_id)
-        {
-            const auto &table = view_.ops();
-            table.record_child_modified_impl(table.context, view_.mutable_data(), child_id, mutation_time_);
-            if (record_modified_local()) { notify_parent_modified(); }
         }
 
       private:
@@ -699,12 +758,23 @@ namespace hgraph
 
         void notify_parent_modified() const
         {
-            view_.parent_link_.notify_child_modified(mutation_time_);
+            view_.parent_link().notify_child_modified(mutation_time_);
         }
 
         TSDataView    view_{};
         engine_time_t mutation_time_{MIN_DT};
     };
+
+    inline void apply_slot_mutation_result(TSDataMutationView &mutation, const SlotTSDataMutationResult &result)
+    {
+        if (!result.changed) { return; }
+        if (result.has_delta)
+        {
+            mutation.mark_modified();
+            return;
+        }
+        mutation.restore_last_modified_time(result.previous_modified_time);
+    }
 
     class IndexedTSDataView
     {
@@ -796,10 +866,14 @@ namespace hgraph
             {
                 throw std::logic_error("IndexedTSDataView::at: element binding is not resolved");
             }
-            auto *element_memory = ops.mutable_element_memory_impl(ops.context, view_->mutable_data(), index);
+            const auto *element_memory = ops.element_memory_impl(ops.context, view_->data(), index);
             if (element_memory == nullptr)
             {
                 throw std::logic_error("IndexedTSDataView::at: element memory is not resolved");
+            }
+            if (!view_->ops().allows_mutation)
+            {
+                return TSDataView{element_binding, element_memory};
             }
             return TSDataView{element_binding, element_memory, *view_, index};
         }
@@ -1011,8 +1085,9 @@ namespace hgraph
         {
             if (!slot_occupied(slot)) { throw std::out_of_range("TSDDataView::at_slot: slot is not occupied"); }
             const auto &ops = dict_ops();
-            return TSDataView{layout().element_binding, ops.child_at_slot_impl(ops.context, view_.data(), slot),
-                              const_cast<TSDataView &>(view_), slot};
+            const auto *child_memory = ops.child_at_slot_impl(ops.context, view_.data(), slot);
+            if (!view_.ops().allows_mutation) { return TSDataView{layout().element_binding, child_memory}; }
+            return TSDataView{layout().element_binding, child_memory, const_cast<TSDataView &>(view_), slot};
         }
         [[nodiscard]] TSDataView at(const ValueView &key) const
         {
@@ -1031,13 +1106,11 @@ namespace hgraph
         }
         [[nodiscard]] Range<TSDataView> values() const
         {
-            const auto &ops = dict_ops();
-            return ops.make_ts_values_range_impl(ops.context, view_.data());
+            return ts_data_values_range(&slot_live_predicate);
         }
         [[nodiscard]] KeyValueRange<ValueView, TSDataView> items() const
         {
-            const auto &ops = dict_ops();
-            return ops.make_ts_kv_range_impl(ops.context, view_.data());
+            return ts_data_items_range(&slot_live_predicate);
         }
         [[nodiscard]] Range<ValueView> valid_keys() const
         {
@@ -1046,13 +1119,11 @@ namespace hgraph
         }
         [[nodiscard]] Range<TSDataView> valid_values() const
         {
-            const auto &ops = dict_ops();
-            return ops.make_valid_ts_values_range_impl(ops.context, view_.data());
+            return ts_data_values_range(&slot_valid_predicate);
         }
         [[nodiscard]] KeyValueRange<ValueView, TSDataView> valid_items() const
         {
-            const auto &ops = dict_ops();
-            return ops.make_valid_ts_kv_range_impl(ops.context, view_.data());
+            return ts_data_items_range(&slot_valid_predicate);
         }
         [[nodiscard]] Range<ValueView> modified_keys(engine_time_t evaluation_time) const
         {
@@ -1063,36 +1134,30 @@ namespace hgraph
         [[nodiscard]] Range<TSDataView> modified_values(engine_time_t evaluation_time) const
         {
             if (!modified(evaluation_time)) { return empty_ts_data_range(); }
-            const auto &ops = dict_ops();
-            return ops.make_modified_ts_values_range_impl(ops.context, view_.data());
+            return ts_data_values_range(&slot_modified_predicate);
         }
         [[nodiscard]] KeyValueRange<ValueView, TSDataView> modified_items(engine_time_t evaluation_time) const
         {
             if (!modified(evaluation_time)) { return empty_ts_data_kv_range(); }
-            const auto &ops = dict_ops();
-            return ops.make_modified_ts_kv_range_impl(ops.context, view_.data());
+            return ts_data_items_range(&slot_modified_predicate);
         }
         [[nodiscard]] Range<ValueView> added_keys() const { return key_set().added(); }
         [[nodiscard]] Range<TSDataView> added_values() const
         {
-            const auto &ops = dict_ops();
-            return ops.make_added_ts_values_range_impl(ops.context, view_.data());
+            return ts_data_values_range(&slot_added_predicate);
         }
         [[nodiscard]] KeyValueRange<ValueView, TSDataView> added_items() const
         {
-            const auto &ops = dict_ops();
-            return ops.make_added_ts_kv_range_impl(ops.context, view_.data());
+            return ts_data_items_range(&slot_added_predicate);
         }
         [[nodiscard]] Range<ValueView> removed_keys() const { return key_set().removed(); }
         [[nodiscard]] Range<TSDataView> removed_values() const
         {
-            const auto &ops = dict_ops();
-            return ops.make_removed_ts_values_range_impl(ops.context, view_.data());
+            return ts_data_values_range(&slot_removed_predicate);
         }
         [[nodiscard]] KeyValueRange<ValueView, TSDataView> removed_items() const
         {
-            const auto &ops = dict_ops();
-            return ops.make_removed_ts_kv_range_impl(ops.context, view_.data());
+            return ts_data_items_range(&slot_removed_predicate);
         }
         [[nodiscard]] TSSDataView key_set() const
         {
@@ -1123,6 +1188,71 @@ namespace hgraph
         {
             return KeyValueRange<ValueView, TSDataView>{.context = nullptr, .memory = nullptr, .limit = 0,
                                                         .predicate = nullptr, .projector = nullptr};
+        }
+
+        [[nodiscard]] Range<TSDataView> ts_data_values_range(Range<TSDataView>::predicate_fn predicate) const
+        {
+            return Range<TSDataView>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = slot_capacity(),
+                .predicate = predicate,
+                .projector = &project_ts_value_at_slot,
+            };
+        }
+
+        [[nodiscard]] KeyValueRange<ValueView, TSDataView> ts_data_items_range(
+            KeyValueRange<ValueView, TSDataView>::predicate_fn predicate) const
+        {
+            return KeyValueRange<ValueView, TSDataView>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = slot_capacity(),
+                .predicate = predicate,
+                .projector = &project_ts_item_at_slot,
+            };
+        }
+
+        [[nodiscard]] static bool slot_live_predicate(const void *context, const void *, std::size_t slot)
+        {
+            return static_cast<const TSDDataView *>(context)->slot_live(slot);
+        }
+
+        [[nodiscard]] static bool slot_valid_predicate(const void *context, const void *, std::size_t slot)
+        {
+            const auto *self = static_cast<const TSDDataView *>(context);
+            return self->slot_live(slot) && self->at_slot(slot).last_modified_time() != MIN_DT;
+        }
+
+        [[nodiscard]] static bool slot_modified_predicate(const void *context, const void *, std::size_t slot)
+        {
+            const auto *self = static_cast<const TSDDataView *>(context);
+            return self->slot_live(slot) && self->slot_modified(slot);
+        }
+
+        [[nodiscard]] static bool slot_added_predicate(const void *context, const void *, std::size_t slot)
+        {
+            const auto *self = static_cast<const TSDDataView *>(context);
+            return self->slot_occupied(slot) && self->slot_added(slot);
+        }
+
+        [[nodiscard]] static bool slot_removed_predicate(const void *context, const void *, std::size_t slot)
+        {
+            const auto *self = static_cast<const TSDDataView *>(context);
+            return self->slot_occupied(slot) && self->slot_removed(slot);
+        }
+
+        [[nodiscard]] static TSDataView project_ts_value_at_slot(const void *context, const void *, std::size_t slot)
+        {
+            return static_cast<const TSDDataView *>(context)->at_slot(slot);
+        }
+
+        [[nodiscard]] static std::pair<ValueView, TSDataView> project_ts_item_at_slot(const void *context,
+                                                                                      const void *,
+                                                                                      std::size_t slot)
+        {
+            const auto *self = static_cast<const TSDDataView *>(context);
+            return {self->key_at_slot(slot), self->at_slot(slot)};
         }
 
         [[nodiscard]] const TSDDataOps &dict_ops() const
@@ -1492,7 +1622,7 @@ namespace hgraph
             const auto &ops    = static_cast<const TSSDataOps &>(mutation_.ops());
             const auto  result = ops.insert_key_impl(ops.context, mutation_.mutable_data(), key,
                                                      current_mutation_time());
-            if (result.changed) { mutation_.mark_modified(); }
+            apply_slot_mutation_result(mutation_, result);
             return result.changed;
         }
 
@@ -1501,7 +1631,7 @@ namespace hgraph
             const auto &ops    = static_cast<const TSSDataOps &>(mutation_.ops());
             const auto  result = ops.remove_key_impl(ops.context, mutation_.mutable_data(), key,
                                                      current_mutation_time());
-            if (result.changed) { mutation_.mark_modified(); }
+            apply_slot_mutation_result(mutation_, result);
             return result.changed;
         }
 
@@ -1553,7 +1683,7 @@ namespace hgraph
             const auto &ops    = static_cast<const TSDDataOps &>(mutation_.ops());
             const auto  result = ops.insert_key_impl(ops.context, mutation_.mutable_data(), key,
                                                      current_mutation_time());
-            if (result.changed) { mutation_.mark_modified(); }
+            apply_slot_mutation_result(mutation_, result);
             return at_slot(result.slot);
         }
 
@@ -1571,7 +1701,7 @@ namespace hgraph
             const auto &ops    = static_cast<const TSDDataOps &>(mutation_.ops());
             const auto  result = ops.remove_key_impl(ops.context, mutation_.mutable_data(), key,
                                                      current_mutation_time());
-            if (result.changed) { mutation_.mark_modified(); }
+            apply_slot_mutation_result(mutation_, result);
             return result.changed;
         }
 
@@ -1584,7 +1714,27 @@ namespace hgraph
 
         [[nodiscard]] bool copy_value_from(const ValueView &source)
         {
-            return mutation_.copy_value_from(source);
+            if (!source.has_value())
+            {
+                throw std::invalid_argument("TSDDataMutationView::copy_value_from requires a live source");
+            }
+            if (source.schema() != layout().value_binding->type_meta)
+            {
+                throw std::invalid_argument("TSDDataMutationView::copy_value_from requires the map value schema");
+            }
+
+            const bool was_modified = mutation_.modified(current_mutation_time());
+            auto       source_map   = source.as_map();
+            for (const auto [key, value] : source_map.items()) { set(key, value); }
+
+            std::vector<ValueView> removals;
+            for (const auto key : keys())
+            {
+                if (!source_map.contains(key)) { removals.push_back(key); }
+            }
+            for (const auto key : removals) { static_cast<void>(erase(key)); }
+
+            return !was_modified && mutation_.modified(current_mutation_time());
         }
 
       private:
@@ -1602,30 +1752,68 @@ namespace hgraph
         TSDataMutationView mutation_;
     };
 
-    inline TSDataParentLink::TSDataParentLink(TSDataView &parent_view, std::size_t parent_child_id)
-        : parent(&parent_view), child_id(parent_child_id)
+    inline const TSDataTracking &TSDataParentLink::parent_tracking() const
     {
-        require_parent_view(parent_view);
+        if (!has_parent()) { throw std::logic_error("TSDataParentLink requires a parent"); }
+        const auto &table = parent_binding->checked_ops();
+        return *table.tracking_impl(table.context, parent_data);
     }
 
-    inline void TSDataParentLink::require_parent_view(const TSDataView &parent_view)
+    inline TSDataTracking &TSDataParentLink::mutable_parent_tracking() const
     {
-        if (!parent_view.valid())
+        if (!has_parent()) { throw std::logic_error("TSDataParentLink requires a parent"); }
+        const auto &table = parent_binding->checked_ops();
+        auto       *memory = const_cast<void *>(parent_data);
+        return *table.mutable_tracking_impl(table.context, memory);
+    }
+
+    inline std::vector<std::size_t> TSDataParentLink::path_from_root() const
+    {
+        std::vector<std::size_t> reversed_path;
+        auto                     current = *this;
+        while (current.has_parent())
         {
-            throw std::logic_error("TSDataParentLink requires a live parent view");
+            reversed_path.push_back(current.child_id);
+            const auto &next = current.parent_tracking().parent;
+            if (!next.has_parent()) { break; }
+            current = next;
         }
-        if (!parent_view.ops().allows_mutation)
+
+        std::reverse(reversed_path.begin(), reversed_path.end());
+        return reversed_path;
+    }
+
+    inline TSDataView TSDataParentLink::root_view() const
+    {
+        if (!has_parent()) { return TSDataView{}; }
+
+        const TSDataBinding *root_binding = parent_binding;
+        const void          *root_data    = parent_data;
+        auto                 current      = *this;
+        while (current.has_parent())
         {
-            throw std::logic_error("TSDataParentLink requires mutable parent TSData ops");
+            root_binding = current.parent_binding;
+            root_data    = current.parent_data;
+            const auto &next = current.parent_tracking().parent;
+            if (!next.has_parent()) { break; }
+            current = next;
         }
+        return TSDataView{root_binding, root_data};
     }
 
     inline void TSDataParentLink::notify_child_modified(engine_time_t mutation_time) const
     {
-        if (parent == nullptr) { return; }
+        if (!has_parent()) { return; }
 
-        auto parent_mutation = parent->begin_mutation(mutation_time);
-        parent_mutation.mark_child_modified(child_id);
+        const auto &table = parent_binding->checked_ops();
+        auto       *memory = const_cast<void *>(parent_data);
+        table.record_child_modified_impl(table.context, memory, child_id, mutation_time);
+
+        auto &state = mutable_parent_tracking();
+        if (state.last_modified_time == mutation_time) { return; }
+
+        state.last_modified_time = mutation_time;
+        state.parent.notify_child_modified(mutation_time);
     }
 
     inline TSDataMutationView TSDataView::begin_mutation(engine_time_t evaluation_time) const
@@ -1723,14 +1911,6 @@ namespace hgraph
 
         [[nodiscard]] TSDataView view() { return TSDataView{binding(), storage_.data()}; }
         [[nodiscard]] TSDataView view() const { return TSDataView{binding(), storage_.data()}; }
-        [[nodiscard]] TSDataView view(TSDataView &parent, std::size_t child_id)
-        {
-            return TSDataView{binding(), storage_.data(), parent, child_id};
-        }
-        [[nodiscard]] TSDataView view(TSDataView &parent, std::size_t child_id) const
-        {
-            return TSDataView{binding(), storage_.data(), parent, child_id};
-        }
 
       private:
         storage_type storage_{};

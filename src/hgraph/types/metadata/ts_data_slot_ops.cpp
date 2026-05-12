@@ -88,6 +88,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 return slot < removed_.size() && removed_.test(slot);
             }
+            [[nodiscard]] bool has_delta() const noexcept { return added_.any() || removed_.any(); }
             [[nodiscard]] const void *key_at_slot(std::size_t slot) const { return keys_[slot]; }
             [[nodiscard]] std::size_t find_slot(const ValueView &key) const
             {
@@ -118,7 +119,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 if (slot_removed(result.slot)) { removed_.reset(result.slot); }
                 else { added_.set(result.slot); }
-                return {.slot = result.slot, .changed = true};
+                return mutation_result(result.slot);
             }
 
             [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, engine_time_t modified_time)
@@ -133,7 +134,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 ensure_delta_capacity();
                 if (slot_added(slot)) { added_.reset(slot); }
                 else { removed_.set(slot); }
-                return {.slot = slot, .changed = true};
+                return mutation_result(slot);
             }
 
             void reset_delta() noexcept
@@ -171,6 +172,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
 
                 keys_.erase_pending();
+                previous_modified_time_ = tracking_.last_modified_time;
                 reset_delta();
                 delta_time_ = modified_time;
                 ensure_delta_capacity();
@@ -183,12 +185,21 @@ namespace hgraph::ts_data_plan_factory_detail
                 removed_.resize(capacity);
             }
 
+            [[nodiscard]] SlotTSDataMutationResult mutation_result(std::size_t slot) const noexcept
+            {
+                return {.slot = slot,
+                        .changed = true,
+                        .has_delta = has_delta(),
+                        .previous_modified_time = previous_modified_time_};
+            }
+
             const ValueTypeBinding *key_binding_{nullptr};
             TSDataTracking         tracking_{};
             KeySlotStore           keys_;
             sul::dynamic_bitset<>  added_{};
             sul::dynamic_bitset<>  removed_{};
             engine_time_t          delta_time_{MIN_DT};
+            engine_time_t          previous_modified_time_{MIN_DT};
         };
 
         class TSDSlotStorage
@@ -229,6 +240,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 return slot < modified_.size() && modified_.test(slot);
             }
+            [[nodiscard]] bool has_delta() const noexcept { return added_.any() || removed_.any() || modified_.any(); }
             [[nodiscard]] const void *key_at_slot(std::size_t slot) const { return keys_[slot]; }
             [[nodiscard]] std::size_t find_slot(const ValueView &key) const
             {
@@ -267,7 +279,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 if (slot_removed(result.slot)) { removed_.reset(result.slot); }
                 else { added_.set(result.slot); }
-                return {.slot = result.slot, .changed = true};
+                return mutation_result(result.slot);
             }
 
             [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, engine_time_t modified_time)
@@ -283,7 +295,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (slot_added(slot)) { added_.reset(slot); }
                 else { removed_.set(slot); }
                 modified_.reset(slot);
-                return {.slot = slot, .changed = true};
+                return mutation_result(slot);
             }
 
             void record_child_modified(std::size_t slot, engine_time_t modified_time)
@@ -333,6 +345,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
 
                 keys_.erase_pending();
+                previous_modified_time_ = tracking_.last_modified_time;
                 reset_delta();
                 delta_time_ = modified_time;
                 ensure_delta_capacity();
@@ -346,6 +359,14 @@ namespace hgraph::ts_data_plan_factory_detail
                 modified_.resize(capacity);
             }
 
+            [[nodiscard]] SlotTSDataMutationResult mutation_result(std::size_t slot) const noexcept
+            {
+                return {.slot = slot,
+                        .changed = true,
+                        .has_delta = has_delta(),
+                        .previous_modified_time = previous_modified_time_};
+            }
+
             const ValueTypeBinding     *key_binding_{nullptr};
             const TSDataBinding        *element_binding_{nullptr};
             TSDataTracking              tracking_{};
@@ -355,6 +376,7 @@ namespace hgraph::ts_data_plan_factory_detail
             sul::dynamic_bitset<>       removed_{};
             sul::dynamic_bitset<>       modified_{};
             engine_time_t               delta_time_{MIN_DT};
+            engine_time_t               previous_modified_time_{MIN_DT};
         };
 
         struct TSSStoragePlanContext
@@ -1185,41 +1207,12 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static bool tsd_copy_value_from(const void *context, void *memory, const ValueView &source,
                                                           engine_time_t modified_time)
             {
-                if (!source.has_value()) { throw std::invalid_argument("TSD copy requires a live source value"); }
-                const auto *state = ctxd(context);
-                if (source.schema() != state->dict_schema->value_schema)
-                {
-                    throw std::invalid_argument("TSD copy requires the map value schema");
-                }
-
-                auto &target = storage<TSDSlotStorage>(memory);
-                MapView source_map{source};
-                bool changed = false;
-                for (const auto [key, value] : source_map.items())
-                {
-                    const auto result = target.insert_key(key, modified_time);
-                    changed = result.changed || changed;
-                    auto *child_memory = target.child_memory_for_write(result.slot);
-                    const auto &child_ops = state->dict_layout.element_binding->checked_ops();
-                    if (child_ops.copy_value_from_impl(child_ops.context, child_memory, value, modified_time))
-                    {
-                        child_ops.mutable_tracking_impl(child_ops.context, child_memory)->last_modified_time =
-                            modified_time;
-                        target.record_child_modified(result.slot, modified_time);
-                        changed = true;
-                    }
-                }
-
-                std::vector<ValueView> removals;
-                for (const auto key : map_keys_range<SlotMapSurface::Live>(context, memory))
-                {
-                    if (!source_map.contains(key)) { removals.push_back(key); }
-                }
-                for (const auto key : removals)
-                {
-                    changed = target.remove_key(key, modified_time).changed || changed;
-                }
-                return changed;
+                (void)context;
+                (void)memory;
+                (void)source;
+                (void)modified_time;
+                throw std::logic_error(
+                    "TSD copy_value_from must be performed through TSDDataMutationView so child notifications use TSDataParentLink");
             }
 
             [[nodiscard]] static const void *tsd_child_at_slot(const void *, const void *memory, std::size_t slot)

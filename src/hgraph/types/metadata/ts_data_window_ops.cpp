@@ -257,25 +257,21 @@ namespace hgraph::ts_data_plan_factory_detail
             void copy_assign_value_slot(std::size_t physical, const void *source)
             {
                 const auto &plan = element_plan();
-                if (plan.can_copy_assign())
+                if (!plan.can_copy_assign())
                 {
-                    plan.copy_assign(value_slot(physical), source);
-                    return;
+                    throw std::logic_error("TSW replacement requires copy-assignable element storage");
                 }
-                plan.destroy(value_slot(physical));
-                plan.copy_construct(value_slot(physical), source);
+                plan.copy_assign(value_slot(physical), source);
             }
 
             void copy_assign_time_slot(std::size_t physical, engine_time_t modified_time)
             {
                 const auto &plan = time_plan();
-                if (plan.can_copy_assign())
+                if (!plan.can_copy_assign())
                 {
-                    plan.copy_assign(time_slot(physical), &modified_time);
-                    return;
+                    throw std::logic_error("TSW replacement requires copy-assignable time storage");
                 }
-                plan.destroy(time_slot(physical));
-                plan.copy_construct(time_slot(physical), &modified_time);
+                plan.copy_assign(time_slot(physical), &modified_time);
             }
 
             void destroy_slot(std::size_t physical) noexcept

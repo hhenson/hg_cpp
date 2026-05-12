@@ -35,7 +35,8 @@ The implementation uses the following names consistently:
     current value storage and the per-tick delta information, laid out
     so those two views stay aligned and can expose useful buffer /
     NumPy representations. ``TSData`` does not own subscribers,
-    parent links, or scheduling state.
+    external notification fan-out, or scheduling state. It does own the
+    local ``TSDataParentLink`` used for parent bubble-up.
 
 ``TSDataOps``
     The type-erased operation table over a ``TSData`` memory region:
@@ -169,8 +170,10 @@ bindings and memory offsets needed by the concrete implementation:
 - ``delta`` — optional per-tick delta payload or masks, using
   ``delta_value_schema`` when the delta is not an alias of the current
   value;
-- ``tracking`` — modification stamps and other transient delta
-  metadata.
+- ``tracking`` — the common ``TSDataTracking`` record. Every TSData
+  shape, including compact atomic TSData, has one. It stores
+  ``last_modified_time`` and the optional ``TSDataParentLink`` used
+  when the data is projected as a child.
 
 The diagrams below are conceptual. ``StoragePlan`` still owns the
 exact byte offsets, padding, and alignment decisions for the target
@@ -195,6 +198,7 @@ addressable regions:
    | tracking region                                                |
    | TSDataTracking {                                                |
    |   last_modified_time                                           |
+   |   parent link                                                  |
    | }                                                              |
    | layout.tracking_offset                                         |
    +---------------------------------------------------------------+
@@ -280,7 +284,7 @@ the value region is suitable for buffer-oriented access.
    | auxiliary region                                             |
    | TSB: field_0/field_1/... auxiliary tracking trees            |
    | TSL: elements auxiliary array with fixed element stride       |
-   | parent TSDataTracking { last_modified_time }                 |
+   | parent TSDataTracking { last_modified_time, parent link }     |
    +--------------------------------------------------------------+
 
 For ``TSL[TS[int], Size[2]]`` the current-value part is therefore:
@@ -362,11 +366,13 @@ fixed ``TSL`` it exposes the documented map-shaped delta
 ``Map<int64, child.delta>`` and iterates only child indices modified at
 ``t``.
 
-Child views are constructed with a ``TSDataParentLink`` that records
-the parent view and the field/index id. When a child modification is
-first recorded for an engine time, the child bubbles that id to the
-parent; the parent then records its own ``last_modified_time`` for the
-same engine time.
+Projecting a child stores a ``TSDataParentLink`` in the child node's
+tracking region. The link records the immediate parent binding/data
+identity and the parent-local field/index id. It does not point at the
+parent view object. When a child modification is first recorded for an
+engine time, the child bubbles that id to the parent; the parent then
+records its own ``last_modified_time`` for the same engine time and
+continues through its own tracking link if it has one.
 
 Window TSData
 ^^^^^^^^^^^^^
@@ -396,7 +402,7 @@ it returns a typed-null scalar view.
    | - payload values are T value elements                        |
    +--------------------------------------------------------------+
    | tracking region                                              |
-   | TSDataTracking { last_modified_time }                        |
+   | TSDataTracking { last_modified_time, parent link }            |
    +--------------------------------------------------------------+
 
 Both models share ``TSWDataView``. The view reports elements in logical
@@ -460,28 +466,35 @@ View Handles
 ^^^^^^^^^^^^
 
 View objects are handles over TSData memory; they are not embedded
-inside the TSData allocation. A plain data view needs the binding and
-data pointer, and exposes only the common time-series operations.
+inside the TSData allocation. A plain data view needs only the binding
+and data pointer, and exposes the common time-series operations.
 Specialised views, for example ``TSBDataView`` and ``TSLDataView``,
-wrap the plain view and provide kind-specific child access. A child
-view additionally carries a
-``TSDataParentLink``: the parent view reference plus the parent-owned
-child id used for bubble-up:
+wrap the plain view and provide kind-specific child access. Child
+back-links are value-owned metadata stored in the child
+``TSDataTracking`` record, so a projected child can outlive the
+transient parent view that created it:
 
 .. mermaid::
 
    flowchart LR
-      View["TSDataView handle<br/>binding_<br/>data_<br/>parent_link_"]
-      Link["TSDataParentLink<br/>parent<br/>child_id"]
+      View["TSDataView handle<br/>binding_<br/>data_"]
       Binding["TSDataBinding<br/>schema + plan + ops"]
       Data["TSData storage allocation<br/>value + optional delta + tracking"]
-      Parent["parent TSDataView<br/>for bubble-up"]
+      Tracking["TSDataTracking<br/>last_modified_time<br/>parent"]
+      Link["TSDataParentLink<br/>parent_binding<br/>parent_data<br/>child_id"]
+      ParentData["parent TSData storage"]
 
       View -->|binding_| Binding
       View -->|data_| Data
-      View -->|parent_link_| Link
-      Link -->|parent| Parent
-      Link -.child_id belongs to parent.-> Parent
+      Data -->|tracking_offset| Tracking
+      Tracking -->|parent| Link
+      Link -->|parent_data| ParentData
+      Link -.child_id belongs to parent.-> ParentData
+
+Because each parent also stores its own ``TSDataParentLink``, a child
+link can walk back to the root without retaining transient views. The
+same walk produces the root-to-child navigation path as integer
+field/index/slot ids.
 
 ``TSDataMutationView`` is the mutation-only handle. It carries a view
 copy plus the current engine time and validates that the bound
@@ -507,14 +520,15 @@ data; the mutation view records the engine time for the in-flight
 operation.
 
 Modification handling is deliberately split into three responsibilities.
-``TSData`` tracks local modification state; child data views are
-constructed with a ``TSDataParentLink`` that owns the parent reference
-and parent-relative child id; and
-the parent data ops record child-level modification details through
-``record_child_modified(parent_data, child_id)`` before the parent marks
-itself modified. The later processing of completed modified elements
-belongs to the surrounding ``TSValue`` / state layer. TSData does not
-own external subscriber lists or graph scheduling fan-out.
+``TSData`` tracks local modification state; projecting child data
+records the immediate parent binding/data identity and parent-relative
+child id into the child's tracking region; and child mutations notify
+their parent only through ``TSDataParentLink``. The link hides the
+parent-specific details by invoking the parent's
+``record_child_modified(parent_data, child_id)`` hook before marking
+the parent modified. The later processing of completed modified
+elements belongs to the surrounding ``TSValue`` / state layer. TSData
+does not own external subscriber lists or graph scheduling fan-out.
 
 The implemented atomic plan follows the compact layout above. ``TSB``
 and fixed-size ``TSL`` use the fixed structured layout above. ``TSW``
@@ -533,6 +547,14 @@ making the slot utility track mutation epochs. The implementation keeps
 a small internal ``delta_time`` marker for that reset decision; the
 public modification answer still comes only from
 ``last_modified_time == evaluation_time``.
+
+Within a single engine time, structural collection changes are
+netted in the slot delta masks. Adding and then removing the same key,
+or removing and then re-adding the same key, clears the corresponding
+``added`` / ``removed`` bit. If that leaves the collection with no
+delta bits for the current engine time, the collection restores its
+previous ``last_modified_time`` and does not report a delta for that
+time.
 
 Slot-Oriented Collection TSData
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -568,6 +590,7 @@ ids:
    +--------------------------------------------------------------+
    | collection tracking                                          |
    | last_modified_time                                           |
+   | parent link                                                   |
    +--------------------------------------------------------------+
    | KeySlotStore                                                 |
    |                                                              |
@@ -598,6 +621,7 @@ independent value-side constructed state in the TSData layout:
    +--------------------------------------------------------------+
    | collection tracking                                          |
    | last_modified_time                                           |
+   | parent link                                                   |
    +--------------------------------------------------------------+
    | KeySlotStore                                                 |
    | slot id        0        1        2        3        ...       |
@@ -622,20 +646,23 @@ modification during the current engine time. The child's own
 the parent bitset is the parent's delta surface, not a duplicate
 timestamp store.
 
-The bubble-up path uses the slot id carried by the child view:
+The bubble-up path uses the slot id carried by the child's
+``TSDataParentLink``:
 
 .. mermaid::
 
    flowchart TD
-      ChildMutation["child TSDataMutationView<br/>slot s"]
+      ChildMutation["child TSDataMutationView"]
       Mark["mark_modified() / copy_value_from()"]
+      ParentLink["child tracking<br/>TSDataParentLink(parent, s)"]
       ParentHook["parent ops<br/>record_child_modified(parent_data, s)"]
       ModifiedBit["parent modified bitset[s] = 1"]
       ParentTime["parent last_modified_time<br/>= current engine time"]
       Bubble["repeat with parent's parent"]
 
       ChildMutation --> Mark
-      Mark --> ParentHook
+      Mark --> ParentLink
+      ParentLink --> ParentHook
       ParentHook --> ModifiedBit
       ModifiedBit --> ParentTime
       ParentTime --> Bubble
@@ -781,10 +808,12 @@ slot ids for the current engine time so the layer can publish
 
 These structural slot observers are internal synchronisation hooks, not
 the public change-notification surface. Per-level change propagation
-uses the ``TSDataParentLink`` constructed into child views plus the
+uses the ``TSDataParentLink`` stored in child tracking plus the
 ``record_child_modified`` hook on the parent ops table. The parent link
 owns the child id because that id is a parent-local slot/path
-identifier. The slot hooks may update bitsets immediately during
+identifier. It can also resolve the root ``TSDataView`` and the
+root-to-child navigation path by walking the chain of parent links.
+The slot hooks may update bitsets immediately during
 mutation; processing of modified elements and external notification
 fan-out belongs to the surrounding state/value layer after the
 value-level mutation count returns to zero.
