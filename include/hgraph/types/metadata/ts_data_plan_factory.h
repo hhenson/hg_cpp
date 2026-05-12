@@ -15,13 +15,12 @@ namespace hgraph
      * canonical ``MemoryUtils::StoragePlan`` and default ``TSDataBinding``
      * for the TS data component.
      *
-     * A ``TSValue`` is the full runtime time-series object. It combines
-     * evaluation state (modification time, validity, subscribers, parent
-     * links, path identity) with a payload/delta component named ``TSData``.
-     * This factory resolves only the ``TSData`` memory plan. Full
-     * ``TSValue`` construction is the responsibility of the reusable
-     * time-series value builder that composes this data plan with the
-     * separate state tree.
+     * ``TSOutput`` and ``TSInput`` are the top-level runtime time-series
+     * holders. They combine endpoint state (modification scope, validity,
+     * subscribers, binding, and scheduling) with a payload/delta component
+     * named ``TSData``. This factory resolves only the ``TSData`` memory plan.
+     * Endpoint construction is handled by the reusable input/output builders
+     * that compose this data plan with the separate endpoint state.
      *
      * Atomic TSData uses the compact value storage plan with mutable ops
      * enabled. Fixed ``TSB`` and fixed-size ``TSL`` allocate the complete
