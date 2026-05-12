@@ -45,6 +45,7 @@ namespace hgraph
                                                                   engine_time_t);
         [[nodiscard]] SlotTSDataMutationResult missing_remove_key(const void *, void *, const ValueView &,
                                                                   engine_time_t);
+        [[nodiscard]] bool missing_touch_slots(const void *, void *, engine_time_t);
         void missing_reserve_slots(const void *, void *, std::size_t);
         [[nodiscard]] const void *missing_child_at_slot(const void *, const void *, std::size_t);
 
@@ -118,6 +119,8 @@ namespace hgraph
                                                     engine_time_t modified_time) = &ts_data_detail::missing_insert_key;
         SlotTSDataMutationResult (*remove_key_impl)(const void *context, void *memory, const ValueView &key,
                                                     engine_time_t modified_time) = &ts_data_detail::missing_remove_key;
+        bool (*touch_impl)(const void *context, void *memory,
+                           engine_time_t modified_time) = &ts_data_detail::missing_touch_slots;
         void (*reserve_impl)(const void *context, void *memory,
                              std::size_t capacity) = &ts_data_detail::missing_reserve_slots;
     };

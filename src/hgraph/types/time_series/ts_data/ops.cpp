@@ -141,6 +141,11 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("key removal");
     }
 
+    bool missing_touch_slots(const void *, void *, engine_time_t)
+    {
+        missing_ts_data_op("slot collection touch");
+    }
+
     void missing_reserve_slots(const void *, void *, std::size_t)
     {
         missing_ts_data_op("slot reservation");

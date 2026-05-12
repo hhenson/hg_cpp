@@ -210,6 +210,10 @@ namespace hgraph
         const auto &ops    = static_cast<const TSSDataOps &>(mutation_.ops());
         const auto  result = ops.insert_key_impl(ops.context, mutation_.mutable_data(), key, current_mutation_time());
         apply_slot_mutation_result(mutation_, result);
+        if (!result.changed && ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time()))
+        {
+            mutation_.mark_modified();
+        }
         return result.changed;
     }
 
@@ -218,6 +222,10 @@ namespace hgraph
         const auto &ops    = static_cast<const TSSDataOps &>(mutation_.ops());
         const auto  result = ops.remove_key_impl(ops.context, mutation_.mutable_data(), key, current_mutation_time());
         apply_slot_mutation_result(mutation_, result);
+        if (!result.changed && ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time()))
+        {
+            mutation_.mark_modified();
+        }
         return result.changed;
     }
 
@@ -225,7 +233,10 @@ namespace hgraph
     {
         std::vector<ValueView> keys;
         for (const auto key : values()) { keys.push_back(key); }
+        const auto &ops           = static_cast<const TSSDataOps &>(mutation_.ops());
+        const bool  newly_touched = ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time());
         for (const auto key : keys) { static_cast<void>(remove(key)); }
+        if (newly_touched) { mutation_.mark_modified(); }
     }
 
     bool TSSDataMutationView::copy_value_from(const ValueView &source)

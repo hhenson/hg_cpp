@@ -307,14 +307,6 @@ namespace hgraph
         if (record_modified_local()) { notify_parent_modified(); }
     }
 
-    void TSDataMutationView::restore_last_modified_time(engine_time_t previous_modified_time)
-    {
-        require_active_mutation();
-
-        auto &state = view_.mutable_tracking();
-        if (state.last_modified_time == mutation_time_) { state.last_modified_time = previous_modified_time; }
-    }
-
     bool TSDataMutationView::copy_value_from(const ValueView &source)
     {
         require_active_mutation();
@@ -371,11 +363,6 @@ namespace hgraph
     void apply_slot_mutation_result(TSDataMutationView &mutation, const SlotTSDataMutationResult &result)
     {
         if (!result.changed) { return; }
-        if (result.has_delta)
-        {
-            mutation.mark_modified();
-            return;
-        }
-        mutation.restore_last_modified_time(result.previous_modified_time);
+        mutation.mark_modified();
     }
 }  // namespace hgraph

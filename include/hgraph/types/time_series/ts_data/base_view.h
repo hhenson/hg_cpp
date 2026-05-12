@@ -174,9 +174,6 @@ namespace hgraph
          */
         void mark_modified();
 
-        /** Restore this node's modification time when an attempted slot mutation had no delta. */
-        void restore_last_modified_time(engine_time_t previous_modified_time);
-
         /** Copy a value-layer view into this TSData node using the binding's type-erased copy op. */
         [[nodiscard]] bool copy_value_from(const ValueView &source);
 

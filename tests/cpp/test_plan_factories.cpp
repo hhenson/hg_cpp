@@ -1069,9 +1069,11 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     }
 
     REQUIRE_FALSE(set.contains(three.view()));
-    REQUIRE_FALSE(view.modified(t3));
-    REQUIRE_FALSE(view.delta_value(t3).has_value());
-    REQUIRE(view.last_modified_time() == t2);
+    REQUIRE(view.modified(t3));
+    auto netted_delta = view.delta_value(t3).as_bundle();
+    REQUIRE(netted_delta.at("added").as_set().empty());
+    REQUIRE(netted_delta.at("removed").as_set().empty());
+    REQUIRE(view.last_modified_time() == t3);
 }
 
 TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified deltas")
@@ -1188,9 +1190,60 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     }
 
     REQUIRE_FALSE(dict.contains(other_key.view()));
-    REQUIRE_FALSE(view.modified(t4));
-    REQUIRE_FALSE(view.delta_value(t4).has_value());
-    REQUIRE(view.last_modified_time() == t3);
+    REQUIRE(view.modified(t4));
+    auto netted_delta = view.delta_value(t4).as_bundle();
+    REQUIRE(netted_delta.at("removed").as_set().empty());
+    REQUIRE(netted_delta.at("modified").as_map().empty());
+    REQUIRE(view.last_modified_time() == t4);
+}
+
+TEST_CASE("TSDataPlanFactory: empty collection copy still marks the collection modified")
+{
+    using namespace hgraph;
+    auto       &registry    = TypeRegistry::instance();
+    auto       &factory     = TSDataPlanFactory::instance();
+    const auto *int_meta    = registry.register_scalar<int>("int");
+    const auto *ts_int      = registry.ts(int_meta);
+    const auto *tss         = registry.tss(int_meta);
+    const auto *tsd         = registry.tsd(int_meta, ts_int);
+    const auto *int_binding = registry.scalar_binding<int>();
+    REQUIRE(int_binding != nullptr);
+
+    const auto t1 = MIN_ST;
+
+    SetBuilder empty_set_builder{*int_binding};
+    auto       empty_set = empty_set_builder.build();
+    TSData     set_data{*factory.binding_for(tss)};
+    auto       set_view = set_data.view();
+    auto       set      = set_view.as_set();
+    {
+        auto mutation = set.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(empty_set.view()));
+    }
+
+    REQUIRE(set_view.modified(t1));
+    REQUIRE(set_view.all_valid());
+    REQUIRE(set.empty());
+    auto set_delta = set_view.delta_value(t1).as_bundle();
+    REQUIRE(set_delta.at("added").as_set().empty());
+    REQUIRE(set_delta.at("removed").as_set().empty());
+
+    MapBuilder empty_map_builder{*int_binding, *int_binding};
+    auto       empty_map = empty_map_builder.build();
+    TSData     dict_data{*factory.binding_for(tsd)};
+    auto       dict_view = dict_data.view();
+    auto       dict      = dict_view.as_dict();
+    {
+        auto mutation = dict.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(empty_map.view()));
+    }
+
+    REQUIRE(dict_view.modified(t1));
+    REQUIRE(dict_view.all_valid());
+    REQUIRE(dict.empty());
+    auto dict_delta = dict_view.delta_value(t1).as_bundle();
+    REQUIRE(dict_delta.at("removed").as_set().empty());
+    REQUIRE(dict_delta.at("modified").as_map().empty());
 }
 
 TEST_CASE("TSDataPlanFactory::plan_for throws for dynamic TSL until slot list storage is implemented")

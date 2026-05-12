@@ -259,8 +259,6 @@ namespace hgraph
     {
         std::size_t slot{TS_DATA_NO_CHILD_ID};
         bool        changed{false};
-        bool        has_delta{false};
-        engine_time_t previous_modified_time{MIN_DT};
     };
 
     struct TSWDataLayout : TSDataLayout

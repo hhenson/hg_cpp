@@ -110,6 +110,21 @@ TEST_CASE("TSOutput dirty cleanup finalizes slot deltas")
     REQUIRE_FALSE(output.dirty());
     REQUIRE(range_count(set.removed()) == 0);
     REQUIRE_FALSE(set.contains(one.view()));
+
+    const auto t3 = t2 + engine_time_delta_t{1};
+    {
+        auto mutation = set.begin_mutation(t3);
+        REQUIRE(mutation.add(one.view()));
+        REQUIRE(mutation.remove(one.view()));
+    }
+
+    REQUIRE(output.dirty());
+    REQUIRE(output.view(t3).modified());
+    REQUIRE(output.view(t3).valid());
+    REQUIRE(range_count(set.added()) == 0);
+    REQUIRE(range_count(set.removed()) == 0);
+    output.cleanup_delta();
+    REQUIRE_FALSE(output.dirty());
     REQUIRE_THROWS_AS(output.begin_mutation(MIN_DT), std::invalid_argument);
 }
 

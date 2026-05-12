@@ -393,6 +393,10 @@ namespace hgraph
         const auto &ops    = static_cast<const TSDDataOps &>(mutation_.ops());
         const auto  result = ops.remove_key_impl(ops.context, mutation_.mutable_data(), key, current_mutation_time());
         apply_slot_mutation_result(mutation_, result);
+        if (!result.changed && ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time()))
+        {
+            mutation_.mark_modified();
+        }
         return result.changed;
     }
 
@@ -400,7 +404,10 @@ namespace hgraph
     {
         std::vector<ValueView> current_keys;
         for (const auto key : keys()) { current_keys.push_back(key); }
+        const auto &ops           = static_cast<const TSDDataOps &>(mutation_.ops());
+        const bool  newly_touched = ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time());
         for (const auto key : current_keys) { static_cast<void>(erase(key)); }
+        if (newly_touched) { mutation_.mark_modified(); }
     }
 
     bool TSDDataMutationView::copy_value_from(const ValueView &source)
@@ -414,8 +421,9 @@ namespace hgraph
             throw std::invalid_argument("TSDDataMutationView::copy_value_from requires the map value schema");
         }
 
-        const bool was_modified = mutation_.modified(current_mutation_time());
-        auto       source_map   = source.as_map();
+        auto       source_map    = source.as_map();
+        const auto &ops          = static_cast<const TSDDataOps &>(mutation_.ops());
+        const bool newly_touched = ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time());
         for (const auto [key, value] : source_map.items()) { set(key, value); }
 
         std::vector<ValueView> removals;
@@ -425,7 +433,8 @@ namespace hgraph
         }
         for (const auto key : removals) { static_cast<void>(erase(key)); }
 
-        return !was_modified && mutation_.modified(current_mutation_time());
+        if (newly_touched) { mutation_.mark_modified(); }
+        return newly_touched;
     }
 
     TSDataView TSDDataMutationView::at_slot(std::size_t slot)

@@ -88,7 +88,6 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 return slot < removed_.size() && removed_.test(slot);
             }
-            [[nodiscard]] bool has_delta() const noexcept { return added_.any() || removed_.any(); }
             [[nodiscard]] const void *key_at_slot(std::size_t slot) const { return keys_[slot]; }
             [[nodiscard]] std::size_t find_slot(const ValueView &key) const
             {
@@ -106,6 +105,13 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 keys_.reserve_to(capacity);
                 ensure_delta_capacity();
+            }
+
+            [[nodiscard]] bool touch(engine_time_t modified_time)
+            {
+                validate_mutation_time(modified_time);
+                prepare_delta(modified_time);
+                return tracking_.last_modified_time != modified_time;
             }
 
             [[nodiscard]] SlotTSDataMutationResult insert_key(const ValueView &key, engine_time_t modified_time)
@@ -148,7 +154,6 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 keys_.erase_pending();
                 reset_delta();
-                previous_modified_time_ = MIN_DT;
             }
 
           protected:
@@ -163,11 +168,16 @@ namespace hgraph::ts_data_plan_factory_detail
 
             void validate_mutation_key(const ValueView &key, engine_time_t modified_time) const
             {
+                validate_mutation_time(modified_time);
+                validate_key(key);
+            }
+
+            void validate_mutation_time(engine_time_t modified_time) const
+            {
                 if (modified_time == MIN_DT)
                 {
                     throw std::invalid_argument("slot TSData mutation requires a concrete engine time");
                 }
-                validate_key(key);
             }
 
             void prepare_delta(engine_time_t modified_time)
@@ -179,7 +189,6 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
 
                 keys_.erase_pending();
-                previous_modified_time_ = tracking_.last_modified_time;
                 reset_delta();
                 delta_time_ = modified_time;
                 ensure_delta_capacity();
@@ -194,10 +203,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] SlotTSDataMutationResult mutation_result(std::size_t slot) const noexcept
             {
-                return {.slot = slot,
-                        .changed = true,
-                        .has_delta = has_delta(),
-                        .previous_modified_time = previous_modified_time_};
+                return {.slot = slot, .changed = true};
             }
 
             const ValueTypeBinding *key_binding_{nullptr};
@@ -206,7 +212,6 @@ namespace hgraph::ts_data_plan_factory_detail
             sul::dynamic_bitset<>  added_{};
             sul::dynamic_bitset<>  removed_{};
             engine_time_t          delta_time_{MIN_DT};
-            engine_time_t          previous_modified_time_{MIN_DT};
         };
 
         class TSDSlotStorage
@@ -247,7 +252,6 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 return slot < modified_.size() && modified_.test(slot);
             }
-            [[nodiscard]] bool has_delta() const noexcept { return added_.any() || removed_.any() || modified_.any(); }
             [[nodiscard]] const void *key_at_slot(std::size_t slot) const { return keys_[slot]; }
             [[nodiscard]] std::size_t find_slot(const ValueView &key) const
             {
@@ -273,6 +277,13 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 keys_.reserve_to(capacity);
                 ensure_delta_capacity();
+            }
+
+            [[nodiscard]] bool touch(engine_time_t modified_time)
+            {
+                validate_mutation_time(modified_time);
+                prepare_delta(modified_time);
+                return tracking_.last_modified_time != modified_time;
             }
 
             [[nodiscard]] SlotTSDataMutationResult insert_key(const ValueView &key, engine_time_t modified_time)
@@ -340,7 +351,6 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 keys_.erase_pending();
                 reset_delta();
-                previous_modified_time_ = MIN_DT;
             }
 
           private:
@@ -355,11 +365,16 @@ namespace hgraph::ts_data_plan_factory_detail
 
             void validate_mutation_key(const ValueView &key, engine_time_t modified_time) const
             {
+                validate_mutation_time(modified_time);
+                validate_key(key);
+            }
+
+            void validate_mutation_time(engine_time_t modified_time) const
+            {
                 if (modified_time == MIN_DT)
                 {
                     throw std::invalid_argument("TSD TSData mutation requires a concrete engine time");
                 }
-                validate_key(key);
             }
 
             void prepare_delta(engine_time_t modified_time)
@@ -371,7 +386,6 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
 
                 keys_.erase_pending();
-                previous_modified_time_ = tracking_.last_modified_time;
                 reset_delta();
                 delta_time_ = modified_time;
                 ensure_delta_capacity();
@@ -387,10 +401,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] SlotTSDataMutationResult mutation_result(std::size_t slot) const noexcept
             {
-                return {.slot = slot,
-                        .changed = true,
-                        .has_delta = has_delta(),
-                        .previous_modified_time = previous_modified_time_};
+                return {.slot = slot, .changed = true};
             }
 
             const ValueTypeBinding     *key_binding_{nullptr};
@@ -402,7 +413,6 @@ namespace hgraph::ts_data_plan_factory_detail
             sul::dynamic_bitset<>       removed_{};
             sul::dynamic_bitset<>       modified_{};
             engine_time_t               delta_time_{MIN_DT};
-            engine_time_t               previous_modified_time_{MIN_DT};
         };
 
         struct TSSStoragePlanContext
@@ -582,6 +592,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 set_ops.make_removed_values_range_impl = &tss_removed_keys_range;
                 set_ops.insert_key_impl                = &tss_insert_key;
                 set_ops.remove_key_impl                = &tss_remove_key;
+                set_ops.touch_impl                     = &tss_touch;
                 set_ops.reserve_impl                   = &tss_reserve;
             }
 
@@ -709,12 +720,12 @@ namespace hgraph::ts_data_plan_factory_detail
                     throw std::invalid_argument("TSS copy requires the set value schema");
                 }
 
-                auto &target = storage<Storage>(memory);
-                SetView source_set{source};
-                bool changed = false;
+                auto     &target        = storage<Storage>(memory);
+                SetView   source_set{source};
+                const bool newly_touched = target.touch(modified_time);
                 for (const auto key : source_set.values())
                 {
-                    changed = target.insert_key(key, modified_time).changed || changed;
+                    static_cast<void>(target.insert_key(key, modified_time));
                 }
 
                 std::vector<ValueView> removals;
@@ -724,9 +735,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
                 for (const auto key : removals)
                 {
-                    changed = target.remove_key(key, modified_time).changed || changed;
+                    static_cast<void>(target.remove_key(key, modified_time));
                 }
-                return changed;
+                return newly_touched;
             }
 
             [[nodiscard]] static std::size_t tss_size(const void *, const void *memory) noexcept
@@ -786,6 +797,11 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                          engine_time_t modified_time)
             {
                 return storage<Storage>(memory).remove_key(key, modified_time);
+            }
+
+            [[nodiscard]] static bool tss_touch(const void *, void *memory, engine_time_t modified_time)
+            {
+                return storage<Storage>(memory).touch(modified_time);
             }
 
             static void tss_reserve(const void *, void *memory, std::size_t capacity)

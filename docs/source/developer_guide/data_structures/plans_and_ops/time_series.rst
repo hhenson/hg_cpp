@@ -583,10 +583,11 @@ public modification answer still comes only from
 Within a single engine time, structural collection changes are
 netted in the slot delta masks. Adding and then removing the same key,
 or removing and then re-adding the same key, clears the corresponding
-``added`` / ``removed`` bit. If that leaves the collection with no
-delta bits for the current engine time, the collection restores its
-previous ``last_modified_time`` and does not report a delta for that
-time.
+``added`` / ``removed`` bit. Empty copy/apply operations also reset the
+delta surface for the current engine time. Even when this leaves no
+delta bits, the collection remains modified at that engine time:
+touching a collection is enough to publish validity, including valid
+empty ``TSS`` / ``TSD`` values.
 
 Slot-Oriented Collection TSData
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
