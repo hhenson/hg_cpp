@@ -8,6 +8,15 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/metadata/ts_data_window_ops.cpp
     hgraph/types/metadata/ts_data_plan_factory.cpp
     hgraph/types/metadata/value_plan_factory.cpp
+    hgraph/types/time_series/ts_data/base_view.cpp
+    hgraph/types/time_series/ts_data/dict_view.cpp
+    hgraph/types/time_series/ts_data/indexed_view.cpp
+    hgraph/types/time_series/ts_data/ops.cpp
+    hgraph/types/time_series/ts_data/set_view.cpp
+    hgraph/types/time_series/ts_data/storage.cpp
+    hgraph/types/time_series/ts_data/types.cpp
+    hgraph/types/time_series/ts_data/window_view.cpp
+    hgraph/types/time_series/ts_output.cpp
     hgraph/types/time_series_reference.cpp
     hgraph/types/value/compact_container_ops.cpp
     hgraph/types/value/value_view.cpp
@@ -36,6 +45,15 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/stable_slot_storage.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/value_slot_store.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/base_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/dict_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/indexed_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/inline.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/ops.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/set_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/storage.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/types.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/window_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_container_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_storage.h

@@ -17,6 +17,15 @@
 #include <hgraph/types/utils/stable_slot_storage.h>
 #include <hgraph/types/utils/value_slot_store.h>
 #include <hgraph/types/time_series/ts_data.h>
+#include <hgraph/types/time_series/ts_data/base_view.h>
+#include <hgraph/types/time_series/ts_data/dict_view.h>
+#include <hgraph/types/time_series/ts_data/indexed_view.h>
+#include <hgraph/types/time_series/ts_data/inline.h>
+#include <hgraph/types/time_series/ts_data/ops.h>
+#include <hgraph/types/time_series/ts_data/set_view.h>
+#include <hgraph/types/time_series/ts_data/storage.h>
+#include <hgraph/types/time_series/ts_data/types.h>
+#include <hgraph/types/time_series/ts_data/window_view.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/value/compact_container_ops.h>
 #include <hgraph/types/value/compact_storage.h>
