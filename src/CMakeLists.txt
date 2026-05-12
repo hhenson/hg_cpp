@@ -48,7 +48,6 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/base_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/dict_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/indexed_view.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/inline.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/set_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/storage.h

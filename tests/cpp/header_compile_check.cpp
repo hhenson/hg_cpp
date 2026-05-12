@@ -20,7 +20,6 @@
 #include <hgraph/types/time_series/ts_data/base_view.h>
 #include <hgraph/types/time_series/ts_data/dict_view.h>
 #include <hgraph/types/time_series/ts_data/indexed_view.h>
-#include <hgraph/types/time_series/ts_data/inline.h>
 #include <hgraph/types/time_series/ts_data/ops.h>
 #include <hgraph/types/time_series/ts_data/set_view.h>
 #include <hgraph/types/time_series/ts_data/storage.h>
