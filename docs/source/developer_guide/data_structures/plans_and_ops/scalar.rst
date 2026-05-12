@@ -83,7 +83,7 @@ the schema for stable addresses.
   pairs the plan with the compact kind-specific ops table.
 
 The time-series layer has the matching ``TSDataPlanFactory`` for the
-payload/delta component inside a full ``TSValue``. Atomic TSData
+payload/delta component inside a time-series endpoint. Atomic TSData
 planning is implemented using compact scalar value storage plus a
 separate delta/tracking region. Collection-shaped TSData planning is
 reserved for the slot-oriented time-series stores.

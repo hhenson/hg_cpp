@@ -1,11 +1,11 @@
 Time-Series Plans and Ops
 =========================
 
-The time-series layer owns full runtime ``TSValue`` objects. A
-``TSValue`` is not just a scalar ``Value`` with a timestamp attached:
-it is split into separate components so the hot value payload, delta
-payload, and graph-evaluation state can be stored and accessed in the
-shape each one needs.
+The time-series layer owns full runtime ``TSOutput`` and ``TSInput``
+endpoints. A time-series endpoint is not just a scalar ``Value`` with a
+timestamp attached: it is split into separate components so the hot
+value payload, delta payload, and graph-evaluation state can be stored
+and accessed in the shape each one needs.
 
 This page focuses on the layout strategies — memory stability, the
 slot-store family, the storage shapes for TSS and TSD, and buffer
@@ -13,30 +13,37 @@ exposure. The per-kind tick contract and the value/delta schema
 mappings are described in *Schemas > Time-Series Schemas*; the
 binding/redirect machinery is described in *Linking Strategies*.
 
-Terminology: TSValue and TSData
--------------------------------
+Terminology: TSOutput, TSInput, and TSData
+------------------------------------------
 
 The implementation uses the following names consistently:
 
-``TSValue``
-    The full runtime time-series object owned by a node input or
-    output. It combines the current payload/delta component with
-    evaluation state and child time-series objects. This is the object
-    that participates in graph binding, notification, and traversal.
+``TSOutput``
+    The output-side top-level time-series holder owned by a node output.
+    It owns the root ``TSData`` payload/delta component and output-local
+    endpoint state such as mutation scope, modification publication, and
+    subscriber fan-out.
+
+``TSInput``
+    The input-side top-level time-series holder owned by a node input. It
+    owns input-local binding, activation, deduplication, and scheduling
+    state. Input views usually resolve their visible payload through a
+    bound output rather than owning an independent copy of the output
+    data.
 
 ``TSState``
-    The graph-evaluation state associated with a ``TSValue``:
+    The graph-evaluation state associated with a time-series endpoint:
     validity, ``last_modified_time``, parent/child relationships,
     subscribers, path identity, and kind-specific notification state.
     ``TSState`` does not own the hot payload bytes.
 
 ``TSData``
-    The payload/delta component inside a ``TSValue``. It owns the
-    current value storage and the per-tick delta information, laid out
-    so those two views stay aligned and can expose useful buffer /
-    NumPy representations. ``TSData`` does not own subscribers,
-    external notification fan-out, or scheduling state. It does own the
-    local ``TSDataParentLink`` used for parent bubble-up.
+    The payload/delta component owned by ``TSOutput`` and resolved by
+    ``TSInput``. It owns the current value storage and the per-tick delta
+    information, laid out so those two views stay aligned and can expose
+    useful buffer / NumPy representations. ``TSData`` does not own
+    subscribers, external notification fan-out, or scheduling state. It
+    does own the local ``TSDataParentLink`` used for parent bubble-up.
 
 ``TSDataOps``
     The type-erased operation table over a ``TSData`` memory region:
@@ -97,14 +104,13 @@ The implementation uses the following names consistently:
     structured plans for ``TSB`` / fixed ``TSL``, window plans for
     ``TSW``, and slot-oriented plans for keyed or dynamically-sized
     collection-shaped time-series data. The factory does not plan the
-    whole ``TSValue`` object, only its payload/delta data component.
+    whole endpoint object, only its payload/delta data component.
 
-``TSValueBuilder``
-    The reusable builder for full ``TSValue`` instances. It composes a
-    ``TSDataBinding`` / data plan with the separate ``TSState`` layout
-    and the reusable child-builder graph needed for nested
-    time-series. ``TSValueBuilder`` is the object cached by node and
-    graph construction code.
+``TSOutputBuilder`` / ``TSInputBuilder``
+    Reusable builders for top-level time-series endpoints. They compose
+    a ``TSDataBinding`` / data plan with the separate endpoint state and
+    any reusable child-builder graph needed for nested time-series. These
+    builders are cached by node and graph construction code.
 
 TSData implementation families
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -151,9 +157,10 @@ TSData implementation families
     compacting or relocating already-published child addresses.
 
 The terms above keep three layers distinct: scalar ``Value`` storage,
-``TSData`` payload/delta storage, and the full ``TSValue`` runtime
-object. Code and docs should avoid using "TS value plan" unless they
-mean the complete object; payload/delta plans are ``TSData`` plans.
+``TSData`` payload/delta storage, and top-level ``TSOutput`` /
+``TSInput`` endpoint state. Code and docs should avoid using "TS value
+plan"; payload/delta plans are ``TSData`` plans, and endpoint plans are
+output/input plans.
 
 TSData Memory Layout and Delta Tracking
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -504,7 +511,7 @@ field/index/slot ids.
 ``TSDataMutationView`` is the mutation-only handle. It carries a view
 copy plus the current engine time and validates that the bound
 ``TSDataOps::allows_mutation`` property is true. Mutation depth is
-tracked by the owning root ``TSValue`` / state object, not by each
+tracked by the owning root ``TSOutput`` / ``TSInput`` endpoint, not by each
 TSData element:
 
 .. mermaid::
@@ -513,7 +520,7 @@ TSData element:
       Mutation["TSDataMutationView<br/>view_<br/>mutation_time_"]
       Tracking["view_.tracking()<br/>TSDataTracking"]
       EngineTime["active engine time"]
-      Root["root TSValue mutation state<br/>tracks mutation depth"]
+      Root["root endpoint mutation state<br/>tracks mutation depth"]
 
       Mutation -->|references through view_| Tracking
       Mutation -->|carries| EngineTime
@@ -532,8 +539,8 @@ their parent only through ``TSDataParentLink``. The link hides the
 parent-specific details by invoking the parent's
 ``record_child_modified(parent_data, child_id)`` hook before marking
 the parent modified. The later processing of completed modified
-elements belongs to the surrounding ``TSValue`` / state layer. TSData
-does not own external subscriber lists or graph scheduling fan-out.
+elements belongs to the surrounding endpoint/state layer. TSData does
+not own external subscriber lists or graph scheduling fan-out.
 
 The implemented atomic plan follows the compact layout above. ``TSB``
 and fixed-size ``TSL`` use the fixed structured layout above. ``TSW``
@@ -574,7 +581,7 @@ live/constructed state, and delta masks.
    flowchart TD
       Slot["stable slot id"]
       KeyPayload["key payload<br/>or positional child"]
-      ChildPayload["child TSData / TSValue<br/>where the shape has children"]
+      ChildPayload["child TSData<br/>where the shape has children"]
       LiveState["key constructed/live state"]
       DeltaMasks["delta masks<br/>added / removed / modified"]
       Path["binding path component"]
@@ -675,21 +682,21 @@ The bubble-up path uses the slot id carried by the child's
 Builder Lifetime
 ----------------
 
-Time-series value builders are reusable builders. A
-``TSValueBuilder`` resolves a ``TSValueTypeMetaData`` schema to the
-``TSDataBinding`` / data plan, state layout, and child-builder graph
-needed to construct a full ``TSValue`` runtime object. Once resolved,
-it should be cached and reused to construct multiple time-series
-instances with the same schema. This is the opposite of the value-
-layer ``ListBuilder`` / ``MapBuilder`` family, which is local scratch
-storage for one immutable ``Value``.
+Time-series endpoint builders are reusable builders. A
+``TSOutputBuilder`` or ``TSInputBuilder`` resolves a
+``TSValueTypeMetaData`` schema to the ``TSDataBinding`` / data plan,
+endpoint state layout, and child-builder graph needed to construct a
+top-level time-series endpoint. Once resolved, it should be cached and
+reused to construct multiple endpoints with the same schema. This is
+the opposite of the value-layer ``ListBuilder`` / ``MapBuilder``
+family, which is local scratch storage for one immutable ``Value``.
 
 This distinction matters most for nested structures. A ``TSB`` builder owns
 the reusable builders for its fields; a fixed ``TSL`` builder owns the
 reusable builder for each element position; a ``TSD`` builder owns the
 reusable value-side time-series builder used whenever a new key appears. The
-builder graph is shared construction metadata, while each ``TSValue``
-instance owns its ``TSState``, ``TSData``, and child storage
+builder graph is shared construction metadata, while each endpoint
+instance owns its endpoint state, ``TSData``, and child storage
 independently.
 
 Memory Stability Invariant

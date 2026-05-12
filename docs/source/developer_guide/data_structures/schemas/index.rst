@@ -79,9 +79,9 @@ The two relevant registries are:
     Schema → plan mapping. Atomic value plans are paired with their
     schema at registration; composite value plans and time-series data
     plans are synthesised on first use and cached. ``TSDataPlanFactory``
-    resolves the payload/delta memory component inside a full
-    ``TSValue``; the rest of the time-series state is planned by the
-    time-series builder. The factory is logically a registry of plans
+    resolves the payload/delta memory component inside a time-series
+    endpoint; the rest of the endpoint state is planned by the
+    input/output builders. The factory is logically a registry of plans
     keyed by schema, so it is treated as part of the schema
     infrastructure even though plans themselves belong to the next
     chapter.

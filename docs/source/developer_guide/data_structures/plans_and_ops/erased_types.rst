@@ -114,8 +114,8 @@ A view exposes:
 Atomic ``set<T>`` is available only on a mutable ``ValueView`` opened
 with ``begin_mutation()``. Structural mutation and delta views are not
 part of the scalar value view. Delta views are reserved for the
-``TSValue`` / ``TSView`` infrastructure where per-tick modification
-state is meaningful.
+``TSOutput`` / ``TSInput`` view infrastructure where per-tick
+modification state is meaningful.
 
 View Casting
 ------------
