@@ -72,6 +72,16 @@ namespace hgraph
         /** True when this node was modified at ``evaluation_time``. */
         [[nodiscard]] bool modified(engine_time_t evaluation_time) const;
 
+        /** Register / remove a per-level modification observer. */
+        void subscribe(Notifiable *observer) const;
+        void unsubscribe(Notifiable *observer) const;
+
+        /** True when this level currently has one or more observers. */
+        [[nodiscard]] bool has_observers() const;
+
+        /** Number of observers currently registered at this level. */
+        [[nodiscard]] std::size_t observer_count() const;
+
         /** True when the node currently holds a valid time-series value. */
         [[nodiscard]] bool has_current_value() const;
 

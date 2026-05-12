@@ -125,6 +125,28 @@ namespace hgraph
         return tracking().last_modified_time == evaluation_time;
     }
 
+    void TSDataView::subscribe(Notifiable *observer) const
+    {
+        require_live("TSDataView::subscribe");
+        mutable_tracking().observers.subscribe(observer);
+    }
+
+    void TSDataView::unsubscribe(Notifiable *observer) const
+    {
+        require_live("TSDataView::unsubscribe");
+        mutable_tracking().observers.unsubscribe(observer);
+    }
+
+    bool TSDataView::has_observers() const
+    {
+        return valid() && !tracking().observers.empty();
+    }
+
+    std::size_t TSDataView::observer_count() const
+    {
+        return valid() ? tracking().observers.size() : 0;
+    }
+
     bool TSDataView::has_current_value() const
     {
         require_live("TSDataView::has_current_value");
@@ -349,10 +371,7 @@ namespace hgraph
         require_active_mutation();
 
         auto &state = view_.mutable_tracking();
-        if (state.last_modified_time == mutation_time_) { return false; }
-
-        state.last_modified_time = mutation_time_;
-        return true;
+        return state.record_modified(mutation_time_);
     }
 
     void TSDataMutationView::notify_parent_modified() const

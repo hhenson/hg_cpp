@@ -22,8 +22,9 @@ The implementation uses the following names consistently:
     The output-side top-level time-series holder owned by a node output.
     It owns the root ``TSData`` payload/delta component and output-local
     endpoint state such as dirty cleanup coordination, modification
-    publication, and subscriber fan-out. ``TSOutput`` is the terminal
-    parent of its root ``TSData`` bubble-up chain.
+    publication conveniences, and root-level subscription forwarding.
+    ``TSOutput`` is the terminal parent of its root ``TSData`` bubble-up
+    chain.
 
 ``TSInput``
     The input-side top-level time-series holder owned by a node input. It
@@ -42,10 +43,10 @@ The implementation uses the following names consistently:
     The payload/delta component owned by ``TSOutput`` and resolved by
     ``TSInput``. It owns the current value storage and the per-tick delta
     information, laid out so those two views stay aligned and can expose
-    useful buffer / NumPy representations. ``TSData`` does not own
-    subscribers, external notification fan-out, or scheduling state. It
-    does own the local ``TSDataParentLink`` used for parent bubble-up,
-    including the root link to the owning endpoint.
+    useful buffer / NumPy representations. ``TSData`` also owns the
+    per-level observer set for modification notification and the local
+    ``TSDataParentLink`` used for parent bubble-up, including the root
+    link to the owning endpoint. It does not own graph scheduling policy.
 
 ``TSDataOps``
     The type-erased operation table over a ``TSData`` memory region:
@@ -60,6 +61,19 @@ The implementation uses the following names consistently:
     empty optional behaviours use no-op thunks, and unsupported
     operations are explicit throwing thunks rather than missing
     pointers.
+
+``TSDataObserverSet``
+    The compact observer set stored in each ``TSDataTracking`` record.
+    Empty levels store a null tagged pointer, a single observer stores the
+    observer pointer directly, and the second observer promotes the set to
+    a heap-owned vector of observer pointers. This keeps unsubscribed
+    levels at one pointer of overhead while still allowing multiple
+    bindings at the same time-series level. Removing an observer during
+    notification marks a tombstone in the active vector and compacts after
+    the outermost notification pass completes; normal removal outside
+    notification remains swap-with-back and pop. Observers added during a
+    notification pass are appended but are not notified for the already
+    in-flight modification.
 
 ``TSDataLayout``
     The common layout prefix for every TSData kind. It records only the
@@ -504,8 +518,9 @@ transient parent view that created it:
       View["TSDataView handle<br/>binding_<br/>data_"]
       Binding["TSDataBinding<br/>schema + plan + ops"]
       Data["TSData storage allocation<br/>value + optional delta + tracking"]
-      Tracking["TSDataTracking<br/>last_modified_time<br/>parent"]
+      Tracking["TSDataTracking<br/>last_modified_time<br/>parent<br/>observers"]
       Link["TSDataParentLink<br/>tagged parent identity<br/>payload union<br/>child_id"]
+      Observers["TSDataObserverSet<br/>null / single / vector"]
       ParentData["parent TSData storage"]
       Endpoint["terminal endpoint<br/>TSOutput / TSInput"]
 
@@ -513,6 +528,7 @@ transient parent view that created it:
       View -->|data_| Data
       Data -->|tracking_offset| Tracking
       Tracking -->|parent| Link
+      Tracking -->|observers| Observers
       Link -->|TSData: binding + data| ParentData
       Link -.endpoint: endpoint pointer.-> Endpoint
       Link -.child_id belongs to parent.-> ParentData
@@ -538,7 +554,7 @@ element:
       Mutation["TSDataMutationView<br/>view_<br/>mutation_time_"]
       Tracking["view_.tracking()<br/>TSDataTracking"]
       EngineTime["active engine time"]
-      Root["root endpoint mutation state<br/>tracks mutation depth"]
+      Root["root endpoint state<br/>dirty cleanup coordination"]
 
       Mutation -->|references through view_| Tracking
       Mutation -->|carries| EngineTime
@@ -550,17 +566,19 @@ data; the mutation view records the engine time for the in-flight
 operation.
 
 Modification handling is deliberately split into three responsibilities.
-``TSData`` tracks local modification state; projecting child data
-records the immediate parent binding/data identity and parent-relative
-child id into the child's tracking region; and child mutations notify
-their parent only through ``TSDataParentLink``. The link hides the
-parent-specific details by invoking the parent's
-``record_child_modified(parent_data, child_id)`` hook before marking
-the parent modified. If the link terminates at an endpoint parent, the
-endpoint records its local dirty state and the bubble-up stops. The
-later processing of completed modified elements belongs to the
-surrounding endpoint/state layer. TSData does not own external
-subscriber lists or graph scheduling fan-out.
+``TSData`` tracks local modification state and per-level observers;
+projecting child data records the immediate parent binding/data identity
+and parent-relative child id into the child's tracking region; and child
+mutations notify their parent only through ``TSDataParentLink``. The link
+hides the parent-specific details by invoking the parent's
+``record_child_modified(parent_data, child_id)`` hook before marking the
+parent modified. Marking a TSData level modified updates
+``last_modified_time`` and notifies that level's observers only on the
+first modification for a given engine time. If the link terminates at an
+endpoint parent, the endpoint records its local dirty state and the
+bubble-up stops. TSData owns observer fan-out at the level being
+observed, but scheduling policy and cleanup lifecycle remain the
+responsibility of the surrounding endpoint / node / graph layer.
 
 The implemented atomic plan follows the compact layout above. ``TSB``
 and fixed-size ``TSL`` use the fixed structured layout above. ``TSW``

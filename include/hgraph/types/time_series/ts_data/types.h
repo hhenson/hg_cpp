@@ -3,6 +3,7 @@
 
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/type_binding.h>
+#include <hgraph/types/notifiable.h>
 #include <hgraph/types/value/value_ops.h>
 #include <hgraph/util/date_time.h>
 #include <hgraph/util/tagged_ptr.h>
@@ -146,19 +147,97 @@ namespace hgraph
                   "TSDataParentLink should remain a compact three-word navigation handle");
 
     /**
+     * Compact per-level observer set for TSData modification notifications.
+     *
+     * The common case stores no payload at all: an empty set is a null tagged
+     * pointer. A single observer is stored directly in the tagged pointer. The
+     * allocation for a vector is only introduced once a second observer is
+     * registered. Observers are not copied with TSData payload copies.
+     */
+    class TSDataObserverSet
+    {
+      public:
+        TSDataObserverSet() noexcept = default;
+        TSDataObserverSet(const TSDataObserverSet &) noexcept;
+        TSDataObserverSet &operator=(const TSDataObserverSet &) noexcept;
+        TSDataObserverSet(TSDataObserverSet &&other) noexcept;
+        TSDataObserverSet &operator=(TSDataObserverSet &&other) noexcept;
+        ~TSDataObserverSet() noexcept;
+
+        /** True when this level has no registered observers. */
+        [[nodiscard]] bool empty() const noexcept;
+
+        /** True when ``observer`` is currently registered. */
+        [[nodiscard]] bool contains(const Notifiable *observer) const noexcept;
+
+        /** Number of observers registered at this level. */
+        [[nodiscard]] std::size_t size() const noexcept;
+
+        /** Register an observer pointer; null is ignored and duplicates assert. */
+        void subscribe(Notifiable *observer);
+
+        /** Remove an observer pointer; null is ignored and missing observers assert. */
+        void unsubscribe(Notifiable *observer);
+
+        /** Notify all registered observers for ``modified_time``. */
+        void notify(engine_time_t modified_time) const;
+
+        /** Notify registered observers that the observed storage is going away. */
+        void notify_invalidated() noexcept;
+
+        /** Clear all observers after sending invalidation notifications. */
+        void clear() noexcept;
+
+      private:
+        struct ObserverList
+        {
+            std::vector<Notifiable *> entries{};
+            std::size_t               notify_depth{0};
+            bool                      compact_pending{false};
+        };
+        using ObserverStorage = discriminated_ptr<Notifiable, ObserverList>;
+
+        [[nodiscard]] Notifiable *single() const noexcept;
+        [[nodiscard]] ObserverList *many() const noexcept;
+        void set_single(Notifiable *observer) noexcept;
+        void set_many(ObserverList *observers) noexcept;
+        void compact_many(ObserverList &observers) noexcept;
+
+        ObserverStorage observers_{};
+    };
+
+    static_assert(sizeof(TSDataObserverSet) <= sizeof(void *),
+                  "TSDataObserverSet should remain a one-word tagged observer handle");
+
+    /**
      * Common per-TSData tracking state.
      *
      * Every TSData shape, including compact atomic TSData, stores this in its
      * value-owned memory. Projected child values use ``parent`` for local
      * bubble-up; root values may carry a terminal endpoint parent such as the
-     * owning ``TSOutput``. TSState owns graph-level notification, and TSData
-     * owns the timestamp needed to decide whether its local delta view belongs
-     * to a given evaluation time.
+     * owning ``TSOutput``. ``observers`` owns the compact per-level
+     * notification set, while ``last_modified_time`` decides whether this
+     * node's local delta view belongs to a given evaluation time.
      */
     struct TSDataTracking
     {
+        TSDataTracking() noexcept = default;
+        TSDataTracking(const TSDataTracking &) = default;
+        TSDataTracking &operator=(const TSDataTracking &) = default;
+        TSDataTracking(TSDataTracking &&) noexcept = default;
+        TSDataTracking &operator=(TSDataTracking &&) noexcept = default;
+        ~TSDataTracking() noexcept = default;
+
+        /**
+         * Record the first modification for ``modified_time`` and notify local
+         * observers once. Returns false when this level was already marked for
+         * the same engine time.
+         */
+        [[nodiscard]] bool record_modified(engine_time_t modified_time);
+
         engine_time_t last_modified_time{MIN_DT};
         TSDataParentLink parent{};
+        TSDataObserverSet observers{};
     };
 
     /**

@@ -50,6 +50,26 @@ namespace hgraph
         return view_->modified(evaluation_time);
     }
 
+    void IndexedTSDataView::subscribe(Notifiable *observer) const
+    {
+        view_->subscribe(observer);
+    }
+
+    void IndexedTSDataView::unsubscribe(Notifiable *observer) const
+    {
+        view_->unsubscribe(observer);
+    }
+
+    bool IndexedTSDataView::has_observers() const
+    {
+        return view_->has_observers();
+    }
+
+    std::size_t IndexedTSDataView::observer_count() const
+    {
+        return view_->observer_count();
+    }
+
     std::size_t IndexedTSDataView::size() const
     {
         const auto &ops = indexed_ops();

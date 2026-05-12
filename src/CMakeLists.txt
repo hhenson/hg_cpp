@@ -29,6 +29,7 @@ set(HGRAPH_CORE_SOURCES
 set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/hgraph.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/hgraph_export.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/notifiable.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_schema.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series_reference.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_data_plan_factory.h

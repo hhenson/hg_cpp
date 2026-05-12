@@ -67,6 +67,26 @@ namespace hgraph
         return view_.modified(evaluation_time);
     }
 
+    void TSWDataView::subscribe(Notifiable *observer) const
+    {
+        view_.subscribe(observer);
+    }
+
+    void TSWDataView::unsubscribe(Notifiable *observer) const
+    {
+        view_.unsubscribe(observer);
+    }
+
+    bool TSWDataView::has_observers() const
+    {
+        return view_.has_observers();
+    }
+
+    std::size_t TSWDataView::observer_count() const
+    {
+        return view_.observer_count();
+    }
+
     bool TSWDataView::duration_based() const noexcept
     {
         return schema()->is_duration_based();

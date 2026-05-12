@@ -7,6 +7,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -21,6 +22,77 @@ namespace
         }
         return count;
     }
+
+    struct RecordingNotifiable : hgraph::Notifiable
+    {
+        std::vector<hgraph::engine_time_t> notified{};
+        std::size_t                        invalidated{0};
+
+        void notify(hgraph::engine_time_t modified_time) override
+        {
+            notified.push_back(modified_time);
+        }
+
+        void notify_invalidated() noexcept override
+        {
+            ++invalidated;
+        }
+    };
+
+    struct SelfUnsubscribingNotifiable : RecordingNotifiable
+    {
+        hgraph::TSDataView observed{};
+
+        void notify(hgraph::engine_time_t modified_time) override
+        {
+            RecordingNotifiable::notify(modified_time);
+            observed.unsubscribe(this);
+        }
+    };
+
+    struct RemovingNotifiable : RecordingNotifiable
+    {
+        hgraph::TSDataView observed{};
+        hgraph::Notifiable *target{nullptr};
+
+        void notify(hgraph::engine_time_t modified_time) override
+        {
+            RecordingNotifiable::notify(modified_time);
+            observed.unsubscribe(target);
+        }
+    };
+
+    struct AddingNotifiable : RecordingNotifiable
+    {
+        hgraph::TSDataView observed{};
+        hgraph::Notifiable *target{nullptr};
+        bool added{false};
+
+        void notify(hgraph::engine_time_t modified_time) override
+        {
+            RecordingNotifiable::notify(modified_time);
+            if (!added)
+            {
+                observed.subscribe(target);
+                added = true;
+            }
+        }
+    };
+
+    struct ReplacingNotifiable : RecordingNotifiable
+    {
+        hgraph::TSDataView observed{};
+        hgraph::Notifiable *removed{nullptr};
+        hgraph::Notifiable *replacement{nullptr};
+
+        void notify(hgraph::engine_time_t modified_time) override
+        {
+            RecordingNotifiable::notify(modified_time);
+            observed.unsubscribe(removed);
+            observed.unsubscribe(this);
+            observed.subscribe(replacement);
+        }
+    };
 }
 
 TEST_CASE("TSOutput owns root TSData and exposes TS validity")
@@ -214,6 +286,237 @@ TEST_CASE("TSOutputView all_valid recurses through fixed bundle children")
     auto fully_valid_bundle = fully_valid.as_bundle();
     REQUIRE(fully_valid_bundle.field("a").value().checked_as<int>() == 1);
     REQUIRE(fully_valid_bundle.field("b").value().checked_as<int>() == 2);
+}
+
+TEST_CASE("TSData observers notify at the modified level and bubble to parents")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *tsb      = registry.tsb("TSOutputObserverBundle", {{"a", ts_int}, {"b", ts_int}});
+
+    TSOutput output{*tsb};
+    auto     root = output.data_view();
+    auto     bundle = root.as_bundle();
+    auto     a = bundle.field("a");
+    auto     b = bundle.field("b");
+
+    RecordingNotifiable root_observer;
+    RecordingNotifiable a_observer;
+    RecordingNotifiable a_second_observer;
+    RecordingNotifiable b_observer;
+
+    output.subscribe(&root_observer);
+    a.subscribe(&a_observer);
+    a.subscribe(&a_second_observer);
+    b.subscribe(&b_observer);
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t3 = t2 + engine_time_delta_t{1};
+
+    Value one{1};
+    Value two{2};
+    Value three{3};
+
+    {
+        auto mutation = a.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(one.view()));
+    }
+
+    REQUIRE(output.dirty());
+    CHECK(root_observer.notified == std::vector<engine_time_t>{t1});
+    CHECK(a_observer.notified == std::vector<engine_time_t>{t1});
+    CHECK(a_second_observer.notified == std::vector<engine_time_t>{t1});
+    CHECK(b_observer.notified.empty());
+
+    {
+        auto mutation = a.begin_mutation(t1);
+        REQUIRE_FALSE(mutation.copy_value_from(two.view()));
+    }
+
+    CHECK(root_observer.notified == std::vector<engine_time_t>{t1});
+    CHECK(a_observer.notified == std::vector<engine_time_t>{t1});
+    CHECK(a_second_observer.notified == std::vector<engine_time_t>{t1});
+
+    {
+        auto mutation = b.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(three.view()));
+    }
+
+    CHECK(root_observer.notified == std::vector<engine_time_t>{t1});
+    CHECK(b_observer.notified == std::vector<engine_time_t>{t1});
+
+    a.unsubscribe(&a_observer);
+    {
+        auto mutation = a.begin_mutation(t2);
+        REQUIRE(mutation.copy_value_from(two.view()));
+    }
+
+    CHECK(root_observer.notified == std::vector<engine_time_t>{t1, t2});
+    CHECK(a_observer.notified == std::vector<engine_time_t>{t1});
+    CHECK(a_second_observer.notified == std::vector<engine_time_t>{t1, t2});
+
+    a.unsubscribe(&a_second_observer);
+    {
+        auto mutation = a.begin_mutation(t3);
+        REQUIRE(mutation.copy_value_from(three.view()));
+    }
+
+    CHECK(root_observer.notified == std::vector<engine_time_t>{t1, t2, t3});
+    CHECK(a_second_observer.notified == std::vector<engine_time_t>{t1, t2});
+
+    output.unsubscribe(&root_observer);
+    b.unsubscribe(&b_observer);
+}
+
+TEST_CASE("TSData observers are invalidated when observed storage is destroyed")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    RecordingNotifiable observer;
+    {
+        TSOutput output{*ts_int};
+        output.subscribe(&observer);
+        REQUIRE(output.data_view().has_observers());
+    }
+
+    CHECK(observer.invalidated == 1);
+}
+
+TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    TSOutput output{*ts_int};
+    auto     observed = output.data_view();
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t3 = t2 + engine_time_delta_t{1};
+    Value      one{1};
+    Value      two{2};
+    Value      three{3};
+
+    SelfUnsubscribingNotifiable self_unsubscribing;
+    RecordingNotifiable         survivor;
+    self_unsubscribing.observed = observed;
+    observed.subscribe(&self_unsubscribing);
+    observed.subscribe(&survivor);
+    REQUIRE(observed.observer_count() == 2);
+
+    {
+        auto mutation = output.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(one.view()));
+    }
+
+    CHECK(self_unsubscribing.notified == std::vector<engine_time_t>{t1});
+    CHECK(survivor.notified == std::vector<engine_time_t>{t1});
+    CHECK(observed.observer_count() == 1);
+
+    {
+        auto mutation = output.begin_mutation(t2);
+        REQUIRE(mutation.copy_value_from(two.view()));
+    }
+
+    CHECK(self_unsubscribing.notified == std::vector<engine_time_t>{t1});
+    CHECK(survivor.notified == std::vector<engine_time_t>{t1, t2});
+    observed.unsubscribe(&survivor);
+    REQUIRE_FALSE(observed.has_observers());
+
+    RemovingNotifiable remover;
+    RecordingNotifiable removed_before_notify;
+    RecordingNotifiable after_removed;
+    remover.observed = observed;
+    remover.target   = &removed_before_notify;
+    observed.subscribe(&remover);
+    observed.subscribe(&removed_before_notify);
+    observed.subscribe(&after_removed);
+
+    {
+        auto mutation = output.begin_mutation(t3);
+        REQUIRE(mutation.copy_value_from(three.view()));
+    }
+
+    CHECK(remover.notified == std::vector<engine_time_t>{t3});
+    CHECK(removed_before_notify.notified.empty());
+    CHECK(after_removed.notified == std::vector<engine_time_t>{t3});
+    CHECK(observed.observer_count() == 2);
+
+    observed.unsubscribe(&remover);
+    observed.unsubscribe(&after_removed);
+    REQUIRE_FALSE(observed.has_observers());
+
+    const auto t4 = t3 + engine_time_delta_t{1};
+    const auto t5 = t4 + engine_time_delta_t{1};
+    Value      four{4};
+    Value      five{5};
+    AddingNotifiable adding;
+    RecordingNotifiable added_later;
+    adding.observed = observed;
+    adding.target   = &added_later;
+    observed.subscribe(&adding);
+
+    {
+        auto mutation = output.begin_mutation(t4);
+        REQUIRE(mutation.copy_value_from(four.view()));
+    }
+
+    CHECK(adding.notified == std::vector<engine_time_t>{t4});
+    CHECK(added_later.notified.empty());
+    CHECK(observed.observer_count() == 2);
+
+    {
+        auto mutation = output.begin_mutation(t5);
+        REQUIRE(mutation.copy_value_from(five.view()));
+    }
+
+    CHECK(adding.notified == std::vector<engine_time_t>{t4, t5});
+    CHECK(added_later.notified == std::vector<engine_time_t>{t5});
+
+    observed.unsubscribe(&adding);
+    observed.unsubscribe(&added_later);
+
+    const auto t6 = t5 + engine_time_delta_t{1};
+    const auto t7 = t6 + engine_time_delta_t{1};
+    Value      six{6};
+    Value      seven{7};
+    ReplacingNotifiable replacing;
+    RecordingNotifiable replaced;
+    RecordingNotifiable replacement;
+    replacing.observed    = observed;
+    replacing.removed     = &replaced;
+    replacing.replacement = &replacement;
+    observed.subscribe(&replacing);
+    observed.subscribe(&replaced);
+
+    {
+        auto mutation = output.begin_mutation(t6);
+        REQUIRE(mutation.copy_value_from(six.view()));
+    }
+
+    CHECK(replacing.notified == std::vector<engine_time_t>{t6});
+    CHECK(replaced.notified.empty());
+    CHECK(replacement.notified.empty());
+    CHECK(observed.observer_count() == 1);
+
+    {
+        auto mutation = output.begin_mutation(t7);
+        REQUIRE(mutation.copy_value_from(seven.view()));
+    }
+
+    CHECK(replacement.notified == std::vector<engine_time_t>{t7});
+    observed.unsubscribe(&replacement);
 }
 
 TEST_CASE("TSOutputView delegates validity through slot TSData ops")

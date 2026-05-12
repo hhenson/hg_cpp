@@ -14,9 +14,9 @@ namespace hgraph
      * Owning output-side time-series endpoint.
      *
      * ``TSOutput`` owns the root TSData allocation and exposes lifecycle hooks
-     * used by nodes to clean up transient delta state after evaluation.
-     * External subscriber fan-out and input binding are layered above this
-     * holder.
+     * used by nodes to clean up transient delta state after evaluation. Root
+     * subscriptions are delegated to the root TSData observer set; child-level
+     * subscriptions are registered on the projected child TSData views.
      */
     class TSOutput : private TSDataParent
     {
@@ -56,6 +56,10 @@ namespace hgraph
 
         /** Clear the dirty flag without touching TSData delta state. */
         void clear_dirty() noexcept;
+
+        /** Register / remove an observer at the root TSData level. */
+        void subscribe(Notifiable *observer);
+        void unsubscribe(Notifiable *observer);
 
         /** Read view at ``evaluation_time``. */
         [[nodiscard]] TSOutputView view(engine_time_t evaluation_time = MIN_DT);
@@ -113,6 +117,10 @@ namespace hgraph
         [[nodiscard]] bool modified(engine_time_t evaluation_time) const;
         [[nodiscard]] bool valid() const;
         [[nodiscard]] bool all_valid() const;
+
+        /** Register / remove an observer at this view's TSData level. */
+        void subscribe(Notifiable *observer) const;
+        void unsubscribe(Notifiable *observer) const;
 
         /** Shape-specific projections for root TSData. */
         [[nodiscard]] TSSDataView as_set() &;

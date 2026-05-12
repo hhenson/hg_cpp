@@ -929,8 +929,13 @@ namespace hgraph::ts_data_plan_factory_detail
                 void       *data  = child_data(state, memory, index);
                 if (ops.copy_value_from_impl(ops.context, data, source_values.at(index), modified_time))
                 {
-                    ops.mutable_tracking_impl(ops.context, data)->last_modified_time = modified_time;
-                    newly_modified                                                   = true;
+                    auto *tracking = ops.mutable_tracking_impl(ops.context, data);
+                    if (tracking == nullptr) { throw std::logic_error("fixed TSData child has no tracking record"); }
+                    if (!tracking->record_modified(modified_time))
+                    {
+                        throw std::logic_error("fixed TSData child reported a duplicate modification");
+                    }
+                    newly_modified = true;
                 }
             }
             return newly_modified;

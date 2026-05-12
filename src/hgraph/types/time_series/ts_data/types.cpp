@@ -1,11 +1,261 @@
 #include <hgraph/types/time_series/ts_data.h>
+#include <hgraph/util/scope.h>
 
 #include <algorithm>
+#include <cassert>
+#include <ranges>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace hgraph
 {
+    TSDataObserverSet::TSDataObserverSet(const TSDataObserverSet &) noexcept
+    {
+    }
+
+    TSDataObserverSet &TSDataObserverSet::operator=(const TSDataObserverSet &other) noexcept
+    {
+        if (this != &other) { clear(); }
+        return *this;
+    }
+
+    TSDataObserverSet::TSDataObserverSet(TSDataObserverSet &&other) noexcept
+        : observers_(std::exchange(other.observers_, ObserverStorage{}))
+    {
+    }
+
+    TSDataObserverSet &TSDataObserverSet::operator=(TSDataObserverSet &&other) noexcept
+    {
+        if (this != &other)
+        {
+            clear();
+            observers_ = std::exchange(other.observers_, ObserverStorage{});
+        }
+        return *this;
+    }
+
+    TSDataObserverSet::~TSDataObserverSet() noexcept
+    {
+        clear();
+    }
+
+    bool TSDataObserverSet::empty() const noexcept
+    {
+        return size() == 0;
+    }
+
+    bool TSDataObserverSet::contains(const Notifiable *observer) const noexcept
+    {
+        if (observer == nullptr) { return false; }
+        if (const auto *entry = single(); entry != nullptr) { return entry == observer; }
+        const auto *entries = many();
+        return entries != nullptr && std::find(entries->entries.begin(), entries->entries.end(), observer) != entries->entries.end();
+    }
+
+    std::size_t TSDataObserverSet::size() const noexcept
+    {
+        if (observers_.empty()) { return 0; }
+        if (single() != nullptr) { return 1; }
+        const auto *entries = many();
+        if (entries == nullptr) { return 0; }
+        return static_cast<std::size_t>(std::ranges::count_if(entries->entries, [](const auto *entry) {
+            return entry != nullptr;
+        }));
+    }
+
+    void TSDataObserverSet::subscribe(Notifiable *observer)
+    {
+        if (observer == nullptr) { return; }
+
+        if (observers_.empty())
+        {
+            set_single(observer);
+            return;
+        }
+
+        if (auto *entry = single(); entry != nullptr)
+        {
+            assert(entry != observer && "TSData observer registered twice");
+            if (entry == observer) { return; }
+
+            auto *entries = new ObserverList{};
+            entries->entries.reserve(2);
+            entries->entries.push_back(entry);
+            entries->entries.push_back(observer);
+            set_many(entries);
+            return;
+        }
+
+        auto *entries = many();
+        assert(entries != nullptr && "TSData observer storage is corrupt");
+        if (entries == nullptr) { throw std::logic_error("TSData observer storage is corrupt"); }
+
+        const auto it = std::find(entries->entries.begin(), entries->entries.end(), observer);
+        assert(it == entries->entries.end() && "TSData observer registered twice");
+        if (it == entries->entries.end()) { entries->entries.push_back(observer); }
+    }
+
+    void TSDataObserverSet::unsubscribe(Notifiable *observer)
+    {
+        if (observer == nullptr) { return; }
+
+        if (auto *entry = single(); entry != nullptr)
+        {
+            assert(entry == observer && "removing unregistered TSData observer");
+            if (entry == observer) { observers_.clear(); }
+            return;
+        }
+
+        auto *entries = many();
+        if (entries == nullptr)
+        {
+            assert(false && "removing unregistered TSData observer");
+            return;
+        }
+
+        const auto it = std::find(entries->entries.begin(), entries->entries.end(), observer);
+        assert(it != entries->entries.end() && "removing unregistered TSData observer");
+        if (it == entries->entries.end()) { return; }
+
+        if (entries->notify_depth > 0)
+        {
+            *it = nullptr;
+            entries->compact_pending = true;
+            return;
+        }
+
+        *it = entries->entries.back();
+        entries->entries.pop_back();
+        compact_many(*entries);
+    }
+
+    void TSDataObserverSet::notify(engine_time_t modified_time) const
+    {
+        if (auto *entry = single(); entry != nullptr)
+        {
+            entry->notify(modified_time);
+            return;
+        }
+
+        auto *entries = many();
+        if (entries == nullptr) { return; }
+        ++entries->notify_depth;
+        auto guard = make_scope_exit([this, entries]() noexcept {
+            --entries->notify_depth;
+            if (entries->notify_depth == 0 && entries->compact_pending)
+            {
+                const_cast<TSDataObserverSet *>(this)->compact_many(*entries);
+            }
+        });
+
+        const auto limit = entries->entries.size();
+        for (std::size_t index = 0; index < limit; ++index)
+        {
+            auto *observer = entries->entries[index];
+            if (observer != nullptr) { observer->notify(modified_time); }
+        }
+    }
+
+    void TSDataObserverSet::notify_invalidated() noexcept
+    {
+        if (auto *entry = single(); entry != nullptr)
+        {
+            try { entry->notify_invalidated(); }
+            catch (...) {}
+            return;
+        }
+
+        const auto *entries = many();
+        if (entries == nullptr) { return; }
+        for (auto *observer : entries->entries)
+        {
+            if (observer == nullptr) { continue; }
+            try { observer->notify_invalidated(); }
+            catch (...) {}
+        }
+    }
+
+    void TSDataObserverSet::clear() noexcept
+    {
+        notify_invalidated();
+        if (auto *entries = many(); entries != nullptr)
+        {
+            if (entries->notify_depth == 0) { delete entries; }
+            else
+            {
+                std::ranges::fill(entries->entries, nullptr);
+                entries->compact_pending = true;
+            }
+        }
+        observers_.clear();
+    }
+
+    Notifiable *TSDataObserverSet::single() const noexcept
+    {
+        return observers_.get<Notifiable>();
+    }
+
+    TSDataObserverSet::ObserverList *TSDataObserverSet::many() const noexcept
+    {
+        return observers_.get<ObserverList>();
+    }
+
+    void TSDataObserverSet::set_single(Notifiable *observer) noexcept
+    {
+        observers_.set(observer);
+    }
+
+    void TSDataObserverSet::set_many(ObserverList *observers) noexcept
+    {
+        observers_.set(observers);
+    }
+
+    void TSDataObserverSet::compact_many(ObserverList &observers) noexcept
+    {
+        if (observers.notify_depth > 0)
+        {
+            observers.compact_pending = true;
+            return;
+        }
+
+        for (std::size_t index = 0; index < observers.entries.size();)
+        {
+            if (observers.entries[index] != nullptr)
+            {
+                ++index;
+                continue;
+            }
+            observers.entries[index] = observers.entries.back();
+            observers.entries.pop_back();
+        }
+        observers.compact_pending = false;
+
+        if (observers.entries.empty())
+        {
+            delete &observers;
+            observers_.clear();
+            return;
+        }
+
+        if (observers.entries.size() == 1)
+        {
+            auto *remaining = observers.entries.front();
+            delete &observers;
+            set_single(remaining);
+        }
+    }
+
+    bool TSDataTracking::record_modified(engine_time_t modified_time)
+    {
+        if (modified_time == MIN_DT) { throw std::invalid_argument("TSDataTracking requires a concrete engine time"); }
+        if (last_modified_time == modified_time) { return false; }
+
+        last_modified_time = modified_time;
+        observers.notify(modified_time);
+        return true;
+    }
+
     TSDataParentLinkKind TSDataParentLink::kind() const noexcept
     {
         return parent_.enum_value();
@@ -75,10 +325,7 @@ namespace hgraph
         table.record_child_modified_impl(table.context, memory, child_id, mutation_time);
 
         auto &state = mutable_parent_tracking();
-        if (state.last_modified_time == mutation_time) { return; }
-
-        state.last_modified_time = mutation_time;
-        state.parent.notify_child_modified(mutation_time);
+        if (state.record_modified(mutation_time)) { state.parent.notify_child_modified(mutation_time); }
     }
 
     std::vector<std::size_t> TSDataParentLink::path_from_root() const

@@ -105,6 +105,18 @@ namespace hgraph
         dirty_ = false;
     }
 
+    void TSOutput::subscribe(Notifiable *observer)
+    {
+        if (!has_value()) { throw std::logic_error("TSOutput::subscribe requires a bound output"); }
+        data_view().subscribe(observer);
+    }
+
+    void TSOutput::unsubscribe(Notifiable *observer)
+    {
+        if (!has_value()) { throw std::logic_error("TSOutput::unsubscribe requires a bound output"); }
+        data_view().unsubscribe(observer);
+    }
+
     TSOutputView TSOutput::view(engine_time_t evaluation_time)
     {
         return TSOutputView{this, data_view(), evaluation_time};
@@ -281,6 +293,18 @@ namespace hgraph
     bool TSOutputView::all_valid() const
     {
         return data_.valid() && data_.all_valid();
+    }
+
+    void TSOutputView::subscribe(Notifiable *observer) const
+    {
+        if (!data_.valid()) { throw std::logic_error("TSOutputView::subscribe requires a bound view"); }
+        data_.subscribe(observer);
+    }
+
+    void TSOutputView::unsubscribe(Notifiable *observer) const
+    {
+        if (!data_.valid()) { throw std::logic_error("TSOutputView::unsubscribe requires a bound view"); }
+        data_.unsubscribe(observer);
     }
 
     TSSDataView TSOutputView::as_set() &

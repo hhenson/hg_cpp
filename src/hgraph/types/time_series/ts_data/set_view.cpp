@@ -56,6 +56,26 @@ namespace hgraph
         return view_.modified(evaluation_time);
     }
 
+    void TSSDataView::subscribe(Notifiable *observer) const
+    {
+        view_.subscribe(observer);
+    }
+
+    void TSSDataView::unsubscribe(Notifiable *observer) const
+    {
+        view_.unsubscribe(observer);
+    }
+
+    bool TSSDataView::has_observers() const
+    {
+        return view_.has_observers();
+    }
+
+    std::size_t TSSDataView::observer_count() const
+    {
+        return view_.observer_count();
+    }
+
     std::size_t TSSDataView::size() const
     {
         const auto &ops = set_ops();

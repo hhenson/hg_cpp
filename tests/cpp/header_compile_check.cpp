@@ -10,6 +10,7 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
+#include <hgraph/types/notifiable.h>
 #include <hgraph/types/utils/intern_table.h>
 #include <hgraph/types/utils/key_slot_store.h>
 #include <hgraph/types/utils/memory_utils.h>

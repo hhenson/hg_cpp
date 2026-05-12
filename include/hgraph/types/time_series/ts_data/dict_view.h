@@ -27,6 +27,10 @@ namespace hgraph
         [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const;
         [[nodiscard]] engine_time_t last_modified_time() const;
         [[nodiscard]] bool modified(engine_time_t evaluation_time) const;
+        void subscribe(Notifiable *observer) const;
+        void unsubscribe(Notifiable *observer) const;
+        [[nodiscard]] bool has_observers() const;
+        [[nodiscard]] std::size_t observer_count() const;
 
         /** Number of live key/value entries. */
         [[nodiscard]] std::size_t size() const;
