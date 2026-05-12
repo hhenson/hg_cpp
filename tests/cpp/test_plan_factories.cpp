@@ -411,8 +411,8 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
     REQUIRE_FALSE(parent.has_parent());
     REQUIRE(child.has_parent());
     REQUIRE(child.child_id() == 0);
-    REQUIRE(child.parent_link().parent_binding == parent.binding());
-    REQUIRE(child.parent_link().parent_data == parent.data());
+    REQUIRE(child.parent_link().parent_binding() == parent.binding());
+    REQUIRE(child.parent_link().parent_data() == parent.data());
     REQUIRE(child.parent_link().child_id == 0);
     REQUIRE(sibling.has_parent());
     REQUIRE(sibling.child_id() == 1);
@@ -516,8 +516,8 @@ TEST_CASE("TSDataView: child parent link is stored in TSData tracking")
         auto dict = view.as_dict();
         child = dict.at(key.view());
         REQUIRE(child.has_parent());
-        REQUIRE(child.parent_link().parent_binding == dict.binding());
-        REQUIRE(child.parent_link().parent_data == dict.base().data());
+        REQUIRE(child.parent_link().parent_binding() == dict.binding());
+        REQUIRE(child.parent_link().parent_data() == dict.base().data());
     }
 
     REQUIRE(child.has_parent());
@@ -1120,7 +1120,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     auto          immutable_child = immutable_view.as_dict().at(key.view());
     REQUIRE(immutable_child.value().checked_as<int>() == 42);
     REQUIRE(immutable_child.has_parent());
-    REQUIRE(immutable_child.parent_link().parent_binding == binding);
+    REQUIRE(immutable_child.parent_link().parent_binding() == binding);
     REQUIRE(immutable_child.root_view().data() == view.data());
 
     REQUIRE(dict.key_set().contains(key.view()));
@@ -1148,8 +1148,8 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
         REQUIRE(it != values.end());
         auto child = *it;
         REQUIRE(child.has_parent());
-        REQUIRE(child.parent_link().parent_binding == dict.binding());
-        REQUIRE(child.parent_link().parent_data == dict.base().data());
+        REQUIRE(child.parent_link().parent_binding() == dict.binding());
+        REQUIRE(child.parent_link().parent_data() == dict.base().data());
         REQUIRE(child.child_id() == dict.find_slot(key.view()));
         auto mutation = child.begin_mutation(t2);
         REQUIRE(mutation.copy_value_from(updated.view()));

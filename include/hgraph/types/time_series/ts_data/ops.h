@@ -25,6 +25,7 @@ namespace hgraph
         [[nodiscard]] const void *missing_delta_memory(const void *, const void *);
         [[nodiscard]] void *missing_mutable_delta_memory(const void *, void *);
         void noop_reset_delta(const void *, void *);
+        void noop_cleanup_delta(const void *, void *, engine_time_t);
         void noop_record_child_modified(const void *, void *, std::size_t, engine_time_t);
         [[nodiscard]] bool missing_copy_value_from(const void *, void *, const ValueView &, engine_time_t);
         [[nodiscard]] std::size_t missing_indexed_size(const void *, const void *);
@@ -78,6 +79,8 @@ namespace hgraph
         void *(*mutable_delta_memory_impl)(const void *context,
                                            void *memory) = &ts_data_detail::missing_mutable_delta_memory;
         void (*reset_delta_impl)(const void *context, void *memory) = &ts_data_detail::noop_reset_delta;
+        void (*cleanup_delta_impl)(const void *context, void *memory,
+                                   engine_time_t modified_time) = &ts_data_detail::noop_cleanup_delta;
         void (*record_child_modified_impl)(const void *context,
                                            void *memory,
                                            std::size_t child_id,

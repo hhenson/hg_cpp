@@ -8,6 +8,21 @@
 #include <stdexcept>
 #include <string>
 
+namespace
+{
+    template <typename Range>
+    std::size_t range_count(const Range &range)
+    {
+        std::size_t count = 0;
+        for (const auto _ : range)
+        {
+            (void)_;
+            ++count;
+        }
+        return count;
+    }
+}
+
 TEST_CASE("TSOutput owns root TSData and exposes TS validity")
 {
     using namespace hgraph;
@@ -19,8 +34,7 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     TSOutput output{*ts_int};
     REQUIRE(output.has_value());
     REQUIRE(output.schema() == ts_int);
-    REQUIRE(output.mutation_depth() == 0);
-    REQUIRE_FALSE(output.mutation_active());
+    REQUIRE_FALSE(output.dirty());
 
     const auto t1 = MIN_ST;
     const auto t2 = t1 + engine_time_delta_t{1};
@@ -37,16 +51,11 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     Value forty_two{42};
     {
         auto mutation = output.begin_mutation(t1);
-        REQUIRE(output.mutation_active());
-        REQUIRE(output.mutation_depth() == 1);
         REQUIRE(mutation.current_mutation_time() == t1);
         REQUIRE(mutation.copy_value_from(forty_two.view()));
         REQUIRE(mutation.modified());
+        REQUIRE(output.dirty());
     }
-
-    REQUIRE_FALSE(output.mutation_active());
-    REQUIRE(output.mutation_depth() == 0);
-    REQUIRE(output.current_mutation_time() == MIN_DT);
 
     auto modified = output.view(t1);
     REQUIRE(modified.valid());
@@ -57,9 +66,54 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     REQUIRE(modified.value().checked_as<int>() == 42);
     REQUIRE(modified.delta_value().checked_as<int>() == 42);
     REQUIRE_FALSE(output.view(t2).delta_value().has_value());
+
+    output.cleanup_delta();
+    REQUIRE_FALSE(output.dirty());
 }
 
-TEST_CASE("TSOutput tracks nested root mutation scopes")
+TEST_CASE("TSOutput dirty cleanup finalizes slot deltas")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *tss      = registry.tss(int_meta);
+
+    TSOutput output{*tss};
+    auto     root = output.data_view();
+    auto     set = root.as_set();
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + engine_time_delta_t{1};
+    Value      one{1};
+
+    {
+        auto mutation = set.begin_mutation(t1);
+        REQUIRE(mutation.add(one.view()));
+    }
+
+    REQUIRE(output.dirty());
+    REQUIRE(range_count(set.added()) == 1);
+    output.cleanup_delta();
+    REQUIRE_FALSE(output.dirty());
+    REQUIRE(range_count(set.added()) == 0);
+    REQUIRE(set.contains(one.view()));
+
+    {
+        auto mutation = set.begin_mutation(t2);
+        REQUIRE(mutation.remove(one.view()));
+    }
+
+    REQUIRE(output.dirty());
+    REQUIRE(range_count(set.removed()) == 1);
+    output.cleanup_delta();
+    REQUIRE_FALSE(output.dirty());
+    REQUIRE(range_count(set.removed()) == 0);
+    REQUIRE_FALSE(set.contains(one.view()));
+    REQUIRE_THROWS_AS(output.begin_mutation(MIN_DT), std::invalid_argument);
+}
+
+TEST_CASE("TSOutput root parent is reattached after copy and move")
 {
     using namespace hgraph;
 
@@ -67,30 +121,39 @@ TEST_CASE("TSOutput tracks nested root mutation scopes")
     const auto *int_meta = registry.register_scalar<int>("int");
     const auto *ts_int   = registry.ts(int_meta);
 
-    TSOutput output{ts_int};
-
     const auto t1 = MIN_ST;
     const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t3 = t2 + engine_time_delta_t{1};
 
+    Value one{1};
+    Value two{2};
+    Value three{3};
+
+    TSOutput source{*ts_int};
     {
-        auto outer = output.begin_mutation(t1);
-        REQUIRE(output.mutation_depth() == 1);
-        REQUIRE(output.current_mutation_time() == t1);
-
-        {
-            auto nested = output.begin_mutation(t1);
-            REQUIRE(output.mutation_depth() == 2);
-            REQUIRE(output.current_mutation_time() == t1);
-        }
-
-        REQUIRE(output.mutation_depth() == 1);
-        REQUIRE_THROWS_AS(output.begin_mutation(t2), std::logic_error);
-        REQUIRE(output.mutation_depth() == 1);
+        auto mutation = source.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(one.view()));
     }
+    REQUIRE(source.dirty());
+    source.cleanup_delta();
 
-    REQUIRE(output.mutation_depth() == 0);
-    REQUIRE(output.current_mutation_time() == MIN_DT);
-    REQUIRE_THROWS_AS(output.begin_mutation(MIN_DT), std::invalid_argument);
+    TSOutput copied{source};
+    REQUIRE(copied.data_view().has_parent());
+    {
+        auto mutation = copied.begin_mutation(t2);
+        REQUIRE(mutation.copy_value_from(two.view()));
+    }
+    REQUIRE(copied.dirty());
+    REQUIRE_FALSE(source.dirty());
+    copied.cleanup_delta();
+
+    TSOutput moved{std::move(copied)};
+    REQUIRE(moved.data_view().has_parent());
+    {
+        auto mutation = moved.begin_mutation(t3);
+        REQUIRE(mutation.copy_value_from(three.view()));
+    }
+    REQUIRE(moved.dirty());
 }
 
 TEST_CASE("TSOutputView all_valid recurses through fixed bundle children")
@@ -117,6 +180,8 @@ TEST_CASE("TSOutputView all_valid recurses through fixed bundle children")
         auto mutation = a.begin_mutation(t1);
         REQUIRE(mutation.copy_value_from(one.view()));
     }
+
+    REQUIRE(output.dirty());
 
     auto partially_valid = output.view(t1);
     REQUIRE(partially_valid.valid());

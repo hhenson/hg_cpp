@@ -21,8 +21,9 @@ The implementation uses the following names consistently:
 ``TSOutput``
     The output-side top-level time-series holder owned by a node output.
     It owns the root ``TSData`` payload/delta component and output-local
-    endpoint state such as mutation scope, modification publication, and
-    subscriber fan-out.
+    endpoint state such as dirty cleanup coordination, modification
+    publication, and subscriber fan-out. ``TSOutput`` is the terminal
+    parent of its root ``TSData`` bubble-up chain.
 
 ``TSInput``
     The input-side top-level time-series holder owned by a node input. It
@@ -43,7 +44,8 @@ The implementation uses the following names consistently:
     information, laid out so those two views stay aligned and can expose
     useful buffer / NumPy representations. ``TSData`` does not own
     subscribers, external notification fan-out, or scheduling state. It
-    does own the local ``TSDataParentLink`` used for parent bubble-up.
+    does own the local ``TSDataParentLink`` used for parent bubble-up,
+    including the root link to the owning endpoint.
 
 ``TSDataOps``
     The type-erased operation table over a ``TSData`` memory region:
@@ -385,7 +387,10 @@ identity and the parent-local field/index id. It does not point at the
 parent view object. When a child modification is first recorded for an
 engine time, the child bubbles that id to the parent; the parent then
 records its own ``last_modified_time`` for the same engine time and
-continues through its own tracking link if it has one.
+continues through its own tracking link if it has one. The root
+``TSData`` link terminates at the owning endpoint, for example
+``TSOutput``, which records endpoint-local dirty state instead of
+recording another TSData child id.
 
 Window TSData
 ^^^^^^^^^^^^^
@@ -500,26 +505,32 @@ transient parent view that created it:
       Binding["TSDataBinding<br/>schema + plan + ops"]
       Data["TSData storage allocation<br/>value + optional delta + tracking"]
       Tracking["TSDataTracking<br/>last_modified_time<br/>parent"]
-      Link["TSDataParentLink<br/>parent_binding<br/>parent_data<br/>child_id"]
+      Link["TSDataParentLink<br/>tagged parent identity<br/>payload union<br/>child_id"]
       ParentData["parent TSData storage"]
+      Endpoint["terminal endpoint<br/>TSOutput / TSInput"]
 
       View -->|binding_| Binding
       View -->|data_| Data
       Data -->|tracking_offset| Tracking
       Tracking -->|parent| Link
-      Link -->|parent_data| ParentData
+      Link -->|TSData: binding + data| ParentData
+      Link -.endpoint: endpoint pointer.-> Endpoint
       Link -.child_id belongs to parent.-> ParentData
 
-Because each parent also stores its own ``TSDataParentLink``, a child
-link can walk back to the root without retaining transient views. The
-same walk produces the root-to-child navigation path as integer
-field/index/slot ids.
+The parent identity is tagged so the link carries exactly one parent
+kind. For a TSData parent it stores ``binding + data``; for an endpoint
+parent it stores the endpoint pointer in the same payload slot. Because
+each TSData parent also stores its own ``TSDataParentLink``, a child link
+can walk back to the root TSData without retaining transient views. The
+walk stops at the endpoint link. The same walk produces the
+root-to-child navigation path as integer field/index/slot ids.
 
 ``TSDataMutationView`` is the mutation-only handle. It carries a view
 copy plus the current engine time and validates that the bound
-``TSDataOps::allows_mutation`` property is true. Mutation depth is
-tracked by the owning root ``TSOutput`` / ``TSInput`` endpoint, not by each
-TSData element:
+``TSDataOps::allows_mutation`` property is true. Endpoint lifecycle
+state, such as whether cleanup is needed after evaluation, is tracked by
+the owning root ``TSOutput`` / ``TSInput`` endpoint, not by each TSData
+element:
 
 .. mermaid::
 
@@ -545,9 +556,11 @@ child id into the child's tracking region; and child mutations notify
 their parent only through ``TSDataParentLink``. The link hides the
 parent-specific details by invoking the parent's
 ``record_child_modified(parent_data, child_id)`` hook before marking
-the parent modified. The later processing of completed modified
-elements belongs to the surrounding endpoint/state layer. TSData does
-not own external subscriber lists or graph scheduling fan-out.
+the parent modified. If the link terminates at an endpoint parent, the
+endpoint records its local dirty state and the bubble-up stops. The
+later processing of completed modified elements belongs to the
+surrounding endpoint/state layer. TSData does not own external
+subscriber lists or graph scheduling fan-out.
 
 The implemented atomic plan follows the compact layout above. ``TSB``
 and fixed-size ``TSL`` use the fixed structured layout above. ``TSW``
@@ -678,6 +691,7 @@ The bubble-up path uses the slot id carried by the child's
       ModifiedBit["parent modified bitset[s] = 1"]
       ParentTime["parent last_modified_time<br/>= current engine time"]
       Bubble["repeat with parent's parent"]
+      Endpoint["terminal endpoint<br/>mark output dirty"]
 
       ChildMutation --> Mark
       Mark --> ParentLink
@@ -685,6 +699,7 @@ The bubble-up path uses the slot id carried by the child's
       ParentHook --> ModifiedBit
       ModifiedBit --> ParentTime
       ParentTime --> Bubble
+      Bubble --> Endpoint
 
 Builder Lifetime
 ----------------
@@ -831,7 +846,8 @@ uses the ``TSDataParentLink`` stored in child tracking plus the
 ``record_child_modified`` hook on the parent ops table. The parent link
 owns the child id because that id is a parent-local slot/path
 identifier. It can also resolve the root ``TSDataView`` and the
-root-to-child navigation path by walking the chain of parent links.
+root-to-child navigation path by walking the chain of TSData parent
+links and stopping at the endpoint parent.
 The slot hooks may update bitsets immediately during
 mutation; processing of modified elements and external notification
 fan-out belongs to the surrounding state/value layer after the

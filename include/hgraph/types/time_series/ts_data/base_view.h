@@ -77,6 +77,14 @@ namespace hgraph
 
         /** True when this node and all required descendants are valid. */
         [[nodiscard]] bool all_valid() const;
+
+        /**
+         * Clear transient delta state for this node and modified descendants.
+         *
+         * ``modified_time`` is normally the root node's last modified time.
+         * Branches whose tracking timestamp differs are skipped.
+         */
+        void cleanup_delta(engine_time_t modified_time) const;
         [[nodiscard]] TSSDataView as_set() &;
         [[nodiscard]] TSSDataView as_set() const &;
         void as_set() && = delete;
@@ -103,6 +111,7 @@ namespace hgraph
       private:
         friend class TSDataMutationView;
         friend class IndexedTSDataView;
+        friend class TSOutput;
         friend class TSDDataView;
         friend class TSDDataMutationView;
 
@@ -112,6 +121,7 @@ namespace hgraph
         void require_live(const char *what) const;
         [[nodiscard]] TSDataTracking &mutable_tracking() const;
         void bind_parent(const TSDataView &parent, std::size_t child_id) const;
+        void bind_parent(TSDataParent &parent, std::size_t child_id) const;
 
         const TSDataBinding *binding_{nullptr};
         const void          *data_{nullptr};

@@ -1,10 +1,8 @@
 #include <hgraph/types/time_series/ts_output.h>
 
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
-#include <hgraph/util/scope.h>
 
 #include <stdexcept>
-#include <string>
 #include <utility>
 
 namespace hgraph
@@ -14,6 +12,7 @@ namespace hgraph
     TSOutput::TSOutput(const TSDataBinding &binding)
         : data_(binding)
     {
+        attach_root_parent();
     }
 
     TSOutput::TSOutput(const TSValueTypeMetaData &schema)
@@ -29,24 +28,25 @@ namespace hgraph
     TSOutput::TSOutput(const TSOutput &other)
         : data_(copyable_data(other))
     {
+        attach_root_parent();
     }
 
     TSOutput &TSOutput::operator=(const TSOutput &other)
     {
         if (this != &other)
         {
-            require_not_mutating("TSOutput copy target");
-            other.require_not_mutating("TSOutput copy source");
             data_ = other.data_;
-            clear_mutation_state();
+            dirty_ = false;
+            attach_root_parent();
         }
         return *this;
     }
 
     TSOutput::TSOutput(TSOutput &&other) noexcept
-        : data_(std::move(other.data_))
+        : data_(std::move(other.data_)),
+          dirty_(std::exchange(other.dirty_, false))
     {
-        other.clear_mutation_state();
+        attach_root_parent();
     }
 
     TSOutput &TSOutput::operator=(TSOutput &&other) noexcept
@@ -54,8 +54,8 @@ namespace hgraph
         if (this != &other)
         {
             data_ = std::move(other.data_);
-            clear_mutation_state();
-            other.clear_mutation_state();
+            dirty_ = std::exchange(other.dirty_, false);
+            attach_root_parent();
         }
         return *this;
     }
@@ -85,19 +85,24 @@ namespace hgraph
         return data_.view();
     }
 
-    std::size_t TSOutput::mutation_depth() const noexcept
+    bool TSOutput::dirty() const noexcept
     {
-        return mutation_depth_;
+        return dirty_;
     }
 
-    bool TSOutput::mutation_active() const noexcept
+    void TSOutput::cleanup_delta()
     {
-        return mutation_depth_ != 0;
+        if (!dirty_) { return; }
+
+        auto root = data_view();
+        const auto modified_time = root.last_modified_time();
+        root.cleanup_delta(modified_time);
+        dirty_ = false;
     }
 
-    engine_time_t TSOutput::current_mutation_time() const noexcept
+    void TSOutput::clear_dirty() noexcept
     {
-        return mutation_time_;
+        dirty_ = false;
     }
 
     TSOutputView TSOutput::view(engine_time_t evaluation_time)
@@ -110,11 +115,6 @@ namespace hgraph
         return TSOutputView{this, data_view(), evaluation_time};
     }
 
-    TSOutputMutationView TSOutput::begin_mutation(engine_time_t evaluation_time)
-    {
-        return TSOutputMutationView{*this, evaluation_time};
-    }
-
     const TSDataBinding &TSOutput::checked_binding_for(const TSValueTypeMetaData *schema)
     {
         if (schema == nullptr) { throw std::invalid_argument("TSOutput requires a time-series schema"); }
@@ -125,38 +125,78 @@ namespace hgraph
 
     const TSData &TSOutput::copyable_data(const TSOutput &other)
     {
-        other.require_not_mutating("TSOutput copy source");
         return other.data_;
     }
 
-    void TSOutput::require_not_mutating(const char *what) const
+    void TSOutput::attach_root_parent()
     {
-        if (mutation_active()) { throw std::logic_error(std::string{what} + " requires no active mutation"); }
+        if (has_value()) { data_view().bind_parent(*this, TS_DATA_NO_CHILD_ID); }
     }
 
-    void TSOutput::begin_mutation_scope(engine_time_t evaluation_time)
+    void TSOutput::record_child_modified(std::size_t, engine_time_t)
+    {
+        dirty_ = true;
+    }
+
+    TSOutputMutationView TSOutput::begin_mutation(engine_time_t evaluation_time)
+    {
+        return TSOutputMutationView{*this, evaluation_time};
+    }
+
+    TSDataMutationView TSOutputMutationView::begin_root_mutation(TSOutput &output, engine_time_t evaluation_time)
     {
         if (evaluation_time == MIN_DT) { throw std::invalid_argument("TSOutput mutation requires a concrete time"); }
-        if (!has_value()) { throw std::logic_error("TSOutput mutation requires a bound output"); }
-        if (mutation_depth_ != 0 && mutation_time_ != evaluation_time)
-        {
-            throw std::logic_error("TSOutput nested mutation requires the same engine time");
-        }
-        if (mutation_depth_ == 0) { mutation_time_ = evaluation_time; }
-        ++mutation_depth_;
+        if (!output.has_value()) { throw std::logic_error("TSOutput mutation requires a bound output"); }
+        return output.data_view().begin_mutation(evaluation_time);
     }
 
-    void TSOutput::end_mutation_scope() noexcept
+    TSOutputMutationView::TSOutputMutationView(TSOutput &output, engine_time_t evaluation_time)
+        : mutation_(begin_root_mutation(output, evaluation_time))
     {
-        if (mutation_depth_ == 0) { return; }
-        --mutation_depth_;
-        if (mutation_depth_ == 0) { mutation_time_ = MIN_DT; }
     }
 
-    void TSOutput::clear_mutation_state() noexcept
+    TSOutputMutationView::TSOutputMutationView(TSOutputMutationView &&) noexcept = default;
+
+    TSOutputMutationView::~TSOutputMutationView() noexcept = default;
+
+    TSDataMutationView &TSOutputMutationView::data_mutation() noexcept
     {
-        mutation_depth_ = 0;
-        mutation_time_  = MIN_DT;
+        return mutation_;
+    }
+
+    const TSDataMutationView &TSOutputMutationView::data_mutation() const noexcept
+    {
+        return mutation_;
+    }
+
+    ValueView TSOutputMutationView::value() const
+    {
+        return mutation_.value();
+    }
+
+    ValueView TSOutputMutationView::delta_value(engine_time_t evaluation_time) const
+    {
+        return mutation_.delta_value(evaluation_time);
+    }
+
+    engine_time_t TSOutputMutationView::current_mutation_time() const
+    {
+        return mutation_.current_mutation_time();
+    }
+
+    bool TSOutputMutationView::modified() const
+    {
+        return mutation_.modified(current_mutation_time());
+    }
+
+    void TSOutputMutationView::mark_modified()
+    {
+        mutation_.mark_modified();
+    }
+
+    bool TSOutputMutationView::copy_value_from(const ValueView &source)
+    {
+        return mutation_.copy_value_from(source);
     }
 
     TSOutputView::TSOutputView() noexcept = default;
@@ -291,69 +331,5 @@ namespace hgraph
     TSWDataView TSOutputView::as_window() const &
     {
         return data_.as_window();
-    }
-
-    TSOutputMutationView::TSOutputMutationView(TSOutput &output, engine_time_t evaluation_time)
-        : output_(&output),
-          mutation_(begin_root_mutation(output, evaluation_time))
-    {
-    }
-
-    TSOutputMutationView::TSOutputMutationView(TSOutputMutationView &&other) noexcept
-        : output_(std::exchange(other.output_, nullptr)),
-          mutation_(std::move(other.mutation_))
-    {
-    }
-
-    TSOutputMutationView::~TSOutputMutationView() noexcept
-    {
-        if (output_ != nullptr) { output_->end_mutation_scope(); }
-    }
-
-    TSDataMutationView &TSOutputMutationView::data_mutation() noexcept
-    {
-        return mutation_;
-    }
-
-    const TSDataMutationView &TSOutputMutationView::data_mutation() const noexcept
-    {
-        return mutation_;
-    }
-
-    ValueView TSOutputMutationView::value() const
-    {
-        return mutation_.value();
-    }
-
-    ValueView TSOutputMutationView::delta_value(engine_time_t evaluation_time) const
-    {
-        return mutation_.delta_value(evaluation_time);
-    }
-
-    engine_time_t TSOutputMutationView::current_mutation_time() const
-    {
-        return mutation_.current_mutation_time();
-    }
-
-    bool TSOutputMutationView::modified() const
-    {
-        return mutation_.modified(current_mutation_time());
-    }
-
-    void TSOutputMutationView::mark_modified()
-    {
-        mutation_.mark_modified();
-    }
-
-    bool TSOutputMutationView::copy_value_from(const ValueView &source)
-    {
-        return mutation_.copy_value_from(source);
-    }
-
-    TSDataMutationView TSOutputMutationView::begin_root_mutation(TSOutput &output, engine_time_t evaluation_time)
-    {
-        output.begin_mutation_scope(evaluation_time);
-        auto rollback = UnwindCleanupGuard{[&output]() noexcept { output.end_mutation_scope(); }};
-        return output.data_view().begin_mutation(evaluation_time);
     }
 }  // namespace hgraph

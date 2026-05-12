@@ -67,8 +67,9 @@ namespace hgraph
 
     TSDataView TSDataView::root_view() const
     {
-        if (!valid() || !has_parent()) { return *this; }
-        return tracking().parent.root_view();
+        if (!valid()) { return *this; }
+        const auto &link = tracking().parent;
+        return link.has_ts_data_parent() ? link.root_view() : *this;
     }
 
     void *TSDataView::mutable_data() const
@@ -137,6 +138,15 @@ namespace hgraph
         if (!has_current_value()) { return false; }
         const auto &table = ops();
         return table.all_valid_impl(table.context, data_);
+    }
+
+    void TSDataView::cleanup_delta(engine_time_t modified_time) const
+    {
+        require_live("TSDataView::cleanup_delta");
+        if (modified_time == MIN_DT || tracking().last_modified_time != modified_time) { return; }
+
+        const auto &table = ops();
+        table.cleanup_delta_impl(table.context, mutable_data(), modified_time);
     }
 
     TSSDataView TSDataView::as_set() &
@@ -230,6 +240,12 @@ namespace hgraph
         mutable_tracking().parent = TSDataParentLink{parent.binding(), parent.data(), child_id};
     }
 
+    void TSDataView::bind_parent(TSDataParent &parent, std::size_t child_id) const
+    {
+        if (!valid()) { throw std::logic_error("TSDataView child requires a live view"); }
+        mutable_tracking().parent = TSDataParentLink{parent, child_id};
+    }
+
     TSDataMutationView::TSDataMutationView(TSDataView view, engine_time_t evaluation_time)
         : view_(view),
           mutation_time_(evaluation_time)
@@ -311,7 +327,10 @@ namespace hgraph
             throw std::logic_error(
                 "TSDataMutationView::copy_value_from reported a new modification that was already recorded");
         }
-        if (newly_modified) { notify_parent_modified(); }
+        if (newly_modified)
+        {
+            notify_parent_modified();
+        }
         return newly_modified;
     }
 

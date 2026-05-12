@@ -144,6 +144,13 @@ namespace hgraph::ts_data_plan_factory_detail
                 delta_time_ = MIN_DT;
             }
 
+            void cleanup_delta() noexcept
+            {
+                keys_.erase_pending();
+                reset_delta();
+                previous_modified_time_ = MIN_DT;
+            }
+
           protected:
             void validate_key(const ValueView &key) const
             {
@@ -315,6 +322,25 @@ namespace hgraph::ts_data_plan_factory_detail
                 removed_.reset();
                 modified_.reset();
                 delta_time_ = MIN_DT;
+            }
+
+            void cleanup_delta(engine_time_t modified_time)
+            {
+                const auto &child_ops = element_binding().checked_ops();
+                for (std::size_t slot = 0; slot < slot_capacity(); ++slot)
+                {
+                    if (!slot_live(slot)) { continue; }
+                    void       *child_memory = child_memory_for_write(slot);
+                    const auto *child_tracking = child_ops.tracking_impl(child_ops.context, child_memory);
+                    if (child_tracking != nullptr && child_tracking->last_modified_time == modified_time)
+                    {
+                        child_ops.cleanup_delta_impl(child_ops.context, child_memory, modified_time);
+                    }
+                }
+
+                keys_.erase_pending();
+                reset_delta();
+                previous_modified_time_ = MIN_DT;
             }
 
           private:
@@ -539,6 +565,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     .delta_memory_impl         = &tss_delta_memory,
                     .mutable_delta_memory_impl = &tss_mutable_delta_memory,
                     .reset_delta_impl          = &tss_reset_delta,
+                    .cleanup_delta_impl        = &tss_cleanup_delta,
                     .copy_value_from_impl      = &tss_copy_value_from,
                 };
                 set_ops.size_impl                      = &tss_size;
@@ -659,6 +686,18 @@ namespace hgraph::ts_data_plan_factory_detail
             static void tss_reset_delta(const void *, void *memory)
             {
                 storage<Storage>(memory).reset_delta();
+            }
+
+            static void tss_cleanup_delta(const void *, void *memory, engine_time_t modified_time)
+            {
+                if constexpr (requires(Storage &target) { target.cleanup_delta(modified_time); })
+                {
+                    storage<Storage>(memory).cleanup_delta(modified_time);
+                }
+                else
+                {
+                    storage<Storage>(memory).cleanup_delta();
+                }
             }
 
             [[nodiscard]] static bool tss_copy_value_from(const void *context, void *memory, const ValueView &source,
@@ -1068,6 +1107,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 base_ops.delta_memory_impl = &tsd_delta_memory;
                 base_ops.mutable_delta_memory_impl = &tsd_mutable_delta_memory;
                 base_ops.reset_delta_impl = &tsd_reset_delta;
+                base_ops.cleanup_delta_impl = &tsd_cleanup_delta;
                 base_ops.record_child_modified_impl = &tsd_record_child_modified;
                 base_ops.copy_value_from_impl = &tsd_copy_value_from;
 
@@ -1230,6 +1270,11 @@ namespace hgraph::ts_data_plan_factory_detail
             static void tsd_reset_delta(const void *, void *memory)
             {
                 storage<TSDSlotStorage>(memory).reset_delta();
+            }
+
+            static void tsd_cleanup_delta(const void *, void *memory, engine_time_t modified_time)
+            {
+                storage<TSDSlotStorage>(memory).cleanup_delta(modified_time);
             }
 
             static void tsd_record_child_modified(const void *, void *memory, std::size_t child_id,

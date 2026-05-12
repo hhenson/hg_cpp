@@ -13,11 +13,12 @@ namespace hgraph
     /**
      * Owning output-side time-series endpoint.
      *
-     * ``TSOutput`` owns the root TSData allocation and the root mutation scope
-     * state. External subscriber fan-out and input binding are layered above
-     * this holder.
+     * ``TSOutput`` owns the root TSData allocation and exposes lifecycle hooks
+     * used by nodes to clean up transient delta state after evaluation.
+     * External subscriber fan-out and input binding are layered above this
+     * holder.
      */
-    class TSOutput
+    class TSOutput : private TSDataParent
     {
       public:
         TSOutput() noexcept;
@@ -41,10 +42,20 @@ namespace hgraph
         [[nodiscard]] TSDataView data_view();
         [[nodiscard]] TSDataView data_view() const;
 
-        /** Root mutation nesting state. */
-        [[nodiscard]] std::size_t mutation_depth() const noexcept;
-        [[nodiscard]] bool mutation_active() const noexcept;
-        [[nodiscard]] engine_time_t current_mutation_time() const noexcept;
+        /** True after this output has been modified and before cleanup runs. */
+        [[nodiscard]] bool dirty() const noexcept;
+
+        /**
+         * Clear transient delta state for the current dirty root.
+         *
+         * Nodes call this from their post-evaluation cleanup hook. The cleanup
+         * walks only branches whose modification time matches the root's last
+         * modified time.
+         */
+        void cleanup_delta();
+
+        /** Clear the dirty flag without touching TSData delta state. */
+        void clear_dirty() noexcept;
 
         /** Read view at ``evaluation_time``. */
         [[nodiscard]] TSOutputView view(engine_time_t evaluation_time = MIN_DT);
@@ -59,14 +70,11 @@ namespace hgraph
         static const TSDataBinding &checked_binding_for(const TSValueTypeMetaData *schema);
         static const TSData &copyable_data(const TSOutput &other);
 
-        void require_not_mutating(const char *what) const;
-        void begin_mutation_scope(engine_time_t evaluation_time);
-        void end_mutation_scope() noexcept;
-        void clear_mutation_state() noexcept;
+        void attach_root_parent();
+        void record_child_modified(std::size_t child_id, engine_time_t mutation_time) override;
 
         TSData        data_{};
-        std::size_t   mutation_depth_{0};
-        engine_time_t mutation_time_{MIN_DT};
+        bool          dirty_{false};
     };
 
     /**
@@ -167,7 +175,6 @@ namespace hgraph
       private:
         static TSDataMutationView begin_root_mutation(TSOutput &output, engine_time_t evaluation_time);
 
-        TSOutput          *output_{nullptr};
         TSDataMutationView mutation_;
     };
 }  // namespace hgraph

@@ -5,7 +5,9 @@
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/value/value_ops.h>
 #include <hgraph/util/date_time.h>
+#include <hgraph/util/tagged_ptr.h>
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <vector>
 
@@ -15,6 +17,7 @@ namespace hgraph
     using TSDataBinding = TypeBinding<TSValueTypeMetaData, TSDataOps>;
 
     struct TSDataTracking;
+    struct TSDataParent;
     class TSDataView;
     class TSDataMutationView;
     class IndexedTSDataView;
@@ -30,30 +33,94 @@ namespace hgraph
     inline constexpr std::size_t TS_DATA_NO_CHILD_ID = static_cast<std::size_t>(-1);
 
     /**
+     * Terminal parent for a TSData bubble-up chain.
+     *
+     * Non-TSData endpoint owners, such as ``TSOutput``, implement this small
+     * interface so the root TSData node can use the same parent-notification
+     * path as nested TSData children.
+     */
+    struct TSDataParent
+    {
+        virtual ~TSDataParent() = default;
+
+        /** Record that ``child_id`` modified at ``mutation_time``. */
+        virtual void record_child_modified(std::size_t child_id, engine_time_t mutation_time) = 0;
+    };
+
+    enum class TSDataParentLinkKind : std::uintptr_t
+    {
+        None     = 0,
+        TSData   = 1,
+        Endpoint = 2,
+    };
+
+    /**
      * Stable parent identity for one TSData node.
      *
      * This is stored in the child node's value-owned tracking region. It does
      * not point at transient view objects, so a child view may outlive the
-     * parent view that projected it.
+     * parent view that projected it. The representation is a compact tagged
+     * union: TSData parents use ``binding + data`` and endpoint parents use
+     * the same payload word for the endpoint pointer.
      */
     struct TSDataParentLink
     {
-        const TSDataBinding *parent_binding{nullptr};
-        const void          *parent_data{nullptr};
-        std::size_t          child_id{TS_DATA_NO_CHILD_ID};
+        using ParentIdentity = tagged_ptr<const TSDataBinding, 2, TSDataParentLinkKind>;
+
+        union ParentPayload
+        {
+            const void   *ts_data;
+            TSDataParent *endpoint;
+
+            constexpr ParentPayload() noexcept : ts_data(nullptr) {}
+            constexpr explicit ParentPayload(const void *data) noexcept : ts_data(data) {}
+            constexpr explicit ParentPayload(TSDataParent *parent) noexcept : endpoint(parent) {}
+        };
+
+      private:
+        ParentIdentity parent_{};
+        ParentPayload  payload_{};
+
+      public:
+        std::size_t child_id{TS_DATA_NO_CHILD_ID};
 
         constexpr TSDataParentLink() noexcept = default;
         constexpr TSDataParentLink(const TSDataBinding *binding,
                                    const void          *data,
                                    std::size_t          parent_child_id) noexcept
-            : parent_binding(binding),
-              parent_data(data),
+            : parent_(binding, TSDataParentLinkKind::TSData),
+              payload_(data),
+              child_id(parent_child_id)
+        {
+        }
+        constexpr TSDataParentLink(TSDataParent &endpoint,
+                                   std::size_t   parent_child_id = TS_DATA_NO_CHILD_ID) noexcept
+            : parent_(static_cast<const TSDataBinding *>(nullptr), TSDataParentLinkKind::Endpoint),
+              payload_(&endpoint),
               child_id(parent_child_id)
         {
         }
 
-        /** True when this child has a recorded parent TSData allocation. */
+        /** Parent kind encoded into the parent identity pointer. */
+        [[nodiscard]] TSDataParentLinkKind kind() const noexcept;
+
+        /** True when this child has either a TSData parent or an endpoint parent. */
         [[nodiscard]] bool has_parent() const noexcept;
+
+        /** True when this child has a recorded parent TSData allocation. */
+        [[nodiscard]] bool has_ts_data_parent() const noexcept;
+
+        /** True when this child bubbles directly to an endpoint parent. */
+        [[nodiscard]] bool has_endpoint_parent() const noexcept;
+
+        /** Parent TSData binding, or null when this link does not target TSData. */
+        [[nodiscard]] const TSDataBinding *parent_binding() const noexcept;
+
+        /** Parent TSData memory, or null when this link does not target TSData. */
+        [[nodiscard]] const void *parent_data() const noexcept;
+
+        /** Endpoint parent, or null when this link targets TSData or is empty. */
+        [[nodiscard]] TSDataParent *parent_endpoint() const noexcept;
 
         /**
          * Record a child modification against the parent and bubble that
@@ -75,14 +142,18 @@ namespace hgraph
         [[nodiscard]] TSDataTracking &mutable_parent_tracking() const;
     };
 
+    static_assert(sizeof(TSDataParentLink) <= sizeof(void *) * 3,
+                  "TSDataParentLink should remain a compact three-word navigation handle");
+
     /**
      * Common per-TSData tracking state.
      *
      * Every TSData shape, including compact atomic TSData, stores this in its
-     * value-owned memory. Root values keep ``parent`` empty; projected child
-     * values use it for local bubble-up. TSState owns graph-level notification,
-     * and TSData owns the timestamp needed to decide whether its local delta
-     * view belongs to a given evaluation time.
+     * value-owned memory. Projected child values use ``parent`` for local
+     * bubble-up; root values may carry a terminal endpoint parent such as the
+     * owning ``TSOutput``. TSState owns graph-level notification, and TSData
+     * owns the timestamp needed to decide whether its local delta view belongs
+     * to a given evaluation time.
      */
     struct TSDataTracking
     {
