@@ -17,6 +17,7 @@
 #include <hgraph/types/utils/stable_slot_storage.h>
 #include <hgraph/types/utils/value_slot_store.h>
 #include <hgraph/types/time_series/ts_data.h>
+#include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/value/compact_container_ops.h>
 #include <hgraph/types/value/compact_storage.h>
 #include <hgraph/types/value/container_ops.h>

@@ -217,6 +217,16 @@ namespace hgraph
             missing_ts_data_op("mutable tracking");
         }
 
+        [[nodiscard]] inline bool missing_has_current_value(const void *, const void *)
+        {
+            missing_ts_data_op("validity");
+        }
+
+        [[nodiscard]] inline bool missing_all_valid(const void *, const void *)
+        {
+            missing_ts_data_op("recursive validity");
+        }
+
         [[nodiscard]] inline const void *missing_value_memory(const void *, const void *)
         {
             missing_ts_data_op("value memory");
@@ -356,6 +366,9 @@ namespace hgraph
                                                const void *memory) = &ts_data_detail::missing_tracking;
         TSDataTracking *(*mutable_tracking_impl)(const void *context,
                                                  void *memory) = &ts_data_detail::missing_mutable_tracking;
+        bool (*has_current_value_impl)(const void *context,
+                                       const void *memory) = &ts_data_detail::missing_has_current_value;
+        bool (*all_valid_impl)(const void *context, const void *memory) = &ts_data_detail::missing_all_valid;
         const void *(*value_memory_impl)(const void *context,
                                          const void *memory) = &ts_data_detail::missing_value_memory;
         void *(*mutable_value_memory_impl)(const void *context,
@@ -496,7 +509,6 @@ namespace hgraph
         const void *(*time_element_at_impl)(const void *context, const void *memory, std::size_t index) = nullptr;
         std::size_t (*capacity_impl)(const void *context, const void *memory) = nullptr;
         bool (*full_impl)(const void *context, const void *memory) = nullptr;
-        bool (*all_valid_impl)(const void *context, const void *memory) = nullptr;
         void (*push_impl)(const void *context, void *memory, const ValueView &source,
                           engine_time_t modified_time) = nullptr;
     };
@@ -590,6 +602,19 @@ namespace hgraph
         [[nodiscard]] bool modified(engine_time_t evaluation_time) const
         {
             return tracking().last_modified_time == evaluation_time;
+        }
+        [[nodiscard]] bool has_current_value() const
+        {
+            require_live("TSDataView::has_current_value");
+            const auto &table = ops();
+            return table.has_current_value_impl(table.context, data_);
+        }
+        [[nodiscard]] bool all_valid() const
+        {
+            require_live("TSDataView::all_valid");
+            if (!has_current_value()) { return false; }
+            const auto &table = ops();
+            return table.all_valid_impl(table.context, data_);
         }
         [[nodiscard]] TSSDataView as_set() &;
         [[nodiscard]] TSSDataView as_set() const &;
@@ -1546,8 +1571,7 @@ namespace hgraph
         }
         [[nodiscard]] bool all_valid() const
         {
-            const auto &ops = window_ops();
-            return ops.all_valid_impl(ops.context, view_.data());
+            return view_.all_valid();
         }
         [[nodiscard]] engine_time_t first_modified_time() const
         {

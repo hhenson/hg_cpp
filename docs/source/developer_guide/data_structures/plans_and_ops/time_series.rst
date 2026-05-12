@@ -48,10 +48,11 @@ The implementation uses the following names consistently:
 ``TSDataOps``
     The type-erased operation table over a ``TSData`` memory region:
     the literal ``allows_mutation`` property, common layout access,
-    read/write memory access, delta reset, copy, and the per-kind hook
-    used when a child time-series value reports that it modified. The
-    table is deliberately passive; generic mutation sequencing and
-    propagation rules live on ``TSDataView`` /
+    current-value validity, recursive ``all_valid`` checks, read/write
+    memory access, delta reset, copy, and the per-kind hook used when a
+    child time-series value reports that it modified. The table is
+    deliberately passive; generic mutation sequencing and propagation
+    rules live on ``TSDataView`` /
     ``TSDataMutationView``. For a real bound ``TSData``
     implementation the table is total: required entries are never null,
     empty optional behaviours use no-op thunks, and unsupported
@@ -479,7 +480,13 @@ View Handles
 
 View objects are handles over TSData memory; they are not embedded
 inside the TSData allocation. A plain data view needs only the binding
-and data pointer, and exposes the common time-series operations.
+and data pointer, and exposes the common time-series operations:
+``binding()``, ``schema()``, current ``value()``, ``delta_value(t)``,
+``last_modified_time()``, ``modified(t)``, ``has_current_value()``, and
+``all_valid()``. Top-level input/output views should delegate this
+common surface to the data view; they only add endpoint-specific
+behaviour such as input binding, output mutation scopes, publication,
+and subscription state.
 Specialised views, for example ``TSBDataView`` and ``TSLDataView``,
 wrap the plain view and provide kind-specific child access. Child
 back-links are value-owned metadata stored in the child

@@ -532,6 +532,8 @@ namespace hgraph::ts_data_plan_factory_detail
                     .layout_impl               = &tss_layout,
                     .tracking_impl             = &tss_tracking,
                     .mutable_tracking_impl     = &tss_mutable_tracking,
+                    .has_current_value_impl    = &tss_has_current_value,
+                    .all_valid_impl            = &tss_all_valid,
                     .value_memory_impl         = &tss_value_memory,
                     .mutable_value_memory_impl = &tss_mutable_value_memory,
                     .delta_memory_impl         = &tss_delta_memory,
@@ -622,6 +624,16 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static TSDataTracking *tss_mutable_tracking(const void *, void *memory) noexcept
             {
                 return &storage<Storage>(memory).mutable_tracking();
+            }
+
+            [[nodiscard]] static bool tss_has_current_value(const void *, const void *memory) noexcept
+            {
+                return storage<Storage>(memory).tracking().last_modified_time != MIN_DT;
+            }
+
+            [[nodiscard]] static bool tss_all_valid(const void *, const void *memory) noexcept
+            {
+                return storage<Storage>(memory).tracking().last_modified_time != MIN_DT;
             }
 
             [[nodiscard]] static const void *tss_value_memory(const void *, const void *memory) noexcept
@@ -1049,6 +1061,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 base_ops.layout_impl = &tsd_layout;
                 base_ops.tracking_impl = &tsd_tracking;
                 base_ops.mutable_tracking_impl = &tsd_mutable_tracking;
+                base_ops.has_current_value_impl = &tsd_has_current_value;
+                base_ops.all_valid_impl = &tsd_all_valid;
                 base_ops.value_memory_impl = &tsd_value_memory;
                 base_ops.mutable_value_memory_impl = &tsd_mutable_value_memory;
                 base_ops.delta_memory_impl = &tsd_delta_memory;
@@ -1171,6 +1185,26 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static TSDataTracking *tsd_mutable_tracking(const void *, void *memory) noexcept
             {
                 return &storage<TSDSlotStorage>(memory).mutable_tracking();
+            }
+
+            [[nodiscard]] static bool tsd_has_current_value(const void *, const void *memory) noexcept
+            {
+                return storage<TSDSlotStorage>(memory).tracking().last_modified_time != MIN_DT;
+            }
+
+            [[nodiscard]] static bool tsd_all_valid(const void *context, const void *memory)
+            {
+                if (!tsd_has_current_value(context, memory)) { return false; }
+
+                const auto *state = ctxd(context);
+                const auto &store = storage<TSDSlotStorage>(memory);
+                const auto &child_ops = state->dict_layout.element_binding->checked_ops();
+                for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
+                {
+                    if (!store.slot_live(slot)) { continue; }
+                    if (!child_ops.all_valid_impl(child_ops.context, store.child_at_slot(slot))) { return false; }
+                }
+                return true;
             }
 
             [[nodiscard]] static const void *tsd_value_memory(const void *, const void *memory) noexcept

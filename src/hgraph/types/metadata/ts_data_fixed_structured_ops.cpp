@@ -224,6 +224,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 .layout_impl               = &fixed_layout,
                 .tracking_impl             = &fixed_tracking,
                 .mutable_tracking_impl     = &fixed_mutable_tracking,
+                .has_current_value_impl    = &fixed_has_current_value,
+                .all_valid_impl            = &fixed_all_valid,
                 .value_memory_impl         = &fixed_value_memory,
                 .mutable_value_memory_impl = &fixed_mutable_value_memory,
                 .delta_memory_impl         = &fixed_delta_memory,
@@ -306,6 +308,26 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static TSDataTracking *fixed_mutable_tracking(const void *context, void *memory) noexcept
         {
             return MemoryUtils::cast<TSDataTracking>(advance(memory, ctx(context)->layout_ptr()->tracking_offset));
+        }
+
+        [[nodiscard]] static bool fixed_has_current_value(const void *context, const void *memory) noexcept
+        {
+            return fixed_tracking(context, memory)->last_modified_time != MIN_DT;
+        }
+
+        [[nodiscard]] static bool fixed_all_valid(const void *context, const void *memory)
+        {
+            if (!fixed_has_current_value(context, memory)) { return false; }
+
+            const auto *state = ctx(context);
+            for (std::size_t index = 0; index < state->element_count(); ++index)
+            {
+                const auto *child = state->element_binding(index);
+                const auto &ops   = child_ops(*child);
+                const auto *data  = child_data(state, memory, index);
+                if (!ops.all_valid_impl(ops.context, data)) { return false; }
+            }
+            return true;
         }
 
         [[nodiscard]] static const void *fixed_value_memory(const void *context, const void *memory) noexcept

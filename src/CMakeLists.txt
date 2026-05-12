@@ -36,6 +36,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/stable_slot_storage.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/value_slot_store.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_container_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_storage.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/container_ops.h

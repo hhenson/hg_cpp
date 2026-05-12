@@ -28,6 +28,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 .layout_impl               = &atomic_layout,
                 .tracking_impl             = &atomic_tracking,
                 .mutable_tracking_impl     = &atomic_mutable_tracking,
+                .has_current_value_impl    = &atomic_has_current_value,
+                .all_valid_impl            = &atomic_has_current_value,
                 .value_memory_impl         = &atomic_value_memory,
                 .mutable_value_memory_impl = &atomic_mutable_value_memory,
                 .delta_memory_impl         = &atomic_delta_memory,
@@ -71,6 +73,11 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             const auto *layout = atomic_layout(context);
             return MemoryUtils::cast<TSDataTracking>(advance(memory, layout->tracking_offset));
+        }
+
+        [[nodiscard]] static bool atomic_has_current_value(const void *context, const void *memory) noexcept
+        {
+            return atomic_tracking(context, memory)->last_modified_time != MIN_DT;
         }
 
         [[nodiscard]] static const void *atomic_value_memory(const void *context, const void *memory) noexcept

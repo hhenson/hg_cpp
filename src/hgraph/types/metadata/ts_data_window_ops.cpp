@@ -661,6 +661,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     .layout_impl               = &window_layout,
                     .tracking_impl             = &window_tracking,
                     .mutable_tracking_impl     = &window_mutable_tracking,
+                    .has_current_value_impl    = &window_has_current_value,
                     .value_memory_impl         = &window_value_memory,
                     .mutable_value_memory_impl = &window_mutable_value_memory,
                     .delta_memory_impl         = &window_delta_memory,
@@ -673,7 +674,6 @@ namespace hgraph::ts_data_plan_factory_detail
                 ops.time_element_at_impl = &window_time_element_at;
                 ops.capacity_impl    = nullptr;
                 ops.full_impl        = nullptr;
-                ops.all_valid_impl   = nullptr;
                 ops.push_impl        = &window_push;
             }
 
@@ -719,6 +719,11 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static TSDataTracking *window_mutable_tracking(const void *context, void *memory) noexcept
             {
                 return MemoryUtils::cast<TSDataTracking>(advance(memory, ctx(context)->layout->tracking_offset));
+            }
+
+            [[nodiscard]] static bool window_has_current_value(const void *context, const void *memory) noexcept
+            {
+                return window_tracking(context, memory)->last_modified_time != MIN_DT;
             }
 
             [[nodiscard]] static const void *window_value_memory(const void *context, const void *memory) noexcept
