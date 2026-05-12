@@ -346,6 +346,11 @@ views using the standard time-series API names:
 ``TSDataView`` does not expose indexed traversal. Fixed and dynamic
 ``TSL`` may use different data ops and layouts, but callers use the
 same ``TSLDataView`` surface for indexed list semantics.
+``TSLDataView`` exposes ``values()``, ``valid_values()``,
+``modified_values(evaluation_time)``, ``items()``, ``valid_items()``,
+and ``modified_items(evaluation_time)``. ``TSBDataView`` exposes the
+same positional operations plus ``keys()``, string-keyed ``items()``,
+``valid_items()``, and ``modified_items(evaluation_time)``.
 
 .. code-block:: text
 
@@ -859,7 +864,8 @@ container.
 The C++ TSData API uses the standard set-view names:
 ``TSDataView::as_set()``
 returns ``TSSDataView`` with ``size()``, ``empty()``, ``contains()``,
-``find_slot()``, ``values()``, ``added()``, ``removed()``,
+``find_slot()``, ``values()``, ``added_values()``,
+``removed_values()``, ``added()``, ``removed()``,
 ``slot_added()``, and ``slot_removed()``. ``TSSDataMutationView`` adds
 ``add()``, ``remove()``, ``clear()``, and ``reserve()``.
 

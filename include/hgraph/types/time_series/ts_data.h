@@ -810,24 +810,34 @@ namespace hgraph
 
         [[nodiscard]] Range<TSDataView> values() const
         {
-            return Range<TSDataView>{
-                .context   = this,
-                .memory    = nullptr,
-                .limit     = size(),
-                .predicate = nullptr,
-                .projector = &project_value,
-            };
+            return values_range(nullptr);
+        }
+
+        [[nodiscard]] Range<TSDataView> valid_values() const
+        {
+            return values_range(&child_valid_predicate);
+        }
+
+        [[nodiscard]] Range<TSDataView> modified_values(engine_time_t evaluation_time) const
+        {
+            if (!modified(evaluation_time)) { return empty_values_range(); }
+            return values_range(&child_modified_predicate);
         }
 
         [[nodiscard]] KeyValueRange<std::size_t, TSDataView> items() const
         {
-            return KeyValueRange<std::size_t, TSDataView>{
-                .context   = this,
-                .memory    = nullptr,
-                .limit     = size(),
-                .predicate = nullptr,
-                .projector = &project_item,
-            };
+            return items_range(nullptr);
+        }
+
+        [[nodiscard]] KeyValueRange<std::size_t, TSDataView> valid_items() const
+        {
+            return items_range(&child_valid_predicate);
+        }
+
+        [[nodiscard]] KeyValueRange<std::size_t, TSDataView> modified_items(engine_time_t evaluation_time) const
+        {
+            if (!modified(evaluation_time)) { return empty_items_range(); }
+            return items_range(&child_modified_predicate);
         }
 
       protected:
@@ -835,6 +845,44 @@ namespace hgraph
             : view_(&view)
         {
             validate_kind(view, expected_kind, what);
+        }
+
+        [[nodiscard]] bool child_valid(std::size_t index) const
+        {
+            return child_last_modified_time(index) != MIN_DT;
+        }
+
+        [[nodiscard]] bool child_modified_at_parent_time(std::size_t index) const
+        {
+            return child_last_modified_time(index) == last_modified_time();
+        }
+
+        [[nodiscard]] const IndexedTSDataOps &indexed_ops() const
+        {
+            return static_cast<const IndexedTSDataOps &>(view_->ops());
+        }
+
+        [[nodiscard]] Range<TSDataView> values_range(Range<TSDataView>::predicate_fn predicate) const
+        {
+            return Range<TSDataView>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = size(),
+                .predicate = predicate,
+                .projector = &project_value,
+            };
+        }
+
+        [[nodiscard]] KeyValueRange<std::size_t, TSDataView> items_range(
+            KeyValueRange<std::size_t, TSDataView>::predicate_fn predicate) const
+        {
+            return KeyValueRange<std::size_t, TSDataView>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = size(),
+                .predicate = predicate,
+                .projector = &project_item,
+            };
         }
 
       private:
@@ -849,9 +897,15 @@ namespace hgraph
             (void)static_cast<const IndexedTSDataOps &>(view.ops());
         }
 
-        [[nodiscard]] const IndexedTSDataOps &indexed_ops() const
+        [[nodiscard]] engine_time_t child_last_modified_time(std::size_t index) const
         {
-            return static_cast<const IndexedTSDataOps &>(view_->ops());
+            const auto &ops = indexed_ops();
+            if (index >= ops.size_impl(ops.context, view_->data())) { return MIN_DT; }
+            const auto *element_binding = ops.element_binding_impl(ops.context, view_->data(), index);
+            const auto *element_memory  = ops.element_memory_impl(ops.context, view_->data(), index);
+            if (element_binding == nullptr || element_memory == nullptr) { return MIN_DT; }
+            const auto &element_ops = element_binding->checked_ops();
+            return element_ops.tracking_impl(element_ops.context, element_memory)->last_modified_time;
         }
 
         [[nodiscard]] TSDataView at_impl(std::size_t index)
@@ -876,6 +930,28 @@ namespace hgraph
                 return TSDataView{element_binding, element_memory};
             }
             return TSDataView{element_binding, element_memory, *view_, index};
+        }
+
+        [[nodiscard]] static Range<TSDataView> empty_values_range() noexcept
+        {
+            return Range<TSDataView>{.context = nullptr, .memory = nullptr, .limit = 0, .predicate = nullptr,
+                                     .projector = nullptr};
+        }
+
+        [[nodiscard]] static KeyValueRange<std::size_t, TSDataView> empty_items_range() noexcept
+        {
+            return KeyValueRange<std::size_t, TSDataView>{.context = nullptr, .memory = nullptr, .limit = 0,
+                                                          .predicate = nullptr, .projector = nullptr};
+        }
+
+        [[nodiscard]] static bool child_valid_predicate(const void *context, const void *, std::size_t index)
+        {
+            return static_cast<const IndexedTSDataView *>(context)->child_valid(index);
+        }
+
+        [[nodiscard]] static bool child_modified_predicate(const void *context, const void *, std::size_t index)
+        {
+            return static_cast<const IndexedTSDataView *>(context)->child_modified_at_parent_time(index);
         }
 
         [[nodiscard]] static TSDataView project_value(const void *context, const void *, std::size_t index)
@@ -979,6 +1055,8 @@ namespace hgraph
             const auto &ops = set_ops();
             return ops.make_removed_values_range_impl(ops.context, view_.data());
         }
+        [[nodiscard]] Range<ValueView> added_values() const { return added(); }
+        [[nodiscard]] Range<ValueView> removed_values() const { return removed(); }
         [[nodiscard]] auto begin() const { return values().begin(); }
         [[nodiscard]] auto end() const { return values().end(); }
 
@@ -1316,13 +1394,18 @@ namespace hgraph
 
         [[nodiscard]] KeyValueRange<std::string_view, TSDataView> items() const
         {
-            return KeyValueRange<std::string_view, TSDataView>{
-                .context   = this,
-                .memory    = nullptr,
-                .limit     = size(),
-                .predicate = nullptr,
-                .projector = &project_named_item,
-            };
+            return named_items_range(nullptr);
+        }
+
+        [[nodiscard]] KeyValueRange<std::string_view, TSDataView> valid_items() const
+        {
+            return named_items_range(&named_child_valid_predicate);
+        }
+
+        [[nodiscard]] KeyValueRange<std::string_view, TSDataView> modified_items(engine_time_t evaluation_time) const
+        {
+            if (!modified(evaluation_time)) { return empty_named_items_range(); }
+            return named_items_range(&named_child_modified_predicate);
         }
 
       private:
@@ -1353,6 +1436,34 @@ namespace hgraph
             if (meta == nullptr || meta->kind != TSTypeKind::TSB || index >= meta->field_count()) { return {}; }
             const char *field_name = meta->fields()[index].name;
             return field_name != nullptr ? std::string_view{field_name} : std::string_view{};
+        }
+
+        [[nodiscard]] KeyValueRange<std::string_view, TSDataView> named_items_range(
+            KeyValueRange<std::string_view, TSDataView>::predicate_fn predicate) const
+        {
+            return KeyValueRange<std::string_view, TSDataView>{
+                .context   = this,
+                .memory    = nullptr,
+                .limit     = size(),
+                .predicate = predicate,
+                .projector = &project_named_item,
+            };
+        }
+
+        [[nodiscard]] static KeyValueRange<std::string_view, TSDataView> empty_named_items_range() noexcept
+        {
+            return KeyValueRange<std::string_view, TSDataView>{.context = nullptr, .memory = nullptr, .limit = 0,
+                                                               .predicate = nullptr, .projector = nullptr};
+        }
+
+        [[nodiscard]] static bool named_child_valid_predicate(const void *context, const void *, std::size_t index)
+        {
+            return static_cast<const TSBDataView *>(context)->child_valid(index);
+        }
+
+        [[nodiscard]] static bool named_child_modified_predicate(const void *context, const void *, std::size_t index)
+        {
+            return static_cast<const TSBDataView *>(context)->child_modified_at_parent_time(index);
         }
 
         [[nodiscard]] static std::string_view project_key(const void *context, const void *, std::size_t index)

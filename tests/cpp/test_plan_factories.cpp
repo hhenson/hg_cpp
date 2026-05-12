@@ -587,6 +587,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     REQUIRE(&first_child.layout() == child_ops.layout_impl(child_ops.context));
     REQUIRE(view.value().is_bundle());
     REQUIRE(view.value().binding() == ValuePlanFactory::instance().binding_for(tsb->value_schema));
+    REQUIRE(tsb_view.valid_items().begin() == tsb_view.valid_items().end());
 
     auto current = view.value().as_bundle();
     REQUIRE(current.at("a").checked_as<int>() == 0);
@@ -620,6 +621,26 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     REQUIRE(view.modified(t1));
     REQUIRE(view.last_modified_time() == t1);
     REQUIRE(view.value().as_bundle().at("a").checked_as<int>() == 7);
+    {
+        auto valid_items = tsb_view.valid_items();
+        auto it = valid_items.begin();
+        REQUIRE(it != valid_items.end());
+        const auto [name, element] = *it;
+        REQUIRE(std::string{name} == "a");
+        REQUIRE(element.value().checked_as<int>() == 7);
+        ++it;
+        REQUIRE(it == valid_items.end());
+    }
+    {
+        auto modified_items = tsb_view.modified_items(t1);
+        auto it = modified_items.begin();
+        REQUIRE(it != modified_items.end());
+        const auto [name, element] = *it;
+        REQUIRE(std::string{name} == "a");
+        REQUIRE(element.delta_value(t1).checked_as<int>() == 7);
+        ++it;
+        REQUIRE(it == modified_items.end());
+    }
 
     auto delta = view.delta_value(t1).as_bundle();
     REQUIRE(delta.at("a").checked_as<int>() == 7);
@@ -672,6 +693,8 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
     REQUIRE(view.value().is_list());
     REQUIRE(view.value().as_list().size() == 3);
     REQUIRE(view.value().as_list().at(2).checked_as<int>() == 0);
+    REQUIRE(tsl_view.valid_values().begin() == tsl_view.valid_values().end());
+    REQUIRE(tsl_view.valid_items().begin() == tsl_view.valid_items().end());
 
     const auto list = view.value().as_list();
     const auto *first = static_cast<const std::byte *>(list.at(0).data());
@@ -689,6 +712,24 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
 
     REQUIRE(view.modified(t1));
     REQUIRE(view.value().as_list().at(2).checked_as<int>() == 11);
+    {
+        auto valid_values = tsl_view.valid_values();
+        auto it = valid_values.begin();
+        REQUIRE(it != valid_values.end());
+        REQUIRE((*it).value().checked_as<int>() == 11);
+        ++it;
+        REQUIRE(it == valid_values.end());
+    }
+    {
+        auto modified_items = tsl_view.modified_items(t1);
+        auto it = modified_items.begin();
+        REQUIRE(it != modified_items.end());
+        const auto [index, element] = *it;
+        REQUIRE(index == 2);
+        REQUIRE(element.delta_value(t1).checked_as<int>() == 11);
+        ++it;
+        REQUIRE(it == modified_items.end());
+    }
 
     auto        delta = view.delta_value(t1).as_map();
     Value       key{std::int64_t{2}};
@@ -1001,6 +1042,8 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     REQUIRE(delta.at("added").as_set().contains(one.view()));
     REQUIRE(delta.at("added").as_set().contains(two.view()));
     REQUIRE(delta.at("removed").as_set().empty());
+    REQUIRE(set.added_values().begin() != set.added_values().end());
+    REQUIRE(set.removed_values().begin() == set.removed_values().end());
 
     const auto t2 = t1 + engine_time_delta_t{1};
     {
@@ -1013,6 +1056,8 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     auto next_delta = view.delta_value(t2).as_bundle();
     REQUIRE(next_delta.at("added").as_set().empty());
     REQUIRE(next_delta.at("removed").as_set().contains(one.view()));
+    REQUIRE(set.added_values().begin() == set.added_values().end());
+    REQUIRE(set.removed_values().begin() != set.removed_values().end());
     REQUIRE(view.last_modified_time() == t2);
 
     const auto t3 = t2 + engine_time_delta_t{1};
