@@ -137,6 +137,12 @@ namespace hgraph
         mutable_tracking().observers.unsubscribe(observer);
     }
 
+    void TSDataView::replace_observer(Notifiable *observer, Notifiable *replacement) const
+    {
+        require_live("TSDataView::replace_observer");
+        mutable_tracking().observers.replace(observer, replacement);
+    }
+
     bool TSDataView::has_observers() const
     {
         return valid() && !tracking().observers.empty();

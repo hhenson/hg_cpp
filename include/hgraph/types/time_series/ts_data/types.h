@@ -179,6 +179,9 @@ namespace hgraph
         /** Remove an observer pointer; null is ignored and missing observers assert. */
         void unsubscribe(Notifiable *observer);
 
+        /** Replace a registered observer pointer without changing list shape. */
+        void replace(Notifiable *observer, Notifiable *replacement) noexcept;
+
         /** Notify all registered observers for ``modified_time``. */
         void notify(engine_time_t modified_time) const;
 

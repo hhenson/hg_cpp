@@ -75,6 +75,7 @@ namespace hgraph
         /** Register / remove a per-level modification observer. */
         void subscribe(Notifiable *observer) const;
         void unsubscribe(Notifiable *observer) const;
+        void replace_observer(Notifiable *observer, Notifiable *replacement) const;
 
         /** True when this level currently has one or more observers. */
         [[nodiscard]] bool has_observers() const;

@@ -130,6 +130,33 @@ namespace hgraph
         compact_many(*entries);
     }
 
+    void TSDataObserverSet::replace(Notifiable *observer, Notifiable *replacement) noexcept
+    {
+        if (observer == nullptr || replacement == nullptr || observer == replacement) { return; }
+
+        if (auto *entry = single(); entry != nullptr)
+        {
+            assert(entry == observer && "replacing unregistered TSData observer");
+            if (entry == observer) { set_single(replacement); }
+            return;
+        }
+
+        auto *entries = many();
+        if (entries == nullptr)
+        {
+            assert(false && "replacing unregistered TSData observer");
+            return;
+        }
+
+        const auto it = std::find(entries->entries.begin(), entries->entries.end(), observer);
+        assert(it != entries->entries.end() && "replacing unregistered TSData observer");
+        if (it == entries->entries.end()) { return; }
+
+        const auto duplicate = std::find(entries->entries.begin(), entries->entries.end(), replacement);
+        assert(duplicate == entries->entries.end() && "replacement TSData observer already registered");
+        if (duplicate == entries->entries.end()) { *it = replacement; }
+    }
+
     void TSDataObserverSet::notify(engine_time_t modified_time) const
     {
         if (auto *entry = single(); entry != nullptr)
