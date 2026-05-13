@@ -17,7 +17,20 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series/ts_data/types.cpp
     hgraph/types/time_series/ts_data/window_view.cpp
     hgraph/types/time_series/endpoint_schema.cpp
+    hgraph/types/time_series/ts_input/base_view.cpp
+    hgraph/types/time_series/ts_input/bundle_view.cpp
+    hgraph/types/time_series/ts_input/dict_view.cpp
+    hgraph/types/time_series/ts_input/list_view.cpp
+    hgraph/types/time_series/ts_input/set_view.cpp
+    hgraph/types/time_series/ts_input/window_view.cpp
     hgraph/types/time_series/ts_input.cpp
+    hgraph/types/time_series/ts_output/base_view.cpp
+    hgraph/types/time_series/ts_output/bundle_view.cpp
+    hgraph/types/time_series/ts_output/dict_view.cpp
+    hgraph/types/time_series/ts_output/list_view.cpp
+    hgraph/types/time_series/ts_output/mutation_view.cpp
+    hgraph/types/time_series/ts_output/set_view.cpp
+    hgraph/types/time_series/ts_output/window_view.cpp
     hgraph/types/time_series/ts_output.cpp
     hgraph/types/time_series_reference.cpp
     hgraph/types/value/compact_container_ops.cpp
@@ -57,7 +70,23 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/types.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/window_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/endpoint_schema.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/typed_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/base_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/bundle_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/dict_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/list_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/set_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/typed_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/window_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/base_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/bundle_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/dict_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/list_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/mutation_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/set_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/typed_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/window_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_container_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_storage.h
