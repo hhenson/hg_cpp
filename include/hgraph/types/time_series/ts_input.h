@@ -11,13 +11,15 @@
 #include <hgraph/types/time_series/ts_input/window_view.h>
 #include <hgraph/types/time_series/ts_output.h>
 
+#include <map>
 #include <memory>
+#include <vector>
 
 namespace hgraph
 {
     namespace detail
     {
-        struct TSInputNode;
+        struct TSInputActiveTarget;
     }
 
     class TSInput;
@@ -29,12 +31,13 @@ namespace hgraph
     class TSWInputView;
 
     /**
-     * Construction plan for one node input bundle.
+     * Construction plan for one input bundle.
      *
      * The plan is compiled from a canonical TS schema plus a generic endpoint
      * annotation tree. TSInput requires a non-peered TSB root, with nested
      * non-peered TSB/fixed-TSL prefixes and peered terminals beneath it. A
-     * peered terminal compiles to input-side TargetLink state.
+     * peered terminal compiles to input-side TargetLink storage in the input
+     * data plan.
      */
     class TSInputConstructionPlan
     {
@@ -59,11 +62,12 @@ namespace hgraph
     };
 
     /**
-     * Cached builder for TSInput endpoint state.
+     * Cached builder for TSInput endpoint storage.
      *
-     * Unlike TSOutput construction, an input builder does not allocate payload
-     * storage for the visible time-series value. It builds the non-peered input
-     * tree and peered terminal state used to borrow output TSData at runtime.
+     * Unlike TSOutput construction, an input builder does not allocate a copied
+     * output payload for the visible time-series value. It builds the planned
+     * input TSData root: non-peered TSB/fixed-TSL prefixes plus TargetLink
+     * terminal storage used to borrow output TSData at runtime.
      */
     class TSInputBuilder
     {
@@ -94,9 +98,9 @@ namespace hgraph
     /**
      * Owning input-side time-series endpoint.
      *
-     * TSInput owns binding and activation state. The root is always a
-     * non-peered TSB; peered terminals inside that tree borrow TSOutput TSData
-     * through input-side TargetLink state.
+     * TSInput owns planned input TSData storage plus activation state. The root
+     * is always a non-peered TSB; peered terminals inside that tree borrow
+     * TSOutput TSData through input-side TargetLink storage.
      */
     class TSInput
     {
@@ -134,11 +138,14 @@ namespace hgraph
         explicit TSInput(const TSInputConstructionPlan &plan);
 
         void rebuild_from_plan(const TSInputConstructionPlan &plan);
-        void relink_nodes() noexcept;
+        void make_active(std::vector<std::size_t> path, TSDataView observed, Notifiable *target_notifier);
+        void make_passive(const std::vector<std::size_t> &path);
+        [[nodiscard]] bool active(const std::vector<std::size_t> &path) const noexcept;
 
         const TSInputBuilder             *builder_{nullptr};
         const TSValueTypeMetaData        *schema_{nullptr};
-        std::unique_ptr<detail::TSInputNode> root_{};
+        TSData                            data_{};
+        std::map<std::vector<std::size_t>, std::unique_ptr<detail::TSInputActiveTarget>> active_targets_{};
     };
 
 }  // namespace hgraph
