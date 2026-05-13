@@ -915,16 +915,14 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static bool set_equals(const void *context, const void *lhs, const void *rhs) noexcept
             {
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
-                try
-                {
+                return fallback_on_exception(false, [&] {
                     if (set_size<Surface>(context, lhs) != set_size<Surface>(context, rhs)) { return false; }
                     for (const auto key : set_make_range<Surface>(context, lhs))
                     {
                         if (!set_contains<Surface>(context, rhs, key.data())) { return false; }
                     }
                     return true;
-                }
-                catch (...) { return false; }
+                });
             }
 
             template <SlotSetSurface Surface>
@@ -1008,13 +1006,11 @@ namespace hgraph::ts_data_plan_factory_detail
                                                           const void *rhs) noexcept
             {
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
-                try
-                {
+                return fallback_on_exception(false, [&] {
                     const auto *state = ctx(context);
                     return state->added_set_binding->checked_ops().equals(lhs, rhs) &&
                            state->removed_set_binding->checked_ops().equals(lhs, rhs);
-                }
-                catch (...) { return false; }
+                });
             }
 
             [[nodiscard]] static std::partial_ordering delta_bundle_compare(const void *context, const void *lhs,
@@ -1721,8 +1717,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static bool map_equals(const void *context, const void *lhs, const void *rhs) noexcept
             {
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
-                try
-                {
+                return fallback_on_exception(false, [&] {
                     if (map_size<Surface>(context, lhs) != map_size<Surface>(context, rhs)) { return false; }
                     const auto &value_ops = map_value_binding<Surface>(context, lhs)->checked_ops();
                     for (const auto [key, value] : map_kv_range<Surface>(context, lhs))
@@ -1731,8 +1726,7 @@ namespace hgraph::ts_data_plan_factory_detail
                         if (rhs_value == nullptr || !value_ops.equals(value.data(), rhs_value)) { return false; }
                     }
                     return true;
-                }
-                catch (...) { return false; }
+                });
             }
 
             template <SlotMapSurface Surface>
@@ -1837,13 +1831,11 @@ namespace hgraph::ts_data_plan_factory_detail
                                                         const void *rhs) noexcept
             {
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
-                try
-                {
+                return fallback_on_exception(false, [&] {
                     const auto *state = ctxd(context);
                     return state->removed_set_binding->checked_ops().equals(lhs, rhs) &&
                            state->modified_map_binding->checked_ops().equals(lhs, rhs);
-                }
-                catch (...) { return false; }
+                });
             }
 
             [[nodiscard]] static std::partial_ordering dict_delta_compare(const void *context, const void *lhs,

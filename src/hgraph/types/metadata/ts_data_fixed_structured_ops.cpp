@@ -522,8 +522,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 return lhs == rhs;
             }
-            try
-            {
+            return fallback_on_exception(false, [&] {
                 const auto *state = ctx(context);
                 for (std::size_t index = 0; index < state->element_count(); ++index)
                 {
@@ -533,11 +532,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     }
                 }
                 return true;
-            }
-            catch (...)
-            {
-                return false;
-            }
+            });
         }
 
         [[nodiscard]] static std::partial_ordering fixed_delta_bundle_compare(const void *context, const void *lhs,
@@ -751,8 +746,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 return lhs == rhs;
             }
-            try
-            {
+            return fallback_on_exception(false, [&] {
                 const auto *state = ctx(context);
                 if (fixed_delta_map_size(context, lhs) != fixed_delta_map_size(context, rhs))
                 {
@@ -774,11 +768,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     }
                 }
                 return true;
-            }
-            catch (...)
-            {
-                return false;
-            }
+            });
         }
 
         [[nodiscard]] static std::partial_ordering fixed_delta_map_compare(const void *context, const void *lhs,

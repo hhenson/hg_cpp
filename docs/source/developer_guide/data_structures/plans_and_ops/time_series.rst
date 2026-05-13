@@ -40,13 +40,15 @@ The implementation uses the following names consistently:
     ``TSState`` does not own the hot payload bytes.
 
 ``TSData``
-    The payload/delta component owned by ``TSOutput`` and resolved by
-    ``TSInput``. It owns the current value storage and the per-tick delta
-    information, laid out so those two views stay aligned and can expose
-    useful buffer / NumPy representations. ``TSData`` also owns the
-    per-level observer set for modification notification and the local
-    ``TSDataParentLink`` used for parent bubble-up, including the root
-    link to the owning endpoint. It does not own graph scheduling policy.
+    The payload/delta component owned by ``TSOutput`` and projected by
+    ``TSInput``. Real output TSData owns the current value storage and
+    per-tick delta information, laid out so those two views stay aligned
+    and can expose useful buffer / NumPy representations. Non-peered
+    input prefixes expose a TSData-shaped projection backed by
+    input-local state and child target links rather than by a copied
+    aggregate payload. ``TSData`` also owns or projects the per-level
+    observer set for modification notification and the local parent link
+    used for bubble-up. It does not own graph scheduling policy.
 
 ``TSDataOps``
     The type-erased operation table over a ``TSData`` memory region:
@@ -252,7 +254,8 @@ Dynamic ``TSL`` prefixes are not part of the first implementation
 because their input-side path identity needs the same slot-oriented
 machinery as dynamic TSData. Peered terminals may still bind to
 collection outputs; once bound, input navigation inside that target
-delegates to the output's ``TSDataView``.
+uses the output's ``TSData`` internally while still returning
+input-shaped endpoint views from the public API.
 
 .. mermaid::
 
@@ -298,6 +301,75 @@ target observer keeps input-local modification state aligned with the
 bound output. The scheduling notifier is installed only for active input
 paths and forwards to the owning node. This preserves independent
 activation for multiple branches that ultimately schedule the same node.
+
+Non-peered input prefixes are structural endpoint nodes with typed
+TSData and value projections. They do not copy the bound output's
+aggregate payload; instead, their input-local erased ops project the
+current value and child TSData views from their children. This keeps the
+public surface consistent with output views while avoiding duplicate
+payload storage for non-peered prefixes.
+
+Their state is recorded on the input prefix and updated by the same
+child-modified bubble-up path used for scheduling:
+
+- ``binding()`` returns the prefix's input-side TSData binding even
+  before any child target is bound;
+- ``valid()`` is true when any child is valid;
+- ``all_valid()`` is true only when every child is valid;
+- ``modified()`` is true when the prefix was marked at the view's
+  evaluation time;
+- ``last_modified_time()`` is the prefix's bubbled modification time, or
+  ``MIN_DT`` when no child has modified it.
+
+Binding state is part of the public input contract, but it is only a
+meaningful target-link predicate for views where ``is_bindable()`` is
+true. ``is_bindable()`` reports whether the view is backed by a peered
+input node whose target can be bound or rebound. This includes child
+views projected inside an already-bound peered target; calling
+``bind_output()`` / ``unbind_output()`` there operates on the enclosing
+peered input node and then reprojects the child path. For bindable
+peered views, ``bound()`` reports whether an output target is currently
+linked. For non-bindable views, including non-peered prefixes,
+``bound()`` is always true: those views own input-local TSData/value
+projection state, and ``bound()`` deliberately avoids recursively
+scanning descendants. Invalid or unbound peered endpoints still retain
+their typed binding; their current value view is typed-null until a
+target is bound and has a current value.
+
+Shape casts on endpoint views stay endpoint-shaped. ``TSInputView``
+therefore returns ``TSSInputView``, ``TSDInputView``, ``TSBInputView``,
+``TSLInputView``, and ``TSWInputView`` from ``as_set()``,
+``as_dict()``, ``as_bundle()``, ``as_list()``, and ``as_window()``.
+These specialised input views expose the normal input behaviours such
+as ``bind_output()``, ``unbind_output()``, ``bound()``,
+``is_bindable()``, ``make_active()``, ``make_passive()``, and
+``active()`` at the projected level.
+
+``TSBInputView`` and ``TSLInputView`` expose the structural navigation
+expected from the corresponding output/data views: ``values()``,
+``valid_values()``, ``modified_values()``, ``items()``,
+``valid_items()``, and ``modified_items()``. Bundle input views also
+expose ``keys()`` and name-based field access. ``TSDInputView`` uses
+keyed lookup while returning child ``TSInputView`` instances for
+dictionary values. These helpers return ``Range`` or ``KeyValueRange``
+surfaces, matching the value and TSData APIs; callers iterate them
+instead of receiving materialised vectors. The specialised input views
+also expose ``data_view()`` for the underlying TSData-shaped projection
+and ``value()`` for the value-layer view.
+
+``TSOutputView`` follows the same rule. Its shape casts return
+``TSSOutputView``, ``TSDOutputView``, ``TSBOutputView``,
+``TSLOutputView``, and ``TSWOutputView`` rather than raw
+``TSDataView`` specialisations. Output-specialised child navigation
+returns child ``TSOutputView`` instances so mutation and observer
+operations remain available at the projected level. When code needs
+the raw TSData surface it uses the specialised endpoint view's
+``data_view()`` method explicitly; when it needs the value-layer shape
+it uses ``value().as_set()``, ``value().as_map()``,
+``value().as_bundle()``, or ``value().as_list()`` as appropriate.
+``TSOutputView::bound()`` reports whether the view carries a live output
+TSData binding, which is distinct from ``valid()``; an output can be
+bound before its time-series value has ever been set.
 
 TSData Memory Layout and Delta Tracking
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -161,8 +161,10 @@ namespace hgraph
     {
         if (auto *entry = single(); entry != nullptr)
         {
-            try { entry->notify_invalidated(); }
-            catch (...) {}
+            static_cast<void>(fallback_on_exception(false, [&] {
+                entry->notify_invalidated();
+                return true;
+            }));
             return;
         }
 
@@ -171,8 +173,10 @@ namespace hgraph
         for (auto *observer : entries->entries)
         {
             if (observer == nullptr) { continue; }
-            try { observer->notify_invalidated(); }
-            catch (...) {}
+            static_cast<void>(fallback_on_exception(false, [&] {
+                observer->notify_invalidated();
+                return true;
+            }));
         }
     }
 

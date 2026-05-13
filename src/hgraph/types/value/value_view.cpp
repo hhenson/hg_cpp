@@ -243,16 +243,11 @@ namespace hgraph
             return bound == other_bound || value_schema_equivalent(schema(), other.schema());
         }
 
-        try
-        {
+        return fallback_on_exception(false, [&] {
             if (bound == other_bound) { return bound->checked_ops().equals(data_, other.data_); }
             if (!value_schema_equivalent(schema(), other.schema())) { return false; }
             return semantic_equals(*this, other);
-        }
-        catch (...)
-        {
-            return false;
-        }
+        });
     }
 
     std::partial_ordering ValueView::compare(const ValueView &other) const noexcept

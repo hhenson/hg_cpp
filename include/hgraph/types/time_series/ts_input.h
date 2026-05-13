@@ -174,6 +174,12 @@ namespace hgraph
         [[nodiscard]] ValueView value() const;
         [[nodiscard]] ValueView delta_value() const;
 
+        /** For bindable target-link views, true when an output target is bound. */
+        [[nodiscard]] bool bound() const noexcept;
+
+        /** True when this view is backed by a peered input node whose target can be rebound. */
+        [[nodiscard]] bool is_bindable() const noexcept;
+
         void bind_output(const TSOutputView &output);
         void unbind_output();
 
@@ -217,16 +223,11 @@ namespace hgraph
                     Notifiable                     *scheduling_notifier,
                     engine_time_t                   evaluation_time) noexcept;
 
-        [[nodiscard]] bool peered() const noexcept;
-        [[nodiscard]] bool non_peered() const noexcept;
-        [[nodiscard]] bool bound() const noexcept;
         [[nodiscard]] bool is_target_position() const noexcept;
         [[nodiscard]] bool target_view_live() const noexcept;
         [[nodiscard]] TSDataView &checked_target_data_view(const char *what) const;
         [[nodiscard]] TSInputView child_from_target(TSDataView child, std::size_t index) const;
         [[nodiscard]] TSInputView child_from_node(detail::TSInputNode *child) const noexcept;
-        [[nodiscard]] bool any_child_bound() const noexcept;
-        [[nodiscard]] bool any_child_valid() const;
 
         TSInput                  *input_{nullptr};
         detail::TSInputNode      *node_{nullptr};
@@ -244,6 +245,7 @@ namespace hgraph
 
         void bind_output(const TSOutputView &output) { this->view_.bind_output(output); }
         void unbind_output() { this->view_.unbind_output(); }
+        [[nodiscard]] bool is_bindable() const noexcept { return this->view_.is_bindable(); }
         void make_active() { this->view_.make_active(); }
         void make_passive() { this->view_.make_passive(); }
         [[nodiscard]] bool active() const { return this->view_.active(); }

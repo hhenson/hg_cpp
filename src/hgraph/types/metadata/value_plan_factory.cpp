@@ -110,8 +110,7 @@ namespace hgraph
         [[nodiscard]] bool composite_value_equals(const void *context, const void *lhs, const void *rhs) noexcept
         {
             if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
-            try
-            {
+            return fallback_on_exception(false, [&] {
                 const auto *state = static_cast<const CompositeIndexedContext *>(context);
                 for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
                 {
@@ -121,11 +120,7 @@ namespace hgraph
                     if (!ops.equals(a, b)) { return false; }
                 }
                 return true;
-            }
-            catch (...)
-            {
-                return false;
-            }
+            });
         }
 
         [[nodiscard]] std::partial_ordering composite_value_compare(const void *context, const void *lhs,
@@ -380,8 +375,7 @@ namespace hgraph
         [[nodiscard]] bool array_value_equals(const void *context, const void *lhs, const void *rhs) noexcept
         {
             if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
-            try
-            {
+            return fallback_on_exception(false, [&] {
                 const auto *state = static_cast<const ArrayIndexedContext *>(context);
                 const auto &ops   = state->element_binding->checked_ops();
                 for (std::size_t index = 0; index < state->size; ++index)
@@ -391,11 +385,7 @@ namespace hgraph
                     if (!ops.equals(a, b)) { return false; }
                 }
                 return true;
-            }
-            catch (...)
-            {
-                return false;
-            }
+            });
         }
 
         [[nodiscard]] std::partial_ordering array_value_compare(const void *context, const void *lhs,

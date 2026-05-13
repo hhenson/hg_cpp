@@ -28,6 +28,7 @@ namespace hgraph
         [[nodiscard]] engine_time_t evaluation_time() const noexcept { return view_.evaluation_time(); }
         [[nodiscard]] const TSDataBinding *binding() const noexcept { return view_.binding(); }
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return view_.schema(); }
+        [[nodiscard]] bool bound() const noexcept { return view_.bound(); }
         [[nodiscard]] bool valid() const { return view_.valid(); }
         [[nodiscard]] bool all_valid() const { return view_.all_valid(); }
         [[nodiscard]] engine_time_t last_modified_time() const { return view_.last_modified_time(); }
@@ -144,6 +145,7 @@ namespace hgraph
         [[nodiscard]] ValueView delta_value() const;
 
         /** Modification and validity status. */
+        [[nodiscard]] bool bound() const noexcept;
         [[nodiscard]] engine_time_t last_modified_time() const;
         [[nodiscard]] bool modified() const;
         [[nodiscard]] bool valid() const;
@@ -180,8 +182,6 @@ namespace hgraph
 
       private:
         friend class TSInputView;
-
-        [[nodiscard]] bool bound() const noexcept;
 
         const TSOutput *output_{nullptr};
         TSDataView      data_{};

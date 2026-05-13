@@ -112,7 +112,9 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     const auto t2 = t1 + engine_time_delta_t{1};
 
     auto initial = output.view(t1);
+    REQUIRE(initial.binding() != nullptr);
     REQUIRE(initial.bound());
+    REQUIRE(initial.evaluation_time() == t1);
     REQUIRE_FALSE(initial.valid());
     REQUIRE_FALSE(initial.all_valid());
     REQUIRE_FALSE(initial.modified());
@@ -133,7 +135,7 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     REQUIRE(modified.valid());
     REQUIRE(modified.all_valid());
     REQUIRE(modified.modified());
-    REQUIRE_FALSE(modified.modified(t2));
+    REQUIRE_FALSE(output.view(t2).modified());
     REQUIRE(modified.last_modified_time() == t1);
     REQUIRE(modified.value().checked_as<int>() == 42);
     REQUIRE(modified.delta_value().checked_as<int>() == 42);
@@ -568,6 +570,55 @@ TEST_CASE("TSOutputView delegates validity through slot TSData ops")
     }
 
     REQUIRE(dict_output.view(t1).all_valid());
+}
+
+TEST_CASE("TSOutput shape casts return endpoint views for slot collections")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *tss      = registry.tss(int_meta);
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *tsd      = registry.tsd(int_meta, ts_int);
+
+    const auto t1 = MIN_ST;
+    Value      one{1};
+    Value      key{7};
+    Value      value{42};
+
+    TSOutput set_output{*tss};
+    auto     set_view = set_output.view(t1);
+    auto     set = set_view.as_set();
+    REQUIRE(set.base().binding() == set_output.binding());
+    {
+        auto mutation = set.begin_mutation(t1);
+        REQUIRE(mutation.add(one.view()));
+    }
+    auto current_set_view = set_output.view(t1);
+    auto current_set = current_set_view.as_set();
+    REQUIRE(current_set.contains(one.view()));
+    REQUIRE(range_count(current_set.data_view().values()) == 1);
+
+    TSOutput dict_output{*tsd};
+    auto     dict_view = dict_output.view(t1);
+    auto     dict = dict_view.as_dict();
+    REQUIRE(dict.base().binding() == dict_output.binding());
+    {
+        auto mutation = dict.begin_mutation(t1);
+        auto child = mutation.at(key.view());
+        auto child_mutation = child.begin_mutation(t1);
+        REQUIRE(child_mutation.copy_value_from(value.view()));
+    }
+
+    auto current_dict_view = dict_output.view(t1);
+    auto current_dict = current_dict_view.as_dict();
+    REQUIRE(current_dict.contains(key.view()));
+    auto child = current_dict.at(key.view());
+    REQUIRE(child.valid());
+    REQUIRE(child.value().checked_as<int>() == 42);
+    REQUIRE(range_count(current_dict.values()) == 1);
+    REQUIRE(range_count(current_dict.items()) == 1);
 }
 
 TEST_CASE("TSOutputView delegates window all_valid through TSData ops")
