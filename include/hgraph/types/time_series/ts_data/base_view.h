@@ -122,6 +122,7 @@ namespace hgraph
         friend class TSDataMutationView;
         friend class IndexedTSDataView;
         friend class TSOutput;
+        friend class TSInputView;
         friend class TSDDataView;
         friend class TSDDataMutationView;
 

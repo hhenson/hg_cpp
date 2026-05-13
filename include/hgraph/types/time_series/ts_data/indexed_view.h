@@ -42,7 +42,7 @@ namespace hgraph
         [[nodiscard]] std::size_t size() const;
         [[nodiscard]] bool empty() const;
 
-        /** Child TSData view at ``index``; throws when the index is out of range. */
+        /** Child TSData view at ``index``; may be typed-invalid when a virtual child is unbound. */
         [[nodiscard]] TSDataView at(std::size_t index) &;
         [[nodiscard]] TSDataView at(std::size_t index) const &;
         TSDataView at(std::size_t) && = delete;
