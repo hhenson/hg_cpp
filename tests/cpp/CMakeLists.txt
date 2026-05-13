@@ -45,6 +45,7 @@ add_executable(hgraph_unit_tests
     test_specialized_views.cpp
     test_static_schema.cpp
     test_time_series_reference.cpp
+    test_ts_input.cpp
     test_ts_schemas.cpp
     test_ts_output.cpp
     test_type_registry.cpp

@@ -28,39 +28,38 @@ dangling pointer is read.
 TargetLink
 ----------
 
-TargetLink is the input-side binding: a ``TSInput`` (or any state
-position inside one) resolves to a ``TSOutput`` position. The state
-type is ``TargetLinkState`` and it carries:
+TargetLink is the input-side binding state for a peered terminal inside
+a ``TSInput``. Peered terminals are declared by the generic
+``TSEndpointSchema`` annotation tree; the ``TSInputPlanFactory``
+validates that the root is a non-peered input bundle and that every
+peered terminal matches the schema position it annotates. The input
+terminal carries:
 
-- the bound target (a stable handle to the target output's state node);
-- a previous-target snapshot used during same-tick rebind/unbind so the
-  input remains readable from the old collection view for the
-  transition tick (matches the Python contract for peered dynamic
-  collections);
-- a ``TargetLinkInvalidator`` registered with the target's
-  ``BaseState`` — when the target is torn down, the invalidator flips
-  the link to "unbound" before the target's memory is reclaimed.
+- the bound output view, including the borrowed output-owned
+  ``TSDataView``;
+- input-local ``last_modified_time`` used to bubble changes through
+  non-peered input prefixes;
+- an internal target observer registered with the bound ``TSData``
+  observer set, so target destruction invalidates the binding before a
+  stale pointer is read.
 
-A subtle point: a TargetLinkState carries **two** notification paths:
+A subtle point: a peered input terminal carries **two** notification paths:
 
 - **Target-modified path.** Subscribed to the target's modification
   notifier. When the target ticks, this path marks the link state
   modified and propagates the tick up through the parent chain
   (non-peered collections above the link).
-- **Scheduling path** (``SchedulingNotifier``). Forwards scheduling
+- **Scheduling path.** Forwards scheduling
   notifications to the owning node, but does *not* mark the link
-  state itself modified. Each TargetLinkState owns its own
-  ``SchedulingNotifier`` instance, giving it a unique ``Notifiable``
-  identity. This matters because multiple TargetLinkStates under a
-  non-peered collection may schedule the same node — using the
-  ``Node *`` directly would collapse them into one entry in the
-  target's subscriber set and make independent
-  subscribe/unsubscribe impossible.
+  state itself modified. Each active input path owns a forwarding
+  ``Notifiable`` identity. This matters because multiple peered terminals
+  under a non-peered collection may schedule the same node — using the
+  node pointer directly would collapse them into one entry in an
+  observer set and make independent subscribe/unsubscribe impossible.
 
-The split mirrors the active-trie / boundary-attachment design from
-the v2 active-path RFC: under a target-link boundary, scheduling and
-modification flow through different identities even though both end
-up touching the same node.
+Under a peered boundary, scheduling and modification flow through
+different identities even though both ultimately reach the same owning
+node.
 
 RefLink
 -------
@@ -75,10 +74,9 @@ RefLink is the output-side dereference of a ``REF`` value. A
   points at. Subscribed via ``target_notifiable``; when the target
   ticks, the link state propagates that tick.
 
-Internally, ``RefLinkState`` composes a ``TargetLinkState`` (named
-``bound_link``) for the current dereferenced target — the same
-binding mechanics, applied to a target chosen by the source's value
-rather than at wiring time.
+Internally, ``RefLinkState`` composes the same target-link binding
+mechanics for the current dereferenced target, applied to a target
+chosen by the source's value rather than at wiring time.
 
 To support multiple consumers downstream of one ``RefLink``, the state
 holds a per-upstream ``boundary_attachments`` map keyed by the
@@ -112,11 +110,10 @@ carries:
   switch ticks read coherently.
 
 Unlike TargetLink, ForwardingLink does **not** participate in input
-scheduling. There is no ``SchedulingNotifier`` and no active-trie
+scheduling. There is no scheduling notifier and no active input
 subtree to manage — all that's needed is for an output's subscribers
 to receive ticks from the forwarded-to output as if they had been
-notified directly. This is "zero-copy output link aliasing" in the v2
-nested-graph RFC.
+notified directly.
 
 The canonical use case is the nested-graph boundary plan: the
 ``alias_child_output`` binding mode exposes a child node's output

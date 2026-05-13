@@ -26,6 +26,8 @@
 #include <hgraph/types/time_series/ts_data/storage.h>
 #include <hgraph/types/time_series/ts_data/types.h>
 #include <hgraph/types/time_series/ts_data/window_view.h>
+#include <hgraph/types/time_series/endpoint_schema.h>
+#include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/value/compact_container_ops.h>
 #include <hgraph/types/value/compact_storage.h>

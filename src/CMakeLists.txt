@@ -16,6 +16,8 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series/ts_data/storage.cpp
     hgraph/types/time_series/ts_data/types.cpp
     hgraph/types/time_series/ts_data/window_view.cpp
+    hgraph/types/time_series/endpoint_schema.cpp
+    hgraph/types/time_series/ts_input.cpp
     hgraph/types/time_series/ts_output.cpp
     hgraph/types/time_series_reference.cpp
     hgraph/types/value/compact_container_ops.cpp
@@ -54,6 +56,8 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/storage.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/types.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/window_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/endpoint_schema.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_container_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_storage.h

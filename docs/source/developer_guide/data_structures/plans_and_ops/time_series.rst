@@ -124,10 +124,22 @@ The implementation uses the following names consistently:
     whole endpoint object, only its payload/delta data component.
 
 ``TSOutputBuilder`` / ``TSInputBuilder``
-    Reusable builders for top-level time-series endpoints. They compose
-    a ``TSDataBinding`` / data plan with the separate endpoint state and
-    any reusable child-builder graph needed for nested time-series. These
-    builders are cached by node and graph construction code.
+    Reusable builders for top-level time-series endpoints. An
+    ``TSOutputBuilder`` composes a ``TSDataBinding`` / data plan with
+    output endpoint state. A ``TSInputBuilder`` consumes an endpoint
+    annotation tree compiled by ``TSInputPlanFactory`` and builds input
+    endpoint state only: the non-peered navigation tree, peered
+    terminals, activation state, and scheduling hooks. It does not
+    allocate an independent payload copy for the visible input value.
+    These builders are cached by node and graph construction code.
+
+``TSEndpointSchema``
+    The generic annotation layer over a canonical
+    ``TSValueTypeMetaData`` schema. Each annotation node says whether
+    that time-series position is ``non_peered`` or ``peered``. This
+    layer is not input-specific; inputs compile peered terminals into
+    target-link binding state, and REF/link infrastructure can reuse it
+    for the same peered vs non-peered distinction.
 
 TSData implementation families
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -178,6 +190,114 @@ The terms above keep three layers distinct: scalar ``Value`` storage,
 ``TSInput`` endpoint state. Code and docs should avoid using "TS value
 plan"; payload/delta plans are ``TSData`` plans, and endpoint plans are
 output/input plans.
+
+TSInput Construction and Scheduling
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The top-level input endpoint is always a non-peered ``TSB``. This TSB
+represents the node input bundle and exists even when a node has a
+single logical input. The node's input schema is known at wiring time,
+then augmented with a ``TSEndpointSchema`` annotation tree. That tree
+records which schema positions are structural, non-peered prefixes and
+where traversal steps into a peered terminal.
+
+For example, for this schema:
+
+.. code-block:: text
+
+   TSB[{ts: TSL[TS[int], 2]}]
+
+the annotation can bind the whole list from one target:
+
+.. code-block:: text
+
+   TSB[non_peered, {ts: peered[TSL[TS[int], 2]]}]
+
+or make the list itself non-peered and bind each element separately:
+
+.. code-block:: text
+
+   TSB[non_peered, {ts: TSL[non_peered, peered[TS[int]], 2]}]
+
+The explicit child form is useful for fixed ``TSL`` because the element
+schema is homogeneous but the endpoint topology can still differ by
+index. For example, for ``TSL[TSB[{x: TS[int]}], 2]`` the first index
+can be peered as one whole bundle while the second index remains a
+non-peered bundle whose field is peered independently:
+
+.. code-block:: text
+
+   TSL[
+     non_peered,
+     [
+       peered[TSB[{x: TS[int]}]],
+       TSB[non_peered, {x: peered[TS[int]]}]
+     ],
+     2
+   ]
+
+``TSEndpointSchema::non_peered_list`` is the shorthand for the common
+case where every fixed-list index has the same annotation.
+
+``TSInputPlanFactory`` validates the annotation against the schema and
+compiles the input construction plan. For TSInput, the root must be a
+non-peered ``TSB``. Under that root the current implementation permits
+one or more non-peered ``TSB`` / fixed-size ``TSL`` prefixes followed
+by a ``peered`` terminal. Once traversal reaches ``peered``, the
+subtree from that point downward is associated with one output peering;
+the TSInput implementation represents that peering with TargetLink
+binding state.
+
+Dynamic ``TSL`` prefixes are not part of the first implementation
+because their input-side path identity needs the same slot-oriented
+machinery as dynamic TSData. Peered terminals may still bind to
+collection outputs; once bound, input navigation inside that target
+delegates to the output's ``TSDataView``.
+
+.. mermaid::
+
+   flowchart TD
+      Root["TSInput root<br/>non-peered TSB"]
+      Prefix["non-peered prefix<br/>TSB / fixed TSL"]
+      Link["peered terminal<br/>TargetLink state"]
+      Output["TSOutputView"]
+      Data["output-owned TSData"]
+
+      Root --> Prefix
+      Prefix --> Link
+      Link -->|bind_output| Output
+      Output --> Data
+
+The input endpoint owns scheduling state, not payload state. Binding a
+target link registers an internal target observer on the bound
+``TSData`` level. That observer updates the peered input terminal's
+``last_modified_time`` and bubbles the modification through any
+non-peered parents. Active input views install scheduling notifiers on
+the input node they activate, or directly on a descendant output
+``TSDataView`` when activation navigates inside a bound target
+collection. The final scheduling target is a ``Notifiable`` supplied by
+the owning runtime node.
+
+.. mermaid::
+
+   sequenceDiagram
+      participant Output as Output TSData
+      participant Link as TargetLink observer
+      participant Prefix as Non-peered parents
+      participant Active as Active scheduling notifier
+      participant Node as Owning node Notifiable
+
+      Output->>Link: notify(modified_time)
+      Link->>Link: record local modified time
+      Link->>Prefix: bubble child modified
+      Prefix->>Active: notify(modified_time)
+      Active->>Node: notify(modified_time)
+
+The scheduling notifier is separate from the target observer. The
+target observer keeps input-local modification state aligned with the
+bound output. The scheduling notifier is installed only for active input
+paths and forwards to the owning node. This preserves independent
+activation for multiple branches that ultimately schedule the same node.
 
 TSData Memory Layout and Delta Tracking
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -724,31 +844,37 @@ Builder Lifetime
 ----------------
 
 Time-series endpoint builders are reusable builders. A
-``TSOutputBuilder`` or ``TSInputBuilder`` resolves a
-``TSValueTypeMetaData`` schema to the ``TSDataBinding`` / data plan,
-endpoint state layout, and child-builder graph needed to construct a
-top-level time-series endpoint. Once resolved, it should be cached and
-reused to construct multiple endpoints with the same schema. This is
-the opposite of the value-layer ``ListBuilder`` / ``MapBuilder``
-family, which is local scratch storage for one immutable ``Value``.
+``TSOutputBuilder`` resolves a ``TSValueTypeMetaData`` schema to the
+``TSDataBinding`` / data plan and endpoint state needed to construct a
+top-level output. A ``TSInputBuilder`` resolves a
+``TSInputConstructionPlan`` compiled from ``TSValueTypeMetaData`` plus
+``TSEndpointSchema`` annotations. That plan describes the non-peered
+input tree and peered terminals needed to construct a top-level input.
+Once resolved, endpoint builders should be cached and reused to
+construct multiple endpoints with the same endpoint plan. This is the
+opposite of the value-layer ``ListBuilder`` / ``MapBuilder`` family,
+which is local scratch storage for one immutable ``Value``.
 
 This distinction matters most for nested structures. A ``TSB`` builder owns
 the reusable builders for its fields; a fixed ``TSL`` builder owns the
 reusable builder for each element position; a ``TSD`` builder owns the
-reusable value-side time-series builder used whenever a new key appears. The
-builder graph is shared construction metadata, while each endpoint
-instance owns its endpoint state, ``TSData``, and child storage
-independently.
+reusable value-side time-series builder used whenever a new key appears.
+For inputs, the endpoint annotation graph owns non-peered TSB /
+fixed-TSL prefixes and peered terminals instead of value payload
+storage. The builder graph is shared construction metadata, while each
+endpoint instance owns its endpoint state independently. Output
+endpoints also own ``TSData`` and child storage; input endpoints borrow
+those payloads through target links.
 
 Memory Stability Invariant
 --------------------------
 
 Every time-series value in the runtime must be memory-stable. Once an
-output's value and its ops table are published, their addresses must
-not move for the lifetime of the owning node. Output-to-input binding
-is implemented by recording pointers — to the value, to the ops, to
-per-element state — and those pointers must remain valid across
-ticks, rebinds, and structural mutation of containers.
+output's ``TSData`` and binding are published, their addresses must not
+move for the lifetime of the owning node. Output-to-input binding is
+implemented by recording borrowed handles to output TSData positions,
+and those handles must remain valid across ticks, rebinds, and
+structural mutation of containers.
 
 For fixed-shape time-series (``TS``, ``TSB``, and fixed-size ``TSL``),
 stability is trivial: the value lives in node-owned storage and
