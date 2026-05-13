@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <memory>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace hgraph
@@ -21,6 +22,9 @@ namespace hgraph
     class TSInputView;
     class TSBInputView;
     class TSLInputView;
+    class TSSInputView;
+    class TSDInputView;
+    class TSWInputView;
 
     /**
      * Construction plan for one node input bundle.
@@ -121,6 +125,9 @@ namespace hgraph
         friend class TSInputView;
         friend class TSBInputView;
         friend class TSLInputView;
+        friend class TSSInputView;
+        friend class TSDInputView;
+        friend class TSWInputView;
 
         explicit TSInput(const TSInputConstructionPlan &plan);
 
@@ -143,16 +150,28 @@ namespace hgraph
       public:
         TSInputView() noexcept;
 
+        /** Evaluation time associated with delta/modified checks. */
+        [[nodiscard]] engine_time_t evaluation_time() const noexcept;
+
+        /** Binding and schema for the input-side TSData projection. */
+        [[nodiscard]] const TSDataBinding *binding() const noexcept;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
-        [[nodiscard]] bool bound() const noexcept;
+        /** Underlying TSData projection; empty for unbound peered terminals. */
+        [[nodiscard]] const TSDataView &data_view() const noexcept;
+
+        /** True when this view or at least one structural child has a current value. */
         [[nodiscard]] bool valid() const;
+
+        /** True when this view and all required structural descendants have current values. */
         [[nodiscard]] bool all_valid() const;
+
+        /** Latest modification time observed at this view, including structural children. */
         [[nodiscard]] engine_time_t last_modified_time() const;
-        [[nodiscard]] bool modified(engine_time_t evaluation_time) const;
+
+        /** True when this view or a structural child was modified at the view's evaluation time. */
         [[nodiscard]] bool modified() const;
 
         [[nodiscard]] ValueView value() const;
-        [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const;
         [[nodiscard]] ValueView delta_value() const;
 
         void bind_output(const TSOutputView &output);
@@ -162,6 +181,14 @@ namespace hgraph
         void make_passive();
         [[nodiscard]] bool active() const;
 
+        [[nodiscard]] TSSInputView as_set() &;
+        [[nodiscard]] TSSInputView as_set() const &;
+        void as_set() && = delete;
+        void as_set() const && = delete;
+        [[nodiscard]] TSDInputView as_dict() &;
+        [[nodiscard]] TSDInputView as_dict() const &;
+        void as_dict() && = delete;
+        void as_dict() const && = delete;
         [[nodiscard]] TSBInputView as_bundle() &;
         [[nodiscard]] TSBInputView as_bundle() const &;
         void as_bundle() && = delete;
@@ -170,11 +197,18 @@ namespace hgraph
         [[nodiscard]] TSLInputView as_list() const &;
         void as_list() && = delete;
         void as_list() const && = delete;
+        [[nodiscard]] TSWInputView as_window() &;
+        [[nodiscard]] TSWInputView as_window() const &;
+        void as_window() && = delete;
+        void as_window() const && = delete;
 
       private:
         friend class TSInput;
         friend class TSBInputView;
         friend class TSLInputView;
+        friend class TSSInputView;
+        friend class TSDInputView;
+        friend class TSWInputView;
 
         TSInputView(TSInput                         *input,
                     detail::TSInputNode            *node,
@@ -183,32 +217,63 @@ namespace hgraph
                     Notifiable                     *scheduling_notifier,
                     engine_time_t                   evaluation_time) noexcept;
 
+        [[nodiscard]] bool peered() const noexcept;
+        [[nodiscard]] bool non_peered() const noexcept;
+        [[nodiscard]] bool bound() const noexcept;
         [[nodiscard]] bool is_target_position() const noexcept;
         [[nodiscard]] bool target_view_live() const noexcept;
-        [[nodiscard]] bool is_target_root() const noexcept;
+        [[nodiscard]] TSDataView &checked_target_data_view(const char *what) const;
         [[nodiscard]] TSInputView child_from_target(TSDataView child, std::size_t index) const;
         [[nodiscard]] TSInputView child_from_node(detail::TSInputNode *child) const noexcept;
+        [[nodiscard]] bool any_child_bound() const noexcept;
+        [[nodiscard]] bool any_child_valid() const;
 
         TSInput                  *input_{nullptr};
         detail::TSInputNode      *node_{nullptr};
-        TSDataView                target_view_{};
+        TSDataView                data_view_{};
         std::vector<std::size_t>  target_path_{};
         Notifiable               *scheduling_notifier_{nullptr};
         engine_time_t             evaluation_time_{MIN_DT};
     };
 
-    class TSBInputView
+    template <typename Derived>
+    class TSInputTypedView : public TSTypedTimeSeriesView<Derived, TSInputView>
+    {
+      public:
+        using base_type = TSTypedTimeSeriesView<Derived, TSInputView>;
+
+        void bind_output(const TSOutputView &output) { this->view_.bind_output(output); }
+        void unbind_output() { this->view_.unbind_output(); }
+        void make_active() { this->view_.make_active(); }
+        void make_passive() { this->view_.make_passive(); }
+        [[nodiscard]] bool active() const { return this->view_.active(); }
+
+      protected:
+        using base_type::base_type;
+    };
+
+    class TSBInputView : public TSInputTypedView<TSBInputView>
     {
       public:
         explicit TSBInputView(TSInputView view);
 
-        [[nodiscard]] const TSInputView &base() const noexcept;
-        [[nodiscard]] TSInputView &base() noexcept;
-        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
-
         [[nodiscard]] std::size_t size() const;
         [[nodiscard]] bool empty() const;
         [[nodiscard]] bool has_field(std::string_view name) const noexcept;
+        [[nodiscard]] TSBDataView data_view() const;
+
+        /** Field names and child views in schema order. */
+        [[nodiscard]] Range<std::string_view> keys() const;
+        [[nodiscard]] Range<TSInputView> values() const;
+
+        /** Child views filtered by current validity or modification time. */
+        [[nodiscard]] Range<TSInputView> valid_values() const;
+        [[nodiscard]] Range<TSInputView> modified_values() const;
+
+        /** ``field name -> child`` pairs in schema order, optionally filtered. */
+        [[nodiscard]] KeyValueRange<std::string_view, TSInputView> items() const;
+        [[nodiscard]] KeyValueRange<std::string_view, TSInputView> valid_items() const;
+        [[nodiscard]] KeyValueRange<std::string_view, TSInputView> modified_items() const;
 
         [[nodiscard]] TSInputView at(std::size_t index) &;
         [[nodiscard]] TSInputView at(std::size_t index) const &;
@@ -232,21 +297,30 @@ namespace hgraph
 
         [[nodiscard]] std::size_t field_index(std::string_view name) const;
         [[nodiscard]] std::size_t find_field_index(std::string_view name) const noexcept;
+        [[nodiscard]] std::string_view key_at(std::size_t index) const noexcept;
 
-        TSInputView view_{};
     };
 
-    class TSLInputView
+    class TSLInputView : public TSInputTypedView<TSLInputView>
     {
       public:
         explicit TSLInputView(TSInputView view);
 
-        [[nodiscard]] const TSInputView &base() const noexcept;
-        [[nodiscard]] TSInputView &base() noexcept;
-        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
-
         [[nodiscard]] std::size_t size() const;
         [[nodiscard]] bool empty() const;
+        [[nodiscard]] TSLDataView data_view() const;
+
+        /** Child views in index order. */
+        [[nodiscard]] Range<TSInputView> values() const;
+
+        /** Child views filtered by current validity or modification time. */
+        [[nodiscard]] Range<TSInputView> valid_values() const;
+        [[nodiscard]] Range<TSInputView> modified_values() const;
+
+        /** ``index -> child`` pairs in index order, optionally filtered. */
+        [[nodiscard]] KeyValueRange<std::size_t, TSInputView> items() const;
+        [[nodiscard]] KeyValueRange<std::size_t, TSInputView> valid_items() const;
+        [[nodiscard]] KeyValueRange<std::size_t, TSInputView> modified_items() const;
 
         [[nodiscard]] TSInputView at(std::size_t index) &;
         [[nodiscard]] TSInputView at(std::size_t index) const &;
@@ -254,9 +328,99 @@ namespace hgraph
         [[nodiscard]] TSInputView operator[](std::size_t index) &;
         [[nodiscard]] TSInputView operator[](std::size_t index) const &;
         TSInputView operator[](std::size_t) && = delete;
+    };
 
-      private:
-        TSInputView view_{};
+    class TSSInputView : public TSInputTypedView<TSSInputView>
+    {
+      public:
+        explicit TSSInputView(TSInputView view);
+
+        [[nodiscard]] TSSDataView data_view() const;
+        [[nodiscard]] std::size_t size() const;
+        [[nodiscard]] bool empty() const;
+        [[nodiscard]] std::size_t slot_capacity() const;
+        [[nodiscard]] bool slot_occupied(std::size_t slot) const;
+        [[nodiscard]] bool slot_live(std::size_t slot) const;
+        [[nodiscard]] bool slot_added(std::size_t slot) const;
+        [[nodiscard]] bool slot_removed(std::size_t slot) const;
+        [[nodiscard]] ValueView at_slot(std::size_t slot) const;
+        [[nodiscard]] bool contains(const ValueView &key) const;
+        [[nodiscard]] std::size_t find_slot(const ValueView &key) const;
+        [[nodiscard]] Range<ValueView> values() const;
+        [[nodiscard]] Range<ValueView> added() const;
+        [[nodiscard]] Range<ValueView> removed() const;
+        [[nodiscard]] Range<ValueView> added_values() const;
+        [[nodiscard]] Range<ValueView> removed_values() const;
+        [[nodiscard]] Range<ValueView>::iterator begin() const;
+        [[nodiscard]] Range<ValueView>::iterator end() const;
+    };
+
+    class TSDInputView : public TSInputTypedView<TSDInputView>
+    {
+      public:
+        explicit TSDInputView(TSInputView view);
+
+        [[nodiscard]] TSDDataView data_view() const;
+        [[nodiscard]] std::size_t size() const;
+        [[nodiscard]] bool empty() const;
+        [[nodiscard]] std::size_t slot_capacity() const;
+        [[nodiscard]] bool slot_occupied(std::size_t slot) const;
+        [[nodiscard]] bool slot_live(std::size_t slot) const;
+        [[nodiscard]] bool slot_added(std::size_t slot) const;
+        [[nodiscard]] bool slot_removed(std::size_t slot) const;
+        [[nodiscard]] bool slot_modified(std::size_t slot) const;
+        [[nodiscard]] ValueView key_at_slot(std::size_t slot) const;
+        [[nodiscard]] TSInputView at_slot(std::size_t slot) const;
+        [[nodiscard]] bool contains(const ValueView &key) const;
+        [[nodiscard]] std::size_t find_slot(const ValueView &key) const;
+        [[nodiscard]] TSInputView at(const ValueView &key) const;
+        [[nodiscard]] TSInputView operator[](const ValueView &key) const;
+        [[nodiscard]] Range<ValueView> keys() const;
+        [[nodiscard]] Range<TSInputView> values() const;
+        [[nodiscard]] KeyValueRange<ValueView, TSInputView> items() const;
+        [[nodiscard]] Range<ValueView> valid_keys() const;
+        [[nodiscard]] Range<TSInputView> valid_values() const;
+        [[nodiscard]] KeyValueRange<ValueView, TSInputView> valid_items() const;
+        [[nodiscard]] Range<ValueView> modified_keys() const;
+        [[nodiscard]] Range<TSInputView> modified_values() const;
+        [[nodiscard]] KeyValueRange<ValueView, TSInputView> modified_items() const;
+        [[nodiscard]] Range<ValueView> added_keys() const;
+        [[nodiscard]] Range<TSInputView> added_values() const;
+        [[nodiscard]] KeyValueRange<ValueView, TSInputView> added_items() const;
+        [[nodiscard]] Range<ValueView> removed_keys() const;
+        [[nodiscard]] Range<TSInputView> removed_values() const;
+        [[nodiscard]] KeyValueRange<ValueView, TSInputView> removed_items() const;
+    };
+
+    class TSWInputView : public TSInputTypedView<TSWInputView>
+    {
+      public:
+        explicit TSWInputView(TSInputView view);
+
+        [[nodiscard]] TSWDataView data_view() const;
+        [[nodiscard]] bool duration_based() const noexcept;
+        [[nodiscard]] bool size_based() const noexcept;
+        [[nodiscard]] bool time_based() const noexcept;
+        [[nodiscard]] std::size_t period() const;
+        [[nodiscard]] std::size_t min_period() const;
+        [[nodiscard]] engine_time_delta_t time_range() const;
+        [[nodiscard]] engine_time_delta_t min_time_range() const;
+        [[nodiscard]] std::size_t capacity() const;
+        [[nodiscard]] std::size_t size() const;
+        [[nodiscard]] bool empty() const;
+        [[nodiscard]] bool full() const;
+        [[nodiscard]] engine_time_t first_modified_time() const;
+        [[nodiscard]] engine_time_t time_at(std::size_t index) const;
+        [[nodiscard]] ValueView time_value_at(std::size_t index) const;
+        [[nodiscard]] ValueView at(std::size_t index) const;
+        [[nodiscard]] ValueView operator[](std::size_t index) const;
+        [[nodiscard]] ValueView front() const;
+        [[nodiscard]] ValueView back() const;
+        [[nodiscard]] Range<ValueView> values() const;
+        [[nodiscard]] Range<ValueView> time_values() const;
+        [[nodiscard]] Range<engine_time_t> value_times() const;
+        [[nodiscard]] Range<ValueView>::iterator begin() const;
+        [[nodiscard]] Range<ValueView>::iterator end() const;
     };
 }  // namespace hgraph
 
