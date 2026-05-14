@@ -28,10 +28,10 @@ The implementation uses the following names consistently:
 
 ``TSInput``
     The input-side top-level time-series holder owned by a node input. It
-    owns input-local binding, activation, deduplication, and scheduling
-    state. Input views usually resolve their visible payload through a
-    bound output rather than owning an independent copy of the output
-    data.
+    owns an input-specific ``TSData`` root, TargetLink terminal storage,
+    activation, deduplication, and scheduling state. Input views usually
+    resolve their visible payload through a bound output rather than
+    owning an independent copy of the output data.
 
 ``TSState``
     The graph-evaluation state associated with a time-series endpoint:
@@ -130,9 +130,10 @@ The implementation uses the following names consistently:
     ``TSOutputBuilder`` composes a ``TSDataBinding`` / data plan with
     output endpoint state. A ``TSInputBuilder`` consumes an endpoint
     annotation tree compiled by ``TSInputPlanFactory`` and builds input
-    endpoint state only: the non-peered navigation tree, peered
-    terminals, activation state, and scheduling hooks. It does not
-    allocate an independent payload copy for the visible input value.
+    endpoint storage: non-peered TSB/fixed-TSL input TSData prefixes,
+    TargetLink terminal storage, activation state, and scheduling hooks.
+    It does not allocate an independent output-payload copy for the
+    visible input value.
     These builders are cached by node and graph construction code.
 
 ``TSEndpointSchema``
@@ -248,7 +249,7 @@ one or more non-peered ``TSB`` / fixed-size ``TSL`` prefixes followed
 by a ``peered`` terminal. Once traversal reaches ``peered``, the
 subtree from that point downward is associated with one output peering;
 the TSInput implementation represents that peering with TargetLink
-binding state.
+storage inside the input data plan.
 
 Dynamic ``TSL`` prefixes are not part of the first implementation
 because their input-side path identity needs the same slot-oriented
@@ -261,8 +262,8 @@ input-shaped endpoint views from the public API.
 
    flowchart TD
       Root["TSInput root<br/>non-peered TSB"]
-      Prefix["non-peered prefix<br/>TSB / fixed TSL"]
-      Link["peered terminal<br/>TargetLink state"]
+      Prefix["planned input TSData prefix<br/>TSB / fixed TSL"]
+      Link["peered terminal<br/>TargetLink storage"]
       Output["TSOutputView"]
       Data["output-owned TSData"]
 
@@ -271,15 +272,35 @@ input-shaped endpoint views from the public API.
       Link -->|bind_output| Output
       Output --> Data
 
-The input endpoint owns scheduling state, not payload state. Binding a
-target link registers an internal target observer on the bound
-``TSData`` level. That observer updates the peered input terminal's
+The input endpoint owns planned input TSData and scheduling state, but
+does not copy output payloads into non-peered prefixes. Binding a target
+link registers an internal target observer on the bound ``TSData``
+level. That observer updates the peered input terminal's
 ``last_modified_time`` and bubbles the modification through any
 non-peered parents. Active input views install scheduling notifiers on
-the input node they activate, or directly on a descendant output
+the input TSData level they activate, or directly on a descendant output
 ``TSDataView`` when activation navigates inside a bound target
 collection. The final scheduling target is a ``Notifiable`` supplied by
 the owning runtime node.
+
+TargetLink in-plan storage is deliberately small: the ordinary
+``TSDataTracking`` record plus inline target-link state. The link state
+owns a borrowed ``TSOutputHandle`` containing the output identity and
+output-owned ``TSDataView``, the target-modified observer, the
+scheduling notifier, and an optional active descendant trie rooted at
+the peered boundary. The state is inline because the normal runtime case
+is a bound link; only the sparse descendant trie nodes are allocated on
+demand.
+
+Views are not stored in TargetLink state. Endpoint views materialize
+transient ``TSDataView`` cursors from the stored ``TSOutputHandle`` when
+they need to navigate or read the target. They also avoid storing
+input and target path vectors. Non-peered positions derive their
+logical input path from ``TSDataParentLink`` only when activation needs
+to touch the root active trie. Positions below a TargetLink carry a
+pointer into the link's descendant trie; that node records the
+input-to-output transition identity, while the projected output
+``TSDataView`` keeps the output-owned parent path.
 
 .. mermaid::
 
@@ -298,12 +319,13 @@ the owning runtime node.
 
 The scheduling notifier is separate from the target observer. The
 target observer keeps input-local modification state aligned with the
-bound output. The scheduling notifier is installed only for active input
-paths and forwards to the owning node. This preserves independent
-activation for multiple branches that ultimately schedule the same node.
+bound output. The scheduling notifier is installed through the active
+trie only for active input paths and forwards to the owning node. The
+trie records boundary-relative path identity without storing an eager
+map or vector-valued path on every input view.
 
-Non-peered input prefixes are structural endpoint nodes with typed
-TSData and value projections. They do not copy the bound output's
+Non-peered input prefixes are structural TSData projections with typed
+bindings and value projections. They do not copy the bound output's
 aggregate payload; instead, their input-local erased ops project the
 current value and child TSData views from their children. This keeps the
 public surface consistent with output views while avoiding duplicate
@@ -324,10 +346,10 @@ child-modified bubble-up path used for scheduling:
 Binding state is part of the public input contract, but it is only a
 meaningful target-link predicate for views where ``is_bindable()`` is
 true. ``is_bindable()`` reports whether the view is backed by a peered
-input node whose target can be bound or rebound. This includes child
+TargetLink whose target can be bound or rebound. This includes child
 views projected inside an already-bound peered target; calling
 ``bind_output()`` / ``unbind_output()`` there operates on the enclosing
-peered input node and then reprojects the child path. For bindable
+TargetLink and then reprojects the child path. For bindable
 peered views, ``bound()`` reports whether an output target is currently
 linked. For non-bindable views, including non-peered prefixes,
 ``bound()`` is always true: those views own input-local TSData/value
@@ -934,9 +956,9 @@ reusable value-side time-series builder used whenever a new key appears.
 For inputs, the endpoint annotation graph owns non-peered TSB /
 fixed-TSL prefixes and peered terminals instead of value payload
 storage. The builder graph is shared construction metadata, while each
-endpoint instance owns its endpoint state independently. Output
-endpoints also own ``TSData`` and child storage; input endpoints borrow
-those payloads through target links.
+endpoint instance owns its planned input storage independently. Output
+endpoints own current/delta payload storage; input endpoints borrow
+output payloads through target links.
 
 Memory Stability Invariant
 --------------------------

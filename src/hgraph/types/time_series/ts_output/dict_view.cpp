@@ -1,6 +1,6 @@
 #include <hgraph/types/time_series/ts_output/dict_view.h>
 
-#include "view_common.h"
+#include <hgraph/types/time_series/ts_output/view_common.h>
 
 #include <utility>
 

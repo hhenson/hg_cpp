@@ -185,10 +185,7 @@ namespace hgraph
         /** Notify all registered observers for ``modified_time``. */
         void notify(engine_time_t modified_time) const;
 
-        /** Notify registered observers that the observed storage is going away. */
-        void notify_invalidated() noexcept;
-
-        /** Clear all observers after sending invalidation notifications. */
+        /** Clear all observer registrations without notifying them. */
         void clear() noexcept;
 
       private:

@@ -1,6 +1,6 @@
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
 
-#include "view_common.h"
+#include <hgraph/types/time_series/ts_input/view_common.h>
 
 #include <stdexcept>
 #include <string>
@@ -130,16 +130,11 @@ namespace hgraph
         if (index >= size()) { throw std::out_of_range("TSBInputView::at index out of range"); }
         if (view_.is_target_position())
         {
-            auto bundle = view_.data_view_.as_bundle();
+            auto data = view_.data_view();
+            auto bundle = data.as_bundle();
             return view_.child_from_target(bundle.at(index), index);
         }
-        if (view_.node_ == nullptr || view_.node_->role != TSEndpointRole::NonPeered)
-        {
-            throw std::logic_error("TSBInputView::at requires a non-peered bundle or bound target");
-        }
-        auto *child = index < view_.node_->children.size() ? view_.node_->children[index].get() : nullptr;
-        if (child == nullptr) { throw std::logic_error("TSBInputView::at selected an unplanned input slot"); }
-        return view_.child_from_node(child);
+        return view_.child_from_input(index);
     }
 
     TSInputView TSBInputView::at(std::size_t index) const &

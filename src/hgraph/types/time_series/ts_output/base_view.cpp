@@ -1,11 +1,72 @@
 #include <hgraph/types/time_series/ts_output/base_view.h>
 
-#include "view_common.h"
+#include <hgraph/types/time_series/ts_output/view_common.h>
 
 #include <utility>
 
 namespace hgraph
 {
+    TSOutputHandle::TSOutputHandle() noexcept = default;
+
+    TSOutputHandle::TSOutputHandle(const TSOutput *output, TSDataView data) noexcept
+        : output_(output),
+          data_(data)
+    {
+    }
+
+    TSOutputHandle::TSOutputHandle(const TSOutputView &view) noexcept
+        : output_(view.output()),
+          data_(view.data_view())
+    {
+    }
+
+    const TSOutput *TSOutputHandle::output() const noexcept
+    {
+        return output_;
+    }
+
+    const TSDataView &TSOutputHandle::data_view() const noexcept
+    {
+        return data_;
+    }
+
+    TSDataView &TSOutputHandle::data_view() noexcept
+    {
+        return data_;
+    }
+
+    const TSDataBinding *TSOutputHandle::binding() const noexcept
+    {
+        return data_.binding();
+    }
+
+    const TSValueTypeMetaData *TSOutputHandle::schema() const noexcept
+    {
+        return data_.schema();
+    }
+
+    bool TSOutputHandle::bound() const noexcept
+    {
+        return output_ != nullptr && data_.valid();
+    }
+
+    bool TSOutputHandle::same_as(const TSOutputHandle &other) const noexcept
+    {
+        return output_ == other.output_ && data_.binding() == other.data_.binding() &&
+               data_.data() == other.data_.data();
+    }
+
+    TSOutputView TSOutputHandle::view(engine_time_t evaluation_time) const noexcept
+    {
+        return TSOutputView{*this, evaluation_time};
+    }
+
+    void TSOutputHandle::reset() noexcept
+    {
+        output_ = nullptr;
+        data_ = {};
+    }
+
     TSOutputView::TSOutputView() noexcept = default;
 
     TSOutputView::TSOutputView(const TSOutput *output, TSDataView data, engine_time_t evaluation_time) noexcept
@@ -15,9 +76,21 @@ namespace hgraph
     {
     }
 
+    TSOutputView::TSOutputView(TSOutputHandle handle, engine_time_t evaluation_time) noexcept
+        : output_(handle.output()),
+          data_(handle.data_view()),
+          evaluation_time_(evaluation_time)
+    {
+    }
+
     const TSOutput *TSOutputView::output() const noexcept
     {
         return output_;
+    }
+
+    TSOutputHandle TSOutputView::handle() const noexcept
+    {
+        return TSOutputHandle{output_, data_};
     }
 
     const TSDataView &TSOutputView::data_view() const noexcept

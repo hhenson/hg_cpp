@@ -11,7 +11,6 @@
 #include <hgraph/types/time_series/ts_input/window_view.h>
 #include <hgraph/types/time_series/ts_output.h>
 
-#include <map>
 #include <memory>
 #include <vector>
 
@@ -20,6 +19,7 @@ namespace hgraph
     namespace detail
     {
         struct TSInputActiveTarget;
+        struct TSInputViewOps;
     }
 
     class TSInput;
@@ -98,9 +98,9 @@ namespace hgraph
     /**
      * Owning input-side time-series endpoint.
      *
-     * TSInput owns planned input TSData storage plus activation state. The root
-     * is always a non-peered TSB; peered terminals inside that tree borrow
-     * TSOutput TSData through input-side TargetLink storage.
+     * TSInput owns planned input TSData storage plus a sparse activation trie.
+     * The root is always a non-peered TSB; peered terminals inside that tree
+     * borrow TSOutput TSData through input-side TargetLink storage.
      */
     class TSInput
     {
@@ -134,6 +134,7 @@ namespace hgraph
         friend class TSSInputView;
         friend class TSDInputView;
         friend class TSWInputView;
+        friend struct detail::TSInputViewOps;
 
         explicit TSInput(const TSInputConstructionPlan &plan);
 
@@ -145,7 +146,7 @@ namespace hgraph
         const TSInputBuilder             *builder_{nullptr};
         const TSValueTypeMetaData        *schema_{nullptr};
         TSData                            data_{};
-        std::map<std::vector<std::size_t>, std::unique_ptr<detail::TSInputActiveTarget>> active_targets_{};
+        std::unique_ptr<detail::TSInputActiveTarget> active_root_{};
     };
 
 }  // namespace hgraph

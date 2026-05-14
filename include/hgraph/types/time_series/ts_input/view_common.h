@@ -1,7 +1,7 @@
 #ifndef HGRAPH_CPP_TS_INPUT_VIEW_COMMON_H
 #define HGRAPH_CPP_TS_INPUT_VIEW_COMMON_H
 
-#include "detail.h"
+#include <hgraph/types/time_series/ts_input/detail.h>
 
 namespace hgraph::detail
 {

@@ -1,6 +1,6 @@
 #include <hgraph/types/time_series/ts_input/window_view.h>
 
-#include "view_common.h"
+#include <hgraph/types/time_series/ts_input/view_common.h>
 
 #include <stdexcept>
 #include <string>

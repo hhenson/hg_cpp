@@ -8,6 +8,7 @@
 namespace hgraph
 {
     class TSOutput;
+    class TSOutputHandle;
     class TSOutputView;
     class TSOutputMutationView;
     class TSBOutputView;
@@ -15,6 +16,42 @@ namespace hgraph
     class TSSOutputView;
     class TSDOutputView;
     class TSWOutputView;
+
+    /**
+     * Stable output endpoint handle without an evaluation time.
+     *
+     * This is the storage form of ``TSOutputView`` used by link state: it
+     * carries the owning output identity and the borrowed TSData cursor, but
+     * leaves time-sensitive ``modified`` / ``delta`` interpretation to views.
+     */
+    class TSOutputHandle
+    {
+      public:
+        TSOutputHandle() noexcept;
+        TSOutputHandle(const TSOutput *output, TSDataView data) noexcept;
+        explicit TSOutputHandle(const TSOutputView &view) noexcept;
+
+        /** Owning output and underlying TSData view. */
+        [[nodiscard]] const TSOutput *output() const noexcept;
+        [[nodiscard]] const TSDataView &data_view() const noexcept;
+        [[nodiscard]] TSDataView &data_view() noexcept;
+
+        /** Binding and schema for the borrowed TSData. */
+        [[nodiscard]] const TSDataBinding *binding() const noexcept;
+        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
+
+        /** True when both output identity and TSData cursor are present. */
+        [[nodiscard]] bool bound() const noexcept;
+        [[nodiscard]] bool same_as(const TSOutputHandle &other) const noexcept;
+
+        /** Recreate a read-only output view for ``evaluation_time``. */
+        [[nodiscard]] TSOutputView view(engine_time_t evaluation_time) const noexcept;
+        void reset() noexcept;
+
+      private:
+        const TSOutput *output_{nullptr};
+        TSDataView      data_{};
+    };
 
     /**
      * Read-only endpoint view carrying an evaluation time.
@@ -27,9 +64,11 @@ namespace hgraph
       public:
         TSOutputView() noexcept;
         TSOutputView(const TSOutput *output, TSDataView data, engine_time_t evaluation_time) noexcept;
+        TSOutputView(TSOutputHandle handle, engine_time_t evaluation_time) noexcept;
 
         /** Owning output and underlying TSData view. */
         [[nodiscard]] const TSOutput *output() const noexcept;
+        [[nodiscard]] TSOutputHandle handle() const noexcept;
         [[nodiscard]] const TSDataView &data_view() const noexcept;
         [[nodiscard]] TSDataView &data_view() noexcept;
 

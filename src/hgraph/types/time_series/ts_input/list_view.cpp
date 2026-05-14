@@ -1,6 +1,6 @@
 #include <hgraph/types/time_series/ts_input/list_view.h>
 
-#include "view_common.h"
+#include <hgraph/types/time_series/ts_input/view_common.h>
 
 #include <stdexcept>
 #include <string>
@@ -109,16 +109,11 @@ namespace hgraph
         if (index >= size()) { throw std::out_of_range("TSLInputView::at index out of range"); }
         if (view_.is_target_position())
         {
-            auto list = view_.data_view_.as_list();
+            auto data = view_.data_view();
+            auto list = data.as_list();
             return view_.child_from_target(list.at(index), index);
         }
-        if (view_.node_ == nullptr || view_.node_->role != TSEndpointRole::NonPeered)
-        {
-            throw std::logic_error("TSLInputView::at requires a non-peered list or bound target");
-        }
-        auto *child = index < view_.node_->children.size() ? view_.node_->children[index].get() : nullptr;
-        if (child == nullptr) { throw std::logic_error("TSLInputView::at selected an unplanned input slot"); }
-        return view_.child_from_node(child);
+        return view_.child_from_input(index);
     }
 
     TSInputView TSLInputView::at(std::size_t index) const &

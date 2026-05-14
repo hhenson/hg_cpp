@@ -26,16 +26,10 @@ namespace
     struct RecordingNotifiable : hgraph::Notifiable
     {
         std::vector<hgraph::engine_time_t> notified{};
-        std::size_t                        invalidated{0};
 
         void notify(hgraph::engine_time_t modified_time) override
         {
             notified.push_back(modified_time);
-        }
-
-        void notify_invalidated() noexcept override
-        {
-            ++invalidated;
         }
     };
 
@@ -143,6 +137,47 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
 
     output.cleanup_delta();
     REQUIRE_FALSE(output.dirty());
+}
+
+TEST_CASE("TSOutputHandle stores output identity without evaluation time")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    TSOutput output{*ts_int};
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + engine_time_delta_t{1};
+
+    Value value{7};
+    {
+        auto mutation = output.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(value.view()));
+    }
+
+    const auto view = output.view(t1);
+    auto       handle = view.handle();
+    REQUIRE(handle.bound());
+    REQUIRE(handle.output() == &output);
+    REQUIRE(handle.binding() == view.binding());
+    REQUIRE(handle.schema() == view.schema());
+
+    const TSOutputHandle from_view{view};
+    REQUIRE(handle.same_as(from_view));
+
+    const auto replay_at_t1 = handle.view(t1);
+    const auto replay_at_t2 = handle.view(t2);
+    REQUIRE(replay_at_t1.output() == &output);
+    REQUIRE(replay_at_t1.data_view().data() == view.data_view().data());
+    REQUIRE(replay_at_t1.evaluation_time() == t1);
+    REQUIRE(replay_at_t1.modified());
+    REQUIRE(replay_at_t2.evaluation_time() == t2);
+    REQUIRE_FALSE(replay_at_t2.modified());
+
+    handle.reset();
+    REQUIRE_FALSE(handle.bound());
 }
 
 TEST_CASE("TSOutput dirty cleanup finalizes slot deltas")
@@ -372,24 +407,6 @@ TEST_CASE("TSData observers notify at the modified level and bubble to parents")
 
     output.unsubscribe(&root_observer);
     b.unsubscribe(&b_observer);
-}
-
-TEST_CASE("TSData observers are invalidated when observed storage is destroyed")
-{
-    using namespace hgraph;
-
-    auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
-    const auto *ts_int   = registry.ts(int_meta);
-
-    RecordingNotifiable observer;
-    {
-        TSOutput output{*ts_int};
-        output.subscribe(&observer);
-        REQUIRE(output.data_view().has_observers());
-    }
-
-    CHECK(observer.invalidated == 1);
 }
 
 TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")

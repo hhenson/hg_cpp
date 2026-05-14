@@ -1,4 +1,4 @@
-#include "ts_data_plan_factory_detail.h"
+#include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
 
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>

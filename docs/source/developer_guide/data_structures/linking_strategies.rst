@@ -20,28 +20,35 @@ ForwardingLink    output → output      Aliasing a child output as a parent out
 ================  ===================  =================================================
 
 Each link points at a memory-stable target — see *Time-Series Plans
-and Ops > Memory Stability Invariant*. The runtime keeps a reverse-
-subscription token registered on the target's state so that, if the
-target is destroyed first, the link can be safely severed before its
-dangling pointer is read.
+and Ops > Memory Stability Invariant*. Link targets are framework-owned
+lifecycle relationships: a link must be unbound before its target
+storage is destroyed, or the target must outlive the link. Violating
+that ordering is a runtime lifecycle bug rather than a condition hidden
+by best-effort invalidation.
 
 TargetLink
 ----------
 
-TargetLink is the input-side binding state for a peered terminal inside
-a ``TSInput``. Peered terminals are declared by the generic
+TargetLink is the input-side storage type for a peered terminal inside
+a ``TSInput`` data plan. Peered terminals are declared by the generic
 ``TSEndpointSchema`` annotation tree; the ``TSInputPlanFactory``
 validates that the root is a non-peered input bundle and that every
 peered terminal matches the schema position it annotates. The input
 terminal carries:
 
-- the bound output view, including the borrowed output-owned
-  ``TSDataView``;
-- input-local ``last_modified_time`` used to bubble changes through
-  non-peered input prefixes;
-- an internal target observer registered with the bound ``TSData``
-  observer set, so target destruction invalidates the binding before a
-  stale pointer is read.
+- compact in-plan tracking with the input-local ``last_modified_time``
+  used to bubble changes through non-peered input prefixes;
+- inline target-link state, because the normal runtime state is a bound
+  link rather than an empty terminal;
+- in that state, the borrowed output handle, the internal target
+  observer registered with the bound output ``TSData`` observer set, and
+  the root pointer for the active descendant trie.
+
+The storage plan should not embed a full output view or an eager active
+collection. The target binding is a borrowed ``TSOutputHandle`` plus
+observer identity; evaluation time belongs on endpoint views, not in the
+link's stored state. Endpoint views recreate transient ``TSDataView``
+cursors from the stored output handle when they need target behaviour.
 
 A subtle point: a peered input terminal carries **two** notification paths:
 
@@ -51,11 +58,10 @@ A subtle point: a peered input terminal carries **two** notification paths:
   (non-peered collections above the link).
 - **Scheduling path.** Forwards scheduling
   notifications to the owning node, but does *not* mark the link
-  state itself modified. Each active input path owns a forwarding
-  ``Notifiable`` identity. This matters because multiple peered terminals
-  under a non-peered collection may schedule the same node — using the
-  node pointer directly would collapse them into one entry in an
-  observer set and make independent subscribe/unsubscribe impossible.
+  state itself modified. Active target descendants are tracked in the
+  link's active trie and share the link's scheduling notifier. This
+  preserves descendant path identity without storing a path-to-target map
+  in the TargetLink state.
 
 Under a peered boundary, scheduling and modification flow through
 different identities even though both ultimately reach the same owning
@@ -141,6 +147,7 @@ separate because:
 - ForwardingLink is the simplest of the three (no input scheduling,
   no source tracking) and benefits from a smaller state footprint.
 
-The three types share the same lifetime invariants — borrowed
-target pointers backed by reverse-subscription invalidators — but
-each one's notification surface is shaped to its job.
+The three types share the same lifetime invariant: borrowed target
+pointers are only valid while the owning framework keeps the target
+storage alive or explicitly unbinds the link first. Each one's
+notification surface is shaped to its job.

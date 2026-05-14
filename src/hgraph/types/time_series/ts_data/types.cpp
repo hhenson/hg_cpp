@@ -184,32 +184,8 @@ namespace hgraph
         }
     }
 
-    void TSDataObserverSet::notify_invalidated() noexcept
-    {
-        if (auto *entry = single(); entry != nullptr)
-        {
-            static_cast<void>(fallback_on_exception(false, [&] {
-                entry->notify_invalidated();
-                return true;
-            }));
-            return;
-        }
-
-        const auto *entries = many();
-        if (entries == nullptr) { return; }
-        for (auto *observer : entries->entries)
-        {
-            if (observer == nullptr) { continue; }
-            static_cast<void>(fallback_on_exception(false, [&] {
-                observer->notify_invalidated();
-                return true;
-            }));
-        }
-    }
-
     void TSDataObserverSet::clear() noexcept
     {
-        notify_invalidated();
         if (auto *entries = many(); entries != nullptr)
         {
             if (entries->notify_depth == 0) { delete entries; }

@@ -43,6 +43,15 @@ namespace
         REQUIRE(mutation.copy_value_from(wrapped.view()));
     }
 
+    void set_list_output(hgraph::TSOutput &output, std::size_t index, int value, hgraph::engine_time_t time)
+    {
+        hgraph::Value wrapped{value};
+        auto          view = output.view(time);
+        auto          list = view.as_list();
+        auto          mutation = list[index].begin_mutation(time);
+        REQUIRE(mutation.copy_value_from(wrapped.view()));
+    }
+
     template <typename Range>
     [[nodiscard]] auto collect_range(const Range &range)
     {
@@ -74,6 +83,12 @@ TEST_CASE("TSInput builds a non-peered TSB root with nested peered terminals")
     const auto &builder = TSInputBuilderFactory::checked_builder_for(
         *root,
         nested_input_schema(root, nested, ts_int));
+    TSOutput output{*ts_int};
+    TSOutput replacement{*ts_int};
+    const auto t1 = MIN_ST;
+    set_output(output, 42, t1);
+    set_output(replacement, 99, t1);
+
     TSInput     input   = builder.make_input();
 
     REQUIRE(input.has_value());
@@ -89,10 +104,6 @@ TEST_CASE("TSInput builds a non-peered TSB root with nested peered terminals")
     REQUIRE(root_view.has_field("a"));
     REQUIRE(root_view.has_field("nested"));
 
-    TSOutput output{*ts_int};
-    const auto t1 = MIN_ST;
-    set_output(output, 42, t1);
-
     auto scalar = root_view.field("a");
     REQUIRE(scalar.is_bindable());
     REQUIRE_FALSE(scalar.bound());
@@ -104,8 +115,6 @@ TEST_CASE("TSInput builds a non-peered TSB root with nested peered terminals")
     REQUIRE(scalar.valid());
     REQUIRE(scalar.value().checked_as<int>() == 42);
 
-    TSOutput replacement{*ts_int};
-    set_output(replacement, 99, t1);
     scalar.bind_output(replacement.view(t1));
     REQUIRE(scalar.bound());
     REQUIRE(scalar.valid());
@@ -186,10 +195,9 @@ TEST_CASE("TSInput active non-peered prefixes schedule through peered terminal n
             TSEndpointSchema::non_peered_list(list, TSEndpointSchema::peered(ts_int)),
         });
 
-    TSInput input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
-
     TSOutput lhs{*ts_int};
     TSOutput rhs{*ts_int};
+    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
 
     auto input_root_view = input.view();
     auto input_root = input_root_view.as_bundle();
@@ -236,10 +244,10 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
             TSEndpointSchema::non_peered_list(list, TSEndpointSchema::peered(ts_int)),
         });
 
-    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
     TSOutput first_output{*ts_int};
     TSOutput second_output{*ts_int};
     TSOutput root_output{*root};
+    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
 
     const auto t1 = MIN_ST + engine_time_delta_t{20};
     const auto t2 = t1 + engine_time_delta_t{1};
@@ -328,6 +336,128 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
     REQUIRE_FALSE(t2_items.valid());
 }
 
+TEST_CASE("TSInput data views project non-peered prefixes")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *list     = registry.tsl(ts_int, 2);
+    const auto *root_schema = registry.tsb("TSInputDataViewNonPeeredRoot", {{"items", list}});
+
+    const auto input_schema = TSEndpointSchema::non_peered(
+        root_schema,
+        {
+            TSEndpointSchema::non_peered_list(list, TSEndpointSchema::peered(ts_int)),
+        });
+
+    TSOutput first_output{*ts_int};
+    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root_schema, input_schema)};
+
+    const auto t1 = MIN_ST + engine_time_delta_t{40};
+    set_output(first_output, 11, t1);
+
+    auto root_view = input.view(nullptr, t1);
+    auto bundle = root_view.as_bundle();
+    auto items = bundle.field("items");
+    auto list_view = items.as_list();
+    list_view[0].bind_output(first_output.view(t1));
+
+    auto root_data = root_view.data_view();
+    REQUIRE(root_data.valid());
+    REQUIRE(root_data.schema() == input.schema());
+    REQUIRE(root_data.binding() == root_view.binding());
+    REQUIRE(root_data.has_current_value());
+    REQUIRE_FALSE(root_data.all_valid());
+    REQUIRE(root_data.modified(t1));
+
+    auto bundle_data = root_data.as_bundle();
+    REQUIRE(bundle_data.size() == 1);
+    auto items_data = bundle_data.field("items");
+    REQUIRE(items_data.valid());
+    REQUIRE(items_data.schema() == list);
+    REQUIRE(items_data.has_current_value());
+    REQUIRE_FALSE(items_data.all_valid());
+    REQUIRE(items_data.modified(t1));
+
+    auto list_data = items_data.as_list();
+    REQUIRE(list_data.size() == 2);
+    REQUIRE(range_size(list_data.valid_items()) == 1);
+    auto first_child = list_data[0];
+    REQUIRE(first_child.valid());
+    REQUIRE(first_child.schema() == ts_int);
+    REQUIRE(first_child.value().checked_as<int>() == 11);
+
+    auto second_child = list_data[1];
+    REQUIRE_FALSE(second_child.valid());
+    REQUIRE(second_child.schema() == ts_int);
+}
+
+TEST_CASE("TSInput data views step through target links and rebinds")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *list     = registry.tsl(ts_int, 2);
+    const auto *root_schema = registry.tsb("TSInputDataViewTargetLinkRoot", {{"items", list}});
+
+    const auto input_schema = TSEndpointSchema::non_peered(
+        root_schema,
+        {
+            TSEndpointSchema::peered(list),
+        });
+
+    TSOutput first_output{*list};
+    TSOutput second_output{*list};
+    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root_schema, input_schema)};
+
+    const auto t1 = MIN_ST + engine_time_delta_t{50};
+    const auto t2 = t1 + engine_time_delta_t{1};
+    set_list_output(first_output, 0, 10, t1);
+    set_list_output(first_output, 1, 20, t1);
+    set_list_output(second_output, 0, 100, t2);
+    set_list_output(second_output, 1, 200, t2);
+
+    auto root_view = input.view(nullptr, t1);
+    auto bundle = root_view.as_bundle();
+    auto items = bundle.field("items");
+    items.bind_output(first_output.view(t1));
+
+    auto list_view = items.as_list();
+    auto cached_child = list_view[1];
+    REQUIRE(cached_child.schema() == ts_int);
+    REQUIRE(cached_child.data_view().schema() == ts_int);
+    REQUIRE(cached_child.value().checked_as<int>() == 20);
+
+    auto root_data = root_view.data_view();
+    auto root_data_bundle = root_data.as_bundle();
+    auto target_data = root_data_bundle.field("items");
+    auto target_data_list = target_data.as_list();
+    auto target_child_data = target_data_list[1];
+    REQUIRE(target_child_data.schema() == ts_int);
+    REQUIRE(target_child_data.value().checked_as<int>() == 20);
+
+    auto rebound_root = input.view(nullptr, t2);
+    auto rebound_bundle = rebound_root.as_bundle();
+    auto rebound_items = rebound_bundle.field("items");
+    rebound_items.bind_output(second_output.view(t2));
+
+    REQUIRE(cached_child.schema() == ts_int);
+    REQUIRE(cached_child.data_view().schema() == ts_int);
+    REQUIRE(cached_child.value().checked_as<int>() == 200);
+
+    auto rebound_root_data = input.view(nullptr, t2).data_view();
+    auto rebound_root_data_bundle = rebound_root_data.as_bundle();
+    auto rebound_target_data = rebound_root_data_bundle.field("items");
+    auto rebound_target_data_list = rebound_target_data.as_list();
+    auto rebound_target_child_data = rebound_target_data_list[1];
+    REQUIRE(rebound_target_child_data.schema() == ts_int);
+    REQUIRE(rebound_target_child_data.value().checked_as<int>() == 200);
+}
+
 TEST_CASE("TSInput binding rejects non-peered views and incompatible output schemas")
 {
     using namespace hgraph;
@@ -346,9 +476,9 @@ TEST_CASE("TSInput binding rejects non-peered views and incompatible output sche
             TSEndpointSchema::peered(ts_int),
         });
 
-    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
     TSOutput wrong_root{*bad_root};
     TSOutput wrong_leaf{*ts_dbl};
+    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
 
     auto root_view = input.view();
     REQUIRE_FALSE(root_view.is_bindable());
@@ -375,9 +505,9 @@ TEST_CASE("TSInput active root bubbles output modifications through non-peered p
             TSEndpointSchema::non_peered_list(list, TSEndpointSchema::peered(ts_int)),
         });
 
-    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
     TSOutput first_output{*ts_int};
     TSOutput second_output{*ts_int};
+    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
 
     auto root_binding_view = input.view();
     auto binding_bundle = root_binding_view.as_bundle();
@@ -436,8 +566,8 @@ TEST_CASE("TSInput peered collection descendants can be activated independently"
             TSEndpointSchema::peered(list),
         });
 
-    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
     TSOutput output{*list};
+    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
 
     auto output_view = output.view();
     auto output_list = output_view.as_list();
@@ -517,9 +647,9 @@ TEST_CASE("TSInput shape casts return endpoint views for slot collections")
             TSEndpointSchema::peered(tsd),
         });
 
-    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
     TSOutput set_output{*tss};
     TSOutput dict_output{*tsd};
+    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
 
     const auto t1 = MIN_ST;
     const auto t2 = t1 + engine_time_delta_t{1};
@@ -594,38 +724,4 @@ TEST_CASE("TSInput shape casts return endpoint views for slot collections")
 
     active_set.make_passive();
     active_dict_child.make_passive();
-}
-
-TEST_CASE("TSInput peered terminals invalidate cached input views when output storage is destroyed")
-{
-    using namespace hgraph;
-
-    auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
-    const auto *ts_int   = registry.ts(int_meta);
-    const auto *root     = registry.tsb("TSInputInvalidationRoot", {{"value", ts_int}});
-
-    const auto input_schema = TSEndpointSchema::non_peered(
-        root,
-        {
-            TSEndpointSchema::peered(ts_int),
-        });
-
-    TSInput input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
-    auto    root_view = input.view();
-    auto    bundle = root_view.as_bundle();
-    auto    value = bundle.field("value");
-
-    {
-        TSOutput output{*ts_int};
-        set_output(output, 7, MIN_ST);
-        value.bind_output(output.view(MIN_ST));
-        REQUIRE(value.valid());
-        REQUIRE(value.value().checked_as<int>() == 7);
-    }
-
-    REQUIRE(value.binding() != nullptr);
-    REQUIRE_FALSE(value.valid());
-    REQUIRE(value.schema() == ts_int);
-    REQUIRE_THROWS_AS(value.value(), std::logic_error);
 }

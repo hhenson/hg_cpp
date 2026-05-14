@@ -214,7 +214,7 @@ namespace hgraph
         const auto *element_memory = ops.element_memory_impl(ops.context, view_->data(), index);
         if (element_memory == nullptr)
         {
-            throw std::logic_error("IndexedTSDataView::at: element memory is not resolved");
+            return TSDataView{element_binding, element_memory};
         }
         if (!view_->ops().allows_mutation) { return TSDataView{element_binding, element_memory}; }
         return TSDataView{element_binding, element_memory, *view_, index};

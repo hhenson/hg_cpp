@@ -5,11 +5,6 @@
 
 namespace hgraph
 {
-    namespace detail
-    {
-        struct TSInputNode;
-    }
-
     class TSInput;
     class TSInputView;
     class TSBInputView;

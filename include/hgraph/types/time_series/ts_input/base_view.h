@@ -11,7 +11,9 @@ namespace hgraph
 {
     namespace detail
     {
-        struct TSInputNode;
+        struct TSInputChildProjection;
+        struct TSInputTargetActiveNode;
+        struct TSInputViewOps;
     }
 
     class TSInput;
@@ -25,8 +27,9 @@ namespace hgraph
     /**
      * Input-side read/binding/activation view.
      *
-     * A view can represent a non-peered input node or a position inside a
-     * bound target output reached through a peered terminal.
+     * A view can represent non-peered input TSData storage, a TargetLink
+     * terminal, or a position inside a bound target output reached through a
+     * TargetLink terminal.
      */
     class TSInputView
     {
@@ -60,7 +63,7 @@ namespace hgraph
         /** For bindable target-link views, true when an output target is bound. */
         [[nodiscard]] bool bound() const noexcept;
 
-        /** True when this view is backed by a peered input node whose target can be rebound. */
+        /** True when this view is backed by TargetLink storage whose output target can be rebound. */
         [[nodiscard]] bool is_bindable() const noexcept;
 
         void bind_output(const TSOutputView &output);
@@ -98,24 +101,57 @@ namespace hgraph
         friend class TSSInputView;
         friend class TSDInputView;
         friend class TSWInputView;
+        friend struct detail::TSInputViewOps;
+
+        struct InputDataCursor
+        {
+            InputDataCursor() noexcept = default;
+            InputDataCursor(TSDataView value_data,
+                            TSDataView raw_data,
+                            detail::TSInputTargetActiveNode *target_node) noexcept;
+
+            [[nodiscard]] bool has_storage() const noexcept;
+            [[nodiscard]] bool is_target_position() const noexcept;
+            [[nodiscard]] bool target_bound() const noexcept;
+            [[nodiscard]] const TSDataBinding *binding() const noexcept;
+            [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
+            [[nodiscard]] const TSValueTypeMetaData *target_path_schema() const noexcept;
+            [[nodiscard]] const TSDataView &resolved_value_data() const noexcept;
+            [[nodiscard]] bool value_live() const noexcept;
+            [[nodiscard]] engine_time_t last_modified_time() const;
+            [[nodiscard]] bool modified(engine_time_t evaluation_time) const;
+            [[nodiscard]] TSDataView &checked_value_data(const char *what) const;
+            [[nodiscard]] InputDataCursor target_child(TSDataView child, std::size_t index) const;
+            void bind_target(const TSOutputView &output);
+            void unbind_target();
+            void make_active(TSInput *input, Notifiable *scheduling_notifier) const;
+            void make_passive(TSInput *input) const;
+            [[nodiscard]] bool active(const TSInput *input) const;
+
+            mutable TSDataView value_data{};
+            TSDataView         raw_data{};
+            detail::TSInputTargetActiveNode *target_node{nullptr};
+        };
 
         TSInputView(TSInput                         *input,
-                    detail::TSInputNode            *node,
-                    TSDataView                      target_view,
-                    std::vector<std::size_t>        target_path,
+                    TSDataView                      value_data,
+                    TSDataView                      raw_data,
+                    detail::TSInputTargetActiveNode *target_node,
                     Notifiable                     *scheduling_notifier,
                     engine_time_t                   evaluation_time) noexcept;
 
         [[nodiscard]] bool is_target_position() const noexcept;
+        [[nodiscard]] const TSValueTypeMetaData *target_path_schema() const noexcept;
+        [[nodiscard]] TSDataView resolve_target_data_view() const noexcept;
         [[nodiscard]] bool target_view_live() const noexcept;
         [[nodiscard]] TSDataView &checked_target_data_view(const char *what) const;
         [[nodiscard]] TSInputView child_from_target(TSDataView child, std::size_t index) const;
-        [[nodiscard]] TSInputView child_from_node(detail::TSInputNode *child) const noexcept;
+        [[nodiscard]] TSInputView child_from_input(std::size_t index) const;
+        [[nodiscard]] TSInputView child_from_projection(detail::TSInputChildProjection projection,
+                                                        std::size_t index) const noexcept;
 
         TSInput                  *input_{nullptr};
-        detail::TSInputNode      *node_{nullptr};
-        TSDataView                data_view_{};
-        std::vector<std::size_t>  target_path_{};
+        InputDataCursor           data_{};
         Notifiable               *scheduling_notifier_{nullptr};
         engine_time_t             evaluation_time_{MIN_DT};
     };

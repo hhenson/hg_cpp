@@ -1,4 +1,4 @@
-#include "ts_data_plan_factory_detail.h"
+#include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
 
 #include <hgraph/types/utils/intern_table.h>
 
