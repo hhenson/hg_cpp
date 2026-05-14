@@ -6,6 +6,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -49,6 +50,18 @@ namespace
         auto          view = output.view(time);
         auto          list = view.as_list();
         auto          mutation = list[index].begin_mutation(time);
+        REQUIRE(mutation.copy_value_from(wrapped.view()));
+    }
+
+    void set_bundle_output(hgraph::TSOutput &output,
+                           std::string_view field,
+                           int value,
+                           hgraph::engine_time_t time)
+    {
+        hgraph::Value wrapped{value};
+        auto          view = output.view(time);
+        auto          bundle = view.as_bundle();
+        auto          mutation = bundle.field(field).begin_mutation(time);
         REQUIRE(mutation.copy_value_from(wrapped.view()));
     }
 
@@ -456,6 +469,148 @@ TEST_CASE("TSInput data views step through target links and rebinds")
     auto rebound_target_child_data = rebound_target_data_list[1];
     REQUIRE(rebound_target_child_data.schema() == ts_int);
     REQUIRE(rebound_target_child_data.value().checked_as<int>() == 200);
+}
+
+TEST_CASE("TSInput output binding levels expose values and data views from root to leaves")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *nested   = registry.tsb("TSInputBindingLevelsNested", {{"x", ts_int}, {"y", ts_int}});
+    const auto *list     = registry.tsl(ts_int, 2);
+    const auto *root     = registry.tsb(
+        "TSInputBindingLevelsRoot",
+        {
+            {"leaf", ts_int},
+            {"bundle", nested},
+            {"whole_list", list},
+            {"leaf_list", list},
+        });
+
+    const auto input_schema = TSEndpointSchema::non_peered(
+        root,
+        {
+            TSEndpointSchema::peered(ts_int),
+            TSEndpointSchema::peered(nested),
+            TSEndpointSchema::peered(list),
+            TSEndpointSchema::non_peered_list(list, TSEndpointSchema::peered(ts_int)),
+        });
+
+    TSOutput leaf_output{*ts_int};
+    TSOutput bundle_output{*nested};
+    TSOutput list_output{*list};
+    TSOutput first_element_output{*ts_int};
+    TSOutput second_element_output{*ts_int};
+    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
+
+    const auto t1 = MIN_ST + engine_time_delta_t{60};
+    set_output(leaf_output, 7, t1);
+    set_bundle_output(bundle_output, "x", 10, t1);
+    set_bundle_output(bundle_output, "y", 20, t1);
+    set_list_output(list_output, 0, 100, t1);
+    set_list_output(list_output, 1, 200, t1);
+    set_output(first_element_output, 1000, t1);
+    set_output(second_element_output, 2000, t1);
+
+    auto root_view = input.view(nullptr, t1);
+    auto root_bundle = root_view.as_bundle();
+    auto leaf = root_bundle.field("leaf");
+    auto bundle = root_bundle.field("bundle");
+    auto whole_list = root_bundle.field("whole_list");
+    auto leaf_list = root_bundle.field("leaf_list");
+
+    REQUIRE_FALSE(root_view.is_bindable());
+    REQUIRE(leaf.is_bindable());
+    REQUIRE(bundle.is_bindable());
+    REQUIRE(whole_list.is_bindable());
+    REQUIRE_FALSE(leaf_list.is_bindable());
+
+    leaf.bind_output(leaf_output.view(t1));
+    bundle.bind_output(bundle_output.view(t1));
+    whole_list.bind_output(list_output.view(t1));
+    auto leaf_list_view = leaf_list.as_list();
+    leaf_list_view[0].bind_output(first_element_output.view(t1));
+    leaf_list_view[1].bind_output(second_element_output.view(t1));
+
+    REQUIRE(root_view.valid());
+    REQUIRE(root_view.all_valid());
+    REQUIRE(root_view.data_view().schema() == root);
+    REQUIRE(root_view.data_view().binding() == root_view.binding());
+
+    REQUIRE(leaf.valid());
+    REQUIRE(leaf.value().checked_as<int>() == 7);
+    REQUIRE(leaf.data_view().schema() == ts_int);
+    REQUIRE(leaf.data_view().data() == leaf_output.data_view().data());
+
+    auto bundle_view = bundle.as_bundle();
+    auto bundle_x = bundle_view.field("x");
+    auto bundle_y = bundle_view.field("y");
+    auto output_bundle_view = bundle_output.view(t1);
+    auto output_bundle = output_bundle_view.as_bundle();
+    REQUIRE(bundle.valid());
+    REQUIRE(bundle.all_valid());
+    REQUIRE(bundle.data_view().schema() == nested);
+    REQUIRE(bundle.data_view().data() == bundle_output.data_view().data());
+    REQUIRE(bundle_x.value().checked_as<int>() == 10);
+    REQUIRE(bundle_y.value().checked_as<int>() == 20);
+    REQUIRE(bundle_x.data_view().data() == output_bundle.field("x").data_view().data());
+    REQUIRE(bundle_y.data_view().data() == output_bundle.field("y").data_view().data());
+
+    auto whole_list_view = whole_list.as_list();
+    auto output_list_view = list_output.view(t1);
+    auto output_list = output_list_view.as_list();
+    REQUIRE(whole_list.valid());
+    REQUIRE(whole_list.all_valid());
+    REQUIRE(whole_list.data_view().schema() == list);
+    REQUIRE(whole_list.data_view().data() == list_output.data_view().data());
+    REQUIRE(whole_list_view[0].value().checked_as<int>() == 100);
+    REQUIRE(whole_list_view[1].value().checked_as<int>() == 200);
+    REQUIRE(whole_list_view[0].data_view().data() == output_list[0].data_view().data());
+    REQUIRE(whole_list_view[1].data_view().data() == output_list[1].data_view().data());
+
+    REQUIRE(leaf_list.valid());
+    REQUIRE(leaf_list.all_valid());
+    REQUIRE(leaf_list.data_view().schema() == list);
+    REQUIRE(leaf_list_view[0].value().checked_as<int>() == 1000);
+    REQUIRE(leaf_list_view[1].value().checked_as<int>() == 2000);
+    REQUIRE(leaf_list_view[0].data_view().data() == first_element_output.data_view().data());
+    REQUIRE(leaf_list_view[1].data_view().data() == second_element_output.data_view().data());
+
+    auto root_data = root_view.data_view();
+    REQUIRE(root_data.valid());
+    REQUIRE(root_data.schema() == root);
+    REQUIRE(root_data.all_valid());
+
+    auto root_data_bundle = root_data.as_bundle();
+    auto leaf_data = root_data_bundle.field("leaf");
+    auto bundle_data = root_data_bundle.field("bundle");
+    auto whole_list_data = root_data_bundle.field("whole_list");
+    auto leaf_list_data = root_data_bundle.field("leaf_list");
+
+    REQUIRE(leaf_data.schema() == ts_int);
+    REQUIRE(leaf_data.value().checked_as<int>() == 7);
+    REQUIRE(leaf_data.data() == leaf_output.data_view().data());
+
+    auto bundle_data_view = bundle_data.as_bundle();
+    REQUIRE(bundle_data.schema() == nested);
+    REQUIRE(bundle_data.data() == bundle_output.data_view().data());
+    REQUIRE(bundle_data_view.field("x").value().checked_as<int>() == 10);
+    REQUIRE(bundle_data_view.field("y").value().checked_as<int>() == 20);
+
+    auto whole_list_data_view = whole_list_data.as_list();
+    REQUIRE(whole_list_data.schema() == list);
+    REQUIRE(whole_list_data.data() == list_output.data_view().data());
+    REQUIRE(whole_list_data_view[0].value().checked_as<int>() == 100);
+    REQUIRE(whole_list_data_view[1].value().checked_as<int>() == 200);
+
+    auto leaf_list_data_view = leaf_list_data.as_list();
+    REQUIRE(leaf_list_data.schema() == list);
+    REQUIRE(leaf_list_data_view[0].data() == first_element_output.data_view().data());
+    REQUIRE(leaf_list_data_view[1].data() == second_element_output.data_view().data());
+    REQUIRE(leaf_list_data_view[0].value().checked_as<int>() == 1000);
+    REQUIRE(leaf_list_data_view[1].value().checked_as<int>() == 2000);
 }
 
 TEST_CASE("TSInput binding rejects non-peered views and incompatible output schemas")

@@ -28,6 +28,11 @@ namespace hgraph
         void noop_cleanup_delta(const void *, void *, engine_time_t);
         void noop_record_child_modified(const void *, void *, std::size_t, engine_time_t);
         [[nodiscard]] bool missing_copy_value_from(const void *, void *, const ValueView &, engine_time_t);
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] bool missing_from_python(const void *, void *, nb::handle, engine_time_t);
+        [[nodiscard]] nb::object missing_to_python(const void *, const void *);
+        [[nodiscard]] nb::object missing_delta_to_python(const void *, const void *, engine_time_t);
+#endif
         [[nodiscard]] std::size_t missing_indexed_size(const void *, const void *);
         [[nodiscard]] const TSDataBinding *missing_indexed_element_binding(const void *, const void *, std::size_t);
         [[nodiscard]] const void *missing_indexed_element_memory(const void *, const void *, std::size_t);
@@ -88,6 +93,15 @@ namespace hgraph
                                            engine_time_t modified_time) = &ts_data_detail::noop_record_child_modified;
         bool (*copy_value_from_impl)(const void *context, void *memory, const ValueView &source,
                                      engine_time_t modified_time) = &ts_data_detail::missing_copy_value_from;
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        bool (*from_python_impl)(const void *context, void *memory, nb::handle source,
+                                 engine_time_t modified_time) = &ts_data_detail::missing_from_python;
+        nb::object (*to_python_impl)(const void *context,
+                                     const void *memory) = &ts_data_detail::missing_to_python;
+        nb::object (*delta_to_python_impl)(const void *context,
+                                           const void *memory,
+                                           engine_time_t evaluation_time) = &ts_data_detail::missing_delta_to_python;
+#endif
     };
 
     struct TSSDataOps : TSDataOps

@@ -1,4 +1,7 @@
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/time_series/endpoint_schema.h>
+#include <hgraph/types/time_series/ts_input.h>
+#include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/types/value/value_builder.h>
@@ -99,6 +102,43 @@ namespace hgraph
             return result;
         }
 
+        [[nodiscard]] const TSValueTypeMetaData *ts_schema_from_handle(nb::handle source, const char *what)
+        {
+            const auto *schema = nb::cast<const TSValueTypeMetaData *>(source);
+            if (schema == nullptr) { throw std::invalid_argument(std::string{what} + " requires a TS schema"); }
+            return schema;
+        }
+
+        [[nodiscard]] std::vector<std::pair<std::string, const TSValueTypeMetaData *>>
+        ts_bundle_fields(nb::handle source, const char *what)
+        {
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> result;
+            nb::object object = nb::borrow<nb::object>(source);
+            nb::object items = nb::hasattr(object, "items") ? object.attr("items")() : object;
+
+            nb::iterator it = nb::iter(items);
+            while (it != nb::iterator::sentinel())
+            {
+                nb::tuple pair = nb::cast<nb::tuple>(*it);
+                if (pair.size() != 2) { throw std::invalid_argument(std::string{what} + " expects name/schema pairs"); }
+                result.emplace_back(nb::cast<std::string>(pair[0]), ts_schema_from_handle(pair[1], what));
+                ++it;
+            }
+            return result;
+        }
+
+        [[nodiscard]] std::vector<TSEndpointSchema> endpoint_schema_sequence(nb::handle source, const char *)
+        {
+            std::vector<TSEndpointSchema> result;
+            nb::iterator it = nb::iter(source);
+            while (it != nb::iterator::sentinel())
+            {
+                result.push_back(nb::cast<TSEndpointSchema>(*it));
+                ++it;
+            }
+            return result;
+        }
+
         [[nodiscard]] const ValueTypeMetaData *int64_schema()
         {
             return TypeRegistry::instance().register_scalar<std::int64_t>("int64");
@@ -189,42 +229,42 @@ namespace hgraph
             return typed_value_from_python(schema, source, "map_value");
         }
 
-        [[nodiscard]] Value engine_time_list(nb::handle microseconds)
+        [[nodiscard]] Value engine_time_list(nb::handle times)
         {
             const auto        &binding = binding_for(engine_time_schema(), "engine_time_list");
             ListBuilder        builder{binding};
-            nb::iterator       it = nb::iter(microseconds);
+            nb::iterator       it = nb::iter(times);
             while (it != nb::iterator::sentinel())
             {
-                const auto value = engine_time_t{engine_time_delta_t{nb::cast<std::int64_t>(*it)}};
+                const auto value = nb::cast<engine_time_t>(*it);
                 builder.push_back(value);
                 ++it;
             }
             return builder.build();
         }
 
-        [[nodiscard]] Value engine_delta_cyclic_buffer(nb::handle microseconds, std::size_t capacity)
+        [[nodiscard]] Value engine_delta_cyclic_buffer(nb::handle durations, std::size_t capacity)
         {
             const auto          &binding = binding_for(engine_delta_schema(), "engine_delta_cyclic_buffer");
             CyclicBufferBuilder  builder{binding, capacity};
-            nb::iterator         it = nb::iter(microseconds);
+            nb::iterator         it = nb::iter(durations);
             while (it != nb::iterator::sentinel())
             {
-                const auto value = engine_time_delta_t{nb::cast<std::int64_t>(*it)};
+                const auto value = nb::cast<engine_time_delta_t>(*it);
                 builder.push_back(value);
                 ++it;
             }
             return builder.build();
         }
 
-        [[nodiscard]] Value engine_date_queue(nb::handle days)
+        [[nodiscard]] Value engine_date_queue(nb::handle dates)
         {
             const auto  &binding = binding_for(engine_date_schema(), "engine_date_queue");
             QueueBuilder builder{binding};
-            nb::iterator it = nb::iter(days);
+            nb::iterator it = nb::iter(dates);
             while (it != nb::iterator::sentinel())
             {
-                const auto value = engine_date_t{std::chrono::sys_days{std::chrono::days{nb::cast<std::int64_t>(*it)}}};
+                const auto value = nb::cast<engine_date_t>(*it);
                 builder.push(value);
                 ++it;
             }
@@ -242,6 +282,24 @@ namespace hgraph
             return schema.display_name != nullptr ? std::string{schema.display_name} : std::string{};
         }
 
+        [[nodiscard]] std::string ts_schema_name(const TSValueTypeMetaData &schema)
+        {
+            return schema.display_name != nullptr ? std::string{schema.display_name} : std::string{};
+        }
+
+        [[nodiscard]] nb::list ts_schema_fields(const TSValueTypeMetaData &schema)
+        {
+            nb::list result;
+            const auto *fields = schema.fields();
+            for (std::size_t index = 0; index < schema.field_count(); ++index)
+            {
+                const TSFieldMetaData &field = fields[index];
+                result.append(nb::make_tuple(field.name != nullptr ? std::string{field.name} : std::string{},
+                                             nb::cast(field.type, nb::rv_policy::reference)));
+            }
+            return result;
+        }
+
         [[nodiscard]] nb::list schema_fields(const ValueTypeMetaData &schema)
         {
             nb::list result;
@@ -251,6 +309,63 @@ namespace hgraph
                 result.append(nb::make_tuple(field.name != nullptr ? std::string{field.name} : std::string{},
                                              nb::cast(field.type, nb::rv_policy::reference)));
             }
+            return result;
+        }
+
+        void apply_python_value_to_output_view(TSOutputView view,
+                                               nb::object   source,
+                                               engine_time_t evaluation_time)
+        {
+            if (source.is_none()) { return; }
+            auto  mutation = view.begin_mutation(evaluation_time);
+            static_cast<void>(mutation.from_python(source));
+        }
+
+        TSOutput &apply_output_value(TSOutput &output, nb::object source, engine_time_t evaluation_time)
+        {
+            apply_python_value_to_output_view(output.view(evaluation_time), source, evaluation_time);
+            return output;
+        }
+
+        TSOutputView apply_output_view_value(TSOutputView view, nb::object source)
+        {
+            apply_python_value_to_output_view(view, source, view.evaluation_time());
+            return view;
+        }
+
+        [[nodiscard]] TSInput make_input(const TSValueTypeMetaData &root_schema,
+                                         const TSEndpointSchema    &endpoint_schema)
+        {
+            return TSInput{TSInputBuilderFactory::checked_builder_for(root_schema, endpoint_schema)};
+        }
+
+        [[nodiscard]] nb::object ts_input_value_to_python(const TSInputView &view)
+        {
+            if (!view.valid()) { return nb::none(); }
+            return view.data_view().value_to_python();
+        }
+
+        [[nodiscard]] nb::object ts_input_delta_value_to_python(const TSInputView &view)
+        {
+            if (!view.modified()) { return nb::none(); }
+            return view.data_view().delta_value_to_python(view.evaluation_time());
+        }
+
+        [[nodiscard]] nb::object ts_output_value_to_python(const TSOutputView &view)
+        {
+            return view.valid() ? view.data_view().value_to_python() : nb::none();
+        }
+
+        [[nodiscard]] nb::object ts_output_delta_value_to_python(const TSOutputView &view)
+        {
+            if (!view.modified()) { return nb::none(); }
+            return view.data_view().delta_value_to_python(view.evaluation_time());
+        }
+
+        [[nodiscard]] nb::list endpoint_schema_children(const TSEndpointSchema &schema)
+        {
+            nb::list result;
+            for (const auto &child : schema.children()) { result.append(child); }
             return result;
         }
 
@@ -315,6 +430,7 @@ namespace hgraph
         void register_value_bindings(nb::module_ &m)
         {
             nb::module_ value_mod = m.def_submodule("value", "Value-layer C++ abstractions");
+            nb::module_ ts_mod    = m.def_submodule("time_series", "Time-series endpoint C++ abstractions");
 
             nb::enum_<ValueTypeKind>(value_mod, "ValueTypeKind")
                 .value("Atomic", ValueTypeKind::Atomic)
@@ -345,6 +461,70 @@ namespace hgraph
                 .def("__repr__", [](const ValueTypeMetaData &self) {
                     return std::string{"ValueTypeMetaData("} + schema_name(self) + ")";
                 });
+
+            nb::enum_<TSTypeKind>(ts_mod, "TSTypeKind")
+                .value("TS", TSTypeKind::TS)
+                .value("TSS", TSTypeKind::TSS)
+                .value("TSD", TSTypeKind::TSD)
+                .value("TSL", TSTypeKind::TSL)
+                .value("TSW", TSTypeKind::TSW)
+                .value("TSB", TSTypeKind::TSB)
+                .value("REF", TSTypeKind::REF)
+                .value("SIGNAL", TSTypeKind::SIGNAL);
+
+            nb::enum_<TSEndpointRole>(ts_mod, "TSEndpointRole")
+                .value("Peered", TSEndpointRole::Peered)
+                .value("NonPeered", TSEndpointRole::NonPeered);
+
+            nb::class_<TSValueTypeMetaData>(ts_mod, "TSValueTypeMetaData")
+                .def_prop_ro("name", &ts_schema_name)
+                .def_ro("kind", &TSValueTypeMetaData::kind)
+                .def_prop_ro("value_type",
+                             [](const TSValueTypeMetaData &self) { return self.value_type; },
+                             nb::rv_policy::reference)
+                .def_prop_ro("value_schema",
+                             [](const TSValueTypeMetaData &self) { return self.value_schema; },
+                             nb::rv_policy::reference)
+                .def_prop_ro("delta_value_schema",
+                             [](const TSValueTypeMetaData &self) { return self.delta_value_schema; },
+                             nb::rv_policy::reference)
+                .def_prop_ro("key_type", &TSValueTypeMetaData::key_type, nb::rv_policy::reference)
+                .def_prop_ro("element_ts", &TSValueTypeMetaData::element_ts, nb::rv_policy::reference)
+                .def_prop_ro("fixed_size", &TSValueTypeMetaData::fixed_size)
+                .def_prop_ro("field_count", &TSValueTypeMetaData::field_count)
+                .def_prop_ro("fields", &ts_schema_fields)
+                .def("__repr__", [](const TSValueTypeMetaData &self) {
+                    return std::string{"TSValueTypeMetaData("} + ts_schema_name(self) + ")";
+                });
+
+            nb::class_<TSEndpointSchema>(ts_mod, "TSEndpointSchema")
+                .def(nb::init<>())
+                .def_static("peered",
+                            [](const TSValueTypeMetaData &schema) { return TSEndpointSchema::peered(&schema); },
+                            "schema"_a)
+                .def_static("non_peered",
+                            [](const TSValueTypeMetaData &schema, nb::handle children) {
+                                return TSEndpointSchema::non_peered(
+                                    &schema,
+                                    endpoint_schema_sequence(children, "TSEndpointSchema.non_peered"));
+                            },
+                            "schema"_a,
+                            "children"_a)
+                .def_static("non_peered_list",
+                            [](const TSValueTypeMetaData &schema, const TSEndpointSchema &element) {
+                                return TSEndpointSchema::non_peered_list(&schema, element);
+                            },
+                            "schema"_a,
+                            "element"_a)
+                .def("empty", &TSEndpointSchema::empty)
+                .def_prop_ro("role", &TSEndpointSchema::role)
+                .def_prop_ro("schema", &TSEndpointSchema::schema, nb::rv_policy::reference)
+                .def("is_peered", &TSEndpointSchema::is_peered)
+                .def("is_non_peered", &TSEndpointSchema::is_non_peered)
+                .def("__len__", &TSEndpointSchema::child_count)
+                .def("child_count", &TSEndpointSchema::child_count)
+                .def("child", &TSEndpointSchema::child, "index"_a, nb::rv_policy::reference_internal)
+                .def_prop_ro("children", &endpoint_schema_children);
 
             nb::class_<TypeRegistry>(value_mod, "TypeRegistry")
                 .def_static("instance", []() -> TypeRegistry & { return TypeRegistry::instance(); },
@@ -391,7 +571,170 @@ namespace hgraph
                      }, "element_schema"_a, "capacity"_a, nb::rv_policy::reference)
                 .def("queue", [](TypeRegistry &self, const ValueTypeMetaData &element_schema, std::size_t max_capacity) {
                          return self.queue(&element_schema, max_capacity);
-                     }, "element_schema"_a, "max_capacity"_a = 0, nb::rv_policy::reference);
+                     }, "element_schema"_a, "max_capacity"_a = 0, nb::rv_policy::reference)
+                .def("signal", [](TypeRegistry &self) { return self.signal(); }, nb::rv_policy::reference)
+                .def("ts", [](TypeRegistry &self, const ValueTypeMetaData &value_schema) {
+                         return self.ts(&value_schema);
+                     }, "value_schema"_a, nb::rv_policy::reference)
+                .def("tss", [](TypeRegistry &self, const ValueTypeMetaData &element_schema) {
+                         return self.tss(&element_schema);
+                     }, "element_schema"_a, nb::rv_policy::reference)
+                .def("tsd", [](TypeRegistry &self,
+                                const ValueTypeMetaData &key_schema,
+                                const TSValueTypeMetaData &value_ts) {
+                         return self.tsd(&key_schema, &value_ts);
+                     }, "key_schema"_a, "value_ts"_a, nb::rv_policy::reference)
+                .def("tsl", [](TypeRegistry &self, const TSValueTypeMetaData &element_ts, std::size_t fixed_size) {
+                         return self.tsl(&element_ts, fixed_size);
+                     }, "element_ts"_a, "fixed_size"_a = 0, nb::rv_policy::reference)
+                .def("tsw", [](TypeRegistry &self,
+                                const ValueTypeMetaData &value_schema,
+                                std::size_t period,
+                                std::size_t min_period) {
+                         return self.tsw(&value_schema, period, min_period);
+                     }, "value_schema"_a, "period"_a, "min_period"_a = 0, nb::rv_policy::reference)
+                .def("tsw_duration", [](TypeRegistry &self,
+                                         const ValueTypeMetaData &value_schema,
+                                         engine_time_delta_t time_range,
+                                         engine_time_delta_t min_time_range) {
+                         return self.tsw_duration(&value_schema, time_range, min_time_range);
+                     }, "value_schema"_a, "time_range"_a, "min_time_range"_a = engine_time_delta_t{0},
+                     nb::rv_policy::reference)
+                .def("tsb", [](TypeRegistry &self, std::string name, nb::handle fields) {
+                         return self.tsb(name, ts_bundle_fields(fields, "TypeRegistry.tsb"));
+                     }, "name"_a, "fields"_a, nb::rv_policy::reference)
+                .def("time_series_type", &TypeRegistry::time_series_type, "name"_a, nb::rv_policy::reference)
+                .def("named_tsb", &TypeRegistry::named_tsb, "name"_a, nb::rv_policy::reference);
+
+            nb::class_<TSOutputView>(ts_mod, "TSOutputView")
+                .def("bound", &TSOutputView::bound)
+                .def("valid", &TSOutputView::valid)
+                .def("all_valid", &TSOutputView::all_valid)
+                .def("modified", &TSOutputView::modified)
+                .def_prop_ro("evaluation_time",
+                             [](const TSOutputView &self) { return self.evaluation_time(); })
+                .def_prop_ro("last_modified_time",
+                             [](const TSOutputView &self) { return self.last_modified_time(); })
+                .def_prop_ro("schema", [](const TSOutputView &self) { return self.schema(); },
+                             nb::rv_policy::reference)
+                .def_prop_ro("value", &ts_output_value_to_python)
+                .def_prop_ro("delta_value", &ts_output_delta_value_to_python)
+                .def("apply_value", &apply_output_view_value, nb::arg("value").none())
+                .def("as_bundle", [](TSOutputView &self) { return self.as_bundle(); }, nb::keep_alive<0, 1>())
+                .def("as_list", [](TSOutputView &self) { return self.as_list(); }, nb::keep_alive<0, 1>());
+
+            nb::class_<TSBOutputView>(ts_mod, "TSBOutputView")
+                .def("__len__", &TSBOutputView::size)
+                .def("size", &TSBOutputView::size)
+                .def("empty", &TSBOutputView::empty)
+                .def("has_field", &TSBOutputView::has_field, "name"_a)
+                .def("field", [](TSBOutputView &self, std::string_view name) { return self.field(name); },
+                     "name"_a,
+                     nb::keep_alive<0, 1>())
+                .def("at", [](TSBOutputView &self, std::size_t index) { return self.at(index); },
+                     "index"_a,
+                     nb::keep_alive<0, 1>())
+                .def("__getitem__", [](TSBOutputView &self, std::string_view name) { return self.field(name); },
+                     "name"_a,
+                     nb::keep_alive<0, 1>());
+
+            nb::class_<TSLOutputView>(ts_mod, "TSLOutputView")
+                .def("__len__", &TSLOutputView::size)
+                .def("size", &TSLOutputView::size)
+                .def("empty", &TSLOutputView::empty)
+                .def("at", [](TSLOutputView &self, std::size_t index) { return self.at(index); },
+                     "index"_a,
+                     nb::keep_alive<0, 1>())
+                .def("__getitem__", [](TSLOutputView &self, std::size_t index) { return self.at(index); },
+                     "index"_a,
+                     nb::keep_alive<0, 1>());
+
+            nb::class_<TSOutput>(ts_mod, "TSOutput")
+                .def(nb::init<const TSValueTypeMetaData &>(), "schema"_a)
+                .def("has_value", &TSOutput::has_value)
+                .def("dirty", &TSOutput::dirty)
+                .def("cleanup_delta", &TSOutput::cleanup_delta)
+                .def("clear_dirty", &TSOutput::clear_dirty)
+                .def_prop_ro("schema", [](const TSOutput &self) { return self.schema(); }, nb::rv_policy::reference)
+                .def("view", [](TSOutput &self, engine_time_t evaluation_time) {
+                         return self.view(evaluation_time);
+                     }, "evaluation_time"_a = MIN_DT, nb::keep_alive<0, 1>())
+                .def("apply_value", &apply_output_value, nb::arg("value").none(), "evaluation_time"_a,
+                     nb::rv_policy::reference_internal);
+
+            nb::class_<TSInputView>(ts_mod, "TSInputView")
+                .def("bound", &TSInputView::bound)
+                .def("is_bindable", &TSInputView::is_bindable)
+                .def("valid", &TSInputView::valid)
+                .def("all_valid", &TSInputView::all_valid)
+                .def("modified", &TSInputView::modified)
+                .def("active", &TSInputView::active)
+                .def("make_active", &TSInputView::make_active)
+                .def("make_passive", &TSInputView::make_passive)
+                .def("bind_output", [](TSInputView &self, const TSOutputView &output) {
+                         self.bind_output(output);
+                         return true;
+                     }, "output"_a, nb::keep_alive<1, 2>())
+                .def("unbind_output", &TSInputView::unbind_output)
+                .def_prop_ro("evaluation_time",
+                             [](const TSInputView &self) { return self.evaluation_time(); })
+                .def_prop_ro("last_modified_time",
+                             [](const TSInputView &self) { return self.last_modified_time(); })
+                .def_prop_ro("schema", [](const TSInputView &self) { return self.schema(); },
+                             nb::rv_policy::reference)
+                .def_prop_ro("value", &ts_input_value_to_python)
+                .def_prop_ro("delta_value", &ts_input_delta_value_to_python)
+                .def("as_bundle", [](TSInputView &self) { return self.as_bundle(); }, nb::keep_alive<0, 1>())
+                .def("as_list", [](TSInputView &self) { return self.as_list(); }, nb::keep_alive<0, 1>());
+
+            nb::class_<TSBInputView>(ts_mod, "TSBInputView")
+                .def("__len__", &TSBInputView::size)
+                .def("size", &TSBInputView::size)
+                .def("empty", &TSBInputView::empty)
+                .def("has_field", &TSBInputView::has_field, "name"_a)
+                .def("bound", &TSBInputView::bound)
+                .def("valid", &TSBInputView::valid)
+                .def("all_valid", &TSBInputView::all_valid)
+                .def("modified", &TSBInputView::modified)
+                .def_prop_ro("value", [](const TSBInputView &self) { return ts_input_value_to_python(self.base()); })
+                .def_prop_ro("delta_value",
+                             [](const TSBInputView &self) { return ts_input_delta_value_to_python(self.base()); })
+                .def("field", [](TSBInputView &self, std::string_view name) { return self.field(name); },
+                     "name"_a,
+                     nb::keep_alive<0, 1>())
+                .def("at", [](TSBInputView &self, std::size_t index) { return self.at(index); },
+                     "index"_a,
+                     nb::keep_alive<0, 1>())
+                .def("__getitem__", [](TSBInputView &self, std::string_view name) { return self.field(name); },
+                     "name"_a,
+                     nb::keep_alive<0, 1>());
+
+            nb::class_<TSLInputView>(ts_mod, "TSLInputView")
+                .def("__len__", &TSLInputView::size)
+                .def("size", &TSLInputView::size)
+                .def("empty", &TSLInputView::empty)
+                .def("bound", &TSLInputView::bound)
+                .def("valid", &TSLInputView::valid)
+                .def("all_valid", &TSLInputView::all_valid)
+                .def("modified", &TSLInputView::modified)
+                .def_prop_ro("value", [](const TSLInputView &self) { return ts_input_value_to_python(self.base()); })
+                .def_prop_ro("delta_value",
+                             [](const TSLInputView &self) { return ts_input_delta_value_to_python(self.base()); })
+                .def("at", [](TSLInputView &self, std::size_t index) { return self.at(index); },
+                     "index"_a,
+                     nb::keep_alive<0, 1>())
+                .def("__getitem__", [](TSLInputView &self, std::size_t index) { return self.at(index); },
+                     "index"_a,
+                     nb::keep_alive<0, 1>());
+
+            nb::class_<TSInput>(ts_mod, "TSInput")
+                .def(nb::init<>())
+                .def_static("create", &make_input, "schema"_a, "endpoint_schema"_a)
+                .def("has_value", &TSInput::has_value)
+                .def_prop_ro("schema", [](const TSInput &self) { return self.schema(); }, nb::rv_policy::reference)
+                .def("view", [](TSInput &self, engine_time_t evaluation_time) {
+                         return self.view(nullptr, evaluation_time);
+                     }, "evaluation_time"_a = MIN_DT, nb::keep_alive<0, 1>());
 
             nb::class_<ValueView>(value_mod, "ValueView")
                 .def("valid", &ValueView::valid)
@@ -544,9 +887,9 @@ namespace hgraph
             value_mod.def("tuple_value", &tuple_value, "schemas"_a, "source"_a);
             value_mod.def("bundle_value", &bundle_value, "name"_a, "fields"_a, "source"_a);
             value_mod.def("map_value", &map_value, "key_schema"_a, "value_schema"_a, "source"_a);
-            value_mod.def("engine_time_list", &engine_time_list, "microseconds"_a);
-            value_mod.def("engine_delta_cyclic_buffer", &engine_delta_cyclic_buffer, "microseconds"_a, "capacity"_a);
-            value_mod.def("engine_date_queue", &engine_date_queue, "days_since_epoch"_a);
+            value_mod.def("engine_time_list", &engine_time_list, "times"_a);
+            value_mod.def("engine_delta_cyclic_buffer", &engine_delta_cyclic_buffer, "durations"_a, "capacity"_a);
+            value_mod.def("engine_date_queue", &engine_date_queue, "dates"_a);
             value_mod.def("unsupported_scalar_to_python", &unsupported_scalar_to_python);
 
             m.attr("ValueTypeKind")    = value_mod.attr("ValueTypeKind");
@@ -563,6 +906,18 @@ namespace hgraph
             m.attr("MapView")          = value_mod.attr("MapView");
             m.attr("CyclicBufferView") = value_mod.attr("CyclicBufferView");
             m.attr("QueueView")        = value_mod.attr("QueueView");
+            m.attr("TSTypeKind")       = ts_mod.attr("TSTypeKind");
+            m.attr("TSEndpointRole")   = ts_mod.attr("TSEndpointRole");
+            m.attr("TSValueTypeMetaData") = ts_mod.attr("TSValueTypeMetaData");
+            m.attr("TSEndpointSchema") = ts_mod.attr("TSEndpointSchema");
+            m.attr("TSOutput")         = ts_mod.attr("TSOutput");
+            m.attr("TSOutputView")     = ts_mod.attr("TSOutputView");
+            m.attr("TSBOutputView")    = ts_mod.attr("TSBOutputView");
+            m.attr("TSLOutputView")    = ts_mod.attr("TSLOutputView");
+            m.attr("TSInput")          = ts_mod.attr("TSInput");
+            m.attr("TSInputView")      = ts_mod.attr("TSInputView");
+            m.attr("TSBInputView")     = ts_mod.attr("TSBInputView");
+            m.attr("TSLInputView")     = ts_mod.attr("TSLInputView");
 
             m.def("register_builtin_value_types", &register_builtin_value_types);
             m.def("value_from_python", &value_from_python_schema, "schema"_a, "source"_a);
@@ -575,10 +930,13 @@ namespace hgraph
             m.def("tuple_value", &tuple_value, "schemas"_a, "source"_a);
             m.def("bundle_value", &bundle_value, "name"_a, "fields"_a, "source"_a);
             m.def("map_value", &map_value, "key_schema"_a, "value_schema"_a, "source"_a);
-            m.def("engine_time_list", &engine_time_list, "microseconds"_a);
-            m.def("engine_delta_cyclic_buffer", &engine_delta_cyclic_buffer, "microseconds"_a, "capacity"_a);
-            m.def("engine_date_queue", &engine_date_queue, "days_since_epoch"_a);
+            m.def("engine_time_list", &engine_time_list, "times"_a);
+            m.def("engine_delta_cyclic_buffer", &engine_delta_cyclic_buffer, "durations"_a, "capacity"_a);
+            m.def("engine_date_queue", &engine_date_queue, "dates"_a);
             m.def("unsupported_scalar_to_python", &unsupported_scalar_to_python);
+
+            ts_mod.def("make_input", &make_input, "schema"_a, "endpoint_schema"_a);
+            m.def("make_input", &make_input, "schema"_a, "endpoint_schema"_a);
         }
     }  // namespace
 }  // namespace hgraph

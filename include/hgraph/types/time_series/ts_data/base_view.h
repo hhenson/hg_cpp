@@ -66,6 +66,14 @@ namespace hgraph
         /** Delta value for ``evaluation_time``, or a typed null view when unchanged. */
         [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const;
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        /** Current value converted by the TSData binding's type-erased Python export op. */
+        [[nodiscard]] nb::object value_to_python() const;
+
+        /** Delta value for ``evaluation_time`` converted by the TSData binding's type-erased Python export op. */
+        [[nodiscard]] nb::object delta_value_to_python(engine_time_t evaluation_time) const;
+#endif
+
         /** Last engine time that modified this TSData node, or ``MIN_DT`` if never valid. */
         [[nodiscard]] engine_time_t last_modified_time() const;
 
@@ -188,6 +196,11 @@ namespace hgraph
 
         /** Copy a value-layer view into this TSData node using the binding's type-erased copy op. */
         [[nodiscard]] bool copy_value_from(const ValueView &source);
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        /** Apply a Python object through the TSData binding's type-erased conversion op. */
+        [[nodiscard]] bool from_python(nb::handle source);
+#endif
 
       private:
         void require_active_mutation() const;

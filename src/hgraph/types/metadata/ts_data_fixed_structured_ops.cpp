@@ -16,6 +16,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -232,6 +233,11 @@ namespace hgraph::ts_data_plan_factory_detail
                 .mutable_delta_memory_impl = &fixed_mutable_delta_memory,
                 .cleanup_delta_impl        = &fixed_cleanup_delta,
                 .copy_value_from_impl      = &fixed_copy_value_from,
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                .from_python_impl          = &fixed_from_python,
+                .to_python_impl            = &fixed_to_python,
+                .delta_to_python_impl      = &fixed_delta_to_python,
+#endif
             };
             ops.size_impl                   = &fixed_indexed_size;
             ops.element_binding_impl        = &fixed_indexed_element_binding;
@@ -243,7 +249,12 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             delta_bundle_ops = IndexedValueOps{
                 {this, false, &fixed_delta_bundle_hash, &fixed_delta_bundle_equals, &fixed_delta_bundle_compare,
-                 &fixed_delta_bundle_to_string},
+                 &fixed_delta_bundle_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                 ,
+                 &fixed_delta_bundle_to_python
+#endif
+                },
                 &fixed_indexed_size,
                 &fixed_delta_bundle_element_at,
                 &fixed_delta_bundle_element_binding,
@@ -253,7 +264,12 @@ namespace hgraph::ts_data_plan_factory_detail
 
             delta_map_ops = MapValueOps{
                 {{this, false, &fixed_delta_map_hash, &fixed_delta_map_equals, &fixed_delta_map_compare,
-                  &fixed_delta_map_to_string},
+                  &fixed_delta_map_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                  ,
+                  &fixed_delta_map_to_python
+#endif
+                 },
                  &fixed_delta_map_size,
                  &fixed_delta_map_key_at_index,
                  &fixed_delta_map_key_binding,
@@ -271,7 +287,12 @@ namespace hgraph::ts_data_plan_factory_detail
 
             delta_key_set_ops = SetValueOps{
                 {{this, false, &fixed_delta_key_set_hash, &fixed_delta_key_set_equals, &fixed_delta_key_set_compare,
-                  &fixed_delta_key_set_to_string},
+                  &fixed_delta_key_set_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                  ,
+                  &fixed_delta_key_set_to_python
+#endif
+                 },
                  &fixed_delta_map_size,
                  &fixed_delta_map_key_at_index,
                  &fixed_delta_map_key_binding,
@@ -563,6 +584,22 @@ namespace hgraph::ts_data_plan_factory_detail
             return indexed_to_string(ctx(context), memory, true);
         }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] static nb::object fixed_delta_bundle_to_python(const void *context, const void *memory)
+        {
+            const auto *state = ctx(context);
+            nb::dict    result;
+            for (std::size_t index = 0; index < state->element_count(); ++index)
+            {
+                if (!child_modified_for_parent_time(state, memory, index)) { continue; }
+                const char *name = state->schema->fields()[index].name;
+                if (name == nullptr || *name == '\0') { continue; }
+                result[nb::str{name}] = child_delta_view(state, memory, index).to_python();
+            }
+            return result;
+        }
+#endif
+
         [[nodiscard]] static bool child_modified_for_parent_time(const FixedTSDataContext *state, const void *memory,
                                                                  std::size_t index) noexcept
         {
@@ -806,6 +843,20 @@ namespace hgraph::ts_data_plan_factory_detail
             return fmt::to_string(out);
         }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] static nb::object fixed_delta_map_to_python(const void *context, const void *memory)
+        {
+            const auto *state = ctx(context);
+            nb::dict    result;
+            for (std::size_t index = 0; index < state->element_count(); ++index)
+            {
+                if (!child_modified_for_parent_time(state, memory, index)) { continue; }
+                result[nb::int_{state->ordinal_keys[index]}] = child_delta_view(state, memory, index).to_python();
+            }
+            return result;
+        }
+#endif
+
         [[nodiscard]] static std::size_t fixed_delta_key_set_hash(const void *context, const void *memory)
         {
             const auto *state  = ctx(context);
@@ -884,6 +935,20 @@ namespace hgraph::ts_data_plan_factory_detail
             return fmt::to_string(out);
         }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] static nb::object fixed_delta_key_set_to_python(const void *context, const void *memory)
+        {
+            const auto *state = ctx(context);
+            nb::set     result;
+            for (std::size_t index = 0; index < state->element_count(); ++index)
+            {
+                if (!child_modified_for_parent_time(state, memory, index)) { continue; }
+                result.add(nb::int_{state->ordinal_keys[index]});
+            }
+            return result;
+        }
+#endif
+
         [[nodiscard]] static bool fixed_copy_value_from(const void *context, void *memory, const ValueView &source,
                                                         engine_time_t modified_time)
         {
@@ -930,6 +995,217 @@ namespace hgraph::ts_data_plan_factory_detail
             }
             return newly_modified;
         }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] static nb::object fixed_to_python(const void *context, const void *memory)
+        {
+            const auto *state = ctx(context);
+            return state->layout_ptr()->value_binding->checked_ops().to_python(fixed_value_memory(context, memory));
+        }
+
+        [[nodiscard]] static nb::object fixed_delta_to_python(const void *context,
+                                                              const void *memory,
+                                                              engine_time_t evaluation_time)
+        {
+            const auto *state = ctx(context);
+            if (fixed_tracking(state, memory)->last_modified_time != evaluation_time) { return nb::none(); }
+            return state->layout_ptr()->delta_binding->checked_ops().to_python(fixed_delta_memory(context, memory));
+        }
+
+        [[nodiscard]] static bool is_python_sequence(nb::handle source)
+        {
+            nb::object object = nb::borrow<nb::object>(source);
+            return nb::isinstance<nb::list>(object) || nb::isinstance<nb::tuple>(object);
+        }
+
+        [[nodiscard]] static bool is_python_mapping(nb::handle source)
+        {
+            nb::object object = nb::borrow<nb::object>(source);
+            return nb::isinstance<nb::dict>(object) || nb::hasattr(object, "items");
+        }
+
+        template <typename Visitor>
+        static void for_each_python_mapping_item(nb::handle source, const char *what, Visitor visitor)
+        {
+            if (!is_python_mapping(source))
+            {
+                throw std::invalid_argument(std::string{what} + " expects a Python mapping");
+            }
+
+            nb::object   object = nb::borrow<nb::object>(source);
+            nb::object   items  = object.attr("items")();
+            nb::iterator it     = nb::iter(items);
+            while (it != nb::iterator::sentinel())
+            {
+                nb::tuple pair = nb::cast<nb::tuple>(*it);
+                if (pair.size() != 2)
+                {
+                    throw std::invalid_argument(std::string{what} + " items() must yield key/value pairs");
+                }
+                visitor(nb::borrow<nb::object>(pair[0]), nb::borrow<nb::object>(pair[1]));
+                ++it;
+            }
+        }
+
+        [[nodiscard]] static std::size_t field_index_by_name(const FixedTSDataContext *state,
+                                                              std::string_view          name) noexcept
+        {
+            for (std::size_t index = 0; index < state->element_count(); ++index)
+            {
+                const char *field_name = state->schema->fields()[index].name;
+                if (field_name != nullptr && name == field_name) { return index; }
+            }
+            return TS_DATA_NO_CHILD_ID;
+        }
+
+        [[nodiscard]] static bool fixed_child_update_from_python(const FixedTSDataContext *state,
+                                                                 void                     *memory,
+                                                                 std::size_t               index,
+                                                                 nb::handle                source,
+                                                                 engine_time_t             modified_time)
+        {
+            if (source.is_none()) { return false; }
+
+            const auto *child = state->element_binding(index);
+            const auto &ops   = child_ops(*child);
+            void       *data  = child_data(state, memory, index);
+            if (!ops.from_python_impl(ops.context, data, source, modified_time)) { return false; }
+
+            auto *tracking = ops.mutable_tracking_impl(ops.context, data);
+            if (tracking == nullptr) { throw std::logic_error("fixed TSData child has no tracking record"); }
+            if (!tracking->record_modified(modified_time))
+            {
+                throw std::logic_error("fixed TSData child reported a duplicate Python update modification");
+            }
+            return true;
+        }
+
+        [[nodiscard]] static bool fixed_from_python_sequence(const FixedTSDataContext *state,
+                                                             void                     *memory,
+                                                             nb::handle                source,
+                                                             engine_time_t             modified_time,
+                                                             const char                *what)
+        {
+            if (!is_python_sequence(source))
+            {
+                throw std::invalid_argument(std::string{what} + " expects a Python list or tuple");
+            }
+
+            nb::object   object   = nb::borrow<nb::object>(source);
+            nb::sequence sequence = nb::cast<nb::sequence>(object);
+            const auto   count    = static_cast<std::size_t>(nb::len(sequence));
+            if (count != state->element_count())
+            {
+                throw std::invalid_argument(
+                    fmt::format("{} expects {} elements, got {}", what, state->element_count(), count));
+            }
+
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                nb::object child_source = sequence[index];
+                static_cast<void>(fixed_child_update_from_python(state, memory, index, child_source, modified_time));
+            }
+            return true;
+        }
+
+        [[nodiscard]] static bool fixed_from_python_bundle(const FixedTSDataContext *state,
+                                                           void                     *memory,
+                                                           nb::handle                source,
+                                                           engine_time_t             modified_time)
+        {
+            nb::object object = nb::borrow<nb::object>(source);
+            if (is_python_mapping(source))
+            {
+                bool touched = true;
+                for_each_python_mapping_item(source, "TSB from_python", [&](nb::handle key, nb::handle value) {
+                    const auto field = nb::cast<std::string>(key);
+                    const auto index = field_index_by_name(state, field);
+                    if (index == TS_DATA_NO_CHILD_ID)
+                    {
+                        throw std::invalid_argument(fmt::format("TSB from_python unknown field '{}'", field));
+                    }
+                    static_cast<void>(fixed_child_update_from_python(state, memory, index, value, modified_time));
+                });
+                return touched;
+            }
+
+            if (is_python_sequence(source))
+            {
+                return fixed_from_python_sequence(state, memory, source, modified_time, "TSB from_python");
+            }
+
+            bool saw_field = false;
+            for (std::size_t index = 0; index < state->element_count(); ++index)
+            {
+                const char *name = state->schema->fields()[index].name;
+                if (name == nullptr || *name == '\0')
+                {
+                    throw std::invalid_argument("TSB from_python has an unnamed field and cannot load attributes");
+                }
+                if (!nb::hasattr(object, name)) { continue; }
+                saw_field = true;
+                nb::object child_source = nb::getattr(object, name);
+                static_cast<void>(fixed_child_update_from_python(state, memory, index, child_source, modified_time));
+            }
+            if (!saw_field)
+            {
+                throw std::invalid_argument("TSB from_python expects a mapping, sequence, or field attributes");
+            }
+            return true;
+        }
+
+        [[nodiscard]] static bool fixed_from_python_list_mapping(const FixedTSDataContext *state,
+                                                                 void                     *memory,
+                                                                 nb::handle                source,
+                                                                 engine_time_t             modified_time)
+        {
+            for_each_python_mapping_item(source, "fixed TSL from_python", [&](nb::handle key, nb::handle value) {
+                const auto index = nb::cast<std::size_t>(key);
+                if (index >= state->element_count())
+                {
+                    throw std::out_of_range("fixed TSL from_python index out of range");
+                }
+                static_cast<void>(fixed_child_update_from_python(state, memory, index, value, modified_time));
+            });
+            return true;
+        }
+
+        [[nodiscard]] static bool fixed_from_python(const void *context,
+                                                    void       *memory,
+                                                    nb::handle  source,
+                                                    engine_time_t modified_time)
+        {
+            if (memory == nullptr)
+            {
+                throw std::logic_error("fixed TSData from_python requires live memory");
+            }
+            if (source.is_none())
+            {
+                throw std::invalid_argument("fixed TSData from_python requires a non-None source");
+            }
+            if (modified_time == MIN_DT)
+            {
+                throw std::invalid_argument("fixed TSData from_python requires a concrete engine time");
+            }
+
+            const auto *state = ctx(context);
+            const bool  first_for_parent = fixed_tracking(state, memory)->last_modified_time != modified_time;
+            bool        touched = false;
+            if (state->schema->kind == TSTypeKind::TSB)
+            {
+                touched = fixed_from_python_bundle(state, memory, source, modified_time);
+            }
+            else if (is_python_mapping(source))
+            {
+                touched = fixed_from_python_list_mapping(state, memory, source, modified_time);
+            }
+            else
+            {
+                touched = fixed_from_python_sequence(state, memory, source, modified_time, "fixed TSL from_python");
+            }
+            return first_for_parent && touched;
+        }
+#endif
     };
 
     struct FixedTSDataContextKey

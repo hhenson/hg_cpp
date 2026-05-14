@@ -66,6 +66,23 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("copy value");
     }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+    bool missing_from_python(const void *, void *, nb::handle, engine_time_t)
+    {
+        missing_ts_data_op("from Python");
+    }
+
+    nb::object missing_to_python(const void *, const void *)
+    {
+        missing_ts_data_op("to Python");
+    }
+
+    nb::object missing_delta_to_python(const void *, const void *, engine_time_t)
+    {
+        missing_ts_data_op("delta to Python");
+    }
+#endif
+
     std::size_t missing_indexed_size(const void *, const void *)
     {
         missing_ts_data_op("indexed size");

@@ -1,7 +1,11 @@
+from datetime import date, datetime, timedelta
+
 import numpy as np
 import pytest
 
 import hgraph
+
+EPOCH = datetime(1970, 1, 1)
 
 
 def assert_numpy_array(value, expected, dtype):
@@ -146,13 +150,45 @@ def test_specialized_views_are_exposed_from_nanobind():
 
 
 def test_engine_time_containers_export_numpy_time_dtypes():
-    assert_numpy_time_array(hgraph.engine_time_list([123, 456]).to_python(), [123, 456], "datetime64[us]")
     assert_numpy_time_array(
-        hgraph.engine_delta_cyclic_buffer([10, 20, 30], 2).to_python(),
+        hgraph.engine_time_list(
+            [
+                EPOCH + timedelta(microseconds=123),
+                EPOCH + timedelta(microseconds=456),
+            ]
+        ).to_python(),
+        [123, 456],
+        "datetime64[us]",
+    )
+    assert_numpy_time_array(
+        hgraph.engine_delta_cyclic_buffer(
+            [
+                timedelta(microseconds=10),
+                timedelta(microseconds=20),
+                timedelta(microseconds=30),
+            ],
+            2,
+        ).to_python(),
         [20, 30],
         "timedelta64[us]",
     )
-    assert_numpy_time_array(hgraph.engine_date_queue([1, 2]).to_python(), [1, 2], "datetime64[D]")
+    assert_numpy_time_array(
+        hgraph.engine_date_queue([date(1970, 1, 2), date(1970, 1, 3)]).to_python(),
+        [1, 2],
+        "datetime64[D]",
+    )
+
+
+def test_engine_chrono_scalars_round_trip_as_python_datetime_types():
+    registry = hgraph.TypeRegistry.instance()
+
+    timestamp = EPOCH + timedelta(days=2, seconds=3, microseconds=4)
+    duration = timedelta(seconds=5, microseconds=6)
+    day = date(2024, 2, 29)
+
+    assert hgraph.value_from_python(registry.engine_time(), timestamp).to_python() == timestamp
+    assert hgraph.value_from_python(registry.engine_time_delta(), duration).to_python() == duration
+    assert hgraph.value_from_python(registry.engine_date(), day).to_python() == day
 
 
 def test_unsupported_scalar_conversion_raises():

@@ -115,6 +115,26 @@ namespace hgraph
         return ValueView{data_layout.delta_binding, table.delta_memory_impl(table.context, data_)};
     }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+    nb::object TSDataView::value_to_python() const
+    {
+        require_live("TSDataView::value_to_python");
+        if (!has_current_value()) { return nb::none(); }
+
+        const auto &table = ops();
+        return table.to_python_impl(table.context, data_);
+    }
+
+    nb::object TSDataView::delta_value_to_python(engine_time_t evaluation_time) const
+    {
+        require_live("TSDataView::delta_value_to_python");
+        if (!modified(evaluation_time)) { return nb::none(); }
+
+        const auto &table = ops();
+        return table.delta_to_python_impl(table.context, data_, evaluation_time);
+    }
+#endif
+
     engine_time_t TSDataView::last_modified_time() const
     {
         return tracking().last_modified_time;
@@ -353,6 +373,29 @@ namespace hgraph
         }
         return newly_modified;
     }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+    bool TSDataMutationView::from_python(nb::handle source)
+    {
+        require_active_mutation();
+        if (source.is_none()) { return false; }
+
+        const auto &table = view_.ops();
+        const bool  newly_modified =
+            table.from_python_impl(table.context, view_.mutable_data(), source, mutation_time_);
+        if (newly_modified && !record_modified_local())
+        {
+            throw std::logic_error(
+                "TSDataMutationView::from_python reported a new modification that was already recorded");
+        }
+        if (newly_modified)
+        {
+            notify_parent_modified();
+        }
+        return newly_modified;
+    }
+
+#endif
 
     void TSDataMutationView::require_active_mutation() const
     {

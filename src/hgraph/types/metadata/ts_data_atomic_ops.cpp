@@ -35,6 +35,11 @@ namespace hgraph::ts_data_plan_factory_detail
                 .delta_memory_impl         = &atomic_delta_memory,
                 .mutable_delta_memory_impl = &atomic_mutable_delta_memory,
                 .copy_value_from_impl      = &atomic_copy_value_from,
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                .from_python_impl          = &atomic_from_python,
+                .to_python_impl            = &atomic_to_python,
+                .delta_to_python_impl      = &atomic_delta_to_python,
+#endif
             };
         }
 
@@ -140,6 +145,51 @@ namespace hgraph::ts_data_plan_factory_detail
             copy_assign_required(value_plan, atomic_mutable_value_memory(context, memory), source.data());
             return first_for_time;
         }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] static bool atomic_from_python(const void *context,
+                                                     void       *memory,
+                                                     nb::handle  source,
+                                                     engine_time_t modified_time)
+        {
+            if (memory == nullptr)
+            {
+                throw std::logic_error("TSData atomic from_python requires live TSData memory");
+            }
+            if (source.is_none())
+            {
+                throw std::invalid_argument("TSData atomic from_python requires a non-None source");
+            }
+            if (modified_time == MIN_DT)
+            {
+                throw std::invalid_argument("TSData atomic from_python requires a concrete engine time");
+            }
+
+            const auto *layout = atomic_layout(context);
+            const auto *tracking = atomic_tracking(context, memory);
+            const bool  first_for_time = tracking->last_modified_time != modified_time;
+            layout->value_binding->checked_ops().from_python(
+                *layout->value_binding,
+                atomic_mutable_value_memory(context, memory),
+                source);
+            return first_for_time;
+        }
+
+        [[nodiscard]] static nb::object atomic_to_python(const void *context, const void *memory)
+        {
+            const auto *layout = atomic_layout(context);
+            return layout->value_binding->checked_ops().to_python(atomic_value_memory(context, memory));
+        }
+
+        [[nodiscard]] static nb::object atomic_delta_to_python(const void *context,
+                                                               const void *memory,
+                                                               engine_time_t evaluation_time)
+        {
+            if (atomic_tracking(context, memory)->last_modified_time != evaluation_time) { return nb::none(); }
+            const auto *layout = atomic_layout(context);
+            return layout->delta_binding->checked_ops().to_python(atomic_delta_memory(context, memory));
+        }
+#endif
     };
 
     struct AtomicTSDataOpsKey

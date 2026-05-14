@@ -189,6 +189,17 @@ namespace hgraph
             return dict.at_slot(slot);
         }
 
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] nb::object input_tsb_to_python(const void *context, const void *memory);
+        [[nodiscard]] nb::object input_tsl_to_python(const void *context, const void *memory);
+        [[nodiscard]] nb::object input_tsb_delta_to_python(const void *context,
+                                                           const void *memory,
+                                                           engine_time_t evaluation_time);
+        [[nodiscard]] nb::object input_tsl_delta_to_python(const void *context,
+                                                           const void *memory,
+                                                           engine_time_t evaluation_time);
+#endif
+
         const detail::TSInputEndpointOps endpoint_ts_ops{
             .name = "TS",
             .child_count = &no_endpoint_child_count,
@@ -222,6 +233,10 @@ namespace hgraph
             .find_key = &no_endpoint_find_key,
             .child_schema = &tsl_endpoint_child_schema,
             .target_child = &tsl_target_child_at,
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+            .to_python = &input_tsl_to_python,
+            .delta_to_python = &input_tsl_delta_to_python,
+#endif
         };
 
         const detail::TSInputEndpointOps endpoint_tsw_ops{
@@ -243,6 +258,10 @@ namespace hgraph
             .find_key = &tsb_endpoint_find_key,
             .child_schema = &tsb_endpoint_child_schema,
             .target_child = &tsb_target_child_at,
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+            .to_python = &input_tsb_to_python,
+            .delta_to_python = &input_tsb_delta_to_python,
+#endif
         };
 
         const detail::TSInputEndpointOps endpoint_ref_ops{
@@ -282,6 +301,22 @@ namespace hgraph
                 throw std::logic_error("TSInput endpoint ops are not registered for the schema kind");
             }
             return *table[index];
+        }
+
+        [[nodiscard]] const detail::TSInputEndpointOps &
+        non_peered_input_endpoint_ops_for(const TSEndpointSchema &endpoint_schema)
+        {
+            if (endpoint_schema.is_peered())
+            {
+                throw std::logic_error("TSInput non-peered endpoint ops requested for a peered endpoint");
+            }
+
+            const auto &ops = input_endpoint_ops_for(endpoint_schema.schema());
+            if (!ops.supports_input_projection)
+            {
+                throw std::logic_error("TSInput non-peered endpoint ops are not available for this shape");
+            }
+            return ops;
         }
 
         [[nodiscard]] const TSDataBinding *regular_ts_data_binding_for(const TSValueTypeMetaData *schema)
@@ -363,13 +398,14 @@ namespace hgraph
 
         struct InputBindingContext
         {
-            const TSValueTypeMetaData      *schema{nullptr};
-            TSDataLayout                    layout{};
-            IndexedTSDataOps                ts_data_ops{};
-            IndexedValueOps                 value_ops{};
-            const ValueTypeBinding         *value_binding{nullptr};
-            const ValueTypeBinding         *delta_binding{nullptr};
-            std::vector<InputChild>         children{};
+            const TSValueTypeMetaData        *schema{nullptr};
+            const detail::TSInputEndpointOps *endpoint_ops{nullptr};
+            TSDataLayout                      layout{};
+            IndexedTSDataOps                  ts_data_ops{};
+            IndexedValueOps                   value_ops{};
+            const ValueTypeBinding           *value_binding{nullptr};
+            const ValueTypeBinding           *delta_binding{nullptr};
+            std::vector<InputChild>           children{};
         };
 
         struct TargetLinkContext
@@ -655,7 +691,7 @@ namespace hgraph
         {
             if (memory == nullptr) { return {}; }
             const auto *state = static_cast<const InputBindingContext *>(context);
-            const auto &endpoint_ops = input_endpoint_ops_for(state->schema);
+            const auto &endpoint_ops = *state->endpoint_ops;
             const bool  named = endpoint_ops.named_value_projection;
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "{}", endpoint_ops.value_open);
@@ -679,6 +715,112 @@ namespace hgraph
             fmt::format_to(std::back_inserter(out), "{}", endpoint_ops.value_close);
             return fmt::to_string(out);
         }
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] nb::object child_value_to_python(const TSDataBinding *binding, const void *memory)
+        {
+            if (binding == nullptr || memory == nullptr) { return nb::none(); }
+            const auto &ops = binding->checked_ops();
+            if (!ops.has_current_value_impl(ops.context, memory)) { return nb::none(); }
+            return ops.to_python_impl(ops.context, memory);
+        }
+
+        [[nodiscard]] nb::object child_delta_to_python(const TSDataBinding *binding,
+                                                       const void          *memory,
+                                                       engine_time_t        evaluation_time)
+        {
+            if (binding == nullptr || memory == nullptr) { return nb::none(); }
+            const auto &ops = binding->checked_ops();
+            const auto *tracking = ops.tracking_impl(ops.context, memory);
+            if (tracking == nullptr || tracking->last_modified_time != evaluation_time) { return nb::none(); }
+            return ops.delta_to_python_impl(ops.context, memory, evaluation_time);
+        }
+
+        [[nodiscard]] nb::object input_tsb_to_python(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            nb::dict result;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                const auto &field = state->schema->fields()[index];
+                if (field.name == nullptr) { continue; }
+                result[nb::str{field.name}] =
+                    child_value_to_python(input_element_binding(context, memory, index),
+                                          input_element_memory(context, memory, index));
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::object input_tsl_to_python(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            nb::list result;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                result.append(child_value_to_python(input_element_binding(context, memory, index),
+                                                    input_element_memory(context, memory, index)));
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::object input_to_python(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto &endpoint_ops = *state->endpoint_ops;
+            if (endpoint_ops.to_python == nullptr)
+            {
+                throw std::logic_error("TSInput non-peered to_python is not available for this endpoint shape");
+            }
+            return endpoint_ops.to_python(context, memory);
+        }
+
+        [[nodiscard]] nb::object input_tsb_delta_to_python(const void *context,
+                                                           const void *memory,
+                                                           engine_time_t evaluation_time)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            nb::dict result;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                const auto &field = state->schema->fields()[index];
+                if (field.name == nullptr) { continue; }
+                auto child_delta = child_delta_to_python(input_element_binding(context, memory, index),
+                                                         input_element_memory(context, memory, index),
+                                                         evaluation_time);
+                if (!child_delta.is_none()) { result[nb::str{field.name}] = child_delta; }
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::object input_tsl_delta_to_python(const void *context,
+                                                           const void *memory,
+                                                           engine_time_t evaluation_time)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            nb::dict result;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                auto child_delta = child_delta_to_python(input_element_binding(context, memory, index),
+                                                         input_element_memory(context, memory, index),
+                                                         evaluation_time);
+                if (!child_delta.is_none()) { result[nb::int_{index}] = child_delta; }
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::object input_delta_to_python(const void *context,
+                                                       const void *memory,
+                                                       engine_time_t evaluation_time)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto &endpoint_ops = *state->endpoint_ops;
+            if (endpoint_ops.delta_to_python == nullptr)
+            {
+                throw std::logic_error("TSInput non-peered delta_to_python is not available for this endpoint shape");
+            }
+            return endpoint_ops.delta_to_python(context, memory, evaluation_time);
+        }
+#endif
 
         [[nodiscard]] bool target_link_has_current_value(const void *context, const void *memory)
         {
@@ -709,6 +851,24 @@ namespace hgraph
         }
 
         void target_link_cleanup_delta(const void *, void *, engine_time_t) {}
+
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] nb::object target_link_to_python(const void *context, const void *memory)
+        {
+            const auto *link = target_storage(static_cast<const TargetLinkContext *>(context), memory);
+            const auto  target = link != nullptr ? link->target_view() : TSDataView{};
+            return target.valid() ? target.value_to_python() : nb::none();
+        }
+
+        [[nodiscard]] nb::object target_link_delta_to_python(const void *context,
+                                                             const void *memory,
+                                                             engine_time_t evaluation_time)
+        {
+            const auto *link = target_storage(static_cast<const TargetLinkContext *>(context), memory);
+            const auto  target = link != nullptr ? link->target_view() : TSDataView{};
+            return target.valid() ? target.delta_value_to_python(evaluation_time) : nb::none();
+        }
+#endif
 
         [[nodiscard]] const TSDataBinding *make_target_link_binding(const TSEndpointSchema           &endpoint_schema,
                                                                     const MemoryUtils::StoragePlan   &root_plan,
@@ -748,6 +908,10 @@ namespace hgraph
                 .value_memory_impl = &target_link_value_memory,
                 .delta_memory_impl = &target_link_delta_memory,
                 .cleanup_delta_impl = &target_link_cleanup_delta,
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                .to_python_impl = &target_link_to_python,
+                .delta_to_python_impl = &target_link_delta_to_python,
+#endif
             };
 
             const auto &binding = TSDataBinding::intern(*context->schema, root_plan, context->ts_data_ops);
@@ -777,6 +941,7 @@ namespace hgraph
             const auto &local_plan = input_storage_plan(endpoint_schema);
             auto context = std::make_unique<InputBindingContext>();
             context->schema = endpoint_schema.schema();
+            context->endpoint_ops = &non_peered_input_endpoint_ops_for(endpoint_schema);
             context->layout.tracking_offset = storage_offset + tracking_offset(local_plan);
             context->children.reserve(endpoint_schema.children().size());
 
@@ -825,6 +990,10 @@ namespace hgraph
                 .delta_memory_impl = &input_delta_memory,
                 .mutable_delta_memory_impl = &input_mutable_delta_memory,
                 .cleanup_delta_impl = &input_cleanup_delta,
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                .to_python_impl = &input_to_python,
+                .delta_to_python_impl = &input_delta_to_python,
+#endif
             };
             context->ts_data_ops.size_impl = &input_indexed_size;
             context->ts_data_ops.element_binding_impl = &input_element_binding;

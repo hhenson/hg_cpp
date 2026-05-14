@@ -22,6 +22,7 @@
 #include <typeinfo>
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
+#include <hgraph/python/chrono.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -300,7 +301,8 @@ namespace hgraph
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         template <typename T>
         constexpr bool python_scalar_castable =
-            std::is_arithmetic_v<T> || std::is_same_v<T, std::string>;
+            std::is_arithmetic_v<T> || std::is_same_v<T, std::string> || std::is_same_v<T, engine_date_t> ||
+            std::is_same_v<T, engine_time_t> || std::is_same_v<T, engine_time_delta_t>;
 
         template <typename T>
         nb::object to_python_thunk(const void *, const void *memory)
