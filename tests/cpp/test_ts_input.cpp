@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -159,6 +160,7 @@ TEST_CASE("TSInput construction uses generic endpoint annotations")
 
     auto       &registry = TypeRegistry::instance();
     const auto *int_meta = registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::int64_t>("int64");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *list     = registry.tsl(ts_int, 2);
     const auto *root     = registry.tsb("TSInputAnnotatedRoot", {{"items", list}});
@@ -577,6 +579,37 @@ TEST_CASE("TSInput output binding levels expose values and data views from root 
     REQUIRE(leaf_list_view[1].value().checked_as<int>() == 2000);
     REQUIRE(leaf_list_view[0].data_view().data() == first_element_output.data_view().data());
     REQUIRE(leaf_list_view[1].data_view().data() == second_element_output.data_view().data());
+
+    REQUIRE(root_view.modified());
+    REQUIRE(leaf.delta_value().checked_as<int>() == 7);
+    auto bundle_delta = bundle.delta_value().as_bundle();
+    REQUIRE(bundle_delta.at("x").checked_as<int>() == 10);
+    REQUIRE(bundle_delta.at("y").checked_as<int>() == 20);
+
+    Value key_zero{std::int64_t{0}};
+    Value key_one{std::int64_t{1}};
+    auto  whole_list_delta = whole_list.delta_value().as_map();
+    REQUIRE(whole_list_delta.size() == 2);
+    REQUIRE(whole_list_delta.at(key_zero.view()).checked_as<int>() == 100);
+    REQUIRE(whole_list_delta.at(key_one.view()).checked_as<int>() == 200);
+
+    auto leaf_list_delta = leaf_list.delta_value().as_map();
+    REQUIRE(leaf_list_delta.size() == 2);
+    REQUIRE(leaf_list_delta.at(key_zero.view()).checked_as<int>() == 1000);
+    REQUIRE(leaf_list_delta.at(key_one.view()).checked_as<int>() == 2000);
+
+    auto root_delta = root_view.delta_value().as_bundle();
+    REQUIRE(root_delta.at("leaf").checked_as<int>() == 7);
+    REQUIRE(root_delta.at("bundle").as_bundle().at("x").checked_as<int>() == 10);
+    REQUIRE(root_delta.at("bundle").as_bundle().at("y").checked_as<int>() == 20);
+    REQUIRE(root_delta.at("whole_list").as_map().at(key_zero.view()).checked_as<int>() == 100);
+    REQUIRE(root_delta.at("whole_list").as_map().at(key_one.view()).checked_as<int>() == 200);
+    REQUIRE(root_delta.at("leaf_list").as_map().at(key_zero.view()).checked_as<int>() == 1000);
+    REQUIRE(root_delta.at("leaf_list").as_map().at(key_one.view()).checked_as<int>() == 2000);
+
+    auto root_data_delta = root_view.data_view().delta_value(t1).as_bundle();
+    REQUIRE(root_data_delta.at("leaf").checked_as<int>() == 7);
+    REQUIRE(root_data_delta.at("leaf_list").as_map().at(key_one.view()).checked_as<int>() == 2000);
 
     auto root_data = root_view.data_view();
     REQUIRE(root_data.valid());

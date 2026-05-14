@@ -3,8 +3,10 @@
 #include <hgraph/types/time_series/ts_input/detail.h>
 
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
+#include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/container_ops.h>
+#include <hgraph/types/value/specialized_views.h>
 #include <hgraph/util/scope.h>
 
 #include <algorithm>
@@ -12,6 +14,7 @@
 #include <cstdint>
 #include <fmt/format.h>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -27,6 +30,12 @@ namespace hgraph
         [[nodiscard]] constexpr std::size_t ts_kind_index(TSTypeKind kind) noexcept
         {
             return static_cast<std::size_t>(kind);
+        }
+
+        [[nodiscard]] std::size_t combine_hash(std::size_t seed, std::size_t value) noexcept
+        {
+            seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+            return seed;
         }
 
         [[nodiscard]] bool output_view_bound(const TSOutputView &output) noexcept
@@ -396,6 +405,92 @@ namespace hgraph
             bool                       target_link{false};
         };
 
+        struct InputBundleDeltaSurface
+        {
+            IndexedValueOps ops{};
+        };
+
+        struct InputListDeltaSurface
+        {
+            MapValueOps               map_ops{};
+            SetValueOps               key_set_ops{};
+            const ValueTypeBinding   *ordinal_key_binding{nullptr};
+            const ValueTypeBinding   *map_value_binding{nullptr};
+            const ValueTypeBinding   *key_set_binding{nullptr};
+            std::vector<std::int64_t> ordinal_keys{};
+        };
+
+        class InputDeltaSurface
+        {
+          public:
+            enum class Kind : std::uint8_t
+            {
+                Empty,
+                Bundle,
+                List,
+            };
+
+            InputDeltaSurface() noexcept = default;
+            InputDeltaSurface(const InputDeltaSurface &) = delete;
+            InputDeltaSurface &operator=(const InputDeltaSurface &) = delete;
+            InputDeltaSurface(InputDeltaSurface &&) = delete;
+            InputDeltaSurface &operator=(InputDeltaSurface &&) = delete;
+
+            ~InputDeltaSurface() noexcept { destroy(); }
+
+            [[nodiscard]] Kind kind() const noexcept { return kind_; }
+
+            [[nodiscard]] InputBundleDeltaSurface &emplace_bundle()
+            {
+                destroy();
+                std::construct_at(&storage_.bundle);
+                kind_ = Kind::Bundle;
+                return storage_.bundle;
+            }
+
+            [[nodiscard]] InputListDeltaSurface &emplace_list()
+            {
+                destroy();
+                std::construct_at(&storage_.list);
+                kind_ = Kind::List;
+                return storage_.list;
+            }
+
+            [[nodiscard]] InputBundleDeltaSurface &bundle() noexcept { return storage_.bundle; }
+            [[nodiscard]] const InputBundleDeltaSurface &bundle() const noexcept { return storage_.bundle; }
+            [[nodiscard]] InputListDeltaSurface &list() noexcept { return storage_.list; }
+            [[nodiscard]] const InputListDeltaSurface &list() const noexcept { return storage_.list; }
+
+          private:
+            union Storage
+            {
+                InputBundleDeltaSurface bundle;
+                InputListDeltaSurface   list;
+
+                Storage() noexcept {}
+                ~Storage() noexcept {}
+            };
+
+            void destroy() noexcept
+            {
+                switch (kind_)
+                {
+                    case Kind::Bundle:
+                        std::destroy_at(&storage_.bundle);
+                        break;
+                    case Kind::List:
+                        std::destroy_at(&storage_.list);
+                        break;
+                    case Kind::Empty:
+                        break;
+                }
+                kind_ = Kind::Empty;
+            }
+
+            Kind    kind_{Kind::Empty};
+            Storage storage_{};
+        };
+
         struct InputBindingContext
         {
             const TSValueTypeMetaData        *schema{nullptr};
@@ -403,6 +498,7 @@ namespace hgraph
             TSDataLayout                      layout{};
             IndexedTSDataOps                  ts_data_ops{};
             IndexedValueOps                   value_ops{};
+            InputDeltaSurface                 delta{};
             const ValueTypeBinding           *value_binding{nullptr};
             const ValueTypeBinding           *delta_binding{nullptr};
             std::vector<InputChild>           children{};
@@ -716,7 +812,469 @@ namespace hgraph
             return fmt::to_string(out);
         }
 
+        [[nodiscard]] const ValueTypeBinding *input_child_delta_binding(const void *context,
+                                                                        const void *memory,
+                                                                        std::size_t index)
+        {
+            const auto *binding = input_element_binding(context, memory, index);
+            if (binding == nullptr) { return nullptr; }
+            const auto &ops = binding->checked_ops();
+            const auto *layout = ops.layout_impl(ops.context);
+            return layout != nullptr ? layout->delta_binding : nullptr;
+        }
+
+        [[nodiscard]] bool input_child_modified_for_parent_time(const void *context,
+                                                                const void *memory,
+                                                                std::size_t index)
+        {
+            const auto *binding = input_element_binding(context, memory, index);
+            const auto *data = input_element_memory(context, memory, index);
+            if (binding == nullptr || data == nullptr) { return false; }
+
+            const auto &ops = binding->checked_ops();
+            const auto *tracking = ops.tracking_impl(ops.context, data);
+            return tracking != nullptr && tracking->last_modified_time == input_tracking(context, memory)->last_modified_time;
+        }
+
+        [[nodiscard]] ValueView input_child_delta_view(const void *context,
+                                                       const void *memory,
+                                                       std::size_t index)
+        {
+            const auto *binding = input_child_delta_binding(context, memory, index);
+            if (binding == nullptr) { return {}; }
+            if (!input_child_modified_for_parent_time(context, memory, index))
+            {
+                return ValueView{binding, nullptr};
+            }
+
+            const auto *child_binding = input_element_binding(context, memory, index);
+            const auto *child_data = input_element_memory(context, memory, index);
+            const auto &child_ops = child_binding->checked_ops();
+            return ValueView{binding, child_ops.delta_memory_impl(child_ops.context, child_data)};
+        }
+
+        [[nodiscard]] std::size_t input_view_hash(ValueView view)
+        {
+            if (!view.has_value()) { return std::hash<const ValueTypeBinding *>{}(view.binding()); }
+            return view.hash();
+        }
+
+        [[nodiscard]] const void *input_delta_bundle_element_at(const void *context,
+                                                                const void *memory,
+                                                                std::size_t index)
+        {
+            return input_child_delta_view(context, memory, index).data();
+        }
+
+        [[nodiscard]] const ValueTypeBinding *input_delta_bundle_element_binding(const void *context,
+                                                                                 const void *memory,
+                                                                                 std::size_t index) noexcept
+        {
+            return fallback_on_exception<const ValueTypeBinding *>(nullptr, [&] {
+                return input_child_delta_binding(context, memory, index);
+            });
+        }
+
+        [[nodiscard]] ValueView input_delta_bundle_projector(const void *context,
+                                                             const void *memory,
+                                                             std::size_t index)
+        {
+            return input_child_delta_view(context, memory, index);
+        }
+
+        [[nodiscard]] Range<ValueView> input_delta_bundle_make_range(const void *context, const void *memory)
+        {
+            return Range<ValueView>{
+                .context = context,
+                .memory = memory,
+                .limit = input_indexed_size(context, memory),
+                .predicate = nullptr,
+                .projector = &input_delta_bundle_projector,
+            };
+        }
+
+        [[nodiscard]] std::size_t input_delta_bundle_hash(const void *context, const void *memory)
+        {
+            std::size_t seed = 0;
+            const auto size = input_indexed_size(context, memory);
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                seed = combine_hash(seed, input_view_hash(input_child_delta_view(context, memory, index)));
+            }
+            return seed;
+        }
+
+        [[nodiscard]] bool input_delta_bundle_equals(const void *context,
+                                                     const void *lhs,
+                                                     const void *rhs) noexcept
+        {
+            if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
+            return fallback_on_exception(false, [&] {
+                const auto size = input_indexed_size(context, lhs);
+                if (input_indexed_size(context, rhs) != size) { return false; }
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    if (!input_child_delta_view(context, lhs, index).equals(input_child_delta_view(context, rhs, index)))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            });
+        }
+
+        [[nodiscard]] std::partial_ordering input_delta_bundle_compare(const void *context,
+                                                                       const void *lhs,
+                                                                       const void *rhs) noexcept
+        {
+            if (const auto order = value_ops_detail::null_order(lhs, rhs)) { return *order; }
+            return fallback_on_exception(std::partial_ordering::unordered, [&] {
+                const auto size = input_indexed_size(context, lhs);
+                if (input_indexed_size(context, rhs) != size) { return std::partial_ordering::unordered; }
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    const auto order =
+                        input_child_delta_view(context, lhs, index).compare(input_child_delta_view(context, rhs, index));
+                    if (order != 0) { return order; }
+                }
+                return std::partial_ordering::equivalent;
+            });
+        }
+
+        [[nodiscard]] std::string input_delta_bundle_to_string(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            fmt::memory_buffer out;
+            fmt::format_to(std::back_inserter(out), "{{");
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                if (index > 0) { fmt::format_to(std::back_inserter(out), ", "); }
+                const auto *name = state->schema->fields()[index].name;
+                fmt::format_to(std::back_inserter(out), "{}: {}",
+                               name != nullptr ? name : "",
+                               input_child_delta_view(context, memory, index).to_string());
+            }
+            fmt::format_to(std::back_inserter(out), "}}");
+            return fmt::to_string(out);
+        }
+
+        [[nodiscard]] bool input_delta_child_predicate(const void *context, const void *memory, std::size_t index)
+        {
+            return input_child_modified_for_parent_time(context, memory, index);
+        }
+
+        [[nodiscard]] std::size_t input_delta_map_size(const void *context, const void *memory) noexcept
+        {
+            return fallback_on_exception(std::size_t{0}, [&] {
+                const auto *state = static_cast<const InputBindingContext *>(context);
+                std::size_t count = 0;
+                for (std::size_t index = 0; index < state->children.size(); ++index)
+                {
+                    if (input_child_modified_for_parent_time(context, memory, index)) { ++count; }
+                }
+                return count;
+            });
+        }
+
+        [[nodiscard]] std::size_t input_nth_modified_child(const InputBindingContext *state,
+                                                           const void *memory,
+                                                           std::size_t ordinal)
+        {
+            std::size_t seen = 0;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                if (!input_child_modified_for_parent_time(state, memory, index)) { continue; }
+                if (seen++ == ordinal) { return index; }
+            }
+            throw std::out_of_range("TSInput TSL delta map index out of range");
+        }
+
+        [[nodiscard]] const void *input_delta_map_key_at_index(const void *context,
+                                                               const void *memory,
+                                                               std::size_t index)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto &delta = state->delta.list();
+            return &delta.ordinal_keys[input_nth_modified_child(state, memory, index)];
+        }
+
+        [[nodiscard]] const ValueTypeBinding *input_delta_map_key_binding(const void *context,
+                                                                          const void *,
+                                                                          std::size_t) noexcept
+        {
+            return static_cast<const InputBindingContext *>(context)->delta.list().ordinal_key_binding;
+        }
+
+        [[nodiscard]] const void *input_delta_map_value_at_index(const void *context,
+                                                                 const void *memory,
+                                                                 std::size_t index)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            return input_child_delta_view(context, memory, input_nth_modified_child(state, memory, index)).data();
+        }
+
+        [[nodiscard]] const ValueTypeBinding *input_delta_map_value_binding(const void *context,
+                                                                            const void *) noexcept
+        {
+            return static_cast<const InputBindingContext *>(context)->delta.list().map_value_binding;
+        }
+
+        [[nodiscard]] bool input_delta_map_contains(const void *context, const void *memory, const void *key)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto index = *MemoryUtils::cast<std::int64_t>(key);
+            return index >= 0 && static_cast<std::size_t>(index) < state->children.size() &&
+                   input_child_modified_for_parent_time(context, memory, static_cast<std::size_t>(index));
+        }
+
+        [[nodiscard]] const void *input_delta_map_value_at(const void *context, const void *memory, const void *key)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto index = *MemoryUtils::cast<std::int64_t>(key);
+            if (index < 0) { return nullptr; }
+            const auto slot = static_cast<std::size_t>(index);
+            if (slot >= state->children.size() || !input_child_modified_for_parent_time(context, memory, slot))
+            {
+                return nullptr;
+            }
+            return input_child_delta_view(context, memory, slot).data();
+        }
+
+        [[nodiscard]] ValueView input_delta_map_key_projector(const void *context,
+                                                              const void *,
+                                                              std::size_t index)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto &delta = state->delta.list();
+            return ValueView{delta.ordinal_key_binding, &delta.ordinal_keys[index]};
+        }
+
+        [[nodiscard]] ValueView input_delta_map_value_projector(const void *context,
+                                                                const void *memory,
+                                                                std::size_t index)
+        {
+            return input_child_delta_view(context, memory, index);
+        }
+
+        [[nodiscard]] std::pair<ValueView, ValueView> input_delta_map_kv_projector(const void *context,
+                                                                                   const void *memory,
+                                                                                   std::size_t index)
+        {
+            return {input_delta_map_key_projector(context, memory, index),
+                    input_delta_map_value_projector(context, memory, index)};
+        }
+
+        [[nodiscard]] Range<ValueView> input_delta_map_make_keys_range(const void *context, const void *memory)
+        {
+            return Range<ValueView>{
+                .context = context,
+                .memory = memory,
+                .limit = input_indexed_size(context, memory),
+                .predicate = &input_delta_child_predicate,
+                .projector = &input_delta_map_key_projector,
+            };
+        }
+
+        [[nodiscard]] Range<ValueView> input_delta_map_make_values_range(const void *context, const void *memory)
+        {
+            return Range<ValueView>{
+                .context = context,
+                .memory = memory,
+                .limit = input_indexed_size(context, memory),
+                .predicate = &input_delta_child_predicate,
+                .projector = &input_delta_map_value_projector,
+            };
+        }
+
+        [[nodiscard]] KeyValueRange<ValueView, ValueView> input_delta_map_make_kv_range(const void *context,
+                                                                                        const void *memory)
+        {
+            return KeyValueRange<ValueView, ValueView>{
+                .context = context,
+                .memory = memory,
+                .limit = input_indexed_size(context, memory),
+                .predicate = &input_delta_child_predicate,
+                .projector = &input_delta_map_kv_projector,
+            };
+        }
+
+        [[nodiscard]] SetView input_delta_map_key_set(const void *context,
+                                                      const ValueTypeBinding *,
+                                                      const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            return SetView{ValueView{state->delta.list().key_set_binding, memory}};
+        }
+
+        [[nodiscard]] std::size_t input_delta_map_hash(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto &delta = state->delta.list();
+            std::size_t result = 0;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                if (!input_child_modified_for_parent_time(context, memory, index)) { continue; }
+                const auto key_hash = delta.ordinal_key_binding->checked_ops().hash(&delta.ordinal_keys[index]);
+                const auto value_hash = input_view_hash(input_child_delta_view(context, memory, index));
+                result ^= combine_hash(key_hash, value_hash);
+            }
+            return result;
+        }
+
+        [[nodiscard]] bool input_delta_map_equals(const void *context, const void *lhs, const void *rhs) noexcept
+        {
+            if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
+            return fallback_on_exception(false, [&] {
+                const auto *state = static_cast<const InputBindingContext *>(context);
+                if (input_delta_map_size(context, lhs) != input_delta_map_size(context, rhs)) { return false; }
+                for (std::size_t index = 0; index < state->children.size(); ++index)
+                {
+                    if (!input_child_modified_for_parent_time(context, lhs, index)) { continue; }
+                    if (!input_child_modified_for_parent_time(context, rhs, index)) { return false; }
+                    if (!input_child_delta_view(context, lhs, index).equals(input_child_delta_view(context, rhs, index)))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            });
+        }
+
+        [[nodiscard]] std::partial_ordering input_delta_map_compare(const void *context,
+                                                                    const void *lhs,
+                                                                    const void *rhs) noexcept
+        {
+            if (const auto order = value_ops_detail::null_order(lhs, rhs)) { return *order; }
+            return input_delta_map_equals(context, lhs, rhs) ? std::partial_ordering::equivalent
+                                                             : std::partial_ordering::unordered;
+        }
+
+        [[nodiscard]] std::string input_delta_map_to_string(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto &delta = state->delta.list();
+            fmt::memory_buffer out;
+            fmt::format_to(std::back_inserter(out), "{{");
+            bool first = true;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                if (!input_child_modified_for_parent_time(context, memory, index)) { continue; }
+                if (!first) { fmt::format_to(std::back_inserter(out), ", "); }
+                first = false;
+                fmt::format_to(std::back_inserter(out), "{}: {}",
+                               delta.ordinal_keys[index],
+                               input_child_delta_view(context, memory, index).to_string());
+            }
+            fmt::format_to(std::back_inserter(out), "}}");
+            return fmt::to_string(out);
+        }
+
+        [[nodiscard]] std::size_t input_delta_key_set_hash(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto &delta = state->delta.list();
+            std::size_t result = 0;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                if (!input_child_modified_for_parent_time(context, memory, index)) { continue; }
+                result ^= delta.ordinal_key_binding->checked_ops().hash(&delta.ordinal_keys[index]);
+            }
+            return result;
+        }
+
+        [[nodiscard]] bool input_delta_key_set_equals(const void *context,
+                                                      const void *lhs,
+                                                      const void *rhs) noexcept
+        {
+            if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
+            return fallback_on_exception(false, [&] {
+                const auto *state = static_cast<const InputBindingContext *>(context);
+                for (std::size_t index = 0; index < state->children.size(); ++index)
+                {
+                    if (input_child_modified_for_parent_time(context, lhs, index) !=
+                        input_child_modified_for_parent_time(context, rhs, index))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            });
+        }
+
+        [[nodiscard]] std::partial_ordering input_delta_key_set_compare(const void *context,
+                                                                        const void *lhs,
+                                                                        const void *rhs) noexcept
+        {
+            if (const auto order = value_ops_detail::null_order(lhs, rhs)) { return *order; }
+            const auto lhs_size = input_delta_map_size(context, lhs);
+            const auto rhs_size = input_delta_map_size(context, rhs);
+            if (lhs_size < rhs_size) { return std::partial_ordering::less; }
+            if (lhs_size > rhs_size) { return std::partial_ordering::greater; }
+            return input_delta_key_set_equals(context, lhs, rhs) ? std::partial_ordering::equivalent
+                                                                 : std::partial_ordering::unordered;
+        }
+
+        [[nodiscard]] std::string input_delta_key_set_to_string(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto &delta = state->delta.list();
+            fmt::memory_buffer out;
+            fmt::format_to(std::back_inserter(out), "{{");
+            bool first = true;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                if (!input_child_modified_for_parent_time(context, memory, index)) { continue; }
+                if (!first) { fmt::format_to(std::back_inserter(out), ", "); }
+                first = false;
+                fmt::format_to(std::back_inserter(out), "{}", delta.ordinal_keys[index]);
+            }
+            fmt::format_to(std::back_inserter(out), "}}");
+            return fmt::to_string(out);
+        }
+
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
+        [[nodiscard]] nb::object input_delta_bundle_value_to_python(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            nb::dict result;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                if (!input_child_modified_for_parent_time(context, memory, index)) { continue; }
+                const auto *name = state->schema->fields()[index].name;
+                if (name == nullptr || *name == '\0') { continue; }
+                result[nb::str{name}] = input_child_delta_view(context, memory, index).to_python();
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::object input_delta_map_value_to_python(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto &delta = state->delta.list();
+            nb::dict result;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                if (!input_child_modified_for_parent_time(context, memory, index)) { continue; }
+                result[nb::int_{delta.ordinal_keys[index]}] = input_child_delta_view(context, memory, index).to_python();
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::object input_delta_key_set_to_python(const void *context, const void *memory)
+        {
+            const auto *state = static_cast<const InputBindingContext *>(context);
+            const auto &delta = state->delta.list();
+            nb::set result;
+            for (std::size_t index = 0; index < state->children.size(); ++index)
+            {
+                if (input_child_modified_for_parent_time(context, memory, index))
+                {
+                    result.add(nb::int_{delta.ordinal_keys[index]});
+                }
+            }
+            return result;
+        }
+
         [[nodiscard]] nb::object child_value_to_python(const TSDataBinding *binding, const void *memory)
         {
             if (binding == nullptr || memory == nullptr) { return nb::none(); }
@@ -944,6 +1502,12 @@ namespace hgraph
             context->endpoint_ops = &non_peered_input_endpoint_ops_for(endpoint_schema);
             context->layout.tracking_offset = storage_offset + tracking_offset(local_plan);
             context->children.reserve(endpoint_schema.children().size());
+            InputListDeltaSurface *list_delta = nullptr;
+            if (!context->endpoint_ops->named_value_projection)
+            {
+                list_delta = &context->delta.emplace_list();
+                list_delta->ordinal_keys.reserve(endpoint_schema.children().size());
+            }
 
             for (std::size_t index = 0; index < endpoint_schema.children().size(); ++index)
             {
@@ -957,6 +1521,10 @@ namespace hgraph
                     .regular_value_binding = regular_value_binding_for(child_schema.schema()),
                     .target_link = child_schema.is_peered(),
                 });
+                if (list_delta != nullptr)
+                {
+                    list_delta->ordinal_keys.push_back(static_cast<std::int64_t>(index));
+                }
             }
 
             context->value_ops = IndexedValueOps{
@@ -971,8 +1539,86 @@ namespace hgraph
 
             context->value_binding = &ValueTypeBinding::intern(*context->schema->value_schema, root_plan,
                                                                context->value_ops);
-            context->delta_binding = ValuePlanFactory::instance().binding_for(context->schema->delta_value_schema);
             context->layout.value_binding = context->value_binding;
+
+            const auto *delta_schema = context->schema->delta_value_schema;
+            if (delta_schema == nullptr)
+            {
+                throw std::logic_error("TSInput data binding requires a delta schema");
+            }
+
+            if (context->endpoint_ops->named_value_projection)
+            {
+                auto &delta = context->delta.emplace_bundle();
+                delta.ops = IndexedValueOps{
+                    {context.get(), false, &input_delta_bundle_hash, &input_delta_bundle_equals,
+                     &input_delta_bundle_compare, &input_delta_bundle_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                     ,
+                     &input_delta_bundle_value_to_python
+#endif
+                    },
+                    &input_indexed_size,
+                    &input_delta_bundle_element_at,
+                    &input_delta_bundle_element_binding,
+                    &input_delta_bundle_make_range,
+                    nullptr,
+                };
+                context->delta_binding = &ValueTypeBinding::intern(*delta_schema, root_plan, delta.ops);
+            }
+            else
+            {
+                auto &delta = *list_delta;
+                delta.ordinal_key_binding = ValuePlanFactory::instance().binding_for(delta_schema->key_type);
+                delta.map_value_binding = input_child_delta_binding(context.get(), nullptr, 0);
+                if (delta.ordinal_key_binding == nullptr || delta.map_value_binding == nullptr)
+                {
+                    throw std::logic_error("TSInput fixed-list delta bindings are not resolved");
+                }
+
+                delta.map_ops = MapValueOps{
+                    {{context.get(), false, &input_delta_map_hash, &input_delta_map_equals,
+                      &input_delta_map_compare, &input_delta_map_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                      ,
+                      &input_delta_map_value_to_python
+#endif
+                     },
+                     &input_delta_map_size,
+                     &input_delta_map_key_at_index,
+                     &input_delta_map_key_binding,
+                     &input_delta_map_make_keys_range,
+                     nullptr},
+                    &input_delta_map_contains,
+                    &input_delta_map_value_at,
+                    &input_delta_map_value_at_index,
+                    &input_delta_map_value_binding,
+                    &input_delta_map_make_keys_range,
+                    &input_delta_map_make_values_range,
+                    &input_delta_map_make_kv_range,
+                    &input_delta_map_key_set,
+                };
+
+                delta.key_set_ops = SetValueOps{
+                    {{context.get(), false, &input_delta_key_set_hash, &input_delta_key_set_equals,
+                      &input_delta_key_set_compare, &input_delta_key_set_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                      ,
+                      &input_delta_key_set_to_python
+#endif
+                     },
+                     &input_delta_map_size,
+                     &input_delta_map_key_at_index,
+                     &input_delta_map_key_binding,
+                     &input_delta_map_make_keys_range,
+                     nullptr},
+                    &input_delta_map_contains,
+                };
+
+                const auto *key_set_schema = TypeRegistry::instance().set(delta_schema->key_type);
+                delta.key_set_binding = &ValueTypeBinding::intern(*key_set_schema, root_plan, delta.key_set_ops);
+                context->delta_binding = &ValueTypeBinding::intern(*delta_schema, root_plan, delta.map_ops);
+            }
             context->layout.delta_binding = context->delta_binding;
 
             context->ts_data_ops = IndexedTSDataOps{};
