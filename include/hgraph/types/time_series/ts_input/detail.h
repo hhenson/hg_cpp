@@ -49,6 +49,8 @@ namespace hgraph::detail
         using child_schema_fn = const TSValueTypeMetaData *(*)(const TSValueTypeMetaData *schema,
                                                                std::size_t                index) noexcept;
         using target_child_fn = TSDataView (*)(TSDataView parent, std::size_t index);
+        /** Convert a non-peered input projection of this shape to a reference token. */
+        using reference_fn = TimeSeriesReference (*)(const TSInputView &view);
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         using to_python_fn = nb::object (*)(const void *context, const void *memory);
         using delta_to_python_fn = nb::object (*)(const void *context,
@@ -66,6 +68,7 @@ namespace hgraph::detail
         find_key_fn      find_key{nullptr};
         child_schema_fn  child_schema{nullptr};
         target_child_fn  target_child{nullptr};
+        reference_fn     reference{nullptr};
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         to_python_fn       to_python{nullptr};
         delta_to_python_fn delta_to_python{nullptr};

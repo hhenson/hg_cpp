@@ -221,7 +221,14 @@ A few notes on the cells that aren't immediate:
 - ``REF<T>`` is conceptually ``TS<TimeSeriesReference>``: the reference
   token itself is the value, and dereferencing to read the target's
   value is a runtime concern handled through binding state, not
-  through ``value_schema`` or ``delta_value_schema``. Note the
+  through ``value_schema`` or ``delta_value_schema``. A reference token
+  is either empty, peered to a single ``TSOutputHandle``, or a
+  non-peered collection of child reference tokens. Input views can
+  produce reference tokens for any shape: target links become direct
+  output references when bound and typed empty references when unbound;
+  non-peered structural prefixes recursively collect child reference
+  tokens; leaf shapes reached without a target link become typed empty
+  references. Note the
   asymmetry: every ``REF<T>`` *schema* (the ``TSValueTypeMetaData``)
   is unique per ``T`` and continues to carry the wrapped target
   schema via ``referenced_ts()`` — useful for binding validation,

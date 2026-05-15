@@ -198,6 +198,44 @@ namespace hgraph
             return dict.at_slot(slot);
         }
 
+        [[nodiscard]] TimeSeriesReference input_leaf_reference(const TSInputView &view)
+        {
+            return TimeSeriesReference::empty(view.schema());
+        }
+
+        [[nodiscard]] TimeSeriesReference input_tsl_reference(const TSInputView &view)
+        {
+            const auto *schema = view.schema();
+            if (schema == nullptr || schema->fixed_size() == 0) { return TimeSeriesReference::empty(schema); }
+
+            auto list = view.as_list();
+            std::vector<TimeSeriesReference> items;
+            items.reserve(list.size());
+            for (std::size_t index = 0; index < list.size(); ++index)
+            {
+                items.emplace_back(list.at(index).reference());
+            }
+            return TimeSeriesReference::non_peered(schema, std::move(items));
+        }
+
+        [[nodiscard]] TimeSeriesReference input_tsb_reference(const TSInputView &view)
+        {
+            const auto *schema = view.schema();
+            if (schema == nullptr)
+            {
+                throw std::logic_error("TSInputView::reference requires a typed TSB input view");
+            }
+
+            auto bundle = view.as_bundle();
+            std::vector<TimeSeriesReference> items;
+            items.reserve(bundle.size());
+            for (std::size_t index = 0; index < bundle.size(); ++index)
+            {
+                items.emplace_back(bundle.at(index).reference());
+            }
+            return TimeSeriesReference::non_peered(schema, std::move(items));
+        }
+
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         [[nodiscard]] nb::object input_tsb_to_python(const void *context, const void *memory);
         [[nodiscard]] nb::object input_tsl_to_python(const void *context, const void *memory);
@@ -215,6 +253,7 @@ namespace hgraph
             .key_at = &no_endpoint_key_at,
             .find_key = &no_endpoint_find_key,
             .child_schema = &no_endpoint_child_schema,
+            .reference = &input_leaf_reference,
         };
 
         const detail::TSInputEndpointOps endpoint_tss_ops{
@@ -223,6 +262,7 @@ namespace hgraph
             .key_at = &no_endpoint_key_at,
             .find_key = &no_endpoint_find_key,
             .child_schema = &no_endpoint_child_schema,
+            .reference = &input_leaf_reference,
         };
 
         const detail::TSInputEndpointOps endpoint_tsd_ops{
@@ -232,6 +272,7 @@ namespace hgraph
             .find_key = &no_endpoint_find_key,
             .child_schema = &tsd_endpoint_child_schema,
             .target_child = &tsd_target_child_at,
+            .reference = &input_leaf_reference,
         };
 
         const detail::TSInputEndpointOps endpoint_tsl_ops{
@@ -242,6 +283,7 @@ namespace hgraph
             .find_key = &no_endpoint_find_key,
             .child_schema = &tsl_endpoint_child_schema,
             .target_child = &tsl_target_child_at,
+            .reference = &input_tsl_reference,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
             .to_python = &input_tsl_to_python,
             .delta_to_python = &input_tsl_delta_to_python,
@@ -254,6 +296,7 @@ namespace hgraph
             .key_at = &no_endpoint_key_at,
             .find_key = &no_endpoint_find_key,
             .child_schema = &no_endpoint_child_schema,
+            .reference = &input_leaf_reference,
         };
 
         const detail::TSInputEndpointOps endpoint_tsb_ops{
@@ -267,6 +310,7 @@ namespace hgraph
             .find_key = &tsb_endpoint_find_key,
             .child_schema = &tsb_endpoint_child_schema,
             .target_child = &tsb_target_child_at,
+            .reference = &input_tsb_reference,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
             .to_python = &input_tsb_to_python,
             .delta_to_python = &input_tsb_delta_to_python,
@@ -279,6 +323,7 @@ namespace hgraph
             .key_at = &no_endpoint_key_at,
             .find_key = &no_endpoint_find_key,
             .child_schema = &no_endpoint_child_schema,
+            .reference = &input_leaf_reference,
         };
 
         const detail::TSInputEndpointOps endpoint_signal_ops{
@@ -287,6 +332,7 @@ namespace hgraph
             .key_at = &no_endpoint_key_at,
             .find_key = &no_endpoint_find_key,
             .child_schema = &no_endpoint_child_schema,
+            .reference = &input_leaf_reference,
         };
 
         [[nodiscard]] const detail::TSInputEndpointOps &input_endpoint_ops_for(const TSValueTypeMetaData *schema)
@@ -512,6 +558,62 @@ namespace hgraph
             TSDataOps                       ts_data_ops{};
             const TSDataBinding            *regular_binding{nullptr};
         };
+
+        using TargetLinkContextCache = std::unordered_map<std::string, std::unique_ptr<TargetLinkContext>>;
+        using InputBindingContextCache = std::unordered_map<std::string, std::unique_ptr<InputBindingContext>>;
+        using TSInputBuilderCache = std::unordered_map<std::string, std::unique_ptr<TSInputBuilder>>;
+
+        [[nodiscard]] TargetLinkContextCache &target_link_context_cache()
+        {
+            static TargetLinkContextCache cache;
+            return cache;
+        }
+
+        [[nodiscard]] std::mutex &target_link_context_cache_mutex()
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        [[nodiscard]] InputBindingContextCache &input_binding_context_cache()
+        {
+            static InputBindingContextCache cache;
+            return cache;
+        }
+
+        [[nodiscard]] std::recursive_mutex &input_binding_context_cache_mutex()
+        {
+            static std::recursive_mutex mutex;
+            return mutex;
+        }
+
+        [[nodiscard]] TSInputBuilderCache &input_builder_cache()
+        {
+            static TSInputBuilderCache cache;
+            return cache;
+        }
+
+        [[nodiscard]] std::mutex &input_builder_cache_mutex()
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        void clear_input_binding_caches() noexcept
+        {
+            {
+                std::lock_guard lock{target_link_context_cache_mutex()};
+                target_link_context_cache().clear();
+            }
+            {
+                std::lock_guard lock{input_binding_context_cache_mutex()};
+                input_binding_context_cache().clear();
+            }
+            {
+                std::lock_guard lock{input_builder_cache_mutex()};
+                input_builder_cache().clear();
+            }
+        }
 
         [[nodiscard]] const InputBindingContext *input_context_for(const TSDataBinding *binding) noexcept;
         [[nodiscard]] const TargetLinkContext *target_context_for(const TSDataBinding *binding) noexcept;
@@ -1432,11 +1534,9 @@ namespace hgraph
                                                                     const MemoryUtils::StoragePlan   &root_plan,
                                                                     std::size_t                       storage_offset)
         {
-            static std::mutex mutex;
-            static std::unordered_map<std::string, std::unique_ptr<TargetLinkContext>> cache;
-
             const auto key = binding_cache_key(endpoint_schema, root_plan, storage_offset);
-            std::lock_guard lock{mutex};
+            std::lock_guard lock{target_link_context_cache_mutex()};
+            auto &cache = target_link_context_cache();
             if (const auto it = cache.find(key); it != cache.end())
             {
                 return TypeBinding<TSValueTypeMetaData, TSDataOps>::find(endpoint_schema.schema(),
@@ -1486,11 +1586,9 @@ namespace hgraph
                 return make_target_link_binding(endpoint_schema, root_plan, storage_offset);
             }
 
-            static std::recursive_mutex mutex;
-            static std::unordered_map<std::string, std::unique_ptr<InputBindingContext>> cache;
-
             const auto key = binding_cache_key(endpoint_schema, root_plan, storage_offset);
-            std::lock_guard lock{mutex};
+            std::lock_guard lock{input_binding_context_cache_mutex()};
+            auto &cache = input_binding_context_cache();
             if (const auto it = cache.find(key); it != cache.end())
             {
                 return TSDataBinding::find(endpoint_schema.schema(), &root_plan, &it->second->ts_data_ops);
@@ -1886,11 +1984,9 @@ namespace hgraph
             return nullptr;
         }
 
-        static std::unordered_map<std::string, std::unique_ptr<TSInputBuilder>> cache;
-        static std::mutex mutex;
-
         const auto key = plan_cache_key(plan);
-        std::lock_guard lock{mutex};
+        std::lock_guard lock{input_builder_cache_mutex()};
+        auto &cache = input_builder_cache();
         if (const auto it = cache.find(key); it != cache.end()) { return it->second.get(); }
 
         auto builder = std::unique_ptr<TSInputBuilder>(new TSInputBuilder(plan));
@@ -1903,6 +1999,11 @@ namespace hgraph
     {
         if (const auto *builder = builder_for(plan); builder != nullptr) { return *builder; }
         throw std::invalid_argument("TSInputBuilderFactory requires a non-peered TSB root annotation");
+    }
+
+    void TSInputBuilderFactory::reset() noexcept
+    {
+        clear_input_binding_caches();
     }
 
     TSInput::TSInput() noexcept = default;

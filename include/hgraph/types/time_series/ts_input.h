@@ -93,6 +93,9 @@ namespace hgraph
                                                                        const TSEndpointSchema    &endpoint_schema);
         [[nodiscard]] static const TSInputBuilder *builder_for(const TSInputConstructionPlan &plan);
         [[nodiscard]] static const TSInputBuilder &checked_builder_for(const TSInputConstructionPlan &plan);
+
+        /** Clear cached input builders and type-erased input binding contexts. */
+        static void reset() noexcept;
     };
 
     /**

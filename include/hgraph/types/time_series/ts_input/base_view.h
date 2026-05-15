@@ -3,6 +3,7 @@
 
 #include <hgraph/types/notifiable.h>
 #include <hgraph/types/time_series/ts_output.h>
+#include <hgraph/types/time_series_reference.h>
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -59,6 +60,16 @@ namespace hgraph
 
         [[nodiscard]] ValueView value() const;
         [[nodiscard]] ValueView delta_value() const;
+
+        /**
+         * Convert this input projection to a reference token.
+         *
+         * A target-link input produces a PEERED reference when bound and a
+         * typed EMPTY reference when unbound. Non-peered structural prefixes
+         * convert recursively through their endpoint ops; leaf shapes reached
+         * without a target link produce typed EMPTY references.
+         */
+        [[nodiscard]] TimeSeriesReference reference() const;
 
         /** For bindable target-link views, true when an output target is bound. */
         [[nodiscard]] bool bound() const noexcept;

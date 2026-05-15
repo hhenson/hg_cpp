@@ -1,5 +1,6 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/time_series/ts_output.h>
+#include <hgraph/types/time_series_reference.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/util/date_time.h>
 
@@ -178,6 +179,41 @@ TEST_CASE("TSOutputHandle stores output identity without evaluation time")
 
     handle.reset();
     REQUIRE_FALSE(handle.bound());
+}
+
+TEST_CASE("TSOutput REF stores TimeSeriesReference as value and delta")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *ref_int  = registry.ref(ts_int);
+
+    TSOutput target{*ts_int};
+    TSOutput ref_output{*ref_int};
+
+    const auto t1 = MIN_ST + engine_time_delta_t{1};
+    const TimeSeriesReference reference{target.view(t1)};
+    Value                     wrapped{reference};
+
+    {
+        auto mutation = ref_output.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(wrapped.view()));
+    }
+
+    auto view = ref_output.view(t1);
+    REQUIRE(view.valid());
+    REQUIRE(view.modified());
+
+    const auto &stored = view.value().checked_as<TimeSeriesReference>();
+    REQUIRE(stored.has_output());
+    REQUIRE(stored.target_schema() == ts_int);
+    REQUIRE(stored.target_output().same_as(target.view(t1).handle()));
+
+    const auto &delta = view.delta_value().checked_as<TimeSeriesReference>();
+    REQUIRE(delta.has_output());
+    REQUIRE(delta.target_output().same_as(target.view(t1).handle()));
 }
 
 TEST_CASE("TSOutput dirty cleanup finalizes slot deltas")

@@ -249,6 +249,33 @@ namespace hgraph
         throw std::logic_error("TSInputView::delta_value requires a live input view");
     }
 
+    TimeSeriesReference TSInputView::reference() const
+    {
+        const auto *view_schema = schema();
+        if (view_schema == nullptr)
+        {
+            throw std::logic_error("TSInputView::reference requires a typed input view");
+        }
+
+        if (is_target_position())
+        {
+            const auto *target_schema = detail::target_link_schema(data_.raw_data);
+            const auto *link = detail::target_link_storage(data_.raw_data);
+            if (target_schema == nullptr || link == nullptr)
+            {
+                throw std::logic_error("TSInputView::reference requires target-link storage");
+            }
+
+            auto target = link->target_output_at_path(*target_schema, data_.target_node);
+            if (!target.bound()) { return TimeSeriesReference::empty(view_schema); }
+            return TimeSeriesReference{target};
+        }
+
+        const auto &ops = detail::input_endpoint_ops_for(view_schema);
+        if (ops.reference == nullptr) { return TimeSeriesReference::empty(view_schema); }
+        return ops.reference(*this);
+    }
+
     void TSInputView::bind_output(const TSOutputView &output)
     {
         if (!is_bindable())

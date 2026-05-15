@@ -17,6 +17,7 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/time_series/ts_data.h>
+#include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/value/compact_storage.h>
 #include <hgraph/types/value/value_ops.h>
 
@@ -31,6 +32,7 @@ namespace
         // destroys the underlying schemas.
         hgraph::ValuePlanFactory::instance().reset();
         hgraph::TSDataPlanFactory::instance().reset();
+        hgraph::TSInputBuilderFactory::reset();
         hgraph::clear_compact_container_plans();
         hgraph::TSDataBinding::clear();
         hgraph::ValueTypeBinding::clear();

@@ -2,6 +2,7 @@
 #define HGRAPH_CPP_ROOT_TIME_SERIES_REFERENCE_H
 
 #include <hgraph/hgraph_export.h>
+#include <hgraph/types/time_series/ts_output/base_view.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,8 @@
 
 namespace hgraph
 {
+    class TSInputView;
+    class TSOutputView;
     struct TSValueTypeMetaData;
 
     /**
@@ -27,10 +30,8 @@ namespace hgraph
      * - **EMPTY** — unbound; the reference points at nothing yet. Still
      *   carries a target schema where one is known, so a later binding
      *   attempt can be validated.
-     * - **PEERED** — directly bound to a single time-series target. The
-     *   target binding payload (output handle / linked context) is
-     *   populated by the runtime layer when it lands; today the kind and
-     *   target schema are tracked for validation.
+     * - **PEERED** — directly bound to a single output endpoint. The
+     *   reference stores the output handle without an evaluation time.
      * - **NON_PEERED** — composite reference whose target is itself a
      *   composite time-series (``REF<TSL<T>>``, ``REF<TSB<...>>``, etc.).
      *   Holds a vector of sub-references, one per structural slot of the
@@ -53,10 +54,27 @@ namespace hgraph
         };
 
         /** Default-construct an EMPTY reference with no target schema. */
-        TimeSeriesReference() noexcept = default;
+        TimeSeriesReference() noexcept;
 
         /** Construct an EMPTY reference that records its expected target schema. */
         explicit TimeSeriesReference(const TSValueTypeMetaData *target_schema) noexcept;
+
+        /** Construct a PEERED reference from an output endpoint handle. */
+        explicit TimeSeriesReference(TSOutputHandle target);
+
+        /** Construct a PEERED reference from an output view. */
+        explicit TimeSeriesReference(const TSOutputView &target);
+
+        /**
+         * Construct a reference from an input view.
+         *
+         * Target-link input views produce a PEERED reference when bound and a
+         * typed EMPTY reference when unbound. Non-peered structural prefixes
+         * produce NON_PEERED references by recursively collecting child
+         * references. Leaf shapes reached without a target link produce typed
+         * EMPTY references.
+         */
+        explicit TimeSeriesReference(const TSInputView &source);
 
         /**
          * Construct a NON_PEERED composite reference. ``target_schema``
@@ -66,12 +84,24 @@ namespace hgraph
          */
         TimeSeriesReference(const TSValueTypeMetaData *target_schema, std::vector<TimeSeriesReference> items);
 
-        /**
-         * Build a PEERED reference. The target binding payload is filled
-         * in by the runtime layer; for now only the kind and target
-         * schema are recorded.
-         */
-        [[nodiscard]] static TimeSeriesReference peered(const TSValueTypeMetaData *target_schema);
+        TimeSeriesReference(const TimeSeriesReference &other);
+        TimeSeriesReference &operator=(const TimeSeriesReference &other);
+        TimeSeriesReference(TimeSeriesReference &&other) noexcept;
+        TimeSeriesReference &operator=(TimeSeriesReference &&other) noexcept;
+        ~TimeSeriesReference() noexcept;
+
+        /** Build an EMPTY reference for ``target_schema``. */
+        [[nodiscard]] static TimeSeriesReference empty(const TSValueTypeMetaData *target_schema = nullptr) noexcept;
+
+        /** Build a PEERED reference from an output endpoint handle. */
+        [[nodiscard]] static TimeSeriesReference peered(TSOutputHandle target);
+
+        /** Build a PEERED reference from an output view. */
+        [[nodiscard]] static TimeSeriesReference peered(const TSOutputView &target);
+
+        /** Build a NON_PEERED composite reference from already-created child references. */
+        [[nodiscard]] static TimeSeriesReference non_peered(const TSValueTypeMetaData *target_schema,
+                                                            std::vector<TimeSeriesReference> items);
 
         /** Discriminator: EMPTY / PEERED / NON_PEERED. */
         [[nodiscard]] Kind kind() const noexcept { return kind_; }
@@ -81,6 +111,8 @@ namespace hgraph
         [[nodiscard]] bool is_peered() const noexcept { return kind_ == Kind::PEERED; }
         /** True when ``kind() == Kind::NON_PEERED``. */
         [[nodiscard]] bool is_non_peered() const noexcept { return kind_ == Kind::NON_PEERED; }
+        /** True when this PEERED reference carries a bound output handle. */
+        [[nodiscard]] bool has_output() const noexcept;
 
         /**
          * Schema describing the TS type this reference is pointed at — the
@@ -88,6 +120,9 @@ namespace hgraph
          * reference is unconstrained.
          */
         [[nodiscard]] const TSValueTypeMetaData *target_schema() const noexcept { return target_schema_; }
+
+        /** Output handle for a PEERED reference. Throws otherwise. */
+        [[nodiscard]] const TSOutputHandle &target_output() const;
 
         /** Sub-references for a NON_PEERED reference. Throws otherwise. */
         [[nodiscard]] const std::vector<TimeSeriesReference> &items() const;
@@ -108,12 +143,22 @@ namespace hgraph
         [[nodiscard]] static const TimeSeriesReference &empty_reference() noexcept;
 
       private:
+        union Storage
+        {
+            TSOutputHandle target;
+            std::vector<TimeSeriesReference> items;
+
+            constexpr Storage() noexcept {}
+            ~Storage() noexcept {}
+        };
+
+        void destroy() noexcept;
+        void copy_from(const TimeSeriesReference &other);
+        void move_from(TimeSeriesReference &&other) noexcept;
+
         Kind                             kind_{Kind::EMPTY};
         const TSValueTypeMetaData       *target_schema_{nullptr};
-        std::vector<TimeSeriesReference> items_{};
-        // PEERED target binding payload (LinkedTSContext / output handle /
-        // observed_time) is added when the runtime layer is implemented. Today
-        // PEERED is a tag carrying only kind + target_schema.
+        Storage                          storage_{};
     };
 }  // namespace hgraph
 

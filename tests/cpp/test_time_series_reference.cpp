@@ -6,6 +6,8 @@
 
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/time_series/ts_input.h>
+#include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/time_series_reference.h>
 #include <hgraph/types/utils/memory_utils.h>
 
@@ -42,9 +44,12 @@ TEST_CASE("TimeSeriesReference: peered reference carries kind and target schema"
     const auto *int_meta = registry.register_scalar<int>("int");
     const auto *ts_int   = registry.ts(int_meta);
 
-    auto ref = TimeSeriesReference::peered(ts_int);
+    TSOutput output{*ts_int};
+    auto     ref = TimeSeriesReference::peered(output.view());
     REQUIRE(ref.is_peered());
+    REQUIRE(ref.has_output());
     REQUIRE(ref.target_schema() == ts_int);
+    REQUIRE(ref.target_output().same_as(output.view().handle()));
 }
 
 TEST_CASE("TimeSeriesReference: non-peered reference holds sub-references")
@@ -55,17 +60,22 @@ TEST_CASE("TimeSeriesReference: non-peered reference holds sub-references")
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, /*fixed_size=*/2);
 
-    std::vector<TimeSeriesReference> items{
-        TimeSeriesReference::peered(ts_int),
-        TimeSeriesReference::peered(ts_int),
-    };
-    TimeSeriesReference composite{tsl, items};
+    TSOutput lhs{*ts_int};
+    TSOutput rhs{*ts_int};
+
+    auto composite = TimeSeriesReference::non_peered(
+        tsl,
+        {
+            TimeSeriesReference{lhs.view()},
+            TimeSeriesReference{rhs.view()},
+        });
 
     REQUIRE(composite.is_non_peered());
     REQUIRE(composite.target_schema() == tsl);
     REQUIRE(composite.items().size() == 2);
     REQUIRE(composite[0].target_schema() == ts_int);
     REQUIRE(composite[1].is_peered());
+    REQUIRE(composite[1].target_output().same_as(rhs.view().handle()));
 }
 
 TEST_CASE("TimeSeriesReference: items() and operator[] throw for non-NON_PEERED references")
@@ -83,8 +93,8 @@ TEST_CASE("TimeSeriesReference: operator[] bounds-checks NON_PEERED indexes")
     const auto *int_meta = registry.register_scalar<int>("int");
     const auto *ts_int   = registry.ts(int_meta);
 
-    std::vector<TimeSeriesReference> items{TimeSeriesReference::peered(ts_int)};
-    TimeSeriesReference              composite{ts_int, items};
+    TSOutput output{*ts_int};
+    auto     composite = TimeSeriesReference::non_peered(ts_int, {TimeSeriesReference{output.view()}});
 
     REQUIRE(composite[0].is_peered());
     REQUIRE_THROWS_AS(composite[1], std::out_of_range);
@@ -105,13 +115,18 @@ TEST_CASE("TimeSeriesReference: equality and hash respect kind, target_schema, a
     const TimeSeriesReference empty_with_schema{ts_int};
     REQUIRE_FALSE(empty_a == empty_with_schema);
 
-    const auto peered_a = TimeSeriesReference::peered(ts_int);
-    const auto peered_b = TimeSeriesReference::peered(ts_int);
+    TSOutput first{*ts_int};
+    TSOutput second{*ts_int};
+
+    const auto peered_a = TimeSeriesReference::peered(first.view());
+    const auto peered_b = TimeSeriesReference::peered(first.view());
+    const auto peered_other = TimeSeriesReference::peered(second.view());
     REQUIRE(peered_a == peered_b);
     REQUIRE(peered_a.hash() == peered_b.hash());
+    REQUIRE_FALSE(peered_a == peered_other);
 
-    const TimeSeriesReference composite_a{ts_int, {TimeSeriesReference::peered(ts_int)}};
-    const TimeSeriesReference composite_b{ts_int, {TimeSeriesReference::peered(ts_int)}};
+    const auto composite_a = TimeSeriesReference::non_peered(ts_int, {TimeSeriesReference{first.view()}});
+    const auto composite_b = TimeSeriesReference::non_peered(ts_int, {TimeSeriesReference{first.view()}});
     const TimeSeriesReference composite_diff{ts_int, {empty_a}};
     REQUIRE(composite_a == composite_b);
     REQUIRE_FALSE(composite_a == composite_diff);
@@ -124,6 +139,64 @@ TEST_CASE("TimeSeriesReference: equality and hash respect kind, target_schema, a
     seen.insert(empty_a);
     seen.insert(peered_a);
     REQUIRE(seen.size() == 2);
+}
+
+TEST_CASE("TimeSeriesReference: input view construction handles peered terminals and non-peered prefixes")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *list     = registry.tsl(ts_int, 2);
+    const auto *root     = registry.tsb("TimeSeriesReferenceInputRoot", {{"leaf", ts_int}, {"items", list}});
+
+    const auto endpoint_schema = TSEndpointSchema::non_peered(
+        root,
+        {
+            TSEndpointSchema::peered(ts_int),
+            TSEndpointSchema::non_peered_list(list, TSEndpointSchema::peered(ts_int)),
+        });
+
+    TSOutput leaf_output{*ts_int};
+    TSOutput item_output{*ts_int};
+    TSOutput second_item_output{*ts_int};
+    TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, endpoint_schema)};
+
+    auto root_view = input.view();
+    auto bundle    = root_view.as_bundle();
+    auto leaf      = bundle.field("leaf");
+    leaf.bind_output(leaf_output.view());
+
+    auto items      = bundle.field("items");
+    auto list_view  = items.as_list();
+    auto first_item = list_view[0];
+    first_item.bind_output(item_output.view());
+
+    const TimeSeriesReference leaf_ref = leaf.reference();
+    REQUIRE(leaf_ref.is_peered());
+    REQUIRE(leaf_ref.target_output().same_as(leaf_output.view().handle()));
+
+    const TimeSeriesReference missing_ref = list_view[1].reference();
+    REQUIRE(missing_ref.is_empty());
+    REQUIRE(missing_ref.target_schema() == ts_int);
+
+    const TimeSeriesReference partial_root_ref{root_view};
+    REQUIRE(partial_root_ref.is_non_peered());
+    REQUIRE(partial_root_ref[1].is_non_peered());
+    REQUIRE(partial_root_ref[1][1].is_empty());
+    REQUIRE(partial_root_ref[1][1].target_schema() == ts_int);
+
+    list_view[1].bind_output(second_item_output.view());
+
+    const TimeSeriesReference root_ref{root_view};
+    REQUIRE(root_ref.is_non_peered());
+    REQUIRE(root_ref.target_schema() == root);
+    REQUIRE(root_ref.items().size() == 2);
+    REQUIRE(root_ref[0].target_output().same_as(leaf_output.view().handle()));
+    REQUIRE(root_ref[1].is_non_peered());
+    REQUIRE(root_ref[1].items().size() == 2);
+    REQUIRE(root_ref[1][0].target_output().same_as(item_output.view().handle()));
+    REQUIRE(root_ref[1][1].target_output().same_as(second_item_output.view().handle()));
 }
 
 TEST_CASE("TimeSeriesReference: empty_reference() returns a stable singleton")
