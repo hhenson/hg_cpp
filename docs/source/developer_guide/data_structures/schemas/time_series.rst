@@ -265,6 +265,233 @@ A few notes on the cells that aren't immediate:
   and duration windows read from timestamped queue storage. The delta
   remains the scalar element added at the current evaluation time.
 
+Reference Behaviour
+-------------------
+
+``REF<T>`` has two separate roles in the runtime:
+
+- as a value, it is a ``TS<TimeSeriesReference>`` whose current value
+  is a reference token;
+- as an output alternative, it can participate in representation
+  changes when an output is bound to an input whose reference markers
+  differ from the output's canonical schema.
+
+The value token is intentionally opaque to user code. A
+``TimeSeriesReference`` can be empty, can name a single output through
+an internal output handle, or can hold a non-peered collection of child
+references. Public code may pass the token around and may request a
+reference token from an input view, but it should not dereference the
+token to obtain an output handle. Internal binding and output-
+alternative machinery may access the handle through a restricted
+interface.
+
+Reference conversion is output-owned. ``RefLink`` is only created by
+output alternative infrastructure, not by user code and not by the
+plain input binding path. Taking a reference token from an input is
+still valid; it produces a ``TimeSeriesReference`` value that can later
+be applied to another input or stored in a ``REF`` output.
+
+Alternative representations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When an input is bound to an output and their schemas differ only by
+reference markers, the binding process asks the output to expose an
+alternative representation. The output view being bound is the
+conversion anchor. The runtime does not automatically promote a child
+request to a root-wide conversion.
+
+For example, given an output:
+
+.. code-block:: text
+
+   TSL[TS[int], Size[2]]
+
+binding only the first element to an input of type:
+
+.. code-block:: text
+
+   REF[TS[int]]
+
+creates a local alternative for the first element:
+
+.. code-block:: text
+
+   TS[int] exposed as REF[TS[int]]
+
+It does not create a whole-list alternative such as:
+
+.. code-block:: text
+
+   TSL[REF[TS[int]], Size[2]]
+
+The whole-list alternative is created only when the list output itself
+is bound to an input of that whole-list reference shape.
+
+The first implementation should treat reference markers as the only
+shape difference handled by this mechanism. Identical schemas use the
+native output representation. Otherwise, validation is based on the
+fully dereferenced shapes:
+
+.. code-block:: text
+
+   dereference(schema_requested) == dereference(schema_owned)
+
+``schema_owned`` is the canonical schema of the output view being
+bound, and ``schema_requested`` is the schema required by the input
+view. ``dereference`` recursively removes ``REF`` markers by replacing
+``REF<T>`` with the dereferenced shape of ``T``. For fixed ``TSL`` and
+``TSB``, children are still matched by index or field order while
+computing the dereferenced shape. Recursive per-key alternatives for
+dynamic keyed collections require explicit slot/key lifecycle rules
+and should not be inferred by silently zipping whatever keys happen to
+exist at runtime.
+
+Alternative storage
+~~~~~~~~~~~~~~~~~~~
+
+Each root output may own a nullable alternative store. The store is
+allocated on the first alternative request and is structured as a tree
+of slots mirroring the navigable shape of the output. The store is a
+cache and ownership boundary; it does not change the semantic rule
+that conversion is anchored at the output view being bound.
+
+Slots are allocated along requested paths, but the actual alternative
+payload is instantiated only where a conversion is required. A payload
+is one of the local output-side alternatives:
+
+- exposing an ordinary output position as a ``TimeSeriesReference``;
+- dereferencing a ``REF`` output position through a ``RefLink``.
+
+A node in the alternative tree may have both a local payload and child
+slots. For example:
+
+.. code-block:: text
+
+   TSB[{ts: TSL[TS[int], Size[2]]}]
+
+may need to expose the ``ts`` field itself as a reference, and may
+also later need alternatives for ``ts[0]`` and ``ts[1]``. Those are
+different requests and should be cached at different slots in the same
+root-owned alternative store.
+
+REF boundaries
+~~~~~~~~~~~~~~
+
+A ``REF`` position is a navigation boundary for alternatives. The
+current output owns alternative state only up to the first ``REF`` on
+each requested path. Anything below that boundary belongs to the
+output referenced by the ``TimeSeriesReference``.
+
+Compatibility validation compares the full dereferenced shape of the
+requested schema with the full dereferenced shape of the owned schema.
+Materialisation does not follow the same depth. This lets the runtime
+reject invalid bindings early without forcing it to build alternative
+slots for data that will only become reachable after a reference is
+dereferenced.
+
+For example, consider an output whose canonical schema is:
+
+.. code-block:: text
+
+   TSL[REF[TSL[REF[TS[int]], Size[2]]], Size[3]]
+
+and an input that wants:
+
+.. code-block:: text
+
+   TSL[REF[TSL[TS[int], Size[2]]], Size[3]]
+
+The validation rule succeeds because both schemas dereference to:
+
+.. code-block:: text
+
+   TSL[TSL[TS[int], Size[2]], Size[3]]
+
+The materialisation rule is narrower. The outer ``TSL`` shapes match,
+but at each element the current output reaches a ``REF`` boundary.
+The current output validates that the referenced schema:
+
+.. code-block:: text
+
+   TSL[REF[TS[int]], Size[2]]
+
+has the same dereferenced shape as the requested referenced schema:
+
+.. code-block:: text
+
+   TSL[TS[int], Size[2]]
+
+However, the current output only materialises the outer list slots and
+the reference-boundary alternative. It does not build slots for the
+inner fixed list. If the reference is later dereferenced, the
+referenced output is asked for the ``TSL[TS[int], Size[2]]``
+alternative, and that output owns any further alternatives required
+below that point.
+
+Nested references therefore form a chain of one-hop output
+alternatives. Each ``RefLink`` resolves one reference value, subscribes
+to one current target, and delegates any deeper representation request
+to that target output. Validation remains bounded by the finite schema
+shape being requested: once the requested shape reaches a leaf, or a
+``REF`` boundary whose wrapped target shape has been validated, the
+current validation step is complete.
+
+Input binding negotiation
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Inputs do not bind their non-peered prefixes. A ``TSInput`` plan holds
+non-peered structure only as navigation and modification state; binding
+happens at peered target-link positions. Each target link knows the
+schema it expects to observe.
+
+Binding starts with a canonical output view or handle. The caller does
+not pre-select an alternative representation. Instead, the target link
+asks the output for binding data matching the target link's expected
+schema:
+
+.. code-block:: text
+
+   input target link expected schema + canonical output view
+       -> output binding data for the expected schema
+
+If the expected schema is the same as the output view's canonical
+schema, the output returns canonical binding data. If the schemas differ
+only by reference markers, the output validates the request with:
+
+.. code-block:: text
+
+   dereference(schema_requested) == dereference(schema_owned)
+
+and returns binding data for an alternative representation. That
+binding data points either at the original output storage or at the
+root-owned alternative store described above. It also carries the
+alternative ops needed to navigate, read, and subscribe to the exposed
+shape.
+
+For example, binding an input target link expecting:
+
+.. code-block:: text
+
+   REF[TS[int]]
+
+to a canonical output view of:
+
+.. code-block:: text
+
+   TS[int]
+
+asks the output to expose ``TS[int]`` as ``REF[TS[int]]`` and binds the
+target link to the returned alternative binding data. Conversely,
+binding an input expecting ``TS[int]`` to an output whose canonical
+schema is ``REF[TS[int]]`` asks the output for a dereferenced
+alternative and binds to that returned shape.
+
+This negotiation rule applies to all target-link binding, not just
+``REF``. A bind operation on an input receives a canonical output view;
+the input-side target link states what schema it wants; the output-side
+binding provider returns the canonical or alternative output shape that
+satisfies that request.
+
 Recursion is automatic: the metadata for a nested ``TSD<string,
 TSL<TS<double>>>`` reads its inner ``TSL``'s ``delta_value_schema``
 directly off the inner schema, so the registry never has to recompose
