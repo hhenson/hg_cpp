@@ -346,6 +346,16 @@ dynamic keyed collections require explicit slot/key lifecycle rules
 and should not be inferred by silently zipping whatever keys happen to
 exist at runtime.
 
+For keyed alternatives, the canonical key slot store remains the source
+of truth. For example, exposing a canonical ``TSD[K, V]`` as
+``TSD[K, REF[V]]`` should use a parallel slot-backed value store, not a
+separate associative child map. The alternative value store mirrors the
+canonical key slots through the standard slot observer protocol, in the
+same style as a key-mirrored value slot store: capacity, insert,
+remove, erase, and clear events keep the alternative slots aligned with
+the key lifecycle, while each alternative value element is constructed
+only when that slot is actually requested.
+
 Alternative storage
 ~~~~~~~~~~~~~~~~~~~
 
@@ -355,24 +365,60 @@ of slots mirroring the navigable shape of the output. The store is a
 cache and ownership boundary; it does not change the semantic rule
 that conversion is anchored at the output view being bound.
 
-Slots are allocated along requested paths, but the actual alternative
-payload is instantiated only where a conversion is required. A payload
-is one of the local output-side alternatives:
+Each element in the tree represents one canonical output navigation
+position. The root element represents the root output. A child element
+represents one slot, index, or field below its parent. The element does
+not represent an arbitrary alternative shape; it represents the place
+where the canonical output may need to expose the opposite reference
+representation:
 
-- exposing an ordinary output position as a ``TimeSeriesReference``;
-- dereferencing a ``REF`` output position through a ``RefLink``.
+- if the canonical position is not ``REF``, the local alternative is a
+  ``REF`` projection of that position;
+- if the canonical position is ``REF``, the local alternative is an
+  unpacked view through a ``RefLink``;
+- once a canonical ``REF`` is reached, this output's alternative tree
+  stops tracking deeper structure. Anything below the reference belongs
+  to the referenced output.
 
-A node in the alternative tree may have both a local payload and child
-slots. For example:
+Slots are allocated along requested paths, but the actual local
+alternative payload is instantiated only where a conversion is required.
+For the non-``REF`` to ``REF`` case, that payload is a
+``RefProjectionPayload``: it owns the ``TimeSeriesReference`` value and
+the ``TSDataBinding`` / ``TSDataOps`` needed to expose this exact output
+position as the requested ``REF`` schema. This payload is not child
+navigation state; it is the local binding data for the opposite
+representation at this element. Implementations may cache these local
+payloads by requested schema when the binding metadata depends on the
+requested schema, for example when nominal and structural schemas have
+the same dereferenced shape but different binding identity.
+
+A slot element in the alternative tree may have both a local payload
+and child slots. For example:
 
 .. code-block:: text
 
    TSB[{ts: TSL[TS[int], Size[2]]}]
 
-may need to expose the ``ts`` field itself as a reference, and may
-also later need alternatives for ``ts[0]`` and ``ts[1]``. Those are
-different requests and should be cached at different slots in the same
-root-owned alternative store.
+has a root element, a child element for ``ts``, and child elements below
+``ts`` for indexes ``0`` and ``1``. If an input binds the whole output
+as:
+
+.. code-block:: text
+
+   REF[TSB[{ts: TSL[TS[int], Size[2]]}]]
+
+the root element gets a local ``REF`` projection. If another input
+binds only ``ts[0]`` as:
+
+.. code-block:: text
+
+   REF[TS[int]]
+
+the store walks root -> ``ts`` -> ``0`` and creates the local
+``REF`` projection at the index ``0`` element. These are different
+positions in the same root-owned alternative store; the root projection
+does not replace the child projection and the child projection does not
+become a second root.
 
 REF boundaries
 ~~~~~~~~~~~~~~

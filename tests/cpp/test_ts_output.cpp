@@ -209,11 +209,11 @@ TEST_CASE("TSOutput REF stores TimeSeriesReference as value and delta")
     const auto &stored = view.value().checked_as<TimeSeriesReference>();
     REQUIRE(stored.has_output());
     REQUIRE(stored.target_schema() == ts_int);
-    REQUIRE(stored.target_output().same_as(target.view(t1).handle()));
+    REQUIRE(stored == reference);
 
     const auto &delta = view.delta_value().checked_as<TimeSeriesReference>();
     REQUIRE(delta.has_output());
-    REQUIRE(delta.target_output().same_as(target.view(t1).handle()));
+    REQUIRE(delta == reference);
 }
 
 TEST_CASE("TSOutput dirty cleanup finalizes slot deltas")

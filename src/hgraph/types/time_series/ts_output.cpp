@@ -1,6 +1,9 @@
 #include <hgraph/types/time_series/ts_output.h>
 
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/time_series/endpoint_schema.h>
+#include <hgraph/types/time_series/ts_output/alternative.h>
 
 #include <stdexcept>
 #include <utility>
@@ -25,6 +28,8 @@ namespace hgraph
     {
     }
 
+    TSOutput::~TSOutput() noexcept = default;
+
     TSOutput::TSOutput(const TSOutput &other)
         : data_(copyable_data(other))
     {
@@ -37,6 +42,7 @@ namespace hgraph
         {
             data_ = other.data_;
             dirty_ = false;
+            alternatives_.reset();
             attach_root_parent();
         }
         return *this;
@@ -46,6 +52,7 @@ namespace hgraph
         : data_(std::move(other.data_)),
           dirty_(std::exchange(other.dirty_, false))
     {
+        other.alternatives_.reset();
         attach_root_parent();
     }
 
@@ -55,6 +62,8 @@ namespace hgraph
         {
             data_ = std::move(other.data_);
             dirty_ = std::exchange(other.dirty_, false);
+            alternatives_.reset();
+            other.alternatives_.reset();
             attach_root_parent();
         }
         return *this;
@@ -125,6 +134,32 @@ namespace hgraph
     TSOutputView TSOutput::view(engine_time_t evaluation_time) const
     {
         return TSOutputView{this, data_view(), evaluation_time};
+    }
+
+    TSOutputHandle TSOutput::binding_for(const TSOutputView &source,
+                                         const TSValueTypeMetaData &requested_schema) const
+    {
+        if (source.output() != this)
+        {
+            throw std::invalid_argument("TSOutput::binding_for requires a view owned by this output");
+        }
+        const auto *source_schema = source.schema();
+        if (source_schema == nullptr)
+        {
+            throw std::invalid_argument("TSOutput::binding_for requires a typed output view");
+        }
+
+        if (time_series_schema_equivalent(source_schema, &requested_schema)) { return source.handle(); }
+
+        auto &registry = TypeRegistry::instance();
+        if (!time_series_schema_equivalent(registry.dereference(source_schema),
+                                           registry.dereference(&requested_schema)))
+        {
+            throw std::invalid_argument("TSOutput alternative binding requires dereference-compatible schemas");
+        }
+
+        if (!alternatives_) { alternatives_ = std::make_unique<detail::TSOutputAlternativeStore>(); }
+        return alternatives_->binding_for(source, requested_schema);
     }
 
     const TSDataBinding &TSOutput::checked_binding_for(const TSValueTypeMetaData *schema)

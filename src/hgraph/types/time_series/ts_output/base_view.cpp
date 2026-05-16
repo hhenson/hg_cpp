@@ -1,5 +1,6 @@
 #include <hgraph/types/time_series/ts_output/base_view.h>
 
+#include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/time_series/ts_output/view_common.h>
 
 #include <utility>
@@ -163,6 +164,15 @@ namespace hgraph
     {
         if (!data_.valid()) { throw std::logic_error("TSOutputView::unsubscribe requires a bound view"); }
         data_.unsubscribe(observer);
+    }
+
+    TSOutputHandle TSOutputView::binding_for(const TSValueTypeMetaData &requested_schema) const
+    {
+        if (output_ == nullptr || !data_.valid())
+        {
+            throw std::logic_error("TSOutputView::binding_for requires a bound output view");
+        }
+        return output_->binding_for(*this, requested_schema);
     }
 
     TSDataMutationView TSOutputView::begin_mutation(engine_time_t evaluation_time) const

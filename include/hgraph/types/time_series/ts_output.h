@@ -10,8 +10,15 @@
 #include <hgraph/types/time_series/ts_output/set_view.h>
 #include <hgraph/types/time_series/ts_output/window_view.h>
 
+#include <memory>
+
 namespace hgraph
 {
+    namespace detail
+    {
+        class TSOutputAlternativeStore;
+    }
+
     /**
      * Owning output-side time-series endpoint.
      *
@@ -27,6 +34,7 @@ namespace hgraph
         explicit TSOutput(const TSDataBinding &binding);
         explicit TSOutput(const TSValueTypeMetaData &schema);
         explicit TSOutput(const TSValueTypeMetaData *schema);
+        ~TSOutput() noexcept;
 
         TSOutput(const TSOutput &other);
         TSOutput &operator=(const TSOutput &other);
@@ -67,6 +75,10 @@ namespace hgraph
         [[nodiscard]] TSOutputView view(engine_time_t evaluation_time = MIN_DT);
         [[nodiscard]] TSOutputView view(engine_time_t evaluation_time = MIN_DT) const;
 
+        /** Binding data for a canonical or alternative representation of ``source``. */
+        [[nodiscard]] TSOutputHandle binding_for(const TSOutputView &source,
+                                                 const TSValueTypeMetaData &requested_schema) const;
+
         /** Begin a root mutation scope. */
         [[nodiscard]] TSOutputMutationView begin_mutation(engine_time_t evaluation_time);
 
@@ -79,8 +91,9 @@ namespace hgraph
         void attach_root_parent();
         void record_child_modified(std::size_t child_id, engine_time_t mutation_time) override;
 
-        TSData        data_{};
-        bool          dirty_{false};
+        TSData                                      data_{};
+        bool                                        dirty_{false};
+        mutable std::unique_ptr<detail::TSOutputAlternativeStore> alternatives_{};
     };
 }  // namespace hgraph
 

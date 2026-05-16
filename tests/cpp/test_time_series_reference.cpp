@@ -10,6 +10,7 @@
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/time_series_reference.h>
 #include <hgraph/types/utils/memory_utils.h>
+#include <hgraph/types/value/value.h>
 
 #include <unordered_set>
 #include <vector>
@@ -49,7 +50,7 @@ TEST_CASE("TimeSeriesReference: peered reference carries kind and target schema"
     REQUIRE(ref.is_peered());
     REQUIRE(ref.has_output());
     REQUIRE(ref.target_schema() == ts_int);
-    REQUIRE(ref.target_output().same_as(output.view().handle()));
+    REQUIRE(ref == TimeSeriesReference{output.view()});
 }
 
 TEST_CASE("TimeSeriesReference: non-peered reference holds sub-references")
@@ -75,7 +76,7 @@ TEST_CASE("TimeSeriesReference: non-peered reference holds sub-references")
     REQUIRE(composite.items().size() == 2);
     REQUIRE(composite[0].target_schema() == ts_int);
     REQUIRE(composite[1].is_peered());
-    REQUIRE(composite[1].target_output().same_as(rhs.view().handle()));
+    REQUIRE(composite[1] == TimeSeriesReference{rhs.view()});
 }
 
 TEST_CASE("TimeSeriesReference: items() and operator[] throw for non-NON_PEERED references")
@@ -174,7 +175,7 @@ TEST_CASE("TimeSeriesReference: input view construction handles peered terminals
 
     const TimeSeriesReference leaf_ref = leaf.reference();
     REQUIRE(leaf_ref.is_peered());
-    REQUIRE(leaf_ref.target_output().same_as(leaf_output.view().handle()));
+    REQUIRE(leaf_ref == TimeSeriesReference{leaf_output.view()});
 
     const TimeSeriesReference missing_ref = list_view[1].reference();
     REQUIRE(missing_ref.is_empty());
@@ -192,11 +193,65 @@ TEST_CASE("TimeSeriesReference: input view construction handles peered terminals
     REQUIRE(root_ref.is_non_peered());
     REQUIRE(root_ref.target_schema() == root);
     REQUIRE(root_ref.items().size() == 2);
-    REQUIRE(root_ref[0].target_output().same_as(leaf_output.view().handle()));
+    REQUIRE(root_ref[0] == TimeSeriesReference{leaf_output.view()});
     REQUIRE(root_ref[1].is_non_peered());
     REQUIRE(root_ref[1].items().size() == 2);
-    REQUIRE(root_ref[1][0].target_output().same_as(item_output.view().handle()));
-    REQUIRE(root_ref[1][1].target_output().same_as(second_item_output.view().handle()));
+    REQUIRE(root_ref[1][0] == TimeSeriesReference{item_output.view()});
+    REQUIRE(root_ref[1][1] == TimeSeriesReference{second_item_output.view()});
+}
+
+TEST_CASE("TimeSeriesReference: target link negotiates output as REF alternative")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *ref_int  = registry.ref(ts_int);
+    const auto *root     = registry.tsb("TimeSeriesReferenceAlternativeInputRoot", {{"ref", ref_int}});
+
+    const auto endpoint_schema = TSEndpointSchema::non_peered(
+        root,
+        {
+            TSEndpointSchema::peered(ref_int),
+        });
+
+    TSOutput target{*ts_int};
+    Value    value{17};
+    const auto t1 = MIN_ST;
+    {
+        auto mutation = target.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(value.view()));
+    }
+
+    TSInput input{TSInputBuilderFactory::checked_builder_for(*root, endpoint_schema)};
+    auto    root_view = input.view(nullptr, t1);
+    auto    root_bundle = root_view.as_bundle();
+    auto    ref_input = root_bundle.field("ref");
+
+    ref_input.bind_output(target.view(t1));
+
+    REQUIRE(ref_input.bound());
+    REQUIRE(ref_input.valid());
+    REQUIRE(ref_input.modified());
+
+    const auto &reference = ref_input.value().checked_as<TimeSeriesReference>();
+    REQUIRE(reference.is_peered());
+    REQUIRE(reference.target_schema() == ts_int);
+    REQUIRE(reference == TimeSeriesReference{target.view(t1)});
+
+    Value next_value{18};
+    const auto t2 = t1 + engine_time_delta_t{1};
+    {
+        auto mutation = target.begin_mutation(t2);
+        REQUIRE(mutation.copy_value_from(next_value.view()));
+    }
+
+    auto t2_root_view = input.view(nullptr, t2);
+    auto t2_bundle = t2_root_view.as_bundle();
+    auto t2_ref_input = t2_bundle.field("ref");
+    REQUIRE(t2_ref_input.valid());
+    REQUIRE_FALSE(t2_ref_input.modified());
+    REQUIRE(t2_ref_input.value().checked_as<TimeSeriesReference>() == TimeSeriesReference{target.view(t2)});
 }
 
 TEST_CASE("TimeSeriesReference: empty_reference() returns a stable singleton")

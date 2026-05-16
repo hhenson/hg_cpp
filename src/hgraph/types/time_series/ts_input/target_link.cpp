@@ -277,14 +277,15 @@ namespace hgraph::detail
         {
             throw std::invalid_argument("TSInput target binding requires a bound output view");
         }
-        if (!time_series_schema_equivalent(output.schema(), &schema))
+        auto target = output.binding_for(schema);
+        if (!time_series_schema_equivalent(target.schema(), &schema))
         {
             throw std::invalid_argument("TSInput target binding schema does not match the input slot schema");
         }
 
         unbind();
         auto &state = state_;
-        state.target = output.handle();
+        state.target = target;
         auto rollback = make_scope_exit<true>([this] { unbind(); });
         state.target.data_view().subscribe(&state);
         if (state.target.data_view().last_modified_time() != MIN_DT)

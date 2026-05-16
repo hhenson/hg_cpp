@@ -12,6 +12,11 @@
 
 namespace hgraph
 {
+    namespace detail
+    {
+        class TSOutputAlternativeStore;
+    }
+
     class TSInputView;
     class TSOutputView;
     struct TSValueTypeMetaData;
@@ -121,9 +126,6 @@ namespace hgraph
          */
         [[nodiscard]] const TSValueTypeMetaData *target_schema() const noexcept { return target_schema_; }
 
-        /** Output handle for a PEERED reference. Throws otherwise. */
-        [[nodiscard]] const TSOutputHandle &target_output() const;
-
         /** Sub-references for a NON_PEERED reference. Throws otherwise. */
         [[nodiscard]] const std::vector<TimeSeriesReference> &items() const;
         /** Indexed sub-reference. Throws if not NON_PEERED or if ``index`` is out of range. */
@@ -143,6 +145,8 @@ namespace hgraph
         [[nodiscard]] static const TimeSeriesReference &empty_reference() noexcept;
 
       private:
+        friend class detail::TSOutputAlternativeStore;
+
         union Storage
         {
             TSOutputHandle target;
@@ -155,6 +159,9 @@ namespace hgraph
         void destroy() noexcept;
         void copy_from(const TimeSeriesReference &other);
         void move_from(TimeSeriesReference &&other) noexcept;
+        [[nodiscard]] static TimeSeriesReference peered_as(const TSValueTypeMetaData *target_schema,
+                                                           TSOutputHandle target);
+        [[nodiscard]] const TSOutputHandle &target_output() const;
 
         Kind                             kind_{Kind::EMPTY};
         const TSValueTypeMetaData       *target_schema_{nullptr};

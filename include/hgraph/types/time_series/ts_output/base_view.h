@@ -94,6 +94,15 @@ namespace hgraph
         void subscribe(Notifiable *observer) const;
         void unsubscribe(Notifiable *observer) const;
 
+        /**
+         * Return output binding data that exposes this view as ``requested_schema``.
+         *
+         * When the requested schema is canonical this is this view's own
+         * handle. When the requested schema differs only by REF markers, the
+         * owning output may return a handle into its alternative store.
+         */
+        [[nodiscard]] TSOutputHandle binding_for(const TSValueTypeMetaData &requested_schema) const;
+
         /** Begin a mutation through this output endpoint view. */
         [[nodiscard]] TSDataMutationView begin_mutation(engine_time_t evaluation_time) const;
 

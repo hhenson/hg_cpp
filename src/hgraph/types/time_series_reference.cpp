@@ -174,6 +174,14 @@ namespace hgraph
         return TimeSeriesReference{target};
     }
 
+    TimeSeriesReference TimeSeriesReference::peered_as(const TSValueTypeMetaData *target_schema,
+                                                       TSOutputHandle target)
+    {
+        TimeSeriesReference result{std::move(target)};
+        result.target_schema_ = target_schema;
+        return result;
+    }
+
     TimeSeriesReference TimeSeriesReference::non_peered(const TSValueTypeMetaData       *target_schema,
                                                         std::vector<TimeSeriesReference> items)
     {
