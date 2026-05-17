@@ -273,8 +273,9 @@ namespace hgraph
 
     TSDataTracking &TSDataView::mutable_tracking() const
     {
+        if (!valid()) { throw std::logic_error("TSDataView::mutable_tracking requires a live view"); }
         const auto &table = ops();
-        return *table.mutable_tracking_impl(table.context, mutable_data());
+        return *table.mutable_tracking_impl(table.context, const_cast<void *>(data_));
     }
 
     void TSDataView::bind_parent(const TSDataView &parent, std::size_t child_id) const

@@ -72,12 +72,22 @@ namespace hgraph
         /** Copy or bind-null construct from a non-owning view. */
         explicit Value(const ValueView &view)
         {
-            if (view.binding() == nullptr)
+            const auto *view_binding = view.binding();
+            if (view_binding == nullptr)
             {
                 throw std::invalid_argument("Value(ValueView): view has no binding");
             }
-            storage_ = view.data() == nullptr ? storage_type::empty(*view.binding())
-                                              : storage_type::owning_copy(*view.binding(), view.data());
+            const auto &ops     = view_binding->checked_ops();
+            const auto &binding = ops.owning_binding(*view_binding);
+            if (view.data() == nullptr)
+            {
+                storage_ = storage_type::empty(binding);
+                return;
+            }
+
+            storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
+                ops.copy_construct_view(binding, dst, view.data());
+            });
         }
 
         /**

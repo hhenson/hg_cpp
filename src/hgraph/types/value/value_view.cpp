@@ -205,12 +205,19 @@ namespace hgraph
         }
         const auto *bound       = binding();
         const auto *other_bound = other.binding();
-        if (bound == nullptr || other_bound == nullptr || bound->plan() != other_bound->plan())
+        if (bound == nullptr || other_bound == nullptr)
         {
             throw std::invalid_argument("ValueView::copy_from requires matching storage plans");
         }
 
-        bound->checked_plan().copy_assign(mutable_data(), other.data_);
+        const auto &other_ops    = other_bound->checked_ops();
+        const auto &copy_binding = other_ops.owning_binding(*other_bound);
+        if (bound->plan() != copy_binding.plan())
+        {
+            throw std::invalid_argument("ValueView::copy_from requires matching storage plans");
+        }
+
+        other_ops.copy_assign_view(*bound, mutable_data(), other.data_);
     }
 
     bool ValueView::try_copy_from(const ValueView &other)
@@ -221,11 +228,15 @@ namespace hgraph
         if (schema() != other.schema()) { return false; }
         const auto *bound       = binding();
         const auto *other_bound = other.binding();
-        if (bound == nullptr || other_bound == nullptr || bound->plan() != other_bound->plan())
+        if (bound == nullptr || other_bound == nullptr)
         {
             return false;
         }
-        bound->checked_plan().copy_assign(mutable_data(), other.data_);
+
+        const auto &other_ops    = other_bound->checked_ops();
+        const auto &copy_binding = other_ops.owning_binding(*other_bound);
+        if (bound->plan() != copy_binding.plan()) { return false; }
+        other_ops.copy_assign_view(*bound, mutable_data(), other.data_);
         return true;
     }
 

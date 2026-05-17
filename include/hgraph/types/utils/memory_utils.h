@@ -740,6 +740,26 @@ namespace hgraph
                 return handle;
             }
 
+            /**
+             * Factory: allocate owning storage for ``binding`` and let the
+             * caller construct the payload in-place.
+             *
+             * ``construct`` is invoked exactly once with the destination
+             * memory pointer. If it throws, any heap allocation is released
+             * and the returned handle is not produced.
+             */
+            template <typename Construct, typename B = Binding>
+                requires(!std::is_void_v<B>)
+            [[nodiscard]] static StorageHandle owning_constructed(
+                const B &binding,
+                Construct &&construct,
+                const AllocatorOps &allocator = MemoryUtils::allocator())
+            {
+                StorageHandle handle;
+                handle.construct_owned_custom(binding, std::forward<Construct>(construct), allocator);
+                return handle;
+            }
+
             /** Factory: produce a borrowing handle around externally owned memory. */
             [[nodiscard]] static StorageHandle reference(const StoragePlan &plan, void *data,
                                                          const AllocatorOps &allocator = MemoryUtils::allocator()) noexcept
@@ -1025,6 +1045,28 @@ namespace hgraph
 
                 auto rollback = ::hgraph::make_scope_exit([this]() noexcept { abandon_failed_construction(); });
                 binding.copy_construct_at(data(), src);
+                rollback.release();
+            }
+
+            template <typename B, typename Construct>
+                requires(!std::is_void_v<B>)
+            void construct_owned_custom(const B &binding, Construct &&construct, const AllocatorOps &allocator) {
+                const StoragePlan &plan = binding.checked_plan();
+                if (!plan.valid()) { throw std::logic_error("MemoryUtils::StorageHandle requires a valid plan"); }
+
+                m_identity = &binding;
+                set_allocator_state(&allocator, owning_state_for(plan));
+
+                if (storage_state() == State::OwningHeap) {
+                    m_storage.ptr = tagged_allocator()->allocate_storage(plan.layout);
+                    auto rollback = ::hgraph::make_scope_exit([this]() noexcept { abandon_failed_construction(); });
+                    std::forward<Construct>(construct)(data());
+                    rollback.release();
+                    return;
+                }
+
+                auto rollback = ::hgraph::make_scope_exit([this]() noexcept { abandon_failed_construction(); });
+                std::forward<Construct>(construct)(data());
                 rollback.release();
             }
 

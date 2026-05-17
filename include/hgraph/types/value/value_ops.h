@@ -106,6 +106,12 @@ namespace hgraph
         nb::object (*to_python_buffer_impl)(const void *context, const ValueTypeBinding &binding,
                                             const ValueArraySource &source) = nullptr;
 #endif
+        void (*copy_construct_view_impl)(const void *context, const ValueTypeBinding &binding, void *dst,
+                                         const void *memory) = nullptr;
+        void (*copy_assign_view_impl)(const void *context, const ValueTypeBinding &binding, void *dst,
+                                      const void *memory) = nullptr;
+        const ValueTypeBinding *(*owning_binding_impl)(const void *context,
+                                                       const ValueTypeBinding &view_binding) = nullptr;
 
         [[nodiscard]] std::size_t hash(const void *memory) const
         {
@@ -180,6 +186,43 @@ namespace hgraph
             return to_python_buffer_impl(context, binding, source);
         }
 #endif
+
+        [[nodiscard]] const ValueTypeBinding &owning_binding(const ValueTypeBinding &view_binding) const
+        {
+            if (owning_binding_impl == nullptr) { return view_binding; }
+            const auto *result = owning_binding_impl(context, view_binding);
+            if (result == nullptr)
+            {
+                throw std::logic_error("ValueOps::owning_binding returned null");
+            }
+            return *result;
+        }
+
+        void copy_construct_view(const ValueTypeBinding &binding, void *dst, const void *memory) const
+        {
+            if (dst == nullptr) { throw std::logic_error("ValueOps::copy_construct_view requires destination memory"); }
+            if (memory == nullptr) { throw std::logic_error("ValueOps::copy_construct_view requires live memory"); }
+            if (copy_construct_view_impl != nullptr)
+            {
+                copy_construct_view_impl(context, binding, dst, memory);
+                return;
+            }
+            binding.checked_plan().copy_construct(dst, memory);
+        }
+
+        void copy_assign_view(const ValueTypeBinding &binding, void *dst, const void *memory) const
+        {
+            if (dst == nullptr || memory == nullptr)
+            {
+                throw std::logic_error("ValueOps::copy_assign_view requires live memory");
+            }
+            if (copy_assign_view_impl != nullptr)
+            {
+                copy_assign_view_impl(context, binding, dst, memory);
+                return;
+            }
+            binding.checked_plan().copy_assign(dst, memory);
+        }
     };
 
     namespace value_ops_detail
