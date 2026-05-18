@@ -4,6 +4,7 @@
 #include <hgraph/types/time_series_reference.h>
 
 #include <cstdint>
+#include <stdexcept>
 #include <utility>
 
 namespace hgraph
@@ -649,6 +650,15 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::ref(const TSValueTypeMetaData *referenced_ts)
     {
+        if (referenced_ts == nullptr)
+        {
+            throw std::invalid_argument("TypeRegistry::ref requires a referenced time-series schema");
+        }
+        if (referenced_ts->kind == TSTypeKind::REF)
+        {
+            return referenced_ts;
+        }
+
         const TSValueTypeMetaData &meta = ref_cache_.intern(referenced_ts, [&]() {
             if (!time_series_reference_meta_)
             {
