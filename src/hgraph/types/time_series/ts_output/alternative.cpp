@@ -4,6 +4,8 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/time_series/ts_data/proxy.h>
+#include <hgraph/types/time_series/ts_input/detail.h>
+#include <hgraph/types/time_series/ts_input/target_link.h>
 #include <hgraph/types/time_series_reference.h>
 #include <hgraph/types/value/value.h>
 
@@ -35,6 +37,16 @@ namespace hgraph::detail
             if (binding == nullptr)
             {
                 throw std::logic_error("TSOutput to-REF alternative could not resolve requested TSData binding");
+            }
+            return *binding;
+        }
+
+        [[nodiscard]] const TSDataBinding &checked_endpoint_binding(const TSEndpointSchema &endpoint_schema)
+        {
+            const auto *binding = input_data_binding_for(endpoint_schema);
+            if (binding == nullptr)
+            {
+                throw std::logic_error("TSOutput from-REF alternative could not resolve endpoint TSData binding");
             }
             return *binding;
         }
@@ -95,6 +107,170 @@ namespace hgraph::detail
         [[nodiscard]] TSOutputView source_child_view(const TSOutputView &parent, TSDataView child)
         {
             return TSOutputView{parent.output(), child, parent.evaluation_time()};
+        }
+
+        [[nodiscard]] TSEndpointSchema from_ref_endpoint_schema_for(const TSValueTypeMetaData *schema)
+        {
+            if (schema == nullptr)
+            {
+                throw std::invalid_argument("TSOutput from-REF endpoint schema requires a time-series schema");
+            }
+
+            if (schema->kind == TSTypeKind::TSB)
+            {
+                std::vector<TSEndpointSchema> children;
+                children.reserve(schema->field_count());
+                for (std::size_t index = 0; index < schema->field_count(); ++index)
+                {
+                    children.push_back(from_ref_endpoint_schema_for(schema->fields()[index].type));
+                }
+                return TSEndpointSchema::non_peered(schema, std::move(children));
+            }
+
+            if (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0)
+            {
+                return TSEndpointSchema::non_peered_list(schema, from_ref_endpoint_schema_for(schema->element_ts()));
+            }
+
+            return TSEndpointSchema::peered(schema);
+        }
+
+        [[nodiscard]] TSDataView endpoint_child_view(TSDataView parent, std::size_t index)
+        {
+            auto projection = input_child_projection(parent, index);
+            if (projection.target_link.valid())
+            {
+                return TSOutputAlternativeStore::child_view_with_parent(parent, projection.target_link, index);
+            }
+            if (projection.visible.valid())
+            {
+                return TSOutputAlternativeStore::child_view_with_parent(parent, projection.visible, index);
+            }
+            return {};
+        }
+
+        void unbind_target_link_at(TSDataView target, engine_time_t modified_time)
+        {
+            auto *link = mutable_target_link_storage(target);
+            if (link == nullptr)
+            {
+                throw std::logic_error("TSOutput from-REF target unbinding requires TargetLink storage");
+            }
+            link->unbind();
+            link->record_target_modified(modified_time);
+        }
+
+        void bind_target_link_at(TSDataView target, TSOutputView output, engine_time_t modified_time)
+        {
+            bind_target_link(target, output);
+            auto *link = mutable_target_link_storage(target);
+            if (link == nullptr)
+            {
+                throw std::logic_error("TSOutput from-REF target binding requires TargetLink storage");
+            }
+            link->record_target_modified(modified_time);
+        }
+
+        [[nodiscard]] TSOutputView output_child_view(const TSOutputView &parent,
+                                                     const TSValueTypeMetaData &parent_schema,
+                                                     std::size_t index)
+        {
+            const auto &ops = input_endpoint_ops_for(&parent_schema);
+            if (ops.target_child == nullptr || ops.child_schema == nullptr)
+            {
+                throw std::logic_error("TSOutput from-REF cannot project a child from this output schema");
+            }
+            auto child = ops.target_child(parent.data_view(), index);
+            if (!child.valid()) { throw std::logic_error("TSOutput from-REF output child projection failed"); }
+            return source_child_view(parent, child);
+        }
+
+        void unbind_from_ref_data(TSDataView target,
+                                  const TSEndpointSchema &endpoint_schema,
+                                  engine_time_t modified_time);
+
+        void apply_output_to_from_ref_data(TSDataView target,
+                                           const TSEndpointSchema &endpoint_schema,
+                                           TSOutputView output,
+                                           engine_time_t modified_time);
+
+        void apply_reference_to_from_ref_data(TSDataView target,
+                                              const TSEndpointSchema &endpoint_schema,
+                                              const TimeSeriesReference &reference,
+                                              engine_time_t modified_time);
+
+        void unbind_from_ref_data(TSDataView target,
+                                  const TSEndpointSchema &endpoint_schema,
+                                  engine_time_t modified_time)
+        {
+            if (endpoint_schema.is_peered())
+            {
+                unbind_target_link_at(target, modified_time);
+                return;
+            }
+
+            for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
+            {
+                unbind_from_ref_data(endpoint_child_view(target, index),
+                                     endpoint_schema.child(index),
+                                     modified_time);
+            }
+        }
+
+        void apply_output_to_from_ref_data(TSDataView target,
+                                           const TSEndpointSchema &endpoint_schema,
+                                           TSOutputView output,
+                                           engine_time_t modified_time)
+        {
+            if (endpoint_schema.is_peered())
+            {
+                bind_target_link_at(target, output, modified_time);
+                return;
+            }
+
+            for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
+            {
+                apply_output_to_from_ref_data(endpoint_child_view(target, index),
+                                              endpoint_schema.child(index),
+                                              output_child_view(output, *endpoint_schema.schema(), index),
+                                              modified_time);
+            }
+        }
+
+        void apply_reference_to_from_ref_data(TSDataView target,
+                                              const TSEndpointSchema &endpoint_schema,
+                                              const TimeSeriesReference &reference,
+                                              engine_time_t modified_time)
+        {
+            if (reference.is_empty())
+            {
+                unbind_from_ref_data(target, endpoint_schema, modified_time);
+                return;
+            }
+
+            if (reference.is_peered())
+            {
+                const auto &output = TSOutputAlternativeStore::peered_reference_target(reference);
+                apply_output_to_from_ref_data(target, endpoint_schema, output.view(modified_time), modified_time);
+                return;
+            }
+
+            if (endpoint_schema.is_peered())
+            {
+                throw std::invalid_argument("TSOutput from-REF cannot apply a non-peered reference to a peered leaf");
+            }
+            if (reference.items().size() != endpoint_schema.child_count())
+            {
+                throw std::invalid_argument("TSOutput from-REF non-peered reference has the wrong child count");
+            }
+
+            for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
+            {
+                apply_reference_to_from_ref_data(endpoint_child_view(target, index),
+                                                 endpoint_schema.child(index),
+                                                 reference[index],
+                                                 modified_time);
+            }
         }
 
         [[nodiscard]] const TSDataBinding &to_ref_ts_data_binding_for(const TSValueTypeMetaData &schema);
@@ -240,6 +416,95 @@ namespace hgraph::detail
         }
     };
 
+    struct TSOutputAlternativeStore::RefLinkAlternativeState final
+    {
+        struct SourceNotifier final : Notifiable
+        {
+            explicit SourceNotifier(RefLinkAlternativeState &owner) noexcept
+                : owner{&owner}
+            {
+            }
+
+            void notify(engine_time_t modified_time) override
+            {
+                if (owner != nullptr) { owner->refresh(modified_time); }
+            }
+
+            RefLinkAlternativeState *owner{nullptr};
+        };
+
+        RefLinkAlternativeState(const TSValueTypeMetaData &requested_schema, const TSOutputView &source)
+            : requested_schema{&requested_schema},
+              endpoint_schema{from_ref_endpoint_schema_for(&requested_schema)},
+              data{checked_endpoint_binding(endpoint_schema)},
+              notifier{*this}
+        {
+            rebind(source);
+        }
+
+        RefLinkAlternativeState(const RefLinkAlternativeState &) = delete;
+        RefLinkAlternativeState &operator=(const RefLinkAlternativeState &) = delete;
+
+        ~RefLinkAlternativeState() noexcept
+        {
+            unsubscribe_source();
+        }
+
+        const TSValueTypeMetaData *requested_schema{nullptr};
+        TSEndpointSchema           endpoint_schema{};
+        TSData                     data{};
+        TSOutputHandle             source{};
+        SourceNotifier             notifier;
+
+        [[nodiscard]] TSOutputHandle handle(const TSOutput *output) noexcept
+        {
+            return TSOutputHandle{output, data.view()};
+        }
+
+        void rebind(const TSOutputView &new_source)
+        {
+            const auto next_source = new_source.handle();
+            if (!source.same_as(next_source))
+            {
+                unsubscribe_source();
+                source = next_source;
+                subscribe_source();
+            }
+            refresh(new_source.evaluation_time());
+        }
+
+      private:
+        void subscribe_source()
+        {
+            if (source.bound()) { source.data_view().subscribe(&notifier); }
+        }
+
+        void unsubscribe_source() noexcept
+        {
+            if (!source.bound()) { return; }
+            static_cast<void>(fallback_on_exception(false, [&] {
+                source.data_view().unsubscribe(&notifier);
+                return true;
+            }));
+        }
+
+        void refresh(engine_time_t modified_time)
+        {
+            if (modified_time == MIN_DT || requested_schema == nullptr || !source.bound()) { return; }
+
+            auto source_view = source.view(modified_time);
+            auto target = data.view();
+            if (!source_view.valid())
+            {
+                unbind_from_ref_data(target, endpoint_schema, modified_time);
+                return;
+            }
+
+            const auto &reference = source_view.value().checked_as<TimeSeriesReference>();
+            apply_reference_to_from_ref_data(target, endpoint_schema, reference, modified_time);
+        }
+    };
+
     TSOutputAlternativeStore::TSOutputAlternativeStore() noexcept = default;
     TSOutputAlternativeStore::TSOutputAlternativeStore(TSOutputAlternativeStore &&) noexcept = default;
     TSOutputAlternativeStore &TSOutputAlternativeStore::operator=(TSOutputAlternativeStore &&) noexcept = default;
@@ -289,7 +554,7 @@ namespace hgraph::detail
 
         if (source_schema->kind == TSTypeKind::REF && requested_schema.kind != TSTypeKind::REF)
         {
-            throw std::logic_error("TSOutput REF dereference alternatives are not implemented yet");
+            return from_ref_binding(key, source, requested_schema);
         }
 
         throw std::logic_error("TSOutput structural reference alternatives are not implemented yet");
@@ -299,6 +564,18 @@ namespace hgraph::detail
                                                                       TSOutputHandle target)
     {
         return TimeSeriesReference::peered_as(target_schema, target);
+    }
+
+    const TSOutputHandle &TSOutputAlternativeStore::peered_reference_target(const TimeSeriesReference &reference)
+    {
+        return reference.target_output();
+    }
+
+    TSDataView TSOutputAlternativeStore::child_view_with_parent(TSDataView parent,
+                                                                TSDataView child,
+                                                                std::size_t child_id)
+    {
+        return TSDataView{child.binding(), child.data(), parent, child_id};
     }
 
     TSOutputHandle TSOutputAlternativeStore::to_ref_binding(const AlternativeKey &key,
@@ -316,6 +593,27 @@ namespace hgraph::detail
             if (it->second->requested_schema != &requested_schema)
             {
                 throw std::logic_error("TSOutput to-REF alternative cache key resolved to the wrong requested schema");
+            }
+            it->second->rebind(source);
+        }
+        return it->second->handle(source.output());
+    }
+
+    TSOutputHandle TSOutputAlternativeStore::from_ref_binding(const AlternativeKey &key,
+                                                              const TSOutputView &source,
+                                                              const TSValueTypeMetaData &requested_schema)
+    {
+        auto it = ref_link_alternatives_.find(key);
+        if (it == ref_link_alternatives_.end())
+        {
+            auto state = std::make_unique<RefLinkAlternativeState>(requested_schema, source);
+            it = ref_link_alternatives_.emplace(key, std::move(state)).first;
+        }
+        else
+        {
+            if (it->second->requested_schema != &requested_schema)
+            {
+                throw std::logic_error("TSOutput from-REF alternative cache key resolved to the wrong requested schema");
             }
             it->second->rebind(source);
         }

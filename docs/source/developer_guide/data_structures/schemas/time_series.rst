@@ -452,6 +452,10 @@ is required. For the non-``REF`` to ``REF`` case, that state is a
 ``ToRefAlternativeState``. It owns a ``TSData`` allocation for the
 requested schema and the returned ``TSOutputHandle`` points at this
 alternative ``TSData`` while retaining the root output identity.
+For the ``REF`` to non-``REF`` case, the state is a
+``RefLinkAlternativeState``. It subscribes to the source ``REF`` TSData
+level, owns endpoint-plan TSData for the requested exposed schema, and
+applies each ``TimeSeriesReference`` tick into TargetLink leaves.
 
 This means the alternative view is TSData-backed and exposes the
 requested shape through normal view APIs. A request for
@@ -464,6 +468,15 @@ requested ``REF`` values directly. A request for
 ``TSD[int, TSB[{items: TSL[REF[TS[int]], Size[2]]}]]`` also stores a
 ``TSDProxy``, but the proxy child is the requested ``TSB`` structure;
 the two ``REF`` leaves are materialised inside that child.
+
+The inverse request ``REF[TS[int]]`` exposed as ``TS[int]`` stores a
+single TargetLink-backed endpoint. When the source reference ticks, the
+link binds, rebinds, or unbinds that endpoint. A request such as
+``REF[TSB[{bid: TS[float], ask: TS[float]}]]`` exposed as the bundle
+shape stores a non-peered bundle endpoint with TargetLink leaves. A
+peered reference to a whole bundle is split into child links; a
+non-peered reference binds each child link from the corresponding child
+reference.
 
 The alternative has its own time-series tracking. Binding or rebinding
 marks the alternative modified at the bind time. Ordinary ticks of the

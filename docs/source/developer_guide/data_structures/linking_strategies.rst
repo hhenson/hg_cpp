@@ -89,6 +89,13 @@ A ``RefLinkState`` is logically split into three pieces:
   notification identity. Each attachment records the active descendant
   paths requested by that input under this dereference boundary.
 
+The current C++ implementation names the output-owned state
+``RefLinkAlternativeState``. It implements the source subscriber and
+reference-bound endpoint pieces. Downstream attachment replay is still a
+separate follow-up for the active/passive input binding layer; the
+target endpoint already uses TargetLink mechanics, so descendant target
+ticks propagate through the exposed alternative.
+
 The source subscriber's job is to drive the target endpoint. When the
 ``REF`` source value changes, the subscriber reads the new
 ``TimeSeriesReference`` and asks the target endpoint to rebind. The
@@ -104,6 +111,12 @@ state at the corresponding slots, much like a ``TSInput`` plan holds
 non-peered prefixes above peered target links. The exposed schema is
 still fixed by the alternative request; the reference value supplies the
 current target outputs inside that shape.
+
+For this first pass, static ``TSB`` and fixed-size ``TSL`` prefixes are
+expanded into non-peered endpoint-plan storage and all other shapes are
+TargetLink leaves. Dynamic keyed non-peered reference expansion needs
+the same explicit slot/key lifecycle work as other dynamic structures
+before it should be enabled.
 
 For example, a ``RefLink`` exposing:
 
@@ -306,7 +319,9 @@ The following invariants are useful when implementing or debugging
 - a non-peered reference recreates target structure under the current
   endpoint instead of flattening it to one output handle;
 - downstream active tries are keyed by the consuming input notification
-  identity, not by output path alone;
+  identity, not by output path alone; this attachment layer is planned
+  separately from the initial source-subscriber and target-endpoint
+  implementation;
 - rebind unsubscribes stale target subscriptions before installing or
   replaying subscriptions on the new target structure;
 - views over a ``RefLink`` are transient cursors over binding data and

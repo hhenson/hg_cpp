@@ -12,17 +12,61 @@
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value.h>
 
+#include <array>
+#include <string>
+#include <type_traits>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace
 {
+    template <std::size_t Count>
+    [[nodiscard]] std::array<hgraph::engine_time_t, Count> sequential_times(
+        hgraph::engine_time_t start = hgraph::MIN_ST,
+        hgraph::engine_time_delta_t step = hgraph::engine_time_delta_t{1})
+    {
+        std::array<hgraph::engine_time_t, Count> result{};
+        auto                                     next = start;
+        for (auto &time : result)
+        {
+            time = next;
+            next += step;
+        }
+        return result;
+    }
+
     template <typename Range>
     std::size_t range_count(const Range &range)
     {
         std::size_t count = 0;
         for (auto it = range.begin(); it != range.end(); ++it) { ++count; }
         return count;
+    }
+
+    template <typename Range>
+    [[nodiscard]] auto collect_range(const Range &range)
+    {
+        using value_type = std::decay_t<decltype(*range.begin())>;
+        std::vector<value_type> result;
+        for (auto value : range) { result.push_back(value); }
+        return result;
+    }
+
+    void set_output_value(hgraph::TSOutput &output, int value, hgraph::engine_time_t time)
+    {
+        hgraph::Value stored{value};
+        auto          mutation = output.begin_mutation(time);
+        REQUIRE(mutation.copy_value_from(stored.view()));
+    }
+
+    void set_output_reference(hgraph::TSOutput &output,
+                              hgraph::TimeSeriesReference reference,
+                              hgraph::engine_time_t time)
+    {
+        hgraph::Value stored{std::move(reference)};
+        auto          mutation = output.begin_mutation(time);
+        REQUIRE(mutation.copy_value_from(stored.view()));
     }
 }
 
@@ -642,6 +686,193 @@ TEST_CASE("TimeSeriesReference: to-REF nested TSD alternative keeps each proxy s
     auto source_after_add_inner = source_after_add_inner_child.as_dict();
     REQUIRE(after_add_inner.at(inner_key_two.view()).value().checked_as<TimeSeriesReference>() ==
             TimeSeriesReference{source_after_add_inner.at(inner_key_two.view())});
+}
+
+TEST_CASE("TimeSeriesReference: from-REF alternative binds peered target and follows target ticks")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *ref_int  = registry.ref(ts_int);
+
+    TSOutput first_target{*ts_int};
+    TSOutput second_target{*ts_int};
+    TSOutput ref_output{*ref_int};
+
+    const auto [t1, t2, t3, t4, t5] = sequential_times<5>();
+
+    set_output_value(first_target, 11, t1);
+    set_output_reference(ref_output, TimeSeriesReference{first_target.view(t1)}, t2);
+
+    auto handle = ref_output.view(t2).binding_for(*ts_int);
+    auto dereferenced = handle.view(t2);
+    REQUIRE(dereferenced.valid());
+    REQUIRE(dereferenced.modified());
+    REQUIRE(dereferenced.value().checked_as<int>() == 11);
+    REQUIRE(dereferenced.last_modified_time() == t2);
+
+    set_output_value(first_target, 12, t3);
+    auto after_target_tick = handle.view(t3);
+    REQUIRE(after_target_tick.valid());
+    REQUIRE(after_target_tick.modified());
+    REQUIRE(after_target_tick.value().checked_as<int>() == 12);
+
+    set_output_value(second_target, 21, t4);
+    set_output_reference(ref_output, TimeSeriesReference{second_target.view(t4)}, t4);
+    auto after_rebind = handle.view(t4);
+    REQUIRE(after_rebind.valid());
+    REQUIRE(after_rebind.modified());
+    REQUIRE(after_rebind.value().checked_as<int>() == 21);
+    REQUIRE(after_rebind.last_modified_time() == t4);
+
+    set_output_reference(ref_output, TimeSeriesReference::empty(ts_int), t5);
+    auto after_unbind = handle.view(t5);
+    REQUIRE_FALSE(after_unbind.valid());
+    REQUIRE(after_unbind.modified());
+    REQUIRE(after_unbind.last_modified_time() == t5);
+}
+
+TEST_CASE("TimeSeriesReference: from-REF alternative expands non-peered bundle references")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *bundle_schema =
+        registry.tsb("TimeSeriesReferenceFromRefNonPeeredBundle", {{"lhs", ts_int}, {"rhs", ts_int}});
+    const auto *ref_bundle = registry.ref(bundle_schema);
+
+    TSOutput lhs_target{*ts_int};
+    TSOutput rhs_target{*ts_int};
+    TSOutput ref_output{*ref_bundle};
+
+    const auto [t1, t2, t3] = sequential_times<3>();
+
+    set_output_value(lhs_target, 1, t1);
+    set_output_value(rhs_target, 2, t1);
+    set_output_reference(ref_output,
+                         TimeSeriesReference::non_peered(
+                             bundle_schema,
+                             {
+                                 TimeSeriesReference{lhs_target.view(t1)},
+                                 TimeSeriesReference{rhs_target.view(t1)},
+                             }),
+                         t2);
+
+    auto handle = ref_output.view(t2).binding_for(*bundle_schema);
+    auto dereferenced_view = handle.view(t2);
+    auto bundle = dereferenced_view.as_bundle();
+    auto lhs = bundle.field("lhs");
+    auto rhs = bundle.field("rhs");
+    REQUIRE(dereferenced_view.valid());
+    REQUIRE(dereferenced_view.modified());
+    REQUIRE(lhs.value().checked_as<int>() == 1);
+    REQUIRE(rhs.value().checked_as<int>() == 2);
+
+    set_output_value(rhs_target, 3, t3);
+    auto after_rhs_tick_view = handle.view(t3);
+    auto after_rhs_tick = after_rhs_tick_view.as_bundle();
+    REQUIRE(after_rhs_tick_view.modified());
+    auto modified_items = collect_range(after_rhs_tick.modified_items());
+    REQUIRE(modified_items.size() == 1);
+    REQUIRE(std::string{modified_items[0].first} == "rhs");
+    REQUIRE(modified_items[0].second.value().checked_as<int>() == 3);
+}
+
+TEST_CASE("TimeSeriesReference: from-REF alternative expands non-peered fixed-list references")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *list_schema = registry.tsl(ts_int, 2);
+    const auto *ref_list = registry.ref(list_schema);
+
+    TSOutput first_target{*ts_int};
+    TSOutput second_target{*ts_int};
+    TSOutput ref_output{*ref_list};
+
+    const auto [t1, t2, t3] = sequential_times<3>();
+
+    set_output_value(first_target, 4, t1);
+    set_output_value(second_target, 5, t1);
+    set_output_reference(ref_output,
+                         TimeSeriesReference::non_peered(
+                             list_schema,
+                             {
+                                 TimeSeriesReference{first_target.view(t1)},
+                                 TimeSeriesReference{second_target.view(t1)},
+                             }),
+                         t2);
+
+    auto handle = ref_output.view(t2).binding_for(*list_schema);
+    auto dereferenced_view = handle.view(t2);
+    auto list = dereferenced_view.as_list();
+    REQUIRE(dereferenced_view.valid());
+    REQUIRE(dereferenced_view.modified());
+    REQUIRE(list[0].value().checked_as<int>() == 4);
+    REQUIRE(list[1].value().checked_as<int>() == 5);
+
+    set_output_value(first_target, 6, t3);
+    auto after_first_tick_view = handle.view(t3);
+    auto after_first_tick = after_first_tick_view.as_list();
+    REQUIRE(after_first_tick_view.modified());
+    auto modified_items = collect_range(after_first_tick.modified_items());
+    REQUIRE(modified_items.size() == 1);
+    REQUIRE(modified_items[0].first == 0);
+    REQUIRE(modified_items[0].second.value().checked_as<int>() == 6);
+}
+
+TEST_CASE("TimeSeriesReference: from-REF alternative splits peered bundle references into child links")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *bundle_schema =
+        registry.tsb("TimeSeriesReferenceFromRefPeeredBundle", {{"lhs", ts_int}, {"rhs", ts_int}});
+    const auto *ref_bundle = registry.ref(bundle_schema);
+
+    TSOutput target{*bundle_schema};
+    TSOutput ref_output{*ref_bundle};
+
+    const auto [t1, t2, t3] = sequential_times<3>();
+
+    {
+        auto data = target.data_view();
+        auto bundle = data.as_bundle();
+        auto lhs = bundle.field("lhs");
+        auto rhs = bundle.field("rhs");
+        Value lhs_value{5};
+        Value rhs_value{6};
+        REQUIRE(lhs.begin_mutation(t1).copy_value_from(lhs_value.view()));
+        REQUIRE(rhs.begin_mutation(t1).copy_value_from(rhs_value.view()));
+    }
+
+    set_output_reference(ref_output, TimeSeriesReference{target.view(t1)}, t2);
+
+    auto handle = ref_output.view(t2).binding_for(*bundle_schema);
+    auto dereferenced_view = handle.view(t2);
+    auto bundle = dereferenced_view.as_bundle();
+    REQUIRE(bundle.field("lhs").value().checked_as<int>() == 5);
+    REQUIRE(bundle.field("rhs").value().checked_as<int>() == 6);
+
+    {
+        auto target_view = target.view(t3);
+        auto target_bundle = target_view.as_bundle();
+        auto rhs = target_bundle.field("rhs");
+        Value rhs_value{7};
+        REQUIRE(rhs.begin_mutation(t3).copy_value_from(rhs_value.view()));
+    }
+
+    auto after_rhs_tick_view = handle.view(t3);
+    auto after_rhs_tick = after_rhs_tick_view.as_bundle();
+    REQUIRE(after_rhs_tick_view.modified());
+    auto modified_items = collect_range(after_rhs_tick.modified_items());
+    REQUIRE(modified_items.size() == 1);
+    REQUIRE(std::string{modified_items[0].first} == "rhs");
+    REQUIRE(modified_items[0].second.value().checked_as<int>() == 7);
 }
 
 TEST_CASE("TimeSeriesReference: empty_reference() returns a stable singleton")

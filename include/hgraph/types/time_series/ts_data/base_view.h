@@ -12,6 +12,11 @@
 
 namespace hgraph
 {
+    namespace detail
+    {
+        class TSOutputAlternativeStore;
+    }
+
     class TSDataView
     {
       public:
@@ -132,6 +137,7 @@ namespace hgraph
         friend class IndexedTSDataView;
         friend class TSOutput;
         friend class TSInputView;
+        friend class detail::TSOutputAlternativeStore;
         friend class TSDProxy;
         friend class TSDDataView;
         friend class TSDDataMutationView;

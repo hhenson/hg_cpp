@@ -39,9 +39,14 @@ namespace hgraph::detail
                                                  const TSValueTypeMetaData &requested_schema);
         [[nodiscard]] static TimeSeriesReference peered_reference_as(const TSValueTypeMetaData *target_schema,
                                                                      TSOutputHandle target);
+        [[nodiscard]] static const TSOutputHandle &peered_reference_target(const TimeSeriesReference &reference);
+        [[nodiscard]] static TSDataView child_view_with_parent(TSDataView parent,
+                                                               TSDataView child,
+                                                               std::size_t child_id);
 
       private:
         struct ToRefAlternativeState;
+        struct RefLinkAlternativeState;
 
         struct AlternativeKey
         {
@@ -64,9 +69,14 @@ namespace hgraph::detail
         [[nodiscard]] TSOutputHandle to_ref_binding(const AlternativeKey &key,
                                                     const TSOutputView &source,
                                                     const TSValueTypeMetaData &requested_schema);
+        [[nodiscard]] TSOutputHandle from_ref_binding(const AlternativeKey &key,
+                                                      const TSOutputView &source,
+                                                      const TSValueTypeMetaData &requested_schema);
 
         std::unordered_map<AlternativeKey, std::unique_ptr<ToRefAlternativeState>, AlternativeKeyHash>
             to_ref_alternatives_{};
+        std::unordered_map<AlternativeKey, std::unique_ptr<RefLinkAlternativeState>, AlternativeKeyHash>
+            ref_link_alternatives_{};
     };
 }  // namespace hgraph::detail
 
