@@ -1,0 +1,1250 @@
+#include <hgraph/types/time_series/ts_data/proxy.h>
+
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/utils/value_slot_store.h>
+#include <hgraph/types/value/specialized_views.h>
+#include <hgraph/types/value/value.h>
+#include <hgraph/types/value/value_builder.h>
+#include <hgraph/util/scope.h>
+
+#include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <unordered_map>
+#include <utility>
+
+namespace hgraph
+{
+    namespace
+    {
+        enum class TSDProxySetSurface
+        {
+            Live,
+            Added,
+            Removed,
+        };
+
+        enum class TSDProxyMapSurface
+        {
+            Live,
+            Added,
+            Removed,
+            Modified,
+        };
+
+        [[nodiscard]] TSDProxy &proxy_storage(void *memory)
+        {
+            if (memory == nullptr) { throw std::logic_error("TSDProxy requires live storage"); }
+            return *static_cast<TSDProxy *>(memory);
+        }
+
+        [[nodiscard]] const TSDProxy &proxy_storage(const void *memory)
+        {
+            if (memory == nullptr) { throw std::logic_error("TSDProxy requires live storage"); }
+            return *static_cast<const TSDProxy *>(memory);
+        }
+
+        struct TSDProxyContextKey
+        {
+            const TSValueTypeMetaData *schema{nullptr};
+            const TSDataBinding      *element_binding{nullptr};
+
+            [[nodiscard]] bool operator==(const TSDProxyContextKey &) const noexcept = default;
+        };
+
+        struct TSDProxyContextKeyHash
+        {
+            [[nodiscard]] std::size_t operator()(const TSDProxyContextKey &key) const noexcept
+            {
+                std::size_t seed = std::hash<const void *>{}(key.schema);
+                const auto  h    = std::hash<const void *>{}(key.element_binding);
+                seed ^= h + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+                return seed;
+            }
+        };
+
+        struct TSDProxyContext
+        {
+            const TSValueTypeMetaData      *schema{nullptr};
+            const MemoryUtils::StoragePlan *plan{nullptr};
+            TSDDataLayout                   layout{};
+            TSDDataOps                      dict_ops{};
+            TSSDataOps                      key_set_ts_ops{};
+            SetValueOps                     key_set_value_ops{};
+            SetValueOps                     added_set_value_ops{};
+            SetValueOps                     removed_set_value_ops{};
+            MapValueOps                     value_map_ops{};
+            MapValueOps                     modified_map_ops{};
+            IndexedValueOps                 delta_bundle_ops{};
+            const TSDataBinding            *element_binding{nullptr};
+            const ValueTypeBinding         *key_set_value_binding{nullptr};
+            const ValueTypeBinding         *added_set_binding{nullptr};
+            const ValueTypeBinding         *removed_set_binding{nullptr};
+            const ValueTypeBinding         *modified_map_binding{nullptr};
+
+            TSDProxyContext(const TSValueTypeMetaData &schema_, const TSDataBinding &element_binding_)
+                : schema(&schema_),
+                  plan(&MemoryUtils::plan_for<TSDProxy>()),
+                  element_binding(&element_binding_)
+            {
+                if (schema->kind != TSTypeKind::TSD)
+                {
+                    throw std::logic_error("TSDProxy context requires a TSD schema");
+                }
+                if (schema->key_type() == nullptr || schema->element_ts() == nullptr)
+                {
+                    throw std::logic_error("TSDProxy schema is incomplete");
+                }
+                if (element_binding->type_meta != schema->element_ts())
+                {
+                    throw std::logic_error("TSDProxy element binding does not match the TSD element schema");
+                }
+
+                const auto &element_ops    = element_binding->checked_ops();
+                const auto *element_layout = element_ops.layout_impl(element_ops.context);
+                if (element_layout == nullptr)
+                {
+                    throw std::logic_error("TSDProxy element layout is not resolved");
+                }
+
+                layout.key_binding           = ValuePlanFactory::instance().binding_for(schema->key_type());
+                layout.element_binding       = element_binding;
+                layout.element_layout        = element_layout;
+                layout.element_value_binding = element_layout->value_binding;
+                layout.element_delta_binding = element_layout->delta_binding;
+                layout.tracking_offset       = 0;
+                if (layout.key_binding == nullptr || layout.element_value_binding == nullptr ||
+                    layout.element_delta_binding == nullptr)
+                {
+                    throw std::logic_error("TSDProxy value bindings are not resolved");
+                }
+
+                configure_value_ops();
+                configure_ts_ops();
+                bind_surfaces();
+            }
+
+          private:
+            void configure_value_ops()
+            {
+                key_set_value_ops     = set_value_ops_for<TSDProxySetSurface::Live>();
+                added_set_value_ops   = set_value_ops_for<TSDProxySetSurface::Added>();
+                removed_set_value_ops = set_value_ops_for<TSDProxySetSurface::Removed>();
+                value_map_ops         = map_value_ops_for<TSDProxyMapSurface::Live>();
+                modified_map_ops      = map_value_ops_for<TSDProxyMapSurface::Modified>();
+                delta_bundle_ops      = IndexedValueOps{
+                    {this, false, nullptr, nullptr, nullptr, nullptr},
+                    &delta_size,
+                    &delta_element_at,
+                    &delta_element_binding,
+                    &delta_range,
+                    nullptr,
+                };
+                delta_bundle_ops.owning_binding_impl      = &canonical_value_binding;
+                delta_bundle_ops.copy_construct_view_impl = &delta_copy_construct_view;
+                delta_bundle_ops.copy_assign_view_impl    = &delta_copy_assign_view;
+            }
+
+            void configure_ts_ops()
+            {
+                key_set_ts_ops = TSSDataOps{};
+                TSDataOps &set_base = key_set_ts_ops;
+                set_base = TSDataOps{
+                    .context                   = this,
+                    .allows_mutation           = false,
+                    .layout_impl               = &ts_layout,
+                    .tracking_impl             = &tracking,
+                    .mutable_tracking_impl     = &mutable_tracking,
+                    .has_current_value_impl    = &has_current_value,
+                    .all_valid_impl            = &all_valid,
+                    .value_memory_impl         = &value_memory,
+                    .mutable_value_memory_impl = &mutable_value_memory,
+                    .delta_memory_impl         = &delta_memory,
+                    .mutable_delta_memory_impl = &mutable_delta_memory,
+                    .cleanup_delta_impl        = &cleanup_delta,
+                    .record_child_modified_impl = &record_child_modified,
+                };
+                key_set_ts_ops.size_impl                      = &set_size<TSDProxySetSurface::Live>;
+                key_set_ts_ops.slot_capacity_impl             = &slot_capacity;
+                key_set_ts_ops.slot_occupied_impl             = &slot_occupied;
+                key_set_ts_ops.slot_live_impl                 = &slot_live;
+                key_set_ts_ops.slot_added_impl                = &slot_added;
+                key_set_ts_ops.slot_removed_impl              = &slot_removed;
+                key_set_ts_ops.key_at_slot_impl               = &key_at_slot;
+                key_set_ts_ops.contains_impl                  = &set_contains;
+                key_set_ts_ops.find_slot_impl                 = &find_slot;
+                key_set_ts_ops.make_values_range_impl         = &set_range<TSDProxySetSurface::Live>;
+                key_set_ts_ops.make_added_values_range_impl   = &set_range<TSDProxySetSurface::Added>;
+                key_set_ts_ops.make_removed_values_range_impl = &set_range<TSDProxySetSurface::Removed>;
+                key_set_ts_ops.subscribe_slot_observer_impl   = &subscribe_slot_observer;
+                key_set_ts_ops.unsubscribe_slot_observer_impl = &unsubscribe_slot_observer;
+
+                dict_ops = TSDDataOps{};
+                TSSDataOps &dict_set = dict_ops;
+                dict_set = key_set_ts_ops;
+                TSDataOps &dict_base = dict_ops;
+                dict_base.context = this;
+                dict_ops.child_at_slot_impl = &tsd_child_at_slot;
+                dict_ops.slot_modified_impl = &slot_modified;
+                dict_ops.make_ts_values_range_impl = &ts_value_range<TSDProxyMapSurface::Live>;
+                dict_ops.make_valid_keys_range_impl = &set_range<TSDProxySetSurface::Live>;
+                dict_ops.make_valid_ts_values_range_impl = &ts_value_range<TSDProxyMapSurface::Live>;
+                dict_ops.make_modified_keys_range_impl = &map_key_range<TSDProxyMapSurface::Modified>;
+                dict_ops.make_modified_ts_values_range_impl = &ts_value_range<TSDProxyMapSurface::Modified>;
+                dict_ops.make_added_ts_values_range_impl = &ts_value_range<TSDProxyMapSurface::Added>;
+                dict_ops.make_removed_ts_values_range_impl = &ts_value_range<TSDProxyMapSurface::Removed>;
+                dict_ops.make_ts_kv_range_impl = &ts_kv_range<TSDProxyMapSurface::Live>;
+                dict_ops.make_valid_ts_kv_range_impl = &ts_kv_range<TSDProxyMapSurface::Live>;
+                dict_ops.make_modified_ts_kv_range_impl = &ts_kv_range<TSDProxyMapSurface::Modified>;
+                dict_ops.make_added_ts_kv_range_impl = &ts_kv_range<TSDProxyMapSurface::Added>;
+                dict_ops.make_removed_ts_kv_range_impl = &ts_kv_range<TSDProxyMapSurface::Removed>;
+            }
+
+            void bind_surfaces()
+            {
+                const auto *set_schema        = TypeRegistry::instance().set(schema->key_type());
+                const auto *key_set_ts_schema = TypeRegistry::instance().tss(schema->key_type());
+                if (schema->value_schema == nullptr || schema->delta_value_schema == nullptr ||
+                    set_schema == nullptr || key_set_ts_schema == nullptr)
+                {
+                    throw std::logic_error("TSDProxy schemas are not populated");
+                }
+
+                layout.value_binding = &ValueTypeBinding::intern(*schema->value_schema, *plan, value_map_ops);
+
+                if (schema->delta_value_schema->kind != ValueTypeKind::Bundle ||
+                    schema->delta_value_schema->field_count != 2)
+                {
+                    throw std::logic_error("TSDProxy delta schema must be Bundle{removed, modified}");
+                }
+                removed_set_binding = &ValueTypeBinding::intern(*schema->delta_value_schema->fields[0].type,
+                                                                *plan,
+                                                                removed_set_value_ops);
+                modified_map_binding = &ValueTypeBinding::intern(*schema->delta_value_schema->fields[1].type,
+                                                                 *plan,
+                                                                 modified_map_ops);
+                added_set_binding = &ValueTypeBinding::intern(*set_schema, *plan, added_set_value_ops);
+                layout.delta_binding = &ValueTypeBinding::intern(*schema->delta_value_schema, *plan, delta_bundle_ops);
+
+                key_set_value_binding = &ValueTypeBinding::intern(*set_schema, *plan, key_set_value_ops);
+                layout.key_set_binding = &TSDataBinding::intern(*key_set_ts_schema, *plan, key_set_ts_ops);
+            }
+
+            template <TSDProxySetSurface Surface>
+            [[nodiscard]] SetValueOps set_value_ops_for()
+            {
+                SetValueOps ops{
+                    {{this, false, nullptr, nullptr, nullptr, nullptr},
+                     &set_size<Surface>,
+                     &set_element_at<Surface>,
+                     &set_element_binding,
+                     &set_range<Surface>,
+                     nullptr},
+                    &set_contains_raw,
+                };
+                ops.owning_binding_impl      = &canonical_value_binding;
+                ops.copy_construct_view_impl = &set_copy_construct_view<Surface>;
+                ops.copy_assign_view_impl    = &set_copy_assign_view<Surface>;
+                return ops;
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] MapValueOps map_value_ops_for()
+            {
+                MapValueOps ops{
+                    {{this, false, nullptr, nullptr, nullptr, nullptr},
+                     &map_size<Surface>,
+                     &map_key_at_index<Surface>,
+                     &set_element_binding,
+                     &map_key_range<Surface>,
+                     nullptr},
+                    &map_contains_raw<Surface>,
+                    &map_value_at<Surface>,
+                    &map_value_at_index<Surface>,
+                    &map_value_binding,
+                    &map_key_range<Surface>,
+                    &map_value_range<Surface>,
+                    &map_kv_range<Surface>,
+                    &map_key_set,
+                };
+                ops.owning_binding_impl      = &canonical_value_binding;
+                ops.copy_construct_view_impl = &map_copy_construct_view<Surface>;
+                ops.copy_assign_view_impl    = &map_copy_assign_view<Surface>;
+                return ops;
+            }
+
+            [[nodiscard]] static const TSDProxyContext *ctx(const void *context) noexcept
+            {
+                return static_cast<const TSDProxyContext *>(context);
+            }
+
+            [[nodiscard]] static const ValueTypeBinding *
+            canonical_value_binding(const void *, const ValueTypeBinding &view_binding)
+            {
+                const auto *binding = ValuePlanFactory::instance().binding_for(view_binding.type_meta);
+                if (binding == nullptr)
+                {
+                    throw std::logic_error("TSDProxy value surface has no canonical owning binding");
+                }
+                return binding;
+            }
+
+            static void delta_copy_construct_view(const void *context,
+                                                  const ValueTypeBinding &binding,
+                                                  void *dst,
+                                                  const void *memory)
+            {
+                const auto &plan = binding.checked_plan();
+                plan.default_construct(dst);
+                auto rollback = make_scope_exit([&]() noexcept { plan.destroy(dst); });
+                delta_copy_assign_view(context, binding, dst, memory);
+                rollback.release();
+            }
+
+            static void delta_copy_assign_view(const void *context,
+                                               const ValueTypeBinding &binding,
+                                               void *dst,
+                                               const void *memory)
+            {
+                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Bundle ||
+                    binding.type_meta->field_count != 2)
+                {
+                    throw std::logic_error("TSDProxy delta copy requires canonical Bundle{removed, modified}");
+                }
+
+                const auto &plan = binding.checked_plan();
+                if (!plan.is_composite() || plan.component_count() != 2)
+                {
+                    throw std::logic_error("TSDProxy delta copy requires a two-field structured plan");
+                }
+
+                auto removed  = Value{ValueView{delta_element_binding(context, memory, 0),
+                                                delta_element_at(context, memory, 0)}};
+                auto modified = Value{ValueView{delta_element_binding(context, memory, 1),
+                                                delta_element_at(context, memory, 1)}};
+
+                auto       *bytes              = static_cast<std::byte *>(dst);
+                const auto &removed_component  = plan.component(0);
+                const auto &modified_component = plan.component(1);
+                removed_component.plan->copy_assign(bytes + removed_component.offset, removed.view().data());
+                modified_component.plan->copy_assign(bytes + modified_component.offset, modified.view().data());
+            }
+
+            template <TSDProxySetSurface Surface>
+            static void set_copy_construct_view(const void *context,
+                                                const ValueTypeBinding &binding,
+                                                void *dst,
+                                                const void *memory)
+            {
+                auto storage = build_set_storage<Surface>(context, binding, memory);
+                std::construct_at(static_cast<SetStorage *>(dst), std::move(storage));
+            }
+
+            template <TSDProxySetSurface Surface>
+            static void set_copy_assign_view(const void *context,
+                                             const ValueTypeBinding &binding,
+                                             void *dst,
+                                             const void *memory)
+            {
+                *static_cast<SetStorage *>(dst) = build_set_storage<Surface>(context, binding, memory);
+            }
+
+            template <TSDProxySetSurface Surface>
+            [[nodiscard]] static SetStorage build_set_storage(const void *context,
+                                                              const ValueTypeBinding &binding,
+                                                              const void *memory)
+            {
+                const auto *state = ctx(context);
+                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Set)
+                {
+                    throw std::logic_error("TSDProxy set copy requires a canonical set binding");
+                }
+                const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                if (key_binding == nullptr || key_binding != state->layout.key_binding)
+                {
+                    throw std::logic_error("TSDProxy set copy key binding is not resolved");
+                }
+
+                SetBuilder builder{*key_binding};
+                for (const auto key : set_range<Surface>(context, memory))
+                {
+                    builder.insert_copy(key.data());
+                }
+                return builder.build_storage();
+            }
+
+            template <TSDProxyMapSurface Surface>
+            static void map_copy_construct_view(const void *context,
+                                                const ValueTypeBinding &binding,
+                                                void *dst,
+                                                const void *memory)
+            {
+                auto storage = build_map_storage<Surface>(context, binding, memory);
+                std::construct_at(static_cast<MapStorage *>(dst), std::move(storage));
+            }
+
+            template <TSDProxyMapSurface Surface>
+            static void map_copy_assign_view(const void *context,
+                                             const ValueTypeBinding &binding,
+                                             void *dst,
+                                             const void *memory)
+            {
+                *static_cast<MapStorage *>(dst) = build_map_storage<Surface>(context, binding, memory);
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static MapStorage build_map_storage(const void *context,
+                                                              const ValueTypeBinding &binding,
+                                                              const void *memory)
+            {
+                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Map)
+                {
+                    throw std::logic_error("TSDProxy map copy requires a canonical map binding");
+                }
+
+                const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->key_type);
+                const auto *value_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                if (key_binding == nullptr || value_binding == nullptr)
+                {
+                    throw std::logic_error("TSDProxy map copy bindings are not resolved");
+                }
+
+                MapBuilder builder{*key_binding, *value_binding};
+                for (const auto item : ts_kv_range<Surface>(context, memory))
+                {
+                    Value value{item.second.value()};
+                    builder.set_item_copy(item.first.data(), value.view().data());
+                }
+                return builder.build_storage();
+            }
+
+            [[nodiscard]] static const TSDataLayout *ts_layout(const void *context) noexcept
+            {
+                return &ctx(context)->layout;
+            }
+
+            [[nodiscard]] static const TSDataTracking *tracking(const void *, const void *memory) noexcept
+            {
+                return &proxy_storage(memory).tracking();
+            }
+
+            [[nodiscard]] static TSDataTracking *mutable_tracking(const void *, void *memory) noexcept
+            {
+                return &proxy_storage(memory).tracking();
+            }
+
+            [[nodiscard]] static bool has_current_value(const void *, const void *memory) noexcept
+            {
+                return proxy_storage(memory).tracking().last_modified_time != MIN_DT;
+            }
+
+            [[nodiscard]] static bool all_valid(const void *context, const void *memory) noexcept
+            {
+                return fallback_on_exception(false, [&] {
+                    if (!has_current_value(context, memory)) { return false; }
+                    const auto *state = ctx(context);
+                    const auto &ops   = state->element_binding->checked_ops();
+                    const auto &store = proxy_storage(memory);
+                    auto        dict  = store.source_dict();
+                    for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                    {
+                        if (!dict.slot_live(slot)) { continue; }
+                        if (!store.has_child(slot)) { return false; }
+                        if (!ops.all_valid_impl(ops.context, store.child_at_slot(slot))) { return false; }
+                    }
+                    return true;
+                });
+            }
+
+            [[nodiscard]] static const void *value_memory(const void *, const void *memory) noexcept
+            {
+                return memory;
+            }
+
+            [[nodiscard]] static void *mutable_value_memory(const void *, void *memory) noexcept
+            {
+                return memory;
+            }
+
+            [[nodiscard]] static const void *delta_memory(const void *, const void *memory) noexcept
+            {
+                return memory;
+            }
+
+            [[nodiscard]] static void *mutable_delta_memory(const void *, void *memory) noexcept
+            {
+                return memory;
+            }
+
+            static void cleanup_delta(const void *, void *memory, engine_time_t modified_time)
+            {
+                proxy_storage(memory).cleanup_delta(modified_time);
+            }
+
+            static void record_child_modified(const void *, void *memory, std::size_t child_id,
+                                              engine_time_t modified_time)
+            {
+                proxy_storage(memory).record_child_modified(child_id, modified_time);
+            }
+
+            static void subscribe_slot_observer(const void *, void *memory, SlotObserver *observer)
+            {
+                proxy_storage(memory).subscribe_slot_observer(observer);
+            }
+
+            static void unsubscribe_slot_observer(const void *, void *memory, SlotObserver *observer)
+            {
+                proxy_storage(memory).unsubscribe_slot_observer(observer);
+            }
+
+            [[nodiscard]] static TSDDataView source_dict(const void *memory)
+            {
+                return proxy_storage(memory).source_dict();
+            }
+
+            template <TSDProxySetSurface Surface>
+            [[nodiscard]] static bool slot_in_set_surface(const void *, const void *memory, std::size_t slot)
+            {
+                auto dict = source_dict(memory);
+                if constexpr (Surface == TSDProxySetSurface::Live) { return dict.slot_live(slot); }
+                if constexpr (Surface == TSDProxySetSurface::Added) { return dict.slot_added(slot); }
+                return dict.slot_removed(slot);
+            }
+
+            [[nodiscard]] static bool slot_modified(const void *context, const void *memory, std::size_t slot)
+            {
+                const auto &store = proxy_storage(memory);
+                if (!store.has_child(slot) || !source_dict(memory).slot_live(slot)) { return false; }
+                if (store.child_updated(slot)) { return true; }
+                const auto *state          = ctx(context);
+                const auto &ops            = state->element_binding->checked_ops();
+                const auto *child_tracking = ops.tracking_impl(ops.context, store.child_at_slot(slot));
+                return child_tracking != nullptr &&
+                       child_tracking->last_modified_time == store.tracking().last_modified_time;
+            }
+
+            [[nodiscard]] static const void *tsd_child_at_slot(const void *, const void *memory, std::size_t slot)
+            {
+                return proxy_storage(memory).child_at_slot(slot);
+            }
+
+            [[nodiscard]] static bool slot_occupied(const void *, const void *memory, std::size_t slot)
+            {
+                return source_dict(memory).slot_occupied(slot);
+            }
+
+            [[nodiscard]] static bool slot_live(const void *, const void *memory, std::size_t slot)
+            {
+                return source_dict(memory).slot_live(slot);
+            }
+
+            [[nodiscard]] static bool slot_added(const void *, const void *memory, std::size_t slot)
+            {
+                return source_dict(memory).slot_added(slot);
+            }
+
+            [[nodiscard]] static bool slot_removed(const void *, const void *memory, std::size_t slot)
+            {
+                return source_dict(memory).slot_removed(slot);
+            }
+
+            [[nodiscard]] static std::size_t slot_capacity(const void *, const void *memory)
+            {
+                return source_dict(memory).slot_capacity();
+            }
+
+            template <TSDProxySetSurface Surface>
+            [[nodiscard]] static std::size_t set_size(const void *context, const void *memory) noexcept
+            {
+                return fallback_on_exception<std::size_t>(0, [&] {
+                    if constexpr (Surface == TSDProxySetSurface::Live) { return source_dict(memory).size(); }
+                    std::size_t count = 0;
+                    auto        dict  = source_dict(memory);
+                    for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                    {
+                        if (slot_in_set_surface<Surface>(context, memory, slot)) { ++count; }
+                    }
+                    return count;
+                });
+            }
+
+            [[nodiscard]] static const void *key_at_slot(const void *, const void *memory, std::size_t slot)
+            {
+                return source_dict(memory).key_at_slot(slot).data();
+            }
+
+            [[nodiscard]] static bool set_contains(const void *context, const void *memory, const ValueView &key)
+            {
+                if (key.binding() != ctx(context)->layout.key_binding) { return false; }
+                return source_dict(memory).contains(key);
+            }
+
+            [[nodiscard]] static bool set_contains_raw(const void *context, const void *memory, const void *key)
+            {
+                return set_contains(context, memory, ValueView{ctx(context)->layout.key_binding, key});
+            }
+
+            [[nodiscard]] static std::size_t find_slot(const void *context, const void *memory, const ValueView &key)
+            {
+                if (key.binding() != ctx(context)->layout.key_binding) { return TS_DATA_NO_CHILD_ID; }
+                return source_dict(memory).find_slot(key);
+            }
+
+            template <TSDProxySetSurface Surface>
+            [[nodiscard]] static const void *set_element_at(const void *context, const void *memory, std::size_t index)
+            {
+                auto        dict = source_dict(memory);
+                std::size_t seen = 0;
+                for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                {
+                    if (!slot_in_set_surface<Surface>(context, memory, slot)) { continue; }
+                    if (seen++ == index) { return dict.key_at_slot(slot).data(); }
+                }
+                throw std::out_of_range("TSDProxy set element index out of range");
+            }
+
+            [[nodiscard]] static const ValueTypeBinding *set_element_binding(const void *context,
+                                                                             const void *,
+                                                                             std::size_t) noexcept
+            {
+                return ctx(context)->layout.key_binding;
+            }
+
+            [[nodiscard]] static ValueView key_projector(const void *context, const void *memory, std::size_t slot)
+            {
+                return ValueView{ctx(context)->layout.key_binding, key_at_slot(context, memory, slot)};
+            }
+
+            template <TSDProxySetSurface Surface>
+            [[nodiscard]] static Range<ValueView> set_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = slot_capacity(context, memory),
+                    .predicate = &slot_in_set_surface<Surface>,
+                    .projector = &key_projector,
+                };
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static bool map_slot_in_surface(const void *context, const void *memory, std::size_t slot)
+            {
+                if constexpr (Surface == TSDProxyMapSurface::Live)
+                {
+                    return source_dict(memory).slot_live(slot);
+                }
+                if constexpr (Surface == TSDProxyMapSurface::Added)
+                {
+                    return source_dict(memory).slot_added(slot);
+                }
+                if constexpr (Surface == TSDProxyMapSurface::Removed)
+                {
+                    return source_dict(memory).slot_removed(slot);
+                }
+                return slot_modified(context, memory, slot);
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static std::size_t map_size(const void *context, const void *memory) noexcept
+            {
+                return fallback_on_exception<std::size_t>(0, [&] {
+                    if constexpr (Surface == TSDProxyMapSurface::Live) { return source_dict(memory).size(); }
+                    std::size_t count = 0;
+                    auto        dict  = source_dict(memory);
+                    for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                    {
+                        if (map_slot_in_surface<Surface>(context, memory, slot)) { ++count; }
+                    }
+                    return count;
+                });
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static const void *map_key_at_index(const void *context,
+                                                              const void *memory,
+                                                              std::size_t index)
+            {
+                auto        dict = source_dict(memory);
+                std::size_t seen = 0;
+                for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                {
+                    if (!map_slot_in_surface<Surface>(context, memory, slot)) { continue; }
+                    if (seen++ == index) { return dict.key_at_slot(slot).data(); }
+                }
+                throw std::out_of_range("TSDProxy map key index out of range");
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static bool map_contains_raw(const void *context, const void *memory, const void *key)
+            {
+                const auto slot = source_dict(memory).find_slot(ValueView{ctx(context)->layout.key_binding, key});
+                return slot != TS_DATA_NO_CHILD_ID && map_slot_in_surface<Surface>(context, memory, slot);
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static const void *map_value_at(const void *context, const void *memory, const void *key)
+            {
+                const auto slot = source_dict(memory).find_slot(ValueView{ctx(context)->layout.key_binding, key});
+                if (slot == TS_DATA_NO_CHILD_ID || !map_slot_in_surface<Surface>(context, memory, slot))
+                {
+                    return nullptr;
+                }
+                return proxy_storage(memory).child_at_slot(slot);
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static const void *map_value_at_index(const void *context,
+                                                                const void *memory,
+                                                                std::size_t index)
+            {
+                auto        dict = source_dict(memory);
+                std::size_t seen = 0;
+                for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+                {
+                    if (!map_slot_in_surface<Surface>(context, memory, slot)) { continue; }
+                    if (seen++ == index) { return proxy_storage(memory).child_at_slot(slot); }
+                }
+                throw std::out_of_range("TSDProxy map value index out of range");
+            }
+
+            [[nodiscard]] static const ValueTypeBinding *map_value_binding(const void *context,
+                                                                           const void *) noexcept
+            {
+                return ctx(context)->layout.element_value_binding;
+            }
+
+            [[nodiscard]] static ValueView map_value_projector(const void *context,
+                                                               const void *memory,
+                                                               std::size_t slot)
+            {
+                return ValueView{ctx(context)->layout.element_value_binding,
+                                 proxy_storage(memory).child_at_slot(slot)};
+            }
+
+            [[nodiscard]] static std::pair<ValueView, ValueView> map_kv_projector(const void *context,
+                                                                                  const void *memory,
+                                                                                  std::size_t slot)
+            {
+                return {key_projector(context, memory, slot), map_value_projector(context, memory, slot)};
+            }
+
+            [[nodiscard]] static TSDataView ts_value_projector(const void *context,
+                                                               const void *memory,
+                                                               std::size_t slot)
+            {
+                return TSDataView{ctx(context)->layout.element_binding, proxy_storage(memory).child_at_slot(slot)};
+            }
+
+            [[nodiscard]] static std::pair<ValueView, TSDataView> ts_kv_projector(const void *context,
+                                                                                  const void *memory,
+                                                                                  std::size_t slot)
+            {
+                return {key_projector(context, memory, slot), ts_value_projector(context, memory, slot)};
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static Range<ValueView> map_key_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = slot_capacity(context, memory),
+                    .predicate = &map_slot_in_surface<Surface>,
+                    .projector = &key_projector,
+                };
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static Range<ValueView> map_value_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = slot_capacity(context, memory),
+                    .predicate = &map_slot_in_surface<Surface>,
+                    .projector = &map_value_projector,
+                };
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static KeyValueRange<ValueView, ValueView> map_kv_range(const void *context,
+                                                                                  const void *memory)
+            {
+                return KeyValueRange<ValueView, ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = slot_capacity(context, memory),
+                    .predicate = &map_slot_in_surface<Surface>,
+                    .projector = &map_kv_projector,
+                };
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static Range<TSDataView> ts_value_range(const void *context, const void *memory)
+            {
+                return Range<TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = slot_capacity(context, memory),
+                    .predicate = &map_slot_in_surface<Surface>,
+                    .projector = &ts_value_projector,
+                };
+            }
+
+            template <TSDProxyMapSurface Surface>
+            [[nodiscard]] static KeyValueRange<ValueView, TSDataView> ts_kv_range(const void *context,
+                                                                                  const void *memory)
+            {
+                return KeyValueRange<ValueView, TSDataView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = slot_capacity(context, memory),
+                    .predicate = &map_slot_in_surface<Surface>,
+                    .projector = &ts_kv_projector,
+                };
+            }
+
+            [[nodiscard]] static SetView map_key_set(const void *context, const ValueTypeBinding *, const void *memory)
+            {
+                return SetView{ValueView{ctx(context)->key_set_value_binding, memory}};
+            }
+
+            [[nodiscard]] static std::size_t delta_size(const void *, const void *) noexcept
+            {
+                return 2;
+            }
+
+            [[nodiscard]] static const void *delta_element_at(const void *, const void *memory, std::size_t index)
+            {
+                if (index == 0 || index == 1) { return memory; }
+                throw std::out_of_range("TSDProxy delta element index out of range");
+            }
+
+            [[nodiscard]] static const ValueTypeBinding *delta_element_binding(const void *context,
+                                                                               const void *,
+                                                                               std::size_t index) noexcept
+            {
+                if (index == 0) { return ctx(context)->removed_set_binding; }
+                if (index == 1) { return ctx(context)->modified_map_binding; }
+                return nullptr;
+            }
+
+            [[nodiscard]] static Range<ValueView> delta_range(const void *context, const void *memory)
+            {
+                return Range<ValueView>{
+                    .context   = context,
+                    .memory    = memory,
+                    .limit     = 2,
+                    .predicate = nullptr,
+                    .projector = &delta_projector,
+                };
+            }
+
+            [[nodiscard]] static ValueView delta_projector(const void *context,
+                                                           const void *memory,
+                                                           std::size_t index)
+            {
+                return ValueView{delta_element_binding(context, memory, index),
+                                 delta_element_at(context, memory, index)};
+            }
+        };
+
+        [[nodiscard]] std::unordered_map<TSDProxyContextKey,
+                                         std::unique_ptr<TSDProxyContext>,
+                                         TSDProxyContextKeyHash> &
+        tsd_proxy_contexts() noexcept
+        {
+            static std::unordered_map<TSDProxyContextKey,
+                                      std::unique_ptr<TSDProxyContext>,
+                                      TSDProxyContextKeyHash> contexts;
+            return contexts;
+        }
+
+        [[nodiscard]] std::recursive_mutex &tsd_proxy_context_mutex() noexcept
+        {
+            static std::recursive_mutex mutex;
+            return mutex;
+        }
+
+        [[nodiscard]] const TSDProxyContext &tsd_proxy_context_for(const TSValueTypeMetaData &schema,
+                                                                   const TSDataBinding      &element_binding)
+        {
+            std::lock_guard<std::recursive_mutex> lock(tsd_proxy_context_mutex());
+            auto &contexts = tsd_proxy_contexts();
+            const TSDProxyContextKey key{&schema, &element_binding};
+            if (const auto it = contexts.find(key); it != contexts.end()) { return *it->second; }
+
+            auto context = std::make_unique<TSDProxyContext>(schema, element_binding);
+            const auto *result = context.get();
+            contexts.emplace(key, std::move(context));
+            return *result;
+        }
+    }  // namespace
+
+    TSDProxySlotSync::TSDProxySlotSync(TSDProxy &owner) noexcept
+        : owner_(&owner)
+    {
+    }
+
+    TSDProxySlotSync::~TSDProxySlotSync() = default;
+
+    void TSDProxySlotSync::on_capacity(std::size_t old_capacity, std::size_t new_capacity)
+    {
+        owner_->on_slot_capacity(old_capacity, new_capacity);
+    }
+
+    void TSDProxySlotSync::on_insert(std::size_t slot)
+    {
+        owner_->on_slot_inserted(slot);
+    }
+
+    void TSDProxySlotSync::on_remove(std::size_t slot)
+    {
+        owner_->on_slot_removed(slot);
+    }
+
+    void TSDProxySlotSync::on_erase(std::size_t slot)
+    {
+        owner_->on_slot_erased(slot);
+    }
+
+    void TSDProxySlotSync::on_clear()
+    {
+        owner_->on_slots_cleared();
+    }
+
+    void TSDProxySlotSync::notify(engine_time_t modified_time)
+    {
+        owner_->on_source_modified(modified_time);
+    }
+
+    TSDProxy::TSDProxy() noexcept
+        : source_sync_(*this)
+    {
+    }
+
+    TSDProxy::~TSDProxy()
+    {
+        unsubscribe_source();
+    }
+
+    void TSDProxy::bind(const TSDataBinding &self_binding,
+                        const TSDataBinding &element_binding,
+                        TSDDataView          source,
+                        ValueBuilder         builder,
+                        const void          *builder_context,
+                        engine_time_t        modified_time)
+    {
+        if (source.schema() == nullptr || source.schema()->kind != TSTypeKind::TSD)
+        {
+            throw std::invalid_argument("TSDProxy requires a TSD source view");
+        }
+        if (builder == nullptr)
+        {
+            throw std::invalid_argument("TSDProxy requires a value builder");
+        }
+
+        const auto &element_plan = element_binding.checked_plan();
+        const bool reconfigure =
+            self_binding_ != &self_binding ||
+            element_binding_ != &element_binding ||
+            source_.binding() != source.binding() ||
+            source_.data() != source.base().data() ||
+            value_builder_ != builder ||
+            value_builder_context_ != builder_context;
+
+        if (reconfigure)
+        {
+            unsubscribe_source();
+            self_binding_          = &self_binding;
+            element_binding_       = &element_binding;
+            source_                = source.base();
+            value_builder_         = builder;
+            value_builder_context_ = builder_context;
+            values_.bind_plan(element_plan);
+            values_.destroy_all();
+        }
+        else
+        {
+            source_ = source.base();
+        }
+
+        sync_from_source(modified_time, true);
+        subscribe_source();
+    }
+
+    void TSDProxy::on_slot_capacity(std::size_t old_capacity, std::size_t new_capacity)
+    {
+        values_.reserve_to(new_capacity);
+        slot_observers_.notify_capacity(old_capacity, new_capacity);
+    }
+
+    void TSDProxy::on_slot_inserted(std::size_t slot)
+    {
+        construct_child_at_slot(slot);
+        slot_observers_.notify_insert(slot);
+    }
+
+    void TSDProxy::on_slot_removed(std::size_t slot)
+    {
+        construct_child_at_slot(slot);
+        slot_observers_.notify_remove(slot);
+    }
+
+    void TSDProxy::on_slot_erased(std::size_t slot)
+    {
+        values_.destroy_at(slot);
+        slot_observers_.notify_erase(slot);
+    }
+
+    void TSDProxy::on_slots_cleared()
+    {
+        values_.destroy_all();
+        slot_observers_.notify_clear();
+    }
+
+    void TSDProxy::on_source_modified(engine_time_t modified_time)
+    {
+        if (modified_time == MIN_DT || !source_.valid() || value_builder_ == nullptr) { return; }
+
+        auto dict = source_dict();
+        bool touched = false;
+        for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+        {
+            if (dict.slot_added(slot) || dict.slot_removed(slot))
+            {
+                ensure_child_at_slot(slot, modified_time);
+                touched = true;
+            }
+        }
+
+        if (touched) { mark_modified(modified_time); }
+    }
+
+    void TSDProxy::cleanup_delta(engine_time_t modified_time)
+    {
+        if (element_binding_ == nullptr) { return; }
+
+        const auto &child_ops = element_binding_->checked_ops();
+        for (std::size_t slot = 0; slot < values_.slot_capacity(); ++slot)
+        {
+            if (!values_.has_slot(slot)) { continue; }
+            void       *child_memory = values_.value_memory(slot);
+            const auto *child_state  = child_ops.tracking_impl(child_ops.context, child_memory);
+            if (child_state != nullptr && child_state->last_modified_time == modified_time)
+            {
+                child_ops.cleanup_delta_impl(child_ops.context, child_memory, modified_time);
+            }
+        }
+
+        auto dict = source_dict();
+        for (std::size_t slot = 0; slot < values_.slot_capacity(); ++slot)
+        {
+            if (!dict.slot_occupied(slot)) { values_.destroy_at(slot); }
+        }
+        values_.clear_all_updated();
+    }
+
+    const TSDataView &TSDProxy::source_view() const noexcept
+    {
+        return source_;
+    }
+
+    TSDDataView TSDProxy::source_dict() const
+    {
+        if (!source_.valid()) { throw std::logic_error("TSDProxy is not bound to a source"); }
+        return source_.as_dict();
+    }
+
+    TSDataView TSDProxy::source_child_at_slot(std::size_t slot) const
+    {
+        return source_dict().at_slot(slot);
+    }
+
+    TSDataTracking &TSDProxy::tracking() noexcept
+    {
+        return tracking_;
+    }
+
+    const TSDataTracking &TSDProxy::tracking() const noexcept
+    {
+        return tracking_;
+    }
+
+    bool TSDProxy::has_child(std::size_t slot) const noexcept
+    {
+        return values_.has_slot(slot);
+    }
+
+    bool TSDProxy::child_updated(std::size_t slot) const noexcept
+    {
+        return values_.slot_updated(slot);
+    }
+
+    const void *TSDProxy::child_at_slot(std::size_t slot) const
+    {
+        if (!has_child(slot)) { throw std::out_of_range("TSDProxy child slot is not constructed"); }
+        return values_.value_memory(slot);
+    }
+
+    void *TSDProxy::child_at_slot(std::size_t slot)
+    {
+        if (!has_child(slot)) { throw std::out_of_range("TSDProxy child slot is not constructed"); }
+        return values_.value_memory(slot);
+    }
+
+    void TSDProxy::subscribe_source()
+    {
+        if (subscribed_ || !source_.valid()) { return; }
+        source_dict().key_set().subscribe_slot_observer(&source_sync_);
+        auto rollback_slot_observer = make_scope_exit<true>([&] {
+            source_dict().key_set().unsubscribe_slot_observer(&source_sync_);
+        });
+        source_.subscribe(&source_sync_);
+        rollback_slot_observer.release();
+        subscribed_ = true;
+    }
+
+    void TSDProxy::unsubscribe_source() noexcept
+    {
+        if (!subscribed_ || !source_.valid()) { return; }
+        FirstExceptionRecorder cleanup_errors;
+        cleanup_errors.capture([&] {
+            source_.unsubscribe(&source_sync_);
+        });
+        cleanup_errors.capture([&] {
+            source_dict().key_set().unsubscribe_slot_observer(&source_sync_);
+        });
+        subscribed_ = false;
+    }
+
+    void TSDProxy::sync_from_source(engine_time_t modified_time, bool force_modified)
+    {
+        if (element_binding_ == nullptr || !source_.valid() || value_builder_ == nullptr)
+        {
+            return;
+        }
+
+        auto dict = source_dict();
+        values_.reserve_to(dict.slot_capacity());
+
+        bool changed = force_modified;
+        for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
+        {
+            if (dict.slot_live(slot) || dict.slot_removed(slot))
+            {
+                const bool existed = has_child(slot);
+                ensure_child_at_slot(slot, modified_time);
+                changed = changed || !existed;
+                continue;
+            }
+
+            if (has_child(slot))
+            {
+                values_.destroy_at(slot);
+                changed = true;
+            }
+        }
+
+        if (changed) { mark_modified(modified_time); }
+    }
+
+    void TSDProxy::construct_child_at_slot(std::size_t slot)
+    {
+        if (self_binding_ == nullptr || element_binding_ == nullptr)
+        {
+            throw std::logic_error("TSDProxy is not initialised");
+        }
+
+        if (values_.has_slot(slot)) { return; }
+
+        values_.construct_at(slot);
+        auto target = TSDataView{element_binding_, values_.value_memory(slot)};
+        target.mutable_tracking().parent = TSDataParentLink{self_binding_, this, slot};
+    }
+
+    void TSDProxy::ensure_child_at_slot(std::size_t slot, engine_time_t modified_time)
+    {
+        if (value_builder_ == nullptr)
+        {
+            throw std::logic_error("TSDProxy is not initialised");
+        }
+
+        construct_child_at_slot(slot);
+        auto target = TSDataView{element_binding_, values_.value_memory(slot)};
+        value_builder_(*this, slot, target, source_child_at_slot(slot), modified_time, value_builder_context_);
+    }
+
+    void TSDProxy::refresh_child_at_slot(std::size_t slot, engine_time_t modified_time)
+    {
+        if (element_binding_ == nullptr || value_builder_ == nullptr)
+        {
+            throw std::logic_error("TSDProxy is not initialised");
+        }
+        auto target = TSDataView{element_binding_, values_.value_memory(slot)};
+        value_builder_(*this, slot, target, source_child_at_slot(slot), modified_time, value_builder_context_);
+    }
+
+    void TSDProxy::mark_modified(engine_time_t modified_time)
+    {
+        if (tracking_.record_modified(modified_time)) { tracking_.parent.notify_child_modified(modified_time); }
+    }
+
+    void TSDProxy::record_child_modified(std::size_t slot, engine_time_t modified_time)
+    {
+        (void)modified_time;
+        if (!has_child(slot)) { return; }
+        auto dict = source_dict();
+        if (dict.slot_live(slot)) { values_.mark_updated(slot); }
+    }
+
+    void TSDProxy::subscribe_slot_observer(SlotObserver *observer)
+    {
+        slot_observers_.add(observer);
+    }
+
+    void TSDProxy::unsubscribe_slot_observer(SlotObserver *observer)
+    {
+        slot_observers_.remove(observer);
+    }
+
+    const TSDataBinding &tsd_proxy_binding_for(const TSValueTypeMetaData &schema,
+                                               const TSDataBinding      &element_binding)
+    {
+        const auto &context = tsd_proxy_context_for(schema, element_binding);
+        return TSDataBinding::intern(schema, *context.plan, context.dict_ops);
+    }
+
+    void bind_tsd_proxy(TSDataView              proxy,
+                        TSDDataView             source,
+                        TSDProxy::ValueBuilder  builder,
+                        const void             *builder_context,
+                        engine_time_t           modified_time)
+    {
+        if (!proxy.valid()) { throw std::invalid_argument("bind_tsd_proxy requires a live proxy view"); }
+        if (proxy.schema() == nullptr || proxy.schema()->kind != TSTypeKind::TSD)
+        {
+            throw std::invalid_argument("bind_tsd_proxy requires a TSD proxy schema");
+        }
+        if (&proxy.binding()->checked_plan() != &MemoryUtils::plan_for<TSDProxy>())
+        {
+            throw std::invalid_argument("bind_tsd_proxy requires storage backed by TSDProxy");
+        }
+        if (source.schema() == nullptr || source.schema()->kind != TSTypeKind::TSD ||
+            source.schema()->key_type() != proxy.schema()->key_type())
+        {
+            throw std::invalid_argument("bind_tsd_proxy requires a source TSD with the same key schema");
+        }
+
+        const auto &layout = proxy.as_dict().layout();
+        if (layout.element_binding == nullptr)
+        {
+            throw std::logic_error("bind_tsd_proxy requires an element binding");
+        }
+
+        auto &storage = proxy_storage(const_cast<void *>(proxy.data()));
+        storage.bind(*proxy.binding(), *layout.element_binding, source, builder, builder_context, modified_time);
+    }
+}  // namespace hgraph

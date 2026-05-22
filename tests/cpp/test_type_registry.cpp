@@ -342,6 +342,7 @@ TEST_CASE("TypeRegistry::ref creates the TimeSeriesReference singleton")
     REQUIRE(r1 == r2);
     REQUIRE(r1->kind == TSTypeKind::REF);
     REQUIRE(r1->referenced_ts() == ts_int);
+    REQUIRE(registry.ref(r1) == r1);
 }
 
 TEST_CASE("TypeRegistry::contains_ref recurses through composite TS kinds")

@@ -2,6 +2,7 @@
 #define HGRAPH_CPP_TS_DATA_OPS_H
 
 #include <hgraph/types/time_series/ts_data/types.h>
+#include <hgraph/types/utils/slot_observer.h>
 #include <hgraph/types/value/value_range.h>
 #include <hgraph/types/value/value_view.h>
 #include <cstddef>
@@ -52,6 +53,8 @@ namespace hgraph
                                                                   engine_time_t);
         [[nodiscard]] bool missing_touch_slots(const void *, void *, engine_time_t);
         void missing_reserve_slots(const void *, void *, std::size_t);
+        void missing_subscribe_slot_observer(const void *, void *, SlotObserver *);
+        void missing_unsubscribe_slot_observer(const void *, void *, SlotObserver *);
         [[nodiscard]] const void *missing_child_at_slot(const void *, const void *, std::size_t);
 
     }  // namespace ts_data_detail
@@ -137,6 +140,14 @@ namespace hgraph
                            engine_time_t modified_time) = &ts_data_detail::missing_touch_slots;
         void (*reserve_impl)(const void *context, void *memory,
                              std::size_t capacity) = &ts_data_detail::missing_reserve_slots;
+        void (*subscribe_slot_observer_impl)(const void *context,
+                                             void *memory,
+                                             SlotObserver *observer) =
+            &ts_data_detail::missing_subscribe_slot_observer;
+        void (*unsubscribe_slot_observer_impl)(const void *context,
+                                               void *memory,
+                                               SlotObserver *observer) =
+            &ts_data_detail::missing_unsubscribe_slot_observer;
     };
 
     struct TSDDataOps : TSSDataOps

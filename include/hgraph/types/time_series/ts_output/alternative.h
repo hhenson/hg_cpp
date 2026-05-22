@@ -1,0 +1,73 @@
+#ifndef HGRAPH_CPP_TS_OUTPUT_ALTERNATIVE_H
+#define HGRAPH_CPP_TS_OUTPUT_ALTERNATIVE_H
+
+#include <hgraph/types/time_series/ts_output/base_view.h>
+
+#include <memory>
+#include <unordered_map>
+
+namespace hgraph::detail
+{
+    class TSOutputAlternativeStore;
+}
+
+namespace hgraph
+{
+    struct TimeSeriesReference;
+}
+
+namespace hgraph::detail
+{
+    /**
+     * Root-owned cache for output alternative binding data.
+     *
+     * Each cached alternative is keyed by the output view where binding starts
+     * and the requested input schema. The requested schema drives the plan and
+     * ops exposed by the alternative handle.
+     */
+    class TSOutputAlternativeStore
+    {
+      public:
+        TSOutputAlternativeStore() noexcept;
+        TSOutputAlternativeStore(const TSOutputAlternativeStore &) = delete;
+        TSOutputAlternativeStore &operator=(const TSOutputAlternativeStore &) = delete;
+        TSOutputAlternativeStore(TSOutputAlternativeStore &&) noexcept;
+        TSOutputAlternativeStore &operator=(TSOutputAlternativeStore &&) noexcept;
+        ~TSOutputAlternativeStore() noexcept;
+
+        [[nodiscard]] TSOutputHandle binding_for(const TSOutputView &source,
+                                                 const TSValueTypeMetaData &requested_schema);
+        [[nodiscard]] static TimeSeriesReference peered_reference_as(const TSValueTypeMetaData *target_schema,
+                                                                     TSOutputHandle target);
+
+      private:
+        struct ToRefAlternativeState;
+
+        struct AlternativeKey
+        {
+            const TSOutput              *source_output{nullptr};
+            const TSDataBinding         *source_binding{nullptr};
+            const void                  *source_data{nullptr};
+            const TSValueTypeMetaData   *requested_schema{nullptr};
+
+            [[nodiscard]] bool operator==(const AlternativeKey &) const noexcept = default;
+        };
+
+        struct AlternativeKeyHash
+        {
+            [[nodiscard]] std::size_t operator()(const AlternativeKey &key) const noexcept;
+        };
+
+        [[nodiscard]] static AlternativeKey key_for(const TSOutputView &source,
+                                                    const TSValueTypeMetaData &requested_schema) noexcept;
+
+        [[nodiscard]] TSOutputHandle to_ref_binding(const AlternativeKey &key,
+                                                    const TSOutputView &source,
+                                                    const TSValueTypeMetaData &requested_schema);
+
+        std::unordered_map<AlternativeKey, std::unique_ptr<ToRefAlternativeState>, AlternativeKeyHash>
+            to_ref_alternatives_{};
+    };
+}  // namespace hgraph::detail
+
+#endif  // HGRAPH_CPP_TS_OUTPUT_ALTERNATIVE_H

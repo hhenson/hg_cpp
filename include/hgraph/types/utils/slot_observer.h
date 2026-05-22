@@ -77,6 +77,12 @@ namespace hgraph
                 return;
             }
 
+            if (m_notify_depth != 0) {
+                *it = nullptr;
+                m_compact_pending = true;
+                return;
+            }
+
             if (it != m_observers.end() - 1) {
                 *it = m_observers.back();
             }
@@ -91,13 +97,21 @@ namespace hgraph
         /** Drop every registered observer without notifying. */
         void clear() noexcept
         {
+            if (m_notify_depth != 0) {
+                std::fill(m_observers.begin(), m_observers.end(), nullptr);
+                m_compact_pending = true;
+                return;
+            }
             m_observers.clear();
         }
 
         /** Invoke ``on_capacity`` on every registered observer. */
         void notify_capacity(size_t old_capacity, size_t new_capacity) const
         {
-            for (auto *observer : m_observers) {
+            NotifyGuard guard{*this};
+            const auto limit = m_observers.size();
+            for (size_t index = 0; index < limit; ++index) {
+                auto *observer = m_observers[index];
                 if (observer != nullptr) {
                     observer->on_capacity(old_capacity, new_capacity);
                 }
@@ -107,7 +121,10 @@ namespace hgraph
         /** Invoke ``on_insert`` on every registered observer. */
         void notify_insert(size_t slot) const
         {
-            for (auto *observer : m_observers) {
+            NotifyGuard guard{*this};
+            const auto limit = m_observers.size();
+            for (size_t index = 0; index < limit; ++index) {
+                auto *observer = m_observers[index];
                 if (observer != nullptr) {
                     observer->on_insert(slot);
                 }
@@ -117,7 +134,10 @@ namespace hgraph
         /** Invoke ``on_remove`` on every registered observer. */
         void notify_remove(size_t slot) const
         {
-            for (auto *observer : m_observers) {
+            NotifyGuard guard{*this};
+            const auto limit = m_observers.size();
+            for (size_t index = 0; index < limit; ++index) {
+                auto *observer = m_observers[index];
                 if (observer != nullptr) {
                     observer->on_remove(slot);
                 }
@@ -127,7 +147,10 @@ namespace hgraph
         /** Invoke ``on_erase`` on every registered observer. */
         void notify_erase(size_t slot) const
         {
-            for (auto *observer : m_observers) {
+            NotifyGuard guard{*this};
+            const auto limit = m_observers.size();
+            for (size_t index = 0; index < limit; ++index) {
+                auto *observer = m_observers[index];
                 if (observer != nullptr) {
                     observer->on_erase(slot);
                 }
@@ -137,7 +160,10 @@ namespace hgraph
         /** Invoke ``on_clear`` on every registered observer. */
         void notify_clear() const
         {
-            for (auto *observer : m_observers) {
+            NotifyGuard guard{*this};
+            const auto limit = m_observers.size();
+            for (size_t index = 0; index < limit; ++index) {
+                auto *observer = m_observers[index];
                 if (observer != nullptr) {
                     observer->on_clear();
                 }
@@ -145,7 +171,37 @@ namespace hgraph
         }
 
       private:
-        std::vector<SlotObserver *> m_observers{};
+        struct NotifyGuard
+        {
+            explicit NotifyGuard(const SlotObserverList &owner) noexcept
+                : owner(owner)
+            {
+                ++owner.m_notify_depth;
+            }
+
+            NotifyGuard(const NotifyGuard &) = delete;
+            NotifyGuard &operator=(const NotifyGuard &) = delete;
+
+            ~NotifyGuard() noexcept
+            {
+                --owner.m_notify_depth;
+                if (owner.m_notify_depth == 0 && owner.m_compact_pending) {
+                    owner.compact();
+                }
+            }
+
+            const SlotObserverList &owner;
+        };
+
+        void compact() const noexcept
+        {
+            std::erase(m_observers, nullptr);
+            m_compact_pending = false;
+        }
+
+        mutable std::vector<SlotObserver *> m_observers{};
+        mutable size_t                      m_notify_depth{0};
+        mutable bool                        m_compact_pending{false};
     };
 }  // namespace hgraph
 

@@ -7,6 +7,7 @@
 #include <hgraph/types/time_series/ts_data/indexed_view.h>
 #include <hgraph/types/time_series/ts_data/set_view.h>
 #include <hgraph/types/time_series/ts_data/dict_view.h>
+#include <hgraph/types/time_series/ts_data/proxy.h>
 #include <hgraph/types/time_series/ts_data/window_view.h>
 #include <hgraph/types/time_series/ts_data/storage.h>
 

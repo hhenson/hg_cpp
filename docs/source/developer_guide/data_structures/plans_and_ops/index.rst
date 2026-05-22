@@ -91,3 +91,4 @@ and is described in *Refinement Topics*.
    erased_types
    scalar
    time_series
+   proxy_state_management

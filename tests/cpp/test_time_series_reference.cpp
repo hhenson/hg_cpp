@@ -15,6 +15,17 @@
 #include <unordered_set>
 #include <vector>
 
+namespace
+{
+    template <typename Range>
+    std::size_t range_count(const Range &range)
+    {
+        std::size_t count = 0;
+        for (auto it = range.begin(); it != range.end(); ++it) { ++count; }
+        return count;
+    }
+}
+
 TEST_CASE("TimeSeriesReference: default-constructed is empty with no target schema")
 {
     using namespace hgraph;
@@ -251,7 +262,289 @@ TEST_CASE("TimeSeriesReference: target link negotiates output as REF alternative
     auto t2_ref_input = t2_bundle.field("ref");
     REQUIRE(t2_ref_input.valid());
     REQUIRE_FALSE(t2_ref_input.modified());
-    REQUIRE(t2_ref_input.value().checked_as<TimeSeriesReference>() == TimeSeriesReference{target.view(t2)});
+    const auto t2_reference_value = t2_ref_input.value().clone();
+    REQUIRE(t2_reference_value.as<TimeSeriesReference>() == TimeSeriesReference{target.view(t2)});
+}
+
+TEST_CASE("TimeSeriesReference: to-REF alternative samples at bind time and ignores source value ticks")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *ref_int  = registry.ref(ts_int);
+    const auto *root     = registry.tsb("TimeSeriesReferenceProjectionTimingRoot", {{"ref", ref_int}});
+
+    const auto endpoint_schema = TSEndpointSchema::non_peered(
+        root,
+        {
+            TSEndpointSchema::peered(ref_int),
+        });
+
+    TSOutput target{*ts_int};
+    {
+        Value value{17};
+        auto  mutation = target.begin_mutation(MIN_ST);
+        REQUIRE(mutation.copy_value_from(value.view()));
+    }
+
+    TSInput input{TSInputBuilderFactory::checked_builder_for(*root, endpoint_schema)};
+    const auto bind_time = MIN_ST + engine_time_delta_t{1};
+    auto       root_view = input.view(nullptr, bind_time);
+    auto       root_bundle = root_view.as_bundle();
+    auto       ref_input = root_bundle.field("ref");
+    ref_input.bind_output(target.view(bind_time));
+
+    REQUIRE(ref_input.valid());
+    REQUIRE(ref_input.modified());
+    REQUIRE(ref_input.last_modified_time() == bind_time);
+
+    auto reference_value = ref_input.value().clone();
+    REQUIRE(reference_value.as<TimeSeriesReference>() == TimeSeriesReference{target.view(bind_time)});
+
+    const auto source_tick_time = bind_time + engine_time_delta_t{1};
+    {
+        Value value{18};
+        auto  mutation = target.begin_mutation(source_tick_time);
+        REQUIRE(mutation.copy_value_from(value.view()));
+    }
+
+    auto after_tick_root = input.view(nullptr, source_tick_time);
+    auto after_tick_bundle = after_tick_root.as_bundle();
+    auto after_tick_ref  = after_tick_bundle.field("ref");
+    REQUIRE(after_tick_ref.valid());
+    REQUIRE_FALSE(after_tick_ref.modified());
+    REQUIRE(after_tick_ref.last_modified_time() == bind_time);
+
+    auto after_tick_reference = after_tick_ref.value().clone();
+    REQUIRE(after_tick_reference.as<TimeSeriesReference>() == TimeSeriesReference{target.view(source_tick_time)});
+}
+
+TEST_CASE("TimeSeriesReference: output alternatives are keyed by starting view and requested schema")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *named_bundle      = registry.tsb("TimeSeriesReferenceAlternativeKeyNamed", {{"value", ts_int}});
+    const auto *structural_bundle = registry.un_named_tsb({{"value", ts_int}});
+    const auto *ref_named         = registry.ref(named_bundle);
+    const auto *ref_structural    = registry.ref(structural_bundle);
+
+    TSOutput target{*named_bundle};
+    {
+        Value value{17};
+        auto  target_data = target.data_view();
+        auto  bundle = target_data.as_bundle();
+        auto  child = bundle.field("value");
+        auto  mutation = child.begin_mutation(MIN_ST);
+        REQUIRE(mutation.copy_value_from(value.view()));
+    }
+
+    auto source = target.view(MIN_ST);
+    auto named_ref_handle = source.binding_for(*ref_named);
+    auto structural_ref_handle = source.binding_for(*ref_structural);
+
+    REQUIRE(named_ref_handle.schema() == ref_named);
+    REQUIRE(structural_ref_handle.schema() == ref_structural);
+    REQUIRE(named_ref_handle.data_view().data() != structural_ref_handle.data_view().data());
+
+    const auto named_ref_value = named_ref_handle.view(MIN_ST).value().clone();
+    const auto structural_ref_value = structural_ref_handle.view(MIN_ST).value().clone();
+
+    REQUIRE(named_ref_value.as<TimeSeriesReference>().target_schema() == named_bundle);
+    REQUIRE(structural_ref_value.as<TimeSeriesReference>().target_schema() == structural_bundle);
+}
+
+TEST_CASE("TimeSeriesReference: to-REF alternative stores fixed list children through TSData")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *ref_int  = registry.ref(ts_int);
+    const auto *source_schema = registry.tsl(ts_int, 2);
+    const auto *requested_schema = registry.tsl(ref_int, 2);
+
+    TSOutput target{*source_schema};
+    auto     target_data = target.data_view();
+    auto     source_list = target_data.as_list();
+    {
+        Value one{1};
+        auto  mutation = source_list.at(0).begin_mutation(MIN_ST);
+        REQUIRE(mutation.copy_value_from(one.view()));
+    }
+    {
+        Value two{2};
+        auto  mutation = source_list.at(1).begin_mutation(MIN_ST);
+        REQUIRE(mutation.copy_value_from(two.view()));
+    }
+
+    auto handle = target.view(MIN_ST).binding_for(*requested_schema);
+    REQUIRE(handle.schema() == requested_schema);
+
+    auto projected_view = handle.view(MIN_ST);
+    REQUIRE(projected_view.valid());
+    REQUIRE(projected_view.modified());
+    auto projected_list = projected_view.as_list();
+    REQUIRE(projected_list.size() == 2);
+
+    auto source_view = target.view(MIN_ST);
+    auto source_output_list = source_view.as_list();
+    const auto &first = projected_list.at(0).value().checked_as<TimeSeriesReference>();
+    const auto &second = projected_list.at(1).value().checked_as<TimeSeriesReference>();
+    REQUIRE(first.target_schema() == ts_int);
+    REQUIRE(second.target_schema() == ts_int);
+    REQUIRE(first == TimeSeriesReference{source_output_list.at(0)});
+    REQUIRE(second == TimeSeriesReference{source_output_list.at(1)});
+}
+
+TEST_CASE("TimeSeriesReference: to-REF TSD alternative keeps keys synchronized")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *ref_int  = registry.ref(ts_int);
+    const auto *source_schema = registry.tsd(int_meta, ts_int);
+    const auto *requested_schema = registry.tsd(int_meta, ref_int);
+
+    TSOutput target{*source_schema};
+    Value    key_one{1};
+    Value    key_two{2};
+    {
+        Value value{11};
+        auto  data = target.data_view();
+        auto  dict = data.as_dict();
+        auto  mutation = dict.begin_mutation(MIN_ST);
+        auto  child = mutation.at(key_one.view());
+        auto  child_mutation = child.begin_mutation(MIN_ST);
+        REQUIRE(child_mutation.copy_value_from(value.view()));
+    }
+
+    auto handle       = target.view(MIN_ST).binding_for(*requested_schema);
+    auto initial_view = handle.view(MIN_ST);
+    auto initial_dict = initial_view.as_dict();
+    REQUIRE(initial_dict.contains(key_one.view()));
+    REQUIRE(range_count(initial_dict.items()) == 1);
+
+    const auto t2 = MIN_ST + engine_time_delta_t{1};
+    {
+        Value value{22};
+        auto  data = target.data_view();
+        auto  dict = data.as_dict();
+        auto  mutation = dict.begin_mutation(t2);
+        auto  child = mutation.at(key_two.view());
+        auto  child_mutation = child.begin_mutation(t2);
+        REQUIRE(child_mutation.copy_value_from(value.view()));
+    }
+
+    auto add_view  = handle.view(t2);
+    auto after_add = add_view.as_dict();
+    REQUIRE(after_add.modified());
+    REQUIRE(after_add.contains(key_one.view()));
+    REQUIRE(after_add.contains(key_two.view()));
+    REQUIRE(range_count(after_add.items()) == 2);
+    auto source_after_add = target.view(t2);
+    auto source_after_add_dict = source_after_add.as_dict();
+    REQUIRE(after_add.at(key_one.view()).value().checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_after_add_dict.at(key_one.view())});
+    REQUIRE(after_add.at(key_two.view()).value().checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_after_add_dict.at(key_two.view())});
+
+    auto value_snapshot = add_view.value().clone();
+    auto value_map = value_snapshot.as_map();
+    REQUIRE(value_map.contains(key_one.view()));
+    REQUIRE(value_map.contains(key_two.view()));
+    REQUIRE(value_map.at(key_two.view()).checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_after_add_dict.at(key_two.view())});
+
+    const auto t3 = t2 + engine_time_delta_t{1};
+    {
+        auto data = target.data_view();
+        auto dict = data.as_dict();
+        auto mutation = dict.begin_mutation(t3);
+        REQUIRE(mutation.erase(key_one.view()));
+    }
+
+    auto remove_view  = handle.view(t3);
+    auto after_remove = remove_view.as_dict();
+    REQUIRE(after_remove.modified());
+    REQUIRE_FALSE(after_remove.contains(key_one.view()));
+    REQUIRE(after_remove.contains(key_two.view()));
+    REQUIRE(range_count(after_remove.items()) == 1);
+    auto delta_snapshot = remove_view.delta_value().clone();
+    auto delta_bundle = delta_snapshot.as_bundle();
+    auto removed_keys = delta_bundle.field("removed").as_set();
+    REQUIRE(removed_keys.contains(key_one.view()));
+}
+
+TEST_CASE("TimeSeriesReference: to-REF nested TSD alternative keeps each proxy subscribed")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *ref_int  = registry.ref(ts_int);
+    const auto *source_inner_schema = registry.tsd(int_meta, ts_int);
+    const auto *requested_inner_schema = registry.tsd(int_meta, ref_int);
+    const auto *source_schema = registry.tsd(int_meta, source_inner_schema);
+    const auto *requested_schema = registry.tsd(int_meta, requested_inner_schema);
+
+    TSOutput target{*source_schema};
+    Value    outer_key{1};
+    Value    inner_key_one{11};
+    Value    inner_key_two{22};
+
+    {
+        Value value{11};
+        auto  target_data = target.data_view();
+        auto  source_dict = target_data.as_dict();
+        auto  outer_mutation = source_dict.begin_mutation(MIN_ST);
+        auto  inner = outer_mutation.at(outer_key.view());
+        auto  inner_dict = inner.as_dict();
+        auto  inner_mutation = inner_dict.begin_mutation(MIN_ST);
+        auto  child = inner_mutation.at(inner_key_one.view());
+        auto  child_mutation = child.begin_mutation(MIN_ST);
+        REQUIRE(child_mutation.copy_value_from(value.view()));
+    }
+
+    auto handle = target.view(MIN_ST).binding_for(*requested_schema);
+    auto projected_view = handle.view(MIN_ST);
+    auto projected_dict = projected_view.as_dict();
+    REQUIRE(projected_dict.contains(outer_key.view()));
+    auto projected_inner_child = projected_dict.at(outer_key.view());
+    auto projected_inner = projected_inner_child.as_dict();
+    REQUIRE(projected_inner.contains(inner_key_one.view()));
+    REQUIRE(range_count(projected_inner.items()) == 1);
+    const auto t2 = MIN_ST + engine_time_delta_t{1};
+    {
+        Value value{22};
+        auto  target_data = target.data_view();
+        auto  source_dict = target_data.as_dict();
+        auto  outer_child = source_dict.at(outer_key.view());
+        auto  inner_dict = outer_child.as_dict();
+        auto  inner_mutation = inner_dict.begin_mutation(t2);
+        auto  child = inner_mutation.at(inner_key_two.view());
+        auto  child_mutation = child.begin_mutation(t2);
+        REQUIRE(child_mutation.copy_value_from(value.view()));
+    }
+
+    auto after_add_view = handle.view(t2);
+    auto after_add_dict = after_add_view.as_dict();
+    auto after_add_inner_child = after_add_dict.at(outer_key.view());
+    auto after_add_inner = after_add_inner_child.as_dict();
+    REQUIRE(after_add_inner.modified());
+    REQUIRE(after_add_inner.contains(inner_key_one.view()));
+    REQUIRE(after_add_inner.contains(inner_key_two.view()));
+    REQUIRE(range_count(after_add_inner.items()) == 2);
+
+    auto source_after_add = target.view(t2);
+    auto source_after_add_dict = source_after_add.as_dict();
+    auto source_after_add_inner_child = source_after_add_dict.at(outer_key.view());
+    auto source_after_add_inner = source_after_add_inner_child.as_dict();
+    REQUIRE(after_add_inner.at(inner_key_two.view()).value().checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_after_add_inner.at(inner_key_two.view())});
 }
 
 TEST_CASE("TimeSeriesReference: empty_reference() returns a stable singleton")

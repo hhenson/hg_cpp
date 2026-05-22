@@ -2,6 +2,7 @@
 #define HGRAPH_CPP_TS_DATA_SET_VIEW_H
 
 #include <hgraph/types/time_series/ts_data/base_view.h>
+#include <hgraph/types/utils/slot_observer.h>
 #include <hgraph/types/value/value_range.h>
 #include <hgraph/util/date_time.h>
 #include <cstddef>
@@ -30,6 +31,10 @@ namespace hgraph
         void unsubscribe(Notifiable *observer) const;
         [[nodiscard]] bool has_observers() const;
         [[nodiscard]] std::size_t observer_count() const;
+
+        /** Register / remove a structural slot observer. */
+        void subscribe_slot_observer(SlotObserver *observer) const;
+        void unsubscribe_slot_observer(SlotObserver *observer) const;
 
         /** Number of live keys in the set. */
         [[nodiscard]] std::size_t size() const;

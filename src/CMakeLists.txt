@@ -12,6 +12,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series/ts_data/dict_view.cpp
     hgraph/types/time_series/ts_data/indexed_view.cpp
     hgraph/types/time_series/ts_data/ops.cpp
+    hgraph/types/time_series/ts_data/proxy.cpp
     hgraph/types/time_series/ts_data/set_view.cpp
     hgraph/types/time_series/ts_data/storage.cpp
     hgraph/types/time_series/ts_data/types.cpp
@@ -69,6 +70,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/dict_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/indexed_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/ops.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/proxy.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/set_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/storage.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/types.h

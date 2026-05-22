@@ -168,6 +168,16 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("slot reservation");
     }
 
+    void missing_subscribe_slot_observer(const void *, void *, SlotObserver *)
+    {
+        missing_ts_data_op("slot observer subscription");
+    }
+
+    void missing_unsubscribe_slot_observer(const void *, void *, SlotObserver *)
+    {
+        missing_ts_data_op("slot observer unsubscription");
+    }
+
     const void *missing_child_at_slot(const void *, const void *, std::size_t)
     {
         missing_ts_data_op("child at slot");

@@ -47,6 +47,7 @@ add_executable(hgraph_unit_tests
     test_time_series_reference.cpp
     test_ts_input.cpp
     test_ts_schemas.cpp
+    test_tsd_proxy.cpp
     test_ts_output.cpp
     test_type_registry.cpp
     test_value.cpp

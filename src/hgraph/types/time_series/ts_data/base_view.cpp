@@ -194,7 +194,7 @@ namespace hgraph
         if (modified_time == MIN_DT || tracking().last_modified_time != modified_time) { return; }
 
         const auto &table = ops();
-        table.cleanup_delta_impl(table.context, mutable_data(), modified_time);
+        table.cleanup_delta_impl(table.context, const_cast<void *>(data_), modified_time);
     }
 
     TSSDataView TSDataView::as_set() &

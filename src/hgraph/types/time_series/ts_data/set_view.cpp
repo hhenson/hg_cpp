@@ -76,6 +76,18 @@ namespace hgraph
         return view_.observer_count();
     }
 
+    void TSSDataView::subscribe_slot_observer(SlotObserver *observer) const
+    {
+        const auto &ops = set_ops();
+        ops.subscribe_slot_observer_impl(ops.context, const_cast<void *>(view_.data()), observer);
+    }
+
+    void TSSDataView::unsubscribe_slot_observer(SlotObserver *observer) const
+    {
+        const auto &ops = set_ops();
+        ops.unsubscribe_slot_observer_impl(ops.context, const_cast<void *>(view_.data()), observer);
+    }
+
     std::size_t TSSDataView::size() const
     {
         const auto &ops = set_ops();

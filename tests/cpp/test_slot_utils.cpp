@@ -4,6 +4,7 @@
 #include <hgraph/types/utils/value_slot_store.h>
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -88,6 +89,26 @@ namespace
         void on_erase(size_t slot) override { events.push_back("erase:" + std::to_string(slot)); }
 
         void on_clear() override { events.push_back("clear"); }
+    };
+
+    struct SelfRemovingSlotObserver final : SlotObserver
+    {
+        SlotObserverList *list{nullptr};
+        int               calls{0};
+
+        explicit SelfRemovingSlotObserver(SlotObserverList *list_) : list(list_) {}
+
+        void on_capacity(size_t, size_t) override {}
+
+        void on_insert(size_t) override
+        {
+            ++calls;
+            list->remove(this);
+        }
+
+        void on_remove(size_t) override {}
+        void on_erase(size_t) override {}
+        void on_clear() override {}
     };
 
     struct TrackedPayload
@@ -196,6 +217,42 @@ TEST_CASE("value slot store tracks updates and notifies observers", "[v2 slot ut
     store.remove_slot_observer(&observer);
     store.notify_insert(2);
     CHECK(observer.events.size() == 5);
+}
+
+TEST_CASE("slot observer list supports reentrant removal", "[v2 slot utils]") {
+    SlotObserverList         observers;
+    SelfRemovingSlotObserver first{&observers};
+    RecordingObserver        second;
+
+    observers.add(&first);
+    observers.add(&second);
+
+    observers.notify_insert(3);
+    REQUIRE(first.calls == 1);
+    REQUIRE(second.events == std::vector<std::string>{"insert:3"});
+
+    observers.notify_insert(4);
+    REQUIRE(first.calls == 1);
+    REQUIRE(second.events == std::vector<std::string>{"insert:3", "insert:4"});
+}
+
+TEST_CASE("value slot store supports default construction before plan binding", "[v2 slot utils]") {
+    ValueSlotStore store;
+
+    REQUIRE(store.plan() == nullptr);
+    REQUIRE_THROWS_AS(store.reserve_to(1), std::logic_error);
+
+    const auto &int_plan = MemoryUtils::plan_for<std::uint32_t>();
+    store.bind_plan(int_plan);
+    REQUIRE(store.plan() == &int_plan);
+
+    store.reserve_to(2);
+    store.construct_at(1);
+    REQUIRE(store.has_slot(1));
+    store.destroy_at(1);
+
+    store.bind_plan(int_plan);
+    REQUIRE_THROWS_AS(store.bind_plan(MemoryUtils::plan_for<std::uint64_t>()), std::logic_error);
 }
 
 TEST_CASE("value slot store manages typed payload lifetime on stable slots", "[v2 slot utils]") {

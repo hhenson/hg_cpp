@@ -236,7 +236,10 @@ A few notes on the cells that aren't immediate:
   ``REF<T>`` metadata pointers is only the ``value_schema`` and
   ``delta_value_schema``: both alias the canonical
   ``TimeSeriesReference`` atomic, the C++ value type that backs a
-  reference token at runtime.
+  reference token at runtime. Direct nested references are normalised:
+  asking the registry for ``REF<REF<T>>`` returns the existing
+  ``REF<T>`` schema. Nested ``REF`` is therefore not a distinct schema
+  shape and must not create a separate output alternative.
 - ``TSL`` keys its delta on ``int64`` because the slot id (an integer
   index) is the universal path identifier into a slot store. The
   registry auto-registers an ``int64`` scalar the first time it
@@ -327,10 +330,10 @@ It does not create a whole-list alternative such as:
 The whole-list alternative is created only when the list output itself
 is bound to an input of that whole-list reference shape.
 
-The first implementation should treat reference markers as the only
-shape difference handled by this mechanism. Identical schemas use the
-native output representation. Otherwise, validation is based on the
-fully dereferenced shapes:
+The to-``REF`` strategy treats reference markers as the only shape
+difference handled by this mechanism. Identical schemas use the native
+output representation. Otherwise, validation is based on the fully
+dereferenced shapes:
 
 .. code-block:: text
 
@@ -339,86 +342,144 @@ fully dereferenced shapes:
 ``schema_owned`` is the canonical schema of the output view being
 bound, and ``schema_requested`` is the schema required by the input
 view. ``dereference`` recursively removes ``REF`` markers by replacing
-``REF<T>`` with the dereferenced shape of ``T``. For fixed ``TSL`` and
-``TSB``, children are still matched by index or field order while
-computing the dereferenced shape. Recursive per-key alternatives for
-dynamic keyed collections require explicit slot/key lifecycle rules
-and should not be inferred by silently zipping whatever keys happen to
-exist at runtime.
+``REF<T>`` with the dereferenced shape of ``T``. Direct
+``REF<REF<T>>`` schemas are normalised by the registry and are not a
+separate alternative form.
 
-For keyed alternatives, the canonical key slot store remains the source
-of truth. For example, exposing a canonical ``TSD[K, V]`` as
-``TSD[K, REF[V]]`` should use a parallel slot-backed value store, not a
-separate associative child map. The alternative value store mirrors the
-canonical key slots through the standard slot observer protocol, in the
-same style as a key-mirrored value slot store: capacity, insert,
-remove, erase, and clear events keep the alternative slots aligned with
-the key lifecycle, while each alternative value element is constructed
-only when that slot is actually requested.
+The current to-``REF`` storage shape is:
+
+.. code-block:: text
+
+   0..n structural prefixes (TSB, fixed TSL, TSD)
+       followed by a REF[remaining requested shape] leaf
+
+At the ``REF`` leaf, materialisation stops. The leaf value is the
+``TimeSeriesReference`` taken from the peered source output view at
+that position. Any structure below that reference belongs to the
+referenced output if it is later dereferenced.
+
+Each requested path has exactly one materialised conversion leaf: it
+is either the top-level alternative itself or a child below a
+``TSB``, fixed-size ``TSL``, or ``TSD`` prefix. Once that leaf is
+created, the current output does not build additional representation
+state below it.
+
+For keyed alternatives, the canonical key store remains the source of
+truth. Exposing a canonical ``TSD[K, V]`` as ``TSD[K, REF[V]]`` uses
+the reusable ``TSDProxy`` TSData component. ``TSDProxy`` takes a source
+``TSD`` view, adapts the source ``TSS`` key-set surface, and owns only
+the alternative value slots. It is not an ad-hoc associative child map:
+child values are stored in slot storage aligned to the source key
+slots, so the requested value shape can be recreated without
+duplicating keys.
+
+``TSDProxy`` does not support external mutation. Its values are
+materialised by a value-builder function supplied by the caller. The
+builder receives the proxy, source slot id, target child TSData view,
+source child TSData view, and engine time. The to-``REF`` alternative
+uses that hook to construct the appropriate ``TimeSeriesReference``
+for each slot, but the proxy itself is not reference-specific.
+
+The proxy registers with the source key-set ``SlotObserver`` protocol
+for structural slot alignment and with normal TSData modification
+notification to learn the engine time. Source key insert/remove/erase
+events construct, retain, and destroy proxy value slots. When source
+modification notification arrives, the proxy reads the source
+added/removed slot surfaces and materialises the affected values.
+Ordinary source child value ticks do not rebuild an already
+materialised to-``REF`` child because the output identity did not
+change.
 
 Alternative storage
 ~~~~~~~~~~~~~~~~~~~
 
 Each root output may own a nullable alternative store. The store is
-allocated on the first alternative request and is structured as a tree
-of slots mirroring the navigable shape of the output. The store is a
-cache and ownership boundary; it does not change the semantic rule
-that conversion is anchored at the output view being bound.
+allocated on the first alternative request. It is a cache and
+ownership boundary; it does not change the semantic rule that
+conversion is anchored at the output view being bound.
 
-Each element in the tree represents one canonical output navigation
-position. The root element represents the root output. A child element
-represents one slot, index, or field below its parent. The element does
-not represent an arbitrary alternative shape; it represents the place
-where the canonical output may need to expose the opposite reference
-representation:
+The primary cache key is:
 
-- if the canonical position is not ``REF``, the local alternative is a
-  ``REF`` projection of that position;
-- if the canonical position is ``REF``, the local alternative is an
-  unpacked view through a ``RefLink``;
-- once a canonical ``REF`` is reached, this output's alternative tree
-  stops tracking deeper structure. Anything below the reference belongs
-  to the referenced output.
+.. code-block:: text
 
-Slots are allocated along requested paths, but the actual local
-alternative payload is instantiated only where a conversion is required.
-For the non-``REF`` to ``REF`` case, that payload is a
-``RefProjectionPayload``: it owns the ``TimeSeriesReference`` value and
-the ``TSDataBinding`` / ``TSDataOps`` needed to expose this exact output
-position as the requested ``REF`` schema. This payload is not child
-navigation state; it is the local binding data for the opposite
-representation at this element. Implementations may cache these local
-payloads by requested schema when the binding metadata depends on the
-requested schema, for example when nominal and structural schemas have
-the same dereferenced shape but different binding identity.
+   [starting output view, requested schema]
 
-A slot element in the alternative tree may have both a local payload
-and child slots. For example:
+The starting output view is the concrete output view handed to input
+binding: the root output identity plus the ``TSData`` binding/data
+pair at that navigation point. The requested schema is the input-side
+schema the target link wants to observe. Since canonical schema matches
+return the original output view directly, every entry in this cache is
+by definition an alternative representation.
+
+The requested schema drives the alternative storage and ops. For
+example:
+
+- if the starting output view is not ``REF`` and the requested schema
+  is ``REF``, the alternative is a ``REF`` view of that starting
+  view;
+- if the starting output view is ``REF`` and the requested schema is
+  not ``REF``, the alternative is an unpacked view through a
+  ``RefLink``;
+- once a canonical ``REF`` is reached, this output stops tracking
+  deeper structure. Anything below the reference belongs to the
+  referenced output.
+
+The actual alternative state is instantiated only where a conversion
+is required. For the non-``REF`` to ``REF`` case, that state is a
+``ToRefAlternativeState``. It owns a ``TSData`` allocation for the
+requested schema and the returned ``TSOutputHandle`` points at this
+alternative ``TSData`` while retaining the root output identity.
+
+This means the alternative view is TSData-backed and exposes the
+requested shape through normal view APIs. A request for
+``REF[TS[int]]`` stores a real ``TimeSeriesReference`` value. A
+request for ``TSL[REF[TS[int]], Size[2]]`` stores a fixed-list TSData
+allocation whose two children are real ``REF`` leaves. A request for
+``TSD[int, REF[TS[int]]]`` stores a ``TSDProxy`` whose keys are read
+from the source dictionary and whose value-builder creates the
+requested alternative values.
+
+The alternative has its own time-series tracking. Binding or rebinding
+marks the alternative modified at the bind time. Ordinary ticks of the
+underlying non-``REF`` output do not tick the alternative ``REF`` value,
+because the reference identity did not change. Dynamic collection
+membership is different: when a source ``TSD`` reports added or removed
+keys, the proxy updates its aligned value slots and marks the
+alternative modified for that evaluation time. Source child value ticks
+do not change an already materialised to-``REF`` child.
+
+Only ``TSD`` introduces live proxy behaviour. Static ``TSB`` and
+fixed-size ``TSL`` prefixes are created once and need no ongoing
+interaction with their source after their children have been
+materialised, unless a descendant path crosses a ``TSD``. In that case
+the descendant ``TSD`` owns the subscription and synchronisation; the
+static prefix remains a structural container.
+
+A starting output view can have multiple cached alternatives when
+different inputs request different schemas. Likewise, the root output
+view and a nested child output view are different starting views even
+when they request the same schema. For example:
 
 .. code-block:: text
 
    TSB[{ts: TSL[TS[int], Size[2]]}]
 
-has a root element, a child element for ``ts``, and child elements below
-``ts`` for indexes ``0`` and ``1``. If an input binds the whole output
-as:
+If an input binds the whole output as:
 
 .. code-block:: text
 
    REF[TSB[{ts: TSL[TS[int], Size[2]]}]]
 
-the root element gets a local ``REF`` projection. If another input
+the root element gets a local ``REF`` alternative. If another input
 binds only ``ts[0]`` as:
 
 .. code-block:: text
 
    REF[TS[int]]
 
-the store walks root -> ``ts`` -> ``0`` and creates the local
-``REF`` projection at the index ``0`` element. These are different
-positions in the same root-owned alternative store; the root projection
-does not replace the child projection and the child projection does not
-become a second root.
+the cache keys differ because the starting output views differ. The
+root alternative does not replace the child alternative and the child
+alternative does not become a second root.
 
 REF boundaries
 ~~~~~~~~~~~~~~

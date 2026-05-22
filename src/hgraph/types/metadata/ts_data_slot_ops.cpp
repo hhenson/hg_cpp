@@ -151,10 +151,20 @@ namespace hgraph::ts_data_plan_factory_detail
                 delta_time_ = MIN_DT;
             }
 
-            void cleanup_delta() noexcept
+            void cleanup_delta()
             {
                 keys_.erase_pending();
                 reset_delta();
+            }
+
+            void add_slot_observer(SlotObserver *observer)
+            {
+                keys_.add_slot_observer(observer);
+            }
+
+            void remove_slot_observer(SlotObserver *observer)
+            {
+                keys_.remove_slot_observer(observer);
             }
 
           protected:
@@ -354,6 +364,16 @@ namespace hgraph::ts_data_plan_factory_detail
                 reset_delta();
             }
 
+            void add_slot_observer(SlotObserver *observer)
+            {
+                keys_.add_slot_observer(observer);
+            }
+
+            void remove_slot_observer(SlotObserver *observer)
+            {
+                keys_.remove_slot_observer(observer);
+            }
+
           private:
             void validate_key(const ValueView &key) const
             {
@@ -485,9 +505,9 @@ namespace hgraph::ts_data_plan_factory_detail
             return entries;
         }
 
-        [[nodiscard]] std::mutex &slot_plan_mutex() noexcept
+        [[nodiscard]] std::recursive_mutex &slot_plan_mutex() noexcept
         {
-            static std::mutex mutex;
+            static std::recursive_mutex mutex;
             return mutex;
         }
 
@@ -675,6 +695,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 set_ops.remove_key_impl                = &tss_remove_key;
                 set_ops.touch_impl                     = &tss_touch;
                 set_ops.reserve_impl                   = &tss_reserve;
+                set_ops.subscribe_slot_observer_impl   = &tss_subscribe_slot_observer;
+                set_ops.unsubscribe_slot_observer_impl = &tss_unsubscribe_slot_observer;
             }
 
             void configure_set_value_ops()
@@ -992,6 +1014,16 @@ namespace hgraph::ts_data_plan_factory_detail
             static void tss_reserve(const void *, void *memory, std::size_t capacity)
             {
                 storage<Storage>(memory).reserve(capacity);
+            }
+
+            static void tss_subscribe_slot_observer(const void *, void *memory, SlotObserver *observer)
+            {
+                storage<Storage>(memory).add_slot_observer(observer);
+            }
+
+            static void tss_unsubscribe_slot_observer(const void *, void *memory, SlotObserver *observer)
+            {
+                storage<Storage>(memory).remove_slot_observer(observer);
             }
 
             template <SlotSetSurface Surface>
@@ -2292,9 +2324,9 @@ namespace hgraph::ts_data_plan_factory_detail
             return contexts;
         }
 
-        [[nodiscard]] std::mutex &slot_context_mutex() noexcept
+        [[nodiscard]] std::recursive_mutex &slot_context_mutex() noexcept
         {
-            static std::mutex mutex;
+            static std::recursive_mutex mutex;
             return mutex;
         }
 
@@ -2349,7 +2381,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
         const auto &key_binding = key_binding_for(schema);
 
-        std::lock_guard<std::mutex> lock(slot_plan_mutex());
+        std::lock_guard<std::recursive_mutex> lock(slot_plan_mutex());
         auto                       &entries = slot_plan_entries();
         if (const auto it = entries.find(&schema); it != entries.end()) { return it->second->root_plan; }
 
@@ -2408,7 +2440,7 @@ namespace hgraph::ts_data_plan_factory_detail
             throw std::logic_error("slot TSData currently expects the storage object at the root");
         }
 
-        std::lock_guard<std::mutex> lock(slot_context_mutex());
+        std::lock_guard<std::recursive_mutex> lock(slot_context_mutex());
         auto                       &contexts = slot_contexts();
         const SlotContextKey        key{&schema, &plan, storage_offset};
         if (const auto it = contexts.find(key); it != contexts.end()) { return it->second->ops_ref(); }
@@ -2436,11 +2468,11 @@ namespace hgraph::ts_data_plan_factory_detail
     void clear_slot_ts_data_contexts() noexcept
     {
         {
-            std::lock_guard<std::mutex> lock(slot_context_mutex());
+            std::lock_guard<std::recursive_mutex> lock(slot_context_mutex());
             slot_contexts().clear();
         }
         {
-            std::lock_guard<std::mutex> lock(slot_plan_mutex());
+            std::lock_guard<std::recursive_mutex> lock(slot_plan_mutex());
             slot_plan_entries().clear();
         }
     }

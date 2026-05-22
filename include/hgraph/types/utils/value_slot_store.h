@@ -35,6 +35,9 @@ namespace hgraph
      */
     struct ValueSlotStore
     {
+        /** Construct an unbound store. A storage plan must be bound before reserving or constructing slots. */
+        ValueSlotStore() noexcept = default;
+
         /**
          * Construct a store bound to ``plan``, optionally using ``allocator``
          * for the underlying heap blocks. The plan must remain valid for the
@@ -99,6 +102,28 @@ namespace hgraph
         [[nodiscard]] size_t stride() const noexcept { return value_storage.stride(); }
         /** Bound storage plan for the held value type, or ``nullptr`` if unbound. */
         [[nodiscard]] const MemoryUtils::StoragePlan *plan() const noexcept { return m_value_plan; }
+
+        /**
+         * Bind this store to ``plan``.
+         *
+         * This supports TSData storage whose element plan is known by the
+         * type-erased binding but not by the default constructor used by the
+         * storage lifecycle. Once bound, the plan is immutable; rebinding to
+         * a different plan is an error.
+         */
+        void bind_plan(const MemoryUtils::StoragePlan &plan)
+        {
+            if (!plan.valid()) {
+                throw std::logic_error("ValueSlotStore requires a valid storage plan");
+            }
+            if (m_value_plan == nullptr) {
+                m_value_plan = &plan;
+                return;
+            }
+            if (m_value_plan != &plan) {
+                throw std::logic_error("ValueSlotStore plan must remain constant");
+            }
+        }
 
         /** Mutable byte pointer for ``slot``; not bounds-checked. */
         [[nodiscard]] void *value_memory(size_t slot) noexcept { return value_storage.slot_data(slot); }
@@ -275,20 +300,6 @@ namespace hgraph
 
       private:
         const MemoryUtils::StoragePlan *m_value_plan{nullptr};
-
-        void bind_plan(const MemoryUtils::StoragePlan &plan)
-        {
-            if (!plan.valid()) {
-                throw std::logic_error("ValueSlotStore requires a valid storage plan");
-            }
-            if (m_value_plan == nullptr) {
-                m_value_plan = &plan;
-                return;
-            }
-            if (m_value_plan != &plan) {
-                throw std::logic_error("ValueSlotStore plan must remain constant");
-            }
-        }
 
         [[nodiscard]] const MemoryUtils::StoragePlan &require_bound_plan() const
         {
