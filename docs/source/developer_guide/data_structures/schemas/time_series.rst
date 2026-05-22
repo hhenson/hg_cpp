@@ -373,12 +373,35 @@ child values are stored in slot storage aligned to the source key
 slots, so the requested value shape can be recreated without
 duplicating keys.
 
+There are two important keyed to-``REF`` shapes:
+
+.. code-block:: text
+
+   direct value conversion:
+       source:    TSD[K, V]
+       requested: TSD[K, REF[V]]
+
+   keyed path conversion:
+       source:    TSD[K, TSB/TSL/TSD[..., V]]
+       requested: TSD[K, TSB/TSL/TSD[..., REF[V]]]
+
+In the direct value conversion, the proxy's child binding is the
+``REF[V]`` leaf, so each mirrored source slot materialises a
+``TimeSeriesReference`` directly. In the keyed path conversion, the
+proxy's child binding is the normal requested structural child. The
+proxy still exists because the key slots are dynamic and must remain
+aligned with the source, but the child is populated by walking the
+requested structure until the first ``REF`` leaf is reached. Any
+nested ``TSD`` encountered on that path owns its own proxy.
+
 ``TSDProxy`` does not support external mutation. Its values are
 materialised by a value-builder function supplied by the caller. The
 builder receives the proxy, source slot id, target child TSData view,
 source child TSData view, and engine time. The to-``REF`` alternative
-uses that hook to construct the appropriate ``TimeSeriesReference``
-for each slot, but the proxy itself is not reference-specific.
+uses that hook either to construct the appropriate
+``TimeSeriesReference`` leaf or to construct the requested structural
+child that contains such a leaf, but the proxy itself is not
+reference-specific.
 
 The proxy registers with the source key-set ``SlotObserver`` protocol
 for structural slot alignment and with normal TSData modification
@@ -437,7 +460,10 @@ request for ``TSL[REF[TS[int]], Size[2]]`` stores a fixed-list TSData
 allocation whose two children are real ``REF`` leaves. A request for
 ``TSD[int, REF[TS[int]]]`` stores a ``TSDProxy`` whose keys are read
 from the source dictionary and whose value-builder creates the
-requested alternative values.
+requested ``REF`` values directly. A request for
+``TSD[int, TSB[{items: TSL[REF[TS[int]], Size[2]]}]]`` also stores a
+``TSDProxy``, but the proxy child is the requested ``TSB`` structure;
+the two ``REF`` leaves are materialised inside that child.
 
 The alternative has its own time-series tracking. Binding or rebinding
 marks the alternative modified at the bind time. Ordinary ticks of the

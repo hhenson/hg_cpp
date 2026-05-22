@@ -28,6 +28,30 @@ Ordinary source child value ticks are not structural events. For the
 to-``REF`` alternative they do not rebuild or tick the proxy, because
 the reference identity remains the same.
 
+There are two distinct to-``REF`` shapes involving ``TSD``:
+
+.. code-block:: text
+
+   direct value conversion:
+       source:    TSD[K, V]
+       requested: TSD[K, REF[V]]
+
+   keyed path conversion:
+       source:    TSD[K, TSB/TSL/TSD[..., V]]
+       requested: TSD[K, TSB/TSL/TSD[..., REF[V]]]
+
+In the direct value conversion, the proxy element binding is the
+requested ``REF[V]`` child and the builder materialises a
+``TimeSeriesReference`` for each source slot.
+
+In the keyed path conversion, the ``TSD`` is only a structural prefix
+on the path to the ``REF`` leaf. The proxy element binding is the
+normal requested child structure, such as a ``TSB`` or fixed ``TSL``.
+The proxy exists to keep the dynamic key slots aligned; population then
+continues through that child structure until the ``REF`` leaf is
+reached. If another ``TSD`` appears below the child, that nested
+dictionary gets its own ``TSDProxy``.
+
 Main Participants
 -----------------
 
@@ -312,6 +336,13 @@ immediately:
 - ``TSD`` binds a ``TSDProxy`` and then lets the proxy mirror the
   source key slots.
 
+The ``TSD`` binding chosen here depends on where the first ``REF``
+appears below the dictionary. For ``TSD[K, REF[V]]`` the proxy child is
+the ``REF[V]`` leaf and the builder writes a reference token directly.
+For ``TSD[K, TSB/TSL/TSD[..., REF[V]]]`` the proxy child is the
+requested child structure, and the builder recurses through that
+structure before writing the eventual ``REF`` leaf.
+
 The ``TSD`` case is the only dynamic case in the current to-``REF``
 implementation. It is the only place where ongoing source maintenance
 is required after the alternative is created.
@@ -446,9 +477,11 @@ added slots and materialises the child value.
       K --> L
 
 For the to-``REF`` alternative, the builder creates a
-``TimeSeriesReference`` for the source child. If the requested child is
-itself a ``TSD``, the builder creates a nested ``TSDProxy`` for that
-source child.
+``TimeSeriesReference`` only when the proxy child is the ``REF`` leaf.
+If the requested child is a structural prefix, the builder constructs
+that normal requested child and continues population below it. If the
+requested child is itself a ``TSD``, the builder creates a nested
+``TSDProxy`` for that source child.
 
 Key Remove and Physical Erase
 -----------------------------

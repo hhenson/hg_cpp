@@ -479,6 +479,103 @@ TEST_CASE("TimeSeriesReference: to-REF TSD alternative keeps keys synchronized")
     REQUIRE(removed_keys.contains(key_one.view()));
 }
 
+TEST_CASE("TimeSeriesReference: to-REF TSD path constructs normal child structures before REF leaves")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *ref_int  = registry.ref(ts_int);
+    const auto *source_list = registry.tsl(ts_int, 2);
+    const auto *requested_list = registry.tsl(ref_int, 2);
+    const auto *source_bundle = registry.tsb("TimeSeriesReferenceTSDPathSourceBundle", {{"items", source_list}});
+    const auto *requested_bundle =
+        registry.tsb("TimeSeriesReferenceTSDPathRequestedBundle", {{"items", requested_list}});
+    const auto *source_schema = registry.tsd(int_meta, source_bundle);
+    const auto *requested_schema = registry.tsd(int_meta, requested_bundle);
+
+    TSOutput target{*source_schema};
+    Value    key_one{1};
+    Value    key_two{2};
+
+    {
+        auto data = target.data_view();
+        auto dict = data.as_dict();
+        auto dict_mutation = dict.begin_mutation(MIN_ST);
+        auto child = dict_mutation.at(key_one.view());
+        auto bundle = child.as_bundle();
+        auto items_child = bundle.field("items");
+        auto items = items_child.as_list();
+        Value first{11};
+        Value second{12};
+        REQUIRE(items.at(0).begin_mutation(MIN_ST).copy_value_from(first.view()));
+        REQUIRE(items.at(1).begin_mutation(MIN_ST).copy_value_from(second.view()));
+    }
+
+    auto target_view = target.view(MIN_ST);
+    auto handle = target_view.binding_for(*requested_schema);
+    auto handle_view = handle.view(MIN_ST);
+    auto projected = handle_view.as_dict();
+    REQUIRE(projected.contains(key_one.view()));
+    REQUIRE(projected.at(key_one.view()).schema() == requested_bundle);
+
+    auto projected_child = projected.at(key_one.view());
+    auto projected_bundle = projected_child.as_bundle();
+    auto projected_items_child = projected_bundle.field("items");
+    auto projected_items = projected_items_child.as_list();
+    REQUIRE(projected_items.at(0).schema() == ref_int);
+    REQUIRE(projected_items.at(1).schema() == ref_int);
+
+    auto source_view = target.view(MIN_ST);
+    auto source = source_view.as_dict();
+    auto source_child = source.at(key_one.view());
+    auto source_bundle_view = source_child.as_bundle();
+    auto source_items_child = source_bundle_view.field("items");
+    auto source_items = source_items_child.as_list();
+    REQUIRE(projected_items.at(0).value().checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_items.at(0)});
+    REQUIRE(projected_items.at(1).value().checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_items.at(1)});
+
+    const auto t2 = MIN_ST + engine_time_delta_t{1};
+    {
+        auto data = target.data_view();
+        auto dict = data.as_dict();
+        auto dict_mutation = dict.begin_mutation(t2);
+        auto child = dict_mutation.at(key_two.view());
+        auto bundle = child.as_bundle();
+        auto items_child = bundle.field("items");
+        auto items = items_child.as_list();
+        Value first{21};
+        Value second{22};
+        REQUIRE(items.at(0).begin_mutation(t2).copy_value_from(first.view()));
+        REQUIRE(items.at(1).begin_mutation(t2).copy_value_from(second.view()));
+    }
+
+    auto after_add_view = handle.view(t2);
+    auto after_add = after_add_view.as_dict();
+    REQUIRE(after_add.modified());
+    REQUIRE(after_add.contains(key_one.view()));
+    REQUIRE(after_add.contains(key_two.view()));
+    REQUIRE(range_count(after_add.items()) == 2);
+    REQUIRE(after_add.at(key_two.view()).schema() == requested_bundle);
+
+    auto added_child = after_add.at(key_two.view());
+    auto added_bundle = added_child.as_bundle();
+    auto added_items_child = added_bundle.field("items");
+    auto added_items = added_items_child.as_list();
+    auto source_after_add_view = target.view(t2);
+    auto source_after_add = source_after_add_view.as_dict();
+    auto source_added_child = source_after_add.at(key_two.view());
+    auto source_added_bundle = source_added_child.as_bundle();
+    auto source_added_items_child = source_added_bundle.field("items");
+    auto source_added_items = source_added_items_child.as_list();
+    REQUIRE(added_items.at(0).value().checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_added_items.at(0)});
+    REQUIRE(added_items.at(1).value().checked_as<TimeSeriesReference>() ==
+            TimeSeriesReference{source_added_items.at(1)});
+}
+
 TEST_CASE("TimeSeriesReference: to-REF nested TSD alternative keeps each proxy subscribed")
 {
     using namespace hgraph;
