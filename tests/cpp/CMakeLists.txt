@@ -41,6 +41,7 @@ add_executable(hgraph_unit_tests
     test_schema_examples.cpp
     test_slot_utils.cpp
     test_scope.cpp
+    test_runtime_value_view.cpp
     test_compact_storage.cpp
     test_specialized_views.cpp
     test_static_schema.cpp

@@ -1,0 +1,278 @@
+#include <hgraph/runtime/executor.h>
+
+#include <deque>
+#include <memory>
+#include <stdexcept>
+#include <utility>
+
+namespace hgraph
+{
+    namespace
+    {
+        struct GraphExecutorStorage
+        {
+            explicit GraphExecutorStorage(const GraphExecutorBuilder &builder)
+                : graph(builder.graph_builder().make_graph()),
+                  start_time(builder.start_time()),
+                  end_time(builder.end_time())
+            {
+            }
+
+            GraphValue    graph{};
+            engine_time_t start_time{MIN_ST};
+            engine_time_t end_time{MAX_ET};
+            bool          stop_requested{false};
+        };
+
+        [[nodiscard]] GraphExecutorStorage &storage(void *memory)
+        {
+            if (memory == nullptr) { throw std::logic_error("GraphExecutor storage is null"); }
+            return *MemoryUtils::cast<GraphExecutorStorage>(memory);
+        }
+
+        [[nodiscard]] const GraphExecutorStorage &storage(const void *memory)
+        {
+            if (memory == nullptr) { throw std::logic_error("GraphExecutor storage is null"); }
+            return *MemoryUtils::cast<GraphExecutorStorage>(memory);
+        }
+
+        void run_impl(const void *, const GraphExecutorView &executor)
+        {
+            auto graph = executor.graph();
+            graph.start(executor.start_time());
+
+            try
+            {
+                while (!executor.stop_requested())
+                {
+                    const engine_time_t next = graph.next_scheduled_time();
+                    if (next == MAX_DT || next >= executor.end_time()) { break; }
+                    graph.evaluate(next);
+                }
+                graph.stop();
+            }
+            catch (...)
+            {
+                try { graph.stop(); }
+                catch (...) {}
+                throw;
+            }
+        }
+
+        void request_stop_impl(const void *, void *memory) noexcept
+        {
+            if (memory != nullptr) { storage(memory).stop_requested = true; }
+        }
+
+        bool stop_requested_impl(const void *, const void *memory) noexcept
+        {
+            return memory != nullptr && storage(memory).stop_requested;
+        }
+
+        engine_time_t start_time_impl(const void *, const void *memory) noexcept
+        {
+            return memory != nullptr ? storage(memory).start_time : MIN_ST;
+        }
+
+        engine_time_t end_time_impl(const void *, const void *memory) noexcept
+        {
+            return memory != nullptr ? storage(memory).end_time : MAX_ET;
+        }
+
+        GraphView graph_impl(const void *, void *memory)
+        {
+            return storage(memory).graph.view();
+        }
+
+        struct ExecutorRuntimeRegistry
+        {
+            const GraphExecutorTypeBinding &make_binding(const GraphExecutorBuilder &builder)
+            {
+                GraphExecutorTypeMetaData meta;
+                names.push_back(std::make_unique<std::string>(std::string{builder.label()}));
+                if (!names.back()->empty()) { meta.display_name = names.back()->c_str(); }
+                meta.mode = builder.mode();
+
+                schemas.push_back(meta);
+                return GraphExecutorTypeBinding::intern(schemas.back(), MemoryUtils::plan_for<GraphExecutorStorage>(), ops());
+            }
+
+            static const GraphExecutorOps &ops()
+            {
+                static const GraphExecutorOps table{
+                    .context = nullptr,
+                    .run_impl = &run_impl,
+                    .request_stop_impl = &request_stop_impl,
+                    .stop_requested_impl = &stop_requested_impl,
+                    .start_time_impl = &start_time_impl,
+                    .end_time_impl = &end_time_impl,
+                    .graph_impl = &graph_impl,
+                };
+                return table;
+            }
+
+            std::deque<GraphExecutorTypeMetaData>       schemas{};
+            std::vector<std::unique_ptr<std::string>>   names{};
+        };
+
+        ExecutorRuntimeRegistry &executor_runtime_registry()
+        {
+            static ExecutorRuntimeRegistry registry;
+            return registry;
+        }
+    }  // namespace
+
+    std::string_view GraphExecutorTypeMetaData::name() const noexcept
+    {
+        return display_name != nullptr ? std::string_view{display_name} : std::string_view{};
+    }
+
+    GraphExecutorView::GraphExecutorView() noexcept = default;
+
+    GraphExecutorView::GraphExecutorView(const GraphExecutorTypeBinding *binding, void *memory) noexcept
+        : storage_(binding, memory)
+    {
+    }
+
+    bool GraphExecutorView::valid() const noexcept { return storage_.has_value(); }
+    const GraphExecutorTypeBinding *GraphExecutorView::binding() const noexcept { return storage_.binding(); }
+    const GraphExecutorTypeMetaData *GraphExecutorView::schema() const noexcept
+    {
+        const auto *bound = binding();
+        return bound != nullptr ? bound->type_meta : nullptr;
+    }
+    void *GraphExecutorView::data() const noexcept { return storage_.data(); }
+
+    engine_time_t GraphExecutorView::start_time() const noexcept
+    {
+        return valid() ? ops().start_time_impl(ops().context, data()) : MIN_ST;
+    }
+
+    engine_time_t GraphExecutorView::end_time() const noexcept
+    {
+        return valid() ? ops().end_time_impl(ops().context, data()) : MAX_ET;
+    }
+
+    bool GraphExecutorView::stop_requested() const noexcept
+    {
+        return valid() && ops().stop_requested_impl(ops().context, data());
+    }
+
+    GraphView GraphExecutorView::graph() const
+    {
+        return ops().graph_impl(ops().context, data());
+    }
+
+    void GraphExecutorView::run() const
+    {
+        ops().run_impl(ops().context, *this);
+    }
+
+    void GraphExecutorView::request_stop() const noexcept
+    {
+        if (valid()) { ops().request_stop_impl(ops().context, data()); }
+    }
+
+    const GraphExecutorOps &GraphExecutorView::ops() const
+    {
+        if (!valid()) { throw std::logic_error("GraphExecutorView requires a live executor"); }
+        return binding()->checked_ops();
+    }
+
+    GraphExecutorValue::GraphExecutorValue() noexcept = default;
+
+    GraphExecutorValue::GraphExecutorValue(const GraphExecutorBuilder &builder)
+    {
+        const auto &binding = builder.binding();
+        storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
+            std::construct_at(MemoryUtils::cast<GraphExecutorStorage>(dst), builder);
+        });
+    }
+
+    GraphExecutorValue::~GraphExecutorValue() = default;
+
+    bool GraphExecutorValue::has_value() const noexcept { return storage_.has_value(); }
+
+    GraphExecutorView GraphExecutorValue::view()
+    {
+        return GraphExecutorView{storage_.binding(), storage_.data()};
+    }
+
+    GraphExecutorView GraphExecutorValue::view() const
+    {
+        return GraphExecutorView{storage_.binding(), const_cast<void *>(storage_.data())};
+    }
+
+    GraphExecutorBuilder::GraphExecutorBuilder() = default;
+
+    GraphExecutorBuilder &GraphExecutorBuilder::label(std::string label)
+    {
+        label_ = std::move(label);
+        return *this;
+    }
+
+    GraphExecutorBuilder &GraphExecutorBuilder::graph_builder(GraphBuilder graph_builder)
+    {
+        graph_builder_ = std::move(graph_builder);
+        return *this;
+    }
+
+    GraphExecutorBuilder &GraphExecutorBuilder::mode(GraphExecutorMode mode) noexcept
+    {
+        mode_ = mode;
+        return *this;
+    }
+
+    GraphExecutorBuilder &GraphExecutorBuilder::start_time(engine_time_t start_time) noexcept
+    {
+        start_time_ = start_time;
+        return *this;
+    }
+
+    GraphExecutorBuilder &GraphExecutorBuilder::end_time(engine_time_t end_time) noexcept
+    {
+        end_time_ = end_time;
+        return *this;
+    }
+
+    std::string_view GraphExecutorBuilder::label() const noexcept
+    {
+        return label_;
+    }
+
+    const GraphBuilder &GraphExecutorBuilder::graph_builder() const noexcept
+    {
+        return graph_builder_;
+    }
+
+    GraphExecutorMode GraphExecutorBuilder::mode() const noexcept
+    {
+        return mode_;
+    }
+
+    engine_time_t GraphExecutorBuilder::start_time() const noexcept
+    {
+        return start_time_;
+    }
+
+    engine_time_t GraphExecutorBuilder::end_time() const noexcept
+    {
+        return end_time_;
+    }
+
+    const GraphTypeBinding &GraphExecutorBuilder::graph_binding() const
+    {
+        return graph_builder_.binding();
+    }
+
+    const GraphExecutorTypeBinding &GraphExecutorBuilder::binding() const
+    {
+        return executor_runtime_registry().make_binding(*this);
+    }
+
+    GraphExecutorValue GraphExecutorBuilder::make_executor() const
+    {
+        return GraphExecutorValue{*this};
+    }
+
+}  // namespace hgraph

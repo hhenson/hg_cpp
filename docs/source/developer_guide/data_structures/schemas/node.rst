@@ -32,12 +32,17 @@ Binding           ``NodeTypeBinding`` — interned ``(schema, plan, ops)``
 Builder           ``NodeBuilder`` — reusable builder that wraps a
                   binding and constructs runtime node instances from
                   graph contexts.
-Value             ``Node`` — the runtime node instance that lives in the
-                  graph's flattened node array (see *Overview >
-                  Structural Layers*).
-View              Node access happens through the structural layer, not
-                  through a type-erased view. Nodes are not values; they
-                  are runtime participants.
+Value             ``NodeValue`` — the owning runtime node instance that
+                  lives in the graph's flattened node array. It owns the
+                  node storage through the same binding + storage-handle
+                  pattern as value and time-series data.
+View              ``NodeView`` — a borrowed type-erased cursor over a
+                  node allocation. It carries the node binding, data
+                  pointer, and no cycle-local state. Evaluation time is
+                  passed explicitly to lifecycle operations and
+                  input/output projection methods. Active input
+                  notification targets are recovered from the node
+                  runtime storage header.
 ================  ==========================================================
 
 ``NodeBuilder`` is a reusable builder, not a value-builder-style scratch
@@ -80,9 +85,11 @@ A ``NodeTypeMetaData`` carries:
 
 ``state_schema``
     Optional. The scalar (value-layer) schema for the node's local
-    state. Records the field layout and types but no actual values; the
-    runtime allocates and constructs the state via the matching
-    ``StoragePlan`` and ``LifecycleOps`` at node construction time.
+    state. Records the field layout and types but no actual values.
+    Runtime construction allocates a read-write ``Value`` for this schema,
+    default-constructs it through the matching ``StoragePlan`` and
+    ``LifecycleOps``, and exposes it through ``NodeView::state``. State
+    mutation uses the normal value-layer ``begin_mutation`` path.
 
 ``recordable_state_schema``
     Optional. The time-series schema for the node's recordable state —
@@ -122,24 +129,68 @@ A ``NodeTypeMetaData`` carries:
     contains unresolved type variables. Wiring resolves these against
     actual input bindings before constructing the node.
 
+Runtime Value/View
+------------------
+
+The runtime node follows the same plan / ops / binding / value / view
+shape as the lower layers:
+
+``NodeTypeBinding``
+    Interned ``(NodeTypeMetaData, NodePlan, NodeOps)`` identity. The
+    binding is the only object a generic node view needs in order to
+    recover schema, storage lifecycle, and runtime behaviour.
+
+``NodeValue``
+    Owns one node allocation. Moving a node value transfers ownership of
+    the allocation; copying is not part of the runtime contract. The node
+    storage plan is a composite slab. The
+    fixed ``NodeRuntimeStorage`` header is the first component and contains
+    only common wrapper state such as graph attachment, node index, lifecycle
+    flags, label, and the stable ``Notifiable`` implementation used by active
+    input subscriptions. Optional components such as ``TSInput``, ``TSOutput``,
+    local ``Value`` state, error output, and recordable-state output are
+    present only when declared by the node schema and are laid out after the
+    header in the same allocation.
+
+``NodeView``
+    Borrowed, type-erased access to a node. Public node operations such as
+    ``start``, ``evaluate``, ``stop``, ``input``, ``output``, ``state``,
+    and ``cleanup_delta`` dispatch through ``NodeOps``. This keeps graph
+    evaluation independent of concrete node implementation classes. The
+    state view is writable-capable when the node declares ``state_schema``;
+    callers still open mutation explicitly with ``ValueView::begin_mutation``.
+    ``NodeView`` itself is timeless: callers pass ``engine_time_t`` to
+    lifecycle operations and to time-series endpoint projections such as
+    ``input(evaluation_time)`` and ``output(evaluation_time)``.
+
+``NodeBuilder``
+    Cached construction recipe. It resolves the node schema and endpoint
+    annotations to a binding, then constructs ``NodeValue`` instances on
+    demand.
+
+The first C++ runtime pass supplies a native callback-backed node family
+using this structure. Static C++ nodes, Python-backed nodes, nested graph
+nodes, and richer scheduler-aware node families should become additional
+``NodeOps`` implementations rather than branches in the graph loop.
+
 The Node Lifecycle
 ------------------
 
 A node's runtime behaviour is exposed through the ``NodeOps`` vtable.
 The hooks are intentionally minimal:
 
-``start(node*)``
+``start(node*, evaluation_time)``
     Called once per node, after construction and before the first
     ``eval``. Used for any node-local resource acquisition that cannot
     be expressed as plain construction.
 
-``eval(node*)``
+``eval(node*, evaluation_time)``
     Called whenever the node is scheduled. The node reads its inputs
     via the bound input views, computes, and writes its output through
     the bound output view. ``eval`` is the only op every node must
     implement.
 
-``stop(node*)``
+``stop(node*, evaluation_time)``
     Called once per node, after the last ``eval`` and before
     destruction. Symmetric counterpart to ``start``: releases anything
     ``start`` acquired. Most compute nodes do not need it.
