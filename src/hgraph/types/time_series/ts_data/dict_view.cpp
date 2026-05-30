@@ -1,86 +1,82 @@
 #include <hgraph/types/time_series/ts_data.h>
 #include <hgraph/types/value/specialized_views.h>
+#include <hgraph/types/value/value.h>
 
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace hgraph
 {
     TSDDataView::TSDDataView(TSDataView view)
-        : view_(view)
+        : storage_(view.storage_ref(), TSTypeKind::TSD)
     {
-        validate_kind(view_);
     }
 
-    const TSDataView &TSDDataView::base() const noexcept
+    TSDataView TSDDataView::base() const noexcept
     {
-        return view_;
-    }
-
-    TSDataView &TSDDataView::base() noexcept
-    {
-        return view_;
+        return TSDataView{storage_.storage_ref()};
     }
 
     const TSDataBinding *TSDDataView::binding() const noexcept
     {
-        return view_.binding();
+        return base().binding();
     }
 
     const TSValueTypeMetaData *TSDDataView::schema() const noexcept
     {
-        return view_.schema();
+        return base().schema();
     }
 
     const TSDDataLayout &TSDDataView::layout() const
     {
-        return static_cast<const TSDDataLayout &>(view_.layout());
+        return static_cast<const TSDDataLayout &>(base().layout());
     }
 
     ValueView TSDDataView::value() const
     {
-        return view_.value();
+        return base().value();
     }
 
     ValueView TSDDataView::delta_value(engine_time_t evaluation_time) const
     {
-        return view_.delta_value(evaluation_time);
+        return base().delta_value(evaluation_time);
     }
 
     engine_time_t TSDDataView::last_modified_time() const
     {
-        return view_.last_modified_time();
+        return base().last_modified_time();
     }
 
     bool TSDDataView::modified(engine_time_t evaluation_time) const
     {
-        return view_.modified(evaluation_time);
+        return base().modified(evaluation_time);
     }
 
     void TSDDataView::subscribe(Notifiable *observer) const
     {
-        view_.subscribe(observer);
+        base().subscribe(observer);
     }
 
     void TSDDataView::unsubscribe(Notifiable *observer) const
     {
-        view_.unsubscribe(observer);
+        base().unsubscribe(observer);
     }
 
     bool TSDDataView::has_observers() const
     {
-        return view_.has_observers();
+        return base().has_observers();
     }
 
     std::size_t TSDDataView::observer_count() const
     {
-        return view_.observer_count();
+        return base().observer_count();
     }
 
     std::size_t TSDDataView::size() const
     {
         const auto &ops = dict_ops();
-        return ops.size_impl(ops.context, view_.data());
+        return ops.size_impl(ops.context, storage_.data());
     }
 
     bool TSDDataView::empty() const
@@ -91,65 +87,66 @@ namespace hgraph
     std::size_t TSDDataView::slot_capacity() const
     {
         const auto &ops = dict_ops();
-        return ops.slot_capacity_impl(ops.context, view_.data());
+        return ops.slot_capacity_impl(ops.context, storage_.data());
     }
 
     bool TSDDataView::slot_occupied(std::size_t slot) const
     {
         const auto &ops = dict_ops();
-        return ops.slot_occupied_impl(ops.context, view_.data(), slot);
+        return ops.slot_occupied_impl(ops.context, storage_.data(), slot);
     }
 
     bool TSDDataView::slot_live(std::size_t slot) const
     {
         const auto &ops = dict_ops();
-        return ops.slot_live_impl(ops.context, view_.data(), slot);
+        return ops.slot_live_impl(ops.context, storage_.data(), slot);
     }
 
     bool TSDDataView::slot_added(std::size_t slot) const
     {
         const auto &ops = dict_ops();
-        return ops.slot_added_impl(ops.context, view_.data(), slot);
+        return ops.slot_added_impl(ops.context, storage_.data(), slot);
     }
 
     bool TSDDataView::slot_removed(std::size_t slot) const
     {
         const auto &ops = dict_ops();
-        return ops.slot_removed_impl(ops.context, view_.data(), slot);
+        return ops.slot_removed_impl(ops.context, storage_.data(), slot);
     }
 
     bool TSDDataView::slot_modified(std::size_t slot) const
     {
         const auto &ops = dict_ops();
-        return ops.slot_modified_impl(ops.context, view_.data(), slot);
+        return ops.slot_modified_impl(ops.context, storage_.data(), slot);
     }
 
     ValueView TSDDataView::key_at_slot(std::size_t slot) const
     {
         if (!slot_occupied(slot)) { throw std::out_of_range("TSDDataView::key_at_slot: slot is not occupied"); }
         const auto &ops = dict_ops();
-        return ValueView{layout().key_binding, ops.key_at_slot_impl(ops.context, view_.data(), slot)};
+        return ValueView{layout().key_binding, ops.key_at_slot_impl(ops.context, storage_.data(), slot)};
     }
 
     bool TSDDataView::contains(const ValueView &key) const
     {
         const auto &ops = dict_ops();
-        return ops.contains_impl(ops.context, view_.data(), key);
+        return ops.contains_impl(ops.context, storage_.data(), key);
     }
 
     std::size_t TSDDataView::find_slot(const ValueView &key) const
     {
         const auto &ops = dict_ops();
-        return ops.find_slot_impl(ops.context, view_.data(), key);
+        return ops.find_slot_impl(ops.context, storage_.data(), key);
     }
 
     TSDataView TSDDataView::at_slot(std::size_t slot) const
     {
         if (!slot_occupied(slot)) { throw std::out_of_range("TSDDataView::at_slot: slot is not occupied"); }
         const auto &ops = dict_ops();
-        const auto *child_memory = ops.child_at_slot_impl(ops.context, view_.data(), slot);
-        if (!view_.ops().allows_mutation) { return TSDataView{layout().element_binding, child_memory}; }
-        return TSDataView{layout().element_binding, child_memory, const_cast<TSDataView &>(view_), slot};
+        const auto *child_memory = ops.child_at_slot_impl(ops.context, storage_.data(), slot);
+        auto        parent       = base();
+        if (!parent.ops().allows_mutation) { return TSDataView{layout().element_binding, child_memory}; }
+        return TSDataView{layout().element_binding, child_memory, parent, slot};
     }
 
     TSDataView TSDDataView::at(const ValueView &key) const
@@ -167,7 +164,7 @@ namespace hgraph
     Range<ValueView> TSDDataView::keys() const
     {
         const auto &ops = dict_ops();
-        return ops.make_values_range_impl(ops.context, view_.data());
+        return ops.make_values_range_impl(ops.context, storage_.data());
     }
 
     Range<TSDataView> TSDDataView::values() const
@@ -183,7 +180,7 @@ namespace hgraph
     Range<ValueView> TSDDataView::valid_keys() const
     {
         const auto &ops = dict_ops();
-        return ops.make_valid_keys_range_impl(ops.context, view_.data());
+        return ops.make_valid_keys_range_impl(ops.context, storage_.data());
     }
 
     Range<TSDataView> TSDDataView::valid_values() const
@@ -200,7 +197,7 @@ namespace hgraph
     {
         if (!modified(evaluation_time)) { return empty_value_range(); }
         const auto &ops = dict_ops();
-        return ops.make_modified_keys_range_impl(ops.context, view_.data());
+        return ops.make_modified_keys_range_impl(ops.context, storage_.data());
     }
 
     Range<TSDataView> TSDDataView::modified_values(engine_time_t evaluation_time) const
@@ -252,12 +249,12 @@ namespace hgraph
         {
             throw std::logic_error("TSDDataView::key_set requires a key-set binding");
         }
-        return TSSDataView{TSDataView{key_set_binding, view_.data()}};
+        return TSSDataView{TSDataView{key_set_binding, storage_.data()}};
     }
 
     TSDDataMutationView TSDDataView::begin_mutation(engine_time_t evaluation_time) const
     {
-        return TSDDataMutationView{view_, evaluation_time};
+        return TSDDataMutationView{base(), evaluation_time};
     }
 
     Range<ValueView> TSDDataView::empty_value_range() noexcept
@@ -344,22 +341,11 @@ namespace hgraph
 
     const TSDDataOps &TSDDataView::dict_ops() const
     {
-        return static_cast<const TSDDataOps &>(view_.ops());
-    }
-
-    void TSDDataView::validate_kind(const TSDataView &view)
-    {
-        if (!view.valid()) { throw std::logic_error("TSDDataView requires a live view"); }
-        const auto *schema = view.schema();
-        if (schema == nullptr || schema->kind != TSTypeKind::TSD)
-        {
-            throw std::invalid_argument("TSDDataView requires a TSD TSData kind");
-        }
-        (void)static_cast<const TSDDataOps &>(view.ops());
+        return storage_.ops();
     }
 
     TSDDataMutationView::TSDDataMutationView(TSDataView view, engine_time_t evaluation_time)
-        : TSDDataView(view),
+        : TSDDataView(TSDataView{view.storage_ref()}),
           mutation_(view.begin_mutation(evaluation_time))
     {
         if (view.schema() == nullptr || view.schema()->kind != TSTypeKind::TSD)
@@ -384,13 +370,13 @@ namespace hgraph
 
     void TSDDataMutationView::reserve(std::size_t capacity)
     {
-        const auto &ops = static_cast<const TSDDataOps &>(mutation_.ops());
+        const auto &ops = dict_ops();
         ops.reserve_impl(ops.context, mutation_.mutable_data(), capacity);
     }
 
     TSDataView TSDDataMutationView::at(const ValueView &key)
     {
-        const auto &ops    = static_cast<const TSDDataOps &>(mutation_.ops());
+        const auto &ops    = dict_ops();
         const auto  result = ops.insert_key_impl(ops.context, mutation_.mutable_data(), key, current_mutation_time());
         apply_slot_mutation_result(mutation_, result);
         return at_slot(result.slot);
@@ -410,7 +396,7 @@ namespace hgraph
 
     bool TSDDataMutationView::erase(const ValueView &key)
     {
-        const auto &ops    = static_cast<const TSDDataOps &>(mutation_.ops());
+        const auto &ops    = dict_ops();
         const auto  result = ops.remove_key_impl(ops.context, mutation_.mutable_data(), key, current_mutation_time());
         apply_slot_mutation_result(mutation_, result);
         if (!result.changed && ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time()))
@@ -422,11 +408,11 @@ namespace hgraph
 
     void TSDDataMutationView::clear()
     {
-        std::vector<ValueView> current_keys;
-        for (const auto key : keys()) { current_keys.push_back(key); }
-        const auto &ops           = static_cast<const TSDDataOps &>(mutation_.ops());
+        std::vector<Value> current_keys;
+        for (const auto key : keys()) { current_keys.emplace_back(key); }
+        const auto &ops           = dict_ops();
         const bool  newly_touched = ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time());
-        for (const auto key : current_keys) { static_cast<void>(erase(key)); }
+        for (const auto &key : current_keys) { static_cast<void>(erase(key.view())); }
         if (newly_touched) { mutation_.mark_modified(); }
     }
 
@@ -442,16 +428,16 @@ namespace hgraph
         }
 
         auto       source_map    = source.as_map();
-        const auto &ops          = static_cast<const TSDDataOps &>(mutation_.ops());
+        const auto &ops          = dict_ops();
         const bool newly_touched = ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time());
         for (const auto [key, value] : source_map.items()) { set(key, value); }
 
-        std::vector<ValueView> removals;
+        std::vector<Value> removals;
         for (const auto key : keys())
         {
-            if (!source_map.contains(key)) { removals.push_back(key); }
+            if (!source_map.contains(key)) { removals.emplace_back(key); }
         }
-        for (const auto key : removals) { static_cast<void>(erase(key)); }
+        for (const auto &key : removals) { static_cast<void>(erase(key.view())); }
 
         if (newly_touched) { mutation_.mark_modified(); }
         return newly_touched;
@@ -459,7 +445,7 @@ namespace hgraph
 
     TSDataView TSDDataMutationView::at_slot(std::size_t slot)
     {
-        const auto &ops = static_cast<const TSDDataOps &>(mutation_.ops());
+        const auto &ops = dict_ops();
         if (!ops.slot_occupied_impl(ops.context, mutation_.mutable_data(), slot))
         {
             throw std::out_of_range("TSDDataMutationView::at_slot: slot is not occupied");

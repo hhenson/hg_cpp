@@ -15,9 +15,13 @@ namespace hgraph
       public:
         explicit TSSDataView(TSDataView view);
 
-        /** Underlying generic TSData view. */
-        [[nodiscard]] const TSDataView &base() const noexcept;
-        [[nodiscard]] TSDataView &base() noexcept;
+        /** Transient generic TSData view over the same storage. */
+        [[nodiscard]] TSDataView base() const noexcept;
+
+        TSSDataView(const TSSDataView &) = delete;
+        TSSDataView &operator=(const TSSDataView &) = delete;
+        TSSDataView(TSSDataView &&) noexcept = default;
+        TSSDataView &operator=(TSSDataView &&) noexcept = default;
 
         /** Binding, schema, layout, and value projections for the set node. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;
@@ -68,9 +72,8 @@ namespace hgraph
 
       protected:
         [[nodiscard]] const TSSDataOps &set_ops() const;
-        static void validate_kind(const TSDataView &view);
 
-        TSDataView view_{};
+        TSSDataStorageRef storage_{};
     };
 
     /** Mutation view over set-shaped TSData. */

@@ -40,8 +40,8 @@ namespace hgraph::detail
         [[nodiscard]] static TimeSeriesReference peered_reference_as(const TSValueTypeMetaData *target_schema,
                                                                      TSOutputHandle target);
         [[nodiscard]] static const TSOutputHandle &peered_reference_target(const TimeSeriesReference &reference);
-        [[nodiscard]] static TSDataView child_view_with_parent(TSDataView parent,
-                                                               TSDataView child,
+        [[nodiscard]] static TSDataView child_view_with_parent(const TSDataView &parent,
+                                                               const TSDataView &child,
                                                                std::size_t child_id);
 
       private:

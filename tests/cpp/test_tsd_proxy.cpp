@@ -20,8 +20,8 @@ namespace
 
     void key_value_builder(hgraph::TSDProxy      &proxy,
                            std::size_t           slot,
-                           hgraph::TSDataView    target,
-                           hgraph::TSDataView    source,
+                           const hgraph::TSDataView &target,
+                           const hgraph::TSDataView &source,
                            hgraph::engine_time_t modified_time,
                            const void           *)
     {

@@ -16,6 +16,8 @@
 
 namespace hgraph
 {
+    class IndexedValueView;
+    class MutableIndexedValueView;
     class TupleView;
     class BundleView;
     class ListView;
@@ -64,6 +66,11 @@ namespace hgraph
 
         ValueView(const ValueTypeBinding *binding, std::nullptr_t) noexcept
             : binding_{binding, BindingTag::ReadOnly}, data_{nullptr} {}
+
+        ValueView(const ValueView &) = delete;
+        ValueView &operator=(const ValueView &) = delete;
+        ValueView(ValueView &&) noexcept = default;
+        ValueView &operator=(ValueView &&) noexcept = default;
 
         /** True when both the binding and the data pointer are non-null. */
         [[nodiscard]] bool valid() const noexcept { return binding() != nullptr && data_ != nullptr; }
@@ -142,6 +149,25 @@ namespace hgraph
             return valid() && schema()->kind == ValueTypeKind::CyclicBuffer;
         }
         [[nodiscard]] bool is_queue() const noexcept { return valid() && schema()->kind == ValueTypeKind::Queue; }
+        [[nodiscard]] bool is_indexed() const noexcept
+        {
+            const auto *type = schema();
+            if (!valid() || type == nullptr) { return false; }
+            switch (type->kind)
+            {
+                case ValueTypeKind::Tuple:
+                case ValueTypeKind::Bundle:
+                case ValueTypeKind::List:
+                case ValueTypeKind::Set:
+                case ValueTypeKind::Map:
+                case ValueTypeKind::CyclicBuffer:
+                case ValueTypeKind::Queue:
+                    return true;
+                case ValueTypeKind::Atomic:
+                    return false;
+            }
+            return false;
+        }
         [[nodiscard]] bool is_type(const ValueTypeMetaData *type) const noexcept { return schema() == type; }
 
         /**
@@ -228,6 +254,10 @@ namespace hgraph
         }
 
         // -- kind-specialised view casts (definitions in specialised_views.h) --
+        [[nodiscard]] IndexedValueView as_indexed_view() const;
+        [[nodiscard]] std::optional<IndexedValueView> try_as_indexed_view() const;
+        [[nodiscard]] IndexedValueView as_indexed() const;
+        [[nodiscard]] std::optional<IndexedValueView> try_as_indexed() const;
         [[nodiscard]] TupleView as_tuple() const;
         [[nodiscard]] std::optional<TupleView> try_as_tuple() const;
         [[nodiscard]] BundleView as_bundle() const;
@@ -252,6 +282,10 @@ namespace hgraph
         [[nodiscard]] std::optional<MutableCyclicBufferView> try_as_mutable_cyclic_buffer() const;
         [[nodiscard]] MutableQueueView as_mutable_queue() const;
         [[nodiscard]] std::optional<MutableQueueView> try_as_mutable_queue() const;
+        [[nodiscard]] MutableIndexedValueView as_mutable_indexed_view() const;
+        [[nodiscard]] std::optional<MutableIndexedValueView> try_as_mutable_indexed_view() const;
+        [[nodiscard]] MutableIndexedValueView as_mutable_indexed() const;
+        [[nodiscard]] std::optional<MutableIndexedValueView> try_as_mutable_indexed() const;
 
         // -- generic ops.
         [[nodiscard]] std::size_t hash() const
@@ -294,6 +328,14 @@ namespace hgraph
 
         struct MutableAccess
         {};
+
+        [[nodiscard]] ValueView borrowed_ref() const noexcept
+        {
+            ValueView result;
+            result.binding_ = binding_;
+            result.data_    = data_;
+            return result;
+        }
 
         [[nodiscard]] static constexpr BindingTag tag_for(const ValueTypeBinding *binding,
                                                           const void             *data,

@@ -3,6 +3,7 @@
 #include <hgraph/types/utils/intern_table.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 
 namespace hgraph::ts_data_plan_factory_detail
@@ -12,7 +13,8 @@ namespace hgraph::ts_data_plan_factory_detail
         TSDataLayout layout{};
         TSDataOps    ops{};
 
-        AtomicTSDataOpsEntry(const ValueTypeBinding &value_binding, const ValueTypeBinding &delta_binding,
+        AtomicTSDataOpsEntry(TSTypeKind kind, const ValueTypeBinding &value_binding,
+                             const ValueTypeBinding &delta_binding,
                              std::size_t value_offset, std::size_t tracking_offset)
         {
             layout = TSDataLayout{
@@ -24,6 +26,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             ops = TSDataOps{
                 .context                   = &layout,
+                .kind                      = kind,
                 .allows_mutation           = true,
                 .layout_impl               = &atomic_layout,
                 .tracking_impl             = &atomic_tracking,
@@ -197,6 +200,7 @@ namespace hgraph::ts_data_plan_factory_detail
         const ValueTypeBinding         *value_binding{nullptr};
         const ValueTypeBinding         *delta_binding{nullptr};
         const MemoryUtils::StoragePlan *plan{nullptr};
+        TSTypeKind                      kind{TSTypeKind::TS};
         std::size_t                     value_offset{0};
         std::size_t                     tracking_offset{0};
 
@@ -212,6 +216,8 @@ namespace hgraph::ts_data_plan_factory_detail
                     (seed >> 2U);
             seed ^= std::hash<const MemoryUtils::StoragePlan *>{}(key.plan) + 0x9e3779b97f4a7c15ULL + (seed << 6U) +
                     (seed >> 2U);
+            seed ^= std::hash<std::uint8_t>{}(static_cast<std::uint8_t>(key.kind)) + 0x9e3779b97f4a7c15ULL +
+                    (seed << 6U) + (seed >> 2U);
             seed ^= std::hash<std::size_t>{}(key.value_offset) + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
             seed ^= std::hash<std::size_t>{}(key.tracking_offset) + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
             return seed;
@@ -225,14 +231,15 @@ namespace hgraph::ts_data_plan_factory_detail
         return cache;
     }
 
-    [[nodiscard]] const TSDataOps &atomic_ts_data_ops(const ValueTypeBinding         &value_binding,
+    [[nodiscard]] const TSDataOps &atomic_ts_data_ops(TSTypeKind                     kind,
+                                                      const ValueTypeBinding         &value_binding,
                                                       const ValueTypeBinding         &delta_binding,
                                                       const MemoryUtils::StoragePlan &plan, std::size_t value_offset,
                                                       std::size_t tracking_offset)
     {
         return atomic_ts_data_ops_cache()
-            .emplace(AtomicTSDataOpsKey{&value_binding, &delta_binding, &plan, value_offset, tracking_offset},
-                     value_binding, delta_binding, value_offset, tracking_offset)
+            .emplace(AtomicTSDataOpsKey{&value_binding, &delta_binding, &plan, kind, value_offset, tracking_offset},
+                     kind, value_binding, delta_binding, value_offset, tracking_offset)
             .ops;
     }
 

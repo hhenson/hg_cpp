@@ -200,8 +200,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 throw std::logic_error("TSDataPlanFactory: embedded atomic bindings are not resolved");
             }
-            const auto &ops =
-                atomic_ts_data_ops(*value_binding, *delta_binding, root_plan, value_offset, tracking_offset);
+            const auto &ops = atomic_ts_data_ops(schema.kind, *value_binding, *delta_binding, root_plan, value_offset,
+                                                 tracking_offset);
             return &TSDataBinding::intern(schema, root_plan, ops);
         }
 

@@ -8,6 +8,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace
@@ -93,6 +94,24 @@ namespace
 TEST_CASE("TSOutput owns root TSData and exposes TS validity")
 {
     using namespace hgraph;
+
+    static_assert(!std::is_copy_constructible_v<TSDataView>);
+    static_assert(!std::is_copy_assignable_v<TSDataView>);
+    static_assert(std::is_move_constructible_v<TSDataView>);
+    static_assert(!std::is_copy_constructible_v<TSDataMutationView>);
+    static_assert(!std::is_copy_constructible_v<TSSDataView>);
+    static_assert(!std::is_copy_constructible_v<TSDDataView>);
+    static_assert(!std::is_copy_constructible_v<TSBDataView>);
+    static_assert(!std::is_copy_constructible_v<TSLDataView>);
+    static_assert(!std::is_copy_constructible_v<TSWDataView>);
+    static_assert(!std::is_copy_constructible_v<TSOutputView>);
+    static_assert(!std::is_copy_assignable_v<TSOutputView>);
+    static_assert(!std::is_copy_constructible_v<TSSOutputView>);
+    static_assert(!std::is_copy_constructible_v<TSDOutputView>);
+    static_assert(!std::is_copy_constructible_v<TSBOutputView>);
+    static_assert(!std::is_copy_constructible_v<TSLOutputView>);
+    static_assert(!std::is_copy_constructible_v<TSWOutputView>);
+    static_assert(std::is_copy_constructible_v<TSOutputHandle>);
 
     auto       &registry = TypeRegistry::instance();
     const auto *int_meta = registry.register_scalar<int>("int");
@@ -465,7 +484,7 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
 
     SelfUnsubscribingNotifiable self_unsubscribing;
     RecordingNotifiable         survivor;
-    self_unsubscribing.observed = observed;
+    self_unsubscribing.observed = observed.borrowed_ref();
     observed.subscribe(&self_unsubscribing);
     observed.subscribe(&survivor);
     REQUIRE(observed.observer_count() == 2);
@@ -492,7 +511,7 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
     RemovingNotifiable remover;
     RecordingNotifiable removed_before_notify;
     RecordingNotifiable after_removed;
-    remover.observed = observed;
+    remover.observed = observed.borrowed_ref();
     remover.target   = &removed_before_notify;
     observed.subscribe(&remover);
     observed.subscribe(&removed_before_notify);
@@ -518,7 +537,7 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
     Value      five{5};
     AddingNotifiable adding;
     RecordingNotifiable added_later;
-    adding.observed = observed;
+    adding.observed = observed.borrowed_ref();
     adding.target   = &added_later;
     observed.subscribe(&adding);
 
@@ -549,7 +568,7 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
     ReplacingNotifiable replacing;
     RecordingNotifiable replaced;
     RecordingNotifiable replacement;
-    replacing.observed    = observed;
+    replacing.observed    = observed.borrowed_ref();
     replacing.removed     = &replaced;
     replacing.replacement = &replacement;
     observed.subscribe(&replacing);

@@ -76,11 +76,11 @@ namespace hgraph
                    kind == ValueTypeKind::Queue;
         }
 
-        [[nodiscard]] bool semantic_indexed_equals(ValueView lhs, ValueView rhs)
+        [[nodiscard]] bool semantic_indexed_equals(const ValueView &lhs, const ValueView &rhs)
         {
-            const IndexedValueView a{lhs};
-            const IndexedValueView b{rhs};
-            const auto             size = a.size();
+            const auto a    = lhs.as_indexed_view();
+            const auto b    = rhs.as_indexed_view();
+            const auto size = a.size();
             if (size != b.size()) { return false; }
             for (std::size_t index = 0; index < size; ++index)
             {
@@ -89,11 +89,11 @@ namespace hgraph
             return true;
         }
 
-        [[nodiscard]] std::partial_ordering semantic_indexed_compare(ValueView lhs, ValueView rhs)
+        [[nodiscard]] std::partial_ordering semantic_indexed_compare(const ValueView &lhs, const ValueView &rhs)
         {
-            const IndexedValueView a{lhs};
-            const IndexedValueView b{rhs};
-            const auto             size = std::min(a.size(), b.size());
+            const auto a    = lhs.as_indexed_view();
+            const auto b    = rhs.as_indexed_view();
+            const auto size = std::min(a.size(), b.size());
             for (std::size_t index = 0; index < size; ++index)
             {
                 const auto child_order = a.at(index).compare(b.at(index));
@@ -104,16 +104,16 @@ namespace hgraph
             return std::partial_ordering::equivalent;
         }
 
-        [[nodiscard]] const ValueTypeBinding *first_indexed_element_binding(ValueView view)
+        [[nodiscard]] const ValueTypeBinding *first_indexed_element_binding(const ValueView &view)
         {
-            const IndexedValueView indexed{view};
+            const auto indexed = view.as_indexed_view();
             return indexed.size() == 0 ? nullptr : indexed.at(0).binding();
         }
 
-        [[nodiscard]] bool semantic_set_equals(ValueView lhs, ValueView rhs)
+        [[nodiscard]] bool semantic_set_equals(const ValueView &lhs, const ValueView &rhs)
         {
-            const SetView a{lhs};
-            const SetView b{rhs};
+            const auto a = lhs.as_set();
+            const auto b = rhs.as_set();
             if (a.size() != b.size()) { return false; }
             if (a.size() == 0) { return true; }
             if (first_indexed_element_binding(lhs) != first_indexed_element_binding(rhs)) { return false; }
@@ -125,20 +125,20 @@ namespace hgraph
             return true;
         }
 
-        [[nodiscard]] std::partial_ordering semantic_set_compare(ValueView lhs, ValueView rhs)
+        [[nodiscard]] std::partial_ordering semantic_set_compare(const ValueView &lhs, const ValueView &rhs)
         {
-            const SetView a{lhs};
-            const SetView b{rhs};
+            const auto a = lhs.as_set();
+            const auto b = rhs.as_set();
             if (a.size() < b.size()) { return std::partial_ordering::less; }
             if (a.size() > b.size()) { return std::partial_ordering::greater; }
             return semantic_set_equals(lhs, rhs) ? std::partial_ordering::equivalent
                                                  : std::partial_ordering::unordered;
         }
 
-        [[nodiscard]] bool semantic_map_equals(ValueView lhs, ValueView rhs)
+        [[nodiscard]] bool semantic_map_equals(const ValueView &lhs, const ValueView &rhs)
         {
-            const MapView a{lhs};
-            const MapView b{rhs};
+            const auto a = lhs.as_map();
+            const auto b = rhs.as_map();
             if (a.size() != b.size()) { return false; }
             if (a.size() == 0) { return true; }
             if (first_indexed_element_binding(lhs) != first_indexed_element_binding(rhs)) { return false; }
@@ -153,7 +153,7 @@ namespace hgraph
             return true;
         }
 
-        [[nodiscard]] bool semantic_equals(ValueView lhs, ValueView rhs)
+        [[nodiscard]] bool semantic_equals(const ValueView &lhs, const ValueView &rhs)
         {
             const auto *schema = structural_schema(lhs.schema());
             if (schema == nullptr) { return false; }
@@ -164,7 +164,7 @@ namespace hgraph
             return false;
         }
 
-        [[nodiscard]] std::partial_ordering semantic_compare(ValueView lhs, ValueView rhs)
+        [[nodiscard]] std::partial_ordering semantic_compare(const ValueView &lhs, const ValueView &rhs)
         {
             const auto *schema = structural_schema(lhs.schema());
             if (schema == nullptr) { return std::partial_ordering::unordered; }

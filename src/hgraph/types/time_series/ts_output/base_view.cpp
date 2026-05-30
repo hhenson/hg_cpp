@@ -9,15 +9,15 @@ namespace hgraph
 {
     TSOutputHandle::TSOutputHandle() noexcept = default;
 
-    TSOutputHandle::TSOutputHandle(const TSOutput *output, TSDataView data) noexcept
+    TSOutputHandle::TSOutputHandle(const TSOutput *output, const TSDataView &data) noexcept
         : output_(output),
-          data_(data)
+          data_(data.storage_ref())
     {
     }
 
     TSOutputHandle::TSOutputHandle(const TSOutputView &view) noexcept
         : output_(view.output()),
-          data_(view.data_view())
+          data_(view.data_view().storage_ref())
     {
     }
 
@@ -26,14 +26,9 @@ namespace hgraph
         return output_;
     }
 
-    const TSDataView &TSOutputHandle::data_view() const noexcept
+    TSDataView TSOutputHandle::data_view() const noexcept
     {
-        return data_;
-    }
-
-    TSDataView &TSOutputHandle::data_view() noexcept
-    {
-        return data_;
+        return TSDataView{data_};
     }
 
     const TSDataBinding *TSOutputHandle::binding() const noexcept
@@ -43,12 +38,13 @@ namespace hgraph
 
     const TSValueTypeMetaData *TSOutputHandle::schema() const noexcept
     {
-        return data_.schema();
+        const auto *bound = data_.binding();
+        return bound != nullptr ? bound->type_meta : nullptr;
     }
 
     bool TSOutputHandle::bound() const noexcept
     {
-        return output_ != nullptr && data_.valid();
+        return output_ != nullptr && data_.has_value();
     }
 
     bool TSOutputHandle::same_as(const TSOutputHandle &other) const noexcept
@@ -65,14 +61,14 @@ namespace hgraph
     void TSOutputHandle::reset() noexcept
     {
         output_ = nullptr;
-        data_ = {};
+        data_.reset();
     }
 
     TSOutputView::TSOutputView() noexcept = default;
 
-    TSOutputView::TSOutputView(const TSOutput *output, TSDataView data, engine_time_t evaluation_time) noexcept
+    TSOutputView::TSOutputView(const TSOutput *output, const TSDataView &data, engine_time_t evaluation_time) noexcept
         : output_(output),
-          data_(data),
+          data_(data.borrowed_ref()),
           evaluation_time_(evaluation_time)
     {
     }
@@ -84,6 +80,11 @@ namespace hgraph
     {
     }
 
+    TSOutputView TSOutputView::borrowed_ref() const noexcept
+    {
+        return TSOutputView{output_, data_.borrowed_ref(), evaluation_time_};
+    }
+
     const TSOutput *TSOutputView::output() const noexcept
     {
         return output_;
@@ -91,7 +92,7 @@ namespace hgraph
 
     TSOutputHandle TSOutputView::handle() const noexcept
     {
-        return TSOutputHandle{output_, data_};
+        return TSOutputHandle{output_, data_.borrowed_ref()};
     }
 
     const TSDataView &TSOutputView::data_view() const noexcept
@@ -183,52 +184,52 @@ namespace hgraph
 
     TSSOutputView TSOutputView::as_set() &
     {
-        return TSSOutputView{*this};
+        return TSSOutputView{borrowed_ref()};
     }
 
     TSSOutputView TSOutputView::as_set() const &
     {
-        return TSSOutputView{*this};
+        return TSSOutputView{borrowed_ref()};
     }
 
     TSDOutputView TSOutputView::as_dict() &
     {
-        return TSDOutputView{*this};
+        return TSDOutputView{borrowed_ref()};
     }
 
     TSDOutputView TSOutputView::as_dict() const &
     {
-        return TSDOutputView{*this};
+        return TSDOutputView{borrowed_ref()};
     }
 
     TSBOutputView TSOutputView::as_bundle() &
     {
-        return TSBOutputView{*this};
+        return TSBOutputView{borrowed_ref()};
     }
 
     TSBOutputView TSOutputView::as_bundle() const &
     {
-        return TSBOutputView{*this};
+        return TSBOutputView{borrowed_ref()};
     }
 
     TSLOutputView TSOutputView::as_list() &
     {
-        return TSLOutputView{*this};
+        return TSLOutputView{borrowed_ref()};
     }
 
     TSLOutputView TSOutputView::as_list() const &
     {
-        return TSLOutputView{*this};
+        return TSLOutputView{borrowed_ref()};
     }
 
     TSWOutputView TSOutputView::as_window() &
     {
-        return TSWOutputView{*this};
+        return TSWOutputView{borrowed_ref()};
     }
 
     TSWOutputView TSOutputView::as_window() const &
     {
-        return TSWOutputView{*this};
+        return TSWOutputView{borrowed_ref()};
     }
 
 }  // namespace hgraph

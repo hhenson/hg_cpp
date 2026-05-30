@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace hgraph
 {
@@ -149,12 +150,18 @@ namespace hgraph
      */
     class IndexedValueView : public ValueView
     {
-      public:
+        friend class ValueView;
+
+      protected:
         explicit IndexedValueView(ValueView base)
-            : ValueView(base)
+            : ValueView(std::move(base))
             , ops_{specialized_view_detail::checked_indexed_ops(binding(), "IndexedValueView")}
         {
         }
+
+      public:
+        IndexedValueView(IndexedValueView &&) noexcept = default;
+        IndexedValueView &operator=(IndexedValueView &&) noexcept = default;
 
         [[nodiscard]] std::size_t size() const
         {
@@ -187,7 +194,7 @@ namespace hgraph
 
       protected:
         IndexedValueView(ValueView base, const IndexedValueOps *ops) noexcept
-            : ValueView(base), ops_{ops}
+            : ValueView(std::move(base)), ops_{ops}
         {
         }
 
@@ -196,13 +203,18 @@ namespace hgraph
 
     class MutableIndexedValueView : public IndexedValueView
     {
-      public:
+        friend class ValueView;
+
+      protected:
         explicit MutableIndexedValueView(ValueView base)
-            : IndexedValueView(specialized_view_detail::require_mutable(base, "MutableIndexedValueView"),
-                               specialized_view_detail::checked_mutable_indexed_ops(base.binding(),
-                                                                                    "MutableIndexedValueView"))
+            : IndexedValueView(specialized_view_detail::require_mutable(std::move(base), "MutableIndexedValueView"))
         {
+            ops_ = specialized_view_detail::checked_mutable_indexed_ops(binding(), "MutableIndexedValueView");
         }
+
+      public:
+        MutableIndexedValueView(MutableIndexedValueView &&) noexcept = default;
+        MutableIndexedValueView &operator=(MutableIndexedValueView &&) noexcept = default;
 
         [[nodiscard]] ValueView at(std::size_t index) const
         {
@@ -226,7 +238,7 @@ namespace hgraph
 
       protected:
         MutableIndexedValueView(ValueView base, const IndexedValueOps *ops) noexcept
-            : IndexedValueView(base, ops)
+            : IndexedValueView(std::move(base), ops)
         {
         }
     };
@@ -236,7 +248,7 @@ namespace hgraph
     {
       public:
         explicit TupleView(ValueView base)
-            : IndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Tuple, "TupleView"))
+            : IndexedValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::Tuple, "TupleView"))
         {
         }
 
@@ -247,7 +259,7 @@ namespace hgraph
     {
       public:
         explicit MutableTupleView(ValueView base)
-            : MutableIndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Tuple,
+            : MutableIndexedValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::Tuple,
                                                                             "MutableTupleView"))
         {
         }
@@ -261,7 +273,7 @@ namespace hgraph
         using IndexedValueView::operator[];
 
         explicit BundleView(ValueView base)
-            : IndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Bundle, "BundleView"))
+            : IndexedValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::Bundle, "BundleView"))
         {
         }
 
@@ -298,7 +310,7 @@ namespace hgraph
         using MutableIndexedValueView::operator[];
 
         explicit MutableBundleView(ValueView base)
-            : MutableIndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Bundle,
+            : MutableIndexedValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::Bundle,
                                                                             "MutableBundleView"))
         {
         }
@@ -332,7 +344,7 @@ namespace hgraph
     {
       public:
         explicit ListView(ValueView base)
-            : IndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::List, "ListView"))
+            : IndexedValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::List, "ListView"))
         {
         }
 
@@ -357,7 +369,7 @@ namespace hgraph
     {
       public:
         explicit MutableListView(ValueView base)
-            : MutableIndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::List,
+            : MutableIndexedValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::List,
                                                                             "MutableListView"))
         {
         }
@@ -383,7 +395,7 @@ namespace hgraph
       public:
         explicit CyclicBufferView(ValueView base)
             : IndexedValueView(
-                  specialized_view_detail::require_kind(base, ValueTypeKind::CyclicBuffer, "CyclicBufferView"))
+                  specialized_view_detail::require_kind(std::move(base), ValueTypeKind::CyclicBuffer, "CyclicBufferView"))
         {
             cyclic_buffer_ops_ = specialized_view_detail::checked_cyclic_buffer_ops(binding(), "CyclicBufferView");
         }
@@ -418,7 +430,7 @@ namespace hgraph
     {
       public:
         explicit MutableCyclicBufferView(ValueView base)
-            : MutableIndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::CyclicBuffer,
+            : MutableIndexedValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::CyclicBuffer,
                                                                             "MutableCyclicBufferView"))
         {
             cyclic_buffer_ops_ = specialized_view_detail::checked_cyclic_buffer_ops(binding(),
@@ -450,7 +462,7 @@ namespace hgraph
     {
       public:
         explicit QueueView(ValueView base)
-            : IndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Queue, "QueueView"))
+            : IndexedValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::Queue, "QueueView"))
         {
             queue_ops_ = specialized_view_detail::checked_queue_ops(binding(), "QueueView");
         }
@@ -483,7 +495,7 @@ namespace hgraph
     {
       public:
         explicit MutableQueueView(ValueView base)
-            : MutableIndexedValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Queue,
+            : MutableIndexedValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::Queue,
                                                                             "MutableQueueView"))
         {
             queue_ops_ = specialized_view_detail::checked_queue_ops(binding(), "MutableQueueView");
@@ -521,7 +533,7 @@ namespace hgraph
     {
       public:
         explicit SetView(ValueView base)
-            : ValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Set, "SetView"))
+            : ValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::Set, "SetView"))
         {
             ops_ = specialized_view_detail::checked_set_ops(binding(), "SetView");
         }
@@ -567,7 +579,7 @@ namespace hgraph
     {
       public:
         explicit MapView(ValueView base)
-            : ValueView(specialized_view_detail::require_kind(base, ValueTypeKind::Map, "MapView"))
+            : ValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::Map, "MapView"))
         {
             ops_ = specialized_view_detail::checked_map_ops(binding(), "MapView");
         }
@@ -635,10 +647,31 @@ namespace hgraph
         const MapValueOps *ops_{nullptr};
     };
 
+    inline IndexedValueView ValueView::as_indexed_view() const
+    {
+        if (!is_indexed()) { throw std::logic_error("ValueView::as_indexed_view on non-indexed view"); }
+        return IndexedValueView{borrowed_ref()};
+    }
+
+    inline std::optional<IndexedValueView> ValueView::try_as_indexed_view() const
+    {
+        return is_indexed() ? std::optional<IndexedValueView>{IndexedValueView{borrowed_ref()}} : std::nullopt;
+    }
+
+    inline IndexedValueView ValueView::as_indexed() const
+    {
+        return as_indexed_view();
+    }
+
+    inline std::optional<IndexedValueView> ValueView::try_as_indexed() const
+    {
+        return try_as_indexed_view();
+    }
+
     inline TupleView ValueView::as_tuple() const
     {
         if (!is_tuple()) { throw std::logic_error("ValueView::as_tuple on non-tuple view"); }
-        return TupleView{*this};
+        return TupleView{borrowed_ref()};
     }
 
     inline MutableTupleView TupleView::begin_mutation() const
@@ -648,13 +681,13 @@ namespace hgraph
 
     inline std::optional<TupleView> ValueView::try_as_tuple() const
     {
-        return is_tuple() ? std::optional<TupleView>{TupleView{*this}} : std::nullopt;
+        return is_tuple() ? std::optional<TupleView>{TupleView{borrowed_ref()}} : std::nullopt;
     }
 
     inline BundleView ValueView::as_bundle() const
     {
         if (!is_bundle()) { throw std::logic_error("ValueView::as_bundle on non-bundle view"); }
-        return BundleView{*this};
+        return BundleView{borrowed_ref()};
     }
 
     inline MutableBundleView BundleView::begin_mutation() const
@@ -664,13 +697,13 @@ namespace hgraph
 
     inline std::optional<BundleView> ValueView::try_as_bundle() const
     {
-        return is_bundle() ? std::optional<BundleView>{BundleView{*this}} : std::nullopt;
+        return is_bundle() ? std::optional<BundleView>{BundleView{borrowed_ref()}} : std::nullopt;
     }
 
     inline ListView ValueView::as_list() const
     {
         if (!is_list()) { throw std::logic_error("ValueView::as_list on non-list view"); }
-        return ListView{*this};
+        return ListView{borrowed_ref()};
     }
 
     inline MutableListView ListView::begin_mutation() const
@@ -680,29 +713,29 @@ namespace hgraph
 
     inline std::optional<ListView> ValueView::try_as_list() const
     {
-        return is_list() ? std::optional<ListView>{ListView{*this}} : std::nullopt;
+        return is_list() ? std::optional<ListView>{ListView{borrowed_ref()}} : std::nullopt;
     }
 
     inline SetView ValueView::as_set() const
     {
         if (!is_set()) { throw std::logic_error("ValueView::as_set on non-set view"); }
-        return SetView{*this};
+        return SetView{borrowed_ref()};
     }
 
     inline std::optional<SetView> ValueView::try_as_set() const
     {
-        return is_set() ? std::optional<SetView>{SetView{*this}} : std::nullopt;
+        return is_set() ? std::optional<SetView>{SetView{borrowed_ref()}} : std::nullopt;
     }
 
     inline MapView ValueView::as_map() const
     {
         if (!is_map()) { throw std::logic_error("ValueView::as_map on non-map view"); }
-        return MapView{*this};
+        return MapView{borrowed_ref()};
     }
 
     inline std::optional<MapView> ValueView::try_as_map() const
     {
-        return is_map() ? std::optional<MapView>{MapView{*this}} : std::nullopt;
+        return is_map() ? std::optional<MapView>{MapView{borrowed_ref()}} : std::nullopt;
     }
 
     inline CyclicBufferView ValueView::as_cyclic_buffer() const
@@ -711,7 +744,7 @@ namespace hgraph
         {
             throw std::logic_error("ValueView::as_cyclic_buffer on non-cyclic-buffer view");
         }
-        return CyclicBufferView{*this};
+        return CyclicBufferView{borrowed_ref()};
     }
 
     inline MutableCyclicBufferView CyclicBufferView::begin_mutation() const
@@ -721,13 +754,13 @@ namespace hgraph
 
     inline std::optional<CyclicBufferView> ValueView::try_as_cyclic_buffer() const
     {
-        return is_cyclic_buffer() ? std::optional<CyclicBufferView>{CyclicBufferView{*this}} : std::nullopt;
+        return is_cyclic_buffer() ? std::optional<CyclicBufferView>{CyclicBufferView{borrowed_ref()}} : std::nullopt;
     }
 
     inline QueueView ValueView::as_queue() const
     {
         if (!is_queue()) { throw std::logic_error("ValueView::as_queue on non-queue view"); }
-        return QueueView{*this};
+        return QueueView{borrowed_ref()};
     }
 
     inline MutableQueueView QueueView::begin_mutation() const
@@ -737,42 +770,42 @@ namespace hgraph
 
     inline std::optional<QueueView> ValueView::try_as_queue() const
     {
-        return is_queue() ? std::optional<QueueView>{QueueView{*this}} : std::nullopt;
+        return is_queue() ? std::optional<QueueView>{QueueView{borrowed_ref()}} : std::nullopt;
     }
 
     inline MutableTupleView ValueView::as_mutable_tuple() const
     {
         if (!is_tuple()) { throw std::logic_error("ValueView::as_mutable_tuple on non-tuple view"); }
-        return MutableTupleView{*this};
+        return MutableTupleView{borrowed_ref()};
     }
 
     inline std::optional<MutableTupleView> ValueView::try_as_mutable_tuple() const
     {
-        return is_tuple() && mutable_payload() ? std::optional<MutableTupleView>{MutableTupleView{*this}}
+        return is_tuple() && mutable_payload() ? std::optional<MutableTupleView>{MutableTupleView{borrowed_ref()}}
                                                : std::nullopt;
     }
 
     inline MutableBundleView ValueView::as_mutable_bundle() const
     {
         if (!is_bundle()) { throw std::logic_error("ValueView::as_mutable_bundle on non-bundle view"); }
-        return MutableBundleView{*this};
+        return MutableBundleView{borrowed_ref()};
     }
 
     inline std::optional<MutableBundleView> ValueView::try_as_mutable_bundle() const
     {
-        return is_bundle() && mutable_payload() ? std::optional<MutableBundleView>{MutableBundleView{*this}}
+        return is_bundle() && mutable_payload() ? std::optional<MutableBundleView>{MutableBundleView{borrowed_ref()}}
                                                 : std::nullopt;
     }
 
     inline MutableListView ValueView::as_mutable_list() const
     {
         if (!is_list()) { throw std::logic_error("ValueView::as_mutable_list on non-list view"); }
-        return MutableListView{*this};
+        return MutableListView{borrowed_ref()};
     }
 
     inline std::optional<MutableListView> ValueView::try_as_mutable_list() const
     {
-        return is_list() && mutable_payload() ? std::optional<MutableListView>{MutableListView{*this}}
+        return is_list() && mutable_payload() ? std::optional<MutableListView>{MutableListView{borrowed_ref()}}
                                               : std::nullopt;
     }
 
@@ -782,26 +815,52 @@ namespace hgraph
         {
             throw std::logic_error("ValueView::as_mutable_cyclic_buffer on non-cyclic-buffer view");
         }
-        return MutableCyclicBufferView{*this};
+        return MutableCyclicBufferView{borrowed_ref()};
     }
 
     inline std::optional<MutableCyclicBufferView> ValueView::try_as_mutable_cyclic_buffer() const
     {
         return is_cyclic_buffer() && mutable_payload()
-                   ? std::optional<MutableCyclicBufferView>{MutableCyclicBufferView{*this}}
+                   ? std::optional<MutableCyclicBufferView>{MutableCyclicBufferView{borrowed_ref()}}
                    : std::nullopt;
     }
 
     inline MutableQueueView ValueView::as_mutable_queue() const
     {
         if (!is_queue()) { throw std::logic_error("ValueView::as_mutable_queue on non-queue view"); }
-        return MutableQueueView{*this};
+        return MutableQueueView{borrowed_ref()};
     }
 
     inline std::optional<MutableQueueView> ValueView::try_as_mutable_queue() const
     {
-        return is_queue() && mutable_payload() ? std::optional<MutableQueueView>{MutableQueueView{*this}}
+        return is_queue() && mutable_payload() ? std::optional<MutableQueueView>{MutableQueueView{borrowed_ref()}}
                                                : std::nullopt;
+    }
+
+    inline MutableIndexedValueView ValueView::as_mutable_indexed_view() const
+    {
+        if (!is_indexed())
+        {
+            throw std::logic_error("ValueView::as_mutable_indexed_view on non-indexed view");
+        }
+        return MutableIndexedValueView{borrowed_ref()};
+    }
+
+    inline std::optional<MutableIndexedValueView> ValueView::try_as_mutable_indexed_view() const
+    {
+        return is_indexed() && mutable_payload()
+                   ? std::optional<MutableIndexedValueView>{MutableIndexedValueView{borrowed_ref()}}
+                   : std::nullopt;
+    }
+
+    inline MutableIndexedValueView ValueView::as_mutable_indexed() const
+    {
+        return as_mutable_indexed_view();
+    }
+
+    inline std::optional<MutableIndexedValueView> ValueView::try_as_mutable_indexed() const
+    {
+        return try_as_mutable_indexed_view();
     }
 
 }  // namespace hgraph

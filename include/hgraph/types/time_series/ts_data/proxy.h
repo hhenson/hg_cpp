@@ -49,8 +49,8 @@ namespace hgraph
       public:
         using ValueBuilder = void (*)(TSDProxy       &proxy,
                                       std::size_t     slot,
-                                      TSDataView      target,
-                                      TSDataView      source,
+                                      const TSDataView &target,
+                                      const TSDataView &source,
                                       engine_time_t   modified_time,
                                       const void     *context);
 
@@ -71,7 +71,7 @@ namespace hgraph
          */
         void bind(const TSDataBinding &self_binding,
                   const TSDataBinding &element_binding,
-                  TSDDataView          source,
+                  const TSDDataView   &source,
                   ValueBuilder         builder,
                   const void          *builder_context,
                   engine_time_t        modified_time);
@@ -79,7 +79,7 @@ namespace hgraph
         /** Clear transient delta state on constructed proxy values. */
         void cleanup_delta(engine_time_t modified_time);
 
-        [[nodiscard]] const TSDataView &source_view() const noexcept;
+        [[nodiscard]] TSDataView source_view() const noexcept;
         [[nodiscard]] TSDDataView source_dict() const;
         [[nodiscard]] TSDataView source_child_at_slot(std::size_t slot) const;
 
@@ -117,7 +117,7 @@ namespace hgraph
         const TSDataBinding          *self_binding_{nullptr};
         const TSDataBinding          *element_binding_{nullptr};
         TSDProxySlotSync              source_sync_;
-        TSDataView                    source_{};
+        TSDDataStorageRef             source_storage_{};
         ValueBuilder                  value_builder_{nullptr};
         const void                   *value_builder_context_{nullptr};
         ValueSlotStore                values_{};
@@ -134,8 +134,8 @@ namespace hgraph
                                                              const TSDataBinding      &element_binding);
 
     /** Bind a live proxy TSData view to a source dictionary. */
-    void bind_tsd_proxy(TSDataView              proxy,
-                        TSDDataView             source,
+    void bind_tsd_proxy(const TSDataView       &proxy,
+                        const TSDDataView      &source,
                         TSDProxy::ValueBuilder  builder,
                         const void             *builder_context,
                         engine_time_t           modified_time);

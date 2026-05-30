@@ -104,9 +104,9 @@ namespace hgraph::detail
             }
         }
 
-        [[nodiscard]] TSOutputView source_child_view(const TSOutputView &parent, TSDataView child)
+        [[nodiscard]] TSOutputView source_child_view(const TSOutputView &parent, const TSDataView &child)
         {
-            return TSOutputView{parent.output(), child, parent.evaluation_time()};
+            return TSOutputView{parent.output(), child.borrowed_ref(), parent.evaluation_time()};
         }
 
         [[nodiscard]] TSEndpointSchema from_ref_endpoint_schema_for(const TSValueTypeMetaData *schema)
@@ -135,7 +135,7 @@ namespace hgraph::detail
             return TSEndpointSchema::peered(schema);
         }
 
-        [[nodiscard]] TSDataView endpoint_child_view(TSDataView parent, std::size_t index)
+        [[nodiscard]] TSDataView endpoint_child_view(const TSDataView &parent, std::size_t index)
         {
             auto projection = input_child_projection(parent, index);
             if (projection.target_link.valid())
@@ -149,7 +149,7 @@ namespace hgraph::detail
             return {};
         }
 
-        void unbind_target_link_at(TSDataView target, engine_time_t modified_time)
+        void unbind_target_link_at(const TSDataView &target, engine_time_t modified_time)
         {
             auto *link = mutable_target_link_storage(target);
             if (link == nullptr)
@@ -160,7 +160,7 @@ namespace hgraph::detail
             link->record_target_modified(modified_time);
         }
 
-        void bind_target_link_at(TSDataView target, TSOutputView output, engine_time_t modified_time)
+        void bind_target_link_at(const TSDataView &target, const TSOutputView &output, engine_time_t modified_time)
         {
             bind_target_link(target, output);
             auto *link = mutable_target_link_storage(target);
@@ -180,26 +180,26 @@ namespace hgraph::detail
             {
                 throw std::logic_error("TSOutput from-REF cannot project a child from this output schema");
             }
-            auto child = ops.target_child(parent.data_view(), index);
+            auto child = ops.target_child(parent.data_view().borrowed_ref(), index);
             if (!child.valid()) { throw std::logic_error("TSOutput from-REF output child projection failed"); }
             return source_child_view(parent, child);
         }
 
-        void unbind_from_ref_data(TSDataView target,
+        void unbind_from_ref_data(const TSDataView &target,
                                   const TSEndpointSchema &endpoint_schema,
                                   engine_time_t modified_time);
 
-        void apply_output_to_from_ref_data(TSDataView target,
+        void apply_output_to_from_ref_data(const TSDataView &target,
                                            const TSEndpointSchema &endpoint_schema,
-                                           TSOutputView output,
+                                           const TSOutputView &output,
                                            engine_time_t modified_time);
 
-        void apply_reference_to_from_ref_data(TSDataView target,
+        void apply_reference_to_from_ref_data(const TSDataView &target,
                                               const TSEndpointSchema &endpoint_schema,
                                               const TimeSeriesReference &reference,
                                               engine_time_t modified_time);
 
-        void unbind_from_ref_data(TSDataView target,
+        void unbind_from_ref_data(const TSDataView &target,
                                   const TSEndpointSchema &endpoint_schema,
                                   engine_time_t modified_time)
         {
@@ -211,15 +211,14 @@ namespace hgraph::detail
 
             for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
             {
-                unbind_from_ref_data(endpoint_child_view(target, index),
-                                     endpoint_schema.child(index),
-                                     modified_time);
+                auto child = endpoint_child_view(target, index);
+                unbind_from_ref_data(child, endpoint_schema.child(index), modified_time);
             }
         }
 
-        void apply_output_to_from_ref_data(TSDataView target,
+        void apply_output_to_from_ref_data(const TSDataView &target,
                                            const TSEndpointSchema &endpoint_schema,
-                                           TSOutputView output,
+                                           const TSOutputView &output,
                                            engine_time_t modified_time)
         {
             if (endpoint_schema.is_peered())
@@ -230,14 +229,13 @@ namespace hgraph::detail
 
             for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
             {
-                apply_output_to_from_ref_data(endpoint_child_view(target, index),
-                                              endpoint_schema.child(index),
-                                              output_child_view(output, *endpoint_schema.schema(), index),
-                                              modified_time);
+                auto child = endpoint_child_view(target, index);
+                auto child_output = output_child_view(output, *endpoint_schema.schema(), index);
+                apply_output_to_from_ref_data(child, endpoint_schema.child(index), child_output, modified_time);
             }
         }
 
-        void apply_reference_to_from_ref_data(TSDataView target,
+        void apply_reference_to_from_ref_data(const TSDataView &target,
                                               const TSEndpointSchema &endpoint_schema,
                                               const TimeSeriesReference &reference,
                                               engine_time_t modified_time)
@@ -266,24 +264,22 @@ namespace hgraph::detail
 
             for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
             {
-                apply_reference_to_from_ref_data(endpoint_child_view(target, index),
-                                                 endpoint_schema.child(index),
-                                                 reference[index],
-                                                 modified_time);
+                auto child = endpoint_child_view(target, index);
+                apply_reference_to_from_ref_data(child, endpoint_schema.child(index), reference[index], modified_time);
             }
         }
 
         [[nodiscard]] const TSDataBinding &to_ref_ts_data_binding_for(const TSValueTypeMetaData &schema);
-        void populate_to_ref_data(TSDataView                  target,
-                                  TSOutputView                source_view,
+        void populate_to_ref_data(const TSDataView           &target,
+                                  const TSOutputView         &source_view,
                                   const TSValueTypeMetaData  &target_schema,
                                   engine_time_t               modified_time,
                                   const ToRefBuildContext    &build_context);
 
         void build_to_ref_proxy_value(TSDProxy      &,
                                       std::size_t,
-                                      TSDataView     target,
-                                      TSDataView     source,
+                                      const TSDataView &target,
+                                      const TSDataView &source,
                                       engine_time_t  modified_time,
                                       const void    *context)
         {
@@ -299,8 +295,8 @@ namespace hgraph::detail
             }
             if (target.has_current_value()) { return; }
 
-            populate_to_ref_data(target,
-                                 TSOutputView{build_context->output, source, modified_time},
+            populate_to_ref_data(target.borrowed_ref(),
+                                 TSOutputView{build_context->output, source.borrowed_ref(), modified_time},
                                  *target.schema(),
                                  modified_time,
                                  *build_context);
@@ -315,15 +311,15 @@ namespace hgraph::detail
             return checked_ts_data_binding(schema);
         }
 
-        void populate_to_ref_data(TSDataView                  target,
-                                  TSOutputView                source_view,
+        void populate_to_ref_data(const TSDataView           &target,
+                                  const TSOutputView         &source_view,
                                   const TSValueTypeMetaData  &target_schema,
                                   engine_time_t               modified_time,
                                   const ToRefBuildContext    &build_context)
         {
             if (target_schema.kind == TSTypeKind::TSD)
             {
-                bind_tsd_proxy(target,
+                bind_tsd_proxy(target.borrowed_ref(),
                                source_view.data_view().as_dict(),
                                &build_to_ref_proxy_value,
                                &build_context,
@@ -349,11 +345,11 @@ namespace hgraph::detail
                 auto source_bundle = source_view.data_view().as_bundle();
                 for (std::size_t index = 0; index < target_schema.field_count(); ++index)
                 {
-                    populate_to_ref_data(target_bundle.at(index),
-                                         source_child_view(source_view, source_bundle.at(index)),
-                                         *target_schema.fields()[index].type,
-                                         modified_time,
-                                         build_context);
+                    auto target_child = target_bundle.at(index);
+                    auto source_child_data = source_bundle.at(index);
+                    auto source_child = source_child_view(source_view, source_child_data);
+                    populate_to_ref_data(target_child, source_child, *target_schema.fields()[index].type,
+                                         modified_time, build_context);
                 }
                 return;
             }
@@ -364,10 +360,10 @@ namespace hgraph::detail
                 auto source_list = source_view.data_view().as_list();
                 for (std::size_t index = 0; index < target_schema.fixed_size(); ++index)
                 {
-                    populate_to_ref_data(target_list.at(index),
-                                         source_child_view(source_view, source_list.at(index)),
-                                         *target_schema.element_ts(),
-                                         modified_time,
+                    auto target_child = target_list.at(index);
+                    auto source_child_data = source_list.at(index);
+                    auto source_child = source_child_view(source_view, source_child_data);
+                    populate_to_ref_data(target_child, source_child, *target_schema.element_ts(), modified_time,
                                          build_context);
                 }
                 return;
@@ -571,8 +567,8 @@ namespace hgraph::detail
         return reference.target_output();
     }
 
-    TSDataView TSOutputAlternativeStore::child_view_with_parent(TSDataView parent,
-                                                                TSDataView child,
+    TSDataView TSOutputAlternativeStore::child_view_with_parent(const TSDataView &parent,
+                                                                const TSDataView &child,
                                                                 std::size_t child_id)
     {
         return TSDataView{child.binding(), child.data(), parent, child_id};

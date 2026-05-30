@@ -660,6 +660,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 TSDataOps &base_ops = set_ops;
                 base_ops = TSDataOps{
                     .context                   = this,
+                    .kind                      = TSTypeKind::TSS,
                     .allows_mutation           = mutable_storage,
                     .layout_impl               = &tss_layout,
                     .tracking_impl             = &tss_tracking,
@@ -834,21 +835,21 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
 
                 auto     &target        = storage<Storage>(memory);
-                SetView   source_set{source};
+                auto      source_set    = source.as_set();
                 const bool newly_touched = target.touch(modified_time);
                 for (const auto key : source_set.values())
                 {
                     static_cast<void>(target.insert_key(key, modified_time));
                 }
 
-                std::vector<ValueView> removals;
+                std::vector<Value> removals;
                 for (const auto key : set_make_range<SlotSetSurface::Live>(context, memory))
                 {
-                    if (!source_set.contains(key)) { removals.push_back(key); }
+                    if (!source_set.contains(key)) { removals.emplace_back(key); }
                 }
-                for (const auto key : removals)
+                for (const auto &key : removals)
                 {
-                    static_cast<void>(target.remove_key(key, modified_time));
+                    static_cast<void>(target.remove_key(key.view(), modified_time));
                 }
                 return newly_touched;
             }
@@ -1350,6 +1351,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 TSSDataOps &set_part = dict_ops;
                 set_part = set_ops;
                 TSDataOps &base_ops = dict_ops;
+                base_ops.kind = TSTypeKind::TSD;
                 base_ops.context = this;
                 base_ops.allows_mutation = true;
                 base_ops.layout_impl = &tsd_layout;
@@ -2099,7 +2101,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] static SetView map_key_set(const void *context, const ValueTypeBinding *, const void *memory)
             {
-                return SetView{ValueView{ctxd(context)->key_set_value_binding, memory}};
+                return ValueView{ctxd(context)->key_set_value_binding, memory}.as_set();
             }
 
             template <SlotMapSurface Surface>

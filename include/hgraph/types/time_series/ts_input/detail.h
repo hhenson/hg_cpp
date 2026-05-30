@@ -30,7 +30,7 @@ namespace hgraph::detail
     [[nodiscard]] const TSDataBinding *input_data_binding_for(const TSEndpointSchema &endpoint_schema);
     [[nodiscard]] const TSDataBinding *regular_ts_data_binding_for(const TSValueTypeMetaData *schema);
 
-    [[nodiscard]] TSInputChildProjection input_child_projection(TSDataView &parent, std::size_t index);
+    [[nodiscard]] TSInputChildProjection input_child_projection(const TSDataView &parent, std::size_t index);
 
     struct TSInputViewOps
     {
@@ -93,7 +93,7 @@ namespace hgraph::detail
         [[nodiscard]] TSInputActiveTarget *child_at(std::size_t slot) const noexcept;
         [[nodiscard]] bool has_any_active() const noexcept;
         TSInputActiveTarget &ensure_child(std::size_t slot);
-        void subscribe(TSDataView observed_, Notifiable *target_notifier);
+        void subscribe(const TSDataView &observed_, Notifiable *target_notifier);
         void unsubscribe() noexcept;
 
         TSInputActiveTarget *parent{nullptr};

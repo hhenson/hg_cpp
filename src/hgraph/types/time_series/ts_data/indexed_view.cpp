@@ -1,79 +1,74 @@
 #include <hgraph/types/time_series/ts_data.h>
 
 #include <stdexcept>
-#include <string>
+#include <utility>
 
 namespace hgraph
 {
-    const TSDataView &IndexedTSDataView::base() const noexcept
+    TSDataView IndexedTSDataView::base() const noexcept
     {
-        return *view_;
-    }
-
-    TSDataView &IndexedTSDataView::base() noexcept
-    {
-        return *view_;
+        return TSDataView{storage_.storage_ref()};
     }
 
     const TSDataBinding *IndexedTSDataView::binding() const noexcept
     {
-        return view_->binding();
+        return base().binding();
     }
 
     const TSValueTypeMetaData *IndexedTSDataView::schema() const noexcept
     {
-        return view_->schema();
+        return base().schema();
     }
 
     const TSDataLayout &IndexedTSDataView::layout() const
     {
-        return view_->layout();
+        return base().layout();
     }
 
     ValueView IndexedTSDataView::value() const
     {
-        return view_->value();
+        return base().value();
     }
 
     ValueView IndexedTSDataView::delta_value(engine_time_t evaluation_time) const
     {
-        return view_->delta_value(evaluation_time);
+        return base().delta_value(evaluation_time);
     }
 
     engine_time_t IndexedTSDataView::last_modified_time() const
     {
-        return view_->last_modified_time();
+        return base().last_modified_time();
     }
 
     bool IndexedTSDataView::modified(engine_time_t evaluation_time) const
     {
-        return view_->modified(evaluation_time);
+        return base().modified(evaluation_time);
     }
 
     void IndexedTSDataView::subscribe(Notifiable *observer) const
     {
-        view_->subscribe(observer);
+        base().subscribe(observer);
     }
 
     void IndexedTSDataView::unsubscribe(Notifiable *observer) const
     {
-        view_->unsubscribe(observer);
+        base().unsubscribe(observer);
     }
 
     bool IndexedTSDataView::has_observers() const
     {
-        return view_->has_observers();
+        return base().has_observers();
     }
 
     std::size_t IndexedTSDataView::observer_count() const
     {
-        return view_->observer_count();
+        return base().observer_count();
     }
 
     std::size_t IndexedTSDataView::size() const
     {
         const auto &ops = indexed_ops();
-        return ops.size_impl(ops.context, view_->data());
+        return ops.size_impl(ops.context, storage_.data());
     }
 
     bool IndexedTSDataView::empty() const
@@ -133,10 +128,9 @@ namespace hgraph
         return items_range(&child_modified_predicate);
     }
 
-    IndexedTSDataView::IndexedTSDataView(TSDataView &view, TSTypeKind expected_kind, const char *what)
-        : view_(&view)
+    IndexedTSDataView::IndexedTSDataView(TSDataView view, TSTypeKind expected_kind)
+        : storage_(view.storage_ref(), expected_kind)
     {
-        validate_kind(view, expected_kind, what);
     }
 
     bool IndexedTSDataView::child_valid(std::size_t index) const
@@ -151,7 +145,7 @@ namespace hgraph
 
     const IndexedTSDataOps &IndexedTSDataView::indexed_ops() const
     {
-        return static_cast<const IndexedTSDataOps &>(view_->ops());
+        return storage_.ops();
     }
 
     Range<TSDataView> IndexedTSDataView::values_range(Range<TSDataView>::predicate_fn predicate) const
@@ -177,23 +171,12 @@ namespace hgraph
         };
     }
 
-    void IndexedTSDataView::validate_kind(const TSDataView &view, TSTypeKind expected_kind, const char *what)
-    {
-        if (!view.valid()) { throw std::logic_error(std::string{what} + " requires a live view"); }
-        const auto *schema = view.schema();
-        if (schema == nullptr || schema->kind != expected_kind)
-        {
-            throw std::invalid_argument(std::string{what} + " requires the matching TSData kind");
-        }
-        (void)static_cast<const IndexedTSDataOps &>(view.ops());
-    }
-
     engine_time_t IndexedTSDataView::child_last_modified_time(std::size_t index) const
     {
         const auto &ops = indexed_ops();
-        if (index >= ops.size_impl(ops.context, view_->data())) { return MIN_DT; }
-        const auto *element_binding = ops.element_binding_impl(ops.context, view_->data(), index);
-        const auto *element_memory  = ops.element_memory_impl(ops.context, view_->data(), index);
+        if (index >= ops.size_impl(ops.context, storage_.data())) { return MIN_DT; }
+        const auto *element_binding = ops.element_binding_impl(ops.context, storage_.data(), index);
+        const auto *element_memory  = ops.element_memory_impl(ops.context, storage_.data(), index);
         if (element_binding == nullptr || element_memory == nullptr) { return MIN_DT; }
         const auto &element_ops = element_binding->checked_ops();
         return element_ops.tracking_impl(element_ops.context, element_memory)->last_modified_time;
@@ -202,22 +185,23 @@ namespace hgraph
     TSDataView IndexedTSDataView::at_impl(std::size_t index)
     {
         const auto &ops = indexed_ops();
-        if (index >= ops.size_impl(ops.context, view_->data()))
+        if (index >= ops.size_impl(ops.context, storage_.data()))
         {
             throw std::out_of_range("IndexedTSDataView::at: index out of range");
         }
-        const auto *element_binding = ops.element_binding_impl(ops.context, view_->data(), index);
+        const auto *element_binding = ops.element_binding_impl(ops.context, storage_.data(), index);
         if (element_binding == nullptr)
         {
             throw std::logic_error("IndexedTSDataView::at: element binding is not resolved");
         }
-        const auto *element_memory = ops.element_memory_impl(ops.context, view_->data(), index);
+        const auto *element_memory = ops.element_memory_impl(ops.context, storage_.data(), index);
         if (element_memory == nullptr)
         {
             return TSDataView{element_binding, element_memory};
         }
-        if (!view_->ops().allows_mutation) { return TSDataView{element_binding, element_memory}; }
-        return TSDataView{element_binding, element_memory, *view_, index};
+        auto parent = base();
+        if (!parent.ops().allows_mutation) { return TSDataView{element_binding, element_memory}; }
+        return TSDataView{element_binding, element_memory, parent, index};
     }
 
     Range<TSDataView> IndexedTSDataView::empty_values_range() noexcept
@@ -253,8 +237,8 @@ namespace hgraph
         return {index, project_value(context, nullptr, index)};
     }
 
-    TSBDataView::TSBDataView(TSDataView &view)
-        : IndexedTSDataView(view, TSTypeKind::TSB, "TSBDataView")
+    TSBDataView::TSBDataView(TSDataView view)
+        : IndexedTSDataView(std::move(view), TSTypeKind::TSB)
     {
     }
 
@@ -387,8 +371,8 @@ namespace hgraph
         return {self->key_at(index), self->IndexedTSDataView::at(index)};
     }
 
-    TSLDataView::TSLDataView(TSDataView &view)
-        : IndexedTSDataView(view, TSTypeKind::TSL, "TSLDataView")
+    TSLDataView::TSLDataView(TSDataView view)
+        : IndexedTSDataView(std::move(view), TSTypeKind::TSL)
     {
     }
 }  // namespace hgraph

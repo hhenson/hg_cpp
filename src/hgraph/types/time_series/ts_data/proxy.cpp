@@ -152,6 +152,7 @@ namespace hgraph
                 TSDataOps &set_base = key_set_ts_ops;
                 set_base = TSDataOps{
                     .context                   = this,
+                    .kind                      = TSTypeKind::TSS,
                     .allows_mutation           = false,
                     .layout_impl               = &ts_layout,
                     .tracking_impl             = &tracking,
@@ -184,6 +185,7 @@ namespace hgraph
                 TSSDataOps &dict_set = dict_ops;
                 dict_set = key_set_ts_ops;
                 TSDataOps &dict_base = dict_ops;
+                dict_base.kind = TSTypeKind::TSD;
                 dict_base.context = this;
                 dict_ops.child_at_slot_impl = &tsd_child_at_slot;
                 dict_ops.slot_modified_impl = &slot_modified;
@@ -808,7 +810,7 @@ namespace hgraph
 
             [[nodiscard]] static SetView map_key_set(const void *context, const ValueTypeBinding *, const void *memory)
             {
-                return SetView{ValueView{ctx(context)->key_set_value_binding, memory}};
+                return ValueView{ctx(context)->key_set_value_binding, memory}.as_set();
             }
 
             [[nodiscard]] static std::size_t delta_size(const void *, const void *) noexcept
@@ -932,7 +934,7 @@ namespace hgraph
 
     void TSDProxy::bind(const TSDataBinding &self_binding,
                         const TSDataBinding &element_binding,
-                        TSDDataView          source,
+                        const TSDDataView   &source,
                         ValueBuilder         builder,
                         const void          *builder_context,
                         engine_time_t        modified_time)
@@ -950,8 +952,8 @@ namespace hgraph
         const bool reconfigure =
             self_binding_ != &self_binding ||
             element_binding_ != &element_binding ||
-            source_.binding() != source.binding() ||
-            source_.data() != source.base().data() ||
+            source_storage_.binding() != source.binding() ||
+            source_storage_.data() != source.base().data() ||
             value_builder_ != builder ||
             value_builder_context_ != builder_context;
 
@@ -960,7 +962,7 @@ namespace hgraph
             unsubscribe_source();
             self_binding_          = &self_binding;
             element_binding_       = &element_binding;
-            source_                = source.base();
+            source_storage_        = TSDDataStorageRef{source.base().storage_ref(), TSTypeKind::TSD};
             value_builder_         = builder;
             value_builder_context_ = builder_context;
             values_.bind_plan(element_plan);
@@ -968,7 +970,7 @@ namespace hgraph
         }
         else
         {
-            source_ = source.base();
+            source_storage_ = TSDDataStorageRef{source.base().storage_ref(), TSTypeKind::TSD};
         }
 
         sync_from_source(modified_time, true);
@@ -1007,7 +1009,7 @@ namespace hgraph
 
     void TSDProxy::on_source_modified(engine_time_t modified_time)
     {
-        if (modified_time == MIN_DT || !source_.valid() || value_builder_ == nullptr) { return; }
+        if (modified_time == MIN_DT || !source_storage_.valid() || value_builder_ == nullptr) { return; }
 
         auto dict = source_dict();
         bool touched = false;
@@ -1047,15 +1049,16 @@ namespace hgraph
         values_.clear_all_updated();
     }
 
-    const TSDataView &TSDProxy::source_view() const noexcept
+    TSDataView TSDProxy::source_view() const noexcept
     {
-        return source_;
+        return TSDataView{source_storage_.storage_ref()};
     }
 
     TSDDataView TSDProxy::source_dict() const
     {
-        if (!source_.valid()) { throw std::logic_error("TSDProxy is not bound to a source"); }
-        return source_.as_dict();
+        if (!source_storage_.valid()) { throw std::logic_error("TSDProxy is not bound to a source"); }
+        auto source = source_view();
+        return source.as_dict();
     }
 
     TSDataView TSDProxy::source_child_at_slot(std::size_t slot) const
@@ -1097,22 +1100,22 @@ namespace hgraph
 
     void TSDProxy::subscribe_source()
     {
-        if (subscribed_ || !source_.valid()) { return; }
+        if (subscribed_ || !source_storage_.valid()) { return; }
         source_dict().key_set().subscribe_slot_observer(&source_sync_);
         auto rollback_slot_observer = make_scope_exit<true>([&] {
             source_dict().key_set().unsubscribe_slot_observer(&source_sync_);
         });
-        source_.subscribe(&source_sync_);
+        source_view().subscribe(&source_sync_);
         rollback_slot_observer.release();
         subscribed_ = true;
     }
 
     void TSDProxy::unsubscribe_source() noexcept
     {
-        if (!subscribed_ || !source_.valid()) { return; }
+        if (!subscribed_ || !source_storage_.valid()) { return; }
         FirstExceptionRecorder cleanup_errors;
         cleanup_errors.capture([&] {
-            source_.unsubscribe(&source_sync_);
+            source_view().unsubscribe(&source_sync_);
         });
         cleanup_errors.capture([&] {
             source_dict().key_set().unsubscribe_slot_observer(&source_sync_);
@@ -1122,7 +1125,7 @@ namespace hgraph
 
     void TSDProxy::sync_from_source(engine_time_t modified_time, bool force_modified)
     {
-        if (element_binding_ == nullptr || !source_.valid() || value_builder_ == nullptr)
+        if (element_binding_ == nullptr || !source_storage_.valid() || value_builder_ == nullptr)
         {
             return;
         }
@@ -1217,8 +1220,8 @@ namespace hgraph
         return TSDataBinding::intern(schema, *context.plan, context.dict_ops);
     }
 
-    void bind_tsd_proxy(TSDataView              proxy,
-                        TSDDataView             source,
+    void bind_tsd_proxy(const TSDataView       &proxy,
+                        const TSDDataView      &source,
                         TSDProxy::ValueBuilder  builder,
                         const void             *builder_context,
                         engine_time_t           modified_time)

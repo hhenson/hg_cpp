@@ -303,7 +303,7 @@ namespace hgraph
             throw std::logic_error("TSDataPlanFactory: atomic TSData plan is missing required components");
         }
 
-        const auto &ops     = plan_detail::atomic_ts_data_ops(*value_binding, *delta_binding, *plan,
+        const auto &ops     = plan_detail::atomic_ts_data_ops(schema->kind, *value_binding, *delta_binding, *plan,
                                                               value_component->offset, tracking_component->offset);
         const auto &binding = TSDataBinding::intern(*schema, *plan, ops);
 

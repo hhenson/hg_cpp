@@ -23,58 +23,56 @@ namespace hgraph
 
         [[nodiscard]] TSOutputView output_at_path(TSOutputView view, const std::vector<std::size_t> &path)
         {
-            TSOutputView current = view;
             for (const std::size_t component : path)
             {
-                const auto *schema = current.schema();
+                const auto *schema = view.schema();
                 if (schema == nullptr) { throw std::logic_error("Graph output path requires a typed output view"); }
                 switch (schema->kind)
                 {
                     case TSTypeKind::TSB:
                     {
-                        auto bundle = current.as_bundle();
-                        current = bundle[component];
+                        auto bundle = view.as_bundle();
+                        view = bundle[component];
                         break;
                     }
                     case TSTypeKind::TSL:
                     {
-                        auto list = current.as_list();
-                        current = list[component];
+                        auto list = view.as_list();
+                        view = list[component];
                         break;
                     }
                     default:
                         throw std::invalid_argument("Graph output path can only traverse indexed time-series structures");
                 }
             }
-            return current;
+            return view;
         }
 
         [[nodiscard]] TSInputView input_at_path(TSInputView view, const std::vector<std::size_t> &path)
         {
-            TSInputView current = view;
             for (const std::size_t component : path)
             {
-                const auto *schema = current.schema();
+                const auto *schema = view.schema();
                 if (schema == nullptr) { throw std::logic_error("Graph input path requires a typed input view"); }
                 switch (schema->kind)
                 {
                     case TSTypeKind::TSB:
                     {
-                        auto bundle = current.as_bundle();
-                        current = bundle[component];
+                        auto bundle = view.as_bundle();
+                        view = bundle[component];
                         break;
                     }
                     case TSTypeKind::TSL:
                     {
-                        auto list = current.as_list();
-                        current = list[component];
+                        auto list = view.as_list();
+                        view = list[component];
                         break;
                     }
                     default:
                         throw std::invalid_argument("Graph input path can only traverse indexed time-series structures");
                 }
             }
-            return current;
+            return view;
         }
 
         struct GraphRuntimeStorage

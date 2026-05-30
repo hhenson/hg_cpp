@@ -1205,7 +1205,7 @@ namespace hgraph
                                                       const void *memory)
         {
             const auto *state = static_cast<const InputBindingContext *>(context);
-            return SetView{ValueView{state->delta.list().key_set_binding, memory}};
+            return ValueView{state->delta.list().key_set_binding, memory}.as_set();
         }
 
         [[nodiscard]] std::size_t input_delta_map_hash(const void *context, const void *memory)
@@ -1557,6 +1557,7 @@ namespace hgraph
 
             context->ts_data_ops = TSDataOps{
                 .context = context.get(),
+                .kind = context->schema->kind,
                 .allows_mutation = true,
                 .layout_impl = &target_link_layout,
                 .tracking_impl = &target_link_tracking,
@@ -1723,6 +1724,7 @@ namespace hgraph
             TSDataOps &base_ops = context->ts_data_ops;
             base_ops = TSDataOps{
                 .context = context.get(),
+                .kind = context->schema->kind,
                 .allows_mutation = true,
                 .layout_impl = &input_layout,
                 .tracking_impl = &input_tracking,
@@ -1832,7 +1834,7 @@ namespace hgraph
             return context != nullptr ? context->schema : nullptr;
         }
 
-        TSInputChildProjection input_child_projection(TSDataView &parent, std::size_t index)
+        TSInputChildProjection input_child_projection(const TSDataView &parent, std::size_t index)
         {
             const auto *context = ::hgraph::input_context_for(parent.binding());
             if (context == nullptr || index >= context->children.size())
@@ -1847,9 +1849,10 @@ namespace hgraph
                 const auto *storage = ::hgraph::target_storage(link);
                 if (storage != nullptr && storage->bound())
                 {
-                    return TSInputChildProjection{storage->target_view(), link};
+                    return TSInputChildProjection{storage->target_view(), std::move(link)};
                 }
-                return TSInputChildProjection{TSDataView{child.regular_binding, static_cast<const void *>(nullptr)}, link};
+                return TSInputChildProjection{TSDataView{child.regular_binding, static_cast<const void *>(nullptr)},
+                                              std::move(link)};
             }
 
             return TSInputChildProjection{TSDataView{child.input_binding, parent.data()}, {}};
@@ -1896,7 +1899,7 @@ namespace hgraph
             return *child;
         }
 
-        void TSInputActiveTarget::subscribe(TSDataView observed_, Notifiable *target_notifier)
+        void TSInputActiveTarget::subscribe(const TSDataView &observed_, Notifiable *target_notifier)
         {
             if (observed_.valid() && observed_.data() == observed.data() && observed_.binding() == observed.binding())
             {
@@ -1907,7 +1910,7 @@ namespace hgraph
             unsubscribe();
             notifier.target = target_notifier;
             if (target_notifier == nullptr || !observed_.valid()) { return; }
-            observed = observed_;
+            observed = observed_.borrowed_ref();
             observed.subscribe(&notifier);
         }
 

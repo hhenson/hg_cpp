@@ -1166,7 +1166,7 @@ namespace hgraph
         }
         const ValueTypeBinding &adapter =
             compact_map_key_set_binding(*storage->key_binding(), *storage->value_binding());
-        return SetView{ValueView{&adapter, memory}};
+        return ValueView{&adapter, memory}.as_set();
     }
 }  // namespace hgraph
 

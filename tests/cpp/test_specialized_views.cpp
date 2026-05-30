@@ -418,6 +418,12 @@ TEST_CASE("Value and ValueView expose direct specialized casts for compact conta
     list_builder.push_back<int>(4);
     list_builder.push_back<int>(5);
     Value list_value = list_builder.build();
+    auto  list_view  = list_value.view();
+    const auto indexed_list = list_view.as_indexed_view();
+    REQUIRE(indexed_list.size() == 2);
+    REQUIRE(indexed_list.at(1).checked_as<int>() == 5);
+    REQUIRE(list_view.try_as_indexed_view().has_value());
+    REQUIRE(list_value.as_indexed_view().size() == 2);
     REQUIRE(list_value.as_list().size() == 2);
     REQUIRE(list_value.as_list().at(1).checked_as<int>() == 5);
     REQUIRE(list_value.view().try_as_list().has_value());
@@ -462,6 +468,10 @@ TEST_CASE("Value and ValueView expose direct specialized casts for compact conta
     REQUIRE(queue_value.as_queue().full());
     REQUIRE_FALSE(queue_value.view().can_begin_mutation());
     REQUIRE_THROWS_AS(queue_value.as_queue().begin_mutation(), std::logic_error);
+
+    Value atomic_value{3};
+    REQUIRE_FALSE(atomic_value.view().try_as_indexed_view().has_value());
+    REQUIRE_THROWS_AS(atomic_value.view().as_indexed_view(), std::logic_error);
 }
 
 TEST_CASE("TupleView, BundleView and fixed ListView read structured MemoryUtils storage")

@@ -72,13 +72,13 @@ namespace hgraph::detail
         ~TSInputTargetLinkStorage() noexcept;
 
         [[nodiscard]] bool bound() const noexcept;
-        void bind(const TSValueTypeMetaData &schema, TSOutputView output);
+        void bind(const TSValueTypeMetaData &schema, const TSOutputView &output);
         void unbind();
         void unbind_noexcept() noexcept;
         void record_target_modified(engine_time_t modified_time);
         [[nodiscard]] TSInputTargetActiveNode &root_node();
         [[nodiscard]] TSInputTargetActiveNode &child_node(TSInputTargetActiveNode *parent, std::size_t slot);
-        void make_active(TSInputTargetActiveNode *node, TSDataView observed, Notifiable *target_notifier);
+        void make_active(TSInputTargetActiveNode *node, const TSDataView &observed, Notifiable *target_notifier);
         void make_passive(TSInputTargetActiveNode *node);
         [[nodiscard]] bool active(const TSInputTargetActiveNode *node) const noexcept;
         [[nodiscard]] TSOutputHandle target_output_at_path(const TSValueTypeMetaData &schema,
@@ -112,7 +112,7 @@ namespace hgraph::detail
     void unbind_target_link(const TSDataView &view);
     void make_target_link_active(const TSDataView &view,
                                  TSInputTargetActiveNode *node,
-                                 TSDataView observed,
+                                 const TSDataView &observed,
                                  Notifiable *target_notifier);
     void make_target_link_passive(const TSDataView &view, TSInputTargetActiveNode *node);
     [[nodiscard]] bool target_link_active(const TSDataView &view,

@@ -174,6 +174,23 @@ namespace hgraph
             return v.template try_as<T>();
         }
 
+        [[nodiscard]] IndexedValueView as_indexed_view() const { return view().as_indexed_view(); }
+        [[nodiscard]] IndexedValueView as_indexed_view() { return view().as_indexed_view(); }
+        [[nodiscard]] std::optional<IndexedValueView> try_as_indexed_view() const
+        {
+            return view().try_as_indexed_view();
+        }
+        [[nodiscard]] std::optional<IndexedValueView> try_as_indexed_view()
+        {
+            return view().try_as_indexed_view();
+        }
+        [[nodiscard]] IndexedValueView as_indexed() const { return as_indexed_view(); }
+        [[nodiscard]] IndexedValueView as_indexed() { return as_indexed_view(); }
+        [[nodiscard]] std::optional<IndexedValueView> try_as_indexed() const { return try_as_indexed_view(); }
+        [[nodiscard]] std::optional<IndexedValueView> try_as_indexed() { return try_as_indexed_view(); }
+        [[nodiscard]] IndexedValueView indexed_view() const { return as_indexed_view(); }
+        [[nodiscard]] IndexedValueView indexed_view() { return as_indexed_view(); }
+
         [[nodiscard]] TupleView as_tuple() const { return view().as_tuple(); }
         [[nodiscard]] TupleView as_tuple() { return view().as_tuple(); }
         [[nodiscard]] std::optional<TupleView> try_as_tuple() const { return view().try_as_tuple(); }
@@ -248,6 +265,20 @@ namespace hgraph
             return compare(other);
         }
         [[nodiscard]] Value clone() const { return binding() != nullptr ? Value{view()} : Value{}; }
+
+        /**
+         * Replace this owning value with an owning copy of ``source``.
+         *
+         * This is the explicit assignment form of ``Value{source}``: it
+         * clones the source payload when present, or preserves the source
+         * binding as a typed-null value when the source has no payload.
+         */
+        Value &assign_from(const ValueView &source)
+        {
+            *this = Value{source};
+            return *this;
+        }
+
         [[nodiscard]] std::string to_string() const { return view().to_string(); }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES

@@ -221,6 +221,7 @@ namespace hgraph::ts_data_plan_factory_detail
             TSDataOps &base_ops = ops;
             base_ops = TSDataOps{
                 .context                   = this,
+                .kind                      = schema->kind,
                 .allows_mutation           = true,
                 .layout_impl               = &fixed_layout,
                 .tracking_impl             = &fixed_tracking,
@@ -757,7 +758,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                              const void *memory)
         {
             const auto *state = ctx(context);
-            return SetView{ValueView{state->delta_key_set_binding, memory}};
+            return ValueView{state->delta_key_set_binding, memory}.as_set();
         }
 
         [[nodiscard]] static std::size_t fixed_delta_map_hash(const void *context, const void *memory)
@@ -970,7 +971,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 throw std::invalid_argument("fixed TSData copy requires the parent value schema");
             }
-            const IndexedValueView source_values{source};
+            const auto source_values = source.as_indexed_view();
             if (source_values.size() != state->element_count())
             {
                 throw std::invalid_argument("fixed TSData copy source has the wrong child count");

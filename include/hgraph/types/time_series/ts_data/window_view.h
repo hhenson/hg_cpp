@@ -14,9 +14,13 @@ namespace hgraph
       public:
         explicit TSWDataView(TSDataView view);
 
-        /** Underlying generic TSData view. */
-        [[nodiscard]] const TSDataView &base() const noexcept;
-        [[nodiscard]] TSDataView &base() noexcept;
+        /** Transient generic TSData view over the same storage. */
+        [[nodiscard]] TSDataView base() const noexcept;
+
+        TSWDataView(const TSWDataView &) = delete;
+        TSWDataView &operator=(const TSWDataView &) = delete;
+        TSWDataView(TSWDataView &&) noexcept = default;
+        TSWDataView &operator=(TSWDataView &&) noexcept = default;
 
         /** Binding, schema, layout, and value projections for the window node. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;
@@ -72,14 +76,15 @@ namespace hgraph
         /** Begin a mutation view over this window. */
         [[nodiscard]] TSWDataMutationView begin_mutation(engine_time_t evaluation_time) const;
 
-      private:
-        static void validate_kind(const TSDataView &view);
+      protected:
         [[nodiscard]] const TSWDataOps &window_ops() const;
+
+      private:
         [[nodiscard]] static ValueView project_value(const void *context, const void *, std::size_t index);
         [[nodiscard]] static ValueView project_time_value(const void *context, const void *, std::size_t index);
         [[nodiscard]] static engine_time_t project_time(const void *context, const void *, std::size_t index);
 
-        TSDataView view_{};
+        TSWDataStorageRef storage_{};
     };
 
     /** Mutation view over window-shaped TSData. */

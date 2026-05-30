@@ -271,7 +271,7 @@ namespace hgraph::detail
         return target_output().bound();
     }
 
-    void TSInputTargetLinkStorage::bind(const TSValueTypeMetaData &schema, TSOutputView output)
+    void TSInputTargetLinkStorage::bind(const TSValueTypeMetaData &schema, const TSOutputView &output)
     {
         if (!output_view_bound(output))
         {
@@ -325,7 +325,7 @@ namespace hgraph::detail
     }
 
     void TSInputTargetLinkStorage::make_active(TSInputTargetActiveNode *node,
-                                               TSDataView observed,
+                                               const TSDataView &observed,
                                                Notifiable *target_notifier)
     {
         auto &state = state_;
@@ -333,7 +333,7 @@ namespace hgraph::detail
 
         auto &active_node = node != nullptr ? *node : state.ensure_active_root();
         const auto observed_handle = observed.valid()
-                                         ? TSOutputHandle{state.target.output(), observed}
+                                         ? TSOutputHandle{state.target.output(), observed.borrowed_ref()}
                                          : TSOutputHandle{};
         if (active_node.locally_active && active_node.observed.same_as(observed_handle)) { return; }
 
@@ -372,7 +372,7 @@ namespace hgraph::detail
         {
             const auto &ops = input_endpoint_ops_for(current_schema);
             if (ops.target_child == nullptr || ops.child_schema == nullptr) { return {}; }
-            current = ops.target_child(current, index);
+            current = ops.target_child(std::move(current), index);
             current_schema = ops.child_schema(current_schema, index);
             if (current_schema == nullptr || !current.valid()) { return {}; }
         }
@@ -471,7 +471,7 @@ namespace hgraph::detail
 
     void make_target_link_active(const TSDataView &view,
                                  TSInputTargetActiveNode *node,
-                                 TSDataView observed,
+                                 const TSDataView &observed,
                                  Notifiable *target_notifier)
     {
         auto *link = mutable_target_link_storage(view);

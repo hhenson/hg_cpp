@@ -37,6 +37,14 @@ namespace hgraph
       public:
         TSInputView() noexcept;
 
+        TSInputView(const TSInputView &) = delete;
+        TSInputView &operator=(const TSInputView &) = delete;
+        TSInputView(TSInputView &&) noexcept = default;
+        TSInputView &operator=(TSInputView &&) noexcept = default;
+
+        /** Explicitly recreate a transient cursor over the same input position. */
+        [[nodiscard]] TSInputView borrowed_ref() const noexcept;
+
         /** Evaluation time associated with delta/modified checks. */
         [[nodiscard]] engine_time_t evaluation_time() const noexcept;
 
@@ -120,6 +128,13 @@ namespace hgraph
             InputDataCursor(TSDataView value_data,
                             TSDataView raw_data,
                             detail::TSInputTargetActiveNode *target_node) noexcept;
+
+            InputDataCursor(const InputDataCursor &) = delete;
+            InputDataCursor &operator=(const InputDataCursor &) = delete;
+            InputDataCursor(InputDataCursor &&) noexcept = default;
+            InputDataCursor &operator=(InputDataCursor &&) noexcept = default;
+
+            [[nodiscard]] InputDataCursor borrowed_ref() const noexcept;
 
             [[nodiscard]] bool has_storage() const noexcept;
             [[nodiscard]] bool is_target_position() const noexcept;

@@ -13,10 +13,15 @@ namespace hgraph
     TSInputView::InputDataCursor::InputDataCursor(TSDataView value_data_,
                                                   TSDataView raw_data_,
                                                   detail::TSInputTargetActiveNode *target_node_) noexcept
-        : value_data(value_data_),
-          raw_data(raw_data_.valid() ? raw_data_ : value_data_),
+        : value_data(std::move(value_data_)),
+          raw_data(raw_data_.valid() ? std::move(raw_data_) : value_data.borrowed_ref()),
           target_node(target_node_)
     {
+    }
+
+    TSInputView::InputDataCursor TSInputView::InputDataCursor::borrowed_ref() const noexcept
+    {
+        return InputDataCursor{value_data.borrowed_ref(), raw_data.borrowed_ref(), target_node};
     }
 
     bool TSInputView::InputDataCursor::has_storage() const noexcept
@@ -93,7 +98,7 @@ namespace hgraph
                                                                             std::size_t index) const
     {
         auto *child_node = detail::target_link_child_node(raw_data, target_node, index);
-        return InputDataCursor{child, raw_data, child_node};
+        return InputDataCursor{std::move(child), raw_data.borrowed_ref(), child_node};
     }
 
     void TSInputView::InputDataCursor::bind_target(const TSOutputView &output)
@@ -113,14 +118,14 @@ namespace hgraph
     {
         if (is_target_position())
         {
-            detail::make_target_link_active(raw_data,
+                detail::make_target_link_active(raw_data,
                                             target_node,
-                                            value_live() ? value_data : TSDataView{},
+                                            value_live() ? value_data.borrowed_ref() : TSDataView{},
                                             scheduling_notifier);
         }
         else if (input != nullptr && value_data.valid())
         {
-            input->make_active(value_data.path_from_root(), value_data, scheduling_notifier);
+            input->make_active(value_data.path_from_root(), value_data.borrowed_ref(), scheduling_notifier);
         }
     }
 
@@ -147,10 +152,21 @@ namespace hgraph
                              Notifiable              *scheduling_notifier,
                              engine_time_t            evaluation_time) noexcept
         : input_(input),
-          data_(value_data, raw_data, target_node),
+          data_(std::move(value_data), std::move(raw_data), target_node),
           scheduling_notifier_(scheduling_notifier),
           evaluation_time_(evaluation_time)
     {
+    }
+
+    TSInputView TSInputView::borrowed_ref() const noexcept
+    {
+        auto cursor = data_.borrowed_ref();
+        return TSInputView{input_,
+                           std::move(cursor.value_data),
+                           std::move(cursor.raw_data),
+                           cursor.target_node,
+                           scheduling_notifier_,
+                           evaluation_time_};
     }
 
     namespace detail
@@ -237,14 +253,14 @@ namespace hgraph
 
     ValueView TSInputView::value() const
     {
-        auto data = data_view();
+        const auto &data = data_view();
         if (data.valid()) { return data.value(); }
         throw std::logic_error("TSInputView::value requires a live input view");
     }
 
     ValueView TSInputView::delta_value() const
     {
-        auto data = data_view();
+        const auto &data = data_view();
         if (data.valid()) { return data.delta_value(evaluation_time_); }
         throw std::logic_error("TSInputView::delta_value requires a live input view");
     }
@@ -268,7 +284,7 @@ namespace hgraph
 
             auto target = link->target_output_at_path(*target_schema, data_.target_node);
             if (!target.bound()) { return TimeSeriesReference::empty(view_schema); }
-            return TimeSeriesReference{target};
+            return TimeSeriesReference{std::move(target)};
         }
 
         const auto &ops = detail::input_endpoint_ops_for(view_schema);
@@ -320,52 +336,52 @@ namespace hgraph
 
     TSSInputView TSInputView::as_set() &
     {
-        return TSSInputView{*this};
+        return TSSInputView{borrowed_ref()};
     }
 
     TSSInputView TSInputView::as_set() const &
     {
-        return TSSInputView{*this};
+        return TSSInputView{borrowed_ref()};
     }
 
     TSDInputView TSInputView::as_dict() &
     {
-        return TSDInputView{*this};
+        return TSDInputView{borrowed_ref()};
     }
 
     TSDInputView TSInputView::as_dict() const &
     {
-        return TSDInputView{*this};
+        return TSDInputView{borrowed_ref()};
     }
 
     TSBInputView TSInputView::as_bundle() &
     {
-        return TSBInputView{*this};
+        return TSBInputView{borrowed_ref()};
     }
 
     TSBInputView TSInputView::as_bundle() const &
     {
-        return TSBInputView{*this};
+        return TSBInputView{borrowed_ref()};
     }
 
     TSLInputView TSInputView::as_list() &
     {
-        return TSLInputView{*this};
+        return TSLInputView{borrowed_ref()};
     }
 
     TSLInputView TSInputView::as_list() const &
     {
-        return TSLInputView{*this};
+        return TSLInputView{borrowed_ref()};
     }
 
     TSWInputView TSInputView::as_window() &
     {
-        return TSWInputView{*this};
+        return TSWInputView{borrowed_ref()};
     }
 
     TSWInputView TSInputView::as_window() const &
     {
-        return TSWInputView{*this};
+        return TSWInputView{borrowed_ref()};
     }
 
     bool TSInputView::is_target_position() const noexcept
@@ -380,7 +396,7 @@ namespace hgraph
 
     TSDataView TSInputView::resolve_target_data_view() const noexcept
     {
-        return data_.resolved_value_data();
+        return data_.resolved_value_data().borrowed_ref();
     }
 
     bool TSInputView::target_view_live() const noexcept
@@ -395,14 +411,14 @@ namespace hgraph
 
     TSInputView TSInputView::child_from_target(TSDataView child, std::size_t index) const
     {
-        auto cursor = data_.target_child(child, index);
-        return TSInputView{input_, cursor.value_data, cursor.raw_data, cursor.target_node,
+        auto cursor = data_.target_child(std::move(child), index);
+        return TSInputView{input_, std::move(cursor.value_data), std::move(cursor.raw_data), cursor.target_node,
                            scheduling_notifier_, evaluation_time_};
     }
 
     TSInputView TSInputView::child_from_input(std::size_t index) const
     {
-        auto parent = data_.value_data;
+        auto parent = data_.value_data.borrowed_ref();
         auto projection = detail::input_child_projection(parent, index);
         if (projection.target_link.valid())
         {
@@ -420,7 +436,7 @@ namespace hgraph
                                                    std::size_t index) const noexcept
     {
         static_cast<void>(index);
-        return TSInputView{input_, projection.visible, projection.target_link, nullptr,
+        return TSInputView{input_, std::move(projection.visible), std::move(projection.target_link), nullptr,
                            scheduling_notifier_, evaluation_time_};
     }
 

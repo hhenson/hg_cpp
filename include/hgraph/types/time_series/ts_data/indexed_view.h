@@ -19,9 +19,13 @@ namespace hgraph
     class IndexedTSDataView
     {
       public:
-        /** Underlying generic TSData view. */
-        [[nodiscard]] const TSDataView &base() const noexcept;
-        [[nodiscard]] TSDataView &base() noexcept;
+        /** Transient generic TSData view over the same storage. */
+        [[nodiscard]] TSDataView base() const noexcept;
+
+        IndexedTSDataView(const IndexedTSDataView &) = delete;
+        IndexedTSDataView &operator=(const IndexedTSDataView &) = delete;
+        IndexedTSDataView(IndexedTSDataView &&) noexcept = default;
+        IndexedTSDataView &operator=(IndexedTSDataView &&) noexcept = default;
 
         /** Binding and schema carried by the underlying TSData view. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;
@@ -65,7 +69,7 @@ namespace hgraph
         [[nodiscard]] KeyValueRange<std::size_t, TSDataView> modified_items(engine_time_t evaluation_time) const;
 
       protected:
-        IndexedTSDataView(TSDataView &view, TSTypeKind expected_kind, const char *what);
+        IndexedTSDataView(TSDataView view, TSTypeKind expected_kind);
 
         /** True when the indexed child has ever received a value. */
         [[nodiscard]] bool child_valid(std::size_t index) const;
@@ -79,7 +83,6 @@ namespace hgraph
             KeyValueRange<std::size_t, TSDataView>::predicate_fn predicate) const;
 
       private:
-        static void validate_kind(const TSDataView &view, TSTypeKind expected_kind, const char *what);
         [[nodiscard]] engine_time_t child_last_modified_time(std::size_t index) const;
         [[nodiscard]] TSDataView at_impl(std::size_t index);
         [[nodiscard]] static Range<TSDataView> empty_values_range() noexcept;
@@ -90,7 +93,7 @@ namespace hgraph
         [[nodiscard]] static std::pair<std::size_t, TSDataView> project_item(const void *context, const void *,
                                                                              std::size_t index);
 
-        TSDataView *view_{nullptr};
+        IndexedTSDataStorageRef storage_{};
     };
 
     /** Named fixed bundle view over indexed TSData children. */
@@ -100,7 +103,7 @@ namespace hgraph
         using IndexedTSDataView::at;
         using IndexedTSDataView::operator[];
 
-        explicit TSBDataView(TSDataView &view);
+        explicit TSBDataView(TSDataView view);
 
         /** Child field view by schema field name. */
         [[nodiscard]] TSDataView at(std::string_view name) &;
@@ -145,7 +148,7 @@ namespace hgraph
     class TSLDataView : public IndexedTSDataView
     {
       public:
-        explicit TSLDataView(TSDataView &view);
+        explicit TSLDataView(TSDataView view);
     };
 }  // namespace hgraph
 

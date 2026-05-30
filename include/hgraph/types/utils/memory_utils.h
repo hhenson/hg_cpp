@@ -523,7 +523,16 @@ namespace hgraph
                   m_data(data)
             {
             }
+            constexpr StorageRef(const Binding *binding, const void *data) noexcept
+                : m_binding(binding),
+                  m_data(const_cast<void *>(data))
+            {
+            }
             constexpr StorageRef(const Binding &binding, void *data) noexcept
+                : StorageRef(&binding, data)
+            {
+            }
+            constexpr StorageRef(const Binding &binding, const void *data) noexcept
                 : StorageRef(&binding, data)
             {
             }

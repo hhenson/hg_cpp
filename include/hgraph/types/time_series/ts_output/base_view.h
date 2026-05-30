@@ -28,13 +28,12 @@ namespace hgraph
     {
       public:
         TSOutputHandle() noexcept;
-        TSOutputHandle(const TSOutput *output, TSDataView data) noexcept;
+        TSOutputHandle(const TSOutput *output, const TSDataView &data) noexcept;
         explicit TSOutputHandle(const TSOutputView &view) noexcept;
 
         /** Owning output and underlying TSData view. */
         [[nodiscard]] const TSOutput *output() const noexcept;
-        [[nodiscard]] const TSDataView &data_view() const noexcept;
-        [[nodiscard]] TSDataView &data_view() noexcept;
+        [[nodiscard]] TSDataView data_view() const noexcept;
 
         /** Binding and schema for the borrowed TSData. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;
@@ -50,7 +49,7 @@ namespace hgraph
 
       private:
         const TSOutput *output_{nullptr};
-        TSDataView      data_{};
+        TSDataStorageRef<> data_{};
     };
 
     /**
@@ -63,8 +62,16 @@ namespace hgraph
     {
       public:
         TSOutputView() noexcept;
-        TSOutputView(const TSOutput *output, TSDataView data, engine_time_t evaluation_time) noexcept;
+        TSOutputView(const TSOutput *output, const TSDataView &data, engine_time_t evaluation_time) noexcept;
         TSOutputView(TSOutputHandle handle, engine_time_t evaluation_time) noexcept;
+
+        TSOutputView(const TSOutputView &) = delete;
+        TSOutputView &operator=(const TSOutputView &) = delete;
+        TSOutputView(TSOutputView &&) noexcept = default;
+        TSOutputView &operator=(TSOutputView &&) noexcept = default;
+
+        /** Explicitly recreate a transient cursor over the same output position. */
+        [[nodiscard]] TSOutputView borrowed_ref() const noexcept;
 
         /** Owning output and underlying TSData view. */
         [[nodiscard]] const TSOutput *output() const noexcept;

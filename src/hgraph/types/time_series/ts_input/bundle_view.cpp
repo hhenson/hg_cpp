@@ -130,7 +130,7 @@ namespace hgraph
         if (index >= size()) { throw std::out_of_range("TSBInputView::at index out of range"); }
         if (view_.is_target_position())
         {
-            auto data = view_.data_view();
+            const auto &data = view_.data_view();
             auto bundle = data.as_bundle();
             return view_.child_from_target(bundle.at(index), index);
         }

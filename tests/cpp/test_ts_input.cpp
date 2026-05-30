@@ -8,6 +8,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace
@@ -71,7 +73,7 @@ namespace
     {
         using value_type = std::decay_t<decltype(*range.begin())>;
         std::vector<value_type> result;
-        for (auto value : range) { result.push_back(value); }
+        for (auto value : range) { result.emplace_back(std::move(value)); }
         return result;
     }
 
@@ -87,6 +89,15 @@ namespace
 TEST_CASE("TSInput builds a non-peered TSB root with nested peered terminals")
 {
     using namespace hgraph;
+
+    static_assert(!std::is_copy_constructible_v<TSInputView>);
+    static_assert(!std::is_copy_assignable_v<TSInputView>);
+    static_assert(std::is_move_constructible_v<TSInputView>);
+    static_assert(!std::is_copy_constructible_v<TSSInputView>);
+    static_assert(!std::is_copy_constructible_v<TSDInputView>);
+    static_assert(!std::is_copy_constructible_v<TSBInputView>);
+    static_assert(!std::is_copy_constructible_v<TSLInputView>);
+    static_assert(!std::is_copy_constructible_v<TSWInputView>);
 
     auto       &registry = TypeRegistry::instance();
     const auto *int_meta = registry.register_scalar<int>("int");
@@ -379,7 +390,7 @@ TEST_CASE("TSInput data views project non-peered prefixes")
     auto list_view = items.as_list();
     list_view[0].bind_output(first_output.view(t1));
 
-    auto root_data = root_view.data_view();
+    auto root_data = root_view.data_view().borrowed_ref();
     REQUIRE(root_data.valid());
     REQUIRE(root_data.schema() == input.schema());
     REQUIRE(root_data.binding() == root_view.binding());
@@ -447,7 +458,7 @@ TEST_CASE("TSInput data views step through target links and rebinds")
     REQUIRE(cached_child.data_view().schema() == ts_int);
     REQUIRE(cached_child.value().checked_as<int>() == 20);
 
-    auto root_data = root_view.data_view();
+    auto root_data = root_view.data_view().borrowed_ref();
     auto root_data_bundle = root_data.as_bundle();
     auto target_data = root_data_bundle.field("items");
     auto target_data_list = target_data.as_list();
@@ -464,7 +475,8 @@ TEST_CASE("TSInput data views step through target links and rebinds")
     REQUIRE(cached_child.data_view().schema() == ts_int);
     REQUIRE(cached_child.value().checked_as<int>() == 200);
 
-    auto rebound_root_data = input.view(nullptr, t2).data_view();
+    auto rebound_root_view = input.view(nullptr, t2);
+    auto rebound_root_data = rebound_root_view.data_view().borrowed_ref();
     auto rebound_root_data_bundle = rebound_root_data.as_bundle();
     auto rebound_target_data = rebound_root_data_bundle.field("items");
     auto rebound_target_data_list = rebound_target_data.as_list();
@@ -611,7 +623,7 @@ TEST_CASE("TSInput output binding levels expose values and data views from root 
     REQUIRE(root_data_delta.at("leaf").checked_as<int>() == 7);
     REQUIRE(root_data_delta.at("leaf_list").as_map().at(key_one.view()).checked_as<int>() == 2000);
 
-    auto root_data = root_view.data_view();
+    auto root_data = root_view.data_view().borrowed_ref();
     REQUIRE(root_data.valid());
     REQUIRE(root_data.schema() == root);
     REQUIRE(root_data.all_valid());

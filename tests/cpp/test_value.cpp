@@ -30,6 +30,23 @@ namespace
 TEST_CASE("ValueOps: ops_for<T> returns a stable canonical vtable")
 {
     using namespace hgraph;
+
+    static_assert(!std::is_copy_constructible_v<ValueView>);
+    static_assert(!std::is_copy_assignable_v<ValueView>);
+    static_assert(std::is_move_constructible_v<ValueView>);
+    static_assert(!std::is_copy_constructible_v<TupleView>);
+    static_assert(!std::is_copy_constructible_v<BundleView>);
+    static_assert(!std::is_copy_constructible_v<ListView>);
+    static_assert(!std::is_copy_constructible_v<SetView>);
+    static_assert(!std::is_copy_constructible_v<MapView>);
+    static_assert(!std::is_copy_constructible_v<CyclicBufferView>);
+    static_assert(!std::is_copy_constructible_v<QueueView>);
+    static_assert(!std::is_copy_constructible_v<MutableTupleView>);
+    static_assert(!std::is_copy_constructible_v<MutableBundleView>);
+    static_assert(!std::is_copy_constructible_v<MutableListView>);
+    static_assert(!std::is_copy_constructible_v<MutableCyclicBufferView>);
+    static_assert(!std::is_copy_constructible_v<MutableQueueView>);
+
     REQUIRE(&ops_for<int>() == &ops_for<int>());
     REQUIRE(&ops_for<int>() != &ops_for<double>());
 
@@ -245,6 +262,8 @@ TEST_CASE("ValueView: clone and copy_from preserve binding and payload")
     Value target{0};
     target.begin_mutation().copy_from(source.view());
     REQUIRE(target.as<int>() == 42);
+    target.assign_from(cloned.view());
+    REQUIRE(target.as<int>() == 7);
 
     Value other_type{3.0};
     REQUIRE_FALSE(target.begin_mutation().try_copy_from(other_type.view()));

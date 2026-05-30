@@ -10,7 +10,8 @@
 
 namespace hgraph::ts_data_plan_factory_detail
 {
-    [[nodiscard]] const TSDataOps &atomic_ts_data_ops(const ValueTypeBinding         &value_binding,
+    [[nodiscard]] const TSDataOps &atomic_ts_data_ops(TSTypeKind                     kind,
+                                                      const ValueTypeBinding         &value_binding,
                                                       const ValueTypeBinding         &delta_binding,
                                                       const MemoryUtils::StoragePlan &plan, std::size_t value_offset,
                                                       std::size_t tracking_offset);

@@ -69,6 +69,7 @@ namespace hgraph
     struct TSDataOps
     {
         const void *context{nullptr};
+        TSTypeKind  kind{TSTypeKind::TS};
         bool        allows_mutation{false};
 
         const TSDataLayout *(*layout_impl)(const void *context) = &ts_data_detail::missing_layout;

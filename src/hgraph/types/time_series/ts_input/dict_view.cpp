@@ -78,7 +78,7 @@ namespace hgraph
     TSInputView TSDInputView::at_slot(std::size_t slot) const
     {
         auto child = data_view().at_slot(slot);
-        return view_.child_from_target(child, slot);
+        return view_.child_from_target(std::move(child), slot);
     }
 
     bool TSDInputView::contains(const ValueView &key) const { return data_view().contains(key); }

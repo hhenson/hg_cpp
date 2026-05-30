@@ -2,8 +2,10 @@
 #define HGRAPH_CPP_TS_DATA_BASE_VIEW_H
 
 #include <hgraph/types/time_series/ts_data/ops.h>
+#include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value_view.h>
 #include <hgraph/util/date_time.h>
+#include <concepts>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -17,6 +19,104 @@ namespace hgraph
         class TSOutputAlternativeStore;
     }
 
+    template <typename DataOps = TSDataOps>
+    class TSDataStorageRef
+    {
+      public:
+        constexpr TSDataStorageRef() noexcept = default;
+
+        constexpr TSDataStorageRef(const TSDataBinding *binding, void *data) noexcept
+            requires std::same_as<DataOps, TSDataOps>
+            : storage_(binding, data),
+              ops_(binding != nullptr ? binding->ops : nullptr)
+        {
+        }
+
+        constexpr TSDataStorageRef(const TSDataBinding *binding, const void *data) noexcept
+            requires std::same_as<DataOps, TSDataOps>
+            : TSDataStorageRef(binding, const_cast<void *>(data))
+        {
+        }
+
+        TSDataStorageRef(TSDataStorageRef<> storage, TSTypeKind expected_kind)
+            requires(!std::same_as<DataOps, TSDataOps>)
+            : storage_(storage.storage_),
+              ops_(checked_ops(storage, expected_kind))
+        {
+        }
+
+        /** True when both the binding and data pointer are present. */
+        [[nodiscard]] constexpr bool has_value() const noexcept { return storage_.has_value(); }
+        [[nodiscard]] constexpr bool valid() const noexcept
+        {
+            if constexpr (std::same_as<DataOps, TSDataOps>)
+            {
+                return has_value();
+            }
+            else
+            {
+                return has_value() && ops_ != nullptr;
+            }
+        }
+        [[nodiscard]] constexpr explicit operator bool() const noexcept { return valid(); }
+
+        /** True when the reference carries a binding, even without data. */
+        [[nodiscard]] constexpr bool bound() const noexcept { return storage_.bound(); }
+
+        /** Bound TSData binding, schema, and memory. */
+        [[nodiscard]] constexpr const TSDataBinding *binding() const noexcept { return storage_.binding(); }
+        [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept
+        {
+            const auto *bound = binding();
+            return bound != nullptr ? bound->type_meta : nullptr;
+        }
+        [[nodiscard]] constexpr void *data() const noexcept { return storage_.data(); }
+
+        /** Generic storage identity over the same binding and memory. */
+        [[nodiscard]] constexpr TSDataStorageRef<> storage_ref() const noexcept
+        {
+            return TSDataStorageRef<>{binding(), data()};
+        }
+
+        /** Checked access to the ops table with the ref's requested type. */
+        [[nodiscard]] const DataOps &ops() const
+        {
+            if (ops_ == nullptr) { throw std::logic_error("TSDataStorageRef is not bound to TSData ops"); }
+            return *ops_;
+        }
+
+        void reset() noexcept
+        {
+            storage_.reset();
+            ops_ = nullptr;
+        }
+
+      private:
+        [[nodiscard]] static const DataOps *checked_ops(TSDataStorageRef<> storage, TSTypeKind expected_kind)
+            requires(!std::same_as<DataOps, TSDataOps>)
+        {
+            if (!storage.has_value()) { throw std::logic_error("TSDataStorageRef requires live TSData storage"); }
+
+            const auto &base_ops = storage.ops();
+            if (base_ops.kind != expected_kind)
+            {
+                throw std::invalid_argument("TSDataStorageRef requires the matching TSData ops kind");
+            }
+            return &static_cast<const DataOps &>(base_ops);
+        }
+
+        MemoryUtils::StorageRef<TSDataBinding> storage_{};
+        const DataOps                         *ops_{nullptr};
+
+        template <typename>
+        friend class TSDataStorageRef;
+    };
+
+    using IndexedTSDataStorageRef = TSDataStorageRef<IndexedTSDataOps>;
+    using TSSDataStorageRef       = TSDataStorageRef<TSSDataOps>;
+    using TSDDataStorageRef       = TSDataStorageRef<TSDDataOps>;
+    using TSWDataStorageRef       = TSDataStorageRef<TSWDataOps>;
+
     class TSDataView
     {
       public:
@@ -24,6 +124,18 @@ namespace hgraph
 
         TSDataView(const TSDataBinding *binding, void *data) noexcept;
         TSDataView(const TSDataBinding *binding, const void *data) noexcept;
+        explicit TSDataView(TSDataStorageRef<> storage) noexcept;
+
+        TSDataView(const TSDataView &) = delete;
+        TSDataView &operator=(const TSDataView &) = delete;
+        TSDataView(TSDataView &&) noexcept = default;
+        TSDataView &operator=(TSDataView &&) noexcept = default;
+
+        /** Explicitly recreate a transient cursor over the same TSData storage. */
+        [[nodiscard]] TSDataView borrowed_ref() const noexcept;
+
+        /** Copyable borrowed storage identity used by handles and owner links. */
+        [[nodiscard]] TSDataStorageRef<> storage_ref() const noexcept;
 
         /** True when the view has both a binding and a live TSData memory pointer. */
         [[nodiscard]] bool valid() const noexcept;
@@ -142,16 +254,15 @@ namespace hgraph
         friend class TSDDataView;
         friend class TSDDataMutationView;
 
-        TSDataView(const TSDataBinding *binding, void *data, TSDataView &parent, std::size_t child_id);
-        TSDataView(const TSDataBinding *binding, const void *data, TSDataView &parent, std::size_t child_id);
+        TSDataView(const TSDataBinding *binding, void *data, const TSDataView &parent, std::size_t child_id);
+        TSDataView(const TSDataBinding *binding, const void *data, const TSDataView &parent, std::size_t child_id);
 
         void require_live(const char *what) const;
         [[nodiscard]] TSDataTracking &mutable_tracking() const;
         void bind_parent(const TSDataView &parent, std::size_t child_id) const;
         void bind_parent(TSDataParent &parent, std::size_t child_id) const;
 
-        const TSDataBinding *binding_{nullptr};
-        const void          *data_{nullptr};
+        TSDataStorageRef<> storage_{};
     };
 
     class TSDataMutationView
@@ -169,11 +280,8 @@ namespace hgraph
 
         ~TSDataMutationView() noexcept;
 
-        /** Read-only projection of the view being mutated. */
-        [[nodiscard]] const TSDataView &view() const noexcept;
-
-        /** Mutable projection of the view being mutated. */
-        [[nodiscard]] TSDataView &view() noexcept;
+        /** Transient projection of the storage being mutated. */
+        [[nodiscard]] TSDataView view() const noexcept;
 
         /** Operation table used by the underlying TSData binding. */
         [[nodiscard]] const TSDataOps &ops() const;
@@ -215,8 +323,8 @@ namespace hgraph
         [[nodiscard]] bool record_modified_local() const;
         void notify_parent_modified() const;
 
-        TSDataView    view_{};
-        engine_time_t mutation_time_{MIN_DT};
+        TSDataStorageRef<> storage_{};
+        engine_time_t      mutation_time_{MIN_DT};
     };
 
     /** Apply a slot mutation result to the owning mutation view's timestamp state. */

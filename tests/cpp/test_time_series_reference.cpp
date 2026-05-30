@@ -49,7 +49,7 @@ namespace
     {
         using value_type = std::decay_t<decltype(*range.begin())>;
         std::vector<value_type> result;
-        for (auto value : range) { result.push_back(value); }
+        for (auto value : range) { result.emplace_back(std::move(value)); }
         return result;
     }
 

@@ -15,9 +15,13 @@ namespace hgraph
       public:
         explicit TSDDataView(TSDataView view);
 
-        /** Underlying generic TSData view. */
-        [[nodiscard]] const TSDataView &base() const noexcept;
-        [[nodiscard]] TSDataView &base() noexcept;
+        /** Transient generic TSData view over the same storage. */
+        [[nodiscard]] TSDataView base() const noexcept;
+
+        TSDDataView(const TSDDataView &) = delete;
+        TSDDataView &operator=(const TSDDataView &) = delete;
+        TSDDataView(TSDDataView &&) noexcept = default;
+        TSDDataView &operator=(TSDDataView &&) noexcept = default;
 
         /** Binding, schema, layout, and value projections for the dictionary node. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;
@@ -83,6 +87,9 @@ namespace hgraph
         /** Begin a mutation view over this dictionary. */
         [[nodiscard]] TSDDataMutationView begin_mutation(engine_time_t evaluation_time) const;
 
+      protected:
+        [[nodiscard]] const TSDDataOps &dict_ops() const;
+
       private:
         [[nodiscard]] static Range<ValueView> empty_value_range() noexcept;
         [[nodiscard]] static Range<TSDataView> empty_ts_data_range() noexcept;
@@ -99,10 +106,8 @@ namespace hgraph
         [[nodiscard]] static std::pair<ValueView, TSDataView> project_ts_item_at_slot(const void *context,
                                                                                       const void *,
                                                                                       std::size_t slot);
-        [[nodiscard]] const TSDDataOps &dict_ops() const;
-        static void validate_kind(const TSDataView &view);
 
-        TSDataView view_{};
+        TSDDataStorageRef storage_{};
     };
 
     /** Mutation view over dictionary-shaped TSData. */

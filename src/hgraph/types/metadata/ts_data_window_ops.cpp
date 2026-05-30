@@ -172,7 +172,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     throw std::invalid_argument("TSW copy requires a list-shaped source value");
                 }
-                return IndexedValueView{source};
+                return source.as_indexed_view();
             }
 
             [[nodiscard]] const MemoryUtils::StoragePlan &time_plan() const
@@ -710,6 +710,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 TSDataOps &base_ops = ops;
                 base_ops = TSDataOps{
                     .context                   = this,
+                    .kind                      = TSTypeKind::TSW,
                     .allows_mutation           = true,
                     .layout_impl               = &window_layout,
                     .tracking_impl             = &window_tracking,
