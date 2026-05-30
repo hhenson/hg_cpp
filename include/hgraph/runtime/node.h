@@ -225,6 +225,16 @@ namespace hgraph
                                                 NodeCallbacks callbacks = {},
                                                 TSEndpointSchema input_endpoint = {});
 
+        /**
+         * Typed front-end over ``native``: build this node from a static node
+         * implementation ``TImplementation`` (a stateless struct with a static
+         * ``eval`` taking ``In<>`` / ``Out<>`` / ``State<>`` parameters, plus
+         * optional ``start`` / ``stop``). Defined in
+         * ``<hgraph/types/static_node.h>``, which must be included to use it.
+         */
+        template <typename TImplementation>
+        NodeBuilder &implementation();
+
         NodeBuilder &label(std::string label);
         [[nodiscard]] std::string_view label() const noexcept;
 

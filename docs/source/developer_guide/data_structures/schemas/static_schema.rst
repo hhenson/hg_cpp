@@ -29,8 +29,9 @@ schema at runtime.
 This page describes the compile-time vocabulary, the descriptor
 bridge to the runtime registry, and the design choices that follow
 from the C++-first goal. The selector layer that pairs markers with
-runtime views (``In<>``, ``Out<>``, ``State<>``, ``RecordableState<>``)
-is sketched at the end and will land alongside the view types.
+runtime views (``In<>``, ``Out<>``, ``State<>``) is described under
+*Selector wrappers* below; for the scalar time-series path it is now
+implemented, and node authoring built on it is described in *Wiring*.
 
 Why a compile-time vocabulary
 -----------------------------
@@ -177,8 +178,8 @@ This is the C++ counterpart of Python type-variable resolution. The
 binding from generic to concrete is the *resolution substitution*
 described in *Schemas > Node Schemas > Generic Resolution*.
 
-Selector wrappers (planned)
----------------------------
+Selector wrappers
+-----------------
 
 The selector layer wraps a static-schema marker with a runtime view,
 so a node ``eval`` can take a typed handle as a parameter:
@@ -197,35 +198,46 @@ so a node ``eval`` can take a typed handle as a parameter:
        }
    };
 
-The selectors planned are:
+Implemented today (scalar time-series path), defined in
+``<hgraph/types/static_node.h>``:
 
-- ``In<Name, TSchema, Policies...>`` — typed input view, with
-  optional ``InputActivity`` and ``InputValidity`` policy flags.
-- ``Out<TSchema>`` — typed output view, plus the current
-  ``evaluation_time`` for marking modifications.
-- ``State<TSchema, Name>`` — typed handle into node-local state.
-- ``RecordableState<TSchema, Name>`` — typed handle into the
-  recordable-state output.
-- ``ScalarArg<Name, T>`` — named scalar parameter injected from the
-  wiring layer.
+- ``In<Name, TS<T>>`` — typed input view. ``value()`` reads the current
+  value; ``modified()`` / ``valid()`` report tick state.
+- ``Out<TS<T>>`` — typed output view; carries the current
+  ``evaluation_time`` so ``set(v)`` writes and ticks the output.
+- ``State<T>`` — typed handle into node-local (value-layer) state, with
+  ``get()`` / ``set(v)``.
 
-These depend on the ``TSInputView`` / ``TSOutputView`` machinery and
-the node-builder, which are not implemented yet. The marker +
-descriptor layer described above is independent of those and is
-implemented first.
+How these markers drive node construction — ``StaticNodeSignature`` and
+``NodeBuilder::implementation<T>()`` — is described in *Wiring*.
+
+Planned, landing with their runtime layers:
+
+- container-shaped selectors (``In`` / ``Out`` over ``TSB`` / ``TSL`` /
+  ``TSS`` / ``TSD`` / ``TSW``), with optional ``InputActivity`` /
+  ``InputValidity`` policy flags;
+- ``RecordableState<TSchema, Name>`` — typed recordable-state output;
+- ``ScalarArg<Name, T>`` — named scalar parameter injected from wiring;
+- named state (``State<TSchema, Name>``).
 
 Status
 ------
 
 Today: ``fixed_string``, marker types (``TS``, ``TSS``, ``TSD``,
 ``TSL``, ``TSW`` tick-only, ``REF``, ``SIGNAL``, ``Field``, named &
-un-named ``Bundle`` / ``TSB``, ``ScalarVar``, ``TsVar``), and the
+un-named ``Bundle`` / ``TSB``, ``ScalarVar``, ``TsVar``), the
 ``scalar_descriptor`` / ``schema_descriptor`` / ``field_descriptor``
-traits. These build on top of the live ``TypeRegistry`` API
-(including the named/un-named bundle split) so static schemas
-register and resolve identically to schemas constructed by direct
-factory calls.
+traits, **and the node-authoring selectors** ``In<Name, TS<T>>`` /
+``Out<TS<T>>`` / ``State<T>`` together with ``StaticNodeSignature`` and
+``NodeBuilder::implementation<T>()`` (see *Wiring*). These build on top
+of the live ``TypeRegistry`` API (including the named/un-named bundle
+split) so static schemas register and resolve identically to schemas
+constructed by direct factory calls, and the scalar time-series path is
+wired from a node struct through to a running graph.
 
-Deferred until the relevant runtime layer lands: selector wrappers,
-duration-based ``TSW``, Python-export bridge, generic-resolution
-substitution machinery.
+Deferred until the relevant runtime layer lands: container-shaped
+selectors (``TSB`` / ``TSL`` / ``TSS`` / ``TSD`` / ``TSW`` inputs and
+outputs), ``RecordableState``, ``EvaluationClock`` / ``NodeScheduler``
+injection, push-source ``apply_message``, ``ScalarArg``, named state,
+input activity/validity policy flags, duration-based ``TSW``, the
+Python-export bridge, and generic-resolution substitution.
