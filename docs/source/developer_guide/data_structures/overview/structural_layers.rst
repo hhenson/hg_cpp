@@ -18,6 +18,19 @@ The runtime has five major structural layers:
 ``TimeSeries``
     Holds value validity, modification time, parent/child relationships, subscribers, structural delta state, and a separate TS data component containing the current payload plus delta payload.
 
+.. note::
+
+   **Current implementation.** ``GraphExecutor`` (``runtime/executor.h``)
+   currently subsumes the ``EvaluationEngine`` responsibilities: it owns
+   ``start_time`` / ``end_time`` / run mode and drives the simulation loop
+   directly, and there is no separate ``EvaluationClock`` type yet — nodes
+   receive ``evaluation_time`` explicitly. A distinct ``EvaluationEngine`` /
+   ``EvaluationClock`` split (with lifecycle observers, callback queues, and a
+   push-message receiver) is only **one candidate** design, carried over from
+   ``ext/2603`` (see *Execution Layer*); the current leaning is to keep these
+   responsibilities folded into the executor's type-erased ops. Treat the
+   separate engine/clock as a recorded alternative, not a committed plan.
+
 The high-level relationship is:
 
 .. mermaid::

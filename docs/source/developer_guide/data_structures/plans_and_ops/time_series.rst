@@ -39,6 +39,15 @@ The implementation uses the following names consistently:
     subscribers, path identity, and kind-specific notification state.
     ``TSState`` does not own the hot payload bytes.
 
+    .. note::
+
+       ``TSState`` is a *conceptual grouping*, not a distinct runtime type in
+       the current code. The state it names is realised inside ``TSData`` —
+       chiefly the per-level ``TSDataTracking`` record (``last_modified_time``,
+       ``TSDataParentLink``) and ``TSDataObserverSet`` — together with
+       endpoint-local state on ``TSOutput`` / ``TSInput``. Use the name when
+       discussing the *role*; do not expect a ``TSState`` class to exist.
+
 ``TSData``
     The payload/delta component owned by ``TSOutput`` and projected by
     ``TSInput``. Real output TSData owns the current value storage and
