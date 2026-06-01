@@ -32,8 +32,7 @@ runtime view:
 
    struct Counter            // a source with node-local state
    {
-       static constexpr auto name      = "counter";
-       static constexpr NodeKind node_kind = NodeKind::PullSource;
+       static constexpr auto name = "counter";
 
        static void start(State<int> state) { state.set(0); }
        static void eval(State<int> state, Out<TS<int>> out)
@@ -51,11 +50,18 @@ The selectors used at this layer are:
 - ``Out<TS<T>>`` — a typed output. ``set(v)`` writes the value and ticks the
   output at the current evaluation time.
 - ``State<T>`` — a typed handle into node-local (value-layer) state.
+- ``Scalar<"name", T>`` *(planned)* — a named scalar value (a wiring argument or
+  a push-source message); the scalar analog of ``In``.
 
-Parameters are injected **by type, not position**: a hook lists only the
-selectors it needs and the runtime synthesises each from the node and the
-current evaluation time. ``eval`` (and ``start`` / ``stop``) must be ``static``
-and return ``void``, and the implementation type must be empty/stateless.
+Each parameter's **selector type** identifies its role, so the ``In`` / ``Out``
+/ ``State`` / service parameters may appear in **any position** — the runtime
+classifies them by type, not by where they sit. The node's *argument schema*,
+however, is **ordered**: the relative order of ``eval``'s inputs defines the
+node's arguments and is wired positionally or by keyword (the ``In<>`` name),
+matching the equivalent Python signature (the two schemas must agree).
+``start`` / ``stop`` differ — each takes only the subset it needs, matched by
+name and validated by type. All hooks must be ``static`` and return ``void``,
+and the implementation type must be empty/stateless.
 
 Signature extraction
 ---------------------
@@ -68,9 +74,10 @@ node contract:
   input ``TSB`` (in argument order, by their ``Name``);
 - **output schema** — the single ``Out<>`` parameter's schema (at most one);
 - **state schema** — the ``State<T>`` parameter's value-layer schema;
-- **node kind** — inferred from which selectors are present: ``In`` and ``Out``
-  → ``Compute``; ``Out`` only → ``PullSource``; ``In`` only → ``Sink``. A
-  ``static constexpr NodeKind node_kind`` member overrides the inference;
+- **node kind** — determined entirely from the node's shape: ``eval`` with
+  ``In`` and ``Out`` → ``Compute``; ``Out`` only → ``PullSource``; ``In`` only
+  → ``Sink``; an ``apply_message`` hook → ``PushSource`` (planned). There is no
+  override — the kind has a single source of truth in the code;
 - **input endpoint** — a ``TSEndpointSchema`` of ``non_peered(input_tsb, {
   peered(field)… })``, one peered terminal per input.
 
@@ -137,9 +144,9 @@ Status
 Implemented (the scalar time-series slice): ``In<Name, TS<T>>`` /
 ``Out<TS<T>>`` / ``State<T>`` selectors, ``StaticNodeSignature``,
 ``NodeBuilder::implementation<T>()``, ``start`` / ``stop`` / ``eval`` hooks,
-node-kind inference (Compute / PullSource / Sink) with a ``node_kind``
-override, and ``GraphBuilder`` / ``GraphEdge`` assembly. A static
-source → compute graph builds and runs in simulation mode.
+node-kind inference (Compute / PullSource / Sink) from shape with no override,
+and ``GraphBuilder`` / ``GraphEdge`` assembly. A static source → compute graph
+builds and runs in simulation mode.
 
 Deferred (land with the relevant runtime layer):
 
@@ -147,6 +154,8 @@ Deferred (land with the relevant runtime layer):
   ``TSW`` inputs and outputs (non-peered prefixes, nested endpoint
   annotations);
 - ``RecordableState``, ``EvaluationClock`` / ``NodeScheduler`` injection;
-- push-source ``apply_message`` hooks and ``ScalarArg`` injection;
+- push-source nodes — a required ``start(Sender<T>)`` plus an
+  ``apply_message(Scalar<"name", T>, …)`` hook — and ``Scalar<"name", T>``
+  arguments;
 - input ``InputActivity`` / ``InputValidity`` policy flags, named state;
 - generic resolution (``TsVar`` / ``ScalarVar``) and the Python lowering.

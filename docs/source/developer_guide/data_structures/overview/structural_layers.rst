@@ -26,8 +26,8 @@ The runtime has five major structural layers:
    directly, and there is no separate ``EvaluationClock`` type yet — nodes
    receive ``evaluation_time`` explicitly. A distinct ``EvaluationEngine`` /
    ``EvaluationClock`` split (with lifecycle observers, callback queues, and a
-   push-message receiver) is only **one candidate** design, carried over from
-   ``ext/2603`` (see *Execution Layer*); the current leaning is to keep these
+   push-message receiver) is only **one candidate** design (see *Execution
+   Layer*); the current leaning is to keep these
    responsibilities folded into the executor's type-erased ops. Treat the
    separate engine/clock as a recorded alternative, not a committed plan.
 

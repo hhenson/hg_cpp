@@ -13,11 +13,10 @@ namespace
 {
     using namespace hgraph;
 
-    // Source: Out only, explicit PullSource kind. Writes a constant.
+    // Source: Out only, no In -> kind inferred as PullSource. Writes a constant.
     struct ConstantSource
     {
-        static constexpr auto     name      = "constant_source";
-        static constexpr NodeKind node_kind = NodeKind::PullSource;
+        static constexpr auto name = "constant_source";
 
         static void eval(Out<TS<int>> out) { out.set(41); }
     };
@@ -41,11 +40,10 @@ namespace
         }
     };
 
-    // Stateful source exercising State<int> across start/eval.
+    // Stateful source (Out only, no In -> PullSource) exercising State<int>.
     struct Counter
     {
-        static constexpr auto     name      = "counter";
-        static constexpr NodeKind node_kind = NodeKind::PullSource;
+        static constexpr auto name = "counter";
 
         static void start(State<int> state) { state.set(0); }
 

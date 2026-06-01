@@ -216,8 +216,15 @@ Planned, landing with their runtime layers:
 - container-shaped selectors (``In`` / ``Out`` over ``TSB`` / ``TSL`` /
   ``TSS`` / ``TSD`` / ``TSW``), with optional ``InputActivity`` /
   ``InputValidity`` policy flags;
-- ``RecordableState<TSchema, Name>`` — typed recordable-state output;
-- ``ScalarArg<Name, T>`` — named scalar parameter injected from wiring;
+- ``RecordableState<TSchema, Id<"...">>`` — typed recordable-state output; the
+  optional ``Id<"...">`` names the recordable (Python's optional
+  ``recordable_id``);
+- ``Scalar<"name", T>`` — named scalar parameter (a wiring argument or a
+  push-source message);
+- ``PythonScalar<"name", Type<"my.module.type">>`` — a named Python-object
+  scalar whose expected Python type is named (as a string) for type-checking;
+  omitting the type (``PythonScalar<"name">``) defaults to ``object`` (any
+  Python object / generic);
 - named state (``State<TSchema, Name>``).
 
 Status
@@ -238,6 +245,6 @@ wired from a node struct through to a running graph.
 Deferred until the relevant runtime layer lands: container-shaped
 selectors (``TSB`` / ``TSL`` / ``TSS`` / ``TSD`` / ``TSW`` inputs and
 outputs), ``RecordableState``, ``EvaluationClock`` / ``NodeScheduler``
-injection, push-source ``apply_message``, ``ScalarArg``, named state,
+injection, push-source ``apply_message``, ``Scalar`` arguments, named state,
 input activity/validity policy flags, duration-based ``TSW``, the
 Python-export bridge, and generic-resolution substitution.

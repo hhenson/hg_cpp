@@ -9,3 +9,4 @@ The user guide describes the HGraph model from a user point of view. The initial
    what_is_hgraph
    core_concepts
    quick_start
+   authoring_nodes_cpp

@@ -248,7 +248,6 @@ namespace hgraph
         template <typename T> concept has_start     = requires { &T::start; };
         template <typename T> concept has_stop      = requires { &T::stop; };
         template <typename T> concept has_name      = requires { T::name; };
-        template <typename T> concept has_node_kind = requires { T::node_kind; };
     }  // namespace static_node_detail
 
     // -----------------------------------------------------------------
@@ -354,16 +353,16 @@ namespace hgraph
 
         [[nodiscard]] static NodeKind node_kind()
         {
-            if constexpr (static_node_detail::has_node_kind<TImplementation>) { return TImplementation::node_kind; }
-            else
-            {
-                const bool has_in  = input_count() > 0;
-                const bool has_out = output_count() > 0;
-                if (has_in && has_out) { return NodeKind::Compute; }
-                if (has_out) { return NodeKind::PullSource; }
-                if (has_in) { return NodeKind::Sink; }
-                return NodeKind::Compute;
-            }
+            // The kind is always determined from the node's shape; there is no
+            // override. A push source is distinguished by an apply_message hook
+            // (not yet implemented); everything else is classified by which of
+            // In / Out are present.
+            const bool has_in  = input_count() > 0;
+            const bool has_out = output_count() > 0;
+            if (has_in && has_out) { return NodeKind::Compute; }
+            if (has_out) { return NodeKind::PullSource; }
+            if (has_in) { return NodeKind::Sink; }
+            return NodeKind::Compute;
         }
 
         /** Input endpoint annotation: a non-peered TSB of peered terminals. */

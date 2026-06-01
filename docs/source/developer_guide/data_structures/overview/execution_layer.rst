@@ -8,8 +8,8 @@ The execution layer contains run-level state. It is not the graph topology itsel
    **Status & direction.** The current runtime implements only the
    ``GraphExecutor`` described under *Current implementation*. The separate
    ``EvaluationEngine`` / ``EvaluationClock`` objects under *Alternative
-   design* are **one candidate** (the ``ext/2603`` shape), **not** a committed
-   target. With the type-erased design the current leaning is to **fold
+   design* are **one candidate**, **not** a committed target. With the
+   type-erased design the current leaning is to **fold
    run-level state and the evaluation loop into the executor's ops** rather
    than introduce separate engine/clock objects. Document execution machinery
    here as it lands, and keep this note honest.
@@ -31,8 +31,8 @@ Current implementation
 Alternative design: a separate engine and clock
 ------------------------------------------------
 
-The split below is the ``ext/2603`` shape, recorded here as an *alternative*,
-**not** the current direction. It lifts run-level state into a separate
+The split below is recorded here as an *alternative*, **not** the current
+direction. It lifts run-level state into a separate
 ``EvaluationEngine`` so real-time mode, observers, and push-sources have a
 dedicated home. The current preference is instead to fold these
 responsibilities into the executor's type-erased ops (see the status note
