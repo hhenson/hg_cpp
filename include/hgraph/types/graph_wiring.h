@@ -21,7 +21,7 @@ namespace hgraph
     /**
      * C++ graph wiring (slice 1: top-level node wiring, no scalars yet).
      *
-     * A graph is authored as a struct with a static ``wire(Wiring &)`` body that
+     * A graph is authored as a struct with a static ``compose(Wiring &)`` body that
      * calls ``wire<NodeType>(w, ports...)`` to add nodes; each call returns a typed
      * ``Port`` to the node's output, and passing ports as inputs records edges.
      * Nodes are **interned** (identical node + inputs → one node) and the graph is
@@ -111,10 +111,10 @@ namespace hgraph
 
     namespace graph_wiring_detail
     {
-        // A graph definition is a struct with a static ``wire(Wiring &, ...)``; a
+        // A graph definition is a struct with a static ``compose(Wiring &, ...)``; a
         // node definition has a static ``eval(...)`` instead.
         template <typename X>
-        concept is_graph_def = requires { &X::wire; };
+        concept is_graph_def = requires { &X::compose; };
 
         template <typename TImplementation>
         [[nodiscard]] NodeBuilder build_node_builder()
@@ -131,19 +131,15 @@ namespace hgraph
      * - If ``X`` is a **node** (has ``eval``): add it with the given input ports
      *   (which must match its time-series inputs, in order) and return a typed
      *   ``Port`` to its output — or ``void`` for a sink.
-     * - If ``X`` is a **sub-graph** (has ``wire``): inline its body into ``w``
+     * - If ``X`` is a **sub-graph** (has ``compose``): inline its body into ``w``
      *   (graphs flatten — no runtime node is produced) and return its output port.
-     *
-     * Inside a graph's own ``wire`` body, call this free function **qualified**
-     * (``hgraph::wire<...>``): the graph method is also named ``wire``, so an
-     * unqualified call would resolve to the method.
      */
     template <typename X, typename... Ports>
     auto wire(Wiring &w, const Ports &...ports)
     {
         if constexpr (graph_wiring_detail::is_graph_def<X>)
         {
-            return X::wire(w, ports...);   // sub-graph: inline its body, return its output port
+            return X::compose(w, ports...);   // sub-graph: inline its body, return its output port
         }
         else
         {
@@ -167,7 +163,7 @@ namespace hgraph
     [[nodiscard]] GraphBuilder build_graph()
     {
         Wiring w;
-        G::wire(w);
+        G::compose(w);
         GraphBuilder graph_builder = std::move(w).finish();
         if constexpr (static_node_detail::has_name<G>) { graph_builder.label(std::string{G::name}); }
         return graph_builder;

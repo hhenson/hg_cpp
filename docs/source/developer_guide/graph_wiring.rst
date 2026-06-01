@@ -154,15 +154,15 @@ The typed C++ facade
   and returns ``Port<output_schema_type>`` (or ``void`` for a sink). Scalar args
   and compile-time per-port schema matching are the next slice; today port schemas
   are validated when edges bind.
-- ``wire<G>(w, ports...)`` — inlines ``G::wire(w, ports...)`` (graphs flatten) and
-  returns ``G``'s output port.
-- ``StaticGraphSignature<G>`` — reflects ``&G::wire`` **skipping the leading
+- ``wire<G>(w, ports...)`` — inlines ``G::compose(w, ports...)`` (graphs flatten)
+  and returns ``G``'s output port.
+- ``StaticGraphSignature<G>`` — reflects ``&G::compose`` **skipping the leading
   ``Wiring&``**: ``Port`` parameters are the graph's time-series inputs, any
   non-``Port`` parameters are its scalar inputs, and the return type is its
   time-series output(s). This is the graph-level mirror of ``StaticNodeSignature``.
 - ``build_graph<G>(...)`` — constructs a ``Wiring``, supplies the time-series
   boundary input ports (for a sub-graph; a top-level graph has **no** time-series
-  inputs or outputs), forwards any scalar inputs, calls ``G::wire(w, …)``, and
+  inputs or outputs), forwards any scalar inputs, calls ``G::compose(w, …)``, and
   returns ``w.finish()``.
 
 The compile-time checks are the C++ advantage over Python; the core re-validates
@@ -170,10 +170,9 @@ schemas at wiring time as a safety net (and as the only check Python relies on).
 
 .. note::
 
-   Inside a graph's own ``wire`` body, call the free ``wire`` **qualified**
-   (``hgraph::wire<…>``): the graph method shares the name, so an unqualified call
-   resolves to the method. A member spelling (``w.wire<…>(…)``) would avoid this;
-   the free form is the current choice.
+   The graph's body method is named ``compose`` and the wiring verb is ``wire`` —
+   distinct names — so inside a ``compose`` body you call ``wire<…>`` directly,
+   without qualification.
 
 
 Graphs flatten

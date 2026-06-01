@@ -2,12 +2,12 @@ Wiring Graphs in C++
 ====================
 
 A *graph* composes nodes — and other graphs — into a runnable program. In C++ a
-graph is a small ``struct`` with a static ``wire`` method: the graph counterpart
+graph is a small ``struct`` with a static ``compose`` method: the graph counterpart
 of authoring a node (see *Authoring Nodes in C++*). It mirrors a Python
 ``@graph``: a signature of time-series inputs and outputs whose body wires the
 sub-components together.
 
-Wiring runs **at wiring time, not at run time** — ``wire`` executes once to build
+Wiring runs **at wiring time, not at run time** — ``compose`` executes once to build
 the graph, never during evaluation. Graphs also **flatten**: composing graphs
 inlines their nodes, and only nodes exist at run time.
 
@@ -17,11 +17,10 @@ inlines their nodes, and only nodes exist at run time.
    ``wire<T>`` for nodes, ``wire<G>`` sub-graph composition (graphs flatten), and
    ``build_graph<G>()`` for a top-level graph. **Scalar inputs**, generic graphs
    and higher-order operators are **not yet implemented** (those examples below are
-   provisional). One ergonomic note: inside a graph's own ``wire`` body, call the
-   free function **qualified** — ``hgraph::wire<...>`` — because the graph method is
-   also named ``wire``; the examples below omit the qualifier for brevity. How it
-   works internally, and how it is shared with Python wiring, is in
-   *Developer Guide > Graph Wiring*.
+   provisional). A graph's body method is named ``compose`` and the wiring verb is
+   ``wire`` — distinct names, so inside a ``compose`` body you call ``wire<…>``
+   directly. How it works internally, and how it is shared with Python wiring, is
+   in *Developer Guide > Graph Wiring*.
 
 
 A first graph
@@ -30,11 +29,11 @@ A first graph
 A top-level graph has **no time-series inputs or outputs** — its sources generate
 data and its sinks consume it. It *may*, however, take **scalar** inputs: plain
 (non-time-series) configuration values that parameterise the graph at wiring
-time. Scalar inputs appear as extra ``wire`` parameters and are passed to
+time. Scalar inputs appear as extra ``compose`` parameters and are passed to
 ``build_graph`` — e.g.
-``static void wire(Wiring &w, Scalar<"window", int> window)`` built with
+``static void compose(Wiring &w, Scalar<"window", int> window)`` built with
 ``build_graph<MyGraph>(Scalar<"window", int>{20})``. The simplest graph is a
-``struct`` whose ``wire`` body just adds nodes:
+``struct`` whose ``compose`` body just adds nodes:
 
 .. code-block:: cpp
 
@@ -43,7 +42,7 @@ time. Scalar inputs appear as extra ``wire`` parameters and are passed to
    {
        static constexpr auto name = "price_graph";
 
-       static void wire(Wiring &w)
+       static void compose(Wiring &w)
        {
            auto a = wire<ConstantSource>(w);
            auto b = wire<ConstantSource>(w);
@@ -51,7 +50,7 @@ time. Scalar inputs appear as extra ``wire`` parameters and are passed to
        }
    };
 
-   GraphBuilder g = build_graph<PriceGraph>();   // runs wire() once, at wiring time
+   GraphBuilder g = build_graph<PriceGraph>();   // runs compose() once, at wiring time
 
 .. code-block:: python
 
@@ -106,7 +105,7 @@ distinguishing scalar input. (In the first graph above, both
 Graphs with a signature
 ------------------------
 
-A sub-graph declares inputs and an output, and composes like a node. The ``wire``
+A sub-graph declares inputs and an output, and composes like a node. The ``compose``
 parameters after the context are the graph's inputs; the return is its output:
 
 .. code-block:: cpp
@@ -116,7 +115,7 @@ parameters after the context are the graph's inputs; the return is its output:
    {
        static constexpr auto name = "mid";
        // logical signature: (TS<double>, TS<double>) -> TS<double>
-       static Port<TS<double>> wire(Wiring &w, Port<TS<double>> bid, Port<TS<double>> ask)
+       static Port<TS<double>> compose(Wiring &w, Port<TS<double>> bid, Port<TS<double>> ask)
        {
            return wire<Average>(w, bid, ask);
        }
@@ -144,7 +143,7 @@ the only difference is whether a runtime node is produced.
 .. code-block:: cpp
 
    // Planned — provisional syntax
-   static Port<TS<double>> wire(Wiring &w, Port<TS<double>> bid, Port<TS<double>> ask)
+   static Port<TS<double>> compose(Wiring &w, Port<TS<double>> bid, Port<TS<double>> ask)
    {
        auto m = wire<Mid>(w, bid, ask);   // inline the Mid sub-graph
        return wire<Scale>(w, m);
@@ -188,7 +187,7 @@ deferred (and map onto Python features):
 - **multiple outputs** — a graph returning a ``TSB`` becomes a bundle ``Port``
   with ``.field<"x">()`` to take a sub-port; as syntactic sugar a graph's outputs
   may instead be returned as an array;
-- **generic graphs** — ``TsVar`` / ``ScalarVar`` in the ``wire`` signature
+- **generic graphs** — ``TsVar`` / ``ScalarVar`` in the ``compose`` signature
   (``TIME_SERIES_TYPE`` / ``SCALAR`` / ``K`` / ``V`` in Python);
 - **higher-order operators** — ``map_`` / ``reduce`` / ``switch_`` / feedback,
   which take graphs as arguments; these are where C++ is furthest from Python's
@@ -204,7 +203,7 @@ C++ ↔ Python cheat sheet
 
    * - C++
      - Python
-   * - ``struct G { static Out wire(Wiring&, In...){} };``
+   * - ``struct G { static Out compose(Wiring&, In...){} };``
      - ``@graph def g(in...) -> Out``
    * - ``wire<T>(w, ports...)`` (node)
      - calling a node — ``t(ports...)``

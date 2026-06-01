@@ -27,19 +27,19 @@ namespace
     struct AddOneGraph
     {
         static constexpr auto name = "add_one_graph";
-        static void           wire(Wiring &w)
+        static void           compose(Wiring &w)
         {
-            auto source = hgraph::wire<ConstantSource>(w);
-            hgraph::wire<AddOne>(w, source);
+            auto source = wire<ConstantSource>(w);
+            wire<AddOne>(w, source);
         }
     };
 
     // A sub-graph: TS<int> -> TS<int>, adding two via two add_one nodes.
     struct PlusTwo
     {
-        static Port<TS<int>> wire(Wiring &w, Port<TS<int>> x)
+        static Port<TS<int>> compose(Wiring &w, Port<TS<int>> x)
         {
-            return hgraph::wire<AddOne>(w, hgraph::wire<AddOne>(w, x));
+            return wire<AddOne>(w, wire<AddOne>(w, x));
         }
     };
 
@@ -47,10 +47,10 @@ namespace
     struct PlusTwoGraph
     {
         static constexpr auto name = "plus_two_graph";
-        static void           wire(Wiring &w)
+        static void           compose(Wiring &w)
         {
-            auto source = hgraph::wire<ConstantSource>(w);
-            hgraph::wire<PlusTwo>(w, source);
+            auto source = wire<ConstantSource>(w);
+            wire<PlusTwo>(w, source);
         }
     };
 }  // namespace
