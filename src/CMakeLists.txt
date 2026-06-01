@@ -41,6 +41,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series_reference.cpp
     hgraph/types/value/compact_container_ops.cpp
     hgraph/types/value/value_view.cpp
+    hgraph/types/graph_wiring.cpp
 )
 
 # Public headers — listed so CLion (and other IDEs) pick them up under the
@@ -57,6 +58,8 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/python/chrono.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/notifiable.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_schema.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_node.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/graph_wiring.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series_reference.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_data_plan_factory.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_data_plan_factory_detail.h

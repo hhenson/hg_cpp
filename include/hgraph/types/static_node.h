@@ -175,6 +175,30 @@ namespace hgraph
             static const ValueTypeMetaData *value_meta() { return scalar_descriptor<V>::value_meta(); }
         };
 
+        // ---- compile-time output schema type extraction ----
+        // output_schema_of<E> is void for any non-output selector and S for Out<S>,
+        // so picking the single non-void result yields the node's output schema type.
+        template <typename T> struct output_schema_of { using type = void; };
+        template <typename S> struct output_schema_of<Out<S>> { using type = S; };
+
+        template <typename A, typename B> struct pick_non_void { using type = A; };
+        template <typename B> struct pick_non_void<void, B> { using type = B; };
+
+        template <typename... Es> struct output_type_of_pack { using type = void; };
+        template <typename E, typename... Rest>
+        struct output_type_of_pack<E, Rest...>
+        {
+            using type = typename pick_non_void<typename output_schema_of<E>::type,
+                                                typename output_type_of_pack<Rest...>::type>::type;
+        };
+
+        template <typename Tuple> struct output_type_of_tuple;
+        template <typename... Es>
+        struct output_type_of_tuple<std::tuple<Es...>>
+        {
+            using type = typename output_type_of_pack<selector_of<Es>...>::type;
+        };
+
         // ---- function-pointer traits over a static hook ----
         template <typename F> struct fn_traits;
         template <typename R, typename... A>
@@ -337,8 +361,12 @@ namespace hgraph
         }
 
       public:
+        /** The static output schema type (the ``Out<S>``'s ``S``), or ``void`` if no output. */
+        using output_schema_type = typename static_node_detail::output_type_of_tuple<eval_args>::type;
+
         [[nodiscard]] static constexpr std::size_t input_count() { return count_inputs(indices{}); }
         [[nodiscard]] static constexpr std::size_t output_count() { return count_outputs(indices{}); }
+        [[nodiscard]] static constexpr bool        has_output() { return output_count() > 0; }
 
         [[nodiscard]] static const TSValueTypeMetaData *input_schema()
         {
