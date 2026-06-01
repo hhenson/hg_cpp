@@ -557,20 +557,22 @@ exactly as Python injects ``_clock`` / ``_scheduler``:
 Scalar values and arguments
 ---------------------------
 
-**Planned.** Not every value in HGraph is a time-series. A *scalar* is a plain
-value (an ``int``, ``double``, string, …). ``Scalar<"name", T>`` is the scalar
-analog of ``In`` — like ``In`` it carries a **name and type** (read it with
-``.value()``) — and it is a first-class node parameter available to ``eval``,
-``start`` / ``stop`` and a push source's ``apply_message``, alongside ``In`` /
-``Out`` / ``State``.
+**Available as ``eval`` arguments.** Not every value in HGraph is a time-series.
+A *scalar* is a plain value (an ``int``, ``double``, string, …).
+``Scalar<"name", T>`` is the scalar analog of ``In`` — like ``In`` it carries a
+**name and type** (read it with ``.value()``) — and it is a first-class node
+parameter alongside ``In`` / ``Out`` / ``State``. Scalars are **read-only**
+per-instance configuration: they are fixed when the node is built and do not
+change during evaluation.
 
 It covers two roles with one marker: a scalar **argument** fixed at wiring time
 (the C++ counterpart of an ordinary, non-time-series Python function argument),
-and the scalar **message** a push source consumes (see `Node kinds`_).
+and the scalar **message** a push source consumes (see `Node kinds`_). The
+argument role is implemented for ``eval``; the push-source message role is
+planned.
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
    struct Scale
    {
        static void eval(In<"in", TS<double>> in, Scalar<"factor", double> factor, Out<TS<double>> out)
@@ -578,6 +580,14 @@ and the scalar **message** a push source consumes (see `Node kinds`_).
            out.set(in.value() * factor.value());
        }
    };
+
+Each ``Scalar<>`` parameter becomes a field of the node's compound scalar
+configuration; the values are supplied when the node is built. The scalars are
+**not** part of the input TSB, so they never affect node-kind inference (a node
+with only ``Scalar`` inputs and an ``Out`` is still a pull source). Supplying
+scalars through the ``wire<T>`` graph facade — so equal scalars fold into the
+wiring intern key — is the next wiring slice; today they are set directly on the
+node builder.
 
 .. code-block:: python
 
@@ -832,8 +842,8 @@ Feature status
    * - ``EvaluationClock`` / ``NodeScheduler`` injection
      - planned
      - available
-   * - ``Scalar<"name", T>`` (named scalar arguments / messages)
-     - planned
+   * - ``Scalar<"name", T>`` (named scalar arguments)
+     - available [#scalar_wire]_
      - available
    * - ``RecordableState``
      - planned
@@ -853,6 +863,11 @@ Feature status
    * - Fluent / implicit edge wiring
      - planned
      - available
+
+.. [#scalar_wire] The ``Scalar<"name", T>`` selector, its signature reflection
+   and ``eval`` injection are implemented; scalar values are supplied through
+   ``NodeBuilder::scalars(...)``. Supplying them through the ``wire<T>`` graph
+   facade (so they fold into the wiring intern key) is the next wiring slice.
 
 
 C++ ↔ Python cheat sheet
@@ -878,7 +893,7 @@ C++ ↔ Python cheat sheet
      - ``_clock: EvaluationClock``
    * - ``NodeScheduler &`` *(planned)*
      - ``_scheduler: SCHEDULER``
-   * - ``Scalar<"f", double>`` *(planned)*
+   * - ``Scalar<"f", double>``
      - plain arg ``f: float``
    * - ``TsVar<"T">`` / ``ScalarVar<"T">`` *(planned in signatures)*
      - ``TIME_SERIES_TYPE`` / ``SCALAR``

@@ -5,9 +5,14 @@
 // runtime (see docs: Wiring, Schemas > Static Schema).
 
 #include <hgraph/runtime/runtime.h>
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_node.h>
 
 #include <catch2/catch_test_macros.hpp>
+
+#include <string>
+#include <string_view>
 
 namespace
 {
@@ -54,6 +59,43 @@ namespace
             out.set(next);
         }
     };
+
+    // Source configured by a scalar input (no time-series inputs -> PullSource).
+    // Emits its configured value; the scalar is read-only wiring-time config.
+    struct ScaledSource
+    {
+        static constexpr auto name = "scaled_source";
+
+        static void eval(Scalar<"value", int> value, Out<TS<int>> out) { out.set(value.value()); }
+    };
+
+    // Compute node mixing a time-series input with a scalar input. The scalar
+    // is configuration (not part of the input TSB); Out is last by convention.
+    struct Shift
+    {
+        static constexpr auto name = "shift";
+
+        static void eval(In<"in", TS<int>> in, Scalar<"delta", int> delta, Out<TS<int>> out)
+        {
+            out.set(in.value() + delta.value());
+        }
+    };
+
+    // Build a single-field compound scalar configuration {field: value}.
+    Value int_scalar_config(std::string_view field, int value)
+    {
+        auto       &registry    = TypeRegistry::instance();
+        const auto *int_meta    = registry.register_scalar<int>("int");
+        const auto *bundle_meta = registry.un_named_bundle({{std::string{field}, int_meta}});
+        const auto *binding     = ValuePlanFactory::instance().binding_for(bundle_meta);
+
+        Value scalars{*binding};
+        {
+            auto mutation = scalars.as_bundle().begin_mutation();
+            mutation[field].checked_mutable_as<int>() = value;
+        }
+        return scalars;
+    }
 }  // namespace
 
 TEST_CASE("static node: node kind is inferred from In/Out selectors")
@@ -115,6 +157,53 @@ TEST_CASE("static node: two sources feed a two-input compute node")
 
     auto graph = executor_view.graph();
     CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<int>() == 82);
+}
+
+TEST_CASE("static node: Scalar<> configures a source from per-instance values")
+{
+    using namespace hgraph;
+
+    auto node = NodeBuilder{}
+                    .label("scaled")
+                    .implementation<ScaledSource>()
+                    .scalars(int_scalar_config("value", 7))
+                    .make_node();
+
+    auto view = node.view();
+    REQUIRE(view.node_kind() == NodeKind::PullSource);   // Scalar is config, not a TS input
+    REQUIRE(view.schema()->has_scalars());
+    REQUIRE(view.has_scalars());
+    REQUIRE_FALSE(view.has_input());
+    REQUIRE(view.scalars().as_bundle().field("value").checked_as<int>() == 7);
+
+    const auto t1 = MIN_ST;
+    view.start(t1);
+    view.evaluate(t1, true);
+    CHECK(node.view().output(t1).value().checked_as<int>() == 7);
+}
+
+TEST_CASE("static node: Scalar<> coexists with a time-series input")
+{
+    using namespace hgraph;
+
+    GraphBuilder builder;
+    builder.add_node(NodeBuilder{}.label("src").implementation<ConstantSource>())
+        .add_node(NodeBuilder{}.label("shift").implementation<Shift>().scalars(int_scalar_config("delta", 5)))
+        .add_edge(GraphEdge{.source_node = 0, .source_path = {}, .target_node = 1, .target_path = {0}});
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    // Compute node: Compute kind (In present), one TS input field, scalar excluded.
+    REQUIRE(graph.node_at(1).node_kind() == NodeKind::Compute);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 46);   // 41 + 5
 }
 
 TEST_CASE("static node: State<int> is constructed and mutated across evaluations")

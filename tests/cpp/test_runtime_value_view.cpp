@@ -75,6 +75,25 @@ namespace
 
         return hgraph::NodeBuilder::native(std::move(schema), std::move(callbacks));
     }
+
+    // A source whose emitted value is read from its per-instance scalar
+    // configuration (the read-only `scalars` component), not hard-coded.
+    hgraph::NodeBuilder scalar_source_node(const hgraph::ValueTypeMetaData *int_meta,
+                                           const hgraph::TSValueTypeMetaData *ts_int)
+    {
+        hgraph::NodeTypeMetaData schema;
+        schema.display_name = "scalar_source";
+        schema.output_schema = ts_int;
+        schema.scalar_schema = int_meta;
+        schema.node_kind = hgraph::NodeKind::PullSource;
+
+        hgraph::NodeCallbacks callbacks;
+        callbacks.evaluate = [](const hgraph::NodeView &view, hgraph::engine_time_t evaluation_time) {
+            write_int_output(view, evaluation_time, view.scalars().checked_as<int>());
+        };
+
+        return hgraph::NodeBuilder::native(std::move(schema), std::move(callbacks));
+    }
 }
 
 TEST_CASE("NodeValue exposes a type-erased view over node storage")
@@ -145,6 +164,32 @@ TEST_CASE("NodeValue state is read-write value storage")
     node.view().evaluate(t2, true);
     REQUIRE(node.view().state().checked_as<int>() == 2);
     REQUIRE(node.view().output(t2).value().checked_as<int>() == 2);
+}
+
+TEST_CASE("NodeValue scalar configuration is read-only per-instance value storage")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int = registry.ts(int_meta);
+
+    NodeValue node = scalar_source_node(int_meta, ts_int).scalars(Value{7}).make_node();
+    const auto t1 = MIN_ST;
+
+    auto view = node.view();
+    REQUIRE(view.valid());
+    REQUIRE(view.schema()->has_scalars());
+    REQUIRE(view.has_scalars());
+    REQUIRE(view.binding()->checked_plan().find_component("scalars") != nullptr);
+    REQUIRE(view.binding()->checked_plan().find_component("state") == nullptr);
+    REQUIRE(view.scalars().checked_as<int>() == 7);
+
+    view.start(t1);
+    view.evaluate(t1, true);
+    REQUIRE(node.view().output(t1).value().checked_as<int>() == 7);
+    // The scalar configuration is unchanged by evaluation.
+    REQUIRE(node.view().scalars().checked_as<int>() == 7);
 }
 
 TEST_CASE("GraphValue wires node views and evaluates scheduled notifications")

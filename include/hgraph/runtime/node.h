@@ -53,6 +53,7 @@ namespace hgraph
         const TSValueTypeMetaData *error_output_schema{nullptr};
         const TSValueTypeMetaData *recordable_state_schema{nullptr};
         const ValueTypeMetaData   *state_schema{nullptr};
+        const ValueTypeMetaData   *scalar_schema{nullptr};
 
         NodeKind node_kind{NodeKind::Compute};
         bool     uses_scheduler{false};
@@ -66,6 +67,7 @@ namespace hgraph
         [[nodiscard]] bool has_input() const noexcept;
         [[nodiscard]] bool has_output() const noexcept;
         [[nodiscard]] bool has_state() const noexcept;
+        [[nodiscard]] bool has_scalars() const noexcept;
         [[nodiscard]] bool has_error_output() const noexcept;
         [[nodiscard]] bool has_recordable_state() const noexcept;
     };
@@ -96,6 +98,7 @@ namespace hgraph
         [[nodiscard]] bool (*has_input_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*has_output_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*has_state_impl)(const void *context, const void *memory) noexcept = nullptr;
+        [[nodiscard]] bool (*has_scalars_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*has_error_output_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*has_recordable_state_impl)(const void *context, const void *memory) noexcept = nullptr;
 
@@ -104,6 +107,7 @@ namespace hgraph
         [[nodiscard]] TSOutputView (*output_view_impl)(const void *context, void *memory,
                                                        engine_time_t evaluation_time) = nullptr;
         [[nodiscard]] ValueView (*state_view_impl)(const void *context, void *memory) = nullptr;
+        [[nodiscard]] ValueView (*scalars_view_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] TSOutputView (*error_output_view_impl)(const void *context, void *memory,
                                                              engine_time_t evaluation_time) = nullptr;
         [[nodiscard]] TSOutputView (*recordable_state_view_impl)(const void *context, void *memory,
@@ -154,12 +158,14 @@ namespace hgraph
         [[nodiscard]] bool has_input() const noexcept;
         [[nodiscard]] bool has_output() const noexcept;
         [[nodiscard]] bool has_state() const noexcept;
+        [[nodiscard]] bool has_scalars() const noexcept;
         [[nodiscard]] bool has_error_output() const noexcept;
         [[nodiscard]] bool has_recordable_state() const noexcept;
 
         [[nodiscard]] TSInputView input(engine_time_t evaluation_time) const;
         [[nodiscard]] TSOutputView output(engine_time_t evaluation_time) const;
         [[nodiscard]] ValueView state() const;
+        [[nodiscard]] ValueView scalars() const;
         [[nodiscard]] TSOutputView error_output(engine_time_t evaluation_time) const;
         [[nodiscard]] TSOutputView recordable_state(engine_time_t evaluation_time) const;
 
@@ -238,6 +244,10 @@ namespace hgraph
         NodeBuilder &label(std::string label);
         [[nodiscard]] std::string_view label() const noexcept;
 
+        /** Per-instance immutable scalar configuration (its shape is the schema's ``scalar_schema``). */
+        NodeBuilder &scalars(Value scalars);
+        [[nodiscard]] const Value &scalars() const noexcept;
+
         [[nodiscard]] const NodeTypeBinding &binding() const;
         [[nodiscard]] const TSEndpointSchema &input_endpoint() const noexcept;
         [[nodiscard]] NodeValue make_node(std::size_t node_index = 0) const;
@@ -250,6 +260,7 @@ namespace hgraph
         const NodeTypeBinding *binding_{nullptr};
         TSEndpointSchema       input_endpoint_{};
         std::string            label_{};
+        Value                  scalars_{};
     };
 
 }  // namespace hgraph

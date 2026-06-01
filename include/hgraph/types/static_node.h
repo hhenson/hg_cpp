@@ -33,8 +33,9 @@ namespace hgraph
      * *Schemas > Static Schema*.
      *
      * This first slice covers the scalar time-series path: ``In<Name, TS<T>>``,
-     * ``Out<TS<T>>`` and scalar ``State<T>``. Container selectors, recordable
-     * state, clock/scheduler injection and push sources are deferred.
+     * ``Out<TS<T>>``, scalar ``State<T>`` and ``Scalar<Name, T>`` (per-instance
+     * wiring-time configuration). Container selectors, recordable state,
+     * clock/scheduler injection and push sources are deferred.
      */
 
     // -----------------------------------------------------------------
@@ -130,6 +131,30 @@ namespace hgraph
         ValueView view_;
     };
 
+    /**
+     * Typed handle to one of the node's per-instance scalar inputs (wiring-time
+     * configuration). Read-only: scalars are fixed when the node is built and do
+     * not change during evaluation. Each ``Scalar<Name, T>`` reads its field by
+     * name from the node's compound scalar configuration.
+     */
+    template <fixed_string Name, typename TValue>
+    class Scalar
+    {
+      public:
+        using value_type                 = TValue;
+        static constexpr auto field_name = Name;
+
+        explicit Scalar(ValueView view) noexcept : view_(std::move(view)) {}
+
+        /** The configured value of this scalar input. */
+        [[nodiscard]] value_type value() const { return view_.template checked_as<TValue>(); }
+
+        [[nodiscard]] const ValueView &view() const noexcept { return view_; }
+
+      private:
+        ValueView view_;
+    };
+
     // -----------------------------------------------------------------
     // Compile-time machinery
     // -----------------------------------------------------------------
@@ -152,6 +177,9 @@ namespace hgraph
         template <typename T> struct is_state_selector : std::false_type {};
         template <typename V> struct is_state_selector<State<V>> : std::true_type {};
 
+        template <typename T> struct is_scalar_selector : std::false_type {};
+        template <fixed_string N, typename V> struct is_scalar_selector<Scalar<N, V>> : std::true_type {};
+
         // ---- per-selector runtime metadata ----
         template <typename T> struct input_selector_traits;
         template <fixed_string N, typename S>
@@ -172,6 +200,14 @@ namespace hgraph
         template <typename V>
         struct state_selector_traits<State<V>>
         {
+            static const ValueTypeMetaData *value_meta() { return scalar_descriptor<V>::value_meta(); }
+        };
+
+        template <typename T> struct scalar_selector_traits;
+        template <fixed_string N, typename V>
+        struct scalar_selector_traits<Scalar<N, V>>
+        {
+            static std::string              name() { return std::string{N.sv()}; }
             static const ValueTypeMetaData *value_meta() { return scalar_descriptor<V>::value_meta(); }
         };
 
@@ -210,6 +246,21 @@ namespace hgraph
         struct input_schemas_of_tuple<std::tuple<Es...>>
         {
             using type = decltype(std::tuple_cat(std::declval<typename in_schema_tuple<selector_of<Es>>::type>()...));
+        };
+
+        // ---- compile-time list of the "wireable" parameters, in eval order ----
+        // These are the parameters supplied at wiring time: the time-series inputs
+        // (In) and the scalar inputs (Scalar). State / clock / scheduler parameters
+        // are injected by the runtime and never appear at a wiring call site.
+        template <typename E> struct wire_param_tuple { using type = std::tuple<>; };
+        template <fixed_string N, typename S> struct wire_param_tuple<In<N, S>> { using type = std::tuple<In<N, S>>; };
+        template <fixed_string N, typename V> struct wire_param_tuple<Scalar<N, V>> { using type = std::tuple<Scalar<N, V>>; };
+
+        template <typename Tuple> struct wire_params_of_tuple;
+        template <typename... Es>
+        struct wire_params_of_tuple<std::tuple<Es...>>
+        {
+            using type = decltype(std::tuple_cat(std::declval<typename wire_param_tuple<selector_of<Es>>::type>()...));
         };
 
         // ---- function-pointer traits over a static hook ----
@@ -252,6 +303,15 @@ namespace hgraph
         struct arg_provider<State<V>>
         {
             static State<V> get(const NodeView &view, engine_time_t) { return State<V>{view.state()}; }
+        };
+
+        template <fixed_string N, typename V>
+        struct arg_provider<Scalar<N, V>>
+        {
+            static Scalar<N, V> get(const NodeView &view, engine_time_t)
+            {
+                return Scalar<N, V>{view.scalars().as_bundle().field(N.sv())};
+            }
         };
 
         template <>
@@ -354,6 +414,22 @@ namespace hgraph
         }
 
         template <std::size_t... I>
+        static void collect_scalars(std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields,
+                                    std::index_sequence<I...>)
+        {
+            (
+                [&] {
+                    using E = static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>;
+                    if constexpr (static_node_detail::is_scalar_selector<E>::value)
+                    {
+                        fields.emplace_back(static_node_detail::scalar_selector_traits<E>::name(),
+                                            static_node_detail::scalar_selector_traits<E>::value_meta());
+                    }
+                }(),
+                ...);
+        }
+
+        template <std::size_t... I>
         static constexpr std::size_t count_inputs(std::index_sequence<I...>)
         {
             return (std::size_t{0} + ... +
@@ -373,6 +449,16 @@ namespace hgraph
                          : std::size_t{0}));
         }
 
+        template <std::size_t... I>
+        static constexpr std::size_t count_scalars(std::index_sequence<I...>)
+        {
+            return (std::size_t{0} + ... +
+                    (static_node_detail::is_scalar_selector<
+                         static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>::value
+                         ? std::size_t{1}
+                         : std::size_t{0}));
+        }
+
       public:
         /** The static output schema type (the ``Out<S>``'s ``S``), or ``void`` if no output. */
         using output_schema_type = typename static_node_detail::output_type_of_tuple<eval_args>::type;
@@ -380,8 +466,12 @@ namespace hgraph
         /** Tuple of the input schema *types* (each ``In<Name, S>``'s ``S``), in argument order. */
         using input_schema_types = typename static_node_detail::input_schemas_of_tuple<eval_args>::type;
 
+        /** Tuple of the wiring-time parameter selector types (``In`` and ``Scalar``), in eval order. */
+        using wire_param_types = typename static_node_detail::wire_params_of_tuple<eval_args>::type;
+
         [[nodiscard]] static constexpr std::size_t input_count() { return count_inputs(indices{}); }
         [[nodiscard]] static constexpr std::size_t output_count() { return count_outputs(indices{}); }
+        [[nodiscard]] static constexpr std::size_t scalar_count() { return count_scalars(indices{}); }
         [[nodiscard]] static constexpr bool        has_output() { return output_count() > 0; }
 
         [[nodiscard]] static const TSValueTypeMetaData *input_schema()
@@ -394,6 +484,20 @@ namespace hgraph
 
         [[nodiscard]] static const TSValueTypeMetaData *output_schema() { return find_output(indices{}); }
         [[nodiscard]] static const ValueTypeMetaData   *state_schema() { return find_state(indices{}); }
+
+        /**
+         * The node's scalar-configuration schema: a compound (un-named bundle)
+         * value type with one field per ``Scalar<Name, T>`` argument, or
+         * ``nullptr`` when the node takes no scalar inputs. Scalars are *not*
+         * time-series inputs and never appear in the input TSB.
+         */
+        [[nodiscard]] static const ValueTypeMetaData *scalar_schema()
+        {
+            std::vector<std::pair<std::string, const ValueTypeMetaData *>> fields;
+            collect_scalars(fields, indices{});
+            if (fields.empty()) { return nullptr; }
+            return TypeRegistry::instance().un_named_bundle(fields);
+        }
 
         [[nodiscard]] static NodeKind node_kind()
         {
@@ -441,6 +545,7 @@ namespace hgraph
         schema.input_schema  = signature::input_schema();
         schema.output_schema = signature::output_schema();
         schema.state_schema  = signature::state_schema();
+        schema.scalar_schema = signature::scalar_schema();
         schema.node_kind     = signature::node_kind();
 
         NodeCallbacks callbacks;
@@ -461,8 +566,10 @@ namespace hgraph
         }
 
         std::string saved_label{label_};
+        Value       saved_scalars{std::move(scalars_)};
         *this = NodeBuilder::native(std::move(schema), std::move(callbacks), signature::input_endpoint());
         if (!saved_label.empty()) { label(std::move(saved_label)); }
+        if (saved_scalars.has_value()) { scalars(std::move(saved_scalars)); }
         return *this;
     }
 

@@ -53,12 +53,14 @@ namespace hgraph
             std::size_t input_offset{npos};
             std::size_t output_offset{npos};
             std::size_t state_offset{npos};
+            std::size_t scalars_offset{npos};
             std::size_t error_output_offset{npos};
             std::size_t recordable_state_offset{npos};
 
             [[nodiscard]] bool has_input() const noexcept { return input_offset != npos; }
             [[nodiscard]] bool has_output() const noexcept { return output_offset != npos; }
             [[nodiscard]] bool has_state() const noexcept { return state_offset != npos; }
+            [[nodiscard]] bool has_scalars() const noexcept { return scalars_offset != npos; }
             [[nodiscard]] bool has_error_output() const noexcept { return error_output_offset != npos; }
             [[nodiscard]] bool has_recordable_state() const noexcept { return recordable_state_offset != npos; }
         };
@@ -113,6 +115,11 @@ namespace hgraph
         [[nodiscard]] Value &node_state(const NodeRuntimeContext &context, void *memory)
         {
             return *MemoryUtils::cast<Value>(node_component(memory, context.layout.state_offset));
+        }
+
+        [[nodiscard]] Value &node_scalars(const NodeRuntimeContext &context, void *memory)
+        {
+            return *MemoryUtils::cast<Value>(node_component(memory, context.layout.scalars_offset));
         }
 
         [[nodiscard]] TSOutput &node_error_output(const NodeRuntimeContext &context, void *memory)
@@ -178,6 +185,7 @@ namespace hgraph
                                     const NodeTypeMetaData   &schema,
                                     TSEndpointSchema          input_endpoint,
                                     std::string               runtime_label,
+                                    const Value              &scalars,
                                     void                     *memory)
         {
             if (context.plan == nullptr) { throw std::logic_error("Node runtime context has no storage plan"); }
@@ -214,6 +222,18 @@ namespace hgraph
                 std::construct_at(MemoryUtils::cast<Value>(
                                       MemoryUtils::advance(memory, context.layout.state_offset)),
                                   state_binding_for(schema.state_schema));
+                ++constructed;
+            }
+
+            if (context.layout.has_scalars())
+            {
+                if (!scalars.has_value())
+                {
+                    throw std::logic_error("Node has a scalar schema but no scalar configuration value was provided");
+                }
+                std::construct_at(MemoryUtils::cast<Value>(
+                                      MemoryUtils::advance(memory, context.layout.scalars_offset)),
+                                  scalars);   // copy the per-instance scalar configuration
                 ++constructed;
             }
 
@@ -255,6 +275,10 @@ namespace hgraph
             {
                 layout.state_offset = component->offset;
             }
+            if (const auto *component = plan.find_component("scalars"); component != nullptr)
+            {
+                layout.scalars_offset = component->offset;
+            }
             if (const auto *component = plan.find_component("error_output"); component != nullptr)
             {
                 layout.error_output_offset = component->offset;
@@ -274,6 +298,7 @@ namespace hgraph
             if (schema.input_schema != nullptr) { builder.add_field("input", MemoryUtils::plan_for<TSInput>()); }
             if (schema.output_schema != nullptr) { builder.add_field("output", MemoryUtils::plan_for<TSOutput>()); }
             if (schema.state_schema != nullptr) { builder.add_field("state", MemoryUtils::plan_for<Value>()); }
+            if (schema.scalar_schema != nullptr) { builder.add_field("scalars", MemoryUtils::plan_for<Value>()); }
             if (schema.error_output_schema != nullptr)
             {
                 builder.add_field("error_output", MemoryUtils::plan_for<TSOutput>());
@@ -452,6 +477,11 @@ namespace hgraph
             return memory != nullptr && runtime_context(context).layout.has_state();
         }
 
+        bool has_scalars_impl(const void *context, const void *memory) noexcept
+        {
+            return memory != nullptr && runtime_context(context).layout.has_scalars();
+        }
+
         bool has_error_output_impl(const void *context, const void *memory) noexcept
         {
             return memory != nullptr && runtime_context(context).layout.has_error_output();
@@ -481,6 +511,13 @@ namespace hgraph
             const auto &runtime = runtime_context(context);
             if (!runtime.layout.has_state()) { throw std::logic_error("Node has no state"); }
             return node_state(runtime, memory).view();
+        }
+
+        ValueView scalars_view_impl(const void *context, void *memory)
+        {
+            const auto &runtime = runtime_context(context);
+            if (!runtime.layout.has_scalars()) { throw std::logic_error("Node has no scalar configuration"); }
+            return node_scalars(runtime, memory).view();
         }
 
         TSOutputView error_output_view_impl(const void *context, void *memory, engine_time_t evaluation_time)
@@ -573,11 +610,13 @@ namespace hgraph
                     .has_input_impl = &has_input_impl,
                     .has_output_impl = &has_output_impl,
                     .has_state_impl = &has_state_impl,
+                    .has_scalars_impl = &has_scalars_impl,
                     .has_error_output_impl = &has_error_output_impl,
                     .has_recordable_state_impl = &has_recordable_state_impl,
                     .input_view_impl = &input_view_impl,
                     .output_view_impl = &output_view_impl,
                     .state_view_impl = &state_view_impl,
+                    .scalars_view_impl = &scalars_view_impl,
                     .error_output_view_impl = &error_output_view_impl,
                     .recordable_state_view_impl = &recordable_state_view_impl,
                 });
@@ -606,6 +645,7 @@ namespace hgraph
     bool NodeTypeMetaData::has_input() const noexcept { return input_schema != nullptr; }
     bool NodeTypeMetaData::has_output() const noexcept { return output_schema != nullptr; }
     bool NodeTypeMetaData::has_state() const noexcept { return state_schema != nullptr; }
+    bool NodeTypeMetaData::has_scalars() const noexcept { return scalar_schema != nullptr; }
     bool NodeTypeMetaData::has_error_output() const noexcept { return error_output_schema != nullptr; }
     bool NodeTypeMetaData::has_recordable_state() const noexcept { return recordable_state_schema != nullptr; }
 
@@ -673,6 +713,11 @@ namespace hgraph
         return valid() && ops().has_state_impl(ops().context, data());
     }
 
+    bool NodeView::has_scalars() const noexcept
+    {
+        return valid() && ops().has_scalars_impl(ops().context, data());
+    }
+
     bool NodeView::has_error_output() const noexcept
     {
         return valid() && ops().has_error_output_impl(ops().context, data());
@@ -696,6 +741,11 @@ namespace hgraph
     ValueView NodeView::state() const
     {
         return ops().state_view_impl(ops().context, data());
+    }
+
+    ValueView NodeView::scalars() const
+    {
+        return ops().scalars_view_impl(ops().context, data());
     }
 
     TSOutputView NodeView::error_output(engine_time_t evaluation_time) const
@@ -729,7 +779,8 @@ namespace hgraph
         const auto &binding = builder.binding();
         const auto &runtime = runtime_context(binding.checked_ops().context);
         storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
-            construct_node_storage(runtime, *binding.type_meta, builder.input_endpoint(), std::string{builder.label()}, dst);
+            construct_node_storage(runtime, *binding.type_meta, builder.input_endpoint(), std::string{builder.label()},
+                                   builder.scalars(), dst);
         });
         attach_graph(nullptr, node_index);
     }
@@ -801,6 +852,17 @@ namespace hgraph
     std::string_view NodeBuilder::label() const noexcept
     {
         return label_;
+    }
+
+    NodeBuilder &NodeBuilder::scalars(Value scalars)
+    {
+        scalars_ = std::move(scalars);
+        return *this;
+    }
+
+    const Value &NodeBuilder::scalars() const noexcept
+    {
+        return scalars_;
     }
 
     const NodeTypeBinding &NodeBuilder::binding() const

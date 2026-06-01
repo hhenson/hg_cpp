@@ -73,6 +73,40 @@ namespace
             wire<Sum>(w, source, source);            // 41 + 41
         }
     };
+
+    // Source configured by a scalar argument (no TS inputs -> PullSource).
+    struct ScaledSource
+    {
+        static constexpr auto name = "scaled_source";
+        static void           eval(Scalar<"value", int> value, Out<TS<int>> out) { out.set(value.value()); }
+    };
+
+    struct ScaledSourceGraph
+    {
+        static constexpr auto name = "scaled_source_graph";
+        static void           compose(Wiring &w) { wire<ScaledSource>(w, 7); }
+    };
+
+    // Compute node mixing a TS input port with a scalar argument; wire args are
+    // given in eval-parameter order: the port, then the scalar.
+    struct Shift
+    {
+        static constexpr auto name = "shift";
+        static void           eval(In<"in", TS<int>> in, Scalar<"delta", int> delta, Out<TS<int>> out)
+        {
+            out.set(in.value() + delta.value());
+        }
+    };
+
+    struct ShiftGraph
+    {
+        static constexpr auto name = "shift_graph";
+        static void           compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);   // 41
+            wire<Shift>(w, source, 5);               // 41 + 5 = 46
+        }
+    };
 }  // namespace
 
 TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulation")
@@ -150,4 +184,61 @@ TEST_CASE("graph wiring: multi-input node wires and type-checks its ports")
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 2);   // one interned source + sum
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 82);
+}
+
+TEST_CASE("graph wiring: a scalar argument configures a wired node")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<ScaledSourceGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 1);
+    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<int>() == 7);
+}
+
+TEST_CASE("graph wiring: a scalar argument coexists with a time-series input port")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<ShiftGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 2);   // source + shift
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 46);
+}
+
+TEST_CASE("graph wiring: scalar values participate in node interning")
+{
+    using namespace hgraph;
+
+    Wiring w;
+    auto   a = wire<ScaledSource>(w, 7);
+    auto   b = wire<ScaledSource>(w, 7);   // equal scalar -> same interned instance
+    auto   c = wire<ScaledSource>(w, 8);   // different scalar -> distinct instance
+
+    CHECK(a.node() == b.node());
+    CHECK(a.node() != c.node());
+
+    GraphBuilder graph_builder = std::move(w).finish();
+    GraphValue   graph         = graph_builder.make_graph();
+    CHECK(graph.view().node_count() == 2);   // {7} deduped, {8} distinct
 }

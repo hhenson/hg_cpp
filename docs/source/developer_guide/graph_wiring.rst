@@ -9,14 +9,15 @@ same runtime graph the same way.
 
 .. note::
 
-   **Status.** Slice 1 is **implemented**: the ``Wiring`` core (interning +
-   topo-sort/rank), the typed ``Port<Schema>`` + ``wire<T>`` facade for nodes, and
-   ``build_graph<G>()`` for a top-level graph, and **sub-graph composition**
-   (``wire<G>`` inlines a graph) — in ``include/hgraph/types/graph_wiring.h`` +
-   ``src/hgraph/types/graph_wiring.cpp``, with ``tests/cpp/test_graph_wiring.cpp``.
-   Scalar inputs, ``StaticGraphSignature``, generics and higher-order operators are
-   **not yet implemented**; those parts of this page are the design record. The
-   user-facing view is *User Guide > Wiring Graphs in C++*.
+   **Status.** Slices 1 and 2 are **implemented**: the ``Wiring`` core (interning +
+   topo-sort/rank), the typed ``Port<Schema>`` + ``wire<T>`` facade for nodes,
+   ``build_graph<G>()`` for a top-level graph, **sub-graph composition**
+   (``wire<G>`` inlines a graph), and **scalar inputs** (``Scalar<>`` arguments
+   folded into the intern key and recorded on the node builder) — in
+   ``include/hgraph/types/graph_wiring.h`` + ``src/hgraph/types/graph_wiring.cpp``,
+   with ``tests/cpp/test_graph_wiring.cpp``. ``StaticGraphSignature``, generics and
+   higher-order operators are **not yet implemented**; those parts of this page are
+   the design record. The user-facing view is *User Guide > Wiring Graphs in C++*.
 
 
 Two tiers
@@ -99,7 +100,7 @@ The shared core
 
 .. code-block:: cpp
 
-   // Implemented shapes (slice 1: no scalars). The typed facade Port<Schema> is below.
+   // Implemented shapes. The typed facade Port<Schema> is below.
    struct WiringInstance;
 
    struct WiringPortRef {                     // erased handle to a wiring instance's output
@@ -109,38 +110,38 @@ The shared core
    };
 
    // The interned wiring identity (stable address, so WiringInstance* IS the
-   // identity). Scalar-aware design: this also holds the scalar values and builds
-   // the NodeBuilder at finish; the current slice has no scalars, so it stores the
-   // (scalar-free) NodeBuilder directly. Edges are derived from `inputs` at finish.
+   // identity). The NodeBuilder carries any per-instance scalar configuration
+   // (set by add_node). Edges are derived from `inputs` at finish.
    struct WiringInstance {
-       NodeBuilder                builder;    // build artifact (slice 1: builder == definition)
+       NodeBuilder                builder;    // build artifact (carries scalars)
        std::vector<WiringPortRef> inputs;     // time-series input ports
    };
 
    class Wiring {
      public:
        // `def` is the node definition's identity (typeid(T) for a C++ static node):
-       // two calls with the same def + equal inputs dedup. `builder` is stored for finish.
+       // two calls with the same def + equal inputs + equal scalars dedup. `builder`
+       // is stored for finish; the `scalars` value is recorded on it (empty if none).
        WiringPortRef add_node(std::type_index def, NodeBuilder builder,
-                              std::span<const WiringPortRef> inputs);
+                              std::span<const WiringPortRef> inputs, Value scalars);
        // Topo-sort + rank → a rank-ordered GraphBuilder (edges from each instance's ports).
        GraphBuilder  finish() &&;
    };
 
-- ``add_node`` keys the instance on ``(def, input ports)`` — ``def`` is the node
-  type's identity (``typeid(T)``) — and looks it up in the wiring intern table. On
-  a hit it returns the existing instance's port; on a miss it interns the new
-  instance (storing its ``NodeBuilder``) and returns a ``WiringPortRef`` to its
-  output. No edges are recorded yet — the input ports carry the dependencies.
+- ``add_node`` keys the instance on ``(def, input ports, scalars)`` — ``def`` is
+  the node type's identity (``typeid(T)``) and ``scalars`` is the compound scalar
+  configuration value (empty when the node has no scalar inputs) — and looks it up
+  in the wiring intern table. On a hit it returns the existing instance's port; on
+  a miss it records the ``scalars`` on the ``NodeBuilder``, interns the new
+  instance (storing that builder), and returns a ``WiringPortRef`` to its output.
+  No edges are recorded yet — the input ports carry the dependencies.
 - ``finish`` runs the rank pass, then walks the instances in rank order, adding
   each instance's ``NodeBuilder`` to a ``GraphBuilder`` and emitting an **edge per
   input port** (port ``i`` → this node's input field ``i``), remapping
   ``WiringInstance*`` endpoints to final indices. The ``NodeBuilder`` has no
   knowledge of ports; edges are applied by the graph builder.
 - The core is language-agnostic, so the Python wiring bridge reuses the interning
-  and rank pass. (Scalar-aware extension: ``add_node`` also takes the scalar
-  values, folds them into the key, and builds the ``NodeBuilder`` at ``finish``
-  from definition + scalars.)
+  and rank pass — including the scalar values in the key.
 
 
 The typed C++ facade
@@ -148,11 +149,15 @@ The typed C++ facade
 
 - ``Port<Schema>`` is the typed handle; ``.erased()`` lowers it to a
   ``WiringPortRef`` (the runtime schema comes from ``Schema``).
-- ``wire<T>(w, ports...)`` — checks input **arity and per-port schemas** at compile
-  time (via ``StaticNodeSignature<T>``, which exposes the output schema type and the
-  input schema types), builds the node's ``NodeBuilder``, lowers to
-  ``w.add_node(typeid(T), builder, ports)``, and returns ``Port<output_schema_type>``
-  (or ``void`` for a sink). Scalar args are the next slice.
+- ``wire<T>(w, args...)`` — takes the node's wiring arguments **in eval-parameter
+  order**: a ``Port`` for each ``In`` and a scalar value for each ``Scalar``. It
+  checks **arity and, per position, the port schema or scalar convertibility** at
+  compile time (via ``StaticNodeSignature<T>``, which exposes the output schema
+  type, the input schema types and the ordered list of wiring parameters), splits
+  the arguments into the time-series input ports and a compound scalar value, lowers
+  to ``w.add_node(typeid(T), builder, ports, scalars)``, and returns
+  ``Port<output_schema_type>`` (or ``void`` for a sink). The scalar value is built
+  as the un-named bundle ``StaticNodeSignature<T>::scalar_schema()`` describes.
 - ``wire<G>(w, ports...)`` — inlines ``G::compose(w, ports...)`` (graphs flatten)
   and returns ``G``'s output port.
 - ``StaticGraphSignature<G>`` — reflects ``&G::compose`` **skipping the leading
@@ -219,9 +224,14 @@ Slices:
    ``wire<X>`` dispatches on
    whether ``X`` is a node (``eval``; adds a runtime node) or a graph (``wire``;
    inlined and flattened). Tests: ``tests/cpp/test_graph_wiring.cpp``.
-2. **Next.** Scalar inputs (``Scalar<>`` folded into the intern key; ``NodeBuilder``
-   built at ``finish`` from definition + scalars); and ``StaticGraphSignature<G>``
-   (for standalone sub-graph building / boundary binding).
+2. **Done.** Scalar inputs: ``wire<T>`` takes ``Scalar<>`` arguments in
+   eval-parameter order, builds the compound scalar value, **folds the scalar
+   values into the intern key** (so equal scalars dedup, distinct scalars do not),
+   and records them on the ``NodeBuilder``. Node-layer scalar storage and the
+   ``Scalar<>`` authoring selector back it (see *Authoring Nodes in C++*).
+3. **Next.** ``StaticGraphSignature<G>`` (for standalone sub-graph building /
+   boundary binding), the precondition for graphs that take scalar inputs and for
+   non-flattening nested graphs.
 
 Deferred: multiple outputs (``TSB`` ports, optionally returned as an array as
 sugar), generic graphs (``TsVar`` / ``ScalarVar`` in signatures), higher-order
