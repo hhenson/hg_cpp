@@ -13,12 +13,15 @@ inlines their nodes, and only nodes exist at run time.
 
 .. note::
 
-   **Planned.** This page describes the intended C++ graph-wiring API. The
-   runtime graph (``GraphBuilder`` / ``GraphExecutor``) exists today, but the
-   ``Wiring`` / ``wire<>`` / ``build_graph<>`` layer below is **not yet
-   implemented**; the syntax is provisional. How it works internally, and how it
-   is shared with Python wiring, is described in *Developer Guide > Graph
-   Wiring*.
+   **Status.** The core is **implemented**: ``Wiring``, typed ``Port<Schema>``,
+   ``wire<T>`` for nodes, ``wire<G>`` sub-graph composition (graphs flatten), and
+   ``build_graph<G>()`` for a top-level graph. **Scalar inputs**, generic graphs
+   and higher-order operators are **not yet implemented** (those examples below are
+   provisional). One ergonomic note: inside a graph's own ``wire`` body, call the
+   free function **qualified** — ``hgraph::wire<...>`` — because the graph method is
+   also named ``wire``; the examples below omit the qualifier for brevity. How it
+   works internally, and how it is shared with Python wiring, is in
+   *Developer Guide > Graph Wiring*.
 
 
 A first graph

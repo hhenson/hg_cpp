@@ -111,6 +111,11 @@ namespace hgraph
 
     namespace graph_wiring_detail
     {
+        // A graph definition is a struct with a static ``wire(Wiring &, ...)``; a
+        // node definition has a static ``eval(...)`` instead.
+        template <typename X>
+        concept is_graph_def = requires { &X::wire; };
+
         template <typename TImplementation>
         [[nodiscard]] NodeBuilder build_node_builder()
         {
@@ -121,24 +126,39 @@ namespace hgraph
     }  // namespace graph_wiring_detail
 
     /**
-     * Wire node ``TImplementation`` into ``w`` with the given input ports (which
-     * must match the node's time-series inputs, in order) and return a typed
-     * ``Port`` to its output — or ``void`` for a sink.
+     * Wire ``X`` into ``w``.
+     *
+     * - If ``X`` is a **node** (has ``eval``): add it with the given input ports
+     *   (which must match its time-series inputs, in order) and return a typed
+     *   ``Port`` to its output — or ``void`` for a sink.
+     * - If ``X`` is a **sub-graph** (has ``wire``): inline its body into ``w``
+     *   (graphs flatten — no runtime node is produced) and return its output port.
+     *
+     * Inside a graph's own ``wire`` body, call this free function **qualified**
+     * (``hgraph::wire<...>``): the graph method is also named ``wire``, so an
+     * unqualified call would resolve to the method.
      */
-    template <typename TImplementation, typename... Ports>
+    template <typename X, typename... Ports>
     auto wire(Wiring &w, const Ports &...ports)
     {
-        using signature = StaticNodeSignature<TImplementation>;
-        static_assert(sizeof...(Ports) == signature::input_count(),
-                      "wire<T>: the number of input ports must match the node's time-series inputs");
-
-        std::array<WiringPortRef, sizeof...(Ports)> inputs{ports.erased()...};
-        WiringPortRef out = w.add_node(std::type_index(typeid(TImplementation)),
-                                       graph_wiring_detail::build_node_builder<TImplementation>(), inputs);
-
-        if constexpr (signature::has_output())
+        if constexpr (graph_wiring_detail::is_graph_def<X>)
         {
-            return Port<typename signature::output_schema_type>{out.node, out.path};
+            return X::wire(w, ports...);   // sub-graph: inline its body, return its output port
+        }
+        else
+        {
+            using signature = StaticNodeSignature<X>;
+            static_assert(sizeof...(Ports) == signature::input_count(),
+                          "wire<T>: the number of input ports must match the node's time-series inputs");
+
+            std::array<WiringPortRef, sizeof...(Ports)> inputs{ports.erased()...};
+            WiringPortRef out = w.add_node(std::type_index(typeid(X)),
+                                           graph_wiring_detail::build_node_builder<X>(), inputs);
+
+            if constexpr (signature::has_output())
+            {
+                return Port<typename signature::output_schema_type>{out.node, out.path};
+            }
         }
     }
 

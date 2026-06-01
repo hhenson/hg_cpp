@@ -33,6 +33,26 @@ namespace
             hgraph::wire<AddOne>(w, source);
         }
     };
+
+    // A sub-graph: TS<int> -> TS<int>, adding two via two add_one nodes.
+    struct PlusTwo
+    {
+        static Port<TS<int>> wire(Wiring &w, Port<TS<int>> x)
+        {
+            return hgraph::wire<AddOne>(w, hgraph::wire<AddOne>(w, x));
+        }
+    };
+
+    // Top-level: source(41) -> PlusTwo -> 43. The sub-graph flattens into the parent.
+    struct PlusTwoGraph
+    {
+        static constexpr auto name = "plus_two_graph";
+        static void           wire(Wiring &w)
+        {
+            auto source = hgraph::wire<ConstantSource>(w);
+            hgraph::wire<PlusTwo>(w, source);
+        }
+    };
 }  // namespace
 
 TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulation")
@@ -70,4 +90,24 @@ TEST_CASE("graph wiring: identical nodes are interned to one")
     GraphBuilder graph_builder = std::move(w).finish();
     GraphValue   graph         = graph_builder.make_graph();
     CHECK(graph.view().node_count() == 1);   // deduped to a single runtime node
+}
+
+TEST_CASE("graph wiring: sub-graph composition inlines (flattens) into the parent")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<PlusTwoGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 3);   // source + two add_one (the PlusTwo sub-graph flattened)
+    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<int>() == 43);
 }

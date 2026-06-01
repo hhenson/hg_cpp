@@ -11,12 +11,12 @@ same runtime graph the same way.
 
    **Status.** Slice 1 is **implemented**: the ``Wiring`` core (interning +
    topo-sort/rank), the typed ``Port<Schema>`` + ``wire<T>`` facade for nodes, and
-   ``build_graph<G>()`` for a top-level graph — in
-   ``include/hgraph/types/graph_wiring.h`` + ``src/hgraph/types/graph_wiring.cpp``,
-   with ``tests/cpp/test_graph_wiring.cpp``. Scalar inputs, sub-graph composition,
-   generics and higher-order operators are **not yet implemented**; those parts of
-   this page are the design record. The user-facing view is
-   *User Guide > Wiring Graphs in C++*.
+   ``build_graph<G>()`` for a top-level graph, and **sub-graph composition**
+   (``wire<G>`` inlines a graph) — in ``include/hgraph/types/graph_wiring.h`` +
+   ``src/hgraph/types/graph_wiring.cpp``, with ``tests/cpp/test_graph_wiring.cpp``.
+   Scalar inputs, ``StaticGraphSignature``, generics and higher-order operators are
+   **not yet implemented**; those parts of this page are the design record. The
+   user-facing view is *User Guide > Wiring Graphs in C++*.
 
 
 Two tiers
@@ -168,6 +168,13 @@ The typed C++ facade
 The compile-time checks are the C++ advantage over Python; the core re-validates
 schemas at wiring time as a safety net (and as the only check Python relies on).
 
+.. note::
+
+   Inside a graph's own ``wire`` body, call the free ``wire`` **qualified**
+   (``hgraph::wire<…>``): the graph method shares the name, so an unqualified call
+   resolves to the method. A member spelling (``w.wire<…>(…)``) would avoid this;
+   the free form is the current choice.
+
 
 Graphs flatten
 --------------
@@ -209,13 +216,14 @@ Slices:
 1. **Done.** The shared ``Wiring`` core (``WiringInstance`` interning by
    ``(typeid(T), input ports)`` + Kahn topo-sort/rank), the ``StaticNodeSignature``
    extension exposing the output schema type, the typed ``Port<Schema>`` +
-   ``wire<T>(w, …)`` facade (compile-time arity), and ``build_graph<G>()`` for a
-   top-level graph. The ``source → add_one`` graph is wired without manual indices
-   or edges (``tests/cpp/test_graph_wiring.cpp``).
+   ``wire<X>(w, …)`` facade (compile-time arity), ``build_graph<G>()`` for a
+   top-level graph, and **sub-graph composition** — ``wire<X>`` dispatches on
+   whether ``X`` is a node (``eval``; adds a runtime node) or a graph (``wire``;
+   inlined and flattened). Tests: ``tests/cpp/test_graph_wiring.cpp``.
 2. **Next.** Scalar inputs (``Scalar<>`` folded into the intern key; ``NodeBuilder``
-   built at ``finish`` from definition + scalars); then sub-graph composition
-   (``wire<G>(w, …)`` and ``StaticGraphSignature<G>``); then compile-time per-port
-   schema matching.
+   built at ``finish`` from definition + scalars); ``StaticGraphSignature<G>`` (for
+   standalone sub-graph building / boundary binding); compile-time per-port schema
+   matching.
 
 Deferred: multiple outputs (``TSB`` ports, optionally returned as an array as
 sugar), generic graphs (``TsVar`` / ``ScalarVar`` in signatures), higher-order
