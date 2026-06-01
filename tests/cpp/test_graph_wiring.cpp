@@ -53,6 +53,26 @@ namespace
             wire<PlusTwo>(w, source);
         }
     };
+
+    // Two-input compute node (exercises compile-time per-port schema matching).
+    struct Sum
+    {
+        static constexpr auto name = "sum";
+        static void           eval(In<"lhs", TS<int>> lhs, In<"rhs", TS<int>> rhs, Out<TS<int>> out)
+        {
+            out.set(lhs.value() + rhs.value());
+        }
+    };
+
+    struct SumGraph
+    {
+        static constexpr auto name = "sum_graph";
+        static void           compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);   // interns to one node
+            wire<Sum>(w, source, source);            // 41 + 41
+        }
+    };
 }  // namespace
 
 TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulation")
@@ -110,4 +130,24 @@ TEST_CASE("graph wiring: sub-graph composition inlines (flattens) into the paren
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 3);   // source + two add_one (the PlusTwo sub-graph flattened)
     CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<int>() == 43);
+}
+
+TEST_CASE("graph wiring: multi-input node wires and type-checks its ports")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<SumGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 2);   // one interned source + sum
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 82);
 }

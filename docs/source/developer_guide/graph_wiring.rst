@@ -148,12 +148,11 @@ The typed C++ facade
 
 - ``Port<Schema>`` is the typed handle; ``.erased()`` lowers it to a
   ``WiringPortRef`` (the runtime schema comes from ``Schema``).
-- ``wire<T>(w, ports...)`` — checks input **arity** at compile time (via
-  ``StaticNodeSignature<T>``, extended to expose the output schema type), builds
-  the node's ``NodeBuilder``, lowers to ``w.add_node(typeid(T), builder, ports)``,
-  and returns ``Port<output_schema_type>`` (or ``void`` for a sink). Scalar args
-  and compile-time per-port schema matching are the next slice; today port schemas
-  are validated when edges bind.
+- ``wire<T>(w, ports...)`` — checks input **arity and per-port schemas** at compile
+  time (via ``StaticNodeSignature<T>``, which exposes the output schema type and the
+  input schema types), builds the node's ``NodeBuilder``, lowers to
+  ``w.add_node(typeid(T), builder, ports)``, and returns ``Port<output_schema_type>``
+  (or ``void`` for a sink). Scalar args are the next slice.
 - ``wire<G>(w, ports...)`` — inlines ``G::compose(w, ports...)`` (graphs flatten)
   and returns ``G``'s output port.
 - ``StaticGraphSignature<G>`` — reflects ``&G::compose`` **skipping the leading
@@ -215,14 +214,14 @@ Slices:
 1. **Done.** The shared ``Wiring`` core (``WiringInstance`` interning by
    ``(typeid(T), input ports)`` + Kahn topo-sort/rank), the ``StaticNodeSignature``
    extension exposing the output schema type, the typed ``Port<Schema>`` +
-   ``wire<X>(w, …)`` facade (compile-time arity), ``build_graph<G>()`` for a
-   top-level graph, and **sub-graph composition** — ``wire<X>`` dispatches on
+   ``wire<X>(w, …)`` facade (compile-time arity **and per-port schema matching**),
+   ``build_graph<G>()`` for a top-level graph, and **sub-graph composition** —
+   ``wire<X>`` dispatches on
    whether ``X`` is a node (``eval``; adds a runtime node) or a graph (``wire``;
    inlined and flattened). Tests: ``tests/cpp/test_graph_wiring.cpp``.
 2. **Next.** Scalar inputs (``Scalar<>`` folded into the intern key; ``NodeBuilder``
-   built at ``finish`` from definition + scalars); ``StaticGraphSignature<G>`` (for
-   standalone sub-graph building / boundary binding); compile-time per-port schema
-   matching.
+   built at ``finish`` from definition + scalars); and ``StaticGraphSignature<G>``
+   (for standalone sub-graph building / boundary binding).
 
 Deferred: multiple outputs (``TSB`` ports, optionally returned as an array as
 sugar), generic graphs (``TsVar`` / ``ScalarVar`` in signatures), higher-order

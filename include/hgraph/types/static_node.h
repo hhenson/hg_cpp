@@ -199,6 +199,19 @@ namespace hgraph
             using type = typename output_type_of_pack<selector_of<Es>...>::type;
         };
 
+        // ---- compile-time list of the input schema types (In args' ``S``, in order) ----
+        // in_schema_tuple<E> is the empty tuple for non-input selectors and tuple<S>
+        // for In<Name, S>, so tuple_cat over the args yields the input schema list.
+        template <typename E> struct in_schema_tuple { using type = std::tuple<>; };
+        template <fixed_string N, typename S> struct in_schema_tuple<In<N, S>> { using type = std::tuple<S>; };
+
+        template <typename Tuple> struct input_schemas_of_tuple;
+        template <typename... Es>
+        struct input_schemas_of_tuple<std::tuple<Es...>>
+        {
+            using type = decltype(std::tuple_cat(std::declval<typename in_schema_tuple<selector_of<Es>>::type>()...));
+        };
+
         // ---- function-pointer traits over a static hook ----
         template <typename F> struct fn_traits;
         template <typename R, typename... A>
@@ -363,6 +376,9 @@ namespace hgraph
       public:
         /** The static output schema type (the ``Out<S>``'s ``S``), or ``void`` if no output. */
         using output_schema_type = typename static_node_detail::output_type_of_tuple<eval_args>::type;
+
+        /** Tuple of the input schema *types* (each ``In<Name, S>``'s ``S``), in argument order. */
+        using input_schema_types = typename static_node_detail::input_schemas_of_tuple<eval_args>::type;
 
         [[nodiscard]] static constexpr std::size_t input_count() { return count_inputs(indices{}); }
         [[nodiscard]] static constexpr std::size_t output_count() { return count_outputs(indices{}); }

@@ -11,6 +11,8 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <tuple>
+#include <type_traits>
 #include <typeindex>
 #include <typeinfo>
 #include <utility>
@@ -89,6 +91,8 @@ namespace hgraph
     class Port
     {
       public:
+        using schema = Schema;
+
         Port() noexcept = default;
         Port(const WiringInstance *node, std::vector<std::size_t> path) noexcept
             : node_(node), path_(std::move(path))
@@ -146,6 +150,9 @@ namespace hgraph
             using signature = StaticNodeSignature<X>;
             static_assert(sizeof...(Ports) == signature::input_count(),
                           "wire<T>: the number of input ports must match the node's time-series inputs");
+            static_assert(std::is_same_v<typename signature::input_schema_types,
+                                         std::tuple<typename Ports::schema...>>,
+                          "wire<T>: input port schema(s) do not match the node's time-series inputs");
 
             std::array<WiringPortRef, sizeof...(Ports)> inputs{ports.erased()...};
             WiringPortRef out = w.add_node(std::type_index(typeid(X)),
