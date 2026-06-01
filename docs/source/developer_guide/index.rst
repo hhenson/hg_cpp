@@ -11,5 +11,6 @@ The developer guide describes the internal design of the C++ implementation. The
    architecture
    data_structures
    wiring
+   graph_wiring
    python_integration
    testing
