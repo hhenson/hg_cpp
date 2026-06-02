@@ -58,6 +58,9 @@ namespace hgraph
 
         NodeKind node_kind{NodeKind::Compute};
         bool     uses_scheduler{false};
+        // When set, the framework schedules this node for the current cycle during
+        // ``start`` (the declarative form of a source doing schedule_now() itself).
+        bool     schedule_on_start{false};
         bool     captures_errors{false};
 
         std::vector<std::size_t> active_inputs{};

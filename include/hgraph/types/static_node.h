@@ -341,12 +341,27 @@ namespace hgraph
             }
         };
 
+        // Transparent, stateless injectable: no signature footprint, no scheduler
+        // component (unlike NodeScheduler it is not an ``is_scheduler_selector``).
+        template <>
+        struct arg_provider<SingleShotScheduler>
+        {
+            static SingleShotScheduler get(const NodeView &view, engine_time_t evaluation_time)
+            {
+                return SingleShotScheduler{view.graph_value(), view.node_index(), evaluation_time};
+            }
+        };
+
         template <>
         struct arg_provider<NodeScheduler>
         {
             static NodeScheduler get(const NodeView &view, engine_time_t evaluation_time)
             {
-                return NodeScheduler{view.scheduler_state(), view.graph_value(), view.node_index(), evaluation_time};
+                // ``started()`` is false while the node's ``start`` hook runs, which
+                // is what lets a source schedule its first evaluation at the start
+                // time (schedule(now())); during ``eval`` it is true (future only).
+                return NodeScheduler{view.scheduler_state(), view.graph_value(), view.node_index(), evaluation_time,
+                                     view.started()};
             }
         };
 
@@ -381,6 +396,9 @@ namespace hgraph
         template <typename T> concept has_start     = requires { &T::start; };
         template <typename T> concept has_stop      = requires { &T::stop; };
         template <typename T> concept has_name      = requires { T::name; };
+        // Optional ``static constexpr bool schedule_on_start`` attribute: when true
+        // the framework schedules the node for the start cycle (see node.cpp).
+        template <typename T> concept has_schedule_on_start = requires { T::schedule_on_start; };
     }  // namespace static_node_detail
 
     // -----------------------------------------------------------------
@@ -495,12 +513,18 @@ namespace hgraph
                          : std::size_t{0}));
         }
 
-        template <std::size_t... I>
-        static constexpr bool any_scheduler(std::index_sequence<I...>)
+        template <typename ArgsTuple, std::size_t... I>
+        static constexpr bool tuple_has_scheduler(std::index_sequence<I...>)
         {
             return (false || ... ||
                     static_node_detail::is_scheduler_selector<
-                        static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>::value);
+                        static_node_detail::selector_of<std::tuple_element_t<I, ArgsTuple>>>::value);
+        }
+
+        template <typename ArgsTuple>
+        static constexpr bool args_have_scheduler()
+        {
+            return tuple_has_scheduler<ArgsTuple>(std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
         }
 
       public:
@@ -517,8 +541,38 @@ namespace hgraph
         [[nodiscard]] static constexpr std::size_t output_count() { return count_outputs(indices{}); }
         [[nodiscard]] static constexpr std::size_t scalar_count() { return count_scalars(indices{}); }
         [[nodiscard]] static constexpr bool        has_output() { return output_count() > 0; }
-        /** Whether ``eval`` injects a ``NodeScheduler`` (so a scheduler-state slot is needed). */
-        [[nodiscard]] static constexpr bool        uses_scheduler() { return any_scheduler(indices{}); }
+        /** Whether the node declares ``static constexpr bool schedule_on_start = true``. */
+        [[nodiscard]] static constexpr bool schedule_on_start()
+        {
+            if constexpr (static_node_detail::has_schedule_on_start<TImplementation>)
+            {
+                return TImplementation::schedule_on_start;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        /**
+         * Whether any hook (``eval`` / ``start`` / ``stop``) injects a
+         * ``NodeScheduler`` — so a scheduler-state slot is allocated. A source
+         * that only schedules itself in ``start`` still needs the slot.
+         */
+        [[nodiscard]] static constexpr bool uses_scheduler()
+        {
+            bool result = args_have_scheduler<eval_args>();
+            if constexpr (static_node_detail::has_start<TImplementation>)
+            {
+                result = result || args_have_scheduler<
+                                       typename static_node_detail::fn_traits<decltype(&TImplementation::start)>::args_tuple>();
+            }
+            if constexpr (static_node_detail::has_stop<TImplementation>)
+            {
+                result = result || args_have_scheduler<
+                                       typename static_node_detail::fn_traits<decltype(&TImplementation::stop)>::args_tuple>();
+            }
+            return result;
+        }
 
         [[nodiscard]] static const TSValueTypeMetaData *input_schema()
         {
@@ -592,8 +646,9 @@ namespace hgraph
         schema.output_schema   = signature::output_schema();
         schema.state_schema    = signature::state_schema();
         schema.scalar_schema   = signature::scalar_schema();
-        schema.node_kind       = signature::node_kind();
-        schema.uses_scheduler  = signature::uses_scheduler();
+        schema.node_kind         = signature::node_kind();
+        schema.uses_scheduler    = signature::uses_scheduler();
+        schema.schedule_on_start = signature::schedule_on_start();
 
         NodeCallbacks callbacks;
         callbacks.evaluate = [](const NodeView &view, engine_time_t evaluation_time) {

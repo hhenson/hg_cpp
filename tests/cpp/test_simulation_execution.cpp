@@ -46,6 +46,7 @@ namespace
         schema.display_name = "source";
         schema.output_schema = ts_int;
         schema.node_kind = NodeKind::PullSource;
+        schema.schedule_on_start = true;  // a source initiates itself at the start cycle
 
         NodeCallbacks callbacks;
         callbacks.evaluate = [value, eval_count](const NodeView &view, engine_time_t evaluation_time) {
@@ -89,7 +90,8 @@ namespace
     // the data-driven, multi-cycle counterpart to the constant source above.
     struct TickingSource
     {
-        static constexpr auto name = "ticking_source";
+        static constexpr auto name              = "ticking_source";
+        static constexpr bool schedule_on_start = true;  // initiate at the start cycle
         static void           eval(NodeScheduler sched, GlobalStateView gs, Scalar<"count", int> count,
                                     State<int> emitted, Out<TS<int>> out)
         {
@@ -153,6 +155,43 @@ TEST_CASE("simulation: a constant source drives exactly one cycle (no tick injec
     // reschedules and the loop ends. This pins the current limitation.
     CHECK(source_evals == 1);
     CHECK(add_one_evals == 1);
+}
+
+TEST_CASE("simulation: a node that does not schedule itself in start is never evaluated")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+
+    // A source with NO start hook: nothing schedules it, so it must never run.
+    int              evals = 0;
+    NodeTypeMetaData schema;
+    schema.display_name  = "unscheduled_source";
+    schema.output_schema = ts_int;
+    schema.node_kind     = NodeKind::PullSource;
+    NodeCallbacks callbacks;
+    callbacks.evaluate = [&evals](const NodeView &view, engine_time_t evaluation_time) {
+        ++evals;
+        write_int_output(view, evaluation_time, 1);
+    };
+
+    GraphBuilder graph_builder;
+    graph_builder.add_node(NodeBuilder::native(std::move(schema), std::move(callbacks)));
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{5});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    // Default state is not-scheduled: with no self-scheduling in start, the node
+    // is never evaluated (the executor idles to end_time).
+    CHECK(evals == 0);
 }
 
 TEST_CASE("simulation: re-ticking a source reschedules its downstream via notification")

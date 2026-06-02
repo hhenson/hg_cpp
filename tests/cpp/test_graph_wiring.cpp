@@ -13,7 +13,8 @@ namespace
 
     struct ConstantSource
     {
-        static constexpr auto name = "source";
+        static constexpr auto name              = "source";
+        static constexpr bool schedule_on_start = true;
         static void           eval(Out<TS<int>> out) { out.set(41); }
     };
 
@@ -77,7 +78,8 @@ namespace
     // Source configured by a scalar argument (no TS inputs -> PullSource).
     struct ScaledSource
     {
-        static constexpr auto name = "scaled_source";
+        static constexpr auto name              = "scaled_source";
+        static constexpr bool schedule_on_start = true;
         static void           eval(Scalar<"value", int> value, Out<TS<int>> out) { out.set(value.value()); }
     };
 

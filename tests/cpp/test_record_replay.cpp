@@ -37,6 +37,25 @@ namespace
             wire<testing::record<int>>(w, inc, std::string{"out"});
         }
     };
+
+    // A source that initiates its single tick 3 cycles after start using the
+    // lightweight SingleShotScheduler (no per-node scheduler state).
+    struct DelayedSource
+    {
+        static constexpr auto name = "delayed_source";
+        static void           start(SingleShotScheduler sched) { sched.schedule(engine_time_delta_t{3}); }
+        static void           eval(Out<TS<int>> out) { out.set(99); }
+    };
+
+    struct DelayedGraph
+    {
+        static constexpr auto name = "delayed_graph";
+        static void           compose(Wiring &w)
+        {
+            auto src = wire<DelayedSource>(w);
+            wire<testing::record<int>>(w, src, std::string{"out"});
+        }
+    };
 }  // namespace
 
 TEST_CASE("testing helpers: set_replay_values / get_recorded_values round-trip")
@@ -79,4 +98,30 @@ TEST_CASE("testing: replay -> add_one -> record captures the per-cycle output")
     CHECK(out[0] == std::optional<int>{2});
     CHECK(out[1] == std::nullopt);
     CHECK(out[2] == std::optional<int>{4});
+}
+
+TEST_CASE("testing: SingleShotScheduler schedules a delayed first tick with no scheduler state")
+{
+    using namespace hgraph;
+    auto &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
+
+    GraphBuilder gb = build_graph<DelayedGraph>();
+
+    GraphExecutorBuilder eb;
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    GraphExecutorValue executor = eb.make_executor();
+    auto               view     = executor.view();
+    view.run();
+
+    // The single tick lands at cycle offset 3 (start + 3); 0..2 are skipped.
+    const auto out = testing::get_recorded_values<int>(view.graph().global_state(), "out");
+    REQUIRE(out.size() == 4);
+    CHECK(out[0] == std::nullopt);
+    CHECK(out[1] == std::nullopt);
+    CHECK(out[2] == std::nullopt);
+    CHECK(out[3] == std::optional<int>{99});
+
+    // SingleShotScheduler is stateless: the source carries no scheduler component.
+    CHECK_FALSE(view.graph().node_at(0).has_scheduler());
 }

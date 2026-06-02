@@ -532,6 +532,9 @@ affect node-kind inference; the node simply receives them at evaluation.
    * - node scheduler
      - ``NodeScheduler`` *(available)*
      - ``_scheduler: SCHEDULER``
+   * - one-shot scheduler
+     - ``SingleShotScheduler`` *(available, C++ only)*
+     - —
    * - current time
      - ``engine_time_t`` *(available)*
      - ``_clock.evaluation_time``
@@ -568,12 +571,38 @@ split**: the persistent per-node footprint (a ``NodeSchedulerState`` — the pen
 ``NodeScheduler`` is the borrowing **view** that is constructed on demand when the
 parameter is injected (so a node that never schedules carries no scheduler context
 in memory). A source that reschedules itself is how a graph ticks over simulated
-time (the data-driven, multi-cycle counterpart to a one-shot constant source):
+time (the data-driven, multi-cycle counterpart to a one-shot constant source).
+
+.. important::
+
+   **Nodes are not scheduled by default.** A node only evaluates when something
+   schedules it: a compute/sink node when one of its inputs ticks, and a **source
+   when it schedules itself at start**. There are three ways to do the initial
+   scheduling, from simplest to most capable:
+
+   1. ``static constexpr bool schedule_on_start = true;`` — a declarative
+      attribute; the framework schedules the node for the start cycle. No hook, no
+      injectable, no per-node state. This is the right choice for almost every
+      source (it just means "tick me at start").
+   2. ``start(SingleShotScheduler s)`` — a lightweight, stateless one-shot
+      scheduler for when the *initial* schedule needs a specific time:
+      ``s.schedule_now()``, ``s.schedule(delta)`` or ``s.schedule(when)``. No
+      cancellation, no tags, no query, no per-node state.
+   3. ``NodeScheduler`` — the full, stateful scheduler (tags, cancellation,
+      rescheduling each cycle). Use it in ``eval`` for a source that re-arms over
+      time; it allocates a per-node ``NodeSchedulerState``.
+
+   These compose: a multi-cycle source typically uses ``schedule_on_start`` for the
+   first tick and ``NodeScheduler`` in ``eval`` to re-arm. (During ``start`` the
+   scheduler also allows scheduling the current cycle; during ``eval`` it is
+   future-only. This matches 2603, where the generator's framework ``start`` does
+   the initial scheduling.)
 
 .. code-block:: cpp
 
    struct Ticker
    {
+       static constexpr bool schedule_on_start = true;   // first tick at start
        static void eval(NodeScheduler sched, State<int> n, Out<TS<int>> out)
        {
            out.set(n.get());

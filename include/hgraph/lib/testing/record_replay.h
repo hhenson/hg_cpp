@@ -115,6 +115,11 @@ namespace hgraph::testing
     {
         static constexpr auto name = "replay";
 
+        // A source initiates itself at the start cycle; the declarative attribute
+        // inserts that scheduling (default = not scheduled). Per-cycle rescheduling
+        // below uses the full NodeScheduler.
+        static constexpr bool schedule_on_start = true;
+
         static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched,
                          State<int> index, Out<TS<T>> out)
         {

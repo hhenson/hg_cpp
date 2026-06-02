@@ -588,6 +588,15 @@ namespace hgraph
             if (callbacks(context).start) { callbacks(context).start(view, evaluation_time); }
             state.started = true;
             rollback.release();
+
+            // Declarative self-scheduling: a node with ``schedule_on_start`` is
+            // marked to evaluate in the current cycle (the framework equivalent of
+            // doing schedule_now() in a start hook). Done after the user start so
+            // the node is fully started before it can be evaluated.
+            if (view.schema() != nullptr && view.schema()->schedule_on_start && state.graph != nullptr)
+            {
+                state.graph->schedule_node(state.node_index, evaluation_time);
+            }
         }
 
         void stop_impl(const void *context, const NodeView &view, engine_time_t evaluation_time)

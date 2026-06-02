@@ -23,6 +23,7 @@ namespace
         schema.display_name = "source";
         schema.output_schema = ts_int;
         schema.node_kind = hgraph::NodeKind::PullSource;
+        schema.schedule_on_start = true;  // a source initiates itself at the start cycle
 
         hgraph::NodeCallbacks callbacks;
         callbacks.evaluate = [value](const hgraph::NodeView &view, hgraph::engine_time_t evaluation_time) {

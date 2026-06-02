@@ -39,10 +39,11 @@ comparing them is an element-wise list compare.
 ``replay<T>``
 -------------
 
-``replay<T>`` is a source node (``Out<TS<T>>`` only). It reads its buffer from the
-``GlobalState`` under the ``key`` scalar and ticks the output once per cycle that
-has a value, rescheduling itself (via ``NodeScheduler``) until the buffer is
-exhausted. It is the first genuine multi-cycle simulation source.
+``replay<T>`` is a source node (``Out<TS<T>>`` only). It initiates itself at start
+via ``schedule_on_start`` (sources are not scheduled by default), then reads its
+buffer from the ``GlobalState`` under the ``key`` scalar and ticks the output once
+per cycle that has a value, rescheduling itself (via ``NodeScheduler``) until the
+buffer is exhausted. It is the first genuine multi-cycle simulation source.
 
 .. code-block:: cpp
 

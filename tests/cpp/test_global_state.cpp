@@ -20,14 +20,16 @@ namespace
     // Source node that emits a value read from the graph's GlobalState.
     struct EmitSeed
     {
-        static constexpr auto name = "emit_seed";
+        static constexpr auto name              = "emit_seed";
+        static constexpr bool schedule_on_start = true;
         static void           eval(GlobalStateView gs, Out<TS<int>> out) { out.set(gs.get_as<int>("seed")); }
     };
 
     // Source node that writes into the GlobalState and emits a constant.
     struct StashConst
     {
-        static constexpr auto name = "stash_const";
+        static constexpr auto name              = "stash_const";
+        static constexpr bool schedule_on_start = true;
         static void           eval(GlobalStateView gs, Out<TS<int>> out)
         {
             gs.set("stashed", Value{5});
@@ -39,7 +41,8 @@ namespace
     // into the store, and emits the new value.
     struct BumpCounter
     {
-        static constexpr auto name = "bump_counter";
+        static constexpr auto name              = "bump_counter";
+        static constexpr bool schedule_on_start = true;
         static void           eval(GlobalStateView gs, Out<TS<int>> out)
         {
             const int next = gs.get_as<int>("counter") + 1;

@@ -23,7 +23,8 @@ namespace
     {
         static constexpr auto name = "constant_source";
 
-        static void eval(Out<TS<int>> out) { out.set(41); }
+        static constexpr bool schedule_on_start = true;
+        static void           eval(Out<TS<int>> out) { out.set(41); }
     };
 
     // Compute: In + Out -> kind inferred as Compute.

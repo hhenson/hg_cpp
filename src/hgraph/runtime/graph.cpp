@@ -222,17 +222,18 @@ namespace hgraph
                 state.started = false;
             });
 
+            // Nodes are NOT scheduled by default. A node that needs an initial
+            // evaluation schedules itself in its ``start`` (a source does
+            // ``schedule(now())``); compute/sink nodes are driven by input
+            // notifications. This mirrors 2603, where the node-kind ``start``
+            // (e.g. GeneratorNodeImpl.start) does the initial scheduling rather
+            // than the graph blanket-scheduling everything.
             for (std::size_t index = 0; index < state.nodes.size(); ++index)
             {
                 state.nodes[index].view().start(state.evaluation_time);
                 ++started_nodes;
             }
             state.started = true;
-
-            for (auto &entry : state.schedule)
-            {
-                if (entry.scheduled == MAX_DT) { entry.scheduled = start_time; }
-            }
             rollback.release();
         }
 

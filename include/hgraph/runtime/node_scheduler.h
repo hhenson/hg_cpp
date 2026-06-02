@@ -33,6 +33,54 @@ namespace hgraph
     };
 
     /**
+     * Lightweight, **stateless** one-shot scheduling injectable — the minimal
+     * scheduling surface, intended mainly for ``start``. Unlike
+     * :cpp:class:`NodeScheduler` it carries **no per-node state** (so a node that
+     * only uses it allocates no scheduler slot and does not set ``uses_scheduler``)
+     * and offers no cancellation, no tags, and no "is it scheduled?" query — it
+     * merely *marks the node to evaluate* at now, a delta, or an absolute future
+     * time. It never moves an existing earlier schedule later (it defers to the
+     * graph's ``schedule_node`` min-semantics).
+     *
+     * It is a transparent injectable: it does not appear in the node's signature
+     * (no input/scalar/state/kind effect) and is available to C++ nodes only — a
+     * node may declare it on ``start`` without also declaring it on ``eval``.
+     */
+    class HGRAPH_EXPORT SingleShotScheduler
+    {
+      public:
+        SingleShotScheduler() noexcept = default;
+        SingleShotScheduler(GraphValue *graph, std::size_t node_index, engine_time_t now) noexcept
+            : graph_(graph), node_index_(node_index), now_(now)
+        {
+        }
+
+        /** The current evaluation time (the start time when injected on ``start``). */
+        [[nodiscard]] engine_time_t now() const noexcept { return now_; }
+
+        /** Mark the node to evaluate in the current cycle. */
+        void schedule_now() const { schedule(now_); }
+
+        /**
+         * Mark the node to evaluate at absolute time ``when``. A no-op if there is
+         * no live graph; never cancels and never moves an existing earlier
+         * schedule later (graph ``schedule_node`` keeps the earliest time).
+         */
+        void schedule(engine_time_t when) const
+        {
+            if (graph_ != nullptr) { graph_->schedule_node(node_index_, when); }
+        }
+
+        /** Mark the node to evaluate ``delta`` after the current time. */
+        void schedule(engine_time_delta_t delta) const { schedule(now_ + delta); }
+
+      private:
+        GraphValue   *graph_{nullptr};
+        std::size_t   node_index_{0};
+        engine_time_t now_{MIN_DT};
+    };
+
+    /**
      * Borrowing **view** over a node's scheduler — the injectable, built on demand
      * (state reference + node index + graph reference + current time). It mirrors
      * the 2603 ``NodeScheduler`` / Python ``SCHEDULER`` interface: schedule
@@ -48,8 +96,9 @@ namespace hgraph
     {
       public:
         NodeScheduler() noexcept = default;
-        NodeScheduler(NodeSchedulerState &state, GraphValue *graph, std::size_t node_index, engine_time_t now) noexcept
-            : state_(&state), graph_(graph), node_index_(node_index), now_(now)
+        NodeScheduler(NodeSchedulerState &state, GraphValue *graph, std::size_t node_index, engine_time_t now,
+                      bool started = true) noexcept
+            : state_(&state), graph_(graph), node_index_(node_index), now_(now), started_(started)
         {
         }
 
@@ -110,9 +159,13 @@ namespace hgraph
         }
 
         /**
-         * Schedule the node at ``when`` (must be in the future). A ``tag``
-         * replaces any prior event under the same tag. ``on_wall_clock`` is not
-         * yet supported.
+         * Schedule the node at ``when``. Once the node is started this must be
+         * strictly in the future; **during ``start``** (before the node is
+         * started) a node may schedule its first evaluation at the current
+         * (start) time via ``schedule(now())`` — this is how a source initiates
+         * itself. A ``tag`` replaces any prior event under the same tag.
+         * ``on_wall_clock`` is not yet supported. Mirrors the authoritative
+         * Python guard ``when > (now if started else MIN_DT)``.
          */
         void schedule(engine_time_t when, std::optional<std::string> tag = std::nullopt,
                       bool on_wall_clock = false) const
@@ -130,7 +183,9 @@ namespace hgraph
                     state_->events.erase({it->second, tag_value});  // replace existing tagged event
                 }
             }
-            if (when <= now_) { return; }  // cannot schedule in the past / current cycle
+            // Started: only the future. Not yet started: the start cycle onward.
+            const engine_time_t threshold = started_ ? now_ : MIN_DT;
+            if (when <= threshold) { return; }
 
             const engine_time_t prev_first = state_->events.empty() ? MAX_DT : state_->events.begin()->first;
             if (tag.has_value()) { state_->tags[tag_value] = when; }  // only tagged events are indexed
@@ -211,6 +266,7 @@ namespace hgraph
         GraphValue         *graph_{nullptr};
         std::size_t         node_index_{0};
         engine_time_t       now_{MIN_DT};
+        bool                started_{true};
     };
 }  // namespace hgraph
 
