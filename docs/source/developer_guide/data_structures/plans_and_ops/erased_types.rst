@@ -348,7 +348,12 @@ time-series layer.
     Adds ``insert(key)``, ``remove(key)``.
 
 ``MutableMapView``
-    Adds ``set_item(key, value)`` (insert-or-replace), ``remove(key)``.
-    The keys remain owned by the map; structural changes flow through
-    the mutable view rather than through the ``key_set()`` accessor
-    (which always returns a read-only ``SetView``).
+    For a **mutable** map (``ValueTypeFlags::Mutable``, from
+    ``registry.mutable_map``) this is **implemented** — ``set_item(key,
+    value)`` (insert-or-replace), ``remove(key)`` and ``clear()`` go through
+    the ``MutableMapValueOps`` surface over a ``KeySlotStore`` +
+    ``ValueSlotStore`` (the same slot substrate the time-series layer uses,
+    without delta). The keys remain owned by the map; structural changes flow
+    through the mutable view rather than through the ``key_set()`` accessor
+    (which always returns a read-only ``SetView``). On a compact (immutable)
+    map these throw.

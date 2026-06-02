@@ -88,7 +88,14 @@ A scalar schema has one of nine kinds, recorded on its
     Unordered collection of unique elements of one type.
 
 ``Map``
-    Key/value mapping with one key type and one value type.
+    Key/value mapping with one key type and one value type. Immutable
+    (built once) by default; a map schema carrying ``ValueTypeFlags::Mutable``
+    (from ``TypeRegistry::mutable_map``) is **structurally mutable** — backed
+    by a ``KeySlotStore`` + co-indexed ``ValueSlotStore`` and supporting
+    ``set_item`` / ``remove`` / ``clear`` through ``MutableMapView``. As with
+    the list, mutability is an explicit schema axis that interns separately.
+    A mutable ``Map<string, Any>`` is the backing for the runtime
+    ``GlobalState`` injectable.
 
 ``CyclicBuffer``
     Fixed-capacity ring buffer of one element type.

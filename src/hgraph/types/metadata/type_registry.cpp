@@ -221,6 +221,7 @@ namespace hgraph
         set_cache_.clear();
         mutable_list_cache_.clear();
         map_cache_.clear();
+        mutable_map_cache_.clear();
         cyclic_buffer_cache_.clear();
         queue_cache_.clear();
         any_cache_.clear();
@@ -484,6 +485,19 @@ namespace hgraph
                                      ValueTypeFlags::Hashable | ValueTypeFlags::Equatable |
                                          ValueTypeFlags::Comparable,
                                      "Any");
+        });
+        return &meta;
+    }
+
+    const ValueTypeMetaData *TypeRegistry::mutable_map(const ValueTypeMetaData *key_type,
+                                                       const ValueTypeMetaData *value_type)
+    {
+        const MapKey key{key_type, value_type};
+        const ValueTypeMetaData &meta = mutable_map_cache_.intern(key, [&]() {
+            ValueTypeMetaData m(ValueTypeKind::Map, map_flags(key_type, value_type) | ValueTypeFlags::Mutable);
+            m.key_type     = key_type;
+            m.element_type = value_type;
+            return m;
         });
         return &meta;
     }

@@ -168,6 +168,20 @@ namespace hgraph
          */
         SetView (*key_set)(const void *context, const ValueTypeBinding *map_binding, const void *memory) = nullptr;
     };
+
+    /**
+     * Structural-mutation surface for a *mutable* (dynamic) map. Extends the
+     * ``MapValueOps`` read surface with the hooks ``MutableMapView`` calls.
+     * ``insert`` copies the supplied key and value (or replaces the value if
+     * the key is present); ``erase`` removes a key; ``clear`` empties the map.
+     * Only bindings over mutable map storage install these.
+     */
+    struct MutableMapValueOps : MapValueOps
+    {
+        void (*insert)(const void *context, void *memory, const void *key, const void *value) = nullptr;
+        void (*erase)(const void *context, void *memory, const void *key) = nullptr;
+        void (*clear)(const void *context, void *memory) = nullptr;
+    };
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_VALUE_CONTAINER_OPS_H

@@ -30,6 +30,7 @@ namespace hgraph
     class MutableListView;
     class MutableCyclicBufferView;
     class MutableQueueView;
+    class MutableMapView;
     class AnyView;
     class MutableAnyView;
     class Value;
@@ -276,6 +277,8 @@ namespace hgraph
         [[nodiscard]] std::optional<CyclicBufferView> try_as_cyclic_buffer() const;
         [[nodiscard]] QueueView as_queue() const;
         [[nodiscard]] std::optional<QueueView> try_as_queue() const;
+        [[nodiscard]] MutableMapView as_mutable_map() const;
+        [[nodiscard]] std::optional<MutableMapView> try_as_mutable_map() const;
         [[nodiscard]] AnyView as_any() const;
         [[nodiscard]] std::optional<AnyView> try_as_any() const;
         [[nodiscard]] MutableAnyView as_mutable_any() const;

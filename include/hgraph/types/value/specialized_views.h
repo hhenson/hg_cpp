@@ -684,6 +684,9 @@ namespace hgraph
         [[nodiscard]] auto begin() const { return entries().begin(); }
         [[nodiscard]] auto end() const { return entries().end(); }
 
+        /** Open a writable view over a mutable map (requires mutable storage). */
+        [[nodiscard]] MutableMapView begin_mutation() const;
+
       private:
         [[nodiscard]] bool key_compatible(const ValueView &key) const noexcept
         {
@@ -692,6 +695,69 @@ namespace hgraph
         }
 
         const MapValueOps *ops_{nullptr};
+    };
+
+    /**
+     * Writable view over a **mutable** map (``ValueTypeFlags::Mutable``). Adds
+     * insert-or-replace, remove, and clear on top of the ``MapView`` read
+     * surface. On a compact (immutable) map these throw.
+     */
+    class MutableMapView : public MapView
+    {
+      public:
+        explicit MutableMapView(ValueView base)
+            : MapView(specialized_view_detail::require_mutable(std::move(base), "MutableMapView"))
+        {
+        }
+
+        /** Insert ``key`` -> ``value``, or replace the value if ``key`` is present. */
+        void set_item(const ValueView &key, const ValueView &value) const
+        {
+            require_key(key, "set_item");
+            require_value(value, "set_item");
+            mutable_ops("set_item")->insert(nullptr, mutable_data(), key.data(), value.data());
+        }
+
+        /** Remove ``key`` if present; returns whether a key was removed. */
+        bool remove(const ValueView &key) const
+        {
+            require_key(key, "remove");
+            const bool had = contains(key);
+            mutable_ops("remove")->erase(nullptr, mutable_data(), key.data());
+            return had;
+        }
+
+        /** Remove every entry. */
+        void clear() const { mutable_ops("clear")->clear(nullptr, mutable_data()); }
+
+      private:
+        [[nodiscard]] const MutableMapValueOps *mutable_ops(const char *what) const
+        {
+            if (schema() == nullptr || !schema()->is_mutable())
+            {
+                throw std::logic_error(std::string{"MutableMapView::"} + what + " requires a mutable map");
+            }
+            const auto *ops = static_cast<const MutableMapValueOps *>(binding()->ops);
+            if (ops == nullptr || ops->insert == nullptr)
+            {
+                throw std::logic_error(std::string{"MutableMapView::"} + what + ": binding has no mutation ops");
+            }
+            return ops;
+        }
+        void require_key(const ValueView &key, const char *what) const
+        {
+            if (!key.valid() || key.schema() != key_schema())
+            {
+                throw std::logic_error(std::string{"MutableMapView::"} + what + ": key schema mismatch");
+            }
+        }
+        void require_value(const ValueView &value, const char *what) const
+        {
+            if (!value.valid() || value.schema() != value_schema())
+            {
+                throw std::logic_error(std::string{"MutableMapView::"} + what + ": value schema mismatch");
+            }
+        }
     };
 
     /**
@@ -829,6 +895,23 @@ namespace hgraph
     inline std::optional<MapView> ValueView::try_as_map() const
     {
         return is_map() ? std::optional<MapView>{MapView{borrowed_ref()}} : std::nullopt;
+    }
+
+    inline MutableMapView MapView::begin_mutation() const
+    {
+        return MutableMapView{ValueView::begin_mutation()};
+    }
+
+    inline MutableMapView ValueView::as_mutable_map() const
+    {
+        if (!is_map()) { throw std::logic_error("ValueView::as_mutable_map on non-map view"); }
+        return MutableMapView{borrowed_ref()};
+    }
+
+    inline std::optional<MutableMapView> ValueView::try_as_mutable_map() const
+    {
+        return is_map() && mutable_payload() ? std::optional<MutableMapView>{MutableMapView{borrowed_ref()}}
+                                             : std::nullopt;
     }
 
     inline CyclicBufferView ValueView::as_cyclic_buffer() const

@@ -108,6 +108,12 @@ namespace hgraph
         const ValueTypeMetaData *set(const ValueTypeMetaData *element_type);
         /** Intern a map value-schema with the given key and value types. */
         const ValueTypeMetaData *map(const ValueTypeMetaData *key_type, const ValueTypeMetaData *value_type);
+        /**
+         * Intern a **mutable** (structurally-mutable, slot-store-backed) map
+         * value-schema. Distinct from :cpp:func:`map`: carries
+         * ``ValueTypeFlags::Mutable`` and interns separately.
+         */
+        const ValueTypeMetaData *mutable_map(const ValueTypeMetaData *key_type, const ValueTypeMetaData *value_type);
         /** Intern a fixed-capacity ring-buffer value-schema. */
         const ValueTypeMetaData *cyclic_buffer(const ValueTypeMetaData *element_type, size_t capacity);
         /** Intern a queue value-schema; ``max_capacity == 0`` means unbounded. */
@@ -461,6 +467,7 @@ namespace hgraph
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> set_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_list_cache_;
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> map_cache_;
+        InternTable<MapKey, ValueTypeMetaData, MapKeyHash> mutable_map_cache_;
         InternTable<SizedKey, ValueTypeMetaData, SizedKeyHash> cyclic_buffer_cache_;
         InternTable<SizedKey, ValueTypeMetaData, SizedKeyHash> queue_cache_;
         InternTable<int, ValueTypeMetaData>                    any_cache_;  // singleton, interned under key 0

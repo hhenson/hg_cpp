@@ -57,6 +57,7 @@ add_executable(hgraph_unit_tests
     test_value.cpp
     test_any_value.cpp
     test_mutable_list.cpp
+    test_mutable_map.cpp
 )
 
 target_link_libraries(hgraph_unit_tests

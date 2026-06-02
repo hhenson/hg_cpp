@@ -368,6 +368,499 @@ namespace hgraph
         const auto *meta = TypeRegistry::instance().mutable_list(element_binding.type_meta);
         return ValueTypeBinding::intern(*meta, mutable_list_plan(element_binding), mutable_list_ops());
     }
+
+    // =================================================================
+    // Mutable Map
+    // =================================================================
+
+    namespace mutable_container_detail
+    {
+        // Adapt a key binding's value-layer ValueOps (hash/equals) to the
+        // KeySlotStore hook shape (which passes (key, context) / (lhs, rhs,
+        // context)). The context is the key binding's ValueOps.
+        inline std::size_t key_hash_adapter(const void *key, const void *context)
+        {
+            return static_cast<const ValueOps *>(context)->hash(key);
+        }
+        inline bool key_equal_adapter(const void *lhs, const void *rhs, const void *context)
+        {
+            return static_cast<const ValueOps *>(context)->equals(lhs, rhs);
+        }
+        [[nodiscard]] inline KeySlotStoreOps key_ops_for(const ValueTypeBinding &key_binding)
+        {
+            return KeySlotStoreOps{
+                .hash    = &key_hash_adapter,
+                .equal   = &key_equal_adapter,
+                .context = &key_binding.checked_ops(),
+            };
+        }
+    }  // namespace mutable_container_detail
+
+    /**
+     * Structurally-mutable value-layer ``Map`` storage. Keys live in a
+     * ``KeySlotStore`` (hashed/compared via the key binding's ``ValueOps``);
+     * values live in a parallel ``ValueSlotStore`` co-indexed by slot. Erase is
+     * immediate (the key is removed and flushed, the value destroyed at once).
+     * Always key/value-bound (the plan's lifecycle context carries the
+     * bindings), so it never has an unbound state.
+     */
+    class MutableMapStorage
+    {
+      public:
+        MutableMapStorage(const ValueTypeBinding &key_binding, const ValueTypeBinding &value_binding)
+            : key_binding_{&key_binding}
+            , value_binding_{&value_binding}
+            , keys_{key_binding.checked_plan(), mutable_container_detail::key_ops_for(key_binding)}
+            , values_{value_binding.checked_plan()}
+        {
+        }
+
+        MutableMapStorage(const MutableMapStorage &other)
+            : key_binding_{other.key_binding_}
+            , value_binding_{other.value_binding_}
+            , keys_{other.key_binding_->checked_plan(), mutable_container_detail::key_ops_for(*other.key_binding_)}
+            , values_{other.value_binding_->checked_plan()}
+        {
+            copy_entries_from(other);
+        }
+
+        MutableMapStorage &operator=(const MutableMapStorage &other)
+        {
+            if (this != &other)
+            {
+                values_.destroy_all();
+                keys_          = KeySlotStore{other.key_binding_->checked_plan(),
+                                              mutable_container_detail::key_ops_for(*other.key_binding_)};
+                values_        = ValueSlotStore{other.value_binding_->checked_plan()};
+                key_binding_   = other.key_binding_;
+                value_binding_ = other.value_binding_;
+                copy_entries_from(other);
+            }
+            return *this;
+        }
+
+        MutableMapStorage(MutableMapStorage &&) noexcept            = default;
+        MutableMapStorage &operator=(MutableMapStorage &&) noexcept = default;
+        ~MutableMapStorage()                                       = default;
+
+        [[nodiscard]] std::size_t             size() const noexcept { return keys_.size(); }
+        [[nodiscard]] std::size_t             slot_capacity() const noexcept { return keys_.slot_capacity(); }
+        [[nodiscard]] bool                    slot_live(std::size_t slot) const noexcept { return keys_.slot_live(slot); }
+        [[nodiscard]] const ValueTypeBinding *key_binding() const noexcept { return key_binding_; }
+        [[nodiscard]] const ValueTypeBinding *value_binding() const noexcept { return value_binding_; }
+
+        [[nodiscard]] const void *key_at(std::size_t slot) const noexcept { return keys_.key_memory(slot); }
+        [[nodiscard]] const void *value_at_slot(std::size_t slot) const noexcept { return values_.value_memory(slot); }
+
+        [[nodiscard]] bool        contains(const void *key) const { return keys_.find_slot(key) != KeySlotStore::npos; }
+        [[nodiscard]] const void *value_for(const void *key) const
+        {
+            const std::size_t slot = keys_.find_slot(key);
+            return slot == KeySlotStore::npos ? nullptr : values_.value_memory(slot);
+        }
+
+        // Ordinal (nth-live) accessors for the indexed surface; O(n).
+        [[nodiscard]] const void *key_at_ordinal(std::size_t ordinal) const { return nth_live_memory(ordinal, true); }
+        [[nodiscard]] const void *value_at_ordinal(std::size_t ordinal) const { return nth_live_memory(ordinal, false); }
+
+        /** Insert ``key`` -> ``value`` (copy), or replace the value if the key is present. */
+        void insert(const void *key, const void *value)
+        {
+            const auto result = keys_.insert(key);  // may grow key capacity
+            values_.reserve_to(keys_.slot_capacity());
+            if (result.inserted) { values_.construct_at(result.slot, value); }
+            else { value_binding_->checked_plan().copy_assign(values_.value_memory(result.slot), value); }
+        }
+
+        /** Remove ``key`` (and its value) immediately. Returns true if a key was removed. */
+        bool erase(const void *key)
+        {
+            const std::size_t slot = keys_.find_slot(key);
+            if (slot == KeySlotStore::npos) { return false; }
+            values_.destroy_at(slot);
+            (void)keys_.remove_slot(slot);
+            keys_.erase_pending();  // flush this removal immediately
+            return true;
+        }
+
+        /** Remove every entry. */
+        void clear()
+        {
+            values_.destroy_all();
+            keys_.clear();
+        }
+
+      private:
+        const ValueTypeBinding *key_binding_{nullptr};
+        const ValueTypeBinding *value_binding_{nullptr};
+        KeySlotStore            keys_;
+        ValueSlotStore          values_;
+
+        [[nodiscard]] const void *nth_live_memory(std::size_t ordinal, bool key) const
+        {
+            std::size_t count = 0;
+            for (std::size_t slot = 0; slot < keys_.slot_capacity(); ++slot)
+            {
+                if (!keys_.slot_live(slot)) { continue; }
+                if (count == ordinal) { return key ? keys_.key_memory(slot) : values_.value_memory(slot); }
+                ++count;
+            }
+            throw std::out_of_range("MutableMapStorage ordinal out of range");
+        }
+
+        void copy_entries_from(const MutableMapStorage &other)
+        {
+            for (std::size_t slot = 0; slot < other.keys_.slot_capacity(); ++slot)
+            {
+                if (other.keys_.slot_live(slot)) { insert(other.keys_.key_memory(slot), other.values_.value_memory(slot)); }
+            }
+        }
+    };
+
+    namespace mutable_container_detail
+    {
+        struct MutableMapState
+        {
+            const ValueTypeBinding *key_binding{nullptr};
+            const ValueTypeBinding *value_binding{nullptr};
+        };
+
+        // -- lifecycle thunks --
+        inline void map_construct(void *dst, const void *context)
+        {
+            const auto &state = compact_detail::checked_state<MutableMapState>(context, "mutable_map");
+            if (state.key_binding == nullptr || state.value_binding == nullptr)
+            {
+                throw std::logic_error("mutable_map construction requires key and value bindings");
+            }
+            std::construct_at(static_cast<MutableMapStorage *>(dst), *state.key_binding, *state.value_binding);
+        }
+        inline void map_destroy(void *memory, const void *) noexcept
+        {
+            std::destroy_at(static_cast<MutableMapStorage *>(memory));
+        }
+        inline void map_copy_construct(void *dst, const void *src, const void *)
+        {
+            std::construct_at(static_cast<MutableMapStorage *>(dst), *static_cast<const MutableMapStorage *>(src));
+        }
+        inline void map_move_construct(void *dst, void *src, const void *)
+        {
+            std::construct_at(static_cast<MutableMapStorage *>(dst), std::move(*static_cast<MutableMapStorage *>(src)));
+        }
+        inline void map_copy_assign(void *dst, const void *src, const void *)
+        {
+            *static_cast<MutableMapStorage *>(dst) = *static_cast<const MutableMapStorage *>(src);
+        }
+        inline void map_move_assign(void *dst, void *src, const void *)
+        {
+            *static_cast<MutableMapStorage *>(dst) = std::move(*static_cast<MutableMapStorage *>(src));
+        }
+
+        // -- read thunks --
+        inline std::size_t map_size(const void *, const void *m) noexcept
+        {
+            return static_cast<const MutableMapStorage *>(m)->size();
+        }
+        inline bool map_contains(const void *, const void *m, const void *key)
+        {
+            return static_cast<const MutableMapStorage *>(m)->contains(key);
+        }
+        inline const void *map_value_at(const void *, const void *m, const void *key)
+        {
+            return static_cast<const MutableMapStorage *>(m)->value_for(key);
+        }
+        inline const void *map_key_at_index(const void *, const void *m, std::size_t i)
+        {
+            return static_cast<const MutableMapStorage *>(m)->key_at_ordinal(i);
+        }
+        inline const void *map_value_at_index(const void *, const void *m, std::size_t i)
+        {
+            return static_cast<const MutableMapStorage *>(m)->value_at_ordinal(i);
+        }
+        inline const ValueTypeBinding *map_key_binding(const void *, const void *m, std::size_t) noexcept
+        {
+            return static_cast<const MutableMapStorage *>(m)->key_binding();
+        }
+        inline const ValueTypeBinding *map_value_binding(const void *, const void *m) noexcept
+        {
+            return static_cast<const MutableMapStorage *>(m)->value_binding();
+        }
+        inline const ValueTypeBinding *map_value_binding_indexed(const void *, const void *m, std::size_t) noexcept
+        {
+            return map_value_binding(nullptr, m);
+        }
+
+        // -- predicate-based ranges (skip dead slots) --
+        inline bool map_slot_live(const void *, const void *m, std::size_t slot)
+        {
+            return static_cast<const MutableMapStorage *>(m)->slot_live(slot);
+        }
+        inline ValueView map_key_projector(const void *, const void *m, std::size_t slot)
+        {
+            const auto *s = static_cast<const MutableMapStorage *>(m);
+            return ValueView{s->key_binding(), s->key_at(slot)};
+        }
+        inline ValueView map_value_projector(const void *, const void *m, std::size_t slot)
+        {
+            const auto *s = static_cast<const MutableMapStorage *>(m);
+            return ValueView{s->value_binding(), s->value_at_slot(slot)};
+        }
+        inline std::pair<ValueView, ValueView> map_kv_projector(const void *, const void *m, std::size_t slot)
+        {
+            const auto *s = static_cast<const MutableMapStorage *>(m);
+            return {ValueView{s->key_binding(), s->key_at(slot)}, ValueView{s->value_binding(), s->value_at_slot(slot)}};
+        }
+        inline Range<ValueView> map_make_keys_range(const void *, const void *m)
+        {
+            return Range<ValueView>{nullptr, m, static_cast<const MutableMapStorage *>(m)->slot_capacity(),
+                                    &map_slot_live, &map_key_projector};
+        }
+        inline Range<ValueView> map_make_values_range(const void *, const void *m)
+        {
+            return Range<ValueView>{nullptr, m, static_cast<const MutableMapStorage *>(m)->slot_capacity(),
+                                    &map_slot_live, &map_value_projector};
+        }
+        inline KeyValueRange<ValueView, ValueView> map_make_kv_range(const void *, const void *m)
+        {
+            return KeyValueRange<ValueView, ValueView>{nullptr, m,
+                                                       static_cast<const MutableMapStorage *>(m)->slot_capacity(),
+                                                       &map_slot_live, &map_kv_projector};
+        }
+
+        // -- whole-map hash/equals/compare/to_string (order-independent) --
+        inline std::size_t map_hash(const void *, const void *m)
+        {
+            const auto *s = static_cast<const MutableMapStorage *>(m);
+            const auto &kops = s->key_binding()->checked_ops();
+            const auto &vops = s->value_binding()->checked_ops();
+            std::size_t acc  = 0;  // xor of per-entry hashes -> order-independent
+            for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
+            {
+                if (!s->slot_live(slot)) { continue; }
+                acc ^= container_ops_detail::combine_hash(kops.hash(s->key_at(slot)), vops.hash(s->value_at_slot(slot)));
+            }
+            return acc;
+        }
+        inline bool map_equals(const void *, const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const MutableMapStorage *>(lhs);
+            const auto *b = static_cast<const MutableMapStorage *>(rhs);
+            if (a->size() != b->size()) { return false; }
+            if (a->key_binding() != b->key_binding() || a->value_binding() != b->value_binding()) { return false; }
+            const auto &vops = a->value_binding()->checked_ops();
+            for (std::size_t slot = 0; slot < a->slot_capacity(); ++slot)
+            {
+                if (!a->slot_live(slot)) { continue; }
+                const void *other_value = b->value_for(a->key_at(slot));
+                if (other_value == nullptr || !vops.equals(a->value_at_slot(slot), other_value)) { return false; }
+            }
+            return true;
+        }
+        inline std::partial_ordering map_compare(const void *ctx, const void *lhs, const void *rhs) noexcept
+        {
+            // Maps have no natural order; equal maps are equivalent, otherwise unordered.
+            return map_equals(ctx, lhs, rhs) ? std::partial_ordering::equivalent : std::partial_ordering::unordered;
+        }
+        inline std::string map_to_string(const void *, const void *m)
+        {
+            const auto *s = static_cast<const MutableMapStorage *>(m);
+            const auto &kops = s->key_binding()->checked_ops();
+            const auto &vops = s->value_binding()->checked_ops();
+            fmt::memory_buffer out;
+            fmt::format_to(std::back_inserter(out), "{{");
+            bool first = true;
+            for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
+            {
+                if (!s->slot_live(slot)) { continue; }
+                if (!first) { fmt::format_to(std::back_inserter(out), ", "); }
+                first = false;
+                fmt::format_to(std::back_inserter(out), "{}: {}", kops.to_string(s->key_at(slot)),
+                               vops.to_string(s->value_at_slot(slot)));
+            }
+            fmt::format_to(std::back_inserter(out), "}}");
+            return fmt::to_string(out);
+        }
+
+        // -- mutation thunks --
+        inline void map_insert(const void *, void *m, const void *key, const void *value)
+        {
+            static_cast<MutableMapStorage *>(m)->insert(key, value);
+        }
+        inline void map_erase(const void *, void *m, const void *key)
+        {
+            (void)static_cast<MutableMapStorage *>(m)->erase(key);
+        }
+        inline void map_clear(const void *, void *m) { static_cast<MutableMapStorage *>(m)->clear(); }
+
+        // -- key-set adapter (read-only SetView over the live keys) --
+        inline std::size_t map_key_set_hash(const void *, const void *m)
+        {
+            const auto *s = static_cast<const MutableMapStorage *>(m);
+            const auto &kops = s->key_binding()->checked_ops();
+            std::size_t acc = 0;
+            for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
+            {
+                if (s->slot_live(slot)) { acc ^= kops.hash(s->key_at(slot)); }
+            }
+            return acc;
+        }
+        inline bool map_key_set_equals(const void *, const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const MutableMapStorage *>(lhs);
+            const auto *b = static_cast<const MutableMapStorage *>(rhs);
+            if (a->size() != b->size()) { return false; }
+            for (std::size_t slot = 0; slot < a->slot_capacity(); ++slot)
+            {
+                if (a->slot_live(slot) && !b->contains(a->key_at(slot))) { return false; }
+            }
+            return true;
+        }
+        inline std::partial_ordering map_key_set_compare(const void *ctx, const void *lhs, const void *rhs) noexcept
+        {
+            return map_key_set_equals(ctx, lhs, rhs) ? std::partial_ordering::equivalent
+                                                     : std::partial_ordering::unordered;
+        }
+        inline std::string map_key_set_to_string(const void *, const void *m)
+        {
+            const auto *s = static_cast<const MutableMapStorage *>(m);
+            const auto &kops = s->key_binding()->checked_ops();
+            fmt::memory_buffer out;
+            fmt::format_to(std::back_inserter(out), "{{");
+            bool first = true;
+            for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
+            {
+                if (!s->slot_live(slot)) { continue; }
+                if (!first) { fmt::format_to(std::back_inserter(out), ", "); }
+                first = false;
+                fmt::format_to(std::back_inserter(out), "{}", kops.to_string(s->key_at(slot)));
+            }
+            fmt::format_to(std::back_inserter(out), "}}");
+            return fmt::to_string(out);
+        }
+
+        inline compact_detail::CompactContainerPlanRegistry<compact_detail::BinaryBindingKey, MutableMapState,
+                                                            compact_detail::BinaryBindingKeyHash> &
+        map_registry()
+        {
+            static compact_detail::CompactContainerPlanRegistry<compact_detail::BinaryBindingKey, MutableMapState,
+                                                                compact_detail::BinaryBindingKeyHash>
+                r;
+            return r;
+        }
+    }  // namespace mutable_container_detail
+
+    // Forward-declared: the key-set binding's plan is the map's own plan.
+    [[nodiscard]] const MemoryUtils::StoragePlan &mutable_map_plan(const ValueTypeBinding &key_binding,
+                                                                   const ValueTypeBinding &value_binding);
+
+    [[nodiscard]] inline const SetValueOps &mutable_map_key_set_ops() noexcept
+    {
+        using namespace mutable_container_detail;
+        static const SetValueOps ops = {
+            {{nullptr,
+              false,
+              &map_key_set_hash,
+              &map_key_set_equals,
+              &map_key_set_compare,
+              &map_key_set_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+              ,
+              nullptr,
+              nullptr
+#endif
+             },
+             &map_size,
+             &map_key_at_index,
+             &map_key_binding,
+             &map_make_keys_range,
+             nullptr},
+            &map_contains,
+        };
+        return ops;
+    }
+
+    [[nodiscard]] inline const ValueTypeBinding &mutable_map_key_set_binding(const ValueTypeBinding &key_binding,
+                                                                             const ValueTypeBinding &value_binding)
+    {
+        const auto *set_meta = TypeRegistry::instance().set(key_binding.type_meta);
+        return ValueTypeBinding::intern(*set_meta, mutable_map_plan(key_binding, value_binding),
+                                        mutable_map_key_set_ops());
+    }
+
+    namespace mutable_container_detail
+    {
+        inline SetView map_key_set_thunk(const void *, const ValueTypeBinding * /*map_binding*/, const void *memory)
+        {
+            const auto *s = static_cast<const MutableMapStorage *>(memory);
+            const ValueTypeBinding &set_binding = mutable_map_key_set_binding(*s->key_binding(), *s->value_binding());
+            return SetView{ValueView{&set_binding, memory}};
+        }
+    }  // namespace mutable_container_detail
+
+    [[nodiscard]] inline const MemoryUtils::StoragePlan &mutable_map_plan(const ValueTypeBinding &key_binding,
+                                                                          const ValueTypeBinding &value_binding)
+    {
+        using namespace mutable_container_detail;
+        return map_registry().intern(
+            compact_detail::BinaryBindingKey{.first = &key_binding, .second = &value_binding},
+            [&] {
+                return std::make_unique<MutableMapState>(
+                    MutableMapState{.key_binding = &key_binding, .value_binding = &value_binding});
+            },
+            [&](const MutableMapState &state) {
+                return std::make_unique<MemoryUtils::StoragePlan>(
+                    compact_detail::make_storage_plan<MutableMapStorage, &map_construct, &map_destroy,
+                                                      &map_copy_construct, &map_move_construct, &map_copy_assign,
+                                                      &map_move_assign>(state));
+            });
+    }
+
+    [[nodiscard]] inline const MutableMapValueOps &mutable_map_ops() noexcept
+    {
+        using namespace mutable_container_detail;
+        static const MutableMapValueOps ops = {
+            {{{// ValueOps:
+               nullptr,
+               true,  // allows_mutation
+               &map_hash,
+               &map_equals,
+               &map_compare,
+               &map_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+               ,
+               nullptr,
+               nullptr
+#endif
+              },
+              // IndexedValueOps (key surface):
+              &map_size,
+              &map_key_at_index,
+              &map_key_binding,
+              &map_make_keys_range,
+              nullptr},
+             // MapValueOps:
+             &map_contains,
+             &map_value_at,
+             &map_value_at_index,
+             &map_value_binding,
+             &map_make_keys_range,
+             &map_make_values_range,
+             &map_make_kv_range,
+             &map_key_set_thunk},
+            // MutableMapValueOps:
+            &map_insert,
+            &map_erase,
+            &map_clear,
+        };
+        return ops;
+    }
+
+    [[nodiscard]] inline const ValueTypeBinding &mutable_map_binding(const ValueTypeBinding &key_binding,
+                                                                     const ValueTypeBinding &value_binding)
+    {
+        const auto *meta = TypeRegistry::instance().mutable_map(key_binding.type_meta, value_binding.type_meta);
+        return ValueTypeBinding::intern(*meta, mutable_map_plan(key_binding, value_binding), mutable_map_ops());
+    }
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_VALUE_MUTABLE_CONTAINER_OPS_H

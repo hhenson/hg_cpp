@@ -898,7 +898,8 @@ namespace hgraph
                 {
                     throw std::logic_error("ValuePlanFactory: map key/value has no resolvable binding");
                 }
-                binding = &compact_map_binding(*key_binding, *value_binding);
+                binding = schema->is_mutable() ? &mutable_map_binding(*key_binding, *value_binding)
+                                               : &compact_map_binding(*key_binding, *value_binding);
                 break;
             }
 
