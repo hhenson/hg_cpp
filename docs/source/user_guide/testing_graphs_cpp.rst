@@ -72,9 +72,10 @@ input may be a braced list (its type is inferred); later inputs are passed as
    CHECK_OUTPUT(testing::eval_node<Sum>({1, none, 3}, rhs), {11, 21, 33});  // lhs persists at cycle 1
 
 The first parameter must be a time-series input, and the node must have exactly one
-output. **Not yet supported:** container/compound time-series (``TSB``/``TSL``/
-``TSS``/``TSD``/``TSW``) — gated on container ``In``/``Out`` selectors in the
-authoring layer.
+output. ``eval_node`` currently drives **scalar** ``TS<T>`` inputs/outputs; set
+time-series (``TSS``) are tested with ``replay_set``/``record_set`` (see *Set
+time-series* below). Other container types (``TSB``/``TSL``/``TSD``/``TSW``) are a
+future extension, gated on their ``In``/``Out`` selectors.
 
 Comparing results: ``CHECK_OUTPUT``
 ....................................
@@ -208,3 +209,40 @@ A small set of reusable nodes lives in ``<hgraph/lib/std/std_nodes.h>`` (namespa
 
    auto c = wire<stdlib::const_<int>>(w, 7);        // source emitting 7 at start
    wire<stdlib::debug_print<int>>(w, c, "value");   // prints "value: 7"
+
+Set time-series (``TSS``)
+-------------------------
+
+A set time-series ticks a **delta** each cycle — the elements *added* and *removed*.
+Nodes author it with the ``In<Name, TSS<T>>`` selector (``size``/``contains``/
+``values``/``added``/``removed``, and ``delta()``) and the ``Out<TSS<T>>`` selector
+(``add``/``remove``/``clear``); the delta accumulates across mutations within a cycle.
+
+A delta is a **``SetDelta<T>``** (in ``<hgraph/types/static_node.h>``, alongside
+``In``/``Out``) — a lightweight wrapper over the delta *value*
+(``Bundle{added, removed}``) that reads its elements on demand, rather than a
+materialised ``std::set``. It is order-independent for equality, and it is the
+``delta_value`` type a node reads via ``In<Name, TSS<T>>::delta()``. Build one with
+``set_delta(added, removed)``.
+
+The testing toolkit captures **correct deltas**, not cumulative values:
+``replay_set<T>`` applies a recorded delta sequence to a ``TSS<T>`` output (remove
+then add); ``record_set<T>`` captures each tick's delta. ``set_replay_deltas`` /
+``get_recorded_deltas`` convert to/from ``std::vector<std::optional<SetDelta<T>>>``:
+
+.. code-block:: cpp
+
+   const std::vector<std::optional<SetDelta<int>>> deltas{
+       set_delta<int>({1, 2}, {}),   // add 1,2
+       set_delta<int>({3}, {1}),      // add 3, remove 1
+       set_delta<int>({}, {2, 3}),    // remove 2,3
+   };
+   testing::set_replay_deltas<int>(gb.global_state(), "in", deltas);
+   /* ... run replay_set<int> -> node-under-test -> record_set<int> ... */
+   auto out = testing::get_recorded_deltas<int>(graph.global_state(), "out");
+
+A built/recorded delta is a ``Bundle{added: List<T>, removed: List<T>}`` so its
+elements read back uniformly with a live ``TSS`` delta (whose fields are ``Set``\ s)
+— ``SetDelta`` wraps either. ``eval_node`` integration for ``TSS`` (and a TSS
+``const_``) is the planned next step; for now wire ``replay_set``/``record_set``
+explicitly.

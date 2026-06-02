@@ -4,12 +4,18 @@
 #include <hgraph/runtime/graph.h>
 #include <hgraph/runtime/node.h>
 #include <hgraph/runtime/node_scheduler.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_schema.h>
+#include <hgraph/types/time_series/ts_data/set_view.h>
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
+#include <hgraph/types/time_series/ts_input/set_view.h>
+#include <hgraph/types/time_series/ts_output/set_view.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/types/value/value_view.h>
 
 #include <cstddef>
+#include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -41,6 +47,111 @@ namespace hgraph
      */
 
     // -----------------------------------------------------------------
+    // Set time-series delta
+    // -----------------------------------------------------------------
+
+    /**
+     * Lightweight wrapper over a set-time-series **delta value** — a
+     * ``Bundle{added, removed}`` whose fields are indexed containers of ``T`` (a
+     * live ``TSS`` delta has ``Set`` fields; a built/recorded delta has ``List``
+     * fields — both read uniformly via the indexed view). Non-materialising: it
+     * reads the elements from the underlying value on demand.
+     *
+     * It can **borrow** an external delta view (e.g. ``In<TSS<T>>::delta()``) or
+     * **own** a built delta (a shared bundle ``Value``), so it is copyable and
+     * value-semantic. Equality is order-independent (compares as sets). Build one
+     * from elements with :cpp:func:`set_delta`.
+     */
+    template <typename TValue>
+    class SetDelta
+    {
+      public:
+        SetDelta() = default;
+        /** Borrow an external delta bundle view (must outlive this wrapper). */
+        explicit SetDelta(const ValueView &bundle) noexcept : binding_(bundle.binding()), data_(bundle.data()) {}
+        /** Own a built delta bundle. */
+        explicit SetDelta(std::shared_ptr<const Value> owned) : owned_(std::move(owned))
+        {
+            if (owned_ && owned_->has_value())
+            {
+                const auto view = owned_->view();
+                binding_        = view.binding();
+                data_           = view.data();
+            }
+        }
+
+        [[nodiscard]] bool                valid() const noexcept { return binding_ != nullptr && data_ != nullptr; }
+        [[nodiscard]] std::vector<TValue> added() const { return elements("added"); }
+        [[nodiscard]] std::vector<TValue> removed() const { return elements("removed"); }
+
+        /** The underlying delta bundle value (``Bundle{added, removed}``). */
+        [[nodiscard]] ValueView value() const noexcept { return ValueView{binding_, data_}; }
+
+        bool operator==(const SetDelta &other) const
+        {
+            // Order-independent: compare the added/removed element sets. (Once the
+            // delta bundle uses value-layer ``Set`` fields this can delegate to the
+            // hash-based set equality without materialising.)
+            return to_set(added()) == to_set(other.added()) && to_set(removed()) == to_set(other.removed());
+        }
+
+      private:
+        [[nodiscard]] std::vector<TValue> elements(std::string_view field) const
+        {
+            std::vector<TValue> out;
+            if (!valid()) { return out; }
+            const auto indexed = ValueView{binding_, data_}.as_bundle().field(field).as_indexed_view();
+            for (std::size_t i = 0; i < indexed.size(); ++i) { out.push_back(indexed.at(i).template checked_as<TValue>()); }
+            return out;
+        }
+        static std::set<TValue> to_set(const std::vector<TValue> &v) { return std::set<TValue>{v.begin(), v.end()}; }
+
+        std::shared_ptr<const Value> owned_{};  // set when the delta is owned
+        const ValueTypeBinding      *binding_{nullptr};
+        const void                  *data_{nullptr};
+    };
+
+    /**
+     * Build a delta value ``Bundle{added, removed}`` from typed elements.
+     *
+     * The fields *should* be value-layer ``Set``\ s so they match a live ``TSS``
+     * delta and compare order-independently via the hash-based set equality. That
+     * requires a **mutable set** value container (to populate a set field), which
+     * the value layer does not yet provide, so this currently builds ``List<T>``
+     * fields and :cpp:class:`SetDelta` compares order-independently by
+     * materialising. Switching the fields to ``Set`` is the planned follow-up.
+     */
+    template <typename TValue>
+    [[nodiscard]] inline Value make_set_delta_value(const std::vector<TValue> &added,
+                                                    const std::vector<TValue> &removed)
+    {
+        auto       &registry = TypeRegistry::instance();
+        const auto *t_meta   = scalar_descriptor<TValue>::value_meta();
+        const auto *list_t   = registry.mutable_list(t_meta);
+        const auto *schema   = registry.un_named_bundle({{"added", list_t}, {"removed", list_t}});
+        const auto *binding  = ValuePlanFactory::instance().binding_for(schema);
+
+        Value delta{*binding};
+        auto  bundle = delta.as_bundle().begin_mutation();
+        {
+            auto m = bundle.field("added").as_list().begin_mutation();
+            for (const auto &e : added) { m.push_back(Value{e}.view()); }
+        }
+        {
+            auto m = bundle.field("removed").as_list().begin_mutation();
+            for (const auto &e : removed) { m.push_back(Value{e}.view()); }
+        }
+        return delta;
+    }
+
+    /** Build an owning :cpp:class:`SetDelta` from element lists (added, removed). */
+    template <typename TValue>
+    [[nodiscard]] inline SetDelta<TValue> set_delta(std::vector<TValue> added, std::vector<TValue> removed)
+    {
+        return SetDelta<TValue>{std::make_shared<const Value>(make_set_delta_value<TValue>(added, removed))};
+    }
+
+    // -----------------------------------------------------------------
     // Selector markers
     // -----------------------------------------------------------------
 
@@ -70,7 +181,51 @@ namespace hgraph
         TSInputView view_;
     };
 
-    /** Typed output selector. Only the scalar ``TS<T>`` form is defined so far. */
+    /**
+     * Set time-series input (``TSS<T>``). Exposes the current set contents and this
+     * cycle's added / removed elements (typed), plus membership and size.
+     */
+    template <fixed_string Name, typename TValue>
+    class In<Name, TSS<TValue>>
+    {
+      public:
+        using schema                     = TSS<TValue>;
+        using value_type                 = TValue;  // the set's element type
+        static constexpr auto field_name = Name;
+
+        explicit In(TSInputView view) noexcept : view_(std::move(view)) {}
+
+        [[nodiscard]] std::size_t size() const { return view_.as_set().size(); }
+        [[nodiscard]] bool        empty() const { return view_.as_set().empty(); }
+        [[nodiscard]] bool        contains(const TValue &key) const { return view_.as_set().contains(Value{key}.view()); }
+
+        /** Current set contents / this cycle's added / removed elements, as typed vectors. */
+        [[nodiscard]] std::vector<TValue> values() const { return collect(view_.as_set().values()); }
+        [[nodiscard]] std::vector<TValue> added() const { return collect(view_.as_set().added()); }
+        [[nodiscard]] std::vector<TValue> removed() const { return collect(view_.as_set().removed()); }
+
+        /** This cycle's delta as a lightweight ``SetDelta`` wrapper over the delta value. */
+        [[nodiscard]] SetDelta<TValue> delta() const { return SetDelta<TValue>{view_.delta_value()}; }
+
+        [[nodiscard]] bool modified() const { return view_.modified(); }
+        [[nodiscard]] bool valid() const { return view_.valid(); }
+
+        [[nodiscard]] TSSInputView       set_view() const { return view_.as_set(); }
+        [[nodiscard]] const TSInputView &view() const noexcept { return view_; }
+
+      private:
+        template <typename RangeT>
+        static std::vector<TValue> collect(RangeT range)
+        {
+            std::vector<TValue> out;
+            for (const auto &v : range) { out.push_back(v.template checked_as<TValue>()); }
+            return out;
+        }
+
+        TSInputView view_;
+    };
+
+    /** Typed output selector. The scalar ``TS<T>`` and set ``TSS<T>`` forms are defined. */
     template <typename TSchema>
     class Out;
 
@@ -117,6 +272,47 @@ namespace hgraph
         [[nodiscard]] bool valid() const { return view_.valid(); }
         [[nodiscard]] const TSOutputView &view() const noexcept { return view_; }
         [[nodiscard]] engine_time_t evaluation_time() const noexcept { return evaluation_time_; }
+
+      private:
+        TSOutputView  view_;
+        engine_time_t evaluation_time_{MIN_DT};
+    };
+
+    /**
+     * Set time-series output (``TSS<T>``). Mutate the set with add / remove /
+     * clear; the delta (added / removed) accumulates across calls within the cycle.
+     */
+    template <typename TValue>
+    class Out<TSS<TValue>>
+    {
+      public:
+        using schema     = TSS<TValue>;
+        using value_type = TValue;
+
+        Out(TSOutputView view, engine_time_t evaluation_time) noexcept
+            : view_(std::move(view)), evaluation_time_(evaluation_time)
+        {
+        }
+
+        /** Add ``key`` to the set; returns whether the set delta changed. */
+        bool add(const TValue &key) const
+        {
+            auto mutation = view_.as_set().begin_mutation(evaluation_time_);
+            return mutation.add(Value{key}.view());
+        }
+        /** Remove ``key`` from the set; returns whether the set delta changed. */
+        bool remove(const TValue &key) const
+        {
+            auto mutation = view_.as_set().begin_mutation(evaluation_time_);
+            return mutation.remove(Value{key}.view());
+        }
+        /** Remove all elements. */
+        void clear() const { view_.as_set().begin_mutation(evaluation_time_).clear(); }
+
+        [[nodiscard]] bool modified() const { return view_.modified(); }
+        [[nodiscard]] bool valid() const { return view_.valid(); }
+        [[nodiscard]] const TSOutputView &view() const noexcept { return view_; }
+        [[nodiscard]] engine_time_t       evaluation_time() const noexcept { return evaluation_time_; }
 
       private:
         TSOutputView  view_;

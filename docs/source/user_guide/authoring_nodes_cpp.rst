@@ -945,7 +945,10 @@ Feature status
    * - Source tick injection over time (self-rescheduling source)
      - available
      - available
-   * - Container selectors (``In``/``Out`` over ``TSB``/``TSL``/``TSS``/``TSD``/``TSW``)
+   * - Set selectors (``In``/``Out`` over ``TSS``)
+     - available
+     - available
+   * - Container selectors (``In``/``Out`` over ``TSB``/``TSL``/``TSD``/``TSW``)
      - planned
      - available
    * - ``SIGNAL`` / ``REF`` selectors

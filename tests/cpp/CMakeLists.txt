@@ -49,6 +49,7 @@ add_executable(hgraph_unit_tests
     test_std_nodes.cpp
     test_check_output.cpp
     test_value_types.cpp
+    test_tss_nodes.cpp
     test_static_node.cpp
     test_graph_wiring.cpp
     test_compact_storage.cpp

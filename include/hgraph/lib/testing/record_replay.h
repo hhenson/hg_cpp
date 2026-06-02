@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -184,6 +185,111 @@ namespace hgraph::testing
             // Record the per-tick delta_value (the event), not the cumulative
             // value — they coincide for scalar TS but differ for compound types.
             mutation.push_back(make_any(ts.view().delta_value()).view());
+        }
+    };
+
+    // -----------------------------------------------------------------
+    // TSS (set time-series): delta-aware replay / record
+    //
+    // A set time-series ticks a *delta* each cycle — the elements added and
+    // removed — represented by the core ``SetDelta<T>`` (a lightweight wrapper
+    // over a ``Bundle{added, removed}`` value; see ``static_node.h``). Build
+    // deltas with ``set_delta(added, removed)``. The per-cycle buffer is the usual
+    // ``List<Any>`` of these (empty Any = no tick).
+    // -----------------------------------------------------------------
+
+    /** Seed a TSS replay buffer from a sequence of ``SetDelta``s (nullopt = no tick). */
+    template <typename T>
+    void set_replay_deltas(const GlobalStateView &gs, std::string_view key,
+                           const std::vector<std::optional<SetDelta<T>>> &deltas)
+    {
+        Value buffer   = make_buffer();
+        auto  mutation = buffer.as_list().begin_mutation();
+        for (const auto &delta : deltas)
+        {
+            if (!delta.has_value()) { mutation.push_back(empty_any().view()); continue; }
+            mutation.push_back(make_any(make_set_delta_value<T>(delta->added(), delta->removed()).view()).view());
+        }
+        gs.set(key, buffer);
+    }
+
+    /** Read a recorded TSS buffer back as a sequence of ``SetDelta``s (owning copies). */
+    template <typename T>
+    [[nodiscard]] std::vector<std::optional<SetDelta<T>>> get_recorded_deltas(const GlobalStateView &gs,
+                                                                              std::string_view key)
+    {
+        std::vector<std::optional<SetDelta<T>>> result;
+        const ValueView                         buffer = gs.get(key);
+        if (!buffer.valid()) { return result; }
+        const auto list = buffer.as_list();
+        for (std::size_t i = 0; i < list.size(); ++i)
+        {
+            const auto element = list.at(i).as_any();
+            if (!element.has_value()) { result.push_back(std::nullopt); continue; }
+            result.push_back(SetDelta<T>{std::make_shared<const Value>(element.get())});  // copy the delta bundle
+        }
+        return result;
+    }
+
+    /**
+     * Replays a recorded sequence of set deltas onto a ``TSS<T>`` output: each
+     * cycle it applies the buffered delta (remove then add). Like ``replay``, it
+     * initiates at start and reschedules until the buffer is exhausted.
+     */
+    template <typename T>
+    struct replay_set
+    {
+        static constexpr auto name              = "replay_set";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched, State<int> index,
+                         Out<TSS<T>> out)
+        {
+            const ValueView buffer = gs.get(key.value());
+            if (!buffer.valid()) { return; }
+            const auto list = buffer.as_list();
+            const int  i    = index.get();
+            const int  size = static_cast<int>(list.size());
+            if (i < size)
+            {
+                const auto element = list.at(static_cast<std::size_t>(i)).as_any();
+                if (element.has_value())
+                {
+                    const auto bundle   = element.get().as_bundle();
+                    auto       mutation = out.view().as_set().begin_mutation(out.evaluation_time());
+                    const auto removed  = bundle.field("removed").as_indexed_view();
+                    for (std::size_t k = 0; k < removed.size(); ++k) { (void)mutation.remove(removed.at(k)); }
+                    const auto added = bundle.field("added").as_indexed_view();
+                    for (std::size_t k = 0; k < added.size(); ++k) { (void)mutation.add(added.at(k)); }
+                }
+            }
+            index.set(i + 1);
+            if (i + 1 < size) { sched.schedule(MIN_TD); }
+        }
+    };
+
+    /** Captures each tick of a ``TSS<T>`` input as a ``SetDelta`` into the buffer. */
+    template <typename T>
+    struct record_set
+    {
+        static constexpr auto name = "record_set";
+
+        static void start(Scalar<"key", std::string> key, GlobalStateView gs) { gs.set(key.value(), make_buffer()); }
+
+        static void eval(In<"ts", TSS<T>> ts, Scalar<"key", std::string> key, GlobalStateView gs, engine_time_t now)
+        {
+            const std::size_t offset   = cycle_offset(now);
+            const ValueView   buffer   = gs.get(key.value());
+            auto              list     = buffer.as_list();
+            std::size_t       size     = list.size();
+            auto              mutation = list.begin_mutation();
+            while (size < offset)
+            {
+                mutation.push_back(empty_any().view());
+                ++size;
+            }
+            // Capture this cycle's delta (added/removed) from the typed views.
+            mutation.push_back(make_any(make_set_delta_value<T>(ts.added(), ts.removed()).view()).view());
         }
     };
 }  // namespace hgraph::testing
