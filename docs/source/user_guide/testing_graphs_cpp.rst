@@ -29,22 +29,48 @@ returns its per-cycle outputs — the one call most node tests need:
        static void           eval(In<"in", TS<int>> in, Out<TS<int>> out) { out.set(in.value() + 1); }
    };
 
-   // One engine cycle per element; std::nullopt = no tick that cycle.
-   auto out = testing::eval_node<AddOne>({1, std::nullopt, 3});
-   // out == { 2, std::nullopt, 4 }   (a skipped input cycle stays skipped)
+   // One engine cycle per element; `none` (= std::nullopt) means no tick that cycle.
+   CHECK_OUTPUT(testing::eval_node<AddOne>({1, none, 3}), {2, none, 4});
 
-Each input element is fed at successive engine cycles from ``MIN_ST``; the result
-is the recorded output aligned the same way. Node ``State`` persists across cycles,
-so a stateful node accumulates as expected:
+Each input element is fed at successive engine cycles from ``MIN_ST`` and the graph
+runs until it is **quiescent**; the result is the recorded output, cycle-aligned
+(``output[i]`` is the node's tick at cycle ``i``, or ``none`` if it did not tick).
+It is padded to **at least** the input length, but is **not truncated** — a node
+that emits beyond the input window (e.g. a scheduled follow-up tick) produces a
+longer result, and those ticks are kept. Node ``State`` persists across cycles, so
+a stateful node accumulates as expected:
 
 .. code-block:: cpp
 
-   auto sums = testing::eval_node<RunningSum>({1, 2, 3, 4});   // { 1, 3, 6, 10 }
+   CHECK_OUTPUT(testing::eval_node<RunningSum>({1, 2, 3, 4}), {1, 3, 6, 10});
 
 The input/output value types (``TIn`` / ``TOut``) are inferred from the node's
 signature. **First slice:** ``NodeT`` must have exactly one ``In<TS<TIn>>``, one
 ``Out<TS<TOut>>`` and no scalar inputs; multi-input / scalar-configured nodes are a
 planned extension.
+
+Comparing results: ``CHECK_OUTPUT``
+....................................
+
+``CHECK_OUTPUT(actual, {expected...})`` (from
+``<hgraph/lib/testing/check_output.h>``) compares an ``eval_node`` result against an
+expected per-cycle sequence and, on mismatch, reports a readable delta — Catch2's
+default ``==`` stringifies ``std::optional`` as the unhelpful ``{?}``. ``none`` is
+the shorthand for "no tick" (bring it in with ``using namespace hgraph::testing;``).
+
+.. code-block:: text
+
+   output mismatch (4 elements):
+     actual:   [1, 2, none, 3]
+     expected: [1, 5, none, 9]
+     > index 1: actual = 2, expected = 5
+     > index 3: actual = 3, expected = 9
+
+``CHECK_OUTPUT`` is non-fatal (continues the test); ``REQUIRE_OUTPUT`` aborts on
+mismatch. The expected argument is a braced list (element type inferred from
+``actual``, so values and ``none`` mix freely) or any existing
+``std::vector<std::optional<T>>``. (This is a test-only header — it depends on
+Catch2 and is not part of the ``hgraph_core`` library.)
 
 The cycle-aligned buffer
 ------------------------

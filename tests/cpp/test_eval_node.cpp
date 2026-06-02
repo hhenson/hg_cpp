@@ -1,6 +1,7 @@
 // Tests for the eval_node harness: feed a node a per-cycle input sequence and
 // read back its per-cycle outputs (wiring replay -> node -> record internally).
 
+#include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/static_node.h>
@@ -13,6 +14,7 @@
 namespace
 {
     using namespace hgraph;
+    using namespace hgraph::testing;  // `none`
 
     struct AddOne
     {
@@ -30,6 +32,26 @@ namespace
             out.set(total.get());
         }
     };
+
+    // Emits each input, then schedules one extra "echo" of value+100 a cycle later
+    // — so it produces MORE output ticks than there are inputs.
+    struct EchoOnce
+    {
+        static constexpr auto name = "echo_once";
+        static void           eval(In<"in", TS<int>> in, NodeScheduler sched, State<int> echo, Out<TS<int>> out)
+        {
+            if (in.modified())
+            {
+                out.set(in.value());
+                echo.set(in.value() + 100);
+                sched.schedule(MIN_TD);   // emit the echo on the next cycle
+            }
+            else
+            {
+                out.set(echo.get());      // the scheduled echo (no input this cycle)
+            }
+        }
+    };
 }  // namespace
 
 TEST_CASE("eval_node: maps each input tick through a compute node")
@@ -37,11 +59,8 @@ TEST_CASE("eval_node: maps each input tick through a compute node")
     using namespace hgraph;
     (void)TypeRegistry::instance().register_scalar<int>("int");
 
-    const auto out = testing::eval_node<AddOne>({1, std::nullopt, 3});
-    REQUIRE(out.size() == 3);
-    CHECK(out[0] == std::optional<int>{2});
-    CHECK(out[1] == std::nullopt);   // no input tick -> no output tick
-    CHECK(out[2] == std::optional<int>{4});
+    // A skipped input cycle (none) stays skipped in the output.
+    CHECK_OUTPUT(testing::eval_node<AddOne>({1, none, 3}), {2, none, 4});
 }
 
 TEST_CASE("eval_node: node state persists across cycles")
@@ -49,12 +68,7 @@ TEST_CASE("eval_node: node state persists across cycles")
     using namespace hgraph;
     (void)TypeRegistry::instance().register_scalar<int>("int");
 
-    const auto out = testing::eval_node<RunningSum>({1, 2, 3, 4});
-    REQUIRE(out.size() == 4);
-    CHECK(out[0] == std::optional<int>{1});
-    CHECK(out[1] == std::optional<int>{3});
-    CHECK(out[2] == std::optional<int>{6});
-    CHECK(out[3] == std::optional<int>{10});
+    CHECK_OUTPUT(testing::eval_node<RunningSum>({1, 2, 3, 4}), {1, 3, 6, 10});
 }
 
 TEST_CASE("eval_node: an all-empty input produces no output ticks")
@@ -62,6 +76,14 @@ TEST_CASE("eval_node: an all-empty input produces no output ticks")
     using namespace hgraph;
     (void)TypeRegistry::instance().register_scalar<int>("int");
 
-    const auto out = testing::eval_node<AddOne>({std::nullopt, std::nullopt});
-    for (const auto &v : out) { CHECK(v == std::nullopt); }
+    CHECK_OUTPUT(testing::eval_node<AddOne>({none, none}), {none, none});
+}
+
+TEST_CASE("eval_node: output longer than the input is not truncated")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    // One input (5) produces two output cycles: 5, then the echo 105.
+    CHECK_OUTPUT(testing::eval_node<EchoOnce>({5}), {5, 105});
 }

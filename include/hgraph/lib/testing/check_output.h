@@ -1,0 +1,135 @@
+#ifndef HGRAPH_LIB_TESTING_CHECK_OUTPUT_H
+#define HGRAPH_LIB_TESTING_CHECK_OUTPUT_H
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <fmt/core.h>
+
+#include <algorithm>
+#include <cstddef>
+#include <optional>
+#include <string>
+#include <vector>
+
+// Catch2-integrated assertions for comparing an ``eval_node`` style result — a
+// ``std::vector<std::optional<T>>`` of per-cycle values — against an expected
+// sequence, with a readable delta message on mismatch (Catch2's default ``==``
+// stringifies ``std::optional`` as the unhelpful ``{?}``).
+//
+//   CHECK_OUTPUT(out, {1, 2, none, 3});      // non-fatal (CHECK semantics)
+//   REQUIRE_OUTPUT(out, {1, 2, none, 3});    // fatal     (REQUIRE semantics)
+//
+// The expected sequence is a braced list whose element type is inferred from
+// ``out`` (so plain values and ``none`` mix freely), or any existing
+// ``std::vector<std::optional<T>>``. This is a test-only header (it depends on
+// Catch2); it is not part of the hgraph_core library.
+
+namespace hgraph::testing
+{
+    /** Shorthand for "no tick this cycle" in expected-output lists. */
+    inline constexpr std::nullopt_t none = std::nullopt;
+
+    namespace detail
+    {
+        template <typename T>
+        std::string format_opt(const std::optional<T> &v)
+        {
+            return v.has_value() ? fmt::format("{}", *v) : std::string{"none"};
+        }
+
+        template <typename T>
+        std::string format_seq(const std::vector<std::optional<T>> &v)
+        {
+            std::string s = "[";
+            for (std::size_t i = 0; i < v.size(); ++i)
+            {
+                if (i != 0) { s += ", "; }
+                s += format_opt(v[i]);
+            }
+            s += "]";
+            return s;
+        }
+
+        template <typename T>
+        std::string output_delta_message(const std::vector<std::optional<T>> &actual,
+                                         const std::vector<std::optional<T>> &expected)
+        {
+            const std::size_t na = actual.size();
+            const std::size_t ne = expected.size();
+
+            std::string msg = (na == ne) ? fmt::format("output mismatch ({} elements):", na)
+                                         : fmt::format("output mismatch (sizes differ: actual {}, expected {}):", na, ne);
+            msg += fmt::format("\n  actual:   {}", format_seq(actual));
+            msg += fmt::format("\n  expected: {}", format_seq(expected));
+
+            const std::size_t n = std::max(na, ne);
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                const bool in_a = i < na;
+                const bool in_e = i < ne;
+                if (in_a && in_e)
+                {
+                    if (actual[i] != expected[i])
+                    {
+                        msg += fmt::format("\n  > index {}: actual = {}, expected = {}", i, format_opt(actual[i]),
+                                           format_opt(expected[i]));
+                    }
+                }
+                else if (in_a)
+                {
+                    msg += fmt::format("\n  > index {}: actual = {}, expected = (missing)", i, format_opt(actual[i]));
+                }
+                else
+                {
+                    msg += fmt::format("\n  > index {}: actual = (missing), expected = {}", i, format_opt(expected[i]));
+                }
+            }
+            return msg;
+        }
+
+        // Returns true when equal; otherwise fills ``msg_out`` with the delta. The
+        // expected list's element type is deduced from ``actual`` (the braced-list
+        // argument is a non-deduced context), so a mixed value/``none`` list works.
+        template <typename T>
+        bool compare_output(const std::vector<std::optional<T>> &actual, const std::vector<std::optional<T>> &expected,
+                            std::string &msg_out)
+        {
+            if (actual == expected) { return true; }
+            msg_out = output_delta_message(actual, expected);
+            return false;
+        }
+    }  // namespace detail
+}  // namespace hgraph::testing
+
+/** Non-fatal: compare ``actual`` to a per-cycle expected sequence; on mismatch
+ *  report a delta and continue. */
+#define CHECK_OUTPUT(actual, ...)                                                                       \
+    do                                                                                                  \
+    {                                                                                                   \
+        std::string _hg_check_output_msg;                                                               \
+        if (::hgraph::testing::detail::compare_output((actual), __VA_ARGS__, _hg_check_output_msg))     \
+        {                                                                                               \
+            SUCCEED("output matches");                                                                  \
+        }                                                                                               \
+        else                                                                                            \
+        {                                                                                               \
+            FAIL_CHECK(_hg_check_output_msg);                                                           \
+        }                                                                                               \
+    } while (false)
+
+/** Fatal: like ``CHECK_OUTPUT`` but aborts the test on mismatch. */
+#define REQUIRE_OUTPUT(actual, ...)                                                                     \
+    do                                                                                                  \
+    {                                                                                                   \
+        std::string _hg_check_output_msg;                                                               \
+        if (::hgraph::testing::detail::compare_output((actual), __VA_ARGS__, _hg_check_output_msg))     \
+        {                                                                                               \
+            SUCCEED("output matches");                                                                  \
+        }                                                                                               \
+        else                                                                                            \
+        {                                                                                               \
+            FAIL(_hg_check_output_msg);                                                                 \
+        }                                                                                               \
+    } while (false)
+
+#endif  // HGRAPH_LIB_TESTING_CHECK_OUTPUT_H

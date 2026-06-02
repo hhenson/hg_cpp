@@ -59,16 +59,22 @@ namespace hgraph::testing
 
         set_replay_values<TIn>(gb.global_state(), "eval_node::in", input);
 
-        // Run one cycle per input element (plus a margin so the last cycle fires).
-        const auto           span = static_cast<engine_time_delta_t::rep>(input.size() + 1);
+        // Run until the graph is quiescent (no artificial input-length cap): a node
+        // may emit beyond the input window — e.g. a scheduled follow-up tick — and
+        // those outputs must not be cut off.
         GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{span});
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
 
         GraphExecutorValue executor = eb.make_executor();
         auto               view     = executor.view();
         view.run();
 
-        return get_recorded_values<TOut>(view.graph().global_state(), "eval_node::out");
+        // Cycle-align the result: output[i] is the node's tick at cycle i (or none).
+        // Pad up to the input length so trailing skipped cycles are represented, but
+        // never truncate — the output may legitimately be longer than the input.
+        auto out = get_recorded_values<TOut>(view.graph().global_state(), "eval_node::out");
+        if (out.size() < input.size()) { out.resize(input.size()); }
+        return out;
     }
 }  // namespace hgraph::testing
 
