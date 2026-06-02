@@ -90,6 +90,47 @@ connects them. You never write node indices or edges by hand, and you never have
 to add nodes in any particular order — see *Ordering is automatic*.
 
 
+Graph scalar parameters
+-----------------------
+
+A top-level graph's ``Scalar<>`` parameters are its **build parameters** — supplied
+when you build the graph, alongside (conceptually) the run window you later give the
+executor. They are consumed at **wiring time**: ``build_graph<G>(values…)`` runs
+``compose`` with the supplied values, so the values must be known before the
+``GraphBuilder`` is produced (you cannot defer them to the executor, which receives
+an already-built graph).
+
+Pass one value per ``Scalar<>`` parameter, **in ``compose``-parameter order**:
+
+.. code-block:: cpp
+
+   struct ReportGraph
+   {
+       static constexpr auto name = "report_graph";
+       //                                   two scalar build parameters
+       static void compose(Wiring &w, Scalar<"window", int> window, Scalar<"factor", double> factor)
+       {
+           auto px = wire<ConstantSource>(w);
+           wire<Print>(w, wire<RollingMean>(w, px, window, factor));
+       }
+   };
+
+   // window = 20, factor = 1.5 — positional, in compose order.
+   GraphBuilder g = build_graph<ReportGraph>(20, 1.5);
+
+The arguments are checked at compile time: the count must match the graph's
+``Scalar<>`` parameters and each value must be convertible to its parameter's type.
+A graph with no scalar parameters is simply ``build_graph<G>()``. The resulting
+``GraphBuilder`` is handed to a ``GraphExecutor`` exactly as for a scalar-free graph
+(see *Running a graph*).
+
+.. note::
+
+   **Positional only, for now.** Arguments are matched by position. Supplying them
+   **by name** (so order does not matter, e.g. ``arg<"factor">(1.5)``) and
+   **default values** for omitted parameters are planned but not yet implemented.
+
+
 Ports
 -----
 

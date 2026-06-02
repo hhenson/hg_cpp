@@ -267,7 +267,10 @@ Slices:
    it has a consumer**, the non-flattening nested graphs (``map_`` / ``reduce`` /
    ``switch_``), which is where the boundary substrate is actually needed.
 
-Deferred: multiple outputs (``TSB`` ports, optionally returned as an array as
-sugar), generic graphs (``TsVar`` / ``ScalarVar`` in signatures), higher-order
-operators and feedback, dead-node pruning, and the Python bridge that drives the
-core.
+Deferred: **by-name graph/node scalar arguments and parameter defaults** (today
+arguments are positional and all required — a compile-time ``arg<"name">(value)``
+matched to the ``Scalar<Name, T>`` parameter, plus defaults for omitted arguments,
+are the planned additions to ``build_graph<G>`` / ``StaticGraphSignature``);
+multiple outputs (``TSB`` ports, optionally returned as an array as sugar); generic
+graphs (``TsVar`` / ``ScalarVar`` in signatures); higher-order operators and
+feedback; dead-node pruning; and the Python bridge that drives the core.

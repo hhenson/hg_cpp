@@ -348,6 +348,12 @@ namespace hgraph
      * they are wrapped into the graph's ``Scalar<>`` parameters and forwarded to
      * ``compose``). Supplying time-series boundary inputs (for standalone sub-graph
      * building) is a later slice.
+     *
+     * TODO: graph scalar parameters are currently **positional and all required**.
+     * Add by-name arguments (e.g. a compile-time ``arg<"name">(value)`` matched to
+     * the ``Scalar<Name, T>`` parameter, order-independent) and parameter
+     * **defaults** for omitted arguments. Not needed yet; see the user guide
+     * *Wiring Graphs in C++ > Graph scalar parameters*.
      */
     template <typename G, typename... Args>
     [[nodiscard]] GraphBuilder build_graph(Args &&...args)
