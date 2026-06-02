@@ -1,6 +1,8 @@
 #ifndef HGRAPH_LIB_TESTING_CHECK_OUTPUT_H
 #define HGRAPH_LIB_TESTING_CHECK_OUTPUT_H
 
+#include <hgraph/types/value/value.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <fmt/core.h>
@@ -34,7 +36,10 @@ namespace hgraph::testing
         template <typename T>
         std::string format_opt(const std::optional<T> &v)
         {
-            return v.has_value() ? fmt::format("{}", *v) : std::string{"none"};
+            // Render through the type-erased value ``to_string`` so display is
+            // consistent across all value types and fixable in one place (the value
+            // layer) — e.g. 1-byte integers show numerically, not as characters.
+            return v.has_value() ? Value{*v}.to_string() : std::string{"none"};
         }
 
         template <typename T>

@@ -40,6 +40,7 @@ TEST_CASE("CHECK_OUTPUT also compares against an existing vector")
 
 TEST_CASE("output delta message pinpoints a value difference")
 {
+    (void)TypeRegistry::instance().register_scalar<int>("int");  // display renders via the value layer
     const std::vector<std::optional<int>> actual{1, 2, std::nullopt, 3};
     const std::vector<std::optional<int>> expected{1, 5, std::nullopt, 3};
 
@@ -53,6 +54,7 @@ TEST_CASE("output delta message pinpoints a value difference")
 
 TEST_CASE("output delta message reports a size difference")
 {
+    (void)TypeRegistry::instance().register_scalar<int>("int");  // display renders via the value layer
     const std::vector<std::optional<int>> actual{1, 2};
     const std::vector<std::optional<int>> expected{1, 2, 3};
 

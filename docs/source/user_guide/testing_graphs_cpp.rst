@@ -44,10 +44,37 @@ a stateful node accumulates as expected:
 
    CHECK_OUTPUT(testing::eval_node<RunningSum>({1, 2, 3, 4}), {1, 3, 6, 10});
 
-The input/output value types (``TIn`` / ``TOut``) are inferred from the node's
-signature. **First slice:** ``NodeT`` must have exactly one ``In<TS<TIn>>``, one
-``Out<TS<TOut>>`` and no scalar inputs; multi-input / scalar-configured nodes are a
-planned extension.
+Arguments are given in the node's **eval-parameter order**. A time-series input is
+a ``std::vector<std::optional<T>>``; a scalar input is the value itself. Value types
+are inferred from the node's signature, and **every scalar value type** is supported
+(``bool``, the integer widths, ``float``/``double``, ``std::string``, …) — the
+harness plumbs values type-erased, so it is generic over the value type.
+
+A node configured by a **scalar** takes the scalar after its inputs:
+
+.. code-block:: cpp
+
+   struct Shift { static void eval(In<"in", TS<int>> in, Scalar<"delta", int> d, Out<TS<int>> o)
+                  { o.set(in.value() + d.value()); } };
+
+   CHECK_OUTPUT(testing::eval_node<Shift>({1, 2, 3}, 5), {6, 7, 8});
+
+A node with **multiple time-series inputs** takes one sequence per input. The first
+input may be a braced list (its type is inferred); later inputs are passed as
+``std::vector<std::optional<T>>``:
+
+.. code-block:: cpp
+
+   struct Sum { static void eval(In<"lhs", TS<int>> a, In<"rhs", TS<int>> b, Out<TS<int>> o)
+                { o.set(a.value() + b.value()); } };
+
+   std::vector<std::optional<int>> rhs{10, 20, 30};
+   CHECK_OUTPUT(testing::eval_node<Sum>({1, none, 3}, rhs), {11, 21, 33});  // lhs persists at cycle 1
+
+The first parameter must be a time-series input, and the node must have exactly one
+output. **Not yet supported:** container/compound time-series (``TSB``/``TSL``/
+``TSS``/``TSD``/``TSW``) — gated on container ``In``/``Out`` selectors in the
+authoring layer.
 
 Comparing results: ``CHECK_OUTPUT``
 ....................................
@@ -118,9 +145,11 @@ before running (``gs.set("in", buffer)``). A cycle whose element is an empty
 
 ``record<T>`` is a sink node (``In<"ts", TS<T>>``). On ``start`` it creates a fresh
 cycle-aligned ``List<Any>`` in the ``GlobalState`` under its ``key``; on each
-evaluation where the input ticks it writes the value at the current cycle offset
-(padding any skipped cycles with empty ``Any`` entries). After the run the buffer
-is the recorded output, readable from the ``GlobalState``.
+evaluation where the input ticks it writes the input's ``delta_value`` (the per-tick
+event, not the cumulative ``value`` — they coincide for scalar time-series but
+differ for compound types) at the current cycle offset (padding any skipped cycles
+with empty ``Any`` entries). After the run the buffer is the recorded output,
+readable from the ``GlobalState``.
 
 .. code-block:: cpp
 

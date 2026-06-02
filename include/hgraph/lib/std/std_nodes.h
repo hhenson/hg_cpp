@@ -40,7 +40,9 @@ namespace hgraph::stdlib
         static constexpr auto name = "debug_print";
         static void           eval(In<"ts", TS<T>> ts, Scalar<"label", std::string> label)
         {
-            fmt::print("{}: {}\n", label.value(), ts.value());
+            // The value is rendered via the type-erased view ``to_string`` (works
+            // for any value type); only the label/layout goes through fmt.
+            fmt::print("{}: {}\n", label.value(), ts.view().value().to_string());
         }
     };
 

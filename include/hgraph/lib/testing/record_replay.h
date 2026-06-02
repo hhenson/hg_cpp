@@ -41,14 +41,17 @@ namespace hgraph::testing
         return Value{*binding};  // unset == empty == None
     }
 
-    /** An ``Any`` boxing a copy of ``inner``. */
-    [[nodiscard]] inline Value make_any(const Value &inner)
+    /** An ``Any`` boxing a copy of the value behind ``inner`` (type-erased). */
+    [[nodiscard]] inline Value make_any(const ValueView &inner)
     {
         const auto *binding = ValuePlanFactory::instance().binding_for(TypeRegistry::instance().any());
         Value       any{*binding};
-        any.as_any().begin_mutation().set(inner.view());
+        any.as_any().begin_mutation().set(inner);
         return any;
     }
+
+    /** An ``Any`` boxing a copy of ``inner``. */
+    [[nodiscard]] inline Value make_any(const Value &inner) { return make_any(inner.view()); }
 
     /** A fresh, empty cycle-aligned buffer (a mutable ``List<Any>``). */
     [[nodiscard]] inline Value make_buffer()
@@ -132,7 +135,8 @@ namespace hgraph::testing
             if (i < size)
             {
                 const auto element = list.at(static_cast<std::size_t>(i)).as_any();
-                if (element.has_value()) { out.set(element.get().template checked_as<T>()); }
+                // Type-erased: copy the stored value straight into the output.
+                if (element.has_value()) { out.apply(element.get()); }
             }
             index.set(i + 1);
             if (i + 1 < size) { sched.schedule(MIN_TD); }  // re-arm for the next cycle
@@ -145,8 +149,10 @@ namespace hgraph::testing
 
     /**
      * Captures each tick of its input into a cycle-aligned ``List<Any>`` in the
-     * ``GlobalState`` under ``key`` (created on ``start``). Skipped cycles are
-     * padded with empty ``Any`` entries so the buffer index matches the engine
+     * ``GlobalState`` under ``key`` (created on ``start``). It records the input's
+     * ``delta_value`` (the per-tick event), not the cumulative ``value`` — they
+     * coincide for scalar time-series but differ for compound types. Skipped cycles
+     * are padded with empty ``Any`` entries so the buffer index matches the engine
      * cycle, mirroring the replay buffer shape.
      */
     template <typename T>
@@ -175,7 +181,9 @@ namespace hgraph::testing
                 mutation.push_back(empty_any().view());
                 ++size;
             }
-            mutation.push_back(make_any(Value{ts.value()}).view());
+            // Record the per-tick delta_value (the event), not the cumulative
+            // value — they coincide for scalar TS but differ for compound types.
+            mutation.push_back(make_any(ts.view().delta_value()).view());
         }
     };
 }  // namespace hgraph::testing

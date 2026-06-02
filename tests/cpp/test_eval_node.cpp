@@ -33,6 +33,27 @@ namespace
         }
     };
 
+    // In + Scalar config: shifts each input by a fixed delta.
+    struct Shift
+    {
+        static constexpr auto name = "eval_node_shift";
+        static void           eval(In<"in", TS<int>> in, Scalar<"delta", int> delta, Out<TS<int>> out)
+        {
+            out.set(in.value() + delta.value());
+        }
+    };
+
+    // Two time-series inputs: sums them (uses the persisted value when one input
+    // does not tick on a given cycle).
+    struct Sum
+    {
+        static constexpr auto name = "eval_node_sum";
+        static void           eval(In<"lhs", TS<int>> lhs, In<"rhs", TS<int>> rhs, Out<TS<int>> out)
+        {
+            out.set(lhs.value() + rhs.value());
+        }
+    };
+
     // Emits each input, then schedules one extra "echo" of value+100 a cycle later
     // — so it produces MORE output ticks than there are inputs.
     struct EchoOnce
@@ -86,4 +107,24 @@ TEST_CASE("eval_node: output longer than the input is not truncated")
 
     // One input (5) produces two output cycles: 5, then the echo 105.
     CHECK_OUTPUT(testing::eval_node<EchoOnce>({5}), {5, 105});
+}
+
+TEST_CASE("eval_node: passes scalar inputs to the node-under-test")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    // The time-series input is braced; the scalar arg (delta = 5) follows.
+    CHECK_OUTPUT(testing::eval_node<Shift>({1, 2, 3}, 5), {6, 7, 8});
+}
+
+TEST_CASE("eval_node: drives a node with multiple time-series inputs")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    // First input braced; later inputs as named vectors. rhs ticks every cycle, so
+    // at cycle 1 lhs's persisted value (1) is summed with rhs (20) -> 21.
+    const std::vector<std::optional<int>> rhs{10, 20, 30};
+    CHECK_OUTPUT(testing::eval_node<Sum>({1, none, 3}, rhs), {11, 21, 33});
 }

@@ -98,6 +98,21 @@ namespace hgraph
             }
         }
 
+        /**
+         * Type-erased set: copy a value from ``value`` (a ``ValueView`` whose schema
+         * matches the output) into the output and tick it. Lets value-layer code
+         * drive the output without converting through the concrete ``T`` — the basis
+         * for generalising tooling beyond scalar values.
+         */
+        void apply(const ValueView &value) const
+        {
+            auto mutation = view_.begin_mutation(evaluation_time_);
+            if (!mutation.copy_value_from(value))
+            {
+                throw std::logic_error("Out<TS<T>>::apply failed to copy the value into the output");
+            }
+        }
+
         [[nodiscard]] bool modified() const { return view_.modified(); }
         [[nodiscard]] bool valid() const { return view_.valid(); }
         [[nodiscard]] const TSOutputView &view() const noexcept { return view_; }

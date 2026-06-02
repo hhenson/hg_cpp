@@ -329,6 +329,12 @@ namespace hgraph
             {
                 return *static_cast<const bool *>(memory) ? "true" : "false";
             }
+            else if constexpr (std::is_integral_v<T> && sizeof(T) == 1)
+            {
+                // 1-byte integers (int8/uint8/char) stream as characters via
+                // ``operator<<``; render their numeric value instead.
+                return std::to_string(static_cast<long long>(*static_cast<const T *>(memory)));
+            }
             else if constexpr (requires(const T &v, std::ostringstream &os) { os << v; })
             {
                 std::ostringstream os;

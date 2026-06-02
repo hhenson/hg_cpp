@@ -7,73 +7,119 @@
 #include <hgraph/types/static_node.h>
 #include <hgraph/util/date_time.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace hgraph::testing
 {
     namespace eval_node_detail
     {
-        // The scalar value type of the node's single time-series input / output.
+        // The node's wire-time parameters (In + Scalar, in eval order).
         template <typename NodeT>
-        using input_value_t =
-            typename std::tuple_element_t<0, typename StaticNodeSignature<NodeT>::input_schema_types>::value_type;
+        using wire_params_t = typename StaticNodeSignature<NodeT>::wire_param_types;
 
+        // Value type of the first wire parameter (required to be a time-series input).
+        template <typename NodeT>
+        using first_input_value_t = typename std::tuple_element_t<0, wire_params_t<NodeT>>::value_type;
+
+        // The node's (single) output value type.
         template <typename NodeT>
         using output_value_t = typename StaticNodeSignature<NodeT>::output_schema_type::value_type;
+
+        inline std::string input_key(std::size_t index) { return "eval_node::in" + std::to_string(index); }
     }  // namespace eval_node_detail
 
     /**
-     * Evaluate a node over a sequence of per-cycle inputs and return its per-cycle
-     * outputs — the C++ counterpart of the Python ``eval_node`` harness.
+     * Evaluate a node over per-cycle inputs and return its per-cycle outputs — the
+     * C++ counterpart of the Python ``eval_node`` harness.
      *
-     * It wires ``replay<TIn> -> NodeT -> record<TOut>``, seeds the inputs into the
-     * graph's ``GlobalState``, runs a simulation from ``MIN_ST`` (one engine cycle
-     * per input element, ``std::nullopt`` = no tick that cycle), and reads the
-     * recorded outputs back as a cycle-aligned vector (``std::nullopt`` where the
-     * node did not tick).
+     * Arguments are given in the node's **eval-parameter order** (its ``In`` and
+     * ``Scalar`` parameters): a **time-series input** is a
+     * ``std::vector<std::optional<T>>`` (one element per engine cycle from
+     * ``MIN_ST``, ``none`` = no tick), and a **scalar input** is the value itself.
+     * The harness wires a ``replay`` per time-series input, the node, then a
+     * ``record`` on the output, seeds the inputs, runs to quiescence, and returns
+     * the recorded output (cycle-aligned, at least as long as the longest input,
+     * never truncated — a node may emit beyond the input window).
      *
-     * First slice: ``NodeT`` has exactly one ``In<TS<TIn>>``, one ``Out<TS<TOut>>``
-     * and no scalar inputs. ``TIn`` / ``TOut`` are inferred from its signature.
+     * The **first** parameter must be a time-series input (so it can be a braced
+     * list — its type is inferred from the node); any later time-series inputs are
+     * passed as ``std::vector<std::optional<T>>``. The node must have exactly one
+     * output. Container/compound time-series are a future extension (gated on
+     * container ``In``/``Out`` selectors).
      */
-    template <typename NodeT>
+    template <typename NodeT, typename... Rest>
     [[nodiscard]] std::vector<std::optional<eval_node_detail::output_value_t<NodeT>>>
-    eval_node(const std::vector<std::optional<eval_node_detail::input_value_t<NodeT>>> &input)
+    eval_node(const std::vector<std::optional<eval_node_detail::first_input_value_t<NodeT>>> &input0, Rest &&...rest)
     {
-        using sig = StaticNodeSignature<NodeT>;
-        static_assert(sig::input_count() == 1, "eval_node (first slice): NodeT must have exactly one time-series input");
-        static_assert(sig::output_count() == 1, "eval_node (first slice): NodeT must have exactly one output");
-        static_assert(sig::scalar_count() == 0, "eval_node (first slice): NodeT must have no scalar inputs");
+        using sig         = StaticNodeSignature<NodeT>;
+        using wire_params = eval_node_detail::wire_params_t<NodeT>;
+        constexpr std::size_t arg_count = 1 + sizeof...(Rest);
 
-        using TIn  = eval_node_detail::input_value_t<NodeT>;
+        static_assert(sig::output_count() == 1, "eval_node: NodeT must have exactly one output");
+        static_assert(sig::input_count() >= 1, "eval_node: NodeT must have at least one time-series input");
+        static_assert(arg_count == std::tuple_size_v<wire_params>,
+                      "eval_node: argument count must match the node's In + Scalar parameters (in eval order)");
+        static_assert(static_node_detail::is_input_selector<std::tuple_element_t<0, wire_params>>::value,
+                      "eval_node: the first In/Scalar parameter must be a time-series input");
+
         using TOut = eval_node_detail::output_value_t<NodeT>;
 
         Wiring w;
-        auto   in_port  = wire<replay<TIn>>(w, std::string{"eval_node::in"});
-        auto   out_port = wire<NodeT>(w, in_port);
+        auto   all = std::forward_as_tuple(input0, std::forward<Rest>(rest)...);
+
+        // Pass 1: wire a replay per time-series input (returning its port) and pass
+        // scalar values straight through, building the wire<NodeT> argument list.
+        auto wire_arg = [&]<std::size_t I>() {
+            using P = std::tuple_element_t<I, wire_params>;
+            if constexpr (static_node_detail::is_input_selector<P>::value)
+            {
+                return wire<replay<typename P::value_type>>(w, eval_node_detail::input_key(I));
+            }
+            else
+            {
+                return std::get<I>(all);  // scalar value
+            }
+        };
+
+        auto out_port = [&]<std::size_t... I>(std::index_sequence<I...>) {
+            return wire<NodeT>(w, wire_arg.template operator()<I>()...);
+        }(std::make_index_sequence<arg_count>{});
+
         wire<record<TOut>>(w, out_port, std::string{"eval_node::out"});
         GraphBuilder gb = std::move(w).finish();
 
-        set_replay_values<TIn>(gb.global_state(), "eval_node::in", input);
+        // Pass 2: seed each time-series input's replay buffer (same key per slot) and
+        // track the longest input.
+        std::size_t max_len = 0;
+        [&]<std::size_t... I>(std::index_sequence<I...>) {
+            (
+                [&] {
+                    using P = std::tuple_element_t<I, wire_params>;
+                    if constexpr (static_node_detail::is_input_selector<P>::value)
+                    {
+                        const auto &seq = std::get<I>(all);
+                        max_len         = std::max(max_len, seq.size());
+                        set_replay_values<typename P::value_type>(gb.global_state(), eval_node_detail::input_key(I), seq);
+                    }
+                }(),
+                ...);
+        }(std::make_index_sequence<arg_count>{});
 
-        // Run until the graph is quiescent (no artificial input-length cap): a node
-        // may emit beyond the input window — e.g. a scheduled follow-up tick — and
-        // those outputs must not be cut off.
         GraphExecutorBuilder eb;
         eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
-
         GraphExecutorValue executor = eb.make_executor();
         auto               view     = executor.view();
         view.run();
 
-        // Cycle-align the result: output[i] is the node's tick at cycle i (or none).
-        // Pad up to the input length so trailing skipped cycles are represented, but
-        // never truncate — the output may legitimately be longer than the input.
+        // Cycle-align: pad to the longest input, never truncate (see record).
         auto out = get_recorded_values<TOut>(view.graph().global_state(), "eval_node::out");
-        if (out.size() < input.size()) { out.resize(input.size()); }
+        if (out.size() < max_len) { out.resize(max_len); }
         return out;
     }
 }  // namespace hgraph::testing
