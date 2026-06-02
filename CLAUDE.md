@@ -124,12 +124,19 @@ run-level state and the evaluation loop fold into the **executor ops**
 (`runtime/executor.h`). A separate engine/clock is a recorded alternative to revisit
 only if that proves insufficient.
 
-**Current milestone:** build the **graph unit-testing toolkit** on this foundation —
-`replay<T>`/`record<T>` nodes over `GlobalState`, the `eval_node<NodeT>` harness, and a
-small `lib/std` (`const`, `debug_print`, `null_sink`) — so node/graph semantics can be
-tested ergonomically (see memory `value-any-globalstate-testing-plan`). `ext/2603` is the
-working reference.
-**C++ only for now** — keep Python out of the configure/build/run path.
+**Graph unit-testing toolkit — DONE.** Built on the above: `replay<T>`/`record<T>`
+nodes over a cycle-aligned `List<Any>` buffer in `GlobalState`, the `eval_node<NodeT>`
+harness (`tests deal in `vector<optional<T>>`; first slice = single In + single Out),
+and a small `lib/std` (`stdlib::const_`, `debug_print`, `null_sink`). Sources are
+**not scheduled by default** — they initiate via `schedule_on_start = true` (declarative),
+`SingleShotScheduler` (lightweight one-shot in `start`), or `NodeScheduler` (full,
+stateful). See `docs/.../testing_graphs_cpp.rst` + memory `value-any-globalstate-testing-plan`.
+`ext/2603` is the working reference.
+
+**Next milestone:** to be decided — candidates include multi-input/scalar `eval_node`,
+more `lib/std` operators, or beginning the non-flattening nested-graph work
+(`map_`/`reduce`/`switch_`). **C++ only for now** — keep Python out of the
+configure/build/run path.
 
 ---
 

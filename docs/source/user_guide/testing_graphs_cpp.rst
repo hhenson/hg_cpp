@@ -8,10 +8,43 @@ source that emits a recorded sequence) and ``record`` (a sink that captures one)
 — both layered on the :doc:`GlobalState <authoring_nodes_cpp>` injectable, plus
 the :doc:`NodeScheduler <authoring_nodes_cpp>` for multi-cycle ticking.
 
-This page documents ``replay`` / ``record`` and their shared buffer
-representation. The higher-level ``eval_node`` harness (which wires
-``replay → node-under-test → record`` for you) builds on these and is documented
-once it lands.
+Most tests use the high-level :ref:`eval_node <eval-node>` harness (below), which
+wires ``replay → node-under-test → record`` for you. This page documents that
+harness and the ``replay`` / ``record`` building blocks it is made of, including
+their shared buffer representation.
+
+.. _eval-node:
+
+``eval_node``
+-------------
+
+``eval_node<NodeT>(inputs)`` runs a node over a sequence of per-cycle inputs and
+returns its per-cycle outputs — the one call most node tests need:
+
+.. code-block:: cpp
+
+   struct AddOne
+   {
+       static constexpr auto name = "add_one";
+       static void           eval(In<"in", TS<int>> in, Out<TS<int>> out) { out.set(in.value() + 1); }
+   };
+
+   // One engine cycle per element; std::nullopt = no tick that cycle.
+   auto out = testing::eval_node<AddOne>({1, std::nullopt, 3});
+   // out == { 2, std::nullopt, 4 }   (a skipped input cycle stays skipped)
+
+Each input element is fed at successive engine cycles from ``MIN_ST``; the result
+is the recorded output aligned the same way. Node ``State`` persists across cycles,
+so a stateful node accumulates as expected:
+
+.. code-block:: cpp
+
+   auto sums = testing::eval_node<RunningSum>({1, 2, 3, 4});   // { 1, 3, 6, 10 }
+
+The input/output value types (``TIn`` / ``TOut``) are inferred from the node's
+signature. **First slice:** ``NodeT`` must have exactly one ``In<TS<TIn>>``, one
+``Out<TS<TOut>>`` and no scalar inputs; multi-input / scalar-configured nodes are a
+planned extension.
 
 The cycle-aligned buffer
 ------------------------
@@ -101,3 +134,22 @@ Wiring ``replay → add_one → record`` and reading the result back:
 ``set_replay_values`` / ``get_recorded_values`` are convenience helpers that build
 a cycle-aligned ``List<Any>`` from a ``std::vector<std::optional<T>>`` and read one
 back, so tests deal in ordinary C++ vectors rather than value-layer containers.
+
+Standard helper nodes (``lib/std``)
+-----------------------------------
+
+A small set of reusable nodes lives in ``<hgraph/lib/std/std_nodes.h>`` (namespace
+``hgraph::stdlib``) — the building blocks graphs and tests reach for most:
+
+* ``const_<T>`` — a constant source: emits its ``value`` scalar once at start
+  (named with a trailing underscore because ``const`` is a C++ keyword; the Python
+  operator is ``const``).
+* ``debug_print<T>`` — a sink that prints ``label: value`` on each tick (a
+  diagnostic aid; ``T`` must be ``fmt``-formattable).
+* ``null_sink<T>`` — a sink that consumes its input and does nothing (gives a graph
+  a terminal sink without side effects).
+
+.. code-block:: cpp
+
+   auto c = wire<stdlib::const_<int>>(w, 7);        // source emitting 7 at start
+   wire<stdlib::debug_print<int>>(w, c, "value");   // prints "value: 7"
