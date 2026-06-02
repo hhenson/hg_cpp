@@ -89,9 +89,11 @@ namespace hgraph
 
         bool operator==(const SetDelta &other) const
         {
-            // Order-independent: compare the added/removed element sets. (Once the
-            // delta bundle uses value-layer ``Set`` fields this can delegate to the
-            // hash-based set equality without materialising.)
+            // Same representation (e.g. both built/recorded delta bundles): the
+            // fields are value-layer Sets, so the value equality is order-independent
+            // and hash-based — no materialisation. Otherwise (e.g. a live TSS delta
+            // vs a built one, different bindings) fall back to comparing element sets.
+            if (valid() && other.valid() && binding_ == other.binding_) { return value().equals(other.value()); }
             return to_set(added()) == to_set(other.added()) && to_set(removed()) == to_set(other.removed());
         }
 
@@ -112,14 +114,10 @@ namespace hgraph
     };
 
     /**
-     * Build a delta value ``Bundle{added, removed}`` from typed elements.
-     *
-     * The fields *should* be value-layer ``Set``\ s so they match a live ``TSS``
-     * delta and compare order-independently via the hash-based set equality. That
-     * requires a **mutable set** value container (to populate a set field), which
-     * the value layer does not yet provide, so this currently builds ``List<T>``
-     * fields and :cpp:class:`SetDelta` compares order-independently by
-     * materialising. Switching the fields to ``Set`` is the planned follow-up.
+     * Build a delta value ``Bundle{added: Set<T>, removed: Set<T>}`` from typed
+     * elements. The fields are value-layer (mutable) ``Set``\ s so they match a
+     * live ``TSS`` delta and compare order-independently via the hash-based set
+     * equality (list fields would make delta comparison order-dependent and slow).
      */
     template <typename TValue>
     [[nodiscard]] inline Value make_set_delta_value(const std::vector<TValue> &added,
@@ -127,19 +125,19 @@ namespace hgraph
     {
         auto       &registry = TypeRegistry::instance();
         const auto *t_meta   = scalar_descriptor<TValue>::value_meta();
-        const auto *list_t   = registry.mutable_list(t_meta);
-        const auto *schema   = registry.un_named_bundle({{"added", list_t}, {"removed", list_t}});
+        const auto *set_t    = registry.mutable_set(t_meta);
+        const auto *schema   = registry.un_named_bundle({{"added", set_t}, {"removed", set_t}});
         const auto *binding  = ValuePlanFactory::instance().binding_for(schema);
 
         Value delta{*binding};
         auto  bundle = delta.as_bundle().begin_mutation();
         {
-            auto m = bundle.field("added").as_list().begin_mutation();
-            for (const auto &e : added) { m.push_back(Value{e}.view()); }
+            auto m = bundle.field("added").as_mutable_set();
+            for (const auto &e : added) { (void)m.add(Value{e}.view()); }
         }
         {
-            auto m = bundle.field("removed").as_list().begin_mutation();
-            for (const auto &e : removed) { m.push_back(Value{e}.view()); }
+            auto m = bundle.field("removed").as_mutable_set();
+            for (const auto &e : removed) { (void)m.add(Value{e}.view()); }
         }
         return delta;
     }

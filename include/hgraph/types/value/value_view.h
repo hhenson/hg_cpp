@@ -22,6 +22,7 @@ namespace hgraph
     class BundleView;
     class ListView;
     class SetView;
+    class MutableSetView;
     class MapView;
     class CyclicBufferView;
     class QueueView;
@@ -271,6 +272,8 @@ namespace hgraph
         [[nodiscard]] std::optional<ListView> try_as_list() const;
         [[nodiscard]] SetView as_set() const;
         [[nodiscard]] std::optional<SetView> try_as_set() const;
+        [[nodiscard]] MutableSetView as_mutable_set() const;
+        [[nodiscard]] std::optional<MutableSetView> try_as_mutable_set() const;
         [[nodiscard]] MapView as_map() const;
         [[nodiscard]] std::optional<MapView> try_as_map() const;
         [[nodiscard]] CyclicBufferView as_cyclic_buffer() const;

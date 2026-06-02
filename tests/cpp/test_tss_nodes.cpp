@@ -112,8 +112,8 @@ TEST_CASE("tss: replay_set -> record_set round-trips set deltas (added/removed)"
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
-    const auto recorded = testing::get_recorded_deltas<int>(ex.view().graph().global_state(), "out");
-    CHECK(recorded == deltas);
+    CHECK_OUTPUT(testing::get_recorded_deltas<int>(ex.view().graph().global_state(), "out"),
+                 {set_delta<int>({1, 2}, {}), set_delta<int>({3}, {1}), set_delta<int>({}, {2, 3})});
 }
 
 TEST_CASE("tss: In<TSS>::delta() exposes this cycle's added/removed as a SetDelta")

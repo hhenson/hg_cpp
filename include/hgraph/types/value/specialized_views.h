@@ -576,6 +576,8 @@ namespace hgraph
      * built from the bound ``IndexedValueOps`` (the set is unordered
      * so ``at(index)`` is not exposed publicly).
      */
+    class MutableSetView;
+
     class SetView : public ValueView
     {
       public:
@@ -613,8 +615,62 @@ namespace hgraph
         [[nodiscard]] auto begin() const { return elements().begin(); }
         [[nodiscard]] auto end() const { return elements().end(); }
 
+        /** Open a writable view over a mutable set (requires mutable storage). */
+        [[nodiscard]] MutableSetView begin_mutation() const;
+
       private:
         const SetValueOps *ops_{nullptr};
+    };
+
+    /**
+     * Writable view over a **mutable** set (``ValueTypeFlags::Mutable``). Adds
+     * add / remove / clear on top of the ``SetView`` read surface. On a compact
+     * (immutable) set these throw.
+     */
+    class MutableSetView : public SetView
+    {
+      public:
+        explicit MutableSetView(ValueView base)
+            : SetView(specialized_view_detail::require_mutable(std::move(base), "MutableSetView"))
+        {
+        }
+
+        /** Add ``key`` to the set; returns whether the set changed. */
+        bool add(const ValueView &key) const
+        {
+            require_element(key, "add");
+            return mutable_ops("add")->add(nullptr, mutable_data(), key.data());
+        }
+        /** Remove ``key`` if present; returns whether the set changed. */
+        bool remove(const ValueView &key) const
+        {
+            require_element(key, "remove");
+            return mutable_ops("remove")->remove(nullptr, mutable_data(), key.data());
+        }
+        /** Remove every element. */
+        void clear() const { mutable_ops("clear")->clear(nullptr, mutable_data()); }
+
+      private:
+        [[nodiscard]] const MutableSetValueOps *mutable_ops(const char *what) const
+        {
+            if (schema() == nullptr || !schema()->is_mutable())
+            {
+                throw std::logic_error(std::string{"MutableSetView::"} + what + " requires a mutable set");
+            }
+            const auto *ops = static_cast<const MutableSetValueOps *>(binding()->ops);
+            if (ops == nullptr || ops->add == nullptr)
+            {
+                throw std::logic_error(std::string{"MutableSetView::"} + what + ": binding has no mutation ops");
+            }
+            return ops;
+        }
+        void require_element(const ValueView &key, const char *what) const
+        {
+            if (!key.valid() || key.schema() != element_schema())
+            {
+                throw std::logic_error(std::string{"MutableSetView::"} + what + ": element schema mismatch");
+            }
+        }
     };
 
     /**
@@ -897,6 +953,23 @@ namespace hgraph
     inline std::optional<SetView> ValueView::try_as_set() const
     {
         return is_set() ? std::optional<SetView>{SetView{borrowed_ref()}} : std::nullopt;
+    }
+
+    inline MutableSetView SetView::begin_mutation() const
+    {
+        return MutableSetView{ValueView::begin_mutation()};
+    }
+
+    inline MutableSetView ValueView::as_mutable_set() const
+    {
+        if (!is_set()) { throw std::logic_error("ValueView::as_mutable_set on non-set view"); }
+        return MutableSetView{borrowed_ref()};
+    }
+
+    inline std::optional<MutableSetView> ValueView::try_as_mutable_set() const
+    {
+        return is_set() && mutable_payload() ? std::optional<MutableSetView>{MutableSetView{borrowed_ref()}}
+                                             : std::nullopt;
     }
 
     inline MapView ValueView::as_map() const

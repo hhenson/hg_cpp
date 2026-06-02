@@ -228,7 +228,9 @@ materialised ``std::set``. It is order-independent for equality, and it is the
 The testing toolkit captures **correct deltas**, not cumulative values:
 ``replay_set<T>`` applies a recorded delta sequence to a ``TSS<T>`` output (remove
 then add); ``record_set<T>`` captures each tick's delta. ``set_replay_deltas`` /
-``get_recorded_deltas`` convert to/from ``std::vector<std::optional<SetDelta<T>>>``:
+``get_recorded_deltas`` convert to/from ``std::vector<std::optional<SetDelta<T>>>``,
+and ``CHECK_OUTPUT`` compares them (rendering each delta as ``{added: {…}, removed:
+{…}}`` on mismatch):
 
 .. code-block:: cpp
 
@@ -239,10 +241,11 @@ then add); ``record_set<T>`` captures each tick's delta. ``set_replay_deltas`` /
    };
    testing::set_replay_deltas<int>(gb.global_state(), "in", deltas);
    /* ... run replay_set<int> -> node-under-test -> record_set<int> ... */
-   auto out = testing::get_recorded_deltas<int>(graph.global_state(), "out");
+   CHECK_OUTPUT(testing::get_recorded_deltas<int>(graph.global_state(), "out"), {
+       set_delta<int>({1, 2}, {}), set_delta<int>({3}, {1}), set_delta<int>({}, {2, 3})});
 
-A built/recorded delta is a ``Bundle{added: List<T>, removed: List<T>}`` so its
-elements read back uniformly with a live ``TSS`` delta (whose fields are ``Set``\ s)
-— ``SetDelta`` wraps either. ``eval_node`` integration for ``TSS`` (and a TSS
-``const_``) is the planned next step; for now wire ``replay_set``/``record_set``
-explicitly.
+A delta bundle is ``Bundle{added: Set<T>, removed: Set<T>}`` (the fields are
+value-layer **mutable sets**, matching a live ``TSS`` delta), so ``SetDelta``
+equality is order-independent and hash-based — no per-comparison materialisation.
+``eval_node`` integration for ``TSS`` (and a TSS ``const_``) is the planned next
+step; for now wire ``replay_set``/``record_set`` explicitly.

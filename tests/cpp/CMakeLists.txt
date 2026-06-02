@@ -65,6 +65,7 @@ add_executable(hgraph_unit_tests
     test_any_value.cpp
     test_mutable_list.cpp
     test_mutable_map.cpp
+    test_mutable_set.cpp
     test_global_state.cpp
 )
 

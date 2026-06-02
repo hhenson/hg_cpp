@@ -130,6 +130,18 @@ namespace hgraph
         bool (*contains)(const void *context, const void *memory, const void *key) = nullptr;
     };
 
+    /**
+     * Mutation surface for a structurally-mutable set. ``add`` inserts a copy of
+     * the supplied key (no-op on a present key); ``remove`` removes a key;
+     * ``clear`` empties the set. Both return whether the set changed.
+     */
+    struct MutableSetValueOps : SetValueOps
+    {
+        bool (*add)(const void *context, void *memory, const void *key) = nullptr;
+        bool (*remove)(const void *context, void *memory, const void *key) = nullptr;
+        void (*clear)(const void *context, void *memory) = nullptr;
+    };
+
     struct MapValueOps : IndexedValueOps
     {
         bool (*contains)(const void *context, const void *memory, const void *key) = nullptr;

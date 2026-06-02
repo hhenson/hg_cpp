@@ -33,13 +33,24 @@ namespace hgraph::testing
 
     namespace detail
     {
+        // A delta-like element (e.g. SetDelta) wraps a value bundle: render via its
+        // ``value().to_string()`` rather than constructing a scalar ``Value``.
+        template <typename T>
+        concept value_wrapper = requires(const T &x) {
+            { x.value() };
+            x.added();
+            x.removed();
+        };
+
         template <typename T>
         std::string format_opt(const std::optional<T> &v)
         {
+            if (!v.has_value()) { return std::string{"none"}; }
             // Render through the type-erased value ``to_string`` so display is
             // consistent across all value types and fixable in one place (the value
             // layer) — e.g. 1-byte integers show numerically, not as characters.
-            return v.has_value() ? Value{*v}.to_string() : std::string{"none"};
+            if constexpr (value_wrapper<T>) { return v->value().to_string(); }
+            else { return Value{*v}.to_string(); }
         }
 
         template <typename T>

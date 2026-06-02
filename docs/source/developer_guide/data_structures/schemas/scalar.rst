@@ -85,7 +85,13 @@ A scalar schema has one of nine kinds, recorded on its
     axis, so the two forms intern separately and never collide.
 
 ``Set``
-    Unordered collection of unique elements of one type.
+    Unordered collection of unique elements of one type. Immutable (built once)
+    by default; a set schema carrying ``ValueTypeFlags::Mutable`` (from
+    ``TypeRegistry::mutable_set``) is **structurally mutable** — backed by a
+    ``KeySlotStore`` and supporting ``add`` / ``remove`` / ``clear`` through
+    ``MutableSetView``, with order-independent hash-based equality. Mutability is
+    an explicit schema axis that interns separately. A mutable set is the field
+    type of a ``TSS`` delta bundle in the testing toolkit.
 
 ``Map``
     Key/value mapping with one key type and one value type. Immutable

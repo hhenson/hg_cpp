@@ -881,6 +881,254 @@ namespace hgraph
         const auto *meta = TypeRegistry::instance().mutable_map(key_binding.type_meta, value_binding.type_meta);
         return ValueTypeBinding::intern(*meta, mutable_map_plan(key_binding, value_binding), mutable_map_ops());
     }
+
+    // -----------------------------------------------------------------
+    // Mutable Set — a structurally-mutable value-layer set (the key-only
+    // counterpart of MutableMapStorage). Elements live in a KeySlotStore
+    // hashed/compared via the element binding's ValueOps; erase is immediate.
+    // -----------------------------------------------------------------
+
+    class MutableSetStorage
+    {
+      public:
+        explicit MutableSetStorage(const ValueTypeBinding &element_binding)
+            : element_binding_{&element_binding}
+            , keys_{element_binding.checked_plan(), mutable_container_detail::key_ops_for(element_binding)}
+        {
+        }
+
+        MutableSetStorage(const MutableSetStorage &other)
+            : element_binding_{other.element_binding_}
+            , keys_{other.element_binding_->checked_plan(), mutable_container_detail::key_ops_for(*other.element_binding_)}
+        {
+            copy_keys_from(other);
+        }
+
+        MutableSetStorage &operator=(const MutableSetStorage &other)
+        {
+            if (this != &other)
+            {
+                keys_           = KeySlotStore{other.element_binding_->checked_plan(),
+                                               mutable_container_detail::key_ops_for(*other.element_binding_)};
+                element_binding_ = other.element_binding_;
+                copy_keys_from(other);
+            }
+            return *this;
+        }
+
+        MutableSetStorage(MutableSetStorage &&) noexcept            = default;
+        MutableSetStorage &operator=(MutableSetStorage &&) noexcept = default;
+        ~MutableSetStorage()                                       = default;
+
+        [[nodiscard]] std::size_t             size() const noexcept { return keys_.size(); }
+        [[nodiscard]] std::size_t             slot_capacity() const noexcept { return keys_.slot_capacity(); }
+        [[nodiscard]] bool                    slot_live(std::size_t slot) const noexcept { return keys_.slot_live(slot); }
+        [[nodiscard]] const ValueTypeBinding *element_binding() const noexcept { return element_binding_; }
+        [[nodiscard]] const void             *key_at(std::size_t slot) const noexcept { return keys_.key_memory(slot); }
+        [[nodiscard]] bool                    contains(const void *key) const { return keys_.find_slot(key) != KeySlotStore::npos; }
+        [[nodiscard]] const void             *key_at_ordinal(std::size_t ordinal) const { return nth_live_memory(ordinal); }
+
+        /** Add ``key`` (copy); returns true when the set changed (key was absent). */
+        bool add(const void *key) { return keys_.insert(key).inserted; }
+
+        /** Remove ``key`` immediately; returns true when a key was removed. */
+        bool remove(const void *key)
+        {
+            const std::size_t slot = keys_.find_slot(key);
+            if (slot == KeySlotStore::npos) { return false; }
+            (void)keys_.remove_slot(slot);
+            keys_.erase_pending();
+            return true;
+        }
+
+        void clear() { keys_.clear(); }
+
+      private:
+        const ValueTypeBinding *element_binding_{nullptr};
+        KeySlotStore            keys_;
+
+        [[nodiscard]] const void *nth_live_memory(std::size_t ordinal) const
+        {
+            std::size_t count = 0;
+            for (std::size_t slot = 0; slot < keys_.slot_capacity(); ++slot)
+            {
+                if (!keys_.slot_live(slot)) { continue; }
+                if (count == ordinal) { return keys_.key_memory(slot); }
+                ++count;
+            }
+            throw std::out_of_range("MutableSetStorage ordinal out of range");
+        }
+
+        void copy_keys_from(const MutableSetStorage &other)
+        {
+            for (std::size_t slot = 0; slot < other.keys_.slot_capacity(); ++slot)
+            {
+                if (other.keys_.slot_live(slot)) { (void)add(other.keys_.key_memory(slot)); }
+            }
+        }
+    };
+
+    namespace mutable_container_detail
+    {
+        struct MutableSetState
+        {
+            const ValueTypeBinding *element_binding{nullptr};
+        };
+
+        inline void set_construct(void *dst, const void *context)
+        {
+            const auto &state = compact_detail::checked_state<MutableSetState>(context, "mutable_set");
+            if (state.element_binding == nullptr) { throw std::logic_error("mutable_set construction requires an element binding"); }
+            std::construct_at(static_cast<MutableSetStorage *>(dst), *state.element_binding);
+        }
+        inline void set_destroy(void *memory, const void *) noexcept { std::destroy_at(static_cast<MutableSetStorage *>(memory)); }
+        inline void set_copy_construct(void *dst, const void *src, const void *)
+        {
+            std::construct_at(static_cast<MutableSetStorage *>(dst), *static_cast<const MutableSetStorage *>(src));
+        }
+        inline void set_move_construct(void *dst, void *src, const void *)
+        {
+            std::construct_at(static_cast<MutableSetStorage *>(dst), std::move(*static_cast<MutableSetStorage *>(src)));
+        }
+        inline void set_copy_assign(void *dst, const void *src, const void *)
+        {
+            *static_cast<MutableSetStorage *>(dst) = *static_cast<const MutableSetStorage *>(src);
+        }
+        inline void set_move_assign(void *dst, void *src, const void *)
+        {
+            *static_cast<MutableSetStorage *>(dst) = std::move(*static_cast<MutableSetStorage *>(src));
+        }
+
+        inline std::size_t set_size(const void *, const void *m) noexcept { return static_cast<const MutableSetStorage *>(m)->size(); }
+        inline bool        set_contains(const void *, const void *m, const void *key) { return static_cast<const MutableSetStorage *>(m)->contains(key); }
+        inline const void *set_element_at(const void *, const void *m, std::size_t i) { return static_cast<const MutableSetStorage *>(m)->key_at_ordinal(i); }
+        inline const ValueTypeBinding *set_element_binding(const void *, const void *m, std::size_t) noexcept
+        {
+            return static_cast<const MutableSetStorage *>(m)->element_binding();
+        }
+        inline bool set_slot_live(const void *, const void *m, std::size_t slot) { return static_cast<const MutableSetStorage *>(m)->slot_live(slot); }
+        inline ValueView set_element_projector(const void *, const void *m, std::size_t slot)
+        {
+            const auto *s = static_cast<const MutableSetStorage *>(m);
+            return ValueView{s->element_binding(), s->key_at(slot)};
+        }
+        inline Range<ValueView> set_make_range(const void *, const void *m)
+        {
+            return Range<ValueView>{nullptr, m, static_cast<const MutableSetStorage *>(m)->slot_capacity(),
+                                    &set_slot_live, &set_element_projector};
+        }
+
+        inline std::size_t set_hash(const void *, const void *m)
+        {
+            const auto *s    = static_cast<const MutableSetStorage *>(m);
+            const auto &eops = s->element_binding()->checked_ops();
+            std::size_t acc  = 0;  // xor of element hashes -> order-independent
+            for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
+            {
+                if (s->slot_live(slot)) { acc ^= eops.hash(s->key_at(slot)); }
+            }
+            return acc;
+        }
+        inline bool set_equals(const void *, const void *lhs, const void *rhs) noexcept
+        {
+            const auto *a = static_cast<const MutableSetStorage *>(lhs);
+            const auto *b = static_cast<const MutableSetStorage *>(rhs);
+            if (a->size() != b->size()) { return false; }
+            for (std::size_t slot = 0; slot < a->slot_capacity(); ++slot)
+            {
+                if (a->slot_live(slot) && !b->contains(a->key_at(slot))) { return false; }
+            }
+            return true;
+        }
+        inline std::partial_ordering set_compare(const void *ctx, const void *lhs, const void *rhs) noexcept
+        {
+            return set_equals(ctx, lhs, rhs) ? std::partial_ordering::equivalent : std::partial_ordering::unordered;
+        }
+        inline std::string set_to_string(const void *, const void *m)
+        {
+            const auto *s    = static_cast<const MutableSetStorage *>(m);
+            const auto &eops = s->element_binding()->checked_ops();
+            fmt::memory_buffer out;
+            fmt::format_to(std::back_inserter(out), "{{");
+            bool first = true;
+            for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
+            {
+                if (!s->slot_live(slot)) { continue; }
+                if (!first) { fmt::format_to(std::back_inserter(out), ", "); }
+                first = false;
+                fmt::format_to(std::back_inserter(out), "{}", eops.to_string(s->key_at(slot)));
+            }
+            fmt::format_to(std::back_inserter(out), "}}");
+            return fmt::to_string(out);
+        }
+
+        inline bool set_add(const void *, void *m, const void *key) { return static_cast<MutableSetStorage *>(m)->add(key); }
+        inline bool set_remove(const void *, void *m, const void *key) { return static_cast<MutableSetStorage *>(m)->remove(key); }
+        inline void set_clear(const void *, void *m) { static_cast<MutableSetStorage *>(m)->clear(); }
+
+        inline compact_detail::CompactContainerPlanRegistry<compact_detail::UnaryBindingKey, MutableSetState,
+                                                            compact_detail::UnaryBindingKeyHash> &
+        set_registry()
+        {
+            static compact_detail::CompactContainerPlanRegistry<compact_detail::UnaryBindingKey, MutableSetState,
+                                                                compact_detail::UnaryBindingKeyHash>
+                r;
+            return r;
+        }
+    }  // namespace mutable_container_detail
+
+    [[nodiscard]] inline const MemoryUtils::StoragePlan &mutable_set_plan(const ValueTypeBinding &element_binding)
+    {
+        using namespace mutable_container_detail;
+        return set_registry().intern(
+            compact_detail::UnaryBindingKey{.binding = &element_binding},
+            [&] { return std::make_unique<MutableSetState>(MutableSetState{.element_binding = &element_binding}); },
+            [&](const MutableSetState &state) {
+                return std::make_unique<MemoryUtils::StoragePlan>(
+                    compact_detail::make_storage_plan<MutableSetStorage, &set_construct, &set_destroy,
+                                                      &set_copy_construct, &set_move_construct, &set_copy_assign,
+                                                      &set_move_assign>(state));
+            });
+    }
+
+    [[nodiscard]] inline const MutableSetValueOps &mutable_set_ops() noexcept
+    {
+        using namespace mutable_container_detail;
+        static const MutableSetValueOps ops = {
+            {{// IndexedValueOps:
+              {// ValueOps:
+               nullptr,
+               true,  // allows_mutation
+               &set_hash,
+               &set_equals,
+               &set_compare,
+               &set_to_string
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+               ,
+               nullptr,
+               nullptr
+#endif
+              },
+              &set_size,
+              &set_element_at,
+              &set_element_binding,
+              &set_make_range,
+              nullptr},
+             // SetValueOps:
+             &set_contains},
+            // MutableSetValueOps:
+            &set_add,
+            &set_remove,
+            &set_clear,
+        };
+        return ops;
+    }
+
+    [[nodiscard]] inline const ValueTypeBinding &mutable_set_binding(const ValueTypeBinding &element_binding)
+    {
+        const auto *meta = TypeRegistry::instance().mutable_set(element_binding.type_meta);
+        return ValueTypeBinding::intern(*meta, mutable_set_plan(element_binding), mutable_set_ops());
+    }
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_VALUE_MUTABLE_CONTAINER_OPS_H

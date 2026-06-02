@@ -886,7 +886,8 @@ namespace hgraph
                 {
                     throw std::logic_error("ValuePlanFactory: set element has no resolvable binding");
                 }
-                binding = &compact_set_binding(*element_binding);
+                binding = schema->is_mutable() ? &mutable_set_binding(*element_binding)
+                                               : &compact_set_binding(*element_binding);
                 break;
             }
 
