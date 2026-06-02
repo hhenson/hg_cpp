@@ -77,6 +77,12 @@ A scalar schema has one of nine kinds, recorded on its
 
 ``List``
     Ordered sequence of one element type. May be ``fixed_size`` or dynamic.
+    A dynamic list is **immutable** (built once) by default; a list schema
+    carrying ``ValueTypeFlags::Mutable`` (from ``TypeRegistry::mutable_list``)
+    is instead **structurally mutable** — backed by growable slot-store
+    storage and supporting ``push_back`` / ``set`` / ``erase`` / ``pop_back``
+    / ``clear`` through ``MutableListView``. Mutability is an explicit schema
+    axis, so the two forms intern separately and never collide.
 
 ``Set``
     Unordered collection of unique elements of one type.

@@ -76,6 +76,8 @@ namespace hgraph
         Equatable = 1u << 5,
         BufferCompatible = 1u << 6,
         VariadicTuple = 1u << 7,
+        /** Container schema backed by structurally-mutable (slot-store) storage. */
+        Mutable = 1u << 8,
     };
 
     /** Bitwise OR over ``ValueTypeFlags``. */
@@ -228,6 +230,8 @@ namespace hgraph
         {
             return has(ValueTypeFlags::VariadicTuple);
         }
+        /** True when this container schema is backed by structurally-mutable storage. */
+        [[nodiscard]] constexpr bool is_mutable() const noexcept { return has(ValueTypeFlags::Mutable); }
     };
 
     namespace detail

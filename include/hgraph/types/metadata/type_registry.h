@@ -97,6 +97,13 @@ namespace hgraph
         const ValueTypeMetaData *list(const ValueTypeMetaData *element_type,
                                       size_t fixed_size = 0,
                                       bool variadic_tuple = false);
+        /**
+         * Intern a **mutable** (structurally-mutable, slot-store-backed)
+         * dynamic list value-schema for ``element_type``. Distinct from the
+         * immutable :cpp:func:`list`: carries ``ValueTypeFlags::Mutable`` and
+         * interns separately, so the two never collide.
+         */
+        const ValueTypeMetaData *mutable_list(const ValueTypeMetaData *element_type);
         /** Intern a set value-schema for ``element_type``. */
         const ValueTypeMetaData *set(const ValueTypeMetaData *element_type);
         /** Intern a map value-schema with the given key and value types. */
@@ -452,6 +459,7 @@ namespace hgraph
         InternTable<NamedBundleKey, ValueTypeMetaData, NamedBundleKeyHash> named_bundle_cache_;
         InternTable<ListKey, ValueTypeMetaData, ListKeyHash> list_cache_;
         InternTable<const ValueTypeMetaData *, ValueTypeMetaData> set_cache_;
+        InternTable<const ValueTypeMetaData *, ValueTypeMetaData> mutable_list_cache_;
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> map_cache_;
         InternTable<SizedKey, ValueTypeMetaData, SizedKeyHash> cyclic_buffer_cache_;
         InternTable<SizedKey, ValueTypeMetaData, SizedKeyHash> queue_cache_;

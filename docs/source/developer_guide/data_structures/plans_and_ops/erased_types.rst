@@ -311,9 +311,13 @@ remain accessible through the mutable view.
 
 Status: atomic views, tuple/bundle views, and fixed-array list views
 currently support explicit mutation when their ops table allows
-``begin_mutation()``. Compact container storage ops do not allow it.
-The structural methods listed below remain design/API targets for the
-slot-store-backed time-series layer.
+``begin_mutation()``. The compact (build-once) container storage ops do
+not allow it. Structural mutation is supported for **mutable** container
+schemas (``ValueTypeFlags::Mutable``), which bind to slot-store-backed
+storage and install a structural-mutation ops surface — the mutable list
+is implemented (below); the mutable map follows; the remaining structural
+methods are still design/API targets for the slot-store-backed
+time-series layer.
 
 ``MutableTupleView``
     Adds mutable child access by index. ``set(index, value)`` is a
@@ -324,9 +328,13 @@ slot-store-backed time-series layer.
     ``set(name, value)`` are time-series-layer targets.
 
 ``MutableListView``
-    Adds mutable child access by index when the underlying ops allow
-    mutation. ``set(index, value)``, ``push_back(value)``, and
-    ``resize(n)`` are time-series-layer targets.
+    Adds mutable child access by index. For a **mutable** list
+    (``ValueTypeFlags::Mutable``, from ``registry.mutable_list``) the
+    structural methods are **implemented** — ``push_back(value)``,
+    ``set(index, value)``, ``erase(index)`` (shifts later elements down),
+    ``pop_back()`` and ``clear()`` go through the ``MutableListValueOps``
+    surface over the growable slot-store storage. On a compact (immutable)
+    list these throw.
 
 ``MutableCyclicBufferView``
     Structural ``push_back(value)`` (replaces oldest when full) and

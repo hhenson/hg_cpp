@@ -387,6 +387,53 @@ namespace hgraph
             if (empty()) { throw std::out_of_range("MutableListView::back on empty list"); }
             return at(size() - 1);
         }
+
+        // -- structural mutation (only for a mutable list; throws otherwise) --
+
+        /** Append a copy of ``element`` (its schema must match the element type). */
+        void push_back(const ValueView &element) const
+        {
+            require_element(element, "push_back");
+            mutable_ops("push_back")->push_back(nullptr, mutable_data(), element.data());
+        }
+
+        /** Replace the element at ``index`` with a copy of ``element``. */
+        void set(std::size_t index, const ValueView &element) const
+        {
+            require_element(element, "set");
+            mutable_ops("set")->set_element(nullptr, mutable_data(), index, element.data());
+        }
+
+        /** Remove the element at ``index``, shifting later elements down. */
+        void erase(std::size_t index) const { mutable_ops("erase")->erase(nullptr, mutable_data(), index); }
+
+        /** Drop the last element. */
+        void pop_back() const { mutable_ops("pop_back")->pop_back(nullptr, mutable_data()); }
+
+        /** Remove every element. */
+        void clear() const { mutable_ops("clear")->clear(nullptr, mutable_data()); }
+
+      private:
+        [[nodiscard]] const MutableListValueOps *mutable_ops(const char *what) const
+        {
+            if (schema() == nullptr || !schema()->is_mutable())
+            {
+                throw std::logic_error(std::string{"MutableListView::"} + what + " requires a mutable list");
+            }
+            const auto *ops = static_cast<const MutableListValueOps *>(binding()->ops);
+            if (ops == nullptr || ops->push_back == nullptr)
+            {
+                throw std::logic_error(std::string{"MutableListView::"} + what + ": binding has no mutation ops");
+            }
+            return ops;
+        }
+        void require_element(const ValueView &element, const char *what) const
+        {
+            if (!element.valid() || element.schema() != element_schema())
+            {
+                throw std::logic_error(std::string{"MutableListView::"} + what + ": element schema mismatch");
+            }
+        }
     };
 
     /** Read-only view over a CyclicBuffer. Adds head / empty. */

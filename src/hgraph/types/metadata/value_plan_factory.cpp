@@ -3,6 +3,7 @@
 #include <hgraph/types/utils/intern_table.h>
 #include <hgraph/types/value/any_ops.h>
 #include <hgraph/types/value/compact_container_ops.h>
+#include <hgraph/types/value/mutable_container_ops.h>
 #include <hgraph/util/scope.h>
 
 #include <compare>
@@ -866,7 +867,8 @@ namespace hgraph
                 }
                 if (schema->fixed_size == 0)
                 {
-                    binding = &compact_list_binding(*element_binding);
+                    binding = schema->is_mutable() ? &mutable_list_binding(*element_binding)
+                                                   : &compact_list_binding(*element_binding);
                 }
                 else
                 {

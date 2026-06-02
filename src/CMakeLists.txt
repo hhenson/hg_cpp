@@ -112,6 +112,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/any_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_container_ops.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/mutable_container_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_storage.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/container_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/specialized_views.h

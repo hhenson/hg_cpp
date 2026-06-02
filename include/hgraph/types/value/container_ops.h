@@ -97,6 +97,24 @@ namespace hgraph
     {
     };
 
+    /**
+     * Structural-mutation surface for a *mutable* (dynamic) list. The base
+     * ``ListValueOps`` read surface stays unchanged; this extends it with the
+     * hooks ``MutableListView`` calls. ``push_back`` / ``set`` copy from the
+     * supplied element memory; ``clear`` destroys all elements. Only bindings
+     * over mutable list storage install these; the compact (immutable) list
+     * leaves them null.
+     */
+    struct MutableListValueOps : ListValueOps
+    {
+        void (*push_back)(const void *context, void *memory, const void *element) = nullptr;
+        void (*set_element)(const void *context, void *memory, std::size_t index, const void *element) = nullptr;
+        /** Remove the element at ``index``, shifting later elements down. */
+        void (*erase)(const void *context, void *memory, std::size_t index) = nullptr;
+        void (*pop_back)(const void *context, void *memory) = nullptr;
+        void (*clear)(const void *context, void *memory) = nullptr;
+    };
+
     struct CyclicBufferValueOps : IndexedValueOps
     {
         std::size_t (*head)(const void *memory) noexcept = nullptr;
