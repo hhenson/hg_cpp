@@ -108,12 +108,15 @@ node/graph/executor builders+views (`runtime/`), **notification-driven schedulin
 wired via `NodeRuntimeStorage : Notifiable` in `node.cpp`), readiness/active-input gating
 (`ready_to_evaluate`, `active_input_modified`), and a single-loop simulation executor.
 
-**Known-thin / false-positive risks** (do not trust as "done"):
-- **Source-tick injection.** Sources only write a constant when evaluated and never
-  reschedule; the graph effectively runs **one cycle** (all nodes scheduled once at
-  `start_time`, `graph.cpp:225-228`) then `next_scheduled_time → MAX_DT`.
-- **Weak tests.** Runtime tests are single-pass and assert weakly (a `t2` evaluate runs
-  zero nodes yet passes). They test plumbing, not multi-cycle notification/gating.
+**Multi-cycle, data-driven evaluation now works** (the former milestone gap, closed):
+a source that reschedules itself via the **`NodeScheduler`** injectable drives the graph
+over successive simulated times, and downstream nodes re-evaluate each cycle. Proven by
+`tests/cpp/test_simulation_execution.cpp` ("a self-rescheduling source drives multiple
+cycles over time") — the old `[!shouldfail]` placeholder is retired and the suite is fully
+green with no expected-failures. The foundation for the testing toolkit is also in place:
+`Any` value kind, mutable `List`/`Map` (slot-store-backed), and the **`GlobalState`**
+injectable (owning value on the graph + `GlobalStateView`; seedable at wiring via
+`Wiring::global_state()`/`GraphBuilder`, read/written at runtime).
 
 **Design decision (recorded):** the 2603-style separate `EvaluationEngine` /
 `EvaluationClock` is **not** the chosen direction — with the type-erased design,
@@ -121,10 +124,11 @@ run-level state and the evaluation loop fold into the **executor ops**
 (`runtime/executor.h`). A separate engine/clock is a recorded alternative to revisit
 only if that proves insufficient.
 
-**Current milestone:** a *convincing* **basic graph executing the simple TS type in
-simulation mode, C++-only**, in small reviewable steps — a real source that ticks over
-simulated time, multi-cycle data-driven evaluation, and tests that *prove* the engine
-semantics (killing the false positives). `ext/2603` is the working reference.
+**Current milestone:** build the **graph unit-testing toolkit** on this foundation —
+`replay<T>`/`record<T>` nodes over `GlobalState`, the `eval_node<NodeT>` harness, and a
+small `lib/std` (`const`, `debug_print`, `null_sink`) — so node/graph semantics can be
+tested ergonomically (see memory `value-any-globalstate-testing-plan`). `ext/2603` is the
+working reference.
 **C++ only for now** — keep Python out of the configure/build/run path.
 
 ---

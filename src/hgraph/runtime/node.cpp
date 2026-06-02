@@ -3,6 +3,7 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/notifiable.h>
 #include <hgraph/runtime/graph.h>
+#include <hgraph/runtime/node_scheduler.h>
 #include <hgraph/util/scope.h>
 
 #include <algorithm>
@@ -54,6 +55,7 @@ namespace hgraph
             std::size_t output_offset{npos};
             std::size_t state_offset{npos};
             std::size_t scalars_offset{npos};
+            std::size_t scheduler_offset{npos};
             std::size_t error_output_offset{npos};
             std::size_t recordable_state_offset{npos};
 
@@ -61,6 +63,7 @@ namespace hgraph
             [[nodiscard]] bool has_output() const noexcept { return output_offset != npos; }
             [[nodiscard]] bool has_state() const noexcept { return state_offset != npos; }
             [[nodiscard]] bool has_scalars() const noexcept { return scalars_offset != npos; }
+            [[nodiscard]] bool has_scheduler() const noexcept { return scheduler_offset != npos; }
             [[nodiscard]] bool has_error_output() const noexcept { return error_output_offset != npos; }
             [[nodiscard]] bool has_recordable_state() const noexcept { return recordable_state_offset != npos; }
         };
@@ -120,6 +123,11 @@ namespace hgraph
         [[nodiscard]] Value &node_scalars(const NodeRuntimeContext &context, void *memory)
         {
             return *MemoryUtils::cast<Value>(node_component(memory, context.layout.scalars_offset));
+        }
+
+        [[nodiscard]] NodeSchedulerState &node_scheduler_state(const NodeRuntimeContext &context, void *memory)
+        {
+            return *MemoryUtils::cast<NodeSchedulerState>(node_component(memory, context.layout.scheduler_offset));
         }
 
         [[nodiscard]] TSOutput &node_error_output(const NodeRuntimeContext &context, void *memory)
@@ -237,6 +245,13 @@ namespace hgraph
                 ++constructed;
             }
 
+            if (context.layout.has_scheduler())
+            {
+                std::construct_at(MemoryUtils::cast<NodeSchedulerState>(
+                                      MemoryUtils::advance(memory, context.layout.scheduler_offset)));
+                ++constructed;
+            }
+
             if (context.layout.has_error_output())
             {
                 std::construct_at(MemoryUtils::cast<TSOutput>(
@@ -279,6 +294,10 @@ namespace hgraph
             {
                 layout.scalars_offset = component->offset;
             }
+            if (const auto *component = plan.find_component("scheduler"); component != nullptr)
+            {
+                layout.scheduler_offset = component->offset;
+            }
             if (const auto *component = plan.find_component("error_output"); component != nullptr)
             {
                 layout.error_output_offset = component->offset;
@@ -299,6 +318,10 @@ namespace hgraph
             if (schema.output_schema != nullptr) { builder.add_field("output", MemoryUtils::plan_for<TSOutput>()); }
             if (schema.state_schema != nullptr) { builder.add_field("state", MemoryUtils::plan_for<Value>()); }
             if (schema.scalar_schema != nullptr) { builder.add_field("scalars", MemoryUtils::plan_for<Value>()); }
+            if (schema.uses_scheduler)
+            {
+                builder.add_field("scheduler", MemoryUtils::plan_for<NodeSchedulerState>());
+            }
             if (schema.error_output_schema != nullptr)
             {
                 builder.add_field("error_output", MemoryUtils::plan_for<TSOutput>());
@@ -482,6 +505,11 @@ namespace hgraph
             return memory != nullptr && runtime_context(context).layout.has_scalars();
         }
 
+        bool has_scheduler_impl(const void *context, const void *memory) noexcept
+        {
+            return memory != nullptr && runtime_context(context).layout.has_scheduler();
+        }
+
         bool has_error_output_impl(const void *context, const void *memory) noexcept
         {
             return memory != nullptr && runtime_context(context).layout.has_error_output();
@@ -518,6 +546,13 @@ namespace hgraph
             const auto &runtime = runtime_context(context);
             if (!runtime.layout.has_scalars()) { throw std::logic_error("Node has no scalar configuration"); }
             return node_scalars(runtime, memory).view();
+        }
+
+        NodeSchedulerState *scheduler_state_impl(const void *context, void *memory)
+        {
+            const auto &runtime = runtime_context(context);
+            if (!runtime.layout.has_scheduler()) { throw std::logic_error("Node has no scheduler"); }
+            return &node_scheduler_state(runtime, memory);
         }
 
         TSOutputView error_output_view_impl(const void *context, void *memory, engine_time_t evaluation_time)
@@ -569,9 +604,42 @@ namespace hgraph
         void evaluate_impl(const void *context, const NodeView &view, engine_time_t evaluation_time, bool force)
         {
             if (!view.started()) { return; }
-            if (!ready_to_evaluate(view, evaluation_time)) { return; }
-            if (!force && view.has_input() && !active_input_modified(view, evaluation_time)) { return; }
-            if (callbacks(context).evaluate) { callbacks(context).evaluate(view, evaluation_time); }
+
+            // Mirror the authoritative Python NodeImpl.eval: capture whether the
+            // node fired on a scheduler event *before* evaluating, gate the
+            // evaluation, then do the scheduler bookkeeping at the end regardless
+            // of whether the evaluation actually ran.
+            const auto         &runtime      = runtime_context(context);
+            const bool          has_scheduler = runtime.layout.has_scheduler();
+            NodeSchedulerState *scheduler     = has_scheduler ? &node_scheduler_state(runtime, view.data()) : nullptr;
+            const bool          scheduled_now = scheduler != nullptr && !scheduler->events.empty() &&
+                                       scheduler->events.begin()->first == evaluation_time;
+
+            bool do_eval = ready_to_evaluate(view, evaluation_time);
+            if (do_eval && !force && view.has_input())
+            {
+                const bool modified = active_input_modified(view, evaluation_time);
+                // A scheduler-bearing node also evaluates when its timer fires,
+                // even if no input ticked; a plain node only on input changes.
+                if (has_scheduler) { do_eval = scheduled_now || modified; }
+                else { do_eval = modified; }
+            }
+
+            if (do_eval && callbacks(context).evaluate) { callbacks(context).evaluate(view, evaluation_time); }
+
+            if (has_scheduler)
+            {
+                NodeScheduler sched{*scheduler, view.graph_value(), view.node_index(), evaluation_time};
+                if (scheduled_now)
+                {
+                    sched.advance();  // consume the fired event(s) and re-arm the next
+                }
+                else if (sched.is_scheduled() && view.graph_value() != nullptr)
+                {
+                    // Ran for another reason (an input ticked): just re-arm the timer.
+                    view.graph_value()->schedule_node(view.node_index(), sched.next_scheduled_time());
+                }
+            }
         }
 
         void cleanup_delta_impl(const void *context, const NodeView &view)
@@ -611,12 +679,14 @@ namespace hgraph
                     .has_output_impl = &has_output_impl,
                     .has_state_impl = &has_state_impl,
                     .has_scalars_impl = &has_scalars_impl,
+                    .has_scheduler_impl = &has_scheduler_impl,
                     .has_error_output_impl = &has_error_output_impl,
                     .has_recordable_state_impl = &has_recordable_state_impl,
                     .input_view_impl = &input_view_impl,
                     .output_view_impl = &output_view_impl,
                     .state_view_impl = &state_view_impl,
                     .scalars_view_impl = &scalars_view_impl,
+                    .scheduler_state_impl = &scheduler_state_impl,
                     .error_output_view_impl = &error_output_view_impl,
                     .recordable_state_view_impl = &recordable_state_view_impl,
                 });
@@ -718,6 +788,11 @@ namespace hgraph
         return valid() && ops().has_scalars_impl(ops().context, data());
     }
 
+    bool NodeView::has_scheduler() const noexcept
+    {
+        return valid() && ops().has_scheduler_impl(ops().context, data());
+    }
+
     bool NodeView::has_error_output() const noexcept
     {
         return valid() && ops().has_error_output_impl(ops().context, data());
@@ -746,6 +821,11 @@ namespace hgraph
     ValueView NodeView::scalars() const
     {
         return ops().scalars_view_impl(ops().context, data());
+    }
+
+    NodeSchedulerState &NodeView::scheduler_state() const
+    {
+        return *ops().scheduler_state_impl(ops().context, data());
     }
 
     TSOutputView NodeView::error_output(engine_time_t evaluation_time) const

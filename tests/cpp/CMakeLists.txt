@@ -43,6 +43,7 @@ add_executable(hgraph_unit_tests
     test_scope.cpp
     test_runtime_value_view.cpp
     test_simulation_execution.cpp
+    test_node_scheduler.cpp
     test_static_node.cpp
     test_graph_wiring.cpp
     test_compact_storage.cpp

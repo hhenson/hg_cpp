@@ -3,6 +3,7 @@
 
 #include <hgraph/runtime/graph.h>
 #include <hgraph/runtime/node.h>
+#include <hgraph/runtime/node_scheduler.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
 #include <hgraph/types/value/value.h>
@@ -191,6 +192,12 @@ namespace hgraph
         template <typename T> struct is_scalar_selector : std::false_type {};
         template <fixed_string N, typename V> struct is_scalar_selector<Scalar<N, V>> : std::true_type {};
 
+        // The scheduler is an injectable, not part of the data contract; it only
+        // flips the node's ``uses_scheduler`` flag so a per-node scheduler-state
+        // slot is allocated.
+        template <typename T> struct is_scheduler_selector : std::false_type {};
+        template <> struct is_scheduler_selector<NodeScheduler> : std::true_type {};
+
         // ---- per-selector runtime metadata ----
         template <typename T> struct input_selector_traits;
         template <fixed_string N, typename S>
@@ -331,6 +338,15 @@ namespace hgraph
             static GlobalStateView get(const NodeView &view, engine_time_t)
             {
                 return view.graph().root().global_state();
+            }
+        };
+
+        template <>
+        struct arg_provider<NodeScheduler>
+        {
+            static NodeScheduler get(const NodeView &view, engine_time_t evaluation_time)
+            {
+                return NodeScheduler{view.scheduler_state(), view.graph_value(), view.node_index(), evaluation_time};
             }
         };
 
@@ -479,6 +495,14 @@ namespace hgraph
                          : std::size_t{0}));
         }
 
+        template <std::size_t... I>
+        static constexpr bool any_scheduler(std::index_sequence<I...>)
+        {
+            return (false || ... ||
+                    static_node_detail::is_scheduler_selector<
+                        static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>::value);
+        }
+
       public:
         /** The static output schema type (the ``Out<S>``'s ``S``), or ``void`` if no output. */
         using output_schema_type = typename static_node_detail::output_type_of_tuple<eval_args>::type;
@@ -493,6 +517,8 @@ namespace hgraph
         [[nodiscard]] static constexpr std::size_t output_count() { return count_outputs(indices{}); }
         [[nodiscard]] static constexpr std::size_t scalar_count() { return count_scalars(indices{}); }
         [[nodiscard]] static constexpr bool        has_output() { return output_count() > 0; }
+        /** Whether ``eval`` injects a ``NodeScheduler`` (so a scheduler-state slot is needed). */
+        [[nodiscard]] static constexpr bool        uses_scheduler() { return any_scheduler(indices{}); }
 
         [[nodiscard]] static const TSValueTypeMetaData *input_schema()
         {
@@ -562,11 +588,12 @@ namespace hgraph
 
         NodeTypeMetaData schema;
         if constexpr (static_node_detail::has_name<TImplementation>) { schema.display_name = TImplementation::name; }
-        schema.input_schema  = signature::input_schema();
-        schema.output_schema = signature::output_schema();
-        schema.state_schema  = signature::state_schema();
-        schema.scalar_schema = signature::scalar_schema();
-        schema.node_kind     = signature::node_kind();
+        schema.input_schema    = signature::input_schema();
+        schema.output_schema   = signature::output_schema();
+        schema.state_schema    = signature::state_schema();
+        schema.scalar_schema   = signature::scalar_schema();
+        schema.node_kind       = signature::node_kind();
+        schema.uses_scheduler  = signature::uses_scheduler();
 
         NodeCallbacks callbacks;
         callbacks.evaluate = [](const NodeView &view, engine_time_t evaluation_time) {

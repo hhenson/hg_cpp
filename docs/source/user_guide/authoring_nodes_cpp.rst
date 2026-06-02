@@ -516,8 +516,8 @@ Injected services — global state, clock and scheduler
 A node can ask for runtime services by listing them as parameters, exactly as
 Python injects ``_clock`` / ``_scheduler``. Injectables are **not** part of the
 node's data contract — they add no input, output, scalar or state, and do not
-affect node-kind inference; the node simply receives them at evaluation. The
-first one, ``GlobalStateView``, is implemented:
+affect node-kind inference; the node simply receives them at evaluation.
+``GlobalStateView`` and ``NodeScheduler`` are implemented:
 
 .. list-table::
    :header-rows: 1
@@ -529,15 +529,15 @@ first one, ``GlobalStateView``, is implemented:
    * - global state
      - ``GlobalStateView`` *(available)*
      - ``GLOBAL_STATE``
-   * - evaluation clock
-     - ``EvaluationClock`` *(planned)*
-     - ``_clock: EvaluationClock``
    * - node scheduler
-     - ``NodeScheduler &`` *(planned)*
+     - ``NodeScheduler`` *(available)*
      - ``_scheduler: SCHEDULER``
    * - current time
      - ``engine_time_t`` *(available)*
      - ``_clock.evaluation_time``
+   * - evaluation clock
+     - ``EvaluationClock`` *(planned)*
+     - ``_clock: EvaluationClock``
 
 ``GlobalStateView`` is a borrowing **view** over the graph's shared, mutable
 ``string -> value`` store — the owning ``GlobalState`` lives on the graph (created
@@ -555,30 +555,86 @@ node that declares it can read and write the store during evaluation:
        }
    };
 
-The store is seeded at wiring time through ``GraphBuilder::global_state()`` (and
-read back after a run via ``GraphView::global_state()``); see *Wiring Graphs in
-C++*. Values are heterogeneous — each key may hold a differently-typed value
-(it is a mutable ``Map<string, Any>`` under the hood).
+The store is seeded at wiring time through ``GraphBuilder::global_state()`` /
+``Wiring::global_state()`` (and read back after a run via
+``GraphView::global_state()``); see *Wiring Graphs in C++*. Values are
+heterogeneous — each key may hold a differently-typed value (it is a mutable
+``Map<string, Any>`` under the hood).
+
+``NodeScheduler`` re-arms the **current** node for a future cycle. It mirrors the
+Python ``SCHEDULER`` interface and is, like ``GlobalStateView``, a **value/view
+split**: the persistent per-node footprint (a ``NodeSchedulerState`` — the pending
+``(time, tag)`` events and the ``tag -> time`` index) lives on the node, while
+``NodeScheduler`` is the borrowing **view** that is constructed on demand when the
+parameter is injected (so a node that never schedules carries no scheduler context
+in memory). A source that reschedules itself is how a graph ticks over simulated
+time (the data-driven, multi-cycle counterpart to a one-shot constant source):
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
-   struct Heartbeat
+   struct Ticker
    {
-       static void start(NodeScheduler &sched) { sched.schedule(std::chrono::seconds{1}); }
-       static void eval(NodeScheduler &sched, Out<TS<int>> out)
+       static void eval(NodeScheduler sched, State<int> n, Out<TS<int>> out)
        {
-           out.set(1);
-           sched.schedule(std::chrono::seconds{1});   // re-arm
+           out.set(n.get());
+           n.set(n.get() + 1);
+           sched.schedule(MIN_TD);   // re-arm for the next cycle (delta from now)
        }
    };
 
 .. code-block:: python
 
    @generator
-   def heartbeat(_scheduler: SCHEDULER = None) -> TS[int]:
+   def ticker(_scheduler: SCHEDULER = None) -> TS[int]:
+       n = 0
        while True:
-           yield _scheduler.next_tick(), 1
+           yield _scheduler.next_tick(), n
+           n += 1
+
+The full interface:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 42 58
+
+   * - Member
+     - Meaning
+   * - ``now()``
+     - the current evaluation time.
+   * - ``schedule(when[, tag][, on_wall_clock])``
+     - schedule at an absolute ``engine_time_t`` ``when`` (must be in the future).
+   * - ``schedule(delta[, tag][, on_wall_clock])``
+     - schedule ``delta`` (``engine_time_delta_t``) after ``now()``.
+   * - ``is_scheduled()`` / ``is_scheduled_now()``
+     - whether anything is pending / the earliest event is *exactly* this cycle.
+   * - ``next_scheduled_time()``
+     - the earliest pending time (``MIN_DT`` when empty).
+   * - ``has_tag(tag)`` / ``tag_time(tag[, default])``
+     - whether / when a tagged event is registered.
+   * - ``tag_is_scheduled_now(tag)``
+     - whether a tagged event is due this cycle.
+   * - ``pop_tag(tag[, default])``
+     - remove a tagged event and return its time.
+   * - ``un_schedule(tag)`` / ``un_schedule()``
+     - cancel a tagged event / the earliest event.
+   * - ``reset()``
+     - cancel everything.
+
+A ``tag`` names an event so it can be replaced (re-scheduling the same tag moves
+it rather than adding a second event), queried, or cancelled. When a node fires
+because its timer was due (``is_scheduled_now``), the runtime consumes the events
+that fired this cycle and re-arms the node at the next pending time; when it fires
+for another reason (an input ticked) it simply re-arms the next timer — so an
+``eval`` only needs to (re)schedule future work. This matches the authoritative
+Python ``SCHEDULER`` semantics. Wall-clock alarms (``on_wall_clock = true``) need
+the real-time evaluation clock, which is not built yet, so that path throws for
+now; calling a mutating method on a node that did not declare a ``NodeScheduler``
+likewise throws.
+
+The interface follows the Python ``SCHEDULER`` contract (the authoritative
+reference). ``tag_time`` / ``tag_is_scheduled_now`` are convenience accessors over
+the same tag index; there is no ``schedule_immediate`` (a node re-arms itself with
+a future ``schedule``).
 
 
 Scalar values and arguments
@@ -857,8 +913,8 @@ Feature status
    * - ``ScalarVar`` / ``TsVar`` markers + descriptors
      - available
      - available
-   * - Source tick injection over time (``@generator`` stream)
-     - planned
+   * - Source tick injection over time (self-rescheduling source)
+     - available
      - available
    * - Container selectors (``In``/``Out`` over ``TSB``/``TSL``/``TSS``/``TSD``/``TSW``)
      - planned
@@ -869,7 +925,10 @@ Feature status
    * - ``GlobalStateView`` injectable (shared ``string -> value`` store)
      - available
      - available
-   * - ``EvaluationClock`` / ``NodeScheduler`` injection
+   * - ``NodeScheduler`` injectable (self-reschedule / multi-cycle sources)
+     - available
+     - available
+   * - ``EvaluationClock`` injection
      - planned
      - available
    * - ``Scalar<"name", T>`` (named scalar arguments)
@@ -916,7 +975,7 @@ C++ ↔ Python cheat sheet
      - ``_state: STATE[...]`` → ``_state.field``
    * - ``EvaluationClock`` *(planned)*
      - ``_clock: EvaluationClock``
-   * - ``NodeScheduler &`` *(planned)*
+   * - ``NodeScheduler sched`` → ``sched.schedule(...)``
      - ``_scheduler: SCHEDULER``
    * - ``Scalar<"f", double>``
      - plain arg ``f: float``

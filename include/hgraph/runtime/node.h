@@ -26,6 +26,7 @@ namespace hgraph
     class NodeBuilder;
     class NodeValue;
     class NodeView;
+    struct NodeSchedulerState;
 
     /** Runtime node category used by graph construction and evaluation. */
     enum class NodeKind
@@ -99,6 +100,7 @@ namespace hgraph
         [[nodiscard]] bool (*has_output_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*has_state_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*has_scalars_impl)(const void *context, const void *memory) noexcept = nullptr;
+        [[nodiscard]] bool (*has_scheduler_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*has_error_output_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*has_recordable_state_impl)(const void *context, const void *memory) noexcept = nullptr;
 
@@ -108,6 +110,7 @@ namespace hgraph
                                                        engine_time_t evaluation_time) = nullptr;
         [[nodiscard]] ValueView (*state_view_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] ValueView (*scalars_view_impl)(const void *context, void *memory) = nullptr;
+        [[nodiscard]] NodeSchedulerState *(*scheduler_state_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] TSOutputView (*error_output_view_impl)(const void *context, void *memory,
                                                              engine_time_t evaluation_time) = nullptr;
         [[nodiscard]] TSOutputView (*recordable_state_view_impl)(const void *context, void *memory,
@@ -159,6 +162,7 @@ namespace hgraph
         [[nodiscard]] bool has_output() const noexcept;
         [[nodiscard]] bool has_state() const noexcept;
         [[nodiscard]] bool has_scalars() const noexcept;
+        [[nodiscard]] bool has_scheduler() const noexcept;
         [[nodiscard]] bool has_error_output() const noexcept;
         [[nodiscard]] bool has_recordable_state() const noexcept;
 
@@ -166,6 +170,8 @@ namespace hgraph
         [[nodiscard]] TSOutputView output(engine_time_t evaluation_time) const;
         [[nodiscard]] ValueView state() const;
         [[nodiscard]] ValueView scalars() const;
+        /** Borrow this node's persistent scheduler state (only valid when ``has_scheduler``). */
+        [[nodiscard]] NodeSchedulerState &scheduler_state() const;
         [[nodiscard]] TSOutputView error_output(engine_time_t evaluation_time) const;
         [[nodiscard]] TSOutputView recordable_state(engine_time_t evaluation_time) const;
 

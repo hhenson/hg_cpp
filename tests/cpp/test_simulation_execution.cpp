@@ -19,7 +19,9 @@
 // false-positive on the multi-cycle semantics.
 
 #include <hgraph/runtime/runtime.h>
+#include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/static_node.h>
 #include <hgraph/types/value/value.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -80,6 +82,40 @@ namespace
             });
         return NodeBuilder::native(std::move(schema), std::move(callbacks), std::move(endpoint));
     }
+
+    // A *real* simulation source: it reschedules itself each cycle (via the
+    // NodeScheduler injectable) until it has emitted ``count`` values, emitting
+    // 0, 1, 2, ... and recording the cycle count into the GlobalState. This is
+    // the data-driven, multi-cycle counterpart to the constant source above.
+    struct TickingSource
+    {
+        static constexpr auto name = "ticking_source";
+        static void           eval(NodeScheduler sched, GlobalStateView gs, Scalar<"count", int> count,
+                                    State<int> emitted, Out<TS<int>> out)
+        {
+            const int n = emitted.get();
+            out.set(n);
+            gs.set("ticks", Value{n + 1});
+            emitted.set(n + 1);
+            if (n + 1 < count.value()) { sched.schedule(MIN_TD); }  // re-arm for the next cycle
+        }
+    };
+
+    struct AddOneNode
+    {
+        static constexpr auto name = "add_one";
+        static void           eval(In<"in", TS<int>> in, Out<TS<int>> out) { out.set(in.value() + 1); }
+    };
+
+    struct TickGraph
+    {
+        static constexpr auto name = "tick_graph";
+        static void           compose(Wiring &w)
+        {
+            auto src = wire<TickingSource>(w, 3);  // count = 3
+            wire<AddOneNode>(w, src);
+        }
+    };
 }  // namespace
 
 TEST_CASE("simulation: a constant source drives exactly one cycle (no tick injection yet)")
@@ -170,38 +206,36 @@ TEST_CASE("simulation: re-ticking a source reschedules its downstream via notifi
     view.stop();
 }
 
-// TARGET behaviour for the current milestone. A real simulation source created
-// to tick at t0, t0+1, t0+2 should drive the graph for three cycles. Today
-// there is no tick injection, so the constant source runs once and these checks
-// fail -- which is why this is tagged [!shouldfail]: the suite stays green until
-// Step 2 lands the source. When it starts passing, Catch2 reports it as an
-// unexpected success; remove the [!shouldfail] tag (and this note) then.
-TEST_CASE("simulation: a source should drive multiple cycles over time", "[!shouldfail][milestone]")
+// MILESTONE: data-driven, multi-cycle evaluation over simulated time. A source
+// that reschedules itself (via the NodeScheduler injectable) drives the graph for
+// as many cycles as it ticks, and its downstream is re-evaluated each cycle. The
+// cycle count is recorded into the GlobalState; the source/add_one outputs track
+// the per-cycle values. (This retired the former "[!shouldfail]" placeholder.)
+TEST_CASE("simulation: a self-rescheduling source drives multiple cycles over time", "[milestone]")
 {
     using namespace hgraph;
 
-    auto       &registry     = TypeRegistry::instance();
-    const auto *int_meta     = registry.register_scalar<int>("int");
-    const auto *ts_int       = registry.ts(int_meta);
-    const auto *input_schema = registry.tsb("MilestoneInput", {{"value", ts_int}});
+    auto &registry = TypeRegistry::instance();
+    (void)registry.register_scalar<int>("int");
 
-    int source_evals  = 0;
-    int add_one_evals = 0;
-
-    GraphBuilder graph_builder;
-    graph_builder.add_node(counting_source(ts_int, 7, &source_evals))
-        .add_node(counting_add_one(input_schema, ts_int, &add_one_evals))
-        .add_edge(GraphEdge{.source_node = 0, .source_path = {}, .target_node = 1, .target_path = {0}});
+    GraphBuilder graph_builder = build_graph<TickGraph>();  // TickingSource(count=3) -> AddOneNode
 
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{3});
+        .end_time(MIN_ST + engine_time_delta_t{10});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
     executor_view.run();
 
-    CHECK(source_evals == 3);
-    CHECK(add_one_evals == 3);
+    auto graph = executor_view.graph();
+
+    // The source rescheduled itself for exactly three cycles.
+    CHECK(graph.global_state().get_as<int>("ticks") == 3);
+
+    // It emitted 0, 1, 2 over successive cycles (last value retained on the
+    // output); the downstream add_one was re-evaluated each cycle and tracked it.
+    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<int>() == 2);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 3);
 }
