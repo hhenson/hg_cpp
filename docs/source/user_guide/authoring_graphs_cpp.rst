@@ -273,6 +273,51 @@ and running a graph*):
    run_graph(price_graph, run_mode=EvaluationMode.SIMULATION, start_time=start, end_time=end)
 
 
+Graph global state
+------------------
+
+A graph carries a shared, mutable ``string -> value`` store — the
+``GlobalState`` — created on the ``GraphBuilder`` at wiring time and copied onto
+each ``GraphValue`` it builds. Seed it before building, and read it back after a
+run; a node sees the same store via the ``GlobalStateView`` injectable (see
+*Authoring Nodes in C++ > Injected services*):
+
+.. code-block:: cpp
+
+   GraphBuilder gb = build_graph<MyGraph>();
+   gb.global_state().set("seed", Value{20});   // seed at wiring time
+
+   GraphExecutorBuilder ex;
+   ex.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(end);
+   GraphExecutorValue executor = ex.make_executor();
+   executor.view().run();
+
+   // read results the nodes wrote into the store
+   const int total = executor.view().graph().global_state().get_as<int>("total");
+
+A ``compose`` body can also seed the store **during wiring**, via
+``Wiring::global_state()`` — ``finish`` carries those entries onto the graph, so a
+value set in ``compose`` is visible to nodes at run time (and can be modified by
+their ``eval``):
+
+.. code-block:: cpp
+
+   struct CounterGraph
+   {
+       static constexpr auto name = "counter_graph";
+       static void compose(Wiring &w)
+       {
+           w.global_state().set("counter", Value{100});   // set at wiring time
+           wire<BumpCounter>(w);                           // a node whose eval bumps "counter"
+       }
+   };
+   // after running: global_state().get_as<int>("counter") == 101
+
+Each built graph gets its own copy seeded with the wiring-time entries, so the
+builder stays reusable. Values are heterogeneous (a mutable ``Map<string, Any>``
+under the hood). This is the store the testing toolkit's replay/record use.
+
+
 What's planned
 --------------
 

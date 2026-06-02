@@ -1,6 +1,7 @@
 #ifndef HGRAPH_CPP_ROOT_STATIC_NODE_H
 #define HGRAPH_CPP_ROOT_STATIC_NODE_H
 
+#include <hgraph/runtime/graph.h>
 #include <hgraph/runtime/node.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
@@ -159,6 +160,12 @@ namespace hgraph
         TValue value_;
     };
 
+    // The ``GlobalStateView`` injectable selector is the runtime view type from
+    // ``<hgraph/runtime/global_state.h>`` (a node declares a ``GlobalStateView``
+    // parameter to read/write the graph's shared state). It is *not* part of the
+    // node's data contract: it adds no input field, scalar, or state, and does
+    // not affect node-kind inference. Its ``arg_provider`` is below.
+
     // -----------------------------------------------------------------
     // Compile-time machinery
     // -----------------------------------------------------------------
@@ -315,6 +322,15 @@ namespace hgraph
             static Scalar<N, V> get(const NodeView &view, engine_time_t)
             {
                 return Scalar<N, V>{view.scalars().as_bundle().field(N.sv())};
+            }
+        };
+
+        template <>
+        struct arg_provider<GlobalStateView>
+        {
+            static GlobalStateView get(const NodeView &view, engine_time_t)
+            {
+                return view.graph().root().global_state();
             }
         };
 

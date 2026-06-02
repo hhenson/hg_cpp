@@ -84,6 +84,13 @@ namespace hgraph
         WiringPortRef add_node(std::type_index def, NodeBuilder builder, std::span<const WiringPortRef> inputs,
                                Value scalars);
 
+        /**
+         * A view over the wiring-time ``GlobalState``. A ``compose`` body can seed
+         * the store here; ``finish`` carries the populated state onto the produced
+         * ``GraphBuilder`` (and thence onto each graph it builds).
+         */
+        [[nodiscard]] GlobalStateView global_state() noexcept;
+
         /** Topologically sort + rank the wired nodes into a rank-ordered GraphBuilder. */
         [[nodiscard]] GraphBuilder finish() &&;
 

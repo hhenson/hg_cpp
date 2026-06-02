@@ -510,11 +510,14 @@ References and signals
        return _state.n
 
 
-Injected services — clock and scheduler
-----------------------------------------
+Injected services — global state, clock and scheduler
+-----------------------------------------------------
 
-**Planned.** A node can ask for runtime services by listing them as parameters,
-exactly as Python injects ``_clock`` / ``_scheduler``:
+A node can ask for runtime services by listing them as parameters, exactly as
+Python injects ``_clock`` / ``_scheduler``. Injectables are **not** part of the
+node's data contract — they add no input, output, scalar or state, and do not
+affect node-kind inference; the node simply receives them at evaluation. The
+first one, ``GlobalStateView``, is implemented:
 
 .. list-table::
    :header-rows: 1
@@ -523,6 +526,9 @@ exactly as Python injects ``_clock`` / ``_scheduler``:
    * - Service
      - C++ selector
      - Python injectable
+   * - global state
+     - ``GlobalStateView`` *(available)*
+     - ``GLOBAL_STATE``
    * - evaluation clock
      - ``EvaluationClock`` *(planned)*
      - ``_clock: EvaluationClock``
@@ -532,6 +538,27 @@ exactly as Python injects ``_clock`` / ``_scheduler``:
    * - current time
      - ``engine_time_t`` *(available)*
      - ``_clock.evaluation_time``
+
+``GlobalStateView`` is a borrowing **view** over the graph's shared, mutable
+``string -> value`` store — the owning ``GlobalState`` lives on the graph (created
+at wiring time, carried onto the graph, the same instance seen at run time). A
+node that declares it can read and write the store during evaluation:
+
+.. code-block:: cpp
+
+   struct EmitSeed
+   {
+       static void eval(GlobalStateView gs, Out<TS<int>> out)
+       {
+           out.set(gs.get_as<int>("seed"));   // read a value seeded at wiring time
+           gs.set("emitted", Value{1});       // ...and write back into the store
+       }
+   };
+
+The store is seeded at wiring time through ``GraphBuilder::global_state()`` (and
+read back after a run via ``GraphView::global_state()``); see *Wiring Graphs in
+C++*. Values are heterogeneous — each key may hold a differently-typed value
+(it is a mutable ``Map<string, Any>`` under the hood).
 
 .. code-block:: cpp
 
@@ -838,6 +865,9 @@ Feature status
      - available
    * - ``SIGNAL`` / ``REF`` selectors
      - planned
+     - available
+   * - ``GlobalStateView`` injectable (shared ``string -> value`` store)
+     - available
      - available
    * - ``EvaluationClock`` / ``NodeScheduler`` injection
      - planned

@@ -39,6 +39,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series/ts_output.cpp
     hgraph/types/time_series/ts_output/alternative.cpp
     hgraph/types/time_series_reference.cpp
+    hgraph/runtime/global_state.cpp
     hgraph/types/value/any_ops.cpp
     hgraph/types/value/compact_container_ops.cpp
     hgraph/types/value/value_view.cpp
@@ -110,6 +111,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/view_common.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/window_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/global_state.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/any_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_container_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/mutable_container_ops.h

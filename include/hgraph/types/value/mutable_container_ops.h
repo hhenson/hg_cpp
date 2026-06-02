@@ -472,6 +472,21 @@ namespace hgraph
             else { value_binding_->checked_plan().copy_assign(values_.value_memory(result.slot), value); }
         }
 
+        /**
+         * Mutable value memory for ``key``, default-constructing an (empty)
+         * value entry when the key is absent. Lets callers assign the value in
+         * place rather than building and copying a temporary.
+         */
+        void *value_or_emplace(const void *key)
+        {
+            const std::size_t slot = keys_.find_slot(key);
+            if (slot != KeySlotStore::npos) { return values_.value_memory(slot); }
+            const auto result = keys_.insert(key);
+            values_.reserve_to(keys_.slot_capacity());
+            values_.construct_at(result.slot);  // default-construct the value
+            return values_.value_memory(result.slot);
+        }
+
         /** Remove ``key`` (and its value) immediately. Returns true if a key was removed. */
         bool erase(const void *key)
         {
@@ -691,6 +706,10 @@ namespace hgraph
             (void)static_cast<MutableMapStorage *>(m)->erase(key);
         }
         inline void map_clear(const void *, void *m) { static_cast<MutableMapStorage *>(m)->clear(); }
+        inline void *map_value_or_emplace(const void *, void *m, const void *key)
+        {
+            return static_cast<MutableMapStorage *>(m)->value_or_emplace(key);
+        }
 
         // -- key-set adapter (read-only SetView over the live keys) --
         inline std::size_t map_key_set_hash(const void *, const void *m)
@@ -851,6 +870,7 @@ namespace hgraph
             &map_insert,
             &map_erase,
             &map_clear,
+            &map_value_or_emplace,
         };
         return ops;
     }

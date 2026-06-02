@@ -718,6 +718,19 @@ namespace hgraph
             mutable_ops("set_item")->insert(nullptr, mutable_data(), key.data(), value.data());
         }
 
+        /**
+         * Mutable view of the value at ``key``, creating a default-valued entry
+         * when ``key`` is absent. Lets callers assign the value in place (e.g.
+         * ``m.value(k).as_mutable_any().set(v)``) without building a temporary.
+         */
+        [[nodiscard]] ValueView value(const ValueView &key) const
+        {
+            require_key(key, "value");
+            const auto *ops  = mutable_ops("value");
+            void       *slot = ops->value_or_emplace(nullptr, mutable_data(), key.data());
+            return ValueView{ops->value_binding(nullptr, mutable_data()), slot}.begin_mutation();
+        }
+
         /** Remove ``key`` if present; returns whether a key was removed. */
         bool remove(const ValueView &key) const
         {

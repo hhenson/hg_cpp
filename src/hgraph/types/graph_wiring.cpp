@@ -70,6 +70,7 @@ namespace hgraph
     {
         std::deque<WiringInstance>                                        instances{};
         std::unordered_map<InstanceKey, WiringInstance *, InstanceKeyHash> interned{};
+        GlobalState                                                        global_state{};
     };
 
     Wiring::Wiring() : impl_(std::make_unique<Impl>()) {}
@@ -97,6 +98,8 @@ namespace hgraph
 
         return WiringPortRef{&instance, {}, output_schema_of(instance)};
     }
+
+    GlobalStateView Wiring::global_state() noexcept { return impl_->global_state.view(); }
 
     GraphBuilder Wiring::finish() &&
     {
@@ -161,6 +164,7 @@ namespace hgraph
                 });
             }
         }
+        graph_builder.global_state(std::move(impl_->global_state));  // carry wiring-time entries onto the graph
         return graph_builder;
     }
 }  // namespace hgraph

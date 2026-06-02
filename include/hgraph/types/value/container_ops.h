@@ -181,6 +181,13 @@ namespace hgraph
         void (*insert)(const void *context, void *memory, const void *key, const void *value) = nullptr;
         void (*erase)(const void *context, void *memory, const void *key) = nullptr;
         void (*clear)(const void *context, void *memory) = nullptr;
+        /**
+         * Return mutable value memory for ``key``, default-constructing an entry
+         * (with a default value) when the key is absent. Lets callers assign the
+         * value in place — avoiding building and copying a temporary value.
+         * Requires a default-constructible value type.
+         */
+        void *(*value_or_emplace)(const void *context, void *memory, const void *key) = nullptr;
     };
 }  // namespace hgraph
 

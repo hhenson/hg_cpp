@@ -1,6 +1,7 @@
 #ifndef HGRAPH_RUNTIME_GRAPH_H
 #define HGRAPH_RUNTIME_GRAPH_H
 
+#include <hgraph/runtime/global_state.h>
 #include <hgraph/runtime/node.h>
 
 #include <cstddef>
@@ -59,6 +60,7 @@ namespace hgraph
         [[nodiscard]] engine_time_t (*next_scheduled_time_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] std::size_t (*node_count_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] NodeView (*node_at_impl)(const void *context, void *memory, std::size_t index) = nullptr;
+        [[nodiscard]] GlobalState *(*global_state_impl)(const void *context, void *memory) noexcept = nullptr;
     };
 
     using GraphTypeBinding = TypeBinding<GraphTypeMetaData, GraphOps>;
@@ -86,6 +88,15 @@ namespace hgraph
         [[nodiscard]] engine_time_t next_scheduled_time() const noexcept;
         [[nodiscard]] std::size_t node_count() const noexcept;
         [[nodiscard]] NodeView node_at(std::size_t index) const;
+
+        /**
+         * A view over the graph's shared ``GlobalState`` (the owning value lives
+         * on the graph). With flattening there is a single graph, so this *is*
+         * the root state; ``root()`` returns this graph for now (the navigation
+         * point once non-flattening nested graphs exist).
+         */
+        [[nodiscard]] GlobalStateView global_state() const;
+        [[nodiscard]] GraphView root() const;
 
         void start(engine_time_t start_time = MIN_ST) const;
         void stop() const;
@@ -138,6 +149,16 @@ namespace hgraph
         GraphBuilder &add_node(NodeBuilder node);
         GraphBuilder &add_edge(GraphEdge edge);
 
+        /**
+         * A view over the graph's initial ``GlobalState``, populated at wiring
+         * time. The owning state is copied onto each ``GraphValue`` produced by
+         * ``make_graph`` (so the builder stays reusable and each graph instance
+         * gets its own runtime state seeded with these wiring-time entries).
+         */
+        [[nodiscard]] GlobalStateView global_state() noexcept;
+        /** Replace the initial ``GlobalState`` (used by the wiring layer's ``finish``). */
+        GraphBuilder &global_state(GlobalState state);
+
         [[nodiscard]] std::string_view label() const noexcept;
         [[nodiscard]] std::size_t node_count() const noexcept;
         [[nodiscard]] const std::vector<NodeBuilder> &nodes() const noexcept;
@@ -151,6 +172,7 @@ namespace hgraph
         std::string                   label_{};
         std::vector<NodeBuilder>      nodes_{};
         std::vector<GraphEdge>        edges_{};
+        GlobalState                   global_state_{};
     };
 
 }  // namespace hgraph

@@ -77,7 +77,8 @@ namespace hgraph
 
         struct GraphRuntimeStorage
         {
-            explicit GraphRuntimeStorage(const GraphBuilder &builder)
+            GraphRuntimeStorage(const GraphBuilder &builder, const GlobalState &seed_state)
+                : global_state(seed_state)  // copy the wiring-time entries onto this graph
             {
                 nodes.reserve(builder.nodes().size());
                 for (std::size_t index = 0; index < builder.nodes().size(); ++index)
@@ -111,6 +112,7 @@ namespace hgraph
 
             std::vector<NodeValue>          nodes{};
             std::vector<GraphScheduleEntry> schedule{};
+            GlobalState                     global_state{};
             engine_time_t                   evaluation_time{MIN_DT};
             bool                            started{false};
             bool                            evaluating{false};
@@ -172,6 +174,11 @@ namespace hgraph
             auto &state = storage(memory);
             if (index >= state.nodes.size()) { throw std::out_of_range("Graph node index is out of range"); }
             return state.nodes[index].view();
+        }
+
+        GlobalState *global_state_impl(const void *, void *memory) noexcept
+        {
+            return memory != nullptr ? &storage(memory).global_state : nullptr;
         }
 
         void schedule_node_impl(const void *, const GraphView &graph, std::size_t node_index, engine_time_t when, bool force)
@@ -306,6 +313,7 @@ namespace hgraph
                     .next_scheduled_time_impl = &next_scheduled_time_impl,
                     .node_count_impl = &node_count_impl,
                     .node_at_impl = &node_at_impl,
+                    .global_state_impl = &global_state_impl,
                 };
                 return table;
             }
@@ -362,6 +370,20 @@ namespace hgraph
         return ops().node_at_impl(ops().context, data(), index);
     }
 
+    GlobalStateView GraphView::global_state() const
+    {
+        GlobalState *state = valid() ? ops().global_state_impl(ops().context, data()) : nullptr;
+        if (state == nullptr) { throw std::logic_error("GraphView::global_state requires a live graph"); }
+        return state->view();
+    }
+
+    GraphView GraphView::root() const
+    {
+        // Flattening: a single graph is its own root. The navigation point for
+        // non-flattening nested graphs (walk to the owning root) lands here.
+        return GraphView{binding(), data()};
+    }
+
     void GraphView::start(engine_time_t start_time) const { ops().start_impl(ops().context, *this, start_time); }
     void GraphView::stop() const { ops().stop_impl(ops().context, *this); }
     void GraphView::evaluate(engine_time_t evaluation_time) const { ops().evaluate_impl(ops().context, *this, evaluation_time); }
@@ -382,7 +404,9 @@ namespace hgraph
     {
         const auto &binding = builder.binding();
         storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
-            std::construct_at(MemoryUtils::cast<GraphRuntimeStorage>(dst), builder);
+            // GraphValue is a friend of GraphBuilder, so we read the owning
+            // GlobalState directly to seed this graph's copy.
+            std::construct_at(MemoryUtils::cast<GraphRuntimeStorage>(dst), builder, builder.global_state_);
         });
         attach_nodes();
     }
@@ -451,6 +475,13 @@ namespace hgraph
     GraphBuilder &GraphBuilder::add_edge(GraphEdge edge)
     {
         edges_.push_back(std::move(edge));
+        return *this;
+    }
+
+    GlobalStateView GraphBuilder::global_state() noexcept { return global_state_.view(); }
+    GraphBuilder   &GraphBuilder::global_state(GlobalState state)
+    {
+        global_state_ = std::move(state);
         return *this;
     }
 
