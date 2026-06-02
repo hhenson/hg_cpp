@@ -584,10 +584,10 @@ planned.
 Each ``Scalar<>`` parameter becomes a field of the node's compound scalar
 configuration; the values are supplied when the node is built. The scalars are
 **not** part of the input TSB, so they never affect node-kind inference (a node
-with only ``Scalar`` inputs and an ``Out`` is still a pull source). Supplying
-scalars through the ``wire<T>`` graph facade — so equal scalars fold into the
-wiring intern key — is the next wiring slice; today they are set directly on the
-node builder.
+with only ``Scalar`` inputs and an ``Out`` is still a pull source). You supply the
+values when wiring the node — ``wire<T>(w, ports…, scalars…)`` (see *Wiring Graphs
+in C++ > Configuring a node with scalars*) — and equal scalars fold into the wiring
+intern key, so nodes that differ only in a scalar value stay distinct.
 
 .. code-block:: python
 
@@ -843,7 +843,7 @@ Feature status
      - planned
      - available
    * - ``Scalar<"name", T>`` (named scalar arguments)
-     - available [#scalar_wire]_
+     - available
      - available
    * - ``RecordableState``
      - planned
@@ -863,11 +863,6 @@ Feature status
    * - Fluent / implicit edge wiring
      - planned
      - available
-
-.. [#scalar_wire] The ``Scalar<"name", T>`` selector, its signature reflection
-   and ``eval`` injection are implemented; scalar values are supplied through
-   ``NodeBuilder::scalars(...)``. Supplying them through the ``wire<T>`` graph
-   facade (so they fold into the wiring intern key) is the next wiring slice.
 
 
 C++ ↔ Python cheat sheet

@@ -9,15 +9,19 @@ same runtime graph the same way.
 
 .. note::
 
-   **Status.** Slices 1 and 2 are **implemented**: the ``Wiring`` core (interning +
+   **Status.** Slices 1–3a are **implemented**: the ``Wiring`` core (interning +
    topo-sort/rank), the typed ``Port<Schema>`` + ``wire<T>`` facade for nodes,
-   ``build_graph<G>()`` for a top-level graph, **sub-graph composition**
-   (``wire<G>`` inlines a graph), and **scalar inputs** (``Scalar<>`` arguments
-   folded into the intern key and recorded on the node builder) — in
-   ``include/hgraph/types/graph_wiring.h`` + ``src/hgraph/types/graph_wiring.cpp``,
-   with ``tests/cpp/test_graph_wiring.cpp``. ``StaticGraphSignature``, generics and
-   higher-order operators are **not yet implemented**; those parts of this page are
-   the design record. The user-facing view is *User Guide > Wiring Graphs in C++*.
+   ``build_graph<G>(…)`` for a top-level graph, **sub-graph composition**
+   (``wire<G>`` inlines a graph), **scalar inputs** (``Scalar<>`` arguments folded
+   into the intern key and recorded on the node builder), and
+   ``StaticGraphSignature<G>`` with **graph-level scalar parameters** (a top-level
+   graph's ``compose`` may take ``Scalar<>`` parameters, supplied through
+   ``build_graph<G>(values…)``) — in ``include/hgraph/types/graph_wiring.h`` +
+   ``src/hgraph/types/graph_wiring.cpp``, with ``tests/cpp/test_graph_wiring.cpp``.
+   Still **not yet implemented**: standalone sub-graph building / time-series
+   boundary binding, ``wire<G>`` auto-wrapping scalar literals for sub-graphs,
+   generics and higher-order operators; those parts of this page are the design
+   record. The user-facing view is *User Guide > Wiring Graphs in C++*.
 
 
 Two tiers
@@ -159,15 +163,22 @@ The typed C++ facade
   ``Port<output_schema_type>`` (or ``void`` for a sink). The scalar value is built
   as the un-named bundle ``StaticNodeSignature<T>::scalar_schema()`` describes.
 - ``wire<G>(w, ports...)`` — inlines ``G::compose(w, ports...)`` (graphs flatten)
-  and returns ``G``'s output port.
-- ``StaticGraphSignature<G>`` — reflects ``&G::compose`` **skipping the leading
-  ``Wiring&``**: ``Port`` parameters are the graph's time-series inputs, any
-  non-``Port`` parameters are its scalar inputs, and the return type is its
-  time-series output(s). This is the graph-level mirror of ``StaticNodeSignature``.
-- ``build_graph<G>(...)`` — constructs a ``Wiring``, supplies the time-series
-  boundary input ports (for a sub-graph; a top-level graph has **no** time-series
-  inputs or outputs), forwards any scalar inputs, calls ``G::compose(w, …)``, and
-  returns ``w.finish()``.
+  and returns ``G``'s output port. (Auto-wrapping scalar literals for a sub-graph
+  that takes ``Scalar<>`` parameters — as ``wire<T>`` does for nodes — is a later
+  slice; today a sub-graph's scalar arguments are passed as ``Scalar<>`` values.)
+- ``StaticGraphSignature<G>`` — **implemented.** Reflects ``&G::compose``
+  **skipping the leading ``Wiring&``**: ``Port`` parameters are the graph's
+  time-series inputs, ``Scalar`` parameters are its scalar inputs, and the return
+  type is its time-series output(s). It exposes ``param_types`` (the ordered
+  parameter selector list), ``output_type``, and ``param_count`` / ``input_count``
+  / ``scalar_count``. This is the graph-level mirror of ``StaticNodeSignature``.
+- ``build_graph<G>(values...)`` — **implemented for a top-level graph.** Constructs
+  a ``Wiring``, wraps each supplied plain value into the corresponding
+  ``Scalar<>`` ``compose`` parameter (checked against ``StaticGraphSignature<G>``:
+  ``input_count() == 0`` — a top-level graph has **no** time-series inputs or
+  outputs — and the argument count matches ``scalar_count()``), calls
+  ``G::compose(w, scalars…)``, and returns ``w.finish()``. Supplying time-series
+  boundary input ports (for standalone sub-graph building) is a later slice.
 
 The compile-time checks are the C++ advantage over Python; the core re-validates
 schemas at wiring time as a safety net (and as the only check Python relies on).
@@ -229,8 +240,14 @@ Slices:
    values into the intern key** (so equal scalars dedup, distinct scalars do not),
    and records them on the ``NodeBuilder``. Node-layer scalar storage and the
    ``Scalar<>`` authoring selector back it (see *Authoring Nodes in C++*).
-3. **Next.** ``StaticGraphSignature<G>`` (for standalone sub-graph building /
-   boundary binding), the precondition for graphs that take scalar inputs and for
+3. **3a — Done.** ``StaticGraphSignature<G>`` (reflects ``compose`` skipping
+   ``Wiring&``; classifies ``Port`` vs ``Scalar`` parameters; exposes the output
+   type) and **graph-level scalar parameters**: ``build_graph<G>(values…)`` wraps
+   the supplied values into the graph's ``Scalar<>`` ``compose`` parameters and
+   forwards them. Tests: ``tests/cpp/test_graph_wiring.cpp``.
+4. **3b — Next.** Standalone sub-graph building / time-series **boundary binding**
+   (supplying ``Port`` inputs to ``build_graph`` / ``wire<G>``), and ``wire<G>``
+   auto-wrapping scalar literals for sub-graphs. This is also the precondition for
    non-flattening nested graphs.
 
 Deferred: multiple outputs (``TSB`` ports, optionally returned as an array as

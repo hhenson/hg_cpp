@@ -140,6 +140,20 @@ namespace hgraph
 
         template <typename T> struct in_param_schema;
         template <fixed_string N, typename S> struct in_param_schema<In<N, S>> { using type = S; };
+
+        // Drop the leading ``Wiring &`` from a ``compose`` parameter tuple.
+        template <typename Tuple> struct drop_first;
+        template <typename A0, typename... As> struct drop_first<std::tuple<A0, As...>> { using type = std::tuple<As...>; };
+
+        // Build a graph ``compose`` ``Scalar<Name, T>`` parameter from a plain value.
+        template <typename ScalarParam, typename Arg>
+        [[nodiscard]] ScalarParam make_scalar_param(Arg &&arg)
+        {
+            using V = typename ScalarParam::value_type;
+            static_assert(std::is_convertible_v<std::remove_cvref_t<Arg>, V>,
+                          "build_graph<G>: scalar argument is not convertible to the graph's Scalar<> type");
+            return ScalarParam{static_cast<V>(std::forward<Arg>(arg))};
+        }
     }  // namespace graph_wiring_detail
 
     /**
@@ -225,12 +239,76 @@ namespace hgraph
         }
     }
 
-    /** Build a top-level graph ``G`` — its ``static wire(Wiring &)`` runs at wiring time. */
+    /**
+     * Compile-time reflection of a graph's ``compose`` signature — the graph-level
+     * mirror of ``StaticNodeSignature``. It reflects ``&G::compose`` **skipping the
+     * leading ``Wiring&``**: ``Port`` parameters are the graph's time-series inputs,
+     * ``Scalar`` parameters are its scalar inputs, and the return type is its
+     * time-series output(s).
+     */
     template <typename G>
-    [[nodiscard]] GraphBuilder build_graph()
+    struct StaticGraphSignature
     {
+      private:
+        using compose_args = typename static_node_detail::fn_traits<decltype(&G::compose)>::args_tuple;
+        using params       = typename graph_wiring_detail::drop_first<compose_args>::type;
+        using indices      = std::make_index_sequence<std::tuple_size_v<params>>;
+
+        template <std::size_t... I>
+        static constexpr std::size_t count_ports(std::index_sequence<I...>)
+        {
+            return (std::size_t{0} + ... +
+                    (graph_wiring_detail::is_port<
+                         static_node_detail::selector_of<std::tuple_element_t<I, params>>>::value
+                         ? std::size_t{1}
+                         : std::size_t{0}));
+        }
+
+        template <std::size_t... I>
+        static constexpr std::size_t count_scalars(std::index_sequence<I...>)
+        {
+            return (std::size_t{0} + ... +
+                    (static_node_detail::is_scalar_selector<
+                         static_node_detail::selector_of<std::tuple_element_t<I, params>>>::value
+                         ? std::size_t{1}
+                         : std::size_t{0}));
+        }
+
+      public:
+        /** Tuple of the ``compose`` parameter selector types (``Port`` / ``Scalar``), in order. */
+        using param_types = params;
+        /** The graph's time-series output type (the ``compose`` return type), or ``void``. */
+        using output_type = typename static_node_detail::fn_traits<decltype(&G::compose)>::return_type;
+
+        [[nodiscard]] static constexpr std::size_t param_count() { return std::tuple_size_v<params>; }
+        [[nodiscard]] static constexpr std::size_t input_count() { return count_ports(indices{}); }
+        [[nodiscard]] static constexpr std::size_t scalar_count() { return count_scalars(indices{}); }
+    };
+
+    /**
+     * Build a top-level graph ``G`` — its ``static compose(Wiring &, …)`` runs at
+     * wiring time. A top-level graph has **no time-series inputs or outputs**, but
+     * **may take ``Scalar`` parameters**: pass the scalar values here (plain values;
+     * they are wrapped into the graph's ``Scalar<>`` parameters and forwarded to
+     * ``compose``). Supplying time-series boundary inputs (for standalone sub-graph
+     * building) is a later slice.
+     */
+    template <typename G, typename... Args>
+    [[nodiscard]] GraphBuilder build_graph(Args &&...args)
+    {
+        using sig = StaticGraphSignature<G>;
+        static_assert(sig::input_count() == 0,
+                      "build_graph<G>: a top-level graph has no time-series inputs (only Scalar parameters)");
+        static_assert(sizeof...(Args) == sig::scalar_count(),
+                      "build_graph<G>: argument count must match the graph's Scalar parameters");
+
         Wiring w;
-        G::compose(w);
+        auto   arg_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
+        [&]<std::size_t... I>(std::index_sequence<I...>) {
+            G::compose(w, graph_wiring_detail::make_scalar_param<std::tuple_element_t<I, typename sig::param_types>>(
+                              std::get<I>(arg_tuple))...);
+        }(std::make_index_sequence<sizeof...(Args)>{});
+
         GraphBuilder graph_builder = std::move(w).finish();
         if constexpr (static_node_detail::has_name<G>) { graph_builder.label(std::string{G::name}); }
         return graph_builder;

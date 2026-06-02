@@ -132,10 +132,12 @@ namespace hgraph
     };
 
     /**
-     * Typed handle to one of the node's per-instance scalar inputs (wiring-time
-     * configuration). Read-only: scalars are fixed when the node is built and do
-     * not change during evaluation. Each ``Scalar<Name, T>`` reads its field by
-     * name from the node's compound scalar configuration.
+     * Typed handle to one of a graph or node's scalar inputs (wiring-time
+     * configuration). Read-only: scalars are fixed at wiring time and do not change
+     * during evaluation. The same marker is used in a node's ``eval`` (where the
+     * value is read from the node's compound scalar configuration) and in a graph's
+     * ``compose`` (where the value is supplied by the caller); it carries its value
+     * directly so both paths are uniform.
      */
     template <fixed_string Name, typename TValue>
     class Scalar
@@ -144,15 +146,17 @@ namespace hgraph
         using value_type                 = TValue;
         static constexpr auto field_name = Name;
 
-        explicit Scalar(ValueView view) noexcept : view_(std::move(view)) {}
+        /** Supplied directly (graph ``compose`` parameter / wiring-time value). */
+        explicit Scalar(TValue value) : value_(std::move(value)) {}
+
+        /** Read from the node's compound scalar configuration (node ``eval`` path). */
+        explicit Scalar(const ValueView &view) : value_(view.template checked_as<TValue>()) {}
 
         /** The configured value of this scalar input. */
-        [[nodiscard]] value_type value() const { return view_.template checked_as<TValue>(); }
-
-        [[nodiscard]] const ValueView &view() const noexcept { return view_; }
+        [[nodiscard]] const value_type &value() const noexcept { return value_; }
 
       private:
-        ValueView view_;
+        TValue value_;
     };
 
     // -----------------------------------------------------------------

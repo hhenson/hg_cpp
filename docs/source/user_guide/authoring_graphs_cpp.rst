@@ -15,15 +15,15 @@ inlines their nodes, and only nodes exist at run time.
 
    **Status.** The core is **implemented**: ``Wiring``, typed ``Port<Schema>``,
    ``wire<T>`` for nodes (including **scalar arguments** to a wired node),
-   ``wire<G>`` sub-graph composition (graphs flatten), and ``build_graph<G>()`` for
-   a top-level graph. Still **not yet implemented**: graph-level **scalar
-   parameters** (a ``compose`` that takes ``Scalar<>`` and ``build_graph<G>(…)``
-   forwarding them — needs ``StaticGraphSignature``), generic graphs and
-   higher-order operators (those examples below are marked provisional). A graph's
-   body method is named ``compose`` and the wiring verb is ``wire`` — distinct
-   names, so inside a ``compose`` body you call ``wire<…>`` directly. How it works
-   internally, and how it is shared with Python wiring, is in *Developer Guide >
-   Graph Wiring*.
+   ``wire<G>`` sub-graph composition (graphs flatten), and ``build_graph<G>(…)`` for
+   a top-level graph — including **graph-level scalar parameters** (a top-level
+   graph's ``compose`` may take ``Scalar<>`` parameters, supplied through
+   ``build_graph<G>(values…)``). Still **not yet implemented** (see *What's
+   planned*): standalone sub-graph building / time-series boundary inputs, generic
+   graphs and higher-order operators. A graph's body method is named ``compose`` and
+   the wiring verb is ``wire`` — distinct names, so inside a ``compose`` body you
+   call ``wire<…>`` directly. How it works internally, and how it is shared with
+   Python wiring, is in *Developer Guide > Graph Wiring*.
 
 
 A first graph
@@ -32,18 +32,15 @@ A first graph
 A top-level graph has **no time-series inputs or outputs** — its sources generate
 data and its sinks consume it. It *may*, however, take **scalar** inputs: plain
 (non-time-series) configuration values that parameterise the graph at wiring time.
-*(Planned.)* Graph-level scalar inputs appear as extra ``compose`` parameters and
-are passed to ``build_graph`` — e.g.
+Graph-level scalar inputs appear as extra ``compose`` parameters and are supplied
+to ``build_graph`` — e.g.
 ``static void compose(Wiring &w, Scalar<"window", int> window)`` built with
-``build_graph<MyGraph>(Scalar<"window", int>{20})``; this needs
-``StaticGraphSignature`` and is not yet wired. Scalar arguments to an individual
-**node** inside a graph *are* available today (see *Configuring a node with
-scalars* below). The simplest graph is a ``struct`` whose ``compose`` body just
-adds nodes:
+``build_graph<MyGraph>(20)`` (the plain value is wrapped into the ``window``
+parameter). The simplest graph takes no scalars; its ``compose`` body just adds
+nodes:
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
    struct PriceGraph
    {
        static constexpr auto name = "price_graph";
@@ -57,6 +54,23 @@ adds nodes:
    };
 
    GraphBuilder g = build_graph<PriceGraph>();   // runs compose() once, at wiring time
+
+A graph that takes a scalar parameter is built by supplying the value:
+
+.. code-block:: cpp
+
+   struct ScaledPriceGraph
+   {
+       static constexpr auto name = "scaled_price_graph";
+
+       static void compose(Wiring &w, Scalar<"factor", double> factor)
+       {
+           auto px = wire<ConstantSource>(w);
+           wire<Print>(w, wire<Scale>(w, px, factor.value()));   // graph scalar -> node scalar
+       }
+   };
+
+   GraphBuilder g = build_graph<ScaledPriceGraph>(2.0);   // factor = 2.0
 
 .. code-block:: python
 
@@ -136,7 +150,6 @@ parameters after the context are the graph's inputs; the return is its output:
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
    struct Mid
    {
        static constexpr auto name = "mid";
@@ -168,7 +181,6 @@ the only difference is whether a runtime node is produced.
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
    static Port<TS<double>> compose(Wiring &w, Port<TS<double>> bid, Port<TS<double>> ask)
    {
        auto m = wire<Mid>(w, bid, ask);   // inline the Mid sub-graph
@@ -207,13 +219,14 @@ and running a graph*):
 What's planned
 --------------
 
-Node wiring, sub-graph composition and node-level scalar arguments work today;
-beyond the basics above the following are deferred (and map onto Python features):
+Node wiring, sub-graph composition, node-level scalar arguments and top-level
+graph-level scalar parameters work today; beyond the basics above the following are
+deferred (and map onto Python features):
 
-- **graph-level scalar parameters** — a ``compose`` that takes ``Scalar<>``
-  parameters and a ``build_graph<G>(…)`` that forwards them; this needs
-  ``StaticGraphSignature`` (the graph-level mirror of ``StaticNodeSignature``) and
-  is the precondition for standalone sub-graph building;
+- **standalone sub-graph building / boundary binding** — supplying time-series
+  **input ports** to ``build_graph`` / ``wire<G>`` so a sub-graph can be built on
+  its own (and ``wire<G>`` auto-wrapping scalar literals as ``wire<T>`` does for
+  nodes); this is also the precondition for non-flattening nested graphs;
 - **multiple outputs** — a graph returning a ``TSB`` becomes a bundle ``Port``
   with ``.field<"x">()`` to take a sub-port; as syntactic sugar a graph's outputs
   may instead be returned as an array;

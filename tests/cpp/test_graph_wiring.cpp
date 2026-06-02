@@ -107,6 +107,27 @@ namespace
             wire<Shift>(w, source, 5);               // 41 + 5 = 46
         }
     };
+
+    // Top-level graph that takes a Scalar parameter, threaded into a node scalar.
+    struct ConfiguredSourceGraph
+    {
+        static constexpr auto name = "configured_source_graph";
+        static void           compose(Wiring &w, Scalar<"value", int> value)
+        {
+            wire<ScaledSource>(w, value.value());
+        }
+    };
+
+    // Top-level graph whose scalar parameter offsets a constant source.
+    struct OffsetGraph
+    {
+        static constexpr auto name = "offset_graph";
+        static void           compose(Wiring &w, Scalar<"offset", int> offset)
+        {
+            auto source = wire<ConstantSource>(w);    // 41
+            wire<Shift>(w, source, offset.value());   // 41 + offset
+        }
+    };
 }  // namespace
 
 TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulation")
@@ -241,4 +262,59 @@ TEST_CASE("graph wiring: scalar values participate in node interning")
     GraphBuilder graph_builder = std::move(w).finish();
     GraphValue   graph         = graph_builder.make_graph();
     CHECK(graph.view().node_count() == 2);   // {7} deduped, {8} distinct
+}
+
+TEST_CASE("graph wiring: StaticGraphSignature reflects a graph's compose parameters")
+{
+    using namespace hgraph;
+
+    using bare = StaticGraphSignature<AddOneGraph>;   // compose(Wiring &)
+    STATIC_REQUIRE(bare::param_count() == 0);
+    STATIC_REQUIRE(bare::input_count() == 0);
+    STATIC_REQUIRE(bare::scalar_count() == 0);
+
+    using configured = StaticGraphSignature<ConfiguredSourceGraph>;   // compose(Wiring &, Scalar<...>)
+    STATIC_REQUIRE(configured::param_count() == 1);
+    STATIC_REQUIRE(configured::input_count() == 0);
+    STATIC_REQUIRE(configured::scalar_count() == 1);
+}
+
+TEST_CASE("graph wiring: a top-level graph takes a scalar parameter via build_graph")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<ConfiguredSourceGraph>(9);
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 1);
+    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<int>() == 9);
+}
+
+TEST_CASE("graph wiring: a graph scalar parameter threads into a node's scalar")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<OffsetGraph>(5);   // 41 + 5
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 2);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 46);
 }
