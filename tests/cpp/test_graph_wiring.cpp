@@ -128,6 +128,30 @@ namespace
             wire<Shift>(w, source, offset.value());   // 41 + offset
         }
     };
+
+    // Sub-graph with a port input AND a scalar parameter: (TS<int>, by) -> TS<int>.
+    // The received Scalar<"by", int> is forwarded straight to wire<Shift> (whose
+    // scalar parameter is Scalar<"delta", int>) — no .value() needed; the wiring
+    // layer unpacks the Scalar and re-applies it (names need not match).
+    struct ShiftBy
+    {
+        static Port<TS<int>> compose(Wiring &w, Port<TS<int>> x, Scalar<"by", int> by)
+        {
+            return wire<Shift>(w, x, by);
+        }
+    };
+
+    // Top-level: source(41) -> ShiftBy(by=5) -> 46. The literal 5 is auto-wrapped
+    // into the sub-graph's Scalar<"by", int> parameter, and ShiftBy flattens.
+    struct ShiftBySubGraph
+    {
+        static constexpr auto name = "shift_by_sub_graph";
+        static void           compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            wire<ShiftBy>(w, source, 5);
+        }
+    };
 }  // namespace
 
 TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulation")
@@ -316,5 +340,25 @@ TEST_CASE("graph wiring: a graph scalar parameter threads into a node's scalar")
 
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 2);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 46);
+}
+
+TEST_CASE("graph wiring: wire<G> auto-wraps a scalar literal for a sub-graph parameter")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<ShiftBySubGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 2);   // source + shift (ShiftBy flattened away)
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 46);
 }

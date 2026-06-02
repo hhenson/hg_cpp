@@ -119,6 +119,9 @@ namespace hgraph
         std::vector<std::size_t> path_{};
     };
 
+    template <typename G>
+    struct StaticGraphSignature;   // defined below; forward-declared for use in wire<G>
+
     namespace graph_wiring_detail
     {
         // A graph definition is a struct with a static ``compose(Wiring &, ...)``; a
@@ -145,14 +148,57 @@ namespace hgraph
         template <typename Tuple> struct drop_first;
         template <typename A0, typename... As> struct drop_first<std::tuple<A0, As...>> { using type = std::tuple<As...>; };
 
-        // Build a graph ``compose`` ``Scalar<Name, T>`` parameter from a plain value.
+        // Coerce a wiring-time scalar argument to its underlying value of type V.
+        // The argument may be a plain value (used directly) or a ``Scalar<Name, T>``
+        // selector (its value is unpacked) — so a scalar received as a node/graph
+        // parameter can be forwarded straight on, without an explicit ``.value()``.
+        // The names need not match; only the value type must be convertible.
+        template <typename V, typename Arg>
+        [[nodiscard]] V coerce_scalar_value(Arg &&arg)
+        {
+            using A = std::remove_cvref_t<Arg>;
+            if constexpr (static_node_detail::is_scalar_selector<A>::value)
+            {
+                static_assert(std::is_convertible_v<typename A::value_type, V>,
+                              "wire/build_graph: the Scalar<> argument's value type does not match the target "
+                              "Scalar<> type");
+                return static_cast<V>(arg.value());
+            }
+            else
+            {
+                static_assert(std::is_convertible_v<A, V>,
+                              "wire/build_graph: scalar argument is not convertible to the target Scalar<> type");
+                return static_cast<V>(std::forward<Arg>(arg));
+            }
+        }
+
+        // Build a graph ``compose`` ``Scalar<Name, T>`` parameter from a wiring
+        // argument (a plain value or a ``Scalar<>`` selector to unpack).
         template <typename ScalarParam, typename Arg>
         [[nodiscard]] ScalarParam make_scalar_param(Arg &&arg)
         {
-            using V = typename ScalarParam::value_type;
-            static_assert(std::is_convertible_v<std::remove_cvref_t<Arg>, V>,
-                          "build_graph<G>: scalar argument is not convertible to the graph's Scalar<> type");
-            return ScalarParam{static_cast<V>(std::forward<Arg>(arg))};
+            return ScalarParam{coerce_scalar_value<typename ScalarParam::value_type>(std::forward<Arg>(arg))};
+        }
+
+        // Transform one ``wire<G>`` argument into its ``compose`` parameter ``P``:
+        // pass a ``Port`` straight through (schema-checked), or wrap a plain value
+        // into the ``Scalar<>`` parameter — the sub-graph mirror of how ``wire<T>``
+        // handles a node's In ports and Scalar arguments.
+        template <typename P, typename Arg>
+        [[nodiscard]] decltype(auto) make_compose_arg(Arg &&arg)
+        {
+            if constexpr (is_port<P>::value)
+            {
+                using A = std::remove_cvref_t<Arg>;
+                static_assert(is_port<A>::value, "wire<G>: a time-series input expects a Port argument");
+                static_assert(std::is_same_v<typename A::schema, typename P::schema>,
+                              "wire<G>: input port schema does not match the sub-graph's time-series input");
+                return std::forward<Arg>(arg);
+            }
+            else
+            {
+                return make_scalar_param<P>(std::forward<Arg>(arg));
+            }
         }
     }  // namespace graph_wiring_detail
 
@@ -166,13 +212,26 @@ namespace hgraph
      *   node's parameters at compile time.
      * - If ``X`` is a **sub-graph** (has ``compose``): inline its body into ``w``
      *   (graphs flatten — no runtime node is produced) and return its output port.
+     *   The arguments follow the same rule as for a node — a ``Port`` for each
+     *   ``Port`` parameter and a scalar value for each ``Scalar`` parameter, **in
+     *   compose-parameter order** — and are checked at compile time.
      */
     template <typename X, typename... Args>
     auto wire(Wiring &w, const Args &...args)
     {
         if constexpr (graph_wiring_detail::is_graph_def<X>)
         {
-            return X::compose(w, args...);   // sub-graph: inline its body, return its output port
+            // sub-graph: inline its body (flatten), forwarding ports through and
+            // wrapping scalar literals into the compose Scalar<> parameters.
+            using sig = StaticGraphSignature<X>;
+            static_assert(sizeof...(Args) == sig::param_count(),
+                          "wire<G>: argument count must match the sub-graph's Port + Scalar parameters "
+                          "(in compose order)");
+            auto arg_tuple = std::forward_as_tuple(args...);
+            return [&]<std::size_t... I>(std::index_sequence<I...>) {
+                return X::compose(w, graph_wiring_detail::make_compose_arg<
+                                         std::tuple_element_t<I, typename sig::param_types>>(std::get<I>(arg_tuple))...);
+            }(std::make_index_sequence<sizeof...(Args)>{});
         }
         else
         {
@@ -218,11 +277,8 @@ namespace hgraph
                             if constexpr (static_node_detail::is_scalar_selector<P>::value)
                             {
                                 using V = typename P::value_type;
-                                using A = std::remove_cvref_t<std::tuple_element_t<I, std::tuple<Args...>>>;
-                                static_assert(std::is_convertible_v<A, V>,
-                                              "wire<T>: scalar argument is not convertible to the node's Scalar<> type");
                                 mutation[P::field_name.sv()].template checked_mutable_as<V>() =
-                                    static_cast<V>(std::get<I>(arg_tuple));
+                                    graph_wiring_detail::coerce_scalar_value<V>(std::get<I>(arg_tuple));
                             }
                         }(),
                         ...);

@@ -9,19 +9,20 @@ same runtime graph the same way.
 
 .. note::
 
-   **Status.** Slices 1–3a are **implemented**: the ``Wiring`` core (interning +
+   **Status.** Slices 1–3b are **implemented**: the ``Wiring`` core (interning +
    topo-sort/rank), the typed ``Port<Schema>`` + ``wire<T>`` facade for nodes,
    ``build_graph<G>(…)`` for a top-level graph, **sub-graph composition**
-   (``wire<G>`` inlines a graph), **scalar inputs** (``Scalar<>`` arguments folded
-   into the intern key and recorded on the node builder), and
+   (``wire<G>`` inlines a graph, with the same compile-time argument checking and
+   scalar-literal auto-wrapping as ``wire<T>``), **scalar inputs** (``Scalar<>``
+   arguments folded into the intern key and recorded on the node builder), and
    ``StaticGraphSignature<G>`` with **graph-level scalar parameters** (a top-level
    graph's ``compose`` may take ``Scalar<>`` parameters, supplied through
    ``build_graph<G>(values…)``) — in ``include/hgraph/types/graph_wiring.h`` +
    ``src/hgraph/types/graph_wiring.cpp``, with ``tests/cpp/test_graph_wiring.cpp``.
    Still **not yet implemented**: standalone sub-graph building / time-series
-   boundary binding, ``wire<G>`` auto-wrapping scalar literals for sub-graphs,
-   generics and higher-order operators; those parts of this page are the design
-   record. The user-facing view is *User Guide > Wiring Graphs in C++*.
+   boundary binding (deferred until there is a consumer — the non-flattening nested
+   graphs), generics and higher-order operators; those parts of this page are the
+   design record. The user-facing view is *User Guide > Wiring Graphs in C++*.
 
 
 Two tiers
@@ -154,7 +155,7 @@ The typed C++ facade
 - ``Port<Schema>`` is the typed handle; ``.erased()`` lowers it to a
   ``WiringPortRef`` (the runtime schema comes from ``Schema``).
 - ``wire<T>(w, args...)`` — takes the node's wiring arguments **in eval-parameter
-  order**: a ``Port`` for each ``In`` and a scalar value for each ``Scalar``. It
+  order**: a ``Port`` for each ``In`` and a scalar argument for each ``Scalar``. It
   checks **arity and, per position, the port schema or scalar convertibility** at
   compile time (via ``StaticNodeSignature<T>``, which exposes the output schema
   type, the input schema types and the ordered list of wiring parameters), splits
@@ -162,10 +163,20 @@ The typed C++ facade
   to ``w.add_node(typeid(T), builder, ports, scalars)``, and returns
   ``Port<output_schema_type>`` (or ``void`` for a sink). The scalar value is built
   as the un-named bundle ``StaticNodeSignature<T>::scalar_schema()`` describes.
-- ``wire<G>(w, ports...)`` — inlines ``G::compose(w, ports...)`` (graphs flatten)
-  and returns ``G``'s output port. (Auto-wrapping scalar literals for a sub-graph
-  that takes ``Scalar<>`` parameters — as ``wire<T>`` does for nodes — is a later
-  slice; today a sub-graph's scalar arguments are passed as ``Scalar<>`` values.)
+- ``wire<G>(w, args...)`` — inlines ``G::compose(w, …)`` (graphs flatten) and
+  returns ``G``'s output port. The arguments follow the **same rule as for a node**
+  (via ``StaticGraphSignature<G>``): in compose-parameter order, a ``Port`` for each
+  ``Port`` parameter (schema-checked) and a scalar argument for each ``Scalar``
+  parameter (wrapped into it, convertibility-checked) — so a sub-graph and a node
+  are wired identically at the call site.
+- **Scalar arguments unpack uniformly.** Every scalar wiring argument (in
+  ``wire<T>``, ``wire<G>`` and ``build_graph``) passes through one helper,
+  ``graph_wiring_detail::coerce_scalar_value<V>``: it accepts either a plain value or
+  a ``Scalar<Name, T>`` **selector** (whose value it unpacks), so a scalar received
+  as a node/graph parameter can be forwarded straight on — ``wire<Shift>(w, x, by)``
+  rather than ``…, by.value()``. Only the value type must be convertible; the
+  ``Name`` need not match (the producer's and consumer's scalar names are
+  independent).
 - ``StaticGraphSignature<G>`` — **implemented.** Reflects ``&G::compose``
   **skipping the leading ``Wiring&``**: ``Port`` parameters are the graph's
   time-series inputs, ``Scalar`` parameters are its scalar inputs, and the return
@@ -245,10 +256,16 @@ Slices:
    type) and **graph-level scalar parameters**: ``build_graph<G>(values…)`` wraps
    the supplied values into the graph's ``Scalar<>`` ``compose`` parameters and
    forwards them. Tests: ``tests/cpp/test_graph_wiring.cpp``.
-4. **3b — Next.** Standalone sub-graph building / time-series **boundary binding**
-   (supplying ``Port`` inputs to ``build_graph`` / ``wire<G>``), and ``wire<G>``
-   auto-wrapping scalar literals for sub-graphs. This is also the precondition for
-   non-flattening nested graphs.
+4. **3b — Done.** ``wire<G>`` parity with ``wire<T>``: the sub-graph branch now
+   reflects ``compose`` via ``StaticGraphSignature<G>``, checks argument arity and
+   per-position port schema / scalar convertibility at compile time, and **auto-wraps
+   scalar literals** into the sub-graph's ``Scalar<>`` parameters. A sub-graph and a
+   node are now wired identically at the call site. Tests:
+   ``tests/cpp/test_graph_wiring.cpp``.
+5. **Next.** Standalone sub-graph building / time-series **boundary binding**
+   (supplying ``Port`` inputs to ``build_graph`` / ``wire<G>``) — **deferred until
+   it has a consumer**, the non-flattening nested graphs (``map_`` / ``reduce`` /
+   ``switch_``), which is where the boundary substrate is actually needed.
 
 Deferred: multiple outputs (``TSB`` ports, optionally returned as an array as
 sugar), generic graphs (``TsVar`` / ``ScalarVar`` in signatures), higher-order

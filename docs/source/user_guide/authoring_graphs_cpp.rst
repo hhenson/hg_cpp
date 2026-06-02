@@ -66,11 +66,16 @@ A graph that takes a scalar parameter is built by supplying the value:
        static void compose(Wiring &w, Scalar<"factor", double> factor)
        {
            auto px = wire<ConstantSource>(w);
-           wire<Print>(w, wire<Scale>(w, px, factor.value()));   // graph scalar -> node scalar
+           wire<Print>(w, wire<Scale>(w, px, factor));   // graph scalar forwarded to node scalar
        }
    };
 
    GraphBuilder g = build_graph<ScaledPriceGraph>(2.0);   // factor = 2.0
+
+A scalar received as a parameter (here ``factor``) can be passed **straight on** to
+a node's or sub-graph's scalar — the wiring layer unpacks it for you, so an explicit
+``factor.value()`` is not required (it still works if you prefer it). The parameter
+names need not match; only the value type must.
 
 .. code-block:: python
 
@@ -174,10 +179,13 @@ first parameter, by convention); it is not part of the logical signature.
 Composing graphs
 ----------------
 
-``wire<G>(w, ports...)`` wires a sub-graph. Because graphs flatten, this **inlines**
+``wire<G>(w, args...)`` wires a sub-graph. Because graphs flatten, this **inlines**
 the sub-graph's nodes into the current graph and returns its output port — there
-is no runtime "graph node". A call site treats a node and a graph the same way;
-the only difference is whether a runtime node is produced.
+is no runtime "graph node". A call site treats a node and a graph **the same way**:
+you pass a ``Port`` for each of the sub-graph's ``Port`` parameters and a plain
+value for each of its ``Scalar`` parameters, in ``compose`` order, and the
+arguments are checked at compile time exactly as for a node. The only difference is
+whether a runtime node is produced.
 
 .. code-block:: cpp
 
@@ -186,6 +194,14 @@ the only difference is whether a runtime node is produced.
        auto m = wire<Mid>(w, bid, ask);   // inline the Mid sub-graph
        return wire<Scale>(w, m);
    }
+
+A sub-graph may take scalar parameters too; pass the value just like a node's
+scalar (it is wrapped into the sub-graph's ``Scalar<>`` parameter):
+
+.. code-block:: cpp
+
+   // sub-graph: compose(Wiring &, Port<TS<int>> x, Scalar<"by", int> by) -> TS<int>
+   auto shifted = wire<ShiftBy>(w, src, 5);   // port for `x`, 5 wrapped into `by`
 
 
 Ordering is automatic
@@ -219,14 +235,15 @@ and running a graph*):
 What's planned
 --------------
 
-Node wiring, sub-graph composition, node-level scalar arguments and top-level
-graph-level scalar parameters work today; beyond the basics above the following are
-deferred (and map onto Python features):
+Node wiring, sub-graph composition (with the same scalar-literal ergonomics as
+nodes), node-level scalar arguments and top-level graph-level scalar parameters work
+today; beyond the basics above the following are deferred (and map onto Python
+features):
 
 - **standalone sub-graph building / boundary binding** — supplying time-series
   **input ports** to ``build_graph`` / ``wire<G>`` so a sub-graph can be built on
-  its own (and ``wire<G>`` auto-wrapping scalar literals as ``wire<T>`` does for
-  nodes); this is also the precondition for non-flattening nested graphs;
+  its own; this is the precondition for non-flattening nested graphs and is deferred
+  until those operators need it;
 - **multiple outputs** — a graph returning a ``TSB`` becomes a bundle ``Port``
   with ``.field<"x">()`` to take a sub-port; as syntactic sugar a graph's outputs
   may instead be returned as an array;
