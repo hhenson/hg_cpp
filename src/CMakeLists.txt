@@ -112,6 +112,8 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output/window_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_output.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/global_state.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/node_scheduler.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/testing/record_replay.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/any_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/compact_container_ops.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/mutable_container_ops.h

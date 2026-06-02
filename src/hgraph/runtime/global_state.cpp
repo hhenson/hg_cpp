@@ -37,9 +37,14 @@ namespace hgraph
     ValueView GlobalStateView::get(std::string_view key) const
     {
         const Value key_value{std::string{key}};
-        auto        view = map_->as_map();
-        if (!view.contains(key_value.view())) { return ValueView{}; }
-        return view.at(key_value.view()).as_any().get();
+        if (!map_->as_map().contains(key_value.view())) { return ValueView{}; }
+        // The GlobalState is by definition a mutable store, so a read honours the
+        // stored value's own mutability: a value boxed as mutable (e.g. a mutable
+        // List/Map) comes back as a writable view that can be mutated in place; an
+        // immutable value comes back read-only (its ops refuse begin_mutation).
+        // Routed through the mutable map accessor; the key is present, so no entry
+        // is created.
+        return map_->as_map().begin_mutation().value(key_value.view()).as_any().get();
     }
 
     void GlobalStateView::set(std::string_view key, const ValueView &value) const

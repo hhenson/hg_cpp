@@ -34,6 +34,12 @@ namespace hgraph
         /**
          * Read the value stored under ``key`` (the contained value, unwrapped
          * from its ``Any`` box). Returns an **invalid** ``ValueView`` when absent.
+         *
+         * The store is mutable by definition, so the read honours the stored
+         * value's own mutability: a value boxed as **mutable** (e.g. a mutable
+         * ``List``/``Map``) comes back as a **writable** view that can be mutated
+         * in place; an **immutable** value comes back read-only (its ops refuse
+         * ``begin_mutation``).
          */
         [[nodiscard]] ValueView get(std::string_view key) const;
 

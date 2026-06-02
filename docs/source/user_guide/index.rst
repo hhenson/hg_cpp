@@ -11,3 +11,4 @@ The user guide describes the HGraph model from a user point of view. The initial
    quick_start
    authoring_nodes_cpp
    authoring_graphs_cpp
+   testing_graphs_cpp

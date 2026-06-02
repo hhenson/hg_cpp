@@ -342,6 +342,14 @@ namespace hgraph
 
     ValueView AnyView::get() const
     {
+        if (writable_payload())
+        {
+            // The Any box is in writable storage, so the value it contains is too:
+            // hand back a writable view. The contained value's own ops still gate
+            // ``begin_mutation`` (an immutable value stays immutable; a mutable one
+            // — e.g. a mutable List/Map — can be mutated in place).
+            return const_cast<Value *>(static_cast<const Value *>(data()))->view();
+        }
         return static_cast<const Value *>(data())->view();
     }
 

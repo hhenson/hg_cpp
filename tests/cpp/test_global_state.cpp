@@ -7,6 +7,7 @@
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/value/value.h>
 
@@ -224,4 +225,53 @@ TEST_CASE("global state: set in a compose block, then modified in an eval block"
     GlobalStateView gs = executor_view.graph().global_state();
     CHECK(gs.get_as<int>("counter") == 101);  // 100 set in compose + 1 set in eval
     CHECK(executor_view.graph().node_at(0).output(MIN_ST).value().checked_as<int>() == 101);
+}
+
+TEST_CASE("global state: a stored mutable value comes back mutable and can be edited in place")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+
+    // Build a mutable List<int> [1, 2] and stash it.
+    const auto *mutable_schema  = registry.mutable_list(int_meta);
+    const auto *mutable_binding = ValuePlanFactory::instance().binding_for(mutable_schema);
+    Value       list{*mutable_binding};
+    {
+        auto m = list.as_list().begin_mutation();
+        m.push_back(Value{1}.view());
+        m.push_back(Value{2}.view());
+    }
+
+    GlobalState gs;
+    gs.view().set("buf", list);
+
+    // The GlobalState is a mutable view: a mutable value comes back writable, so
+    // it can be appended in place...
+    gs.view().get("buf").as_list().begin_mutation().push_back(Value{3}.view());
+
+    // ...and the edit persists in the store.
+    const auto stored = gs.view().get("buf").as_list();
+    REQUIRE(stored.size() == 3);
+    CHECK(stored.at(0).checked_as<int>() == 1);
+    CHECK(stored.at(2).checked_as<int>() == 3);
+}
+
+TEST_CASE("global state: a stored immutable value stays read-only")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+
+    // An immutable (compact) list — its ops do not opt into mutation.
+    const auto *immutable_schema  = registry.list(int_meta);
+    const auto *immutable_binding = ValuePlanFactory::instance().binding_for(immutable_schema);
+    Value       list{*immutable_binding};
+
+    GlobalState gs;
+    gs.view().set("frozen", list);
+
+    // Mutability is honoured: the immutable value is refused mutation even though
+    // the store itself is mutable.
+    CHECK_THROWS(gs.view().get("frozen").as_list().begin_mutation());
 }
