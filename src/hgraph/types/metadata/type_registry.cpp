@@ -222,6 +222,7 @@ namespace hgraph
         map_cache_.clear();
         cyclic_buffer_cache_.clear();
         queue_cache_.clear();
+        any_cache_.clear();
         ts_cache_.clear();
         tss_cache_.clear();
         tsd_cache_.clear();
@@ -456,6 +457,20 @@ namespace hgraph
             m.key_type = key_type;
             m.element_type = value_type;
             return m;
+        });
+        return &meta;
+    }
+
+    const ValueTypeMetaData *TypeRegistry::any()
+    {
+        // Unconstrained, singleton: no element/key/fields. Hashable / equatable /
+        // comparable because the Any ops delegate to the embedded value (which may
+        // itself throw if the contained value lacks the capability).
+        const ValueTypeMetaData &meta = any_cache_.intern(0, [&]() {
+            return ValueTypeMetaData(ValueTypeKind::Any,
+                                     ValueTypeFlags::Hashable | ValueTypeFlags::Equatable |
+                                         ValueTypeFlags::Comparable,
+                                     "Any");
         });
         return &meta;
     }

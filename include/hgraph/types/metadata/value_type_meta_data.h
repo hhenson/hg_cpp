@@ -19,7 +19,7 @@ namespace hgraph
     struct ValueTypeMetaData;
 
     /**
-     * Eight value-layer kinds, matching the ``Value Kinds`` section of the
+     * Nine value-layer kinds, matching the ``Value Kinds`` section of the
      * developer guide. Every ``ValueTypeMetaData`` carries one of these
      * tags; consumers dispatch on it to interpret the rest of the metadata
      * fields.
@@ -42,6 +42,17 @@ namespace hgraph
         CyclicBuffer,
         /** FIFO queue with capacity and ordering. */
         Queue,
+        /**
+         * Type-erased "any value" box. Compile-time schema knowledge ends
+         * here: the box stores an embedded owning ``Value`` whose own schema
+         * is only known at run time. Storage is the ``Value`` handle; the
+         * contained value's memory is allocated on demand when content is
+         * assigned, after which it carries its own schema and owned memory.
+         * Carries no ``element_type`` / ``key_type`` / ``fields`` — it is
+         * unconstrained. The slot type for heterogeneous mutable containers
+         * (and the eventual analogue of a generic / Python ``object``).
+         */
+        Any,
     };
 
     /**

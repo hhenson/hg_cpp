@@ -64,6 +64,10 @@ namespace hgraph
                 case ValueTypeKind::Map:
                     return value_schema_equivalent(lhs->key_type, rhs->key_type) &&
                            value_schema_equivalent(lhs->element_type, rhs->element_type);
+
+                case ValueTypeKind::Any:
+                    // Unconstrained and singleton: any two Any schemas are equivalent.
+                    return true;
             }
 
             return false;
@@ -326,4 +330,43 @@ namespace hgraph
         *this = std::move(replacement);
     }
 #endif
+
+    // -- AnyView / MutableAnyView ----------------------------------------------
+    // Defined here (not inline) because they reach into the embedded owning
+    // ``Value`` that backs an ``Any`` value, and ``Value`` is complete here.
+
+    bool AnyView::has_value() const noexcept
+    {
+        return static_cast<const Value *>(data())->has_value();
+    }
+
+    ValueView AnyView::get() const
+    {
+        return static_cast<const Value *>(data())->view();
+    }
+
+    const ValueTypeMetaData *AnyView::value_schema() const noexcept
+    {
+        return static_cast<const Value *>(data())->schema();
+    }
+
+    MutableAnyView AnyView::begin_mutation() const
+    {
+        return MutableAnyView{ValueView::begin_mutation()};
+    }
+
+    void MutableAnyView::set(const ValueView &value) const
+    {
+        *static_cast<Value *>(mutable_data()) = Value{value};
+    }
+
+    void MutableAnyView::set(const Value &value) const
+    {
+        *static_cast<Value *>(mutable_data()) = value;
+    }
+
+    void MutableAnyView::clear() const
+    {
+        static_cast<Value *>(mutable_data())->reset();
+    }
 }  // namespace hgraph

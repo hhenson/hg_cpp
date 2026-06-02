@@ -30,6 +30,8 @@ namespace hgraph
     class MutableListView;
     class MutableCyclicBufferView;
     class MutableQueueView;
+    class AnyView;
+    class MutableAnyView;
     class Value;
 
     /**
@@ -149,6 +151,7 @@ namespace hgraph
             return valid() && schema()->kind == ValueTypeKind::CyclicBuffer;
         }
         [[nodiscard]] bool is_queue() const noexcept { return valid() && schema()->kind == ValueTypeKind::Queue; }
+        [[nodiscard]] bool is_any()   const noexcept { return valid() && schema()->kind == ValueTypeKind::Any; }
         [[nodiscard]] bool is_indexed() const noexcept
         {
             const auto *type = schema();
@@ -164,6 +167,7 @@ namespace hgraph
                 case ValueTypeKind::Queue:
                     return true;
                 case ValueTypeKind::Atomic:
+                case ValueTypeKind::Any:
                     return false;
             }
             return false;
@@ -272,6 +276,10 @@ namespace hgraph
         [[nodiscard]] std::optional<CyclicBufferView> try_as_cyclic_buffer() const;
         [[nodiscard]] QueueView as_queue() const;
         [[nodiscard]] std::optional<QueueView> try_as_queue() const;
+        [[nodiscard]] AnyView as_any() const;
+        [[nodiscard]] std::optional<AnyView> try_as_any() const;
+        [[nodiscard]] MutableAnyView as_mutable_any() const;
+        [[nodiscard]] std::optional<MutableAnyView> try_as_mutable_any() const;
         [[nodiscard]] MutableTupleView as_mutable_tuple() const;
         [[nodiscard]] std::optional<MutableTupleView> try_as_mutable_tuple() const;
         [[nodiscard]] MutableBundleView as_mutable_bundle() const;

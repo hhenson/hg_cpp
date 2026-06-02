@@ -105,6 +105,13 @@ namespace hgraph
         const ValueTypeMetaData *cyclic_buffer(const ValueTypeMetaData *element_type, size_t capacity);
         /** Intern a queue value-schema; ``max_capacity == 0`` means unbounded. */
         const ValueTypeMetaData *queue(const ValueTypeMetaData *element_type, size_t max_capacity = 0);
+        /**
+         * The canonical, unconstrained ``Any`` value-schema — a type-erased
+         * box (an embedded owning ``Value``). Singleton: every call returns
+         * the same interned pointer. The slot type for heterogeneous mutable
+         * containers and the analogue of a generic / Python ``object``.
+         */
+        const ValueTypeMetaData *any();
 
         /** Singleton ``SIGNAL`` time-series schema. */
         const TSValueTypeMetaData *signal();
@@ -448,6 +455,7 @@ namespace hgraph
         InternTable<MapKey, ValueTypeMetaData, MapKeyHash> map_cache_;
         InternTable<SizedKey, ValueTypeMetaData, SizedKeyHash> cyclic_buffer_cache_;
         InternTable<SizedKey, ValueTypeMetaData, SizedKeyHash> queue_cache_;
+        InternTable<int, ValueTypeMetaData>                    any_cache_;  // singleton, interned under key 0
 
         InternTable<const ValueTypeMetaData *, TSValueTypeMetaData> ts_cache_;
         InternTable<const ValueTypeMetaData *, TSValueTypeMetaData> tss_cache_;

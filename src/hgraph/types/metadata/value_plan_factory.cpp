@@ -1,6 +1,7 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 
 #include <hgraph/types/utils/intern_table.h>
+#include <hgraph/types/value/any_ops.h>
 #include <hgraph/types/value/compact_container_ops.h>
 #include <hgraph/util/scope.h>
 
@@ -810,6 +811,7 @@ namespace hgraph
             case ValueTypeKind::Map:
             case ValueTypeKind::CyclicBuffer:
             case ValueTypeKind::Queue:
+            case ValueTypeKind::Any:
             {
                 const ValueTypeBinding *binding = binding_for(schema);
                 plan = binding != nullptr ? binding->plan() : nullptr;
@@ -919,6 +921,10 @@ namespace hgraph
                 binding = &compact_queue_binding(*element_binding, schema->fixed_size);
                 break;
             }
+
+            case ValueTypeKind::Any:
+                binding = &any_binding();
+                break;
         }
 
         if (binding == nullptr)

@@ -647,6 +647,52 @@ namespace hgraph
         const MapValueOps *ops_{nullptr};
     };
 
+    /**
+     * Read-only view over an ``Any`` value — the type-erased box holding an
+     * embedded owning ``Value``. ``has_value`` reports whether content has
+     * been assigned; ``get`` returns a read view of the contained value (an
+     * invalid view when empty). Methods that touch the embedded ``Value`` are
+     * defined out-of-line (in ``value_view.cpp``) where ``Value`` is complete.
+     */
+    class AnyView : public ValueView
+    {
+      public:
+        explicit AnyView(ValueView base)
+            : ValueView(specialized_view_detail::require_kind(std::move(base), ValueTypeKind::Any, "AnyView"))
+        {
+        }
+
+        /** True when a value has been assigned into the box. */
+        [[nodiscard]] bool has_value() const noexcept;
+        /** Read-only view of the contained value; an invalid view when empty. */
+        [[nodiscard]] ValueView get() const;
+        /** Schema of the contained value, or ``nullptr`` when empty. */
+        [[nodiscard]] const ValueTypeMetaData *value_schema() const noexcept;
+
+        /** Open a writable view over the box (requires mutable storage). */
+        [[nodiscard]] MutableAnyView begin_mutation() const;
+    };
+
+    /**
+     * Writable view over an ``Any`` value: replace or clear the contained
+     * value. ``set`` deep-copies the supplied value into the box.
+     */
+    class MutableAnyView : public AnyView
+    {
+      public:
+        explicit MutableAnyView(ValueView base)
+            : AnyView(specialized_view_detail::require_mutable(std::move(base), "MutableAnyView"))
+        {
+        }
+
+        /** Replace the contained value with a deep copy of ``value``. */
+        void set(const ValueView &value) const;
+        /** Replace the contained value with a copy of ``value``. */
+        void set(const Value &value) const;
+        /** Clear the box back to the empty state. */
+        void clear() const;
+    };
+
     inline IndexedValueView ValueView::as_indexed_view() const
     {
         if (!is_indexed()) { throw std::logic_error("ValueView::as_indexed_view on non-indexed view"); }
@@ -771,6 +817,29 @@ namespace hgraph
     inline std::optional<QueueView> ValueView::try_as_queue() const
     {
         return is_queue() ? std::optional<QueueView>{QueueView{borrowed_ref()}} : std::nullopt;
+    }
+
+    inline AnyView ValueView::as_any() const
+    {
+        if (!is_any()) { throw std::logic_error("ValueView::as_any on non-any view"); }
+        return AnyView{borrowed_ref()};
+    }
+
+    inline std::optional<AnyView> ValueView::try_as_any() const
+    {
+        return is_any() ? std::optional<AnyView>{AnyView{borrowed_ref()}} : std::nullopt;
+    }
+
+    inline MutableAnyView ValueView::as_mutable_any() const
+    {
+        if (!is_any()) { throw std::logic_error("ValueView::as_mutable_any on non-any view"); }
+        return MutableAnyView{borrowed_ref()};
+    }
+
+    inline std::optional<MutableAnyView> ValueView::try_as_mutable_any() const
+    {
+        return is_any() && mutable_payload() ? std::optional<MutableAnyView>{MutableAnyView{borrowed_ref()}}
+                                             : std::nullopt;
     }
 
     inline MutableTupleView ValueView::as_mutable_tuple() const

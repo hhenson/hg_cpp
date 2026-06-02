@@ -126,7 +126,7 @@ handle. Two cast families exist:
 
 - **Kind-specialised view casts**: ``as_tuple()``, ``as_bundle()``,
   ``as_list()``, ``as_set()``, ``as_map()``, ``as_cyclic_buffer()``,
-  ``as_queue()``, with ``try_as_*`` counterparts that return
+  ``as_queue()``, ``as_any()``, with ``try_as_*`` counterparts that return
   ``std::optional`` and throw nothing.
 - **Atomic typed casts**: ``as<T>()``, ``try_as<T>()``,
   ``checked_as<T>()`` reach the underlying scalar in one call.
@@ -289,6 +289,16 @@ Read-only views
     and ``key_set()`` returning a read-only ``SetView`` over the live
     keys. ``contains`` and ``at`` are part of the erased ops contract
     and must be average O(1) for map implementations.
+
+``AnyView``
+    View over an ``Any`` box (see *Schemas > Scalar Schemas > Value
+    Kinds*). ``has_value()`` reports whether content has been assigned;
+    ``get()`` returns a read view of the contained value (an invalid view
+    when empty); ``value_schema()`` returns the contained value's schema or
+    ``nullptr``. The mutable counterpart ``MutableAnyView`` (via
+    ``begin_mutation()``) adds ``set(value)`` (replace, deep copy) and
+    ``clear()`` (return to empty). Unlike the compact containers, the
+    ``Any`` ops allow ``begin_mutation()``, so the box is reassignable.
 
 Mutable views (ops-gated)
 ~~~~~~~~~~~~~~~~~~~~~~~~~

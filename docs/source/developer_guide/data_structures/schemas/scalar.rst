@@ -5,7 +5,7 @@ A scalar schema is the value-layer's concept identity for a non-time-
 series payload. Scalar schemas are represented at runtime by
 ``ValueTypeMetaData``. The struct carries:
 
-- ``kind`` — the value kind (one of the eight listed below),
+- ``kind`` — the value kind (one of the nine listed below),
 - capability flags — for example, whether the value is hashable,
   comparable, or buffer-exposable,
 - component fields — for composite kinds, the field list (bundle/tuple)
@@ -22,7 +22,7 @@ Types* — the multi-implementation rationale).
 Value Kinds
 -----------
 
-A scalar schema has one of eight kinds, recorded on its
+A scalar schema has one of nine kinds, recorded on its
 ``ValueTypeMetaData``:
 
 ``Atomic``
@@ -90,10 +90,27 @@ A scalar schema has one of eight kinds, recorded on its
 ``Queue``
     FIFO queue with capacity and ordering.
 
+``Any``
+    A type-erased "any value" box. **Compile-time schema knowledge ends
+    here**: an ``Any`` carries no element/key/field references — it is
+    unconstrained — and its storage is an embedded owning ``Value`` whose
+    own schema is only known at run time. The box is empty until a value is
+    assigned; assigning copies the value in, after which the contained
+    ``Value`` carries its own schema and owns its own memory. ``Any`` is the
+    singleton schema returned by ``TypeRegistry::any()``.
+
+    ``Any`` is the slot type that lets value-layer containers hold
+    heterogeneous contents (a ``List<Any>`` or ``Map<K, Any>`` where each
+    element may have a different concrete schema), and is the eventual
+    analogue of a generic / Python ``object``. ``hash`` / ``equals`` /
+    ``compare`` / ``to_string`` delegate to the contained value, with an
+    explicit empty state (empty equals empty; empty orders before any
+    non-empty value; an empty box stringifies as ``"None"``).
+
 Each kind has a corresponding specialised view at the runtime layer
 (``TupleView``, ``BundleView``, ``ListView``, ``SetView``, ``MapView``,
-``CyclicBufferView``, ``QueueView``); those views are described under
-*Allocation, Plans and Ops > Erased Types*.
+``CyclicBufferView``, ``QueueView``, ``AnyView`` / ``MutableAnyView``);
+those views are described under *Allocation, Plans and Ops > Erased Types*.
 
 Composite Schema Synthesis
 --------------------------

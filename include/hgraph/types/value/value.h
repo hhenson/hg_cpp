@@ -225,6 +225,10 @@ namespace hgraph
         [[nodiscard]] QueueView as_queue() { return view().as_queue(); }
         [[nodiscard]] std::optional<QueueView> try_as_queue() const { return view().try_as_queue(); }
         [[nodiscard]] std::optional<QueueView> try_as_queue() { return view().try_as_queue(); }
+        [[nodiscard]] AnyView as_any() const { return view().as_any(); }
+        [[nodiscard]] AnyView as_any() { return view().as_any(); }
+        [[nodiscard]] std::optional<AnyView> try_as_any() const { return view().try_as_any(); }
+        [[nodiscard]] std::optional<AnyView> try_as_any() { return view().try_as_any(); }
 
         [[nodiscard]] TupleView tuple_view() const { return as_tuple(); }
         [[nodiscard]] TupleView tuple_view() { return as_tuple(); }
