@@ -73,6 +73,34 @@ namespace
             }
         }
     };
+
+    // TS<int> in -> TSS<int> out: each ticked value is added to the set (the
+    // per-cycle delta is therefore {added: {value}}). Exercises a TSS *output*.
+    struct AccumulateSet
+    {
+        static constexpr auto name = "eval_accumulate_set";
+        static void           eval(In<"in", TS<int>> in, Out<TSS<int>> out) { out.add(in.value()); }
+    };
+
+    // TSS<int> in -> TS<int> out: emits the cumulative set size. Exercises a TSS
+    // *input* (the first, braced, parameter).
+    struct SetSizeNode
+    {
+        static constexpr auto name = "eval_set_size";
+        static void           eval(In<"s", TSS<int>> s, Out<TS<int>> out) { out.set(static_cast<int>(s.size())); }
+    };
+
+    // TSS<int> in -> TSS<int> out: re-applies this cycle's delta (remove then add),
+    // so the output delta mirrors the input. Exercises TSS on both ends.
+    struct MirrorSet
+    {
+        static constexpr auto name = "eval_mirror_set";
+        static void           eval(In<"s", TSS<int>> s, Out<TSS<int>> out)
+        {
+            for (int r : s.removed()) { out.remove(r); }
+            for (int a : s.added()) { out.add(a); }
+        }
+    };
 }  // namespace
 
 TEST_CASE("eval_node: maps each input tick through a compute node")
@@ -127,4 +155,35 @@ TEST_CASE("eval_node: drives a node with multiple time-series inputs")
     // at cycle 1 lhs's persisted value (1) is summed with rhs (20) -> 21.
     const std::vector<std::optional<int>> rhs{10, 20, 30};
     CHECK_OUTPUT(testing::eval_node<Sum>({1, none, 3}, rhs), {11, 21, 33});
+}
+
+TEST_CASE("eval_node: a TSS output is read back as a per-cycle SetDelta")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    // Each cycle adds one element, so each delta is {added: {value}}.
+    CHECK_OUTPUT(testing::eval_node<AccumulateSet>({1, 2, 3}),
+                 {set_delta<int>({1}, {}), set_delta<int>({2}, {}), set_delta<int>({3}, {})});
+}
+
+TEST_CASE("eval_node: a TSS input is fed from a per-cycle SetDelta sequence")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    // {1,2} -> +3 -1 -> {2,3} -> -2 -3 -> {}; cumulative sizes 2, 2, 0.
+    CHECK_OUTPUT(testing::eval_node<SetSizeNode>(
+                     {set_delta<int>({1, 2}, {}), set_delta<int>({3}, {1}), set_delta<int>({}, {2, 3})}),
+                 {2, 2, 0});
+}
+
+TEST_CASE("eval_node: TSS on both input and output round-trips the delta")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    const std::vector<std::optional<SetDelta<int>>> deltas{
+        set_delta<int>({1, 2}, {}), set_delta<int>({3}, {1}), set_delta<int>({}, {2, 3})};
+    CHECK_OUTPUT(testing::eval_node<MirrorSet>(deltas), deltas);
 }
