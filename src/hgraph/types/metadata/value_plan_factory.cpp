@@ -743,6 +743,7 @@ namespace hgraph
         binding_cache_.clear();
         clear_compact_container_plans();
         clear_mutable_container_plans();
+        MemoryUtils::clear_synthesised_plans();
         clear_structured_indexed_ops();
     }
 

@@ -1225,6 +1225,20 @@ namespace hgraph
         }
 
         /**
+         * Clear the synthesised composite (tuple/bundle) and array plan registries.
+         * Both intern by child/element-plan **pointer**, so they hold dangling keys
+         * once the underlying plans are torn down. Any reset path that frees plans
+         * (e.g. a registry reset between tests) must call this, or a later plan that
+         * reuses a freed address will get a stale composite/array plan — producing a
+         * wrong layout (overlapping fields) and memory corruption. Plans are
+         * program-lifetime in normal use, so this is only exercised on reset.
+         */
+        static void clear_synthesised_plans() noexcept {
+            composite_registry().clear();
+            array_registry().clear();
+        }
+
+        /**
          * Canonical atomic plan for ``T``.
          *
          * The plan is a function-local ``static`` so the same address is
@@ -1342,6 +1356,11 @@ namespace hgraph
             [[nodiscard]] const StoragePlan &intern(CompositeKind kind, const std::vector<PendingComponent> &components) {
                 return m_table.intern(make_signature(kind, components), [&]() { return build_entry(kind, components); }).plan;
             }
+
+            // Composite plans are interned by child-plan POINTER (see make_signature),
+            // so this must be cleared whenever the underlying child plans are torn
+            // down — otherwise a later plan reusing a freed address gets a stale hit.
+            void clear() noexcept { m_table.clear(); }
 
           private:
             InternTable<std::string, Entry> m_table{};
@@ -1464,6 +1483,9 @@ namespace hgraph
                 };
                 return m_table.intern(key, [&]() { return build_entry(element_plan, count); }).plan;
             }
+
+            // Keyed by element-plan POINTER; clear when the element plans are torn down.
+            void clear() noexcept { m_table.clear(); }
 
           private:
             InternTable<Key, Entry, KeyHash> m_table{};
