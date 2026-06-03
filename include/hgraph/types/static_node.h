@@ -232,15 +232,18 @@ namespace hgraph
     {
       public:
         ListDelta() = default;
-        /** Snapshot an external delta map view into an owned copy. */
-        explicit ListDelta(const ValueView &map) : value_(map.valid() ? Value{map} : Value{}) {}
-        /** Take ownership of a built delta map value. */
-        explicit ListDelta(Value owned) : value_(std::move(owned)) {}
+        /** Build from a sparse ``index -> value`` map. */
+        explicit ListDelta(const std::map<std::size_t, TValue> &entries) : storage_(make_storage(entries)) {}
+        /** Copy an external delta map view into an owned snapshot. */
+        explicit ListDelta(const ValueView &map) : storage_(make_storage(map)) {}
+        /** Copy a built delta map into this handle's storage. */
+        explicit ListDelta(const Value &owned) : ListDelta(owned.view()) {}
+        explicit ListDelta(Value &&owned) : ListDelta(owned.view()) {}
 
-        [[nodiscard]] bool valid() const noexcept { return value_.has_value(); }
+        [[nodiscard]] bool valid() const noexcept { return storage_.has_value(); }
 
         /** The underlying delta map value (``Map<int64, T>``). */
-        [[nodiscard]] ValueView value() const noexcept { return value_.view(); }
+        [[nodiscard]] ValueView value() const noexcept { return ValueView{storage_.binding(), storage_.data()}; }
 
         [[nodiscard]] bool contains(std::size_t index) const
         {
@@ -289,7 +292,20 @@ namespace hgraph
             return std::map<std::size_t, TValue>{v.begin(), v.end()};
         }
 
-        Value value_{};
+        using storage_type = Value::storage_type;
+
+        /** Snapshot a delta-map view into an owning handle (deep copy via the binding). */
+        [[nodiscard]] static storage_type make_storage(const ValueView &map)
+        {
+            if (!map.valid()) { return storage_type{}; }
+            return storage_type::owning_copy(*map.binding(), map.data());
+        }
+        [[nodiscard]] static storage_type make_storage(const std::map<std::size_t, TValue> &entries)
+        {
+            return make_storage(make_list_delta_value<TValue>(entries).view());
+        }
+
+        storage_type storage_{};
     };
 
     /**
@@ -301,7 +317,7 @@ namespace hgraph
     {
         std::map<std::size_t, TValue> map;
         for (const auto &entry : entries) { map.insert_or_assign(entry.first, entry.second); }
-        return ListDelta<TValue>{make_list_delta_value<TValue>(map)};
+        return ListDelta<TValue>{map};
     }
 
     /**
@@ -318,7 +334,7 @@ namespace hgraph
         {
             if (positional[i].has_value()) { map.emplace(i, *positional[i]); }
         }
-        return ListDelta<TValue>{make_list_delta_value<TValue>(map)};
+        return ListDelta<TValue>{map};
     }
 
     // -----------------------------------------------------------------
@@ -448,7 +464,7 @@ namespace hgraph
             {
                 entries.emplace(index, child.value().template checked_as<TValue>());
             }
-            return ListDelta<TValue>{make_list_delta_value<TValue>(entries)};
+            return ListDelta<TValue>{entries};
         }
 
         [[nodiscard]] bool modified() const { return view_.modified(); }
