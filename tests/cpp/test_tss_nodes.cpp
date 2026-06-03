@@ -47,10 +47,10 @@ namespace
         static constexpr auto name = "tss_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay<int>>(w, std::string{"in"});
+            auto src = wire<testing::replay<TS<int>>>(w, std::string{"in"});
             auto acc = wire<Accumulate>(w, src);   // -> Port<TSS<int>>
             auto sz  = wire<SetSize>(w, acc);       // In<TSS<int>> -> Out<TS<int>>
-            wire<testing::record<int>>(w, sz, std::string{"out"});
+            wire<testing::record<TS<int>>>(w, sz, std::string{"out"});
         }
     };
 
@@ -60,8 +60,8 @@ namespace
         static constexpr auto name = "tss_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay_set<int>>(w, std::string{"in"});
-            wire<testing::record_set<int>>(w, src, std::string{"out"});
+            auto src = wire<testing::replay<TSS<int>>>(w, std::string{"in"});
+            wire<testing::record<TSS<int>>>(w, src, std::string{"out"});
         }
     };
 
@@ -71,9 +71,9 @@ namespace
         static constexpr auto name = "tss_added_count_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay_set<int>>(w, std::string{"in"});
+            auto src = wire<testing::replay<TSS<int>>>(w, std::string{"in"});
             auto cnt = wire<AddedCount>(w, src);
-            wire<testing::record<int>>(w, cnt, std::string{"out"});
+            wire<testing::record<TS<int>>>(w, cnt, std::string{"out"});
         }
     };
 }  // namespace
@@ -94,7 +94,7 @@ TEST_CASE("tss: Out<TSS> accumulates and In<TSS> reads the growing set")
     CHECK_OUTPUT(testing::get_recorded_values<int>(ex.view().graph().global_state(), "out"), {1, 2, 3});
 }
 
-TEST_CASE("tss: replay_set -> record_set round-trips set deltas (added/removed)")
+TEST_CASE("tss: replay<TSS> -> record<TSS> round-trips set deltas (added/removed)")
 {
     (void)TypeRegistry::instance().register_scalar<int>("int");
 

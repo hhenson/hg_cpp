@@ -142,38 +142,42 @@ comparing them is an element-wise list compare.
    the ``eval_node`` convention (Python anchors at ``start_time``, defaulting to
    ``MIN_ST``); a configurable start time is a future extension.
 
-``replay<T>``
+``replay<S>``
 -------------
 
-``replay<T>`` is a source node (``Out<TS<T>>`` only). It initiates itself at start
-via ``schedule_on_start`` (sources are not scheduled by default), then reads its
-buffer from the ``GlobalState`` under the ``key`` scalar and ticks the output once
-per cycle that has a value, rescheduling itself (via ``NodeScheduler``) until the
-buffer is exhausted. It is the first genuine multi-cycle simulation source.
+``replay<S>`` is the source node — a **single template keyed on the time-series
+schema** ``S``, with a specialisation per kind; there are no named variants. Wire
+``replay<TS<int>>`` for a scalar source (``Out<TS<T>>``), and ``replay<TSS<int>>`` /
+``replay<TSL<TS<int>, N>>`` to replay set / list deltas (see below). Each initiates
+itself at start via ``schedule_on_start`` (sources are not scheduled by default),
+reads its buffer from the ``GlobalState`` under the ``key`` scalar, ticks once per
+cycle that has a value, and reschedules itself (via ``NodeScheduler``) until the
+buffer is exhausted.
 
 .. code-block:: cpp
 
    // emits the value at the current cycle, then re-arms for the next
-   auto src = wire<testing::replay<int>>(w, std::string{"in"});
+   auto src = wire<testing::replay<TS<int>>>(w, std::string{"in"});
 
 The ``key`` names the ``GlobalState`` entry holding the input buffer; seed it
 before running (``gs.set("in", buffer)``). A cycle whose element is an empty
 ``Any`` is skipped (the output does not tick that cycle).
 
-``record<T>``
+``record<S>``
 -------------
 
-``record<T>`` is a sink node (``In<"ts", TS<T>>``). On ``start`` it creates a fresh
-cycle-aligned ``List<Any>`` in the ``GlobalState`` under its ``key``; on each
-evaluation where the input ticks it writes the input's ``delta_value`` (the per-tick
-event, not the cumulative ``value`` — they coincide for scalar time-series but
-differ for compound types) at the current cycle offset (padding any skipped cycles
-with empty ``Any`` entries). After the run the buffer is the recorded output,
-readable from the ``GlobalState``.
+``record<S>`` is the sink node — the dual of ``replay<S>``, likewise one template
+keyed on the schema (``record<TS<T>>`` / ``record<TSS<T>>`` / ``record<TSL<TS<T>,
+N>>``). On ``start`` it creates a fresh cycle-aligned ``List<Any>`` in the
+``GlobalState`` under its ``key``; on each evaluation where the input ticks it writes
+the input's ``delta_value`` (the per-tick event, not the cumulative ``value`` — they
+coincide for scalar time-series but differ for compound types) at the current cycle
+offset (padding any skipped cycles with empty ``Any`` entries). After the run the
+buffer is the recorded output, readable from the ``GlobalState``.
 
 .. code-block:: cpp
 
-   wire<testing::record<int>>(w, inc, std::string{"out"});  // (input port, key)
+   wire<testing::record<TS<int>>>(w, inc, std::string{"out"});  // (input port, key)
 
 Worked example
 --------------
@@ -193,9 +197,9 @@ Wiring ``replay → add_one → record`` and reading the result back:
        static constexpr auto name = "replay_record_graph";
        static void           compose(Wiring &w)
        {
-           auto src = wire<testing::replay<int>>(w, std::string{"in"});
+           auto src = wire<testing::replay<TS<int>>>(w, std::string{"in"});
            auto inc = wire<AddOne>(w, src);
-           wire<testing::record<int>>(w, inc, std::string{"out"});
+           wire<testing::record<TS<int>>>(w, inc, std::string{"out"});
        }
    };
 
@@ -263,8 +267,8 @@ way.
    CHECK_OUTPUT(testing::eval_node<MirrorSet>(deltas), deltas);   // round-trips the deltas
 
 The building blocks underneath are also usable directly when you need to wire a graph
-by hand: ``replay_set<T>`` applies a recorded delta sequence to a ``TSS<T>`` output
-(remove then add); ``record_set<T>`` captures each tick's delta; ``set_replay_deltas``
+by hand: ``replay<TSS<T>>`` applies a recorded delta sequence to a ``TSS<T>`` output
+(remove then add); ``record<TSS<T>>`` captures each tick's delta; ``set_replay_deltas``
 / ``get_recorded_deltas`` convert to/from ``std::vector<std::optional<SetDelta<T>>>``;
 and ``CHECK_OUTPUT`` compares them (rendering each delta as ``{added: {…}, removed:
 {…}}`` on mismatch).
@@ -316,10 +320,11 @@ comes back the same way.
    };
    CHECK_OUTPUT(testing::eval_node<MirrorList>(deltas), deltas);   // round-trips the deltas
 
-The building blocks are also usable directly: ``replay_list<T, N>`` sets each
-``index -> value`` of the buffered delta on a ``TSL<TS<T>, N>`` output; ``record_list<T,
-N>`` captures each tick's delta (only the children modified that cycle); ``set_replay_list_deltas``
-/ ``get_recorded_list_deltas`` convert to/from ``std::vector<std::optional<ListDelta<T>>>``;
+The building blocks are also usable directly: ``replay<TSL<TS<T>, N>>`` sets each
+``index -> value`` of the buffered delta on a ``TSL<TS<T>, N>`` output;
+``record<TSL<TS<T>, N>>`` captures each tick's delta (only the children modified that
+cycle); ``set_replay_list_deltas`` / ``get_recorded_list_deltas`` convert to/from
+``std::vector<std::optional<ListDelta<T>>>``;
 and ``CHECK_OUTPUT`` renders each delta as the map ``{0: 1, 1: 10}`` on mismatch.
 
 This first slice covers fixed-size ``TSL`` with **scalar** children (``TS<T>``);

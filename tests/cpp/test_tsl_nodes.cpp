@@ -65,10 +65,10 @@ namespace
         static constexpr auto name = "tsl_spread_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay<int>>(w, std::string{"in"});
+            auto src = wire<testing::replay<TS<int>>>(w, std::string{"in"});
             auto sp  = wire<Spread>(w, src);   // -> Port<TSL<TS<int>, 2>>
             auto tot = wire<Total>(w, sp);
-            wire<testing::record<int>>(w, tot, std::string{"out"});
+            wire<testing::record<TS<int>>>(w, tot, std::string{"out"});
         }
     };
 
@@ -77,8 +77,8 @@ namespace
         static constexpr auto name = "tsl_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay_list<int, 2>>(w, std::string{"in"});
-            wire<testing::record_list<int, 2>>(w, src, std::string{"out"});
+            auto src = wire<testing::replay<TSL<TS<int>, 2>>>(w, std::string{"in"});
+            wire<testing::record<TSL<TS<int>, 2>>>(w, src, std::string{"out"});
         }
     };
 }  // namespace
@@ -115,7 +115,7 @@ TEST_CASE("tsl: Out<TSL> sets children and In<TSL> reads the values back")
     CHECK_OUTPUT(testing::get_recorded_values<int>(ex.view().graph().global_state(), "out"), {11, 22, 33});
 }
 
-TEST_CASE("tsl: replay_list -> record_list round-trips list deltas (modified children only)")
+TEST_CASE("tsl: replay<TSL> -> record<TSL> round-trips list deltas (modified children only)")
 {
     (void)TypeRegistry::instance().register_scalar<int>("int");
 

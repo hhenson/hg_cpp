@@ -24,7 +24,7 @@ namespace
         static void           compose(Wiring &w)
         {
             auto c = wire<stdlib::const_<int>>(w, 7);
-            wire<testing::record<int>>(w, c, std::string{"out"});
+            wire<testing::record<TS<int>>>(w, c, std::string{"out"});
         }
     };
 

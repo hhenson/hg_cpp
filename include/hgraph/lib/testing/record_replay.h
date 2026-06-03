@@ -107,16 +107,27 @@ namespace hgraph::testing
     }
 
     // -----------------------------------------------------------------
-    // replay<T> — a multi-cycle source over a cycle-aligned buffer
+    // replay<S> / record<S> — schema-keyed multi-cycle source / sink over a
+    // cycle-aligned buffer. One template per direction, specialised per
+    // time-series schema (``TS<T>`` scalar, ``TSS<T>`` set, ``TSL<TS<T>, N>``
+    // list). There are no named variants — wire e.g. ``replay<TS<int>>``,
+    // ``replay<TSS<int>>``, or ``record<TSL<TS<int>, 3>>``.
     // -----------------------------------------------------------------
 
+    /** Multi-cycle source: emits a recorded sequence for the time-series schema ``S``. */
+    template <typename TSchema>
+    struct replay;
+
+    /** Multi-cycle sink: captures a time-series of schema ``S`` into a cycle-aligned buffer. */
+    template <typename TSchema>
+    struct record;
+
     /**
-     * Emits a recorded ``TS<T>`` sequence read from the ``GlobalState`` under
-     * ``key``: one output tick per cycle whose buffer element has a value,
-     * rescheduling itself until the buffer is exhausted.
+     * Scalar ``TS<T>`` source: one output tick per cycle whose buffer element has a
+     * value, rescheduling itself until the buffer is exhausted.
      */
     template <typename T>
-    struct replay
+    struct replay<TS<T>>
     {
         static constexpr auto name = "replay";
 
@@ -145,20 +156,16 @@ namespace hgraph::testing
         }
     };
 
-    // -----------------------------------------------------------------
-    // record<T> — captures a TS<T> into a cycle-aligned buffer
-    // -----------------------------------------------------------------
-
     /**
-     * Captures each tick of its input into a cycle-aligned ``List<Any>`` in the
-     * ``GlobalState`` under ``key`` (created on ``start``). It records the input's
-     * ``delta_value`` (the per-tick event), not the cumulative ``value`` — they
-     * coincide for scalar time-series but differ for compound types. Skipped cycles
-     * are padded with empty ``Any`` entries so the buffer index matches the engine
-     * cycle, mirroring the replay buffer shape.
+     * Scalar ``TS<T>`` sink: captures each tick of its input into a cycle-aligned
+     * ``List<Any>`` in the ``GlobalState`` under ``key`` (created on ``start``). It
+     * records the input's ``delta_value`` (the per-tick event), not the cumulative
+     * ``value`` — they coincide for scalar time-series but differ for compound types.
+     * Skipped cycles are padded with empty ``Any`` entries so the buffer index matches
+     * the engine cycle, mirroring the replay buffer shape.
      */
     template <typename T>
-    struct record
+    struct record<TS<T>>
     {
         static constexpr auto name = "record";
 
@@ -238,9 +245,9 @@ namespace hgraph::testing
      * initiates at start and reschedules until the buffer is exhausted.
      */
     template <typename T>
-    struct replay_set
+    struct replay<TSS<T>>
     {
-        static constexpr auto name              = "replay_set";
+        static constexpr auto name              = "replay";
         static constexpr bool schedule_on_start = true;
 
         static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched, State<int> index,
@@ -271,9 +278,9 @@ namespace hgraph::testing
 
     /** Captures each tick of a ``TSS<T>`` input as a ``SetDelta`` into the buffer. */
     template <typename T>
-    struct record_set
+    struct record<TSS<T>>
     {
-        static constexpr auto name = "record_set";
+        static constexpr auto name = "record";
 
         static void start(Scalar<"key", std::string> key, GlobalStateView gs) { gs.set(key.value(), make_buffer()); }
 
@@ -343,9 +350,9 @@ namespace hgraph::testing
      * ``replay``, it initiates at start and reschedules until the buffer is exhausted.
      */
     template <typename T, std::size_t N>
-    struct replay_list
+    struct replay<TSL<TS<T>, N>>
     {
-        static constexpr auto name              = "replay_list";
+        static constexpr auto name              = "replay";
         static constexpr bool schedule_on_start = true;
 
         static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched, State<int> index,
@@ -376,9 +383,9 @@ namespace hgraph::testing
 
     /** Captures each tick of a ``TSL<TS<T>, N>`` input as a ``ListDelta`` into the buffer. */
     template <typename T, std::size_t N>
-    struct record_list
+    struct record<TSL<TS<T>, N>>
     {
-        static constexpr auto name = "record_list";
+        static constexpr auto name = "record";
 
         static void start(Scalar<"key", std::string> key, GlobalStateView gs) { gs.set(key.value(), make_buffer()); }
 

@@ -43,7 +43,7 @@ namespace hgraph::testing
     {
         using element = T;
 
-        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay<T>>(w, key); }
+        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay<TS<T>>>(w, key); }
 
         static void seed(const GlobalStateView &gs, std::string_view key,
                          const std::vector<std::optional<element>> &seq)
@@ -54,7 +54,7 @@ namespace hgraph::testing
         template <typename Port>
         static void wire_record(Wiring &w, Port port, const std::string &key)
         {
-            wire<record<T>>(w, port, key);
+            wire<record<TS<T>>>(w, port, key);
         }
 
         static std::vector<std::optional<element>> read(const GlobalStateView &gs, std::string_view key)
@@ -68,7 +68,7 @@ namespace hgraph::testing
     {
         using element = SetDelta<T>;
 
-        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay_set<T>>(w, key); }
+        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay<TSS<T>>>(w, key); }
 
         static void seed(const GlobalStateView &gs, std::string_view key,
                          const std::vector<std::optional<element>> &seq)
@@ -79,7 +79,7 @@ namespace hgraph::testing
         template <typename Port>
         static void wire_record(Wiring &w, Port port, const std::string &key)
         {
-            wire<record_set<T>>(w, port, key);
+            wire<record<TSS<T>>>(w, port, key);
         }
 
         static std::vector<std::optional<element>> read(const GlobalStateView &gs, std::string_view key)
@@ -101,7 +101,10 @@ namespace hgraph::testing
         using T       = typename TElementSchema::value_type;
         using element = ListDelta<T>;
 
-        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay_list<T, FixedSize>>(w, key); }
+        static auto wire_replay(Wiring &w, const std::string &key)
+        {
+            return wire<replay<TSL<TElementSchema, FixedSize>>>(w, key);
+        }
 
         static void seed(const GlobalStateView &gs, std::string_view key,
                          const std::vector<std::optional<element>> &seq)
@@ -112,7 +115,7 @@ namespace hgraph::testing
         template <typename Port>
         static void wire_record(Wiring &w, Port port, const std::string &key)
         {
-            wire<record_list<T, FixedSize>>(w, port, key);
+            wire<record<TSL<TElementSchema, FixedSize>>>(w, port, key);
         }
 
         static std::vector<std::optional<element>> read(const GlobalStateView &gs, std::string_view key)
