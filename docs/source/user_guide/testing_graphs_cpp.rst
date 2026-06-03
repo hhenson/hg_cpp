@@ -72,11 +72,13 @@ input may be a braced list (its type is inferred); later inputs are passed as
    CHECK_OUTPUT(testing::eval_node<Sum>({1, none, 3}, rhs), {11, 21, 33});  // lhs persists at cycle 1
 
 The first parameter must be a time-series input, and the node must have exactly one
-output. ``eval_node`` drives both **scalar** ``TS<T>`` and **set** ``TSS<T>`` inputs
-and outputs: a ``TSS`` input/output exchanges a per-cycle ``SetDelta<T>`` rather than a
-bare value (see *Set time-series* below). Other container types
-(``TSB``/``TSL``/``TSD``/``TSW``) are a future extension — each is one new
-``ts_harness`` specialisation (see below) plus its ``replay``/``record`` pair.
+output. ``eval_node`` drives **scalar** ``TS<T>``, **set** ``TSS<T>``, and fixed-size
+**list** ``TSL<TS<T>, N>`` inputs and outputs: a ``TSS`` input/output exchanges a
+per-cycle ``SetDelta<T>`` and a ``TSL`` one a per-cycle ``ListDelta<T>``, rather than a
+bare value (see *Set time-series* and *List time-series* below). The remaining
+container types (``TSB``/``TSD``/``TSW``, and dynamic/nested ``TSL``) are a future
+extension — each is one new ``ts_harness`` specialisation (see below) plus its
+``replay``/``record`` pair.
 
 .. _ts-harness:
 
@@ -85,9 +87,10 @@ How the harness dispatches per schema
 
 ``eval_node`` itself is schema-agnostic: for each input and the output it consults a
 ``ts_harness<S>`` trait (in ``<hgraph/lib/testing/eval_node.h>``) that names the
-per-cycle **harness element** (``T`` for ``TS<T>``, ``SetDelta<T>`` for ``TSS<T>``)
-and the four operations it needs — wire the ``replay`` source, seed its buffer, wire
-the ``record`` sink, and read the captured buffer back. The first input's element type
+per-cycle **harness element** (``T`` for ``TS<T>``, ``SetDelta<T>`` for ``TSS<T>``,
+``ListDelta<T>`` for ``TSL<TS<T>, N>``) and the four operations it needs — wire the
+``replay`` source, seed its buffer, wire the ``record`` sink, and read the captured
+buffer back. The first input's element type
 is what the (braced) first argument holds, and the output's element type is what the
 returned ``std::vector<std::optional<…>>`` holds. Supporting a new time-series kind is
 therefore a localised change: add a ``ts_harness`` specialisation alongside that kind's
@@ -271,3 +274,54 @@ value-layer **mutable sets**, matching a live ``TSS`` delta), so ``SetDelta``
 equality is order-independent and hash-based — no per-comparison materialisation. A
 ``TSS`` ``const_`` (a constant set source) is still future work: it needs a
 set-valued wiring scalar, which is its own design step.
+
+List time-series (``TSL``)
+--------------------------
+
+A fixed-size list time-series ``TSL<TS<T>, N>`` is ``N`` child scalar time-series. It
+ticks a **delta** each cycle — the children that ticked, as a ``{index -> value}``
+map. Nodes author it with the ``In<Name, TSL<TS<T>, N>>`` selector (``size``, ``at(i)``,
+``values``, and ``delta()``) and the ``Out<TSL<TS<T>, N>>`` selector, which ticks a
+child either flat (``out.set(i, v)``) or through a per-child sub-selector
+(``out[i].set(v)``, reusing the scalar ``Out<TS<T>>`` surface).
+
+A delta is a **``ListDelta<T>``** (in ``<hgraph/types/static_node.h>``, alongside
+``In``/``Out``) — a wrapper over an **immutable** value-layer ``Map<index, value>``
+that reads its entries on demand. It is the ``delta_value`` type a node reads via
+``In<...>::delta()``, order-independent for equality. Build one either as a sparse map
+or positionally:
+
+.. code-block:: cpp
+
+   list_delta<int>({{0, 10}, {2, 30}})   // sparse: index 0 -> 10, index 2 -> 30
+   list_delta<int>({10, none, 30})        // positional: position is the index, none = no tick
+
+(The delta value is *immutable* — a compact ``Map``, built once — unlike the ``TSS``
+delta whose set fields are mutable. A no-tick *cycle* is ``none`` at that cycle, not an
+empty ``list_delta``.)
+
+The simplest test path is :ref:`eval_node <eval-node>`, which dispatches ``TSL``
+inputs/outputs through the ``ListDelta``-valued harness (see :ref:`ts-harness`): a
+``TSL`` input is a ``std::vector<std::optional<ListDelta<T>>>`` and a ``TSL`` output
+comes back the same way.
+
+.. code-block:: cpp
+
+   struct MirrorList { static void eval(In<"l", TSL<TS<int>, 2>> l, Out<TSL<TS<int>, 2>> out)
+                       { for (auto &[i, v] : l.delta().items()) out.set(i, v); } };
+
+   const std::vector<std::optional<ListDelta<int>>> deltas{
+       list_delta<int>({{0, 1}, {1, 2}}),   // both children tick
+       list_delta<int>({{0, 5}}),            // only child 0 ticks
+   };
+   CHECK_OUTPUT(testing::eval_node<MirrorList>(deltas), deltas);   // round-trips the deltas
+
+The building blocks are also usable directly: ``replay_list<T, N>`` sets each
+``index -> value`` of the buffered delta on a ``TSL<TS<T>, N>`` output; ``record_list<T,
+N>`` captures each tick's delta (only the children modified that cycle); ``set_replay_list_deltas``
+/ ``get_recorded_list_deltas`` convert to/from ``std::vector<std::optional<ListDelta<T>>>``;
+and ``CHECK_OUTPUT`` renders each delta as the map ``{0: 1, 1: 10}`` on mismatch.
+
+This first slice covers fixed-size ``TSL`` with **scalar** children (``TS<T>``);
+dynamic (resizable) ``TSL`` and nested element schemas (a ``TSL`` of ``TSS``/``TSB``/…)
+are future extensions.

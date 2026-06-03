@@ -88,6 +88,39 @@ namespace hgraph::testing
         }
     };
 
+    // Detect a scalar time-series child schema (TSL's first slice supports TS<T>
+    // children only).
+    template <typename S> struct is_scalar_ts : std::false_type {};
+    template <typename V> struct is_scalar_ts<TS<V>> : std::true_type {};
+
+    template <typename TElementSchema, std::size_t FixedSize>
+    struct ts_harness<TSL<TElementSchema, FixedSize>>
+    {
+        static_assert(is_scalar_ts<TElementSchema>::value,
+                      "eval_node TSL support is limited to scalar TS<T> children in this slice");
+        using T       = typename TElementSchema::value_type;
+        using element = ListDelta<T>;
+
+        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay_list<T, FixedSize>>(w, key); }
+
+        static void seed(const GlobalStateView &gs, std::string_view key,
+                         const std::vector<std::optional<element>> &seq)
+        {
+            set_replay_list_deltas<T>(gs, key, seq);
+        }
+
+        template <typename Port>
+        static void wire_record(Wiring &w, Port port, const std::string &key)
+        {
+            wire<record_list<T, FixedSize>>(w, port, key);
+        }
+
+        static std::vector<std::optional<element>> read(const GlobalStateView &gs, std::string_view key)
+        {
+            return get_recorded_list_deltas<T>(gs, key);
+        }
+    };
+
     namespace eval_node_detail
     {
         // The node's wire-time parameters (In + Scalar, in eval order).

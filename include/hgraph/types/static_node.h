@@ -8,12 +8,18 @@
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/time_series/ts_data/set_view.h>
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
+#include <hgraph/types/time_series/ts_input/list_view.h>
 #include <hgraph/types/time_series/ts_input/set_view.h>
+#include <hgraph/types/time_series/ts_output/list_view.h>
 #include <hgraph/types/time_series/ts_output/set_view.h>
 #include <hgraph/types/value/value.h>
+#include <hgraph/types/value/value_builder.h>
 #include <hgraph/types/value/value_view.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -184,6 +190,138 @@ namespace hgraph
     }
 
     // -----------------------------------------------------------------
+    // List time-series delta
+    // -----------------------------------------------------------------
+
+    /**
+     * Build a list-time-series **delta value** — an **immutable** value-layer
+     * ``Map<int64, T>`` mapping a child index to that child's value, for the
+     * children that ticked this cycle. The map is built once via ``MapBuilder``
+     * (compact maps have no mutation path, which is exactly the immutability a
+     * delta needs); the C++ surface speaks ``std::size_t`` indices while the
+     * value-layer key is the registered ``int64`` scalar (a ``size_t`` scalar
+     * would collide with ``uint64`` on LP64 platforms).
+     */
+    template <typename TValue>
+    [[nodiscard]] inline Value make_list_delta_value(const std::map<std::size_t, TValue> &entries)
+    {
+        const auto *key_binding = ValuePlanFactory::instance().binding_for(scalar_descriptor<std::int64_t>::value_meta());
+        const auto *val_binding = ValuePlanFactory::instance().binding_for(scalar_descriptor<TValue>::value_meta());
+        if (key_binding == nullptr || val_binding == nullptr)
+        {
+            throw std::logic_error("ListDelta could not resolve the delta value binding");
+        }
+        MapBuilder builder{*key_binding, *val_binding};
+        for (const auto &[index, value] : entries)
+        {
+            builder.set_item<std::int64_t, TValue>(static_cast<std::int64_t>(index), value);
+        }
+        return builder.build();
+    }
+
+    /**
+     * Lightweight wrapper over a list-time-series **delta value** — an immutable
+     * ``Map<int64, T>`` (child index -> value) for the children that ticked this
+     * cycle. ``ListDelta`` owns a snapshot of that map value, so it is safe to copy
+     * out of an input selector and compare after the producing call stack has
+     * unwound. The elements are read on demand; equality is order-independent
+     * (compares as maps). Build one from elements with :cpp:func:`list_delta`.
+     */
+    template <typename TValue>
+    class ListDelta
+    {
+      public:
+        ListDelta() = default;
+        /** Snapshot an external delta map view into an owned copy. */
+        explicit ListDelta(const ValueView &map) : value_(map.valid() ? Value{map} : Value{}) {}
+        /** Take ownership of a built delta map value. */
+        explicit ListDelta(Value owned) : value_(std::move(owned)) {}
+
+        [[nodiscard]] bool valid() const noexcept { return value_.has_value(); }
+
+        /** The underlying delta map value (``Map<int64, T>``). */
+        [[nodiscard]] ValueView value() const noexcept { return value_.view(); }
+
+        [[nodiscard]] bool contains(std::size_t index) const
+        {
+            if (!valid()) { return false; }
+            return value().as_map().contains(index_key(index).view());
+        }
+
+        /** Value of the child at ``index`` (must be present). */
+        [[nodiscard]] TValue at(std::size_t index) const
+        {
+            return value().as_map().at(index_key(index).view()).template checked_as<TValue>();
+        }
+
+        /** The modified child indices (unordered). */
+        [[nodiscard]] std::vector<std::size_t> indices() const
+        {
+            std::vector<std::size_t> out;
+            for (const auto &entry : items()) { out.push_back(entry.first); }
+            return out;
+        }
+
+        /** The ``(index, value)`` pairs of the modified children. */
+        [[nodiscard]] std::vector<std::pair<std::size_t, TValue>> items() const
+        {
+            std::vector<std::pair<std::size_t, TValue>> out;
+            if (!valid()) { return out; }
+            const auto map = value().as_map();
+            for (const auto &[key, val] : map)
+            {
+                out.emplace_back(static_cast<std::size_t>(key.template checked_as<std::int64_t>()),
+                                 val.template checked_as<TValue>());
+            }
+            return out;
+        }
+
+        bool operator==(const ListDelta &other) const { return to_map(items()) == to_map(other.items()); }
+
+      private:
+        [[nodiscard]] static Value index_key(std::size_t index)
+        {
+            (void)scalar_descriptor<std::int64_t>::value_meta();  // ensure int64 is registered
+            return Value{static_cast<std::int64_t>(index)};
+        }
+        static std::map<std::size_t, TValue> to_map(const std::vector<std::pair<std::size_t, TValue>> &v)
+        {
+            return std::map<std::size_t, TValue>{v.begin(), v.end()};
+        }
+
+        Value value_{};
+    };
+
+    /**
+     * Build an owning :cpp:class:`ListDelta` from a sparse index -> value map, e.g.
+     * ``list_delta<int>({{0, 10}, {2, 30}})`` (index 1 did not tick).
+     */
+    template <typename TValue>
+    [[nodiscard]] inline ListDelta<TValue> list_delta(std::initializer_list<std::pair<std::size_t, TValue>> entries)
+    {
+        std::map<std::size_t, TValue> map;
+        for (const auto &entry : entries) { map.insert_or_assign(entry.first, entry.second); }
+        return ListDelta<TValue>{make_list_delta_value<TValue>(map)};
+    }
+
+    /**
+     * Build an owning :cpp:class:`ListDelta` from a positional sequence: position is
+     * the child index and ``std::nullopt`` is "no tick at that index", e.g.
+     * ``list_delta<int>({10, none, 30})``. (A no-tick *cycle* is expressed by
+     * ``none`` at that cycle, not by an empty ``list_delta``.)
+     */
+    template <typename TValue>
+    [[nodiscard]] inline ListDelta<TValue> list_delta(std::vector<std::optional<TValue>> positional)
+    {
+        std::map<std::size_t, TValue> map;
+        for (std::size_t i = 0; i < positional.size(); ++i)
+        {
+            if (positional[i].has_value()) { map.emplace(i, *positional[i]); }
+        }
+        return ListDelta<TValue>{make_list_delta_value<TValue>(map)};
+    }
+
+    // -----------------------------------------------------------------
     // Selector markers
     // -----------------------------------------------------------------
 
@@ -254,6 +392,72 @@ namespace hgraph
             return out;
         }
 
+        TSInputView view_;
+    };
+
+    /**
+     * List time-series input (``TSL<TS<T>, N>``). Exposes the fixed-size collection
+     * of child time-series: their current values (by index or all-at-once), and this
+     * cycle's delta (the children that ticked) as a :cpp:class:`ListDelta`. Only
+     * scalar children (``TS<T>``) are supported in this slice.
+     */
+    template <fixed_string Name, typename TValue, std::size_t N>
+    class In<Name, TSL<TS<TValue>, N>>
+    {
+      public:
+        using schema                        = TSL<TS<TValue>, N>;
+        using value_type                    = TValue;  // the child element type
+        static constexpr auto        field_name = Name;
+        static constexpr std::size_t fixed_size = N;
+
+        explicit In(TSInputView view) noexcept : view_(std::move(view)) {}
+
+        [[nodiscard]] std::size_t size() const
+        {
+            auto list = view_.as_list();
+            return list.size();
+        }
+
+        /** Current value of child ``index``. */
+        [[nodiscard]] TValue at(std::size_t index) const
+        {
+            auto list = view_.as_list();
+            return list.at(index).value().template checked_as<TValue>();
+        }
+
+        /** All children's current values; ``std::nullopt`` where a child is not valid. */
+        [[nodiscard]] std::vector<std::optional<TValue>> values() const
+        {
+            std::vector<std::optional<TValue>> out;
+            auto                               list = view_.as_list();
+            for (std::size_t i = 0; i < list.size(); ++i)
+            {
+                auto child = list.at(i);
+                if (child.valid()) { out.push_back(child.value().template checked_as<TValue>()); }
+                else { out.push_back(std::nullopt); }
+            }
+            return out;
+        }
+
+        /** This cycle's delta as an owned ``ListDelta`` (modified child index -> value). */
+        [[nodiscard]] ListDelta<TValue> delta() const
+        {
+            std::map<std::size_t, TValue> entries;
+            auto                          list = view_.as_list();
+            for (const auto &[index, child] : list.modified_items())
+            {
+                entries.emplace(index, child.value().template checked_as<TValue>());
+            }
+            return ListDelta<TValue>{make_list_delta_value<TValue>(entries)};
+        }
+
+        [[nodiscard]] bool modified() const { return view_.modified(); }
+        [[nodiscard]] bool valid() const { return view_.valid(); }
+
+        [[nodiscard]] TSLInputView      list_view() const { return view_.as_list(); }
+        [[nodiscard]] const TSInputView &view() const noexcept { return view_; }
+
+      private:
         TSInputView view_;
     };
 
@@ -340,6 +544,58 @@ namespace hgraph
         }
         /** Remove all elements. */
         void clear() const { view_.as_set().begin_mutation(evaluation_time_).clear(); }
+
+        [[nodiscard]] bool modified() const { return view_.modified(); }
+        [[nodiscard]] bool valid() const { return view_.valid(); }
+        [[nodiscard]] const TSOutputView &view() const noexcept { return view_; }
+        [[nodiscard]] engine_time_t       evaluation_time() const noexcept { return evaluation_time_; }
+
+      private:
+        TSOutputView  view_;
+        engine_time_t evaluation_time_{MIN_DT};
+    };
+
+    /**
+     * List time-series output (``TSL<TS<T>, N>``). Tick a child time-series by index,
+     * either flat (``out.set(i, v)``) or through a per-child sub-selector
+     * (``out[i].set(v)`` / ``out[i].apply(view)``, which reuses the scalar
+     * ``Out<TS<T>>`` surface). Only scalar children (``TS<T>``) are supported here.
+     */
+    template <typename TValue, std::size_t N>
+    class Out<TSL<TS<TValue>, N>>
+    {
+      public:
+        using schema                        = TSL<TS<TValue>, N>;
+        using value_type                    = TValue;
+        static constexpr std::size_t fixed_size = N;
+
+        Out(TSOutputView view, engine_time_t evaluation_time) noexcept
+            : view_(std::move(view)), evaluation_time_(evaluation_time)
+        {
+        }
+
+        [[nodiscard]] std::size_t size() const
+        {
+            auto list = view_.as_list();
+            return list.size();
+        }
+
+        /** Per-child output selector: ``out[i].set(v)`` ticks child ``i``. */
+        [[nodiscard]] Out<TS<TValue>> operator[](std::size_t index) const
+        {
+            auto list = view_.as_list();
+            return Out<TS<TValue>>{list.at(index), evaluation_time_};
+        }
+
+        /** Set child ``index`` to ``value`` and tick it (thin wrapper over ``operator[]``). */
+        template <typename U>
+        void set(std::size_t index, U &&value) const
+        {
+            (*this)[index].set(std::forward<U>(value));
+        }
+
+        /** Type-erased per-child set (see ``Out<TS<T>>::apply``). */
+        void apply(std::size_t index, const ValueView &value) const { (*this)[index].apply(value); }
 
         [[nodiscard]] bool modified() const { return view_.modified(); }
         [[nodiscard]] bool valid() const { return view_.valid(); }

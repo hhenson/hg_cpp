@@ -8,6 +8,7 @@
 #include <fmt/core.h>
 
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -33,13 +34,11 @@ namespace hgraph::testing
 
     namespace detail
     {
-        // A delta-like element (e.g. SetDelta) wraps a value bundle: render via its
-        // ``value().to_string()`` rather than constructing a scalar ``Value``.
+        // A delta-like element (e.g. SetDelta, ListDelta) wraps a value: render via
+        // its ``value().to_string()`` rather than constructing a scalar ``Value``.
         template <typename T>
         concept value_wrapper = requires(const T &x) {
-            { x.value() };
-            x.added();
-            x.removed();
+            { x.value().to_string() } -> std::convertible_to<std::string>;
         };
 
         template <typename T>
