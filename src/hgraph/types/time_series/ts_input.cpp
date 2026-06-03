@@ -180,19 +180,19 @@ namespace hgraph
             return schema != nullptr ? schema->element_ts() : nullptr;
         }
 
-        [[nodiscard]] TSDataView tsb_target_child_at(TSDataView parent, std::size_t index)
+        [[nodiscard]] TSDataView tsb_target_child_at(const TSDataView &parent, std::size_t index)
         {
             auto bundle = parent.as_bundle();
             return bundle.at(index);
         }
 
-        [[nodiscard]] TSDataView tsl_target_child_at(TSDataView parent, std::size_t index)
+        [[nodiscard]] TSDataView tsl_target_child_at(const TSDataView &parent, std::size_t index)
         {
             auto list = parent.as_list();
             return list.at(index);
         }
 
-        [[nodiscard]] TSDataView tsd_target_child_at(TSDataView parent, std::size_t slot)
+        [[nodiscard]] TSDataView tsd_target_child_at(const TSDataView &parent, std::size_t slot)
         {
             auto dict = parent.as_dict();
             return dict.at_slot(slot);
@@ -1901,7 +1901,8 @@ namespace hgraph
 
         void TSInputActiveTarget::subscribe(const TSDataView &observed_, Notifiable *target_notifier)
         {
-            if (observed_.valid() && observed_.data() == observed.data() && observed_.binding() == observed.binding())
+            if (observed_.valid() && observed.valid() && observed_.data() == observed.data() &&
+                observed_.binding() == observed.binding())
             {
                 notifier.target = target_notifier;
                 return;
@@ -1910,16 +1911,22 @@ namespace hgraph
             unsubscribe();
             notifier.target = target_notifier;
             if (target_notifier == nullptr || !observed_.valid()) { return; }
-            observed = observed_.borrowed_ref();
-            observed.subscribe(&notifier);
+            const auto observed_ref = observed_.storage_ref();
+            TSDataView observed_view{observed_ref};
+            observed_view.subscribe(&notifier);
+            observed = observed_ref;
         }
 
         void TSInputActiveTarget::unsubscribe() noexcept
         {
             if (!observed.valid()) { return; }
-            [[maybe_unused]] auto reset_observed = make_scope_exit([this]() noexcept { observed = {}; });
+            TSDataView            observed_view{observed};
+            [[maybe_unused]] auto reset_observed = make_scope_exit([this]() noexcept {
+                observed.reset();
+                notifier.target = nullptr;
+            });
             [[maybe_unused]] auto unsubscribe_observer =
-                make_scope_exit<true>([this] { observed.unsubscribe(&notifier); });
+                make_scope_exit<true>([&] { observed_view.unsubscribe(&notifier); });
         }
 
     }  // namespace detail

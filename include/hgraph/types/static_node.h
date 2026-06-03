@@ -14,7 +14,6 @@
 #include <hgraph/types/value/value_view.h>
 
 #include <cstddef>
-#include <memory>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -40,60 +39,89 @@ namespace hgraph
      * See ``data_structures`` developer guide: *Wiring* and
      * *Schemas > Static Schema*.
      *
-     * This first slice covers the scalar time-series path: ``In<Name, TS<T>>``,
-     * ``Out<TS<T>>``, scalar ``State<T>`` and ``Scalar<Name, T>`` (per-instance
-     * wiring-time configuration). Container selectors, recordable state,
-     * clock/scheduler injection and push sources are deferred.
+     * The typed selector surface currently covers scalar ``TS<T>`` values,
+     * set ``TSS<T>`` values, scalar ``State<T>``, wiring-time ``Scalar<Name, T>``
+     * values, graph-level ``GlobalState<T>``, and scheduler injection. Other
+     * container shapes and push-source selectors are still being filled in.
      */
 
     // -----------------------------------------------------------------
     // Set time-series delta
     // -----------------------------------------------------------------
 
+    template <typename TValue>
+    [[nodiscard]] inline Value make_set_delta_value(const std::vector<TValue> &added,
+                                                    const std::vector<TValue> &removed);
+
+    template <typename TValue>
+    [[nodiscard]] inline const ValueTypeBinding &set_delta_value_binding()
+    {
+        auto       &registry = TypeRegistry::instance();
+        const auto *t_meta   = scalar_descriptor<TValue>::value_meta();
+        const auto *set_t    = registry.mutable_set(t_meta);
+        const auto *schema   = registry.un_named_bundle({{"added", set_t}, {"removed", set_t}});
+        const auto *binding  = ValuePlanFactory::instance().binding_for(schema);
+        if (binding == nullptr) { throw std::logic_error("SetDelta could not resolve the delta value binding"); }
+        return *binding;
+    }
+
+    template <typename TValue, typename BundleMutation>
+    inline void populate_set_delta_bundle(BundleMutation &&bundle,
+                                          const std::vector<TValue> &added,
+                                          const std::vector<TValue> &removed)
+    {
+        {
+            auto m = bundle.field("added").as_mutable_set();
+            for (const auto &e : added) { (void)m.add(Value{e}.view()); }
+        }
+        {
+            auto m = bundle.field("removed").as_mutable_set();
+            for (const auto &e : removed) { (void)m.add(Value{e}.view()); }
+        }
+    }
+
     /**
      * Lightweight wrapper over a set-time-series **delta value** — a
      * ``Bundle{added, removed}`` whose fields are indexed containers of ``T`` (a
-     * live ``TSS`` delta has ``Set`` fields; a built/recorded delta has ``List``
-     * fields — both read uniformly via the indexed view). Non-materialising: it
-     * reads the elements from the underlying value on demand.
+     * live ``TSS`` delta has ``Set`` fields; a built/recorded delta has mutable
+     * ``Set`` fields — both read uniformly via the indexed view).
      *
-     * It can **borrow** an external delta view (e.g. ``In<TSS<T>>::delta()``) or
-     * **own** a built delta (a shared bundle ``Value``), so it is copyable and
-     * value-semantic. Equality is order-independent (compares as sets). Build one
-     * from elements with :cpp:func:`set_delta`.
+     * ``SetDelta`` owns a snapshot of the bundle value. It is therefore safe to
+     * copy out of an input selector and compare after the producing call stack has
+     * unwound. Equality is order-independent (compares as sets). Build one from
+     * elements with :cpp:func:`set_delta`.
      */
     template <typename TValue>
     class SetDelta
     {
       public:
         SetDelta() = default;
-        /** Borrow an external delta bundle view (must outlive this wrapper). */
-        explicit SetDelta(const ValueView &bundle) noexcept : binding_(bundle.binding()), data_(bundle.data()) {}
-        /** Own a built delta bundle. */
-        explicit SetDelta(std::shared_ptr<const Value> owned) : owned_(std::move(owned))
+        explicit SetDelta(std::vector<TValue> added, std::vector<TValue> removed)
+            : storage_(make_storage(added, removed))
         {
-            if (owned_ && owned_->has_value())
-            {
-                const auto view = owned_->view();
-                binding_        = view.binding();
-                data_           = view.data();
-            }
         }
 
-        [[nodiscard]] bool                valid() const noexcept { return binding_ != nullptr && data_ != nullptr; }
+        /** Copy an external delta bundle view into an owned snapshot. */
+        explicit SetDelta(const ValueView &bundle)
+        {
+            if (bundle.valid())
+            {
+                storage_ = make_storage(elements_from(bundle, "added"), elements_from(bundle, "removed"));
+            }
+        }
+        /** Copy a built delta bundle into this handle's storage. */
+        explicit SetDelta(const Value &owned) : SetDelta(owned.view()) {}
+        explicit SetDelta(Value &&owned) : SetDelta(owned.view()) {}
+
+        [[nodiscard]] bool                valid() const noexcept { return storage_.has_value(); }
         [[nodiscard]] std::vector<TValue> added() const { return elements("added"); }
         [[nodiscard]] std::vector<TValue> removed() const { return elements("removed"); }
 
         /** The underlying delta bundle value (``Bundle{added, removed}``). */
-        [[nodiscard]] ValueView value() const noexcept { return ValueView{binding_, data_}; }
+        [[nodiscard]] ValueView value() const noexcept { return ValueView{storage_.binding(), storage_.data()}; }
 
         bool operator==(const SetDelta &other) const
         {
-            // Same representation (e.g. both built/recorded delta bundles): the
-            // fields are value-layer Sets, so the value equality is order-independent
-            // and hash-based — no materialisation. Otherwise (e.g. a live TSS delta
-            // vs a built one, different bindings) fall back to comparing element sets.
-            if (valid() && other.valid() && binding_ == other.binding_) { return value().equals(other.value()); }
             return to_set(added()) == to_set(other.added()) && to_set(removed()) == to_set(other.removed());
         }
 
@@ -102,15 +130,33 @@ namespace hgraph
         {
             std::vector<TValue> out;
             if (!valid()) { return out; }
-            const auto indexed = ValueView{binding_, data_}.as_bundle().field(field).as_indexed_view();
+            return elements_from(value(), field);
+        }
+
+        [[nodiscard]] static std::vector<TValue> elements_from(const ValueView &bundle, std::string_view field)
+        {
+            std::vector<TValue> out;
+            if (!bundle.valid()) { return out; }
+            const auto indexed = bundle.as_bundle().field(field).as_indexed_view();
             for (std::size_t i = 0; i < indexed.size(); ++i) { out.push_back(indexed.at(i).template checked_as<TValue>()); }
             return out;
         }
         static std::set<TValue> to_set(const std::vector<TValue> &v) { return std::set<TValue>{v.begin(), v.end()}; }
 
-        std::shared_ptr<const Value> owned_{};  // set when the delta is owned
-        const ValueTypeBinding      *binding_{nullptr};
-        const void                  *data_{nullptr};
+        using storage_type = Value::storage_type;
+
+        [[nodiscard]] static storage_type make_storage(const std::vector<TValue> &added,
+                                                       const std::vector<TValue> &removed)
+        {
+            const auto &binding = set_delta_value_binding<TValue>();
+            storage_type storage{binding};
+            populate_set_delta_bundle<TValue>(ValueView{&binding, storage.data()}.as_bundle().begin_mutation(),
+                                              added,
+                                              removed);
+            return storage;
+        }
+
+        storage_type storage_{};
     };
 
     /**
@@ -123,22 +169,10 @@ namespace hgraph
     [[nodiscard]] inline Value make_set_delta_value(const std::vector<TValue> &added,
                                                     const std::vector<TValue> &removed)
     {
-        auto       &registry = TypeRegistry::instance();
-        const auto *t_meta   = scalar_descriptor<TValue>::value_meta();
-        const auto *set_t    = registry.mutable_set(t_meta);
-        const auto *schema   = registry.un_named_bundle({{"added", set_t}, {"removed", set_t}});
-        const auto *binding  = ValuePlanFactory::instance().binding_for(schema);
-
-        Value delta{*binding};
+        const auto &binding = set_delta_value_binding<TValue>();
+        Value       delta{binding};
         auto  bundle = delta.as_bundle().begin_mutation();
-        {
-            auto m = bundle.field("added").as_mutable_set();
-            for (const auto &e : added) { (void)m.add(Value{e}.view()); }
-        }
-        {
-            auto m = bundle.field("removed").as_mutable_set();
-            for (const auto &e : removed) { (void)m.add(Value{e}.view()); }
-        }
+        populate_set_delta_bundle<TValue>(bundle, added, removed);
         return delta;
     }
 
@@ -146,7 +180,7 @@ namespace hgraph
     template <typename TValue>
     [[nodiscard]] inline SetDelta<TValue> set_delta(std::vector<TValue> added, std::vector<TValue> removed)
     {
-        return SetDelta<TValue>{std::make_shared<const Value>(make_set_delta_value<TValue>(added, removed))};
+        return SetDelta<TValue>{std::move(added), std::move(removed)};
     }
 
     // -----------------------------------------------------------------
@@ -202,7 +236,7 @@ namespace hgraph
         [[nodiscard]] std::vector<TValue> added() const { return collect(view_.as_set().added()); }
         [[nodiscard]] std::vector<TValue> removed() const { return collect(view_.as_set().removed()); }
 
-        /** This cycle's delta as a lightweight ``SetDelta`` wrapper over the delta value. */
+        /** This cycle's delta as an owned ``SetDelta`` snapshot. */
         [[nodiscard]] SetDelta<TValue> delta() const { return SetDelta<TValue>{view_.delta_value()}; }
 
         [[nodiscard]] bool modified() const { return view_.modified(); }

@@ -48,7 +48,7 @@ namespace hgraph::detail
         using find_key_fn = std::size_t (*)(const TSValueTypeMetaData *schema, std::string_view name) noexcept;
         using child_schema_fn = const TSValueTypeMetaData *(*)(const TSValueTypeMetaData *schema,
                                                                std::size_t                index) noexcept;
-        using target_child_fn = TSDataView (*)(TSDataView parent, std::size_t index);
+        using target_child_fn = TSDataView (*)(const TSDataView &parent, std::size_t index);
         /** Convert a non-peered input projection of this shape to a reference token. */
         using reference_fn = TimeSeriesReference (*)(const TSInputView &view);
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -99,7 +99,7 @@ namespace hgraph::detail
         TSInputActiveTarget *parent{nullptr};
         std::size_t          slot{0};
         bool                 active{false};
-        TSDataView           observed{};
+        TSDataStorageRef<>   observed{};
         TSInputSchedulingNotifier notifier{};
         std::unordered_map<std::size_t, std::unique_ptr<TSInputActiveTarget>> children{};
     };

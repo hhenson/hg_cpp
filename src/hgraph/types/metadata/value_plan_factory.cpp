@@ -741,6 +741,8 @@ namespace hgraph
         std::lock_guard<std::mutex> lock(mutex_);
         cache_.clear();
         binding_cache_.clear();
+        clear_compact_container_plans();
+        clear_mutable_container_plans();
         clear_structured_indexed_ops();
     }
 

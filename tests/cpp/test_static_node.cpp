@@ -13,6 +13,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace
 {
@@ -112,6 +113,26 @@ TEST_CASE("static node: node kind is inferred from In/Out selectors")
     CHECK(compute.view().node_kind() == NodeKind::Compute);
     CHECK(compute.view().has_input());
     CHECK(compute.view().has_output());
+}
+
+TEST_CASE("static node: SetDelta construction survives value registry resets")
+{
+    using namespace hgraph;
+
+    {
+        (void)TypeRegistry::instance().register_scalar<int>("int");
+        const auto first = set_delta<int>({1}, {});
+        CHECK(first.added() == std::vector<int>{1});
+    }
+
+    ValuePlanFactory::instance().reset();
+    ValueTypeBinding::clear();
+    TypeRegistry::instance().reset();
+
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+    const auto second = set_delta<int>({2}, {1});
+    CHECK(second.added() == std::vector<int>{2});
+    CHECK(second.removed() == std::vector<int>{1});
 }
 
 TEST_CASE("static node: source -> compute graph runs in simulation mode")

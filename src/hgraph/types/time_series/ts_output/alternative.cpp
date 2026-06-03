@@ -180,7 +180,7 @@ namespace hgraph::detail
             {
                 throw std::logic_error("TSOutput from-REF cannot project a child from this output schema");
             }
-            auto child = ops.target_child(parent.data_view().borrowed_ref(), index);
+            auto child = ops.target_child(parent.data_view(), index);
             if (!child.valid()) { throw std::logic_error("TSOutput from-REF output child projection failed"); }
             return source_child_view(parent, child);
         }

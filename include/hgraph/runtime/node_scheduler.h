@@ -163,9 +163,10 @@ namespace hgraph
          * strictly in the future; **during ``start``** (before the node is
          * started) a node may schedule its first evaluation at the current
          * (start) time via ``schedule(now())`` — this is how a source initiates
-         * itself. A ``tag`` replaces any prior event under the same tag.
+         * itself. A non-empty ``tag`` replaces any prior event under the same tag.
          * ``on_wall_clock`` is not yet supported. Mirrors the authoritative
-         * Python guard ``when > (now if started else MIN_DT)``.
+         * Python guard for started nodes, while preserving the start-cycle
+         * ``schedule(now())`` source pattern before the node has started.
          */
         void schedule(engine_time_t when, std::optional<std::string> tag = std::nullopt,
                       bool on_wall_clock = false) const
@@ -175,20 +176,29 @@ namespace hgraph
             {
                 throw std::logic_error("NodeScheduler: wall-clock alarms are not supported in simulation yet");
             }
-            const std::string tag_value = tag.value_or("");
-            if (tag.has_value())
+            // Started: only the future. Not yet started: the start cycle onward.
+            if (started_)
+            {
+                if (when <= now_) { return; }
+            }
+            else if (when < now_)
+            {
+                return;
+            }
+
+            const bool        tagged    = tag.has_value() && !tag->empty();
+            const std::string tag_value = tagged ? *tag : std::string{};
+
+            if (tagged)
             {
                 if (const auto it = state_->tags.find(tag_value); it != state_->tags.end())
                 {
                     state_->events.erase({it->second, tag_value});  // replace existing tagged event
                 }
             }
-            // Started: only the future. Not yet started: the start cycle onward.
-            const engine_time_t threshold = started_ ? now_ : MIN_DT;
-            if (when <= threshold) { return; }
 
             const engine_time_t prev_first = state_->events.empty() ? MAX_DT : state_->events.begin()->first;
-            if (tag.has_value()) { state_->tags[tag_value] = when; }  // only tagged events are indexed
+            if (tagged) { state_->tags[tag_value] = when; }  // only tagged events are indexed
             state_->events.insert({when, tag_value});
             const engine_time_t next = state_->events.begin()->first;
             if (graph_ != nullptr && next < prev_first) { graph_->schedule_node(node_index_, next); }

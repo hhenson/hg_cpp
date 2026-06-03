@@ -226,7 +226,7 @@ namespace hgraph::testing
         {
             const auto element = list.at(i).as_any();
             if (!element.has_value()) { result.push_back(std::nullopt); continue; }
-            result.push_back(SetDelta<T>{std::make_shared<const Value>(element.get())});  // copy the delta bundle
+            result.push_back(SetDelta<T>{element.get()});
         }
         return result;
     }

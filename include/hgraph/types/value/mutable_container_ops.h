@@ -1129,6 +1129,13 @@ namespace hgraph
         const auto *meta = TypeRegistry::instance().mutable_set(element_binding.type_meta);
         return ValueTypeBinding::intern(*meta, mutable_set_plan(element_binding), mutable_set_ops());
     }
+
+    inline void clear_mutable_container_plans() noexcept
+    {
+        mutable_container_detail::list_registry().clear();
+        mutable_container_detail::map_registry().clear();
+        mutable_container_detail::set_registry().clear();
+    }
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_ROOT_VALUE_MUTABLE_CONTAINER_OPS_H

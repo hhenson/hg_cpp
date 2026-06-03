@@ -372,7 +372,7 @@ namespace hgraph::detail
         {
             const auto &ops = input_endpoint_ops_for(current_schema);
             if (ops.target_child == nullptr || ops.child_schema == nullptr) { return {}; }
-            current = ops.target_child(std::move(current), index);
+            current = ops.target_child(current, index);
             current_schema = ops.child_schema(current_schema, index);
             if (current_schema == nullptr || !current.valid()) { return {}; }
         }

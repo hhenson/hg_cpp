@@ -85,6 +85,40 @@ TEST_CASE("node scheduler: a tag replaces its prior event and can be queried and
     CHECK(sched.pop_tag("missing", base + one) == base + one);
 }
 
+TEST_CASE("node scheduler: invalid tagged replacement leaves the previous event intact")
+{
+    NodeSchedulerState state;
+    NodeScheduler      sched{state, nullptr, 0, base};
+
+    sched.schedule(base + engine_time_delta_t{10}, "alarm");
+
+    sched.schedule(base, "alarm");
+    CHECK(sched.has_tag("alarm"));
+    CHECK(sched.tag_time("alarm") == base + engine_time_delta_t{10});
+    CHECK(sched.next_scheduled_time() == base + engine_time_delta_t{10});
+
+    sched.schedule(base - one, "alarm");
+    CHECK(sched.has_tag("alarm"));
+    CHECK(sched.tag_time("alarm") == base + engine_time_delta_t{10});
+    CHECK(sched.pop_tag("alarm") == base + engine_time_delta_t{10});
+}
+
+TEST_CASE("node scheduler: start-time view can schedule the current cycle but not earlier")
+{
+    NodeSchedulerState state;
+    NodeScheduler      sched{state, nullptr, 0, base, /*started=*/false};
+
+    sched.schedule(base, "source");
+    CHECK(sched.has_tag("source"));
+    CHECK(sched.tag_time("source") == base);
+    CHECK(sched.next_scheduled_time() == base);
+    CHECK(sched.tag_is_scheduled_now("source"));
+
+    sched.schedule(base - one, "source");
+    CHECK(sched.has_tag("source"));
+    CHECK(sched.tag_time("source") == base);
+}
+
 TEST_CASE("node scheduler: is_scheduled_now is true only when the earliest event is exactly now")
 {
     NodeSchedulerState state;
