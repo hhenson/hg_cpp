@@ -707,6 +707,41 @@ namespace hgraph
         template <typename T> struct is_scalar_selector : std::false_type {};
         template <fixed_string N, typename V> struct is_scalar_selector<Scalar<N, V>> : std::true_type {};
 
+        template <typename A, typename B> struct same_input_name : std::false_type {};
+        template <fixed_string AName, typename ASchema, fixed_string BName, typename BSchema>
+        struct same_input_name<In<AName, ASchema>, In<BName, BSchema>>
+            : std::bool_constant<AName.sv() == BName.sv()>
+        {
+        };
+
+        template <typename A, typename B> struct same_scalar_name : std::false_type {};
+        template <fixed_string AName, typename AValue, fixed_string BName, typename BValue>
+        struct same_scalar_name<Scalar<AName, AValue>, Scalar<BName, BValue>>
+            : std::bool_constant<AName.sv() == BName.sv()>
+        {
+        };
+
+        template <template <typename, typename> typename SameName, typename... Es>
+        struct has_duplicate_selector_names_pack : std::false_type
+        {
+        };
+
+        template <template <typename, typename> typename SameName, typename E, typename... Rest>
+        struct has_duplicate_selector_names_pack<SameName, E, Rest...>
+            : std::bool_constant<(SameName<selector_of<E>, selector_of<Rest>>::value || ...) ||
+                                 has_duplicate_selector_names_pack<SameName, Rest...>::value>
+        {
+        };
+
+        template <template <typename, typename> typename SameName, typename Tuple>
+        struct has_duplicate_selector_names;
+
+        template <template <typename, typename> typename SameName, typename... Es>
+        struct has_duplicate_selector_names<SameName, std::tuple<Es...>>
+            : has_duplicate_selector_names_pack<SameName, Es...>
+        {
+        };
+
         // The scheduler is an injectable, not part of the data contract; it only
         // flips the node's ``uses_scheduler`` flag so a per-node scheduler-state
         // slot is allocated.
@@ -1028,6 +1063,16 @@ namespace hgraph
                          : std::size_t{0}));
         }
 
+        template <std::size_t... I>
+        static constexpr std::size_t count_states(std::index_sequence<I...>)
+        {
+            return (std::size_t{0} + ... +
+                    (static_node_detail::is_state_selector<
+                         static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>::value
+                         ? std::size_t{1}
+                         : std::size_t{0}));
+        }
+
         template <typename ArgsTuple, std::size_t... I>
         static constexpr bool tuple_has_scheduler(std::index_sequence<I...>)
         {
@@ -1055,6 +1100,17 @@ namespace hgraph
         [[nodiscard]] static constexpr std::size_t input_count() { return count_inputs(indices{}); }
         [[nodiscard]] static constexpr std::size_t output_count() { return count_outputs(indices{}); }
         [[nodiscard]] static constexpr std::size_t scalar_count() { return count_scalars(indices{}); }
+        [[nodiscard]] static constexpr std::size_t state_count() { return count_states(indices{}); }
+        [[nodiscard]] static constexpr bool input_names_unique()
+        {
+            return !static_node_detail::has_duplicate_selector_names<static_node_detail::same_input_name,
+                                                                     eval_args>::value;
+        }
+        [[nodiscard]] static constexpr bool scalar_names_unique()
+        {
+            return !static_node_detail::has_duplicate_selector_names<static_node_detail::same_scalar_name,
+                                                                     eval_args>::value;
+        }
         [[nodiscard]] static constexpr bool        has_output() { return output_count() > 0; }
         /** Whether the node declares ``static constexpr bool schedule_on_start = true``. */
         [[nodiscard]] static constexpr bool schedule_on_start()
@@ -1154,6 +1210,9 @@ namespace hgraph
 
         using signature = StaticNodeSignature<TImplementation>;
         static_assert(signature::output_count() <= 1, "Static nodes support at most one Out<...> parameter");
+        static_assert(signature::state_count() <= 1, "Static nodes support at most one State<...> parameter");
+        static_assert(signature::input_names_unique(), "Static node In<> selector names must be unique");
+        static_assert(signature::scalar_names_unique(), "Static node Scalar<> selector names must be unique");
 
         NodeTypeMetaData schema;
         if constexpr (static_node_detail::has_name<TImplementation>) { schema.display_name = TImplementation::name; }

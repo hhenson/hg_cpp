@@ -83,6 +83,21 @@ namespace
         }
     };
 
+    struct DuplicateInputNames
+    {
+        static void eval(In<"x", TS<int>>, In<"x", TS<int>>, Out<TS<int>>);
+    };
+
+    struct DuplicateScalarNames
+    {
+        static void eval(Scalar<"x", int>, Scalar<"x", int>, Out<TS<int>>);
+    };
+
+    struct MultipleStateSlots
+    {
+        static void eval(State<int>, State<int>, Out<TS<int>>);
+    };
+
     // Build a single-field compound scalar configuration {field: value}.
     Value int_scalar_config(std::string_view field, int value)
     {
@@ -113,6 +128,19 @@ TEST_CASE("static node: node kind is inferred from In/Out selectors")
     CHECK(compute.view().node_kind() == NodeKind::Compute);
     CHECK(compute.view().has_input());
     CHECK(compute.view().has_output());
+}
+
+TEST_CASE("static node: signature detects ambiguous selector contracts")
+{
+    using namespace hgraph;
+
+    STATIC_REQUIRE(StaticNodeSignature<Sum>::input_names_unique());
+    STATIC_REQUIRE(StaticNodeSignature<Shift>::scalar_names_unique());
+    STATIC_REQUIRE(StaticNodeSignature<Counter>::state_count() == 1);
+
+    STATIC_REQUIRE_FALSE(StaticNodeSignature<DuplicateInputNames>::input_names_unique());
+    STATIC_REQUIRE_FALSE(StaticNodeSignature<DuplicateScalarNames>::scalar_names_unique());
+    STATIC_REQUIRE(StaticNodeSignature<MultipleStateSlots>::state_count() == 2);
 }
 
 TEST_CASE("static node: SetDelta construction survives value registry resets")

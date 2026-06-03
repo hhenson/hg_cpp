@@ -130,17 +130,44 @@ namespace hgraph::testing
         template <typename NodeT>
         using wire_params_t = typename StaticNodeSignature<NodeT>::wire_param_types;
 
-        // Time-series schema of the first wire parameter (required to be an input).
-        template <typename NodeT>
-        using first_input_schema_t = typename std::tuple_element_t<0, wire_params_t<NodeT>>::schema;
-
         // The node's (single) output time-series schema.
         template <typename NodeT>
         using output_schema_t = typename StaticNodeSignature<NodeT>::output_schema_type;
 
+        template <typename NodeT, typename Params>
+        struct first_input_element;
+
+        template <typename NodeT>
+        struct first_input_element<NodeT, std::tuple<>>
+        {
+            static_assert(static_node_detail::always_false_v<NodeT>,
+                          "eval_node: NodeT must have at least one time-series input");
+            using type = void;
+        };
+
+        template <typename NodeT, typename First, typename... Rest>
+        struct first_input_element_impl
+        {
+            static_assert(static_node_detail::always_false_v<NodeT>,
+                          "eval_node: the first In/Scalar parameter must be a time-series input");
+            using type = void;
+        };
+
+        template <typename NodeT, fixed_string Name, typename Schema, typename... Rest>
+        struct first_input_element_impl<NodeT, In<Name, Schema>, Rest...>
+        {
+            using type = typename ts_harness<Schema>::element;
+        };
+
+        template <typename NodeT, typename First, typename... Rest>
+        struct first_input_element<NodeT, std::tuple<First, Rest...>>
+            : first_input_element_impl<NodeT, First, Rest...>
+        {
+        };
+
         // Per-cycle harness element of the first input / the output (T, SetDelta<T>, ...).
         template <typename NodeT>
-        using first_input_element_t = typename ts_harness<first_input_schema_t<NodeT>>::element;
+        using first_input_element_t = typename first_input_element<NodeT, wire_params_t<NodeT>>::type;
 
         template <typename NodeT>
         using output_element_t = typename ts_harness<output_schema_t<NodeT>>::element;
@@ -155,7 +182,8 @@ namespace hgraph::testing
      * Arguments are given in the node's **eval-parameter order** (its ``In`` and
      * ``Scalar`` parameters): a **time-series input** is a
      * ``std::vector<std::optional<E>>`` where ``E`` is that input's harness element
-     * (``T`` for ``TS<T>``, ``SetDelta<T>`` for ``TSS<T>`` — see :cpp:class:`ts_harness`),
+     * (``T`` for ``TS<T>``, ``SetDelta<T>`` for ``TSS<T>``, ``ListDelta<T>`` for
+     * fixed scalar-child ``TSL<TS<T>, N>`` — see :cpp:class:`ts_harness`),
      * one element per engine cycle from ``MIN_ST`` (``none`` = no tick), and a
      * **scalar input** is the value itself. The harness wires the matching ``replay``
      * per time-series input, the node, then the matching ``record`` on the output,
@@ -166,9 +194,9 @@ namespace hgraph::testing
      * The **first** parameter must be a time-series input (so it can be a braced
      * list — its element type is inferred from the node); any later time-series
      * inputs are passed as ``std::vector<std::optional<E>>``. The node must have
-     * exactly one output. Both scalar (``TS``) and set (``TSS``) time-series are
-     * supported on inputs and the output; other container kinds
-     * (``TSB``/``TSL``/``TSD``/``TSW``) are a future extension (a new
+     * exactly one output. Scalar (``TS``), set (``TSS``), and fixed scalar-child
+     * list (``TSL<TS<T>, N>``) time-series are supported on inputs and the output;
+     * other container kinds (``TSB``/``TSD``/``TSW``) are a future extension (a new
      * :cpp:class:`ts_harness` specialisation plus its replay/record pair).
      */
     template <typename NodeT, typename... Rest>
