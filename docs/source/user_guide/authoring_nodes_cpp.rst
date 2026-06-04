@@ -454,10 +454,12 @@ Internally the top-level input of every node is already a bundle — each ``In``
 parameter becomes one field of it — which is why a node's inputs and a ``TSB``
 share the same structure.
 
-The typed ``TSB`` selectors work for authored nodes. The erased replay/record
-delta path intentionally does not yet accept ``TSB`` directly: a sparse field
-delta convention is still needed before ``capture_delta`` / ``apply_delta`` can
-round-trip a bundle as schema data.
+The typed ``TSB`` selectors work for authored nodes and for erased
+replay/record. A ``TSB`` delta is the canonical
+``Bundle{field: delta(field_schema)...}``; unchanged scalar fields remain typed
+null. Build expected test deltas with ``tsb_delta<Schema>(...)`` in schema field
+order. ``std::nullopt`` leaves a field at its canonical default delta: typed-null
+for scalar children, empty delta for collection children.
 
 
 Collections — ``TSS`` / ``TSL`` / ``TSD`` / ``TSW``
@@ -557,7 +559,8 @@ conveniences.
 
 ``TSD`` replay/record uses the canonical
 ``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}`` delta. Build expected
-test deltas with ``dict_delta<K, V>``.
+test deltas with ``dict_delta<K, V>``; ``V`` can itself be any supported
+non-``REF`` time-series, including ``TSB``.
 
 **Window (``TSW<T, Period, MinPeriod>``) — available for tick-count windows.**
 ``In`` derives from ``TSWInputView`` and adds typed ``at(i)``, ``operator[](i)``,
@@ -910,8 +913,8 @@ explicit output type — and builds the concrete node. A ``TsVar`` ``In`` / ``Ou
 element type yet), so the body is driven by the runtime ``capture_delta`` /
 ``apply_delta`` (``<hgraph/types/time_series/ts_delta.h>``). The framework's own
 ``replay`` / ``record`` / ``const_`` / ``debug_print`` / ``null_sink`` are authored
-exactly this way. Direct erased ``TSB`` replay/record is still excluded until the
-runtime has a sparse field-delta convention; ``REF`` is a separate binding surface.
+exactly this way. ``REF`` is a separate binding surface and is not part of erased
+value replay.
 
 A passthrough generic over any time-series type:
 

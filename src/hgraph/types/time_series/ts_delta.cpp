@@ -21,7 +21,7 @@ namespace hgraph
         [[noreturn]] void unsupported(const char *fn, const TSValueTypeMetaData *schema)
         {
             throw std::logic_error(
-                fmt::format("{}: time-series kind {} is not yet supported (supported: TS / SIGNAL / TSS / TSD / TSL / TSW)", fn,
+                fmt::format("{}: time-series kind {} is not yet supported (supported: TS / SIGNAL / TSS / TSD / TSL / TSB / TSW)", fn,
                             schema != nullptr ? static_cast<int>(schema->kind) : -1));
         }
 
@@ -30,6 +30,127 @@ namespace hgraph
             const auto *binding = ValuePlanFactory::instance().binding_for(meta);
             if (binding == nullptr) { throw std::logic_error(fmt::format("{}: unresolved value binding", fn)); }
             return *binding;
+        }
+
+        [[nodiscard]] bool delta_has_effect(const TSValueTypeMetaData *schema, const ValueView &delta)
+        {
+            if (schema == nullptr || !delta.has_value()) { return false; }
+
+            switch (schema->kind)
+            {
+            case TSTypeKind::TS:
+            case TSTypeKind::SIGNAL:
+            case TSTypeKind::TSW:
+                return true;
+
+            case TSTypeKind::TSS:
+            {
+                const auto bundle = delta.as_bundle();
+                return bundle.field("added").as_indexed_view().size() != 0 ||
+                       bundle.field("removed").as_indexed_view().size() != 0;
+            }
+
+            case TSTypeKind::TSD:
+            {
+                const auto bundle = delta.as_bundle();
+                return bundle.field("removed").as_indexed_view().size() != 0 ||
+                       bundle.field("modified").as_map().size() != 0;
+            }
+
+            case TSTypeKind::TSL:
+                return delta.as_map().size() != 0;
+
+            case TSTypeKind::TSB:
+            {
+                const auto bundle = delta.as_bundle();
+                for (std::size_t index = 0; index < bundle.size(); ++index)
+                {
+                    if (delta_has_effect(schema->fields()[index].type, bundle.at(index))) { return true; }
+                }
+                return false;
+            }
+
+            default:
+                return true;
+            }
+        }
+
+        [[nodiscard]] Value empty_delta_value(const TSValueTypeMetaData *schema);
+
+        void initialize_tsb_delta_defaults(const TSValueTypeMetaData *schema, BundleBuilder &builder)
+        {
+            for (std::size_t index = 0; index < schema->field_count(); ++index)
+            {
+                const TSValueTypeMetaData *child_schema = schema->fields()[index].type;
+                if (child_schema == nullptr) { throw std::logic_error("capture_delta: TSB field schema is null"); }
+                switch (child_schema->kind)
+                {
+                case TSTypeKind::TS:
+                case TSTypeKind::SIGNAL:
+                case TSTypeKind::TSW:
+                    break;
+
+                default:
+                {
+                    Value empty = empty_delta_value(child_schema);
+                    builder.set(index, empty.view());
+                    break;
+                }
+                }
+            }
+        }
+
+        [[nodiscard]] Value empty_delta_value(const TSValueTypeMetaData *schema)
+        {
+            if (schema == nullptr) { throw std::logic_error("empty_delta_value: schema is null"); }
+
+            switch (schema->kind)
+            {
+            case TSTypeKind::TSS:
+            {
+                const ValueTypeBinding &elem_binding =
+                    binding_for(schema->value_schema->element_type, "empty_delta_value");
+                SetBuilder    added{elem_binding};
+                SetBuilder    removed{elem_binding};
+                BundleBuilder bundle{binding_for(schema->delta_value_schema, "empty_delta_value")};
+                bundle.set("added", added.build().view());
+                bundle.set("removed", removed.build().view());
+                return bundle.build();
+            }
+
+            case TSTypeKind::TSD:
+            {
+                const ValueTypeMetaData *bundle_meta = schema->delta_value_schema;
+                const ValueTypeBinding  &key_binding = binding_for(schema->key_type(), "empty_delta_value");
+                const ValueTypeBinding  &delta_binding =
+                    binding_for(schema->element_ts()->delta_value_schema, "empty_delta_value");
+                SetBuilder    removed{key_binding};
+                MapBuilder    modified{key_binding, delta_binding};
+                BundleBuilder bundle{binding_for(bundle_meta, "empty_delta_value")};
+                bundle.set("removed", removed.build().view());
+                bundle.set("modified", modified.build().view());
+                return bundle.build();
+            }
+
+            case TSTypeKind::TSL:
+            {
+                const ValueTypeMetaData *map_meta    = schema->delta_value_schema;
+                const ValueTypeBinding  &key_binding = binding_for(map_meta->key_type, "empty_delta_value");
+                const ValueTypeBinding  &val_binding = binding_for(map_meta->element_type, "empty_delta_value");
+                MapBuilder               builder{key_binding, val_binding};
+                return builder.build();
+            }
+
+            case TSTypeKind::TSB:
+            {
+                BundleBuilder builder{binding_for(schema->delta_value_schema, "empty_delta_value")};
+                initialize_tsb_delta_defaults(schema, builder);
+                return builder.build();
+            }
+
+            default:
+                return Value{binding_for(schema->delta_value_schema, "empty_delta_value")};
+            }
         }
     }  // namespace
 
@@ -119,6 +240,24 @@ namespace hgraph
             return builder.build();
         }
 
+        case TSTypeKind::TSB:
+        {
+            // delta_value_schema == Bundle{field: delta(field_ts)...}. The bundle
+            // shape is fixed; only children modified at this tick overwrite their
+            // default typed-null / empty delta field.
+            BundleBuilder builder{binding_for(schema->delta_value_schema, "capture_delta")};
+            initialize_tsb_delta_defaults(schema, builder);
+            auto          bundle = in.as_bundle();
+            for (std::size_t index = 0; index < bundle.size(); ++index)
+            {
+                auto child = bundle.at(index);
+                if (!child.modified()) { continue; }
+                const Value child_delta = capture_delta(child);
+                builder.set(index, child_delta.view());
+            }
+            return builder.build();
+        }
+
         default: unsupported("capture_delta", schema);
         }
     }
@@ -127,6 +266,7 @@ namespace hgraph
     {
         const TSValueTypeMetaData *schema = out.schema();
         if (schema == nullptr) { throw std::logic_error("apply_delta: output view has no schema"); }
+        if (!delta_has_effect(schema, delta)) { return; }
 
         switch (schema->kind)
         {
@@ -184,6 +324,19 @@ namespace hgraph
             {
                 auto child = list_out.at(static_cast<std::size_t>(key.template checked_as<std::int64_t>()));
                 apply_delta(child, child_delta);
+            }
+            break;
+        }
+
+        case TSTypeKind::TSB:
+        {
+            auto       bundle_out = out.as_bundle();
+            const auto bundle     = delta.as_bundle();
+            for (std::size_t index = 0; index < bundle.size(); ++index)
+            {
+                const ValueView child_delta = bundle.at(index);
+                if (!delta_has_effect(schema->fields()[index].type, child_delta)) { continue; }
+                apply_delta(bundle_out.at(index), child_delta);
             }
             break;
         }

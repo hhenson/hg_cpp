@@ -22,6 +22,8 @@ namespace
     using IntDict = TSD<std::string, TS<int>>;
     using IntWindow = TSW<int, 3, 1>;
     using Quote = TSB<"Quote", Field<"bid", TS<int>>, Field<"ask", TS<int>>>;
+    using QuoteList = TSL<Quote, 2>;
+    using QuoteDict = TSD<std::string, Quote>;
 
     struct DictSpread
     {
@@ -137,6 +139,36 @@ namespace
             auto q   = wire<QuoteSpread>(w, src);
             auto sum = wire<QuoteTotal>(w, q);
             wire<testing::record>(w, sum, std::string{"out"});
+        }
+    };
+
+    struct QuoteDeltaGraph
+    {
+        static constexpr auto name = "quote_delta_graph";
+        static void           compose(Wiring &w)
+        {
+            auto src = wire<testing::replay, Quote>(w, std::string{"in"});
+            wire<testing::record>(w, src, std::string{"out"});
+        }
+    };
+
+    struct QuoteListDeltaGraph
+    {
+        static constexpr auto name = "quote_list_delta_graph";
+        static void           compose(Wiring &w)
+        {
+            auto src = wire<testing::replay, QuoteList>(w, std::string{"in"});
+            wire<testing::record>(w, src, std::string{"out"});
+        }
+    };
+
+    struct QuoteDictDeltaGraph
+    {
+        static constexpr auto name = "quote_dict_delta_graph";
+        static void           compose(Wiring &w)
+        {
+            auto src = wire<testing::replay, QuoteDict>(w, std::string{"in"});
+            wire<testing::record>(w, src, std::string{"out"});
         }
     };
 
@@ -345,6 +377,76 @@ TEST_CASE("collections: TSB typed field selectors work through node wiring")
     ex.view().run();
 
     CHECK_OUTPUT(testing::get_recorded_values<int>(ex.view().graph().global_state(), "out"), {11, 22, 33});
+}
+
+TEST_CASE("collections: TSB replay and record round-trip sparse field deltas")
+{
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    const std::vector<std::optional<Value>> deltas{
+        tsb_delta<Quote>(1, 10),
+        tsb_delta<Quote>(std::nullopt, 20),
+        tsb_delta<Quote>(3, std::nullopt),
+    };
+
+    GraphBuilder gb = build_graph<QuoteDeltaGraph>();
+    testing::set_replay_deltas(gb.global_state(), "in", deltas);
+
+    GraphExecutorBuilder eb;
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    GraphExecutorValue ex = eb.make_executor();
+    ex.view().run();
+
+    CHECK_OUTPUT(testing::get_recorded_deltas(ex.view().graph().global_state(), "out"),
+                 {tsb_delta<Quote>(1, 10), tsb_delta<Quote>(std::nullopt, 20), tsb_delta<Quote>(3, std::nullopt)});
+}
+
+TEST_CASE("collections: TSL and TSD replay and record recurse through TSB children")
+{
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+    (void)TypeRegistry::instance().register_scalar<std::string>("string");
+
+    {
+        const std::vector<std::optional<Value>> deltas{
+            list_delta<Quote>({{0, tsb_delta<Quote>(1, 10)}, {1, tsb_delta<Quote>(2, 20)}}),
+            list_delta<Quote>({{1, tsb_delta<Quote>(std::nullopt, 30)}}),
+            list_delta<Quote>({{0, tsb_delta<Quote>(4, std::nullopt)}}),
+        };
+
+        GraphBuilder gb = build_graph<QuoteListDeltaGraph>();
+        testing::set_replay_deltas(gb.global_state(), "in", deltas);
+
+        GraphExecutorBuilder eb;
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+        GraphExecutorValue ex = eb.make_executor();
+        ex.view().run();
+
+        CHECK_OUTPUT(testing::get_recorded_deltas(ex.view().graph().global_state(), "out"),
+                     {list_delta<Quote>({{0, tsb_delta<Quote>(1, 10)}, {1, tsb_delta<Quote>(2, 20)}}),
+                      list_delta<Quote>({{1, tsb_delta<Quote>(std::nullopt, 30)}}),
+                      list_delta<Quote>({{0, tsb_delta<Quote>(4, std::nullopt)}})});
+    }
+
+    {
+        const std::vector<std::optional<Value>> deltas{
+            dict_delta<std::string, Quote>({{"a"s, tsb_delta<Quote>(1, 10)}, {"b"s, tsb_delta<Quote>(2, 20)}}),
+            dict_delta<std::string, Quote>({{"a"s, tsb_delta<Quote>(std::nullopt, 30)}}, {"b"s}),
+            dict_delta<std::string, Quote>({{"b"s, tsb_delta<Quote>(4, std::nullopt)}}),
+        };
+
+        GraphBuilder gb = build_graph<QuoteDictDeltaGraph>();
+        testing::set_replay_deltas(gb.global_state(), "in", deltas);
+
+        GraphExecutorBuilder eb;
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+        GraphExecutorValue ex = eb.make_executor();
+        ex.view().run();
+
+        CHECK_OUTPUT(testing::get_recorded_deltas(ex.view().graph().global_state(), "out"),
+                     {dict_delta<std::string, Quote>({{"a"s, tsb_delta<Quote>(1, 10)}, {"b"s, tsb_delta<Quote>(2, 20)}}),
+                      dict_delta<std::string, Quote>({{"a"s, tsb_delta<Quote>(std::nullopt, 30)}}, {"b"s}),
+                      dict_delta<std::string, Quote>({{"b"s, tsb_delta<Quote>(4, std::nullopt)}})});
+    }
 }
 
 TEST_CASE("collections: SIGNAL typed output ticks and typed input observes the tick")

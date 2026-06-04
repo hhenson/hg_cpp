@@ -2,8 +2,8 @@
 // Value` / `apply_delta(const TSOutputView&, const ValueView&)` — schema-as-data,
 // dispatched on the live endpoint's kind. This suite drives them directly through
 // hand-authored probe source/sink nodes and shows the cycle-aligned buffers
-// round-trip identically (against the canonical `set_delta`/`list_delta` oracle) for
-// TS / TSS / TSL.
+// round-trip identically (against the canonical delta builders) for TS / SIGNAL /
+// TSS / TSD / TSL / TSB / TSW.
 
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/record_replay.h>
@@ -25,6 +25,8 @@ namespace
 {
     using namespace hgraph;
     using namespace hgraph::testing;  // none, make_buffer/make_any/empty_any/cycle_offset, set_replay_*, get_recorded_*
+    using Quote = TSB<"DeltaQuote", Field<"bid", TS<int>>, Field<"ask", TS<int>>>;
+    using QuoteWithSet = TSB<"DeltaQuoteWithSet", Field<"levels", TSS<int>>, Field<"last", TS<int>>>;
 
     // The erased free functions take the base TSInputView / TSOutputView. A typed
     // `In<Name,S>` reaches it uniformly via `base()`; a typed `Out<S>` is the base
@@ -219,6 +221,38 @@ TEST_CASE("ts_delta: capture/apply round-trip a TSD-of-scalar dict delta")
                  {dict_delta<std::string, TS<int>>({{"a"s, 1}, {"b"s, 2}}),
                   dict_delta<std::string, TS<int>>({{"a"s, 5}}, {"b"s}),
                   dict_delta<std::string, TS<int>>({{"b"s, 9}})});
+}
+
+TEST_CASE("ts_delta: capture/apply round-trip a TSB sparse field delta")
+{
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+    const std::vector<std::optional<Value>> deltas{
+        tsb_delta<Quote>(1, 10),
+        tsb_delta<Quote>(std::nullopt, 20),
+        tsb_delta<Quote>(3, std::nullopt),
+    };
+
+    auto rt = run_graph<RoundTripGraph<Quote>>(
+        [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
+    CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
+                 {tsb_delta<Quote>(1, 10), tsb_delta<Quote>(std::nullopt, 20), tsb_delta<Quote>(3, std::nullopt)});
+}
+
+TEST_CASE("ts_delta: capture/apply round-trip a TSB with a container field delta")
+{
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+    const std::vector<std::optional<Value>> deltas{
+        tsb_delta<QuoteWithSet>(set_delta<int>({1, 2}, {}), std::nullopt),
+        tsb_delta<QuoteWithSet>(std::nullopt, 5),
+        tsb_delta<QuoteWithSet>(set_delta<int>({3}, {1}), 6),
+    };
+
+    auto rt = run_graph<RoundTripGraph<QuoteWithSet>>(
+        [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
+    CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
+                 {tsb_delta<QuoteWithSet>(set_delta<int>({1, 2}, {}), std::nullopt),
+                  tsb_delta<QuoteWithSet>(std::nullopt, 5),
+                  tsb_delta<QuoteWithSet>(set_delta<int>({3}, {1}), 6)});
 }
 
 TEST_CASE("ts_delta: capture/apply round-trip a TSW scalar push delta")

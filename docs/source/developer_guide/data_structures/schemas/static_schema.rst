@@ -293,7 +293,8 @@ parallel delta representation. The delta of any time-series is the canonical
 ``SIGNAL`` / tick-count ``TSW<T,...>`` → scalar; ``TSS<T>`` →
 ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSD<K,V>`` →
 ``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}``; ``TSL<C,N>`` →
-``Map<int64, delta(C)>``; recursive). ``In<…>::delta()`` is just the inherited
+``Map<int64, delta(C)>``; ``TSB{f...}`` →
+``Bundle{f: delta(f_schema)...}``; recursive). ``In<…>::delta()`` is just the inherited
 ``delta_value()``. To **construct** a collection delta for tests/wiring, recursive
 builder functions produce the canonical ``Value`` (see *Allocation, Plans and Ops
 > Value builders* and *Testing Graphs in C++*):
@@ -303,6 +304,7 @@ builder functions produce the canonical ``Value`` (see *Allocation, Plans and Op
    set_delta<int>({1, 2}, {})                       // -> Bundle{added:{1,2}, removed:{}}
    list_delta<TSS<int>>({{0, set_delta<int>({1},{})}})  // -> Map<int64, Bundle>
    dict_delta<std::string, TS<int>>({{"a", 1}}, {"b"})   // -> Bundle{removed, modified}
+   tsb_delta<PriceTick>(101.0, std::nullopt, 5)     // ask is typed-null
 
 Comparison and display go through the value-layer ops (``Value::equals`` —
 order-independent for sets/maps — and ``to_string``); no wrapper type
@@ -322,8 +324,7 @@ authored over them is *generic*; the variables resolve at wiring time (see
 (``replay`` / ``record`` / ``const_`` / ``debug_print`` / ``null_sink``) are
 authored this way — **one** implementation each, the schema flowing as data, driven
 by the runtime ``capture_delta`` / ``apply_delta`` rather than per-type code for
-the replayable kinds. Direct ``TSB`` replay/record remains excluded until the
-runtime has a sparse field-delta convention; ``REF`` is a separate binding surface.
+the replayable kinds. ``REF`` is a separate binding surface.
 
 Planned, landing with their runtime layers:
 
@@ -367,8 +368,7 @@ the resolution-map schema overloads, and the wiring-time resolution in ``wire<>`
 Deferred until the relevant runtime layer lands: ``REF`` selectors,
 ``RecordableState``, ``EvaluationClock`` injection, push-source ``apply_message``,
 named state, input activity/validity policy flags, duration-based ``TSW``, the
-Python-export bridge, direct erased ``TSB`` replay/record (pending sparse
-field-delta semantics), and **graph-level** generic resolution (aggregating
+Python-export bridge, and **graph-level** generic resolution (aggregating
 node-level resolution across a sub-graph).
 (``NodeScheduler`` / ``SingleShotScheduler`` injection is now implemented; see
 *Authoring Nodes in C++*.)

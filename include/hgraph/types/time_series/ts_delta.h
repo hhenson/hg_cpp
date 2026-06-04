@@ -26,11 +26,11 @@ namespace hgraph
      *   ``TS<T>`` / ``SIGNAL`` / ``TSW<T>`` -> scalar; ``TSS<T>`` ->
      *   ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSD<K,V>`` ->
      *   ``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}``;
-     *   ``TSL<C,N>`` -> ``Map<int64, delta(C)>`` (recursive in ``C``).
+     *   ``TSL<C,N>`` -> ``Map<int64, delta(C)>``; ``TSB{f...}`` ->
+     *   ``Bundle{f: delta(f)...}`` (recursive in children).
      *
-     * ``TSB`` and ``REF`` throw a clear ``std::logic_error``. ``TSB`` still needs
-     * a sparse field-delta convention; ``REF`` is a separate reference-binding
-     * surface rather than ordinary value replay.
+     * ``REF`` throws a clear ``std::logic_error``: it is a separate
+     * reference-binding surface rather than ordinary value replay.
      */
     [[nodiscard]] Value capture_delta(const TSInputView &in);
 

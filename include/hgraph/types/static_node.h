@@ -67,12 +67,12 @@ namespace hgraph
     // ``TSW<T,...>`` -> scalar; ``TSS<T>`` ->
     // ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSD<K,V>`` ->
     // ``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}``; ``TSL<C,N>`` ->
-    // ``Map<int64, delta(C)>``, recursive). These builders *produce that exact
-    // canonical Value*, so a built delta compares to a runtime-produced one via
-    // ``Value::equals`` — there is no parallel wrapper type. These are the
-    // *test-authoring* builders (construct an expected delta); the runtime capture /
-    // apply of a live delta is the type-erased ``capture_delta`` / ``apply_delta``
-    // (``<hgraph/types/time_series/ts_delta.h>``).
+    // ``Map<int64, delta(C)>``; ``TSB{f...}`` -> ``Bundle{f: delta(f)...}``,
+    // recursive). These builders *produce that exact canonical Value*, so a built
+    // delta compares to a runtime-produced one via ``Value::equals`` — there is no
+    // parallel wrapper type. These are the *test-authoring* builders (construct an
+    // expected delta); the runtime capture / apply of a live delta is the type-erased
+    // ``capture_delta`` / ``apply_delta`` (``<hgraph/types/time_series/ts_delta.h>``).
     // -----------------------------------------------------------------
 
     namespace static_node_detail
@@ -91,6 +91,9 @@ namespace hgraph
         template <typename V, std::size_t P, std::size_t M> struct delta_input<TSW<V, P, M>> { using type = V; };
         template <> struct delta_input<SIGNAL> { using type = bool; };
         template <typename C> using delta_input_t = typename delta_input<C>::type;
+
+        template <typename T> struct is_optional : std::false_type {};
+        template <typename T> struct is_optional<std::optional<T>> : std::true_type {};
 
         template <fixed_string Wanted, typename... Fields>
         struct tsb_field_lookup
@@ -224,6 +227,113 @@ namespace hgraph
             bundle.set("modified", modified_map.build().view());
             return bundle.build();
         }
+
+        template <typename S>
+        struct empty_delta_builder;
+
+        template <typename V>
+        struct empty_delta_builder<TSS<V>>
+        {
+            [[nodiscard]] static Value build() { return set_delta<V>({}, {}); }
+        };
+
+        template <typename K, typename V>
+        struct empty_delta_builder<TSD<K, V>>
+        {
+            [[nodiscard]] static Value build() { return build_dict_delta<K, V>({}, {}); }
+        };
+
+        template <typename C, std::size_t N>
+        struct empty_delta_builder<TSL<C, N>>
+        {
+            [[nodiscard]] static Value build() { return build_list_delta<C>({}); }
+        };
+
+        template <typename Field>
+        void initialize_tsb_delta_field(BundleBuilder &builder, std::size_t index)
+        {
+            using C = typename Field::schema;
+            if constexpr (!is_scalar_ts<C>::value)
+            {
+                Value empty = empty_delta_builder<C>::build();
+                builder.set(index, empty.view());
+            }
+        }
+
+        template <typename... Fields>
+        void initialize_tsb_delta_defaults(BundleBuilder &builder)
+        {
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                (initialize_tsb_delta_field<std::tuple_element_t<I, std::tuple<Fields...>>>(builder, I), ...);
+            }(std::make_index_sequence<sizeof...(Fields)>{});
+        }
+
+        template <typename C, typename Arg>
+        void set_tsb_delta_field(BundleBuilder &builder, std::size_t index, Arg &&arg)
+        {
+            using A = std::remove_cvref_t<Arg>;
+            if constexpr (std::is_same_v<A, std::nullopt_t>)
+            {
+                return;
+            }
+            else if constexpr (is_optional<A>::value)
+            {
+                if (arg.has_value()) { set_tsb_delta_field<C>(builder, index, *arg); }
+            }
+            else if constexpr (is_scalar_ts<C>::value)
+            {
+                using V = delta_input_t<C>;
+                static_assert(std::is_convertible_v<A, V>, "tsb_delta: field scalar delta has the wrong value type");
+                V     value = static_cast<V>(std::forward<Arg>(arg));
+                Value delta{value};
+                builder.set(index, delta.view());
+            }
+            else
+            {
+                static_assert(requires(const A &value) { value.view(); },
+                              "tsb_delta: container field delta must be a Value-like object");
+                builder.set(index, std::forward<Arg>(arg).view());
+            }
+        }
+
+        template <typename S>
+        struct tsb_delta_builder;
+
+        template <typename... Fields>
+        struct tsb_delta_builder<UnNamedTSB<Fields...>>
+        {
+            static void initialize(BundleBuilder &builder) { initialize_tsb_delta_defaults<Fields...>(builder); }
+
+            template <typename... Args>
+            static void fill(BundleBuilder &builder, Args &&...args)
+            {
+                static_assert(sizeof...(Args) == sizeof...(Fields), "tsb_delta: argument count must match TSB fields");
+                [&]<std::size_t... I>(std::index_sequence<I...>) {
+                    (set_tsb_delta_field<typename std::tuple_element_t<I, std::tuple<Fields...>>::schema>(
+                         builder, I, std::get<I>(std::forward_as_tuple(std::forward<Args>(args)...))),
+                     ...);
+                }(std::make_index_sequence<sizeof...(Fields)>{});
+            }
+        };
+
+        template <fixed_string Name, typename... Fields>
+        struct tsb_delta_builder<TSB<Name, Fields...>> : tsb_delta_builder<UnNamedTSB<Fields...>>
+        {};
+
+        template <typename... Fields>
+        struct empty_delta_builder<UnNamedTSB<Fields...>>
+        {
+            [[nodiscard]] static Value build()
+            {
+                BundleBuilder builder{delta_value_binding<UnNamedTSB<Fields...>>()};
+                initialize_tsb_delta_defaults<Fields...>(builder);
+                return builder.build();
+            }
+        };
+
+        template <fixed_string Name, typename... Fields>
+        struct empty_delta_builder<TSB<Name, Fields...>> : empty_delta_builder<UnNamedTSB<Fields...>>
+        {};
     }  // namespace static_node_detail
 
     /**
@@ -266,6 +376,22 @@ namespace hgraph
         std::map<K, static_node_detail::delta_input_t<V>> map;
         for (const auto &[key, input] : modified) { map.insert_or_assign(key, input); }
         return static_node_detail::build_dict_delta<K, V>(map, removed);
+    }
+
+    /**
+     * Build the canonical ``TSB`` delta value ``Bundle{field: delta(field_schema)...}``.
+     * Pass one argument per field in schema order. A scalar child field takes the bare
+     * scalar delta; a container child field takes a child-delta ``Value``. Passing
+     * ``std::nullopt`` leaves the field at its canonical default delta: typed-null for
+     * scalar children, empty delta for collection children.
+     */
+    template <typename S, typename... Args>
+    [[nodiscard]] inline Value tsb_delta(Args &&...args)
+    {
+        BundleBuilder builder{delta_value_binding<S>()};
+        static_node_detail::tsb_delta_builder<S>::initialize(builder);
+        static_node_detail::tsb_delta_builder<S>::fill(builder, std::forward<Args>(args)...);
+        return builder.build();
     }
 
     // -----------------------------------------------------------------

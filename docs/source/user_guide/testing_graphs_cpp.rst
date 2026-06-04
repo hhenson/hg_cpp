@@ -73,14 +73,13 @@ input may be a braced list (its type is inferred); later inputs are passed as
 
 The first parameter must be a time-series input, and the node must have exactly one
 output. ``eval_node`` drives scalar ``TS<T>``, ``SIGNAL``, ``TSS<T>``,
-``TSD<K,V>``, ``TSW<T,Period,MinPeriod>``, and ``TSL<C, N>`` inputs and outputs.
-``TSL`` is recursive in any supported non-``REF`` child ``C``. ``TS<T>`` and
+``TSD<K,V>``, ``TSB<...>``, ``TSW<T,Period,MinPeriod>``, and ``TSL<C, N>`` inputs
+and outputs. ``TSL`` is recursive in any supported non-``REF`` child ``C``. ``TS<T>`` and
 tick-count ``TSW<T,...>`` exchange a bare ``T`` per cycle, ``SIGNAL`` exchanges
 ``bool`` ticks, and collection inputs/outputs exchange the per-cycle **delta as a
 canonical type-erased ``Value``** built by helpers such as ``set_delta`` /
-``list_delta`` / ``dict_delta`` (see the collection sections below).
-Direct erased ``TSB`` replay/record remains intentionally unsupported until the
-runtime has a sparse field-delta convention.
+``list_delta`` / ``dict_delta`` / ``tsb_delta`` (see the collection sections
+below).
 
 .. _ts-harness:
 
@@ -256,9 +255,12 @@ A collection time-series ticks a **delta** each cycle, and that delta is the
 **canonical type-erased** ``Value`` whose schema is the runtime
 ``delta_value_schema``: ``Bundle{added: Set<T>, removed: Set<T>}`` for ``TSS<T>``,
 ``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}`` for ``TSD<K,V>``, and
-``Map<int64, delta(C)>`` for ``TSL<C, N>`` (recursive in ``C``). Tick-count
-``TSW<T,...>`` and ``SIGNAL`` have scalar deltas, so the harness exchanges plain
-``T`` / ``bool`` elements for those shapes. Tests build collection deltas with
+``Map<int64, delta(C)>`` for ``TSL<C, N>`` (recursive in ``C``). ``TSB<...>`` uses
+``Bundle{field: delta(field_schema)...}``; ``std::nullopt`` in ``tsb_delta``
+leaves the field at its canonical default delta, typed-null for scalar children
+and empty for collection children. Tick-count ``TSW<T,...>`` and ``SIGNAL`` have
+scalar deltas, so the harness exchanges plain ``T`` / ``bool`` elements for
+those shapes. Tests build collection deltas with
 **recursive builder functions** that *produce a standard* ``Value`` *matching the
 type-erased signature* (there is no parallel wrapper type — comparison is
 ``Value::equals``, display is ``to_string``):
@@ -271,6 +273,8 @@ type-erased signature* (there is no parallel wrapper type — comparison is
    list_delta<TSS<int>>({{0, set_delta<int>({1}, {})}})  // -> Map<int64, Bundle>   (TSL of sets)
    list_delta<TSL<TS<int>,2>>({{0, list_delta<TS<int>>({{0,1}})}})   // nested, recursive
    dict_delta<std::string, TS<int>>({{"a", 1}}, {"b"})   // remove b, modify a
+   using Quote = TSB<"Quote", Field<"bid", TS<int>>, Field<"ask", TS<int>>>;
+   tsb_delta<Quote>(101, std::nullopt)                    // bid ticked, ask is typed-null
 
 Signal time-series (``SIGNAL``)
 -------------------------------
