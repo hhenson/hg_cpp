@@ -47,10 +47,10 @@ namespace
         static constexpr auto name = "tss_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay<TS<int>>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TS<int>>(w, std::string{"in"});
             auto acc = wire<Accumulate>(w, src);   // -> Port<TSS<int>>
             auto sz  = wire<SetSize>(w, acc);       // In<TSS<int>> -> Out<TS<int>>
-            wire<testing::record<TS<int>>>(w, sz, std::string{"out"});
+            wire<testing::record>(w, sz, std::string{"out"});
         }
     };
 
@@ -60,8 +60,8 @@ namespace
         static constexpr auto name = "tss_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay<TSS<int>>>(w, std::string{"in"});
-            wire<testing::record<TSS<int>>>(w, src, std::string{"out"});
+            auto src = wire<testing::replay, TSS<int>>(w, std::string{"in"});
+            wire<testing::record>(w, src, std::string{"out"});
         }
     };
 
@@ -71,9 +71,9 @@ namespace
         static constexpr auto name = "tss_added_count_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay<TSS<int>>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TSS<int>>(w, std::string{"in"});
             auto cnt = wire<AddedCount>(w, src);
-            wire<testing::record<TS<int>>>(w, cnt, std::string{"out"});
+            wire<testing::record>(w, cnt, std::string{"out"});
         }
     };
 }  // namespace

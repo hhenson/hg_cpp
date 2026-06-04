@@ -6,6 +6,7 @@
 #include <hgraph/runtime/node_scheduler.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_schema.h>
+#include <hgraph/types/type_resolution.h>
 #include <hgraph/types/time_series/ts_data/set_view.h>
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
 #include <hgraph/types/time_series/ts_input/list_view.h>
@@ -59,8 +60,10 @@ namespace hgraph
     // ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSL<C,N>`` ->
     // ``Map<int64, delta(C)>``, recursive). These builders *produce that exact
     // canonical Value*, so a built delta compares to a runtime-produced one via
-    // ``Value::equals`` — there is no parallel wrapper type. The recursive
-    // ``ts_delta<S>`` driver (``apply``) is defined after the ``Out`` selectors.
+    // ``Value::equals`` — there is no parallel wrapper type. These are the
+    // *test-authoring* builders (construct an expected delta); the runtime capture /
+    // apply of a live delta is the type-erased ``capture_delta`` / ``apply_delta``
+    // (``<hgraph/types/time_series/ts_delta.h>``).
     // -----------------------------------------------------------------
 
     namespace static_node_detail
@@ -276,6 +279,28 @@ namespace hgraph
     };
 
     /**
+     * **Deferred** (generic) input selector — the schema is a ``TsVar`` type variable
+     * resolved at wiring time, not a concrete time-series. It IS a ``TSInputView``
+     * (no typed sugar, since there is no concrete element type); the node drives it
+     * through the erased API and the runtime ``capture_delta`` / ``apply_delta``.
+     * ``base()`` returns the erased view uniformly (matching ``In<TS<T>>``).
+     */
+    template <fixed_string Name, fixed_string VarName, typename... TConstraints>
+    class In<Name, TsVar<VarName, TConstraints...>> : public TSInputView
+    {
+      public:
+        using schema                     = TsVar<VarName, TConstraints...>;
+        static constexpr auto field_name = Name;
+
+        explicit In(TSInputView view) noexcept : TSInputView(std::move(view)) {}
+
+        /** The erased input view (uniform with ``In<TS<T>>::base()``). */
+        [[nodiscard]] const TSInputView &base() const noexcept { return *this; }
+        // schema() / value() / delta_value() / modified() / valid() / as_set() /
+        // as_list() / as_bundle() all inherited from TSInputView.
+    };
+
+    /**
      * Typed output selector — derives from the type-erased output view for its kind
      * (``TSOutputView`` / ``TSSOutputView`` / ``TSLOutputView`` …). The output view
      * already carries the current ``evaluation_time``, so the selector adds no data.
@@ -376,82 +401,39 @@ namespace hgraph
         // size() / modified() / valid() / evaluation_time() inherited from TSLOutputView.
     };
 
-    // -----------------------------------------------------------------
-    // ts_delta<S> — recursive delta driver
-    //
-    // ``capture`` reads a live input view and rebuilds the canonical delta ``Value``
-    // (via the value-layer builders, so the result is owned and copyable even though
-    // the runtime's transient delta storage omits copy hooks). ``apply`` is the
-    // inverse: it re-creates output ticks from a canonical delta ``Value``. Both
-    // recurse through container children, bottoming out at scalars / sets.
-    // -----------------------------------------------------------------
-    template <typename S>
-    struct ts_delta;
-
-    template <typename T>
-    struct ts_delta<TS<T>>
+    /**
+     * **Deferred** (generic) output selector — the schema is a ``TsVar`` resolved at
+     * wiring time. It IS a ``TSOutputView``; the node drives it through the erased
+     * API and ``apply_delta``. ``apply`` is a scalar (TS-kind) convenience that
+     * copies a value and ticks it; container kinds go through ``apply_delta``.
+     */
+    template <fixed_string VarName, typename... TConstraints>
+    class Out<TsVar<VarName, TConstraints...>> : public TSOutputView
     {
-        /** Capture the scalar delta (== the value) as an owned ``Value``. */
-        [[nodiscard]] static Value capture(const TSInputView &in) { return Value{in.value()}; }
+      public:
+        using schema = TsVar<VarName, TConstraints...>;
 
-        static void apply(const Out<TS<T>> &out, const ValueView &delta) { out.apply(delta); }
-    };
+        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
 
-    template <typename T>
-    struct ts_delta<TSS<T>>
-    {
-        /** Rebuild the canonical ``Bundle{added, removed}`` from the live set delta. */
-        [[nodiscard]] static Value capture(const TSInputView &in)
+        /** Type-erased set: copy a value (matching the resolved output schema) and tick it. */
+        void apply(const ValueView &value) const
         {
-            const auto     set = in.as_set();
-            std::vector<T> added;
-            for (const auto &e : set.added()) { added.push_back(e.template checked_as<T>()); }
-            std::vector<T> removed;
-            for (const auto &e : set.removed()) { removed.push_back(e.template checked_as<T>()); }
-            return set_delta<T>(std::move(added), std::move(removed));
-        }
-
-        static void apply(const Out<TSS<T>> &out, const ValueView &delta)
-        {
-            const auto bundle  = delta.as_bundle();
-            const auto removed = bundle.field("removed").as_indexed_view();
-            for (std::size_t i = 0; i < removed.size(); ++i) { (void)out.remove(removed.at(i).template checked_as<T>()); }
-            const auto added = bundle.field("added").as_indexed_view();
-            for (std::size_t i = 0; i < added.size(); ++i) { (void)out.add(added.at(i).template checked_as<T>()); }
-        }
-    };
-
-    template <typename C, std::size_t N>
-    struct ts_delta<TSL<C, N>>
-    {
-        /** Rebuild the canonical ``Map<int64, delta(C)>`` from the modified children. */
-        [[nodiscard]] static Value capture(const TSInputView &in)
-        {
-            std::map<std::size_t, static_node_detail::delta_input_t<C>> entries;
-            const auto                                                  list = in.as_list();
-            for (const auto &[index, child] : list.modified_items())
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
+            if (!mutation.copy_value_from(value))
             {
-                if constexpr (static_node_detail::is_scalar_ts<C>::value)
-                {
-                    entries.emplace(index, child.value().template checked_as<typename C::value_type>());
-                }
-                else
-                {
-                    entries.emplace(index, ts_delta<C>::capture(child));
-                }
-            }
-            return static_node_detail::build_list_delta<C>(entries);
-        }
-
-        static void apply(const Out<TSL<C, N>> &out, const ValueView &delta)
-        {
-            const auto map = delta.as_map();
-            for (const auto &[key, child_delta] : map)
-            {
-                ts_delta<C>::apply(out[static_cast<std::size_t>(key.template checked_as<std::int64_t>())], child_delta);
+                throw std::logic_error("Out<TsVar>::apply failed to copy the value into the output");
             }
         }
+        // schema() / begin_mutation() / evaluation_time() / as_set() / as_list() inherited.
     };
+
+    // The per-cycle delta capture / apply that ``replay`` / ``record`` and the harness
+    // use is now the runtime, type-erased ``capture_delta`` / ``apply_delta``
+    // (``<hgraph/types/time_series/ts_delta.h>``) — schema-as-data, dispatched on the
+    // live endpoint's kind — which replaced the compile-time ``ts_delta<S>`` driver.
+    // The ``set_delta`` / ``list_delta`` builders above remain as the test-authoring
+    // way to construct an *expected* canonical delta ``Value`` (compared via
+    // ``Value::equals`` against a captured one).
 
     /** Typed handle into node-local (value-layer) state. One state slot per node. */
     template <typename TValue>
@@ -504,6 +486,29 @@ namespace hgraph
 
       private:
         TValue value_;
+    };
+
+    /**
+     * **Deferred** (generic) scalar selector — the value type is a ``ScalarVar``
+     * resolved at wiring time. It holds the configured value type-erased as an owned
+     * ``Value``; ``value()`` returns the erased ``ValueView`` (a node typically forwards
+     * it through ``apply_delta`` / ``copy_value_from`` against its resolved output).
+     */
+    template <fixed_string Name, fixed_string VarName, typename... TConstraints>
+    class Scalar<Name, ScalarVar<VarName, TConstraints...>>
+    {
+      public:
+        using schema                     = ScalarVar<VarName, TConstraints...>;
+        static constexpr auto field_name = Name;
+
+        /** Read from the node's compound scalar configuration (node ``eval`` path). */
+        explicit Scalar(const ValueView &view) : value_(view) {}
+
+        /** The configured value, type-erased. */
+        [[nodiscard]] ValueView value() const noexcept { return value_.view(); }
+
+      private:
+        Value value_;
     };
 
     // The ``GlobalStateView`` injectable selector is the runtime view type from
@@ -579,10 +584,14 @@ namespace hgraph
         template <> struct is_scheduler_selector<NodeScheduler> : std::true_type {};
 
         // ---- per-selector runtime metadata ----
+        // ``schema`` / ``value_schema`` expose the selector's compile-time schema type
+        // so the generic-wiring path can resolve type variables (see type_resolution.h);
+        // the ``*_meta()`` accessors stay the concrete-path (var schemas return nullptr).
         template <typename T> struct input_selector_traits;
         template <fixed_string N, typename S>
         struct input_selector_traits<In<N, S>>
         {
+            using schema = S;
             static std::string                name() { return std::string{N.sv()}; }
             static const TSValueTypeMetaData *ts_meta() { return schema_descriptor<S>::ts_meta(); }
         };
@@ -591,6 +600,7 @@ namespace hgraph
         template <typename S>
         struct output_selector_traits<Out<S>>
         {
+            using schema = S;
             static const TSValueTypeMetaData *ts_meta() { return schema_descriptor<S>::ts_meta(); }
         };
 
@@ -598,6 +608,7 @@ namespace hgraph
         template <typename V>
         struct state_selector_traits<State<V>>
         {
+            using value_schema = V;
             static const ValueTypeMetaData *value_meta() { return scalar_descriptor<V>::value_meta(); }
         };
 
@@ -605,9 +616,21 @@ namespace hgraph
         template <fixed_string N, typename V>
         struct scalar_selector_traits<Scalar<N, V>>
         {
+            using value_schema = V;
             static std::string              name() { return std::string{N.sv()}; }
             static const ValueTypeMetaData *value_meta() { return scalar_descriptor<V>::value_meta(); }
         };
+
+        // ---- per-selector genericity (a var-bearing schema is not concrete) ----
+        template <typename E> struct selector_is_generic : std::false_type {};
+        template <fixed_string N, typename S>
+        struct selector_is_generic<In<N, S>> : std::bool_constant<!schema_descriptor<S>::is_concrete()> {};
+        template <typename S>
+        struct selector_is_generic<Out<S>> : std::bool_constant<!schema_descriptor<S>::is_concrete()> {};
+        template <fixed_string N, typename V>
+        struct selector_is_generic<Scalar<N, V>> : std::bool_constant<!scalar_descriptor<V>::is_concrete()> {};
+        template <typename V>
+        struct selector_is_generic<State<V>> : std::bool_constant<!scalar_descriptor<V>::is_concrete()> {};
 
         // ---- compile-time output schema type extraction ----
         // output_schema_of<E> is void for any non-output selector and S for Out<S>,
@@ -975,6 +998,83 @@ namespace hgraph
             return result;
         }
 
+        // ---- resolved (generic) collectors: substitute type-var bindings ----
+        template <std::size_t... I>
+        static void collect_inputs_resolved(std::vector<std::pair<std::string, const TSValueTypeMetaData *>> &fields,
+                                            const ResolutionMap &m, std::index_sequence<I...>)
+        {
+            (
+                [&] {
+                    using E = static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>;
+                    if constexpr (static_node_detail::is_input_selector<E>::value)
+                    {
+                        using S = typename static_node_detail::input_selector_traits<E>::schema;
+                        fields.emplace_back(static_node_detail::input_selector_traits<E>::name(),
+                                            ts_resolver<S>::resolve(m));
+                    }
+                }(),
+                ...);
+        }
+
+        template <std::size_t... I>
+        static const TSValueTypeMetaData *find_output_resolved(const ResolutionMap &m, std::index_sequence<I...>)
+        {
+            const TSValueTypeMetaData *out = nullptr;
+            (
+                [&] {
+                    using E = static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>;
+                    if constexpr (static_node_detail::is_output_selector<E>::value)
+                    {
+                        out = ts_resolver<typename static_node_detail::output_selector_traits<E>::schema>::resolve(m);
+                    }
+                }(),
+                ...);
+            return out;
+        }
+
+        template <std::size_t... I>
+        static const ValueTypeMetaData *find_state_resolved(const ResolutionMap &m, std::index_sequence<I...>)
+        {
+            const ValueTypeMetaData *state = nullptr;
+            (
+                [&] {
+                    using E = static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>;
+                    if constexpr (static_node_detail::is_state_selector<E>::value)
+                    {
+                        state = scalar_resolver<typename static_node_detail::state_selector_traits<E>::value_schema>::resolve(m);
+                    }
+                }(),
+                ...);
+            return state;
+        }
+
+        template <std::size_t... I>
+        static void collect_scalars_resolved(std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields,
+                                             const ResolutionMap &m, std::index_sequence<I...>)
+        {
+            (
+                [&] {
+                    using E = static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>;
+                    if constexpr (static_node_detail::is_scalar_selector<E>::value)
+                    {
+                        fields.emplace_back(static_node_detail::scalar_selector_traits<E>::name(),
+                                            scalar_resolver<typename static_node_detail::scalar_selector_traits<E>::value_schema>::resolve(m));
+                    }
+                }(),
+                ...);
+        }
+
+        template <std::size_t... I>
+        static constexpr bool compute_is_generic(std::index_sequence<I...>)
+        {
+            return (false || ... ||
+                    static_node_detail::selector_is_generic<
+                        static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>::value);
+        }
+
+        /** True when any In / Out / Scalar / State selector carries an unresolved type variable. */
+        [[nodiscard]] static constexpr bool is_generic() { return compute_is_generic(indices{}); }
+
         [[nodiscard]] static const TSValueTypeMetaData *input_schema()
         {
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
@@ -985,6 +1085,34 @@ namespace hgraph
 
         [[nodiscard]] static const TSValueTypeMetaData *output_schema() { return find_output(indices{}); }
         [[nodiscard]] static const ValueTypeMetaData   *state_schema() { return find_state(indices{}); }
+
+        /** Resolved input TSB schema, substituting type-var bindings from ``m``. */
+        [[nodiscard]] static const TSValueTypeMetaData *input_schema(const ResolutionMap &m)
+        {
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+            collect_inputs_resolved(fields, m, indices{});
+            if (fields.empty()) { return nullptr; }
+            return TypeRegistry::instance().un_named_tsb(fields);
+        }
+
+        [[nodiscard]] static const TSValueTypeMetaData *output_schema(const ResolutionMap &m)
+        {
+            return find_output_resolved(m, indices{});
+        }
+
+        [[nodiscard]] static const ValueTypeMetaData *state_schema(const ResolutionMap &m)
+        {
+            return find_state_resolved(m, indices{});
+        }
+
+        /** Resolved scalar-configuration bundle schema (or nullptr when none). */
+        [[nodiscard]] static const ValueTypeMetaData *scalar_schema(const ResolutionMap &m)
+        {
+            std::vector<std::pair<std::string, const ValueTypeMetaData *>> fields;
+            collect_scalars_resolved(fields, m, indices{});
+            if (fields.empty()) { return nullptr; }
+            return TypeRegistry::instance().un_named_bundle(fields);
+        }
 
         /**
          * The node's scalar-configuration schema: a compound (un-named bundle)
@@ -1021,6 +1149,19 @@ namespace hgraph
             if (tsb == nullptr) { return TSEndpointSchema{}; }
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
             collect_inputs(fields, indices{});
+            std::vector<TSEndpointSchema> children;
+            children.reserve(fields.size());
+            for (const auto &field : fields) { children.push_back(TSEndpointSchema::peered(field.second)); }
+            return TSEndpointSchema::non_peered(tsb, std::move(children));
+        }
+
+        /** Resolved input endpoint annotation (type-var bindings from ``m``). */
+        [[nodiscard]] static TSEndpointSchema input_endpoint(const ResolutionMap &m)
+        {
+            const TSValueTypeMetaData *tsb = input_schema(m);
+            if (tsb == nullptr) { return TSEndpointSchema{}; }
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+            collect_inputs_resolved(fields, m, indices{});
             std::vector<TSEndpointSchema> children;
             children.reserve(fields.size());
             for (const auto &field : fields) { children.push_back(TSEndpointSchema::peered(field.second)); }
@@ -1074,6 +1215,57 @@ namespace hgraph
         std::string saved_label{label_};
         Value       saved_scalars{std::move(scalars_)};
         *this = NodeBuilder::native(std::move(schema), std::move(callbacks), signature::input_endpoint());
+        if (!saved_label.empty()) { label(std::move(saved_label)); }
+        if (saved_scalars.has_value()) { scalars(std::move(saved_scalars)); }
+        return *this;
+    }
+
+    template <typename TImplementation>
+    NodeBuilder &NodeBuilder::implementation(const ResolutionMap &resolution)
+    {
+        static_assert(std::is_class_v<TImplementation>, "Static node implementations must be class/struct types");
+        static_assert(std::is_empty_v<TImplementation>, "Static node implementations must be stateless");
+
+        using signature = StaticNodeSignature<TImplementation>;
+        static_assert(signature::output_count() <= 1, "Static nodes support at most one Out<...> parameter");
+        static_assert(signature::state_count() <= 1, "Static nodes support at most one State<...> parameter");
+        static_assert(signature::input_names_unique(), "Static node In<> selector names must be unique");
+        static_assert(signature::scalar_names_unique(), "Static node Scalar<> selector names must be unique");
+
+        // Identical to the concrete implementation() except the schema pointers are
+        // computed by substituting the wiring-time type-var bindings (``resolution``).
+        // The callbacks stay schema-agnostic — they read the resolved endpoints from
+        // the NodeView, so one closure over &eval serves every resolution.
+        NodeTypeMetaData schema;
+        if constexpr (static_node_detail::has_name<TImplementation>) { schema.display_name = TImplementation::name; }
+        schema.input_schema      = signature::input_schema(resolution);
+        schema.output_schema     = signature::output_schema(resolution);
+        schema.state_schema      = signature::state_schema(resolution);
+        schema.scalar_schema     = signature::scalar_schema(resolution);
+        schema.node_kind         = signature::node_kind();
+        schema.uses_scheduler    = signature::uses_scheduler();
+        schema.schedule_on_start = signature::schedule_on_start();
+
+        NodeCallbacks callbacks;
+        callbacks.evaluate = [](const NodeView &view, engine_time_t evaluation_time) {
+            static_node_detail::invoke<&TImplementation::eval>(view, evaluation_time);
+        };
+        if constexpr (static_node_detail::has_start<TImplementation>)
+        {
+            callbacks.start = [](const NodeView &view, engine_time_t evaluation_time) {
+                static_node_detail::invoke<&TImplementation::start>(view, evaluation_time);
+            };
+        }
+        if constexpr (static_node_detail::has_stop<TImplementation>)
+        {
+            callbacks.stop = [](const NodeView &view, engine_time_t evaluation_time) {
+                static_node_detail::invoke<&TImplementation::stop>(view, evaluation_time);
+            };
+        }
+
+        std::string saved_label{label_};
+        Value       saved_scalars{std::move(scalars_)};
+        *this = NodeBuilder::native(std::move(schema), std::move(callbacks), signature::input_endpoint(resolution));
         if (!saved_label.empty()) { label(std::move(saved_label)); }
         if (saved_scalars.has_value()) { scalars(std::move(saved_scalars)); }
         return *this;

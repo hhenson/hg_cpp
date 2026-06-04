@@ -16,15 +16,39 @@ namespace hgraph
         // + input ports by (producing instance, path) + the scalar configuration
         // values. The output schema is implied by the node + path, so it is not
         // part of the key. ``scalars`` is empty for a node with no scalar inputs.
+        // The node's *resolved* schema identity: the (registry-interned, hence stable)
+        // input / output / scalar / state schema pointers. For a concrete node these
+        // are implied by ``def``; for a GENERIC node two wirings of the same definition
+        // resolve to different schemas (e.g. const_ over int vs double), so they must
+        // enter the key or distinct resolutions would wrongly dedup. (The NodeTypeMetaData
+        // object itself is freshly built per builder, so it cannot be used as identity.)
+        struct ResolvedSchema
+        {
+            const void *input;
+            const void *output;
+            const void *scalar;
+            const void *state;
+
+            bool operator==(const ResolvedSchema &) const noexcept = default;
+        };
+
+        [[nodiscard]] ResolvedSchema resolved_schema_of(const NodeBuilder &builder)
+        {
+            const auto *tm = builder.binding().type_meta;
+            if (tm == nullptr) { return ResolvedSchema{nullptr, nullptr, nullptr, nullptr}; }
+            return ResolvedSchema{tm->input_schema, tm->output_schema, tm->scalar_schema, tm->state_schema};
+        }
+
         struct InstanceKey
         {
             std::type_index                                                         def;
+            ResolvedSchema                                                          schema;
             std::vector<std::pair<const WiringInstance *, std::vector<std::size_t>>> inputs;
             Value                                                                   scalars;
 
             bool operator==(const InstanceKey &other) const noexcept
             {
-                if (def != other.def || inputs != other.inputs) { return false; }
+                if (def != other.def || !(schema == other.schema) || inputs != other.inputs) { return false; }
                 if (scalars.has_value() != other.scalars.has_value()) { return false; }
                 if (!scalars.has_value()) { return true; }
                 return scalars.equals(other.scalars);
@@ -39,6 +63,10 @@ namespace hgraph
                 auto combine = [&h](std::size_t v) noexcept {
                     h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
                 };
+                combine(std::hash<const void *>{}(key.schema.input));
+                combine(std::hash<const void *>{}(key.schema.output));
+                combine(std::hash<const void *>{}(key.schema.scalar));
+                combine(std::hash<const void *>{}(key.schema.state));
                 for (const auto &[node, path] : key.inputs)
                 {
                     combine(std::hash<const void *>{}(node));
@@ -50,10 +78,10 @@ namespace hgraph
             }
         };
 
-        [[nodiscard]] InstanceKey make_key(std::type_index def, std::span<const WiringPortRef> inputs,
-                                           const Value &scalars)
+        [[nodiscard]] InstanceKey make_key(std::type_index def, ResolvedSchema schema,
+                                           std::span<const WiringPortRef> inputs, const Value &scalars)
         {
-            InstanceKey key{def, {}, scalars};
+            InstanceKey key{def, schema, {}, scalars};
             key.inputs.reserve(inputs.size());
             for (const auto &port : inputs) { key.inputs.emplace_back(port.node, port.path); }
             return key;
@@ -81,7 +109,7 @@ namespace hgraph
     WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder, std::span<const WiringPortRef> inputs,
                                    Value scalars)
     {
-        InstanceKey key = make_key(def, inputs, scalars);
+        InstanceKey key = make_key(def, resolved_schema_of(builder), inputs, scalars);
 
         if (auto it = impl_->interned.find(key); it != impl_->interned.end())
         {

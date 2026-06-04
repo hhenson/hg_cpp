@@ -27,6 +27,7 @@ namespace hgraph
     class NodeValue;
     class NodeView;
     struct NodeSchedulerState;
+    struct ResolutionMap;  // type_resolution.h — generic-node wiring resolution
 
     /** Runtime node category used by graph construction and evaluation. */
     enum class NodeKind
@@ -249,6 +250,15 @@ namespace hgraph
          */
         template <typename TImplementation>
         NodeBuilder &implementation();
+
+        /**
+         * Generic-node front-end: build ``TImplementation`` resolving its type
+         * variables (``TsVar`` / ``ScalarVar``) through ``resolution`` (see
+         * ``type_resolution.h``). Used by the wiring layer for generic nodes; the
+         * concrete overload above is unaffected. Defined in ``static_node.h``.
+         */
+        template <typename TImplementation>
+        NodeBuilder &implementation(const ResolutionMap &resolution);
 
         NodeBuilder &label(std::string label);
         [[nodiscard]] std::string_view label() const noexcept;

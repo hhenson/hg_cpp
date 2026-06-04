@@ -71,10 +71,10 @@ namespace
         static constexpr auto name = "tsl_spread_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay<TS<int>>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TS<int>>(w, std::string{"in"});
             auto sp  = wire<Spread>(w, src);   // -> Port<TSL<TS<int>, 2>>
             auto tot = wire<Total>(w, sp);
-            wire<testing::record<TS<int>>>(w, tot, std::string{"out"});
+            wire<testing::record>(w, tot, std::string{"out"});
         }
     };
 
@@ -83,8 +83,8 @@ namespace
         static constexpr auto name = "tsl_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay<TSL<TS<int>, 2>>>(w, std::string{"in"});
-            wire<testing::record<TSL<TS<int>, 2>>>(w, src, std::string{"out"});
+            auto src = wire<testing::replay, TSL<TS<int>, 2>>(w, std::string{"in"});
+            wire<testing::record>(w, src, std::string{"out"});
         }
     };
 }  // namespace

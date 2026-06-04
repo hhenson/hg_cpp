@@ -6,6 +6,7 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_node.h>
+#include <hgraph/types/time_series/ts_delta.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/util/date_time.h>
 
@@ -138,15 +139,16 @@ namespace hgraph::testing
     }
 
     // -----------------------------------------------------------------
-    // replay<S> / record<S> — one generic source / sink per direction, over a
-    // cycle-aligned buffer of canonical delta ``Value``s. ``record`` captures the
-    // input's ``delta_value()``; ``replay`` re-creates ticks via the recursive
-    // ``ts_delta<S>::apply``. Works for any time-series schema (TS / TSS / TSL / …,
-    // recursively). Wire e.g. ``replay<TS<int>>``, ``record<TSL<TSS<int>, 2>>``.
+    // replay / record — a SINGLE erased source / sink (not templated per schema),
+    // over a cycle-aligned buffer of canonical delta ``Value``s. Each is authored
+    // once over a deferred time-series type (``TsVar``) and resolved at wiring; the
+    // behaviour is schema-as-data, driven by the runtime ``capture_delta`` /
+    // ``apply_delta``. ``record`` is a sink whose type resolves from its connected
+    // input port — ``wire<record>(w, port, key)``; ``replay`` is a source whose type
+    // is supplied explicitly — ``wire<replay, TS<int>>(w, key)``.
     // -----------------------------------------------------------------
 
-    /** Multi-cycle source: emits a recorded delta sequence for time-series schema ``S``. */
-    template <typename S>
+    /** Multi-cycle source: emits a recorded delta sequence for its (resolved) output type. */
     struct replay
     {
         static constexpr auto name = "replay";
@@ -155,7 +157,7 @@ namespace hgraph::testing
         static constexpr bool schedule_on_start = true;
 
         static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched, State<int> index,
-                         Out<S> out)
+                         Out<TsVar<"S">> out)
         {
             const ValueView buffer = gs.get(key.value());
             if (!buffer.valid()) { return; }  // nothing seeded under this key
@@ -166,15 +168,14 @@ namespace hgraph::testing
             if (i < size)
             {
                 const auto element = list.at(static_cast<std::size_t>(i)).as_any();
-                if (element.has_value()) { ts_delta<S>::apply(out, element.get()); }
+                if (element.has_value()) { apply_delta(out, element.get()); }
             }
             index.set(i + 1);
             if (i + 1 < size) { sched.schedule(MIN_TD); }  // re-arm for the next cycle
         }
     };
 
-    /** Multi-cycle sink: captures each tick's canonical ``delta_value()`` into the buffer. */
-    template <typename S>
+    /** Multi-cycle sink: captures each tick's canonical delta into the buffer. */
     struct record
     {
         static constexpr auto name = "record";
@@ -184,7 +185,7 @@ namespace hgraph::testing
             gs.set(key.value(), make_buffer());  // fresh, empty cycle-aligned buffer
         }
 
-        static void eval(In<"ts", S> ts, Scalar<"key", std::string> key, GlobalStateView gs, engine_time_t now)
+        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, GlobalStateView gs, engine_time_t now)
         {
             const std::size_t offset   = cycle_offset(now);
             const ValueView   buffer   = gs.get(key.value());
@@ -198,7 +199,7 @@ namespace hgraph::testing
             }
             // The canonical per-tick delta, rebuilt as an owned value-layer Value (the
             // runtime's transient delta storage omits copy hooks), then boxed.
-            mutation.push_back(make_any(ts_delta<S>::capture(ts.base())).view());
+            mutation.push_back(make_any(capture_delta(ts.base())).view());
         }
     };
 }  // namespace hgraph::testing

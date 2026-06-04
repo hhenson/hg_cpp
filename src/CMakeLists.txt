@@ -38,6 +38,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series/ts_output/window_view.cpp
     hgraph/types/time_series/ts_output.cpp
     hgraph/types/time_series/ts_output/alternative.cpp
+    hgraph/types/time_series/ts_delta.cpp
     hgraph/types/time_series_reference.cpp
     hgraph/runtime/global_state.cpp
     hgraph/types/value/any_ops.cpp

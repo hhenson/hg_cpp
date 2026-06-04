@@ -158,4 +158,5 @@ Deferred (land with the relevant runtime layer):
   ``apply_message(Scalar<"name", T>, …)`` hook — and ``Scalar<"name", T>``
   arguments;
 - input ``InputActivity`` / ``InputValidity`` policy flags, named state;
-- generic resolution (``TsVar`` / ``ScalarVar``) and the Python lowering.
+- the Python lowering, and **graph-level** generic resolution (node-level
+  ``TsVar`` / ``ScalarVar`` resolution is now implemented — see *Graph Wiring*).

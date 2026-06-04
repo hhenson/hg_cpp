@@ -262,7 +262,24 @@ Slices:
    scalar literals** into the sub-graph's ``Scalar<>`` parameters. A sub-graph and a
    node are now wired identically at the call site. Tests:
    ``tests/cpp/test_graph_wiring.cpp``.
-5. **Next.** Standalone sub-graph building / time-series **boundary binding**
+5. **Generic (type-variable) nodes — done.** A node authored over ``TsVar`` /
+   ``ScalarVar`` (one implementation, no per-type instantiation) is resolved to a
+   concrete node at the ``wire<>`` call. ``wire<>`` builds a ``ResolutionMap``
+   (``include/hgraph/types/type_resolution.h``): each input selector's pattern is
+   **unified** against the connected port's runtime schema, a scalar variable is
+   inferred from the configured value's type, and a source-side output variable is
+   supplied **explicitly** — either ``wire<replay, TS<int>>(w, key)`` (an explicit
+   output schema, which also makes the returned port the typed ``Port<TS<int>>``) or
+   via ``ts_type<...>()`` / ``scalar_type<...>()`` helpers. The resolved schemas
+   build the node through ``NodeBuilder::implementation<T>(map)``. When a generic
+   output type is only known at wiring (resolved from inputs/values, not supplied),
+   ``wire<>`` returns the **erased** ``Port<void>`` carrying the runtime schema;
+   downstream ``wire<>`` accepts it (typed or erased). The resolved schema pointers
+   are part of the node's interning key, so distinct resolutions of one definition do
+   not collide. The framework's own ``replay`` / ``record`` / ``const_`` /
+   ``debug_print`` / ``null_sink`` are authored this way. Tests:
+   ``tests/cpp/test_type_resolution.cpp``.
+6. **Next.** Standalone sub-graph building / time-series **boundary binding**
    (supplying ``Port`` inputs to ``build_graph`` / ``wire<G>``) — **deferred until
    it has a consumer**, the non-flattening nested graphs (``map_`` / ``reduce`` /
    ``switch_``), which is where the boundary substrate is actually needed.
@@ -271,6 +288,7 @@ Deferred: **by-name graph/node scalar arguments and parameter defaults** (today
 arguments are positional and all required — a compile-time ``arg<"name">(value)``
 matched to the ``Scalar<Name, T>`` parameter, plus defaults for omitted arguments,
 are the planned additions to ``build_graph<G>`` / ``StaticGraphSignature``);
-multiple outputs (``TSB`` ports, optionally returned as an array as sugar); generic
-graphs (``TsVar`` / ``ScalarVar`` in signatures); higher-order operators and
-feedback; dead-node pruning; and the Python bridge that drives the core.
+multiple outputs (``TSB`` ports, optionally returned as an array as sugar);
+**graph-level** generic resolution (``TsVar`` / ``ScalarVar`` in a *graph*
+``compose`` signature — node-level resolution above is done); higher-order operators
+and feedback; dead-node pruning; and the Python bridge that drives the core.

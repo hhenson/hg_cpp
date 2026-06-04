@@ -6,6 +6,7 @@
 #include <hgraph/types/metadata/value_plan_factory.h>   // ValuePlanFactory (scalar bundle binding)
 #include <hgraph/types/static_node.h>                   // StaticNodeSignature, In/Out/State/Scalar markers
 #include <hgraph/types/static_schema.h>                 // schema_descriptor
+#include <hgraph/types/type_resolution.h>               // ResolutionMap, ts_resolver, unifiers, ts_type
 #include <hgraph/types/value/value.h>                   // Value (scalar configuration)
 
 #include <array>
@@ -126,6 +127,38 @@ namespace hgraph
         std::vector<std::size_t> path_{};
     };
 
+    /**
+     * **Erased** output port: a generic node whose output type is only known at
+     * wiring time (resolved from inferred type variables, not supplied explicitly)
+     * returns this form, carrying the resolved runtime schema instead of a static
+     * one. Downstream ``wire<>`` accepts it and matches/unifies against the runtime
+     * schema. (A generic source wired with an explicit output schema returns the
+     * ordinary typed ``Port<S>`` instead.)
+     */
+    template <>
+    class Port<void>
+    {
+      public:
+        using schema = void;
+
+        Port() noexcept = default;
+        Port(const WiringInstance *node, std::vector<std::size_t> path, const TSValueTypeMetaData *schema) noexcept
+            : node_(node), path_(std::move(path)), schema_(schema)
+        {
+        }
+
+        [[nodiscard]] const WiringInstance           *node() const noexcept { return node_; }
+        [[nodiscard]] const std::vector<std::size_t> &path() const noexcept { return path_; }
+        [[nodiscard]] const TSValueTypeMetaData      *runtime_schema() const noexcept { return schema_; }
+
+        [[nodiscard]] WiringPortRef erased() const { return WiringPortRef{node_, path_, schema_}; }
+
+      private:
+        const WiringInstance      *node_{nullptr};
+        std::vector<std::size_t>   path_{};
+        const TSValueTypeMetaData *schema_{nullptr};
+    };
+
     template <typename G>
     struct StaticGraphSignature;   // defined below; forward-declared for use in wire<G>
 
@@ -148,8 +181,25 @@ namespace hgraph
         template <typename T> struct is_port : std::false_type {};
         template <typename S> struct is_port<Port<S>> : std::true_type {};
 
+        // The erased port (``Port<void>``): carries only a runtime schema.
+        template <typename T> struct is_erased_port : std::false_type {};
+        template <> struct is_erased_port<Port<void>> : std::true_type {};
+
         template <typename T> struct in_param_schema;
         template <fixed_string N, typename S> struct in_param_schema<In<N, S>> { using type = S; };
+
+        // The schema type a Scalar<Name, V> wire-param carries (``V`` — a concrete
+        // scalar type, or a ``ScalarVar`` for a generic node).
+        template <typename T> struct scalar_param_schema;
+        template <fixed_string N, typename V> struct scalar_param_schema<Scalar<N, V>> { using type = V; };
+
+        // The value type of a wiring scalar argument (a plain value, or a forwarded
+        // ``Scalar<>`` selector whose value is unpacked).
+        template <typename A> struct arg_value_type { using type = A; };
+        template <fixed_string N, typename V> struct arg_value_type<Scalar<N, V>> { using type = V; };
+
+        template <typename T> struct is_scalar_var : std::false_type {};
+        template <fixed_string N, typename... C> struct is_scalar_var<ScalarVar<N, C...>> : std::true_type {};
 
         // Drop the leading ``Wiring &`` from a ``compose`` parameter tuple.
         template <typename Tuple> struct drop_first;
@@ -185,6 +235,25 @@ namespace hgraph
         [[nodiscard]] ScalarParam make_scalar_param(Arg &&arg)
         {
             return ScalarParam{coerce_scalar_value<typename ScalarParam::value_type>(std::forward<Arg>(arg))};
+        }
+
+        // Build the owned ``Value`` for one scalar field of a *generic* node's
+        // configuration bundle. For a concrete ``Scalar<Name, V>`` the field type is
+        // ``V``; for a var ``Scalar<Name, ScalarVar<...>>`` it is the supplied
+        // argument's own value type (which also pins the scalar variable).
+        template <typename P, typename Arg>
+        [[nodiscard]] Value make_scalar_field(Arg &&arg)
+        {
+            using ST = typename scalar_param_schema<P>::type;
+            if constexpr (is_scalar_var<ST>::value)
+            {
+                using VT = typename arg_value_type<std::remove_cvref_t<Arg>>::type;
+                return Value{coerce_scalar_value<VT>(std::forward<Arg>(arg))};
+            }
+            else
+            {
+                return Value{coerce_scalar_value<ST>(std::forward<Arg>(arg))};
+            }
         }
 
         // Transform one ``wire<G>`` argument into its ``compose`` parameter ``P``:
@@ -223,7 +292,7 @@ namespace hgraph
      *   ``Port`` parameter and a scalar value for each ``Scalar`` parameter, **in
      *   compose-parameter order** — and are checked at compile time.
      */
-    template <typename X, typename... Args>
+    template <typename X, typename OutSchema = void, typename... Args>
     auto wire(Wiring &w, const Args &...args)
     {
         if constexpr (graph_wiring_detail::is_graph_def<X>)
@@ -249,55 +318,166 @@ namespace hgraph
 
             auto arg_tuple = std::forward_as_tuple(args...);
 
-            // Time-series input ports (the In positions), in eval order.
-            std::vector<WiringPortRef> inputs;
-            inputs.reserve(signature::input_count());
-            [&]<std::size_t... I>(std::index_sequence<I...>) {
-                (
-                    [&] {
-                        using P = std::tuple_element_t<I, wire_params>;
-                        using A = std::remove_cvref_t<std::tuple_element_t<I, std::tuple<Args...>>>;
-                        if constexpr (static_node_detail::is_input_selector<P>::value)
-                        {
-                            static_assert(graph_wiring_detail::is_port<A>::value,
-                                          "wire<T>: a time-series input expects a Port argument");
-                            static_assert(std::is_same_v<typename A::schema,
-                                                         typename graph_wiring_detail::in_param_schema<P>::type>,
-                                          "wire<T>: input port schema does not match the node's time-series input");
-                            inputs.push_back(std::get<I>(arg_tuple).erased());
-                        }
-                    }(),
-                    ...);
-            }(std::make_index_sequence<sizeof...(Args)>{});
-
-            // Compound scalar configuration (the Scalar positions), if any.
-            Value scalars;
-            if constexpr (signature::scalar_count() > 0)
+            if constexpr (signature::is_generic())
             {
-                const auto *binding = ValuePlanFactory::instance().binding_for(signature::scalar_schema());
-                scalars             = Value{*binding};
-                auto mutation       = scalars.as_bundle().begin_mutation();
+                // ---------- generic node: resolve type variables at wiring time ----------
+                ResolutionMap map;
+
+                // (a) explicit output schema, for a source-side variable (e.g. replay).
+                if constexpr (!std::is_void_v<OutSchema>)
+                {
+                    ts_unifier<typename signature::output_schema_type>::unify(ts_type<OutSchema>(), map);
+                }
+
+                // (b) bind from connected input ports + infer scalar variables from values.
                 [&]<std::size_t... I>(std::index_sequence<I...>) {
                     (
                         [&] {
                             using P = std::tuple_element_t<I, wire_params>;
-                            if constexpr (static_node_detail::is_scalar_selector<P>::value)
+                            using A = std::remove_cvref_t<std::tuple_element_t<I, std::tuple<Args...>>>;
+                            if constexpr (static_node_detail::is_input_selector<P>::value)
                             {
-                                using V = typename P::value_type;
-                                mutation[P::field_name.sv()].template checked_mutable_as<V>() =
-                                    graph_wiring_detail::coerce_scalar_value<V>(std::get<I>(arg_tuple));
+                                static_assert(graph_wiring_detail::is_port<A>::value,
+                                              "wire<T>: a time-series input expects a Port argument");
+                                ts_unifier<typename graph_wiring_detail::in_param_schema<P>::type>::unify(
+                                    std::get<I>(arg_tuple).erased().schema, map);
+                            }
+                            else if constexpr (static_node_detail::is_scalar_selector<P>::value)
+                            {
+                                using ST = typename graph_wiring_detail::scalar_param_schema<P>::type;
+                                using VT = typename graph_wiring_detail::arg_value_type<A>::type;
+                                scalar_unifier<ST>::unify(scalar_descriptor<VT>::value_meta(), map);
                             }
                         }(),
                         ...);
                 }(std::make_index_sequence<sizeof...(Args)>{});
+
+                // Input ports (the In positions): bindings are already validated above.
+                std::vector<WiringPortRef> inputs;
+                inputs.reserve(signature::input_count());
+                [&]<std::size_t... I>(std::index_sequence<I...>) {
+                    (
+                        [&] {
+                            using P = std::tuple_element_t<I, wire_params>;
+                            if constexpr (static_node_detail::is_input_selector<P>::value)
+                            {
+                                inputs.push_back(std::get<I>(arg_tuple).erased());
+                            }
+                        }(),
+                        ...);
+                }(std::make_index_sequence<sizeof...(Args)>{});
+
+                // Resolved scalar configuration: assembled from owned field Values so
+                // a var field's (now-resolved) type is honoured.
+                Value scalars;
+                if constexpr (signature::scalar_count() > 0)
+                {
+                    const auto   *binding = ValuePlanFactory::instance().binding_for(signature::scalar_schema(map));
+                    BundleBuilder bundle{*binding};
+                    [&]<std::size_t... I>(std::index_sequence<I...>) {
+                        (
+                            [&] {
+                                using P = std::tuple_element_t<I, wire_params>;
+                                if constexpr (static_node_detail::is_scalar_selector<P>::value)
+                                {
+                                    Value field = graph_wiring_detail::make_scalar_field<P>(std::get<I>(arg_tuple));
+                                    bundle.set(P::field_name.sv(), field.view());
+                                }
+                            }(),
+                            ...);
+                    }(std::make_index_sequence<sizeof...(Args)>{});
+                    scalars = bundle.build();
+                }
+
+                NodeBuilder nb;
+                nb.implementation<X>(map);
+                WiringPortRef out =
+                    w.add_node(std::type_index(typeid(X)), std::move(nb), inputs, std::move(scalars));
+
+                if constexpr (signature::has_output())
+                {
+                    if constexpr (!std::is_void_v<OutSchema>)
+                    {
+                        return Port<OutSchema>{out.node, out.path};       // typed: explicit output schema
+                    }
+                    else
+                    {
+                        return Port<void>{out.node, out.path, out.schema};  // erased: runtime-resolved
+                    }
+                }
             }
-
-            WiringPortRef out = w.add_node(std::type_index(typeid(X)), graph_wiring_detail::build_node_builder<X>(),
-                                           inputs, std::move(scalars));
-
-            if constexpr (signature::has_output())
+            else
             {
-                return Port<typename signature::output_schema_type>{out.node, out.path};
+                // ---------- concrete node ----------
+                static_assert(std::is_void_v<OutSchema>,
+                              "wire<T, OutSchema>: an explicit output schema applies only to generic nodes");
+
+                // Time-series input ports: a typed port is schema-checked at compile
+                // time; an erased port is matched against the node's input at runtime.
+                std::vector<WiringPortRef> inputs;
+                inputs.reserve(signature::input_count());
+                [&]<std::size_t... I>(std::index_sequence<I...>) {
+                    (
+                        [&] {
+                            using P = std::tuple_element_t<I, wire_params>;
+                            using A = std::remove_cvref_t<std::tuple_element_t<I, std::tuple<Args...>>>;
+                            if constexpr (static_node_detail::is_input_selector<P>::value)
+                            {
+                                static_assert(graph_wiring_detail::is_port<A>::value,
+                                              "wire<T>: a time-series input expects a Port argument");
+                                if constexpr (graph_wiring_detail::is_erased_port<A>::value)
+                                {
+                                    const WiringPortRef ref      = std::get<I>(arg_tuple).erased();
+                                    const auto         *expected = schema_descriptor<
+                                        typename graph_wiring_detail::in_param_schema<P>::type>::ts_meta();
+                                    if (expected != nullptr && ref.schema != expected)
+                                    {
+                                        throw std::logic_error(
+                                            "wire<T>: erased port schema does not match the node's time-series input");
+                                    }
+                                    inputs.push_back(ref);
+                                }
+                                else
+                                {
+                                    static_assert(std::is_same_v<typename A::schema,
+                                                                 typename graph_wiring_detail::in_param_schema<P>::type>,
+                                                  "wire<T>: input port schema does not match the node's time-series input");
+                                    inputs.push_back(std::get<I>(arg_tuple).erased());
+                                }
+                            }
+                        }(),
+                        ...);
+                }(std::make_index_sequence<sizeof...(Args)>{});
+
+                // Compound scalar configuration (the Scalar positions), if any.
+                Value scalars;
+                if constexpr (signature::scalar_count() > 0)
+                {
+                    const auto *binding = ValuePlanFactory::instance().binding_for(signature::scalar_schema());
+                    scalars             = Value{*binding};
+                    auto mutation       = scalars.as_bundle().begin_mutation();
+                    [&]<std::size_t... I>(std::index_sequence<I...>) {
+                        (
+                            [&] {
+                                using P = std::tuple_element_t<I, wire_params>;
+                                if constexpr (static_node_detail::is_scalar_selector<P>::value)
+                                {
+                                    using V = typename P::value_type;
+                                    mutation[P::field_name.sv()].template checked_mutable_as<V>() =
+                                        graph_wiring_detail::coerce_scalar_value<V>(std::get<I>(arg_tuple));
+                                }
+                            }(),
+                            ...);
+                    }(std::make_index_sequence<sizeof...(Args)>{});
+                }
+
+                WiringPortRef out = w.add_node(std::type_index(typeid(X)),
+                                               graph_wiring_detail::build_node_builder<X>(), inputs, std::move(scalars));
+
+                if constexpr (signature::has_output())
+                {
+                    return Port<typename signature::output_schema_type>{out.node, out.path};
+                }
             }
         }
     }

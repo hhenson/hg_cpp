@@ -34,7 +34,7 @@ namespace
         static constexpr auto name = "const_double_graph";
         static void           compose(Wiring &w)
         {
-            wire<testing::record<TS<double>>>(w, wire<stdlib::const_<double>>(w, 3.5), std::string{"out"});
+            wire<testing::record>(w, wire<stdlib::const_>(w, 3.5), std::string{"out"});
         }
     };
 
@@ -43,7 +43,7 @@ namespace
         static constexpr auto name = "const_string_graph";
         static void           compose(Wiring &w)
         {
-            wire<testing::record<TS<std::string>>>(w, wire<stdlib::const_<std::string>>(w, std::string{"hi"}),
+            wire<testing::record>(w, wire<stdlib::const_>(w, std::string{"hi"}),
                                                    std::string{"out"});
         }
     };

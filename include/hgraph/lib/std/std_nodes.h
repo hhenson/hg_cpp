@@ -19,43 +19,44 @@ namespace hgraph::stdlib
      * Constant source: emits a fixed value once at the start cycle.
      *
      * Named ``const_`` because ``const`` is a C++ keyword (the Python operator is
-     * ``const``). It is a ``PullSource`` configured by its ``value`` scalar; it
-     * ticks once at start and does not reschedule.
+     * ``const``). A SINGLE generic node: the value type is a ``ScalarVar`` inferred
+     * from the configured value, and the output ``TS<T>`` is resolved from it — so
+     * one implementation serves every scalar type. ``wire<stdlib::const_>(w, 42)``.
+     * It ticks once at start (``PullSource``) and does not reschedule.
      */
-    template <typename T>
     struct const_
     {
         static constexpr auto name              = "const";
         static constexpr bool schedule_on_start = true;
-        static void           eval(Scalar<"value", T> value, Out<TS<T>> out) { out.set(value.value()); }
-    };
-
-    /**
-     * Debug sink: prints ``label: value`` on each tick of its input (a diagnostic
-     * aid, not a data path). ``T`` must be formattable by ``fmt``.
-     */
-    template <typename T>
-    struct debug_print
-    {
-        static constexpr auto name = "debug_print";
-        static void           eval(In<"ts", TS<T>> ts, Scalar<"label", std::string> label)
+        static void           eval(Scalar<"value", ScalarVar<"T">> value, Out<TS<ScalarVar<"T">>> out)
         {
-            // The value is rendered via the type-erased view ``to_string`` (works
-            // for any value type); only the label/layout goes through fmt. ``ts`` is
-            // itself the input view, so reach the erased ``value()`` through the base.
-            fmt::print("{}: {}\n", label.value(), ts.TSInputView::value().to_string());
+            out.apply(value.value());  // erased copy of the configured value, ticked at the start cycle
         }
     };
 
     /**
-     * Null sink: consumes its input and does nothing. Useful to give a graph a
-     * terminal sink (so an output is driven) without side effects.
+     * Debug sink: prints ``label: value`` on each tick of its input (a diagnostic
+     * aid, not a data path). A SINGLE generic node over any time-series type — the
+     * value renders through the type-erased view ``to_string``.
      */
-    template <typename T>
+    struct debug_print
+    {
+        static constexpr auto name = "debug_print";
+        static void           eval(In<"ts", TsVar<"S">> ts, Scalar<"label", std::string> label)
+        {
+            fmt::print("{}: {}\n", label.value(), ts.value().to_string());
+        }
+    };
+
+    /**
+     * Null sink: consumes its input and does nothing. A SINGLE generic node over any
+     * time-series type. Useful to give a graph a terminal sink (so an output is
+     * driven) without side effects.
+     */
     struct null_sink
     {
         static constexpr auto name = "null_sink";
-        static void           eval(In<"ts", TS<T>> ts) { static_cast<void>(ts); }
+        static void           eval(In<"ts", TsVar<"S">> ts) { static_cast<void>(ts); }
     };
 }  // namespace hgraph::stdlib
 

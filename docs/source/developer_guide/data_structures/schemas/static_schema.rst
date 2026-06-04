@@ -169,14 +169,31 @@ Generic schemas
 
 A schema that contains a ``TsVar`` or ``ScalarVar`` is *generic*. The
 descriptor's ``is_concrete()`` returns ``false`` and ``ts_meta()`` /
-``value_meta()`` returns ``nullptr``. Wiring resolves the variable to
-a concrete type before constructing a runtime node, at which point a
-*resolved* schema (with the variable replaced by the concrete type)
-becomes concrete and looks up its registry pointer normally.
+``value_meta()`` returns ``nullptr`` (the concreteness is AND-folded
+through children, so ``TSD<ScalarVar, TsVar>`` is generic too). Wiring
+resolves each variable to a concrete type before constructing a runtime
+node, at which point a *resolved* schema (with the variable replaced by
+the concrete type) becomes concrete and looks up its registry pointer
+normally.
 
-This is the C++ counterpart of Python type-variable resolution. The
-binding from generic to concrete is the *resolution substitution*
-described in *Schemas > Node Schemas > Generic Resolution*.
+This is **implemented** (``include/hgraph/types/type_resolution.h``). A
+``ResolutionMap`` binds variable names to concrete metadata; two families
+mirror the descriptor recursion:
+
+- ``ts_resolver<S>`` / ``scalar_resolver<T>`` — **substitute** the bound
+  metadata into the (otherwise compile-time) schema, producing the
+  resolved registry pointer (a concrete leaf ignores the map, so the same
+  resolver serves concrete and generic schemas uniformly);
+- ``ts_unifier<S>`` / ``scalar_unifier<T>`` — **bind** variables by
+  matching a pattern schema against a concrete runtime meta (e.g. a
+  connected input port's schema), recursing through containers.
+
+A node is authored once over its variables; ``StaticNodeSignature``
+exposes ``is_generic()`` and resolution-map overloads of its schema
+accessors, and ``NodeBuilder::implementation<T>(const ResolutionMap&)``
+builds the resolved node — see *Schemas > Node Schemas > Generic
+Resolution* and *Graph Wiring*. This is the C++ counterpart of (and the
+seed for the eventual bridge to) Python type-variable resolution.
 
 Selector wrappers
 -----------------
@@ -286,6 +303,16 @@ re-implements them.
 How these markers drive node construction — ``StaticNodeSignature`` and
 ``NodeBuilder::implementation<T>()`` — is described in *Wiring*.
 
+**Deferred (generic) selectors.** ``In<Name, TsVar<"S">>`` / ``Out<TsVar<"S">>`` /
+``Scalar<Name, ScalarVar<"T">>`` are the variable forms: ``In`` / ``Out`` *are* the
+bare erased view (no typed sugar — there is no concrete element type), and the
+``Scalar`` holds its configured value type-erased as an owned ``Value``. A node
+authored over them is *generic*; the variables resolve at wiring time (see
+*Generic schemas* above and *Graph Wiring*). The framework's own utility nodes
+(``replay`` / ``record`` / ``const_`` / ``debug_print`` / ``null_sink``) are
+authored this way — **one** implementation each, the schema flowing as data, driven
+by the runtime ``capture_delta`` / ``apply_delta`` rather than per-type code.
+
 Planned, landing with their runtime layers:
 
 - the remaining container selectors (``In`` / ``Out`` over ``TSB`` / ``TSD`` /
@@ -321,10 +348,18 @@ schemas register and resolve identically to direct factory calls, and the
 scalar/set/list time-series paths wire from a node struct through to a running
 graph.
 
+**Generic-resolution substitution is now implemented** (node-level): the
+``TsVar`` / ``ScalarVar`` selectors, ``ResolutionMap`` + ``ts_resolver`` /
+``ts_unifier`` (``type_resolution.h``), ``StaticNodeSignature::is_generic()`` +
+the resolution-map schema overloads, and the wiring-time resolution in ``wire<>``
+(unify from input ports, infer from scalar values, or supply explicitly via
+``ts_type<>()`` / an explicit output schema). See *Graph Wiring*.
+
 Deferred until the relevant runtime layer lands: the remaining container
 selectors (``TSB`` / ``TSD`` / ``TSW`` inputs and outputs — same
 derive-from-view pattern), ``RecordableState``, ``EvaluationClock`` injection,
 push-source ``apply_message``, named state, input activity/validity policy
-flags, duration-based ``TSW``, the Python-export bridge, and generic-resolution
-substitution. (``NodeScheduler`` / ``SingleShotScheduler`` injection is now
-implemented; see *Authoring Nodes in C++*.)
+flags, duration-based ``TSW``, the Python-export bridge, and **graph-level**
+generic resolution (aggregating node-level resolution across a sub-graph).
+(``NodeScheduler`` / ``SingleShotScheduler`` injection is now implemented; see
+*Authoring Nodes in C++*.)

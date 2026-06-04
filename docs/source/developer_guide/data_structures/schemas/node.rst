@@ -125,9 +125,10 @@ A ``NodeTypeMetaData`` carries:
     accumulators) implement ``start`` and ``stop``.
 
 ``unresolved_args``
-    For generic node schemas, the list of input names whose schema
-    contains unresolved type variables. Wiring resolves these against
-    actual input bindings before constructing the node.
+    For generic node schemas, the input names whose schema contains
+    unresolved type variables. ``wire<>`` resolves these against the
+    connected input bindings (via ``ts_unifier``) before constructing the
+    node — see *Generic Resolution* below.
 
 Runtime Value/View
 ------------------
@@ -222,18 +223,34 @@ brought into and out of existence.
 Generic Resolution
 ------------------
 
-A node schema may carry **type variables** — placeholder schemas that
-must be resolved at wiring time before the node can be instantiated.
-For example, a generic ``add`` node has input schemas
-``In<"lhs", TS<T>>`` and ``In<"rhs", TS<T>>`` and output schema
-``Out<TS<T>>``; ``T`` is unresolved on the abstract schema and gets
-bound to a concrete scalar schema (``int``, ``double``, …) at the
-point the node is wired into a graph.
+A node schema may carry **type variables** (``TsVar`` / ``ScalarVar``) —
+placeholder schemas that must be resolved at wiring time before the node
+can be instantiated. For example, a generic ``add`` node has inputs
+``In<"lhs", TsVar<"T">>`` / ``In<"rhs", TsVar<"T">>`` and output
+``Out<TsVar<"T">>``; ``T`` is unresolved on the abstract schema and is
+bound to a concrete time-series schema at the point the node is wired.
 
-Resolution is a registry operation: ``NodeRegistry::resolve(generic,
-{T -> int_meta})`` returns the interned concrete node schema. Two
-generic nodes with the same structural shape and the same resolution
-substitution always resolve to the same concrete schema pointer.
+Resolution is **implemented at the wiring layer**
+(``include/hgraph/types/type_resolution.h``):
+
+- a ``ResolutionMap`` binds each variable name to concrete metadata;
+- ``wire<>`` populates it — ``ts_unifier`` matches each input selector's
+  pattern against the connected port's runtime schema (binding input
+  variables), a scalar variable is inferred from the configured value's
+  type, and a source-side output variable is supplied explicitly
+  (``ts_type<>()`` / an explicit output schema);
+- ``StaticNodeSignature::is_generic()`` plus its resolution-map schema
+  overloads, driven through ``NodeBuilder::implementation<T>(const
+  ResolutionMap&)``, then build the node's concrete ``NodeTypeMetaData``.
+
+The node's *callbacks* never see ``T`` — they read the resolved endpoints
+from the ``NodeView`` at eval time — so one closure over ``&eval`` serves
+every resolution. Two wirings of the same generic definition with the
+same resolved schemas and inputs intern to one node (the resolved
+input/output/scalar/state schema pointers are part of the wiring key, so
+distinct resolutions do **not** collide). This is the C++ counterpart of
+Python type-variable resolution and the seed for generic ``map_`` /
+``reduce`` / ``switch_``.
 
 Interning Key
 -------------

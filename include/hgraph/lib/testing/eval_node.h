@@ -25,8 +25,9 @@ namespace hgraph::testing
      * The harness element is the typed scalar ``T`` for a scalar ``TS<T>`` (so a test
      * writes ``{1, none, 3}``) and the **canonical delta ``Value``** for any container
      * (``TSS`` / ``TSL`` / …, built by ``set_delta`` / ``list_delta`` and compared with
-     * ``Value::equals``). One generic template covers every schema — ``replay<S>`` /
-     * ``record<S>`` are themselves generic, so no per-kind specialisation is needed.
+     * ``Value::equals``). One adapter covers every schema — ``replay`` / ``record`` are
+     * SINGLE erased nodes resolved at wiring (``replay`` from the explicit type ``S``,
+     * ``record`` from its connected input port), so no per-kind variant is needed.
      */
     template <typename S> struct harness_element { using type = Value; };
     template <typename T> struct harness_element<TS<T>> { using type = T; };
@@ -37,7 +38,8 @@ namespace hgraph::testing
         using element                       = typename harness_element<S>::type;
         static constexpr bool is_scalar     = static_node_detail::is_scalar_ts<S>::value;
 
-        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay<S>>(w, key); }
+        // Source: the output type is supplied explicitly (S), giving a typed Port<S>.
+        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay, S>(w, key); }
 
         static void seed(const GlobalStateView &gs, std::string_view key, const std::vector<std::optional<element>> &seq)
         {
@@ -45,10 +47,11 @@ namespace hgraph::testing
             else { set_replay_deltas(gs, key, seq); }
         }
 
+        // Sink: the input type resolves from the connected port.
         template <typename Port>
         static void wire_record(Wiring &w, Port port, const std::string &key)
         {
-            wire<record<S>>(w, port, key);
+            wire<record>(w, port, key);
         }
 
         static std::vector<std::optional<element>> read(const GlobalStateView &gs, std::string_view key)

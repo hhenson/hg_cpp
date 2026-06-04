@@ -836,21 +836,26 @@ wiring time. The Python package uses the type variables ``SCALAR``,
 ``TIME_SERIES_TYPE``, ``K``, ``V`` (and friends). The C++ markers are
 ``ScalarVar<"Name">`` and ``TsVar<"Name">``.
 
-**Available:** the ``ScalarVar`` / ``TsVar`` markers and their descriptors — a
-schema that contains one reports as *not concrete* until resolved.
-**Planned:** using them in a node ``eval`` signature and resolving them during
-wiring.
+**Available:** authoring a node over ``ScalarVar`` / ``TsVar`` and resolving the
+variables at wiring time. A node is written **once** (no per-type instantiation);
+``wire<>`` resolves each variable — unifying input selectors against the connected
+port's schema, inferring a scalar variable from the configured value, or taking an
+explicit output type — and builds the concrete node. A ``TsVar`` ``In`` / ``Out``
+*is* the erased view (it has no typed ``value()`` / ``set()`` — there is no concrete
+element type yet), so the body is driven by the runtime ``capture_delta`` /
+``apply_delta`` (``<hgraph/types/time_series/ts_delta.h>``). The framework's own
+``replay`` / ``record`` / ``const_`` / ``debug_print`` / ``null_sink`` are authored
+exactly this way.
 
 A passthrough generic over any time-series type:
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
-   struct Passthrough
+   struct passthrough
    {
        static void eval(In<"in", TsVar<"T">> in, Out<TsVar<"T">> out)
        {
-           out.set(in.value());           // 'T' resolved to a concrete schema at wiring time
+           apply_delta(out, capture_delta(in.base()).view());  // 'T' resolved at wiring
        }
    };
 
@@ -862,18 +867,20 @@ A passthrough generic over any time-series type:
    def passthrough(in_: TIME_SERIES_TYPE) -> TIME_SERIES_TYPE:
        return in_.delta_value
 
-A node generic over a scalar type:
+A node generic over a scalar type (this is exactly ``stdlib::const_``) — the scalar
+variable ``T`` is inferred from the configured value, so ``TS<T>`` resolves with it:
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
-   struct Const
+   struct const_
    {
+       static constexpr bool schedule_on_start = true;
        static void eval(Scalar<"value", ScalarVar<"T">> value, Out<TS<ScalarVar<"T">>> out)
        {
-           out.set(value.value());
+           out.apply(value.value());   // erased copy of the configured value
        }
    };
+   // wired as: wire<stdlib::const_>(w, 42);    // T inferred = int
 
 .. code-block:: python
 
@@ -884,12 +891,14 @@ A node generic over a scalar type:
        yield MIN_ST, value
 
 A dict-keyed generic uses ``ScalarVar`` / ``TsVar`` in C++ and ``K`` / ``V`` in
-Python:
+Python. The resolver/unifier recursion handles such composites (``K`` and ``V``
+bind from the connected ``TSD`` port); note that *executing* a node over ``TSD`` /
+``TSS``-valued containers additionally needs the corresponding runtime layer
+(see below):
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
-   struct KeysOf
+   struct keys_of
    {
        static void eval(In<"d", TSD<ScalarVar<"K">, TsVar<"V">>> d, Out<TSS<ScalarVar<"K">>> out)
        {
@@ -1020,7 +1029,7 @@ Feature status
      - planned
      - available
    * - Generic node resolution (``TsVar`` / ``ScalarVar`` in signatures)
-     - planned
+     - available
      - available
    * - Push-source ``apply_message`` (``Scalar<"name", T>``) + required ``start(Sender<T>)``
      - planned
@@ -1058,7 +1067,7 @@ C++ ↔ Python cheat sheet
      - ``_scheduler: SCHEDULER``
    * - ``Scalar<"f", double>``
      - plain arg ``f: float``
-   * - ``TsVar<"T">`` / ``ScalarVar<"T">`` *(planned in signatures)*
+   * - ``TsVar<"T">`` / ``ScalarVar<"T">`` (resolved at wiring)
      - ``TIME_SERIES_TYPE`` / ``SCALAR``
    * - ``eval`` with ``Out`` and no ``In`` (kind inferred)
      - ``@generator``

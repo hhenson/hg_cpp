@@ -78,8 +78,8 @@ output. ``eval_node`` drives **scalar** ``TS<T>``, **set** ``TSS<T>``, and fixed
 cycle; a **container** input/output exchanges the per-cycle **delta as a canonical
 type-erased ``Value``** built by ``set_delta`` / ``list_delta`` (see *Set time-series*
 and *List time-series* below). The remaining container types (``TSB`` / ``TSD`` /
-``TSW``) are a future extension — each is one new ``ts_harness`` specialisation plus its
-``delta_schema`` / ``apply`` entry in the recursive ``ts_delta`` trait.
+``TSW``) are a future extension — each is a new kind case in the runtime
+``capture_delta`` / ``apply_delta`` dispatch.
 
 .. _ts-harness:
 
@@ -87,17 +87,19 @@ How the harness dispatches per schema
 .....................................
 
 ``eval_node`` itself is schema-agnostic: for each input and the output it consults a
-``ts_harness<S>`` trait (in ``<hgraph/lib/testing/eval_node.h>``) that names the
+``ts_harness<S>`` adapter (in ``<hgraph/lib/testing/eval_node.h>``) that names the
 per-cycle **harness element** — ``T`` for a scalar ``TS<T>``, and the canonical delta
-``Value`` for a container (``TSS`` / ``TSL`` / …) — and how to wire the ``replay``
-source / ``record`` sink and seed/read the cycle-aligned buffer. Containers flow as
-canonical ``Value``\ s end to end: ``record`` captures ``in.delta_value()``, ``replay``
-re-creates ticks from a delta ``Value`` via the recursive ``ts_delta<S>::apply``, and
-``CHECK_OUTPUT`` compares with ``Value::equals`` (order-independent) and renders with
-``to_string``. The first input's element type is what the (braced) first argument
+``Value`` for a container (``TSS`` / ``TSL`` / …) — and wires the (single, erased)
+``replay`` source / ``record`` sink and seeds/reads the cycle-aligned buffer.
+Containers flow as canonical ``Value``\ s end to end: ``record`` captures the per-tick
+delta via the runtime ``capture_delta``, ``replay`` re-creates ticks via
+``apply_delta``, and ``CHECK_OUTPUT`` compares with ``Value::equals``
+(order-independent) and renders with ``to_string``. The first input's element type is
+what the (braced) first argument
 holds; the output's element type is what the returned ``std::vector<std::optional<…>>``
-holds. Supporting a new time-series kind is a localised change: a ``ts_harness`` /
-``ts_delta`` specialisation; ``eval_node`` does not change.
+holds. Supporting a new time-series kind is a localised change — a kind case in the
+runtime ``capture_delta`` / ``apply_delta``; ``eval_node`` and the erased
+``replay`` / ``record`` do not change.
 
 Comparing results: ``CHECK_OUTPUT``
 ....................................
@@ -145,42 +147,46 @@ comparing them is an element-wise list compare.
    the ``eval_node`` convention (Python anchors at ``start_time``, defaulting to
    ``MIN_ST``); a configurable start time is a future extension.
 
-``replay<S>``
--------------
+``replay``
+----------
 
-``replay<S>`` is the source node — a **single template keyed on the time-series
-schema** ``S``, with a specialisation per kind; there are no named variants. Wire
-``replay<TS<int>>`` for a scalar source (``Out<TS<T>>``), and ``replay<TSS<int>>`` /
-``replay<TSL<TS<int>, N>>`` to replay set / list deltas (see below). Each initiates
-itself at start via ``schedule_on_start`` (sources are not scheduled by default),
-reads its buffer from the ``GlobalState`` under the ``key`` scalar, ticks once per
-cycle that has a value, and reschedules itself (via ``NodeScheduler``) until the
-buffer is exhausted.
+``replay`` is the source node — a **single erased node** (not templated per schema):
+it is authored over a deferred output type (``Out<TsVar<"S">>``) and resolved at
+wiring. Supply the output type explicitly, which also gives back a typed port:
+``wire<testing::replay, TS<int>>(w, key)`` for a scalar source, or
+``wire<testing::replay, TSS<int>>`` / ``wire<testing::replay, TSL<TS<int>, N>>`` to
+replay set / list deltas (see below). It initiates itself at start via
+``schedule_on_start`` (sources are not scheduled by default), reads its buffer from
+the ``GlobalState`` under the ``key`` scalar, ticks once per cycle that has a value
+(re-creating the tick via the runtime ``apply_delta``), and reschedules itself (via
+``NodeScheduler``) until the buffer is exhausted.
 
 .. code-block:: cpp
 
    // emits the value at the current cycle, then re-arms for the next
-   auto src = wire<testing::replay<TS<int>>>(w, std::string{"in"});
+   auto src = wire<testing::replay, TS<int>>(w, std::string{"in"});
 
 The ``key`` names the ``GlobalState`` entry holding the input buffer; seed it
 before running (``gs.set("in", buffer)``). A cycle whose element is an empty
 ``Any`` is skipped (the output does not tick that cycle).
 
-``record<S>``
--------------
+``record``
+----------
 
-``record<S>`` is the sink node — the dual of ``replay<S>``, likewise one template
-keyed on the schema (``record<TS<T>>`` / ``record<TSS<T>>`` / ``record<TSL<TS<T>,
-N>>``). On ``start`` it creates a fresh cycle-aligned ``List<Any>`` in the
-``GlobalState`` under its ``key``; on each evaluation where the input ticks it writes
-the input's ``delta_value`` (the per-tick event, not the cumulative ``value`` — they
-coincide for scalar time-series but differ for compound types) at the current cycle
-offset (padding any skipped cycles with empty ``Any`` entries). After the run the
-buffer is the recorded output, readable from the ``GlobalState``.
+``record`` is the sink node — the dual of ``replay``, likewise a **single erased
+node** over a deferred input type (``In<"ts", TsVar<"S">>``); its type resolves from
+the connected port, so it is wired without a type argument:
+``wire<testing::record>(w, port, key)``. On ``start`` it creates a fresh
+cycle-aligned ``List<Any>`` in the ``GlobalState`` under its ``key``; on each
+evaluation where the input ticks it captures the per-tick **delta** (via the runtime
+``capture_delta`` — the per-tick event, not the cumulative ``value``; they coincide
+for scalar time-series but differ for compound types) at the current cycle offset
+(padding any skipped cycles with empty ``Any`` entries). After the run the buffer is
+the recorded output, readable from the ``GlobalState``.
 
 .. code-block:: cpp
 
-   wire<testing::record<TS<int>>>(w, inc, std::string{"out"});  // (input port, key)
+   wire<testing::record>(w, inc, std::string{"out"});  // (input port, key)
 
 Worked example
 --------------
@@ -200,9 +206,9 @@ Wiring ``replay → add_one → record`` and reading the result back:
        static constexpr auto name = "replay_record_graph";
        static void           compose(Wiring &w)
        {
-           auto src = wire<testing::replay<TS<int>>>(w, std::string{"in"});
+           auto src = wire<testing::replay, TS<int>>(w, std::string{"in"});
            auto inc = wire<AddOne>(w, src);
-           wire<testing::record<TS<int>>>(w, inc, std::string{"out"});
+           wire<testing::record>(w, inc, std::string{"out"});
        }
    };
 
@@ -276,8 +282,8 @@ delta ``Value`` from ``set_delta``.
    };
    CHECK_OUTPUT(testing::eval_node<MirrorSet>(deltas), deltas);   // round-trips the deltas
 
-By hand: ``replay<TSS<T>>`` re-creates ticks from a delta ``Value`` (remove then add);
-``record<TSS<T>>`` captures ``ts.delta_value()``; ``CHECK_OUTPUT`` renders each delta as
+By hand: ``wire<testing::replay, TSS<T>>`` re-creates ticks from a delta ``Value``
+(remove then add); ``wire<testing::record>`` captures the per-tick delta; ``CHECK_OUTPUT`` renders each delta as
 ``{added: {…}, removed: {…}}`` on mismatch. A ``TSS`` ``const_`` (a constant set source)
 is still future work — it needs a set-valued wiring scalar.
 
@@ -320,9 +326,9 @@ are themselves ``set_delta`` ``Value``\ s, a TSL-of-TSL delta a ``Map`` of ``Map
    // TSL<TSL<TS<int>,2>> delta: Map<int64, Map<int64, int>>
    const Value nd = list_delta<TSL<TS<int>, 2>>({{0, list_delta<TS<int>>({{0, 7}, {1, 8}})}});
 
-By hand: ``replay<TSL<C, N>>`` re-creates ticks by recursively applying each
-``index -> child_delta`` of the buffered delta to ``out[index]`` (an ``Out<C>``);
-``record<TSL<C, N>>`` captures ``ts.delta_value()`` (only the children that ticked);
+By hand: ``wire<testing::replay, TSL<C, N>>`` re-creates ticks by recursively applying
+each ``index -> child_delta`` of the buffered delta to the matching child output;
+``wire<testing::record>`` captures the per-tick delta (only the children that ticked);
 ``CHECK_OUTPUT`` renders each delta as the map ``{0: 1, 1: 10}`` on mismatch.
 
 .. note::
