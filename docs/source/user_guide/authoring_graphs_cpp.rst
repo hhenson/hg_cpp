@@ -146,6 +146,11 @@ Ports are typed, so passing the wrong port type — or the wrong number of input
 to ``wire<T>`` is a **compile error**. (Python catches the same mistakes, but only
 when the graph is wired at run time.)
 
+``SIGNAL`` is the exception on the input side: a ``Port<TS<int>>``,
+``Port<TSD<...>>`` or any other time-series output port may be passed to a node or
+sub-graph input declared as ``SIGNAL``. The input observes the upstream tick rather
+than the upstream value.
+
 
 Configuring a node with scalars
 -------------------------------
@@ -225,8 +230,10 @@ the sub-graph's nodes into the current graph and returns its output port — the
 is no runtime "graph node". A call site treats a node and a graph **the same way**:
 you pass a ``Port`` for each of the sub-graph's ``Port`` parameters and a plain
 value for each of its ``Scalar`` parameters, in ``compose`` order, and the
-arguments are checked at compile time exactly as for a node. The only difference is
-whether a runtime node is produced.
+arguments are checked exactly as for a node. Typed ports are checked at compile
+time; erased generic-source ports are checked at wiring time and then passed to
+``compose`` as the declared port type. The only difference is whether a runtime
+node is produced.
 
 .. code-block:: cpp
 

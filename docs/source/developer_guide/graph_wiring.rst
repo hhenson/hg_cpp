@@ -153,7 +153,10 @@ The typed C++ facade
 --------------------
 
 - ``Port<Schema>`` is the typed handle; ``.erased()`` lowers it to a
-  ``WiringPortRef`` (the runtime schema comes from ``Schema``).
+  ``WiringPortRef`` (the runtime schema comes from ``Schema``). A sub-graph
+  input parameter declared as ``Port<SIGNAL>`` is treated as a tick subscription:
+  any upstream time-series output port may be supplied, regardless of its value
+  schema.
 - ``wire<T>(w, args...)`` — takes the node's wiring arguments **in eval-parameter
   order**: a ``Port`` for each ``In`` and a scalar argument for each ``Scalar``. It
   checks **arity and, per position, the port schema or scalar convertibility** at
@@ -166,9 +169,11 @@ The typed C++ facade
 - ``wire<G>(w, args...)`` — inlines ``G::compose(w, …)`` (graphs flatten) and
   returns ``G``'s output port. The arguments follow the **same rule as for a node**
   (via ``StaticGraphSignature<G>``): in compose-parameter order, a ``Port`` for each
-  ``Port`` parameter (schema-checked) and a scalar argument for each ``Scalar``
-  parameter (wrapped into it, convertibility-checked) — so a sub-graph and a node
-  are wired identically at the call site.
+  ``Port`` parameter (schema-checked, then passed to ``compose`` as the declared
+  port type) and a scalar argument for each ``Scalar`` parameter (wrapped into it,
+  convertibility-checked) — so a sub-graph and a node are wired identically at the
+  call site. An erased generic-source port is checked against the declared
+  sub-graph input schema before it is retyped for ``compose``.
 - **Scalar arguments unpack uniformly.** Every scalar wiring argument (in
   ``wire<T>``, ``wire<G>`` and ``build_graph``) passes through one helper,
   ``graph_wiring_detail::coerce_scalar_value<V>``: it accepts either a plain value or

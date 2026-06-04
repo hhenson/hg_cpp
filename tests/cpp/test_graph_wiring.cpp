@@ -2,6 +2,7 @@
 // body, compose nodes with wire<T>(w, ports...), and build it with
 // build_graph<G>() — no node indices or edges by hand. See docs: Graph Wiring.
 
+#include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 
@@ -154,6 +155,56 @@ namespace
             wire<ShiftBy>(w, source, 5);
         }
     };
+
+    struct AddOneSubGraph
+    {
+        static Port<TS<int>> compose(Wiring &w, Port<TS<int>> x)
+        {
+            return wire<AddOne>(w, x);
+        }
+    };
+
+    struct GenericSourceIntoTypedSubGraph
+    {
+        static constexpr auto name = "generic_source_into_typed_sub_graph";
+        static void           compose(Wiring &w)
+        {
+            auto source = wire<stdlib::const_>(w, 41);  // erased Port<void>, resolved to TS<int>
+            wire<AddOneSubGraph>(w, source);
+        }
+    };
+
+    struct CountSignal
+    {
+        static constexpr auto name = "count_signal";
+        static void           eval(In<"pulse", SIGNAL> pulse, State<int> count, Out<TS<int>> out)
+        {
+            if (pulse.ticked())
+            {
+                const int next = count.get() + 1;
+                count.set(next);
+                out.set(next);
+            }
+        }
+    };
+
+    struct CountSignalSubGraph
+    {
+        static Port<TS<int>> compose(Wiring &w, Port<SIGNAL> pulse)
+        {
+            return wire<CountSignal>(w, pulse);
+        }
+    };
+
+    struct SignalSubGraphFromTsPort
+    {
+        static constexpr auto name = "signal_sub_graph_from_ts_port";
+        static void           compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            wire<CountSignalSubGraph>(w, source);
+        }
+    };
 }  // namespace
 
 TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulation")
@@ -211,6 +262,46 @@ TEST_CASE("graph wiring: sub-graph composition inlines (flattens) into the paren
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 3);   // source + two add_one (the PlusTwo sub-graph flattened)
     CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<int>() == 43);
+}
+
+TEST_CASE("graph wiring: sub-graph typed input accepts an erased generic source port")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<GenericSourceIntoTypedSubGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    auto               view     = executor.view();
+    view.run();
+
+    auto graph = view.graph();
+    REQUIRE(graph.node_count() == 2);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 42);
+}
+
+TEST_CASE("graph wiring: sub-graph SIGNAL input accepts any time-series port")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<SignalSubGraphFromTsPort>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    auto               view     = executor.view();
+    view.run();
+
+    auto graph = view.graph();
+    REQUIRE(graph.node_count() == 2);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 1);
 }
 
 TEST_CASE("graph wiring: multi-input node wires and type-checks its ports")

@@ -274,13 +274,17 @@ namespace hgraph
         // into the ``Scalar<>`` parameter — the sub-graph mirror of how ``wire<T>``
         // handles a node's In ports and Scalar arguments.
         template <typename P, typename Arg>
-        [[nodiscard]] decltype(auto) make_compose_arg(Arg &&arg)
+        [[nodiscard]] auto make_compose_arg(Arg &&arg)
         {
             if constexpr (is_port<P>::value)
             {
                 using A = std::remove_cvref_t<Arg>;
                 static_assert(is_port<A>::value, "wire<G>: a time-series input expects a Port argument");
-                if constexpr (is_erased_port<A>::value)
+                if constexpr (is_erased_port<P>::value)
+                {
+                    return P{arg.node(), arg.path(), arg.erased().schema};
+                }
+                else if constexpr (is_erased_port<A>::value)
                 {
                     const auto *expected = schema_descriptor<typename P::schema>::ts_meta();
                     if (!input_accepts_output_schema(expected, arg.erased().schema))
@@ -288,13 +292,14 @@ namespace hgraph
                         throw std::logic_error(
                             "wire<G>: erased input port schema does not match the sub-graph's time-series input");
                     }
+                    return P{arg.node(), arg.path()};
                 }
                 else
                 {
                     static_assert(statically_accepts_output_v<typename P::schema, typename A::schema>,
                                   "wire<G>: input port schema does not match the sub-graph's time-series input");
+                    return P{arg.node(), arg.path()};
                 }
-                return std::forward<Arg>(arg);
             }
             else
             {
