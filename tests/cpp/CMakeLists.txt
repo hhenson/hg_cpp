@@ -54,6 +54,7 @@ add_executable(hgraph_unit_tests
     test_static_node.cpp
     test_graph_wiring.cpp
     test_compact_storage.cpp
+    test_bundle_builder.cpp
     test_specialized_views.cpp
     test_static_schema.cpp
     test_time_series_reference.cpp

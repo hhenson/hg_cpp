@@ -14,6 +14,7 @@
 #include <new>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace hgraph
@@ -654,6 +655,96 @@ namespace hgraph
         builder_detail::ElementAccumulator   value_acc_;
         compact_detail::SlotIndex            index_{};
         bool                                  built_{false};
+    };
+
+    // -----------------------------------------------------------------
+    // BundleBuilder — assemble a compact (immutable) Bundle / Tuple
+    // ``Value`` from prebuilt field ``Value``s.
+    //
+    // Composite fields cannot be populated through ``begin_mutation`` when
+    // they are themselves immutable containers (``Set`` / ``Map`` / …):
+    // ``MutableIndexedValueView::at`` begin-mutates each field, which an
+    // immutable field refuses. Instead each field is set by a whole-value
+    // ``copy_assign`` at its layout offset, over the default-constructed
+    // field. This is how the canonical delta bundles
+    // (``Bundle{added: Set<T>, removed: Set<T>}`` for ``TSS``, the per-field
+    // delta bundle for ``TSB``) are constructed for tests/wiring so they
+    // match the runtime ``delta_value_schema`` exactly.
+    // -----------------------------------------------------------------
+    class BundleBuilder
+    {
+      public:
+        explicit BundleBuilder(const ValueTypeBinding &bundle_binding) : binding_{&bundle_binding}, value_{bundle_binding}
+        {
+            if (!bundle_binding.checked_plan().is_composite())
+            {
+                throw std::logic_error("BundleBuilder requires a composite (bundle/tuple) binding");
+            }
+        }
+
+        /** Set field ``index`` to a copy of ``field`` (whole-value copy-assign). */
+        BundleBuilder &set(std::size_t index, const ValueView &field)
+        {
+            ensure_not_built();
+            const auto &comp = component(index);
+            comp.plan->copy_assign(field_memory(comp.offset), field.data());
+            return *this;
+        }
+
+        /** Set the named field ``name`` to a copy of ``field``. */
+        BundleBuilder &set(std::string_view name, const ValueView &field) { return set(index_of(name), field); }
+
+        [[nodiscard]] std::size_t size() const noexcept { return state().component_count; }
+
+        [[nodiscard]] Value build()
+        {
+            ensure_not_built();
+            built_ = true;
+            return std::move(value_);
+        }
+
+      private:
+        [[nodiscard]] const MemoryUtils::CompositeState &state() const
+        {
+            const auto *s =
+                static_cast<const MemoryUtils::CompositeState *>(binding_->checked_plan().lifecycle_context);
+            if (s == nullptr) { throw std::logic_error("BundleBuilder: binding has no composite state"); }
+            return *s;
+        }
+
+        [[nodiscard]] const MemoryUtils::CompositeComponent &component(std::size_t index) const
+        {
+            const auto &st = state();
+            if (index >= st.component_count) { throw std::out_of_range("BundleBuilder: field index out of range"); }
+            return st.components()[index];
+        }
+
+        [[nodiscard]] std::size_t index_of(std::string_view name) const
+        {
+            const auto &st = state();
+            for (std::size_t i = 0; i < st.component_count; ++i)
+            {
+                const auto &c = st.components()[i];
+                if (c.name != nullptr && name == c.name) { return i; }
+            }
+            throw std::out_of_range("BundleBuilder: field name not found");
+        }
+
+        // The value_ storage is owned and being assembled here, so writing
+        // through its raw base pointer is sound (no begin_mutation gating).
+        [[nodiscard]] void *field_memory(std::size_t offset)
+        {
+            return static_cast<std::byte *>(const_cast<void *>(value_.view().data())) + offset;
+        }
+
+        void ensure_not_built() const
+        {
+            if (built_) { throw std::logic_error("BundleBuilder is single-use"); }
+        }
+
+        const ValueTypeBinding *binding_{nullptr};
+        Value                   value_{};
+        bool                    built_{false};
     };
 }  // namespace hgraph
 
