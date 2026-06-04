@@ -272,11 +272,12 @@ returns ``Out<C>``. The same recursion applies to ``TSB`` field access once thos
 selectors land.
 
 This selector recursion (and the delta construction below) is purely a
-compile-time/value-layer concern and works for any child. **Runtime execution**
-now covers ``TSL`` over scalar (``TS``) and set (``TSS``) children: a fixed
-parent owns each embedded ``TSS`` child's slot storage and projects child value
-views from that storage, so the first example above composes and runs. A ``TSL``
-whose child is a ``TSD`` or a dynamic ``TSL`` is still pending.
+compile-time/value-layer concern and works for any child. The TSData runtime
+now covers fixed ``TSL`` children across the implemented non-``REF`` kinds:
+``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed ``TSL``, ``TSB``, and ``TSW``.
+Slot and window children are owned as child auxiliary storage, while fixed
+children recurse through the parent value/auxiliary layout. Dynamic ``TSL``
+storage is still pending.
 
 **Deltas are canonical type-erased Values.** A selector does *not* introduce a
 parallel delta representation. The delta of any time-series is the canonical

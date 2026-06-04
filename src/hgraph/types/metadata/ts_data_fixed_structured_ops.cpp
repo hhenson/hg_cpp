@@ -4,6 +4,7 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/specialized_views.h>
 #include <hgraph/types/value/value.h>
+#include <hgraph/types/value/value_builder.h>
 #include <hgraph/util/scope.h>
 
 #include <fmt/format.h>
@@ -300,6 +301,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 &fixed_delta_bundle_make_range,
                 nullptr,
             };
+            delta_bundle_ops.owning_binding_impl      = &canonical_value_binding;
+            delta_bundle_ops.copy_construct_view_impl = &fixed_delta_bundle_copy_construct_view;
+            delta_bundle_ops.copy_assign_view_impl    = &fixed_delta_bundle_copy_assign_view;
 
             delta_map_ops = MapValueOps{
                 {{this, false, &fixed_delta_map_hash, &fixed_delta_map_equals, &fixed_delta_map_compare,
@@ -323,6 +327,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 &fixed_delta_map_make_kv_range,
                 &fixed_delta_map_key_set,
             };
+            delta_map_ops.owning_binding_impl      = &canonical_value_binding;
+            delta_map_ops.copy_construct_view_impl = &fixed_delta_map_copy_construct_view;
+            delta_map_ops.copy_assign_view_impl    = &fixed_delta_map_copy_assign_view;
 
             delta_key_set_ops = SetValueOps{
                 {{this, false, &fixed_delta_key_set_hash, &fixed_delta_key_set_equals, &fixed_delta_key_set_compare,
@@ -339,6 +346,9 @@ namespace hgraph::ts_data_plan_factory_detail
                  nullptr},
                 &fixed_delta_map_contains,
             };
+            delta_key_set_ops.owning_binding_impl      = &canonical_value_binding;
+            delta_key_set_ops.copy_construct_view_impl = &fixed_delta_key_set_copy_construct_view;
+            delta_key_set_ops.copy_assign_view_impl    = &fixed_delta_key_set_copy_assign_view;
         }
 
         [[nodiscard]] static const FixedTSDataContext *ctx(const void *context) noexcept
@@ -818,6 +828,52 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 #endif
 
+        static void fixed_delta_bundle_copy_construct_view(const void *context,
+                                                           const ValueTypeBinding &binding,
+                                                           void *dst,
+                                                           const void *memory)
+        {
+            const auto &plan = binding.checked_plan();
+            plan.default_construct(dst);
+            auto rollback = make_scope_exit([&]() noexcept { plan.destroy(dst); });
+            fixed_delta_bundle_copy_assign_view(context, binding, dst, memory);
+            rollback.release();
+        }
+
+        static void fixed_delta_bundle_copy_assign_view(const void *context,
+                                                        const ValueTypeBinding &binding,
+                                                        void *dst,
+                                                        const void *memory)
+        {
+            const auto *state = ctx(context);
+            if (binding.type_meta != state->schema->delta_value_schema)
+            {
+                throw std::logic_error("fixed TSB delta copy requires the canonical parent delta schema");
+            }
+            if (state->schema->kind != TSTypeKind::TSB)
+            {
+                throw std::logic_error("fixed delta bundle copy requires TSB TSData");
+            }
+
+            const auto &plan = binding.checked_plan();
+            if (!plan.is_composite() || plan.component_count() != state->element_count())
+            {
+                throw std::logic_error("fixed TSB delta copy requires a matching structured plan");
+            }
+
+            auto *bytes = static_cast<std::byte *>(dst);
+            for (std::size_t index = 0; index < state->element_count(); ++index)
+            {
+                if (!child_modified_for_parent_time(state, memory, index))
+                {
+                    continue;
+                }
+                Value child{child_delta_view(state, memory, index)};
+                const auto &component = plan.component(index);
+                component.plan->copy_assign(bytes + component.offset, child.view().data());
+            }
+        }
+
         [[nodiscard]] static bool child_modified_for_parent_time(const FixedTSDataContext *state, const void *memory,
                                                                  std::size_t index) noexcept
         {
@@ -1075,6 +1131,66 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 #endif
 
+        static void fixed_delta_map_copy_construct_view(const void *context,
+                                                        const ValueTypeBinding &binding,
+                                                        void *dst,
+                                                        const void *memory)
+        {
+            auto storage = build_fixed_delta_map_storage(context, binding, memory);
+            std::construct_at(static_cast<MapStorage *>(dst), std::move(storage));
+        }
+
+        static void fixed_delta_map_copy_assign_view(const void *context,
+                                                     const ValueTypeBinding &binding,
+                                                     void *dst,
+                                                     const void *memory)
+        {
+            *static_cast<MapStorage *>(dst) = build_fixed_delta_map_storage(context, binding, memory);
+        }
+
+        [[nodiscard]] static MapStorage build_fixed_delta_map_storage(const void *context,
+                                                                      const ValueTypeBinding &binding,
+                                                                      const void *memory)
+        {
+            const auto *state = ctx(context);
+            if (binding.type_meta != state->schema->delta_value_schema ||
+                binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Map)
+            {
+                throw std::logic_error("fixed TSL delta copy requires the canonical parent delta map schema");
+            }
+            if (state->schema->kind != TSTypeKind::TSL)
+            {
+                throw std::logic_error("fixed delta map copy requires TSL TSData");
+            }
+
+            const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->key_type);
+            const auto *value_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+            if (key_binding == nullptr || key_binding != state->ordinal_key_binding)
+            {
+                throw std::logic_error("fixed TSL delta copy key binding is not resolved");
+            }
+            if (value_binding == nullptr)
+            {
+                throw std::logic_error("fixed TSL delta copy value binding is not resolved");
+            }
+
+            MapBuilder builder{*key_binding, *value_binding};
+            for (std::size_t index = 0; index < state->element_count(); ++index)
+            {
+                if (!child_modified_for_parent_time(state, memory, index))
+                {
+                    continue;
+                }
+                Value child_delta{child_delta_view(state, memory, index)};
+                if (child_delta.binding() != value_binding)
+                {
+                    throw std::logic_error("fixed TSL delta copy materialized the wrong value binding");
+                }
+                builder.set_item_copy(&state->ordinal_keys[index], child_delta.view().data());
+            }
+            return builder.build_storage();
+        }
+
         [[nodiscard]] static std::size_t fixed_delta_key_set_hash(const void *context, const void *memory)
         {
             const auto *state  = ctx(context);
@@ -1166,6 +1282,49 @@ namespace hgraph::ts_data_plan_factory_detail
             return result;
         }
 #endif
+
+        static void fixed_delta_key_set_copy_construct_view(const void *context,
+                                                            const ValueTypeBinding &binding,
+                                                            void *dst,
+                                                            const void *memory)
+        {
+            auto storage = build_fixed_delta_key_set_storage(context, binding, memory);
+            std::construct_at(static_cast<SetStorage *>(dst), std::move(storage));
+        }
+
+        static void fixed_delta_key_set_copy_assign_view(const void *context,
+                                                         const ValueTypeBinding &binding,
+                                                         void *dst,
+                                                         const void *memory)
+        {
+            *static_cast<SetStorage *>(dst) = build_fixed_delta_key_set_storage(context, binding, memory);
+        }
+
+        [[nodiscard]] static SetStorage build_fixed_delta_key_set_storage(const void *context,
+                                                                          const ValueTypeBinding &binding,
+                                                                          const void *memory)
+        {
+            const auto *state = ctx(context);
+            if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Set)
+            {
+                throw std::logic_error("fixed TSL delta key-set copy requires a canonical set schema");
+            }
+            const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+            if (key_binding == nullptr || key_binding != state->ordinal_key_binding)
+            {
+                throw std::logic_error("fixed TSL delta key-set copy key binding is not resolved");
+            }
+
+            SetBuilder builder{*key_binding};
+            for (std::size_t index = 0; index < state->element_count(); ++index)
+            {
+                if (child_modified_for_parent_time(state, memory, index))
+                {
+                    builder.insert_copy(&state->ordinal_keys[index]);
+                }
+            }
+            return builder.build_storage();
+        }
 
         [[nodiscard]] static bool fixed_copy_value_from(const void *context, void *memory, const ValueView &source,
                                                         engine_time_t modified_time)

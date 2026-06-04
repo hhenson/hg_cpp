@@ -25,15 +25,16 @@ namespace hgraph
      * Atomic TSData uses the compact value storage plan with mutable ops
      * enabled. Fixed ``TSB`` and fixed-size ``TSL`` allocate the complete
      * current value as the first canonical value-layer region, then store
-     * child/parent tracking in a separate auxiliary tree. Keyed collection
-     * TSData uses slot-oriented storage so current payload and delta
-     * bookkeeping stay aligned by stable slot id.
+     * child/parent tracking or projected child storage in a separate
+     * auxiliary tree. Keyed collection TSData uses slot-oriented storage so
+     * current payload and delta bookkeeping stay aligned by stable slot id.
      *
      * Implemented synthesis paths cover atomic TSData (``TS<T>``, ``REF<T>``,
      * and ``SIGNAL``), fixed structured TSData (``TSB`` and fixed-size
-     * ``TSL``), and keyed slot TSData (``TSS`` and ``TSD``). Dynamic ``TSL``
-     * currently throws ``std::logic_error`` until its slot-oriented storage is
-     * implemented.
+     * ``TSL``), window TSData (``TSW``), and keyed slot TSData (``TSS`` and
+     * ``TSD``). Fixed structured parents can nest any implemented non-``REF``
+     * child kind. Dynamic ``TSL`` currently throws ``std::logic_error`` until
+     * its slot-oriented storage is implemented.
      *
      * The factory is a process-wide singleton via ``instance()``;
      * non-copyable and non-movable.

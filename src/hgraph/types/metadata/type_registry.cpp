@@ -574,7 +574,7 @@ namespace hgraph
         const TSDictKey key{key_type, value_ts};
         const TSValueTypeMetaData &meta = tsd_cache_.intern(key, [&]() {
             TSValueTypeMetaData m(
-                TSTypeKind::TSD, key_type && value_ts ? map(key_type, value_ts->value_type) : nullptr);
+                TSTypeKind::TSD, key_type && value_ts ? map(key_type, value_ts->value_schema) : nullptr);
             m.set_tsd(key_type, value_ts);
             populate_ts_schemas(m);
             return m;
@@ -588,7 +588,7 @@ namespace hgraph
         const TSValueTypeMetaData &meta = tsl_cache_.intern(key, [&]() {
             TSValueTypeMetaData m(
                 TSTypeKind::TSL,
-                element_ts && element_ts->value_type ? list(element_ts->value_type, fixed_size) : nullptr);
+                element_ts && element_ts->value_schema ? list(element_ts->value_schema, fixed_size) : nullptr);
             m.set_tsl(element_ts, fixed_size);
             populate_ts_schemas(m);
             return m;
@@ -636,7 +636,7 @@ namespace hgraph
             value_fields.reserve(fields.size());
             for (const auto &[field_name, ts_type] : fields)
             {
-                value_fields.emplace_back(field_name, ts_type ? ts_type->value_type : nullptr);
+                value_fields.emplace_back(field_name, ts_type ? ts_type->value_schema : nullptr);
             }
 
             std::unique_ptr<TSFieldMetaData[]> stored_fields =
@@ -686,7 +686,7 @@ namespace hgraph
             value_fields.reserve(fields.size());
             for (const auto &[field_name, ts_type] : fields)
             {
-                value_fields.emplace_back(field_name, ts_type ? ts_type->value_type : nullptr);
+                value_fields.emplace_back(field_name, ts_type ? ts_type->value_schema : nullptr);
             }
             const ValueTypeMetaData *named_value_bundle = bundle(name, value_fields);
 

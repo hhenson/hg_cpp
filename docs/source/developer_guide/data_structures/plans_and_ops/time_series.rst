@@ -567,21 +567,25 @@ bundle field whose payload is the fixed list value plan; the child and
 grandchild TSData views use embedded bindings with offsets into the
 shared value and auxiliary regions.
 
-**Embedded TSS children.** A fixed parent may also own a slot-oriented
-``TSS`` child. The child's slot storage is placed as that child's
-auxiliary node, and the parent indexed TSData ops return a pointer to the
-child storage subobject when the child is selected. The child binding is
-the normal slot binding over the child slot plan; the slot ops still
-receive a pointer to their own storage object and do not know about the
-parent's root allocation. Parent notification uses the existing
+**Embedded projected children.** A fixed parent may also own children
+whose storage is not just an offset into the parent's value region. This
+includes slot-oriented ``TSS`` / ``TSD`` children and window-oriented
+``TSW`` children. The child's complete TSData storage plan is placed as
+that child's auxiliary node, and the parent indexed TSData ops return a
+pointer to that child storage subobject when the child is selected. The
+child binding is the normal binding over the child plan; slot and window
+ops still receive a pointer to their own storage object and do not know
+about the parent's root allocation. Parent notification uses the existing
 ``TSDataParentLink`` installed by child view projection.
 
-When a fixed parent contains such projected child storage, its
-``value()`` surface is also projected from the child value views instead
-of exposing a stale canonical value-region copy. Copying that transient
-view materialises the normal canonical value-layer ``List`` / ``Bundle``.
-This supports ``TSL[TSS[int], Size[N]]`` execution. Embedded ``TSD`` and
-dynamic ``TSL`` storage remain future runtime work.
+When a fixed parent contains projected child storage, its ``value()`` and
+delta surfaces are projected from child views instead of exposing a stale
+canonical value-region copy. Copying those transient views materialises
+normal canonical value-layer ``List`` / ``Bundle`` / ``Map`` / ``Set``
+storage. Fixed ``TSL`` and ``TSB`` can therefore contain any implemented
+non-``REF`` child kind: ``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed
+``TSL``, ``TSB``, and ``TSW``. Dynamic ``TSL`` storage remains future
+runtime work.
 
 .. mermaid::
 
@@ -1003,10 +1007,11 @@ object stable, but its internal queue may grow; callers should treat
 element ``ValueView`` handles as short-lived projections rather than
 stable child time-series addresses.
 
-For TSD and dynamic TSL, stability is harder. Elements are added and
-removed during evaluation, but a consumer that bound to one of them
-on the previous tick must still be able to dereference it on the
-current tick. Compacting storage cannot be used. The runtime instead
+For TSD, and for the future dynamic TSL storage shape, stability is
+harder. Elements are added and removed during evaluation, but a consumer
+that bound to one of them on the previous tick must still be able to
+dereference it on the current tick. Compacting storage cannot be used.
+The runtime instead
 uses chained, non-relocating slot blocks: new capacity is appended
 without moving previously published slot addresses.
 
@@ -1179,8 +1184,8 @@ TSD is the time-series wrapper around a delta-tracking Map. It owns:
 
 The value side is itself a recursive time-series layer: each value-
 slot holds a complete time-series value (most often a ``TS``, but
-``TSB``, ``TSL``, or further nested ``TSD`` are all permitted by the
-schema). Memory stability is preserved by the underlying
+``SIGNAL``, ``TSS``, ``TSB``, fixed ``TSL``, ``TSW``, or further nested
+``TSD`` are all permitted by the schema). Memory stability is preserved by the underlying
 ``StableSlotStorage`` so consumers can bind to a specific slot's value
 without worrying about future structural changes.
 

@@ -192,6 +192,30 @@ TEST_CASE("ts_schemas: TSB<{f...}>.value_schema is Bundle{f.value...}, delta is 
     REQUIRE(tsb->delta_value_schema->fields[1].type == int_meta);
 }
 
+TEST_CASE("ts_schemas: collection value schemas compose from child value_schema")
+{
+    using namespace hgraph;
+    auto       &registry    = TypeRegistry::instance();
+    const auto *str_meta    = registry.register_scalar<std::string>("string");
+    const auto *double_meta = registry.register_scalar<double>("double");
+    const auto *window      = registry.tsw(double_meta, 3, 1);
+
+    const auto *list = registry.tsl(window, 2);
+    REQUIRE(list->value_schema == registry.list(window->value_schema, 2));
+    REQUIRE(list->value_schema->element_type == window->value_schema);
+    REQUIRE(list->delta_value_schema == registry.map(registry.register_scalar<int64_t>("int64"),
+                                                     window->delta_value_schema));
+
+    const auto *dict = registry.tsd(str_meta, window);
+    REQUIRE(dict->value_schema == registry.map(str_meta, window->value_schema));
+    REQUIRE(dict->value_schema->element_type == window->value_schema);
+    REQUIRE(dict->delta_value_schema->fields[1].type == registry.map(str_meta, window->delta_value_schema));
+
+    const auto *bundle = registry.tsb("SchemaWindowChildBundle", {{"window", window}});
+    REQUIRE(bundle->value_schema->fields[0].type == window->value_schema);
+    REQUIRE(bundle->delta_value_schema->fields[0].type == window->delta_value_schema);
+}
+
 TEST_CASE("ts_schemas: REF<T> value/delta schemas are TimeSeriesReference, but the REF schemas themselves are distinct")
 {
     using namespace hgraph;

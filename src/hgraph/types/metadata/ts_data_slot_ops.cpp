@@ -1494,6 +1494,10 @@ namespace hgraph::ts_data_plan_factory_detail
             void configure_map_value_ops()
             {
                 value_map_ops = map_ops_for_surface<SlotMapSurface::Live>();
+                value_map_ops.owning_binding_impl      = &canonical_value_binding;
+                value_map_ops.copy_construct_view_impl = &map_copy_construct_view<SlotMapSurface::Live>;
+                value_map_ops.copy_assign_view_impl    = &map_copy_assign_view<SlotMapSurface::Live>;
+
                 key_set_value_ops = SetValueOps{
                     {{this, false, &map_key_set_hash, &map_key_set_equals, &map_key_set_compare,
                       &map_key_set_to_string
@@ -1509,11 +1513,18 @@ namespace hgraph::ts_data_plan_factory_detail
                      nullptr},
                     &map_contains_key,
                 };
+                key_set_value_ops.owning_binding_impl      = &canonical_value_binding;
+                key_set_value_ops.copy_construct_view_impl = &set_copy_construct_view<SlotSetSurface::Live>;
+                key_set_value_ops.copy_assign_view_impl    = &set_copy_assign_view<SlotSetSurface::Live>;
             }
 
             void configure_modified_map_ops()
             {
                 modified_map_ops = map_ops_for_surface<SlotMapSurface::Modified>();
+                modified_map_ops.owning_binding_impl      = &canonical_value_binding;
+                modified_map_ops.copy_construct_view_impl = &map_copy_construct_view<SlotMapSurface::Modified>;
+                modified_map_ops.copy_assign_view_impl    = &map_copy_assign_view<SlotMapSurface::Modified>;
+
                 dict_delta_bundle_ops = IndexedValueOps{
                     {this, false, &dict_delta_hash, &dict_delta_equals, &dict_delta_compare,
                      &dict_delta_to_string
@@ -1528,6 +1539,9 @@ namespace hgraph::ts_data_plan_factory_detail
                     &dict_delta_make_range,
                     nullptr,
                 };
+                dict_delta_bundle_ops.owning_binding_impl      = &canonical_value_binding;
+                dict_delta_bundle_ops.copy_construct_view_impl = &dict_delta_copy_construct_view;
+                dict_delta_bundle_ops.copy_assign_view_impl    = &dict_delta_copy_assign_view;
             }
 
             void bind_tsd_surfaces(const TSValueTypeMetaData &schema_, const MemoryUtils::StoragePlan &plan_)
@@ -1589,6 +1603,102 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static const TSDContext *ctxd(const void *context) noexcept
             {
                 return static_cast<const TSDContext *>(context);
+            }
+
+            template <SlotMapSurface Surface>
+            static void map_copy_construct_view(const void *context,
+                                                const ValueTypeBinding &binding,
+                                                void *dst,
+                                                const void *memory)
+            {
+                auto storage = build_map_storage<Surface>(context, binding, memory);
+                std::construct_at(static_cast<MapStorage *>(dst), std::move(storage));
+            }
+
+            template <SlotMapSurface Surface>
+            static void map_copy_assign_view(const void *context,
+                                             const ValueTypeBinding &binding,
+                                             void *dst,
+                                             const void *memory)
+            {
+                *static_cast<MapStorage *>(dst) = build_map_storage<Surface>(context, binding, memory);
+            }
+
+            template <SlotMapSurface Surface>
+            [[nodiscard]] static MapStorage build_map_storage(const void *context,
+                                                              const ValueTypeBinding &binding,
+                                                              const void *memory)
+            {
+                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Map)
+                {
+                    throw std::logic_error("TSD map copy requires a canonical map binding");
+                }
+
+                const auto *state       = ctxd(context);
+                const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->key_type);
+                const auto *value_binding =
+                    ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                if (key_binding == nullptr || key_binding != state->dict_layout.key_binding)
+                {
+                    throw std::logic_error("TSD map copy key binding is not resolved");
+                }
+                if (value_binding == nullptr)
+                {
+                    throw std::logic_error("TSD map copy value binding is not resolved");
+                }
+
+                MapBuilder builder{*key_binding, *value_binding};
+                for (const auto [key, value] : map_kv_range<Surface>(context, memory))
+                {
+                    Value owned_value{value};
+                    if (owned_value.binding() != value_binding)
+                    {
+                        throw std::logic_error("TSD map copy materialized the wrong value binding");
+                    }
+                    builder.set_item_copy(key.data(), owned_value.view().data());
+                }
+                return builder.build_storage();
+            }
+
+            static void dict_delta_copy_construct_view(const void *context,
+                                                       const ValueTypeBinding &binding,
+                                                       void *dst,
+                                                       const void *memory)
+            {
+                const auto &plan = binding.checked_plan();
+                plan.default_construct(dst);
+                auto rollback = make_scope_exit([&]() noexcept { plan.destroy(dst); });
+                dict_delta_copy_assign_view(context, binding, dst, memory);
+                rollback.release();
+            }
+
+            static void dict_delta_copy_assign_view(const void *context,
+                                                    const ValueTypeBinding &binding,
+                                                    void *dst,
+                                                    const void *memory)
+            {
+                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Bundle ||
+                    binding.type_meta->field_count != 2)
+                {
+                    throw std::logic_error("TSD delta copy requires canonical Bundle{removed, modified}");
+                }
+
+                const auto &plan = binding.checked_plan();
+                if (!plan.is_composite() || plan.component_count() != 2)
+                {
+                    throw std::logic_error("TSD delta copy requires a two-field structured plan");
+                }
+
+                auto removed = Value{ValueView{dict_delta_element_binding(context, memory, 0),
+                                               dict_delta_element_at(context, memory, 0)}};
+                auto modified = Value{ValueView{dict_delta_element_binding(context, memory, 1),
+                                                dict_delta_element_at(context, memory, 1)}};
+
+                auto       *bytes              = static_cast<std::byte *>(dst);
+                const auto &removed_component  = plan.component(0);
+                const auto &modified_component = plan.component(1);
+                removed_component.plan->copy_assign(bytes + removed_component.offset, removed.view().data());
+                modified_component.plan->copy_assign(bytes + modified_component.offset, modified.view().data());
             }
 
             [[nodiscard]] static const TSDataLayout *tsd_layout(const void *context) noexcept

@@ -183,10 +183,11 @@ namespace hgraph
         TSTypeKind kind{TSTypeKind::SIGNAL};
         /**
          * Underlying value-layer schema the metadata was constructed against.
-         * This is the value pointer passed to the constructor and used
-         * internally during composite construction (e.g. ``TSD`` reads
-         * ``element_ts->value_type`` to compose its own value layout). For
-         * the consumer-visible value schema use ``value_schema`` instead.
+         * This is the value pointer passed to the constructor. For most
+         * kinds it is also the consumer-visible current-value schema, but
+         * kinds such as ``TSW`` keep scalar element type here while exposing
+         * a list-shaped ``value_schema``. Collection schemas compose from
+         * child ``value_schema`` values, not this constructor pointer.
          */
         const ValueTypeMetaData *value_type{nullptr};
         /** Kind-dependent payload; populated through the ``set_*`` helpers. */

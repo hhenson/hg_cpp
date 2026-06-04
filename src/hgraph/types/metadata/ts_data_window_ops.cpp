@@ -4,6 +4,7 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/specialized_views.h>
 #include <hgraph/types/value/value.h>
+#include <hgraph/types/value/value_builder.h>
 #include <hgraph/util/scope.h>
 
 #include <fmt/format.h>
@@ -752,6 +753,9 @@ namespace hgraph::ts_data_plan_factory_detail
                     &window_value_make_range,
                     nullptr,
                 };
+                value_ops.owning_binding_impl      = &window_value_owning_binding;
+                value_ops.copy_construct_view_impl = &window_value_copy_construct_view;
+                value_ops.copy_assign_view_impl    = &window_value_copy_assign_view;
             }
 
             [[nodiscard]] static const TSWContextBase *ctx(const void *context) noexcept
@@ -762,6 +766,17 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static const TSDataLayout *window_layout(const void *context) noexcept
             {
                 return ctx(context)->layout;
+            }
+
+            [[nodiscard]] static const ValueTypeBinding *
+            window_value_owning_binding(const void *, const ValueTypeBinding &view_binding)
+            {
+                const auto *binding = ValuePlanFactory::instance().binding_for(view_binding.type_meta);
+                if (binding == nullptr)
+                {
+                    throw std::logic_error("TSW value surface has no canonical owning binding");
+                }
+                return binding;
             }
 
             [[nodiscard]] static const void *advance(const void *memory, std::size_t offset) noexcept
@@ -942,6 +957,102 @@ namespace hgraph::ts_data_plan_factory_detail
                     .predicate = nullptr,
                     .projector = &window_value_projector,
                 };
+            }
+
+            static void window_value_copy_construct_view(const void *context,
+                                                         const ValueTypeBinding &binding,
+                                                         void *dst,
+                                                         const void *memory)
+            {
+                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::List)
+                {
+                    throw std::logic_error("TSW value copy requires a canonical list binding");
+                }
+                if (binding.type_meta->fixed_size == 0)
+                {
+                    auto storage = build_dynamic_list_storage(context, binding, memory);
+                    std::construct_at(static_cast<ListStorage *>(dst), std::move(storage));
+                    return;
+                }
+
+                const auto &plan = binding.checked_plan();
+                plan.default_construct(dst);
+                auto rollback = make_scope_exit([&]() noexcept { plan.destroy(dst); });
+                window_value_copy_assign_view(context, binding, dst, memory);
+                rollback.release();
+            }
+
+            static void window_value_copy_assign_view(const void *context,
+                                                      const ValueTypeBinding &binding,
+                                                      void *dst,
+                                                      const void *memory)
+            {
+                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::List)
+                {
+                    throw std::logic_error("TSW value copy requires a canonical list binding");
+                }
+                if (binding.type_meta->fixed_size == 0)
+                {
+                    *static_cast<ListStorage *>(dst) = build_dynamic_list_storage(context, binding, memory);
+                    return;
+                }
+
+                assign_fixed_list_storage(context, binding, dst, memory);
+            }
+
+            [[nodiscard]] static const ValueTypeBinding *
+            window_value_element_owning_binding(const TSWContextBase *state, const ValueTypeBinding &binding)
+            {
+                const auto *element_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                if (element_binding == nullptr || element_binding != state->layout->element_binding)
+                {
+                    throw std::logic_error("TSW value copy element binding is not resolved");
+                }
+                return element_binding;
+            }
+
+            [[nodiscard]] static ListStorage build_dynamic_list_storage(const void *context,
+                                                                        const ValueTypeBinding &binding,
+                                                                        const void *memory)
+            {
+                const auto *state = ctx(context);
+                const auto *element_binding = window_value_element_owning_binding(state, binding);
+                ListBuilder builder{*element_binding};
+                for (const auto element : window_value_make_range(context, memory))
+                {
+                    builder.push_back_copy(element.data());
+                }
+                return builder.build_storage();
+            }
+
+            static void assign_fixed_list_storage(const void *context,
+                                                  const ValueTypeBinding &binding,
+                                                  void *dst,
+                                                  const void *memory)
+            {
+                const auto *state = ctx(context);
+                const auto *element_binding = window_value_element_owning_binding(state, binding);
+                const auto &plan = binding.checked_plan();
+                if (!plan.is_array() || plan.array_count() != binding.type_meta->fixed_size)
+                {
+                    throw std::logic_error("TSW fixed value copy requires a matching array plan");
+                }
+
+                const auto &element_plan = plan.array_element_plan();
+                const auto count = window_value_size(context, memory);
+                if (count > binding.type_meta->fixed_size)
+                {
+                    throw std::logic_error("TSW fixed value copy source exceeds declared fixed size");
+                }
+
+                auto *bytes = static_cast<std::byte *>(dst);
+                Value default_element{*element_binding};
+                for (std::size_t index = 0; index < binding.type_meta->fixed_size; ++index)
+                {
+                    const void *source = index < count ? window_value_element_at(context, memory, index)
+                                                       : default_element.view().data();
+                    element_plan.copy_assign(bytes + plan.element_offset(index), source);
+                }
             }
 
             [[nodiscard]] static std::size_t window_value_hash(const void *context, const void *memory)

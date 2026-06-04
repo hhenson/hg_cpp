@@ -96,18 +96,18 @@ namespace hgraph::ts_data_plan_factory_detail
             builder.add_field("tracking", MemoryUtils::plan_for<TSDataTracking>());
             return builder.build();
         }
-        if (schema.kind == TSTypeKind::TSS)
+        if (is_slot_ts_data(schema))
         {
             return *synthesise_slot_plan(schema);
         }
-        if (is_slot_ts_data(schema))
+        if (is_window_ts_data(schema))
         {
-            throw std::logic_error("TSDataPlanFactory: embedded TSD slot storage is not implemented");
+            return *synthesise_window_plan(schema);
         }
         if (!is_fixed_structured_ts_data(schema))
         {
             throw std::logic_error(
-                fmt::format("TSDataPlanFactory: slot-oriented TSData storage is not implemented for kind {}",
+                fmt::format("TSDataPlanFactory: TSData storage is not implemented for kind {}",
                             static_cast<int>(schema.kind)));
         }
 
@@ -197,7 +197,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                 const MemoryUtils::StoragePlan &root_plan,
                                                                 std::size_t value_offset, std::size_t aux_offset)
     {
-        if (schema.kind == TSTypeKind::TSS)
+        if (is_slot_ts_data(schema))
         {
             const auto *plan = synthesise_slot_plan(schema);
             if (plan == nullptr)
@@ -207,9 +207,22 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto &ops = slot_ts_data_ops(schema, *plan, 0);
             return &TSDataBinding::intern(schema, *plan, ops);
         }
-        if (is_slot_ts_data(schema))
+        if (is_window_ts_data(schema))
         {
-            throw std::logic_error("TSDataPlanFactory: embedded TSD slot storage is not implemented");
+            const auto *plan = synthesise_window_plan(schema);
+            if (plan == nullptr)
+            {
+                throw std::logic_error("TSDataPlanFactory: TSW TSData plan is not resolved");
+            }
+            const auto *window_component   = plan->find_component("window");
+            const auto *tracking_component = plan->find_component("tracking");
+            if (window_component == nullptr || tracking_component == nullptr)
+            {
+                throw std::logic_error("TSDataPlanFactory: TSW TSData plan is missing required components");
+            }
+            const auto &ops =
+                window_ts_data_ops(schema, *plan, window_component->offset, tracking_component->offset);
+            return &TSDataBinding::intern(schema, *plan, ops);
         }
 
         const auto &aux_plan        = ts_data_aux_plan(schema);
@@ -231,7 +244,7 @@ namespace hgraph::ts_data_plan_factory_detail
         if (!is_fixed_structured_ts_data(schema))
         {
             throw std::logic_error(
-                fmt::format("TSDataPlanFactory: slot-oriented TSData storage is not implemented for kind {}",
+                fmt::format("TSDataPlanFactory: TSData storage is not implemented for kind {}",
                             static_cast<int>(schema.kind)));
         }
 

@@ -13,6 +13,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -35,6 +37,89 @@ namespace
         [[nodiscard]] bool operator==(const MoveAssignableOnlyScalar &) const = default;
         [[nodiscard]] auto operator<=>(const MoveAssignableOnlyScalar &) const = default;
     };
+
+    void mutate_supported_ts_child(hgraph::TSDataView child, hgraph::engine_time_t modified_time, int seed)
+    {
+        using namespace hgraph;
+
+        const auto *schema = child.schema();
+        REQUIRE(schema != nullptr);
+
+        switch (schema->kind)
+        {
+        case TSTypeKind::TS:
+        {
+            Value value{seed};
+            auto  mutation = child.begin_mutation(modified_time);
+            REQUIRE(mutation.copy_value_from(value.view()));
+            break;
+        }
+        case TSTypeKind::SIGNAL:
+        {
+            Value value{true};
+            auto  mutation = child.begin_mutation(modified_time);
+            REQUIRE(mutation.copy_value_from(value.view()));
+            break;
+        }
+        case TSTypeKind::TSS:
+        {
+            Value value{seed};
+            auto  set = child.as_set();
+            auto  mutation = set.begin_mutation(modified_time);
+            REQUIRE(mutation.add(value.view()));
+            break;
+        }
+        case TSTypeKind::TSD:
+        {
+            Value key{seed};
+            auto  dict = child.as_dict();
+            auto  mutation = dict.begin_mutation(modified_time);
+            auto  nested = mutation.at(key.view());
+            mutate_supported_ts_child(std::move(nested), modified_time, seed + 1);
+            break;
+        }
+        case TSTypeKind::TSL:
+        {
+            auto list = child.as_list();
+            REQUIRE(list.size() > 0);
+            auto nested = list.at(0);
+            mutate_supported_ts_child(std::move(nested), modified_time, seed + 1);
+            break;
+        }
+        case TSTypeKind::TSB:
+        {
+            auto bundle = child.as_bundle();
+            REQUIRE(bundle.size() > 0);
+            auto nested = bundle.at(0);
+            mutate_supported_ts_child(std::move(nested), modified_time, seed + 1);
+            break;
+        }
+        case TSTypeKind::TSW:
+        {
+            Value value{seed};
+            auto  window = child.as_window();
+            auto  mutation = window.begin_mutation(modified_time);
+            mutation.push(value.view());
+            break;
+        }
+        case TSTypeKind::REF:
+            FAIL("REF is intentionally excluded from this nesting matrix");
+            break;
+        }
+    }
+
+    void require_canonical_snapshots(const hgraph::TSDataView &root, hgraph::engine_time_t modified_time)
+    {
+        using namespace hgraph;
+
+        REQUIRE(root.schema() != nullptr);
+        Value current{root.value()};
+        REQUIRE(current.binding() == ValuePlanFactory::instance().binding_for(root.schema()->value_schema));
+
+        REQUIRE(root.modified(modified_time));
+        Value delta{root.delta_value(modified_time)};
+        REQUIRE(delta.binding() == ValuePlanFactory::instance().binding_for(root.schema()->delta_value_schema));
+    }
 }  // namespace
 
 TEST_CASE("ValuePlanFactory: atomic round-trip via TypeRegistry")
@@ -800,6 +885,98 @@ TEST_CASE("TSDataPlanFactory: fixed TSL owns embedded TSS child storage")
     REQUIRE(parent_snapshot.view().as_list().at(0).as_set().empty());
     REQUIRE(parent_snapshot.view().as_list().at(1).as_set().contains(one.view()));
     REQUIRE(parent_snapshot.view().as_list().at(1).as_set().contains(two.view()));
+}
+
+TEST_CASE("TSDataPlanFactory: collections nest every supported non-REF TSData kind")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    (void)registry.register_scalar<bool>("bool");
+
+    const auto *ts_int     = registry.ts(int_meta);
+    const auto *signal     = registry.signal();
+    const auto *tss_int    = registry.tss(int_meta);
+    const auto *tsd_ts     = registry.tsd(int_meta, ts_int);
+    const auto *tsl_ts     = registry.tsl(ts_int, 2);
+    const auto *tsb_ts     = registry.tsb("NestedMatrixChildBundle", {{"x", ts_int}, {"tick", signal}});
+    const auto *tsw_int    = registry.tsw(int_meta, 3, 1);
+
+    struct ChildCase
+    {
+        const char                      *label;
+        const TSValueTypeMetaData       *schema;
+    };
+    const std::vector<ChildCase> children{
+        {"TS", ts_int},
+        {"SIGNAL", signal},
+        {"TSS", tss_int},
+        {"TSD", tsd_ts},
+        {"TSL", tsl_ts},
+        {"TSB", tsb_ts},
+        {"TSW", tsw_int},
+    };
+
+    const auto t1 = MIN_ST;
+    int        seed = 10;
+    for (const auto &child : children)
+    {
+        SECTION(std::string{"fixed TSL child "} + child.label)
+        {
+            const auto *parent = registry.tsl(child.schema, 2);
+            const auto *binding = factory.binding_for(parent);
+            REQUIRE(binding != nullptr);
+
+            TSData data{*binding};
+            auto   root = data.view();
+            auto   list = root.as_list();
+            REQUIRE(list.size() == 2);
+            auto nested = list.at(0);
+            REQUIRE(nested.schema() == child.schema);
+
+            mutate_supported_ts_child(std::move(nested), t1, seed++);
+            require_canonical_snapshots(root, t1);
+        }
+
+        SECTION(std::string{"TSB child "} + child.label)
+        {
+            const auto *parent =
+                registry.tsb(std::string{"NestedMatrixParentBundle_"} + child.label, {{"child", child.schema}});
+            const auto *binding = factory.binding_for(parent);
+            REQUIRE(binding != nullptr);
+
+            TSData data{*binding};
+            auto   root = data.view();
+            auto   bundle = root.as_bundle();
+            auto   nested = bundle.field("child");
+            REQUIRE(nested.schema() == child.schema);
+
+            mutate_supported_ts_child(std::move(nested), t1, seed++);
+            require_canonical_snapshots(root, t1);
+        }
+
+        SECTION(std::string{"TSD child "} + child.label)
+        {
+            const auto *parent = registry.tsd(int_meta, child.schema);
+            const auto *binding = factory.binding_for(parent);
+            REQUIRE(binding != nullptr);
+
+            TSData data{*binding};
+            auto   root = data.view();
+            auto   dict = root.as_dict();
+            Value  key{seed++};
+            {
+                auto mutation = dict.begin_mutation(t1);
+                auto nested = mutation.at(key.view());
+                REQUIRE(nested.schema() == child.schema);
+                mutate_supported_ts_child(std::move(nested), t1, seed++);
+            }
+
+            REQUIRE(dict.contains(key.view()));
+            require_canonical_snapshots(root, t1);
+        }
+    }
 }
 
 TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")

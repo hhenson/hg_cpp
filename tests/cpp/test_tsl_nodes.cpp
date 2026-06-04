@@ -196,8 +196,8 @@ TEST_CASE("tsl: recursive — list_delta over container children builds nested c
     CHECK(nd.equals(list_delta<TSL<TS<int>, 2>>({{0, list_delta<TS<int>>({{1, 8}, {0, 7}})}})));
     CHECK(nd.view().as_map().at(Value{std::int64_t{0}}.view()).as_map().size() == 2);
 
-    // A TSL<TSS> now executes in a graph. TSD and dynamic TSL children still need
-    // additional runtime coverage before they should be enabled.
+    // TSData storage now supports fixed TSL over every implemented non-REF child kind.
+    // Dynamic TSL storage remains a separate runtime shape.
 }
 
 TEST_CASE("tsl: a TSL<TSS> executes end-to-end (replay -> record round-trips list-of-set deltas)")

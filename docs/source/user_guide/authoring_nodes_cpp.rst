@@ -500,11 +500,12 @@ or another ``TSL`` — nested arbitrarily. ``in[i]`` yields the child input sele
 A ``TSL`` delta is the canonical ``Map<int64, delta(C)>`` ``Value`` (recursive in
 ``C``); build one for tests with ``list_delta`` (see *Testing Graphs in C++*).
 
-The selector composition above is recursive over **any** child today, and *running a
-graph* now works for a ``TSL`` over scalar (``TS``) and set (``TSS``) children. A
+The selector composition above is recursive over **any** child today, and the TSData
+runtime supports fixed ``TSL`` children across the implemented non-``REF`` kinds:
+``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed ``TSL``, ``TSB``, and ``TSW``. A
 ``TSL<TSS<int>, N>`` such as ``FanIn`` owns each child set's slot storage inside the
-fixed list and projects the parent value from those child views. A ``TSL`` whose child
-is a ``TSD`` or a dynamic ``TSL`` still needs further runtime support.
+fixed list and projects the parent value from those child views. Dynamic ``TSL``
+storage still needs further runtime support.
 
 **Planned.** ``TSD<K, V>`` (dict) and ``TSW<T, …>`` (window) selectors follow the
 same derive-from-view pattern; the Python iteration API

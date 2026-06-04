@@ -335,9 +335,6 @@ each ``index -> child_delta`` of the buffered delta to the matching child output
 
    The **authoring and delta layers are recursive over any child schema** today —
    ``In``/``Out<TSL<C, N>>`` compose for any ``C`` and ``list_delta``/``set_delta`` build
-   the nested canonical ``Value``. **Execution** now covers ``TSL`` over **scalar
-   (``TS``)** and **set (``TSS``)** children: a ``TSL<TSS<int>, N>`` owns each child set's
-   slot storage inside the fixed list and round-trips through ``replay``/``record`` end to
-   end. Still future: a ``TSL`` whose child is a ``TSD`` or a *dynamic* ``TSL``, dynamic
-   (``N == 0``) ``TSL``, and ``TSW`` children — these remain exercised only at the
-   delta/value layer for now.
+   the nested canonical ``Value``. TSData storage for fixed ``TSL`` now covers the
+   implemented non-``REF`` child kinds: ``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed
+   ``TSL``, ``TSB``, and ``TSW``. Still future: dynamic (``N == 0``) ``TSL`` storage.
