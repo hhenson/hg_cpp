@@ -52,352 +52,187 @@ namespace hgraph
      */
 
     // -----------------------------------------------------------------
-    // Set time-series delta
+    // Time-series deltas — canonical type-erased Values
+    //
+    // The per-cycle delta of any time-series is the canonical ``Value`` whose schema
+    // is the runtime ``delta_value_schema`` (``TS<T>`` -> ``T``; ``TSS<T>`` ->
+    // ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSL<C,N>`` ->
+    // ``Map<int64, delta(C)>``, recursive). These builders *produce that exact
+    // canonical Value*, so a built delta compares to a runtime-produced one via
+    // ``Value::equals`` — there is no parallel wrapper type. The recursive
+    // ``ts_delta<S>`` driver (``apply``) is defined after the ``Out`` selectors.
     // -----------------------------------------------------------------
 
-    template <typename TValue>
-    [[nodiscard]] inline Value make_set_delta_value(const std::vector<TValue> &added,
-                                                    const std::vector<TValue> &removed);
-
-    template <typename TValue>
-    [[nodiscard]] inline const ValueTypeBinding &set_delta_value_binding()
+    namespace static_node_detail
     {
-        auto       &registry = TypeRegistry::instance();
-        const auto *t_meta   = scalar_descriptor<TValue>::value_meta();
-        const auto *set_t    = registry.mutable_set(t_meta);
-        const auto *schema   = registry.un_named_bundle({{"added", set_t}, {"removed", set_t}});
-        const auto *binding  = ValuePlanFactory::instance().binding_for(schema);
-        if (binding == nullptr) { throw std::logic_error("SetDelta could not resolve the delta value binding"); }
+        /** True for a scalar time-series schema ``TS<T>`` (the TSL recursion base). */
+        template <typename S> struct is_scalar_ts : std::false_type {};
+        template <typename V> struct is_scalar_ts<TS<V>> : std::true_type {};
+
+        /** The user-supplied per-entry delta input for child schema ``C``: the bare
+         *  scalar ``T`` for ``TS<T>``, otherwise a prebuilt child-delta ``Value``. */
+        template <typename C> struct delta_input { using type = Value; };
+        template <typename V> struct delta_input<TS<V>> { using type = V; };
+        template <typename C> using delta_input_t = typename delta_input<C>::type;
+    }  // namespace static_node_detail
+
+    /** The canonical delta-value schema for time-series schema ``S`` (recursive). */
+    template <typename S>
+    [[nodiscard]] inline const ValueTypeMetaData *delta_value_schema()
+    {
+        const TSValueTypeMetaData *ts = schema_descriptor<S>::ts_meta();
+        return ts != nullptr ? ts->delta_value_schema : nullptr;
+    }
+
+    /** The binding for ``S``'s canonical delta value. */
+    template <typename S>
+    [[nodiscard]] inline const ValueTypeBinding &delta_value_binding()
+    {
+        const auto *binding = ValuePlanFactory::instance().binding_for(delta_value_schema<S>());
+        if (binding == nullptr) { throw std::logic_error("delta_value_binding: unresolved delta schema"); }
         return *binding;
     }
 
-    template <typename TValue, typename BundleMutation>
-    inline void populate_set_delta_bundle(BundleMutation &&bundle,
-                                          const std::vector<TValue> &added,
-                                          const std::vector<TValue> &removed)
-    {
-        {
-            auto m = bundle.field("added").as_mutable_set();
-            for (const auto &e : added) { (void)m.add(Value{e}.view()); }
-        }
-        {
-            auto m = bundle.field("removed").as_mutable_set();
-            for (const auto &e : removed) { (void)m.add(Value{e}.view()); }
-        }
-    }
-
     /**
-     * Lightweight wrapper over a set-time-series **delta value** — a
-     * ``Bundle{added, removed}`` whose fields are indexed containers of ``T`` (a
-     * live ``TSS`` delta has ``Set`` fields; a built/recorded delta has mutable
-     * ``Set`` fields — both read uniformly via the indexed view).
-     *
-     * ``SetDelta`` owns a snapshot of the bundle value. It is therefore safe to
-     * copy out of an input selector and compare after the producing call stack has
-     * unwound. Equality is order-independent (compares as sets). Build one from
-     * elements with :cpp:func:`set_delta`.
+     * Build the canonical ``TSS<T>`` delta value ``Bundle{added: Set<T>, removed:
+     * Set<T>}`` from typed elements. The immutable ``Set`` fields are assembled with
+     * ``SetBuilder`` + ``BundleBuilder`` so the result matches the runtime
+     * ``delta_value_schema`` exactly (and compares via ``Value::equals``).
      */
     template <typename TValue>
-    class SetDelta
+    [[nodiscard]] inline Value set_delta(std::vector<TValue> added, std::vector<TValue> removed)
     {
-      public:
-        SetDelta() = default;
-        explicit SetDelta(std::vector<TValue> added, std::vector<TValue> removed)
-            : storage_(make_storage(added, removed))
-        {
-        }
+        auto       &registry       = TypeRegistry::instance();
+        const auto *t_meta         = scalar_descriptor<TValue>::value_meta();
+        const auto *t_binding      = ValuePlanFactory::instance().binding_for(t_meta);
+        const auto *set_meta       = registry.set(t_meta);
+        const auto *bundle_schema  = registry.un_named_bundle({{"added", set_meta}, {"removed", set_meta}});
+        const auto *bundle_binding = ValuePlanFactory::instance().binding_for(bundle_schema);
+        if (t_binding == nullptr || bundle_binding == nullptr) { throw std::logic_error("set_delta: unresolved binding"); }
 
-        /** Copy an external delta bundle view into an owned snapshot. */
-        explicit SetDelta(const ValueView &bundle)
+        SetBuilder added_set{*t_binding};
+        for (const auto &e : added) { (void)added_set.insert(e); }
+        SetBuilder removed_set{*t_binding};
+        for (const auto &e : removed) { (void)removed_set.insert(e); }
+
+        BundleBuilder bundle{*bundle_binding};
+        bundle.set("added", added_set.build().view());
+        bundle.set("removed", removed_set.build().view());
+        return bundle.build();
+    }
+
+    namespace static_node_detail
+    {
+        /** Build ``Map<int64, delta(C)>`` from a sparse ``index -> child-delta`` map. */
+        template <typename C>
+        [[nodiscard]] inline Value build_list_delta(const std::map<std::size_t, delta_input_t<C>> &entries)
         {
-            if (bundle.valid())
+            const auto *key_binding =
+                ValuePlanFactory::instance().binding_for(scalar_descriptor<std::int64_t>::value_meta());
+            const auto &val_binding = delta_value_binding<C>();
+            if (key_binding == nullptr) { throw std::logic_error("list_delta: unresolved key binding"); }
+
+            MapBuilder builder{*key_binding, val_binding};
+            for (const auto &[index, input] : entries)
             {
-                storage_ = make_storage(elements_from(bundle, "added"), elements_from(bundle, "removed"));
+                const std::int64_t key = static_cast<std::int64_t>(index);
+                if constexpr (is_scalar_ts<C>::value)
+                {
+                    builder.set_item_copy(std::addressof(key), std::addressof(input));  // scalar child delta == value
+                }
+                else
+                {
+                    builder.set_item_copy(std::addressof(key), input.view().data());    // container child delta Value
+                }
             }
+            return builder.build();
         }
-        /** Copy a built delta bundle into this handle's storage. */
-        explicit SetDelta(const Value &owned) : SetDelta(owned.view()) {}
-        explicit SetDelta(Value &&owned) : SetDelta(owned.view()) {}
-
-        [[nodiscard]] bool                valid() const noexcept { return storage_.has_value(); }
-        [[nodiscard]] std::vector<TValue> added() const { return elements("added"); }
-        [[nodiscard]] std::vector<TValue> removed() const { return elements("removed"); }
-
-        /** The underlying delta bundle value (``Bundle{added, removed}``). */
-        [[nodiscard]] ValueView value() const noexcept { return ValueView{storage_.binding(), storage_.data()}; }
-
-        bool operator==(const SetDelta &other) const
-        {
-            return to_set(added()) == to_set(other.added()) && to_set(removed()) == to_set(other.removed());
-        }
-
-      private:
-        [[nodiscard]] std::vector<TValue> elements(std::string_view field) const
-        {
-            std::vector<TValue> out;
-            if (!valid()) { return out; }
-            return elements_from(value(), field);
-        }
-
-        [[nodiscard]] static std::vector<TValue> elements_from(const ValueView &bundle, std::string_view field)
-        {
-            std::vector<TValue> out;
-            if (!bundle.valid()) { return out; }
-            const auto indexed = bundle.as_bundle().field(field).as_indexed_view();
-            for (std::size_t i = 0; i < indexed.size(); ++i) { out.push_back(indexed.at(i).template checked_as<TValue>()); }
-            return out;
-        }
-        static std::set<TValue> to_set(const std::vector<TValue> &v) { return std::set<TValue>{v.begin(), v.end()}; }
-
-        using storage_type = Value::storage_type;
-
-        [[nodiscard]] static storage_type make_storage(const std::vector<TValue> &added,
-                                                       const std::vector<TValue> &removed)
-        {
-            const auto &binding = set_delta_value_binding<TValue>();
-            storage_type storage{binding};
-            populate_set_delta_bundle<TValue>(ValueView{&binding, storage.data()}.as_bundle().begin_mutation(),
-                                              added,
-                                              removed);
-            return storage;
-        }
-
-        storage_type storage_{};
-    };
+    }  // namespace static_node_detail
 
     /**
-     * Build a delta value ``Bundle{added: Set<T>, removed: Set<T>}`` from typed
-     * elements. The fields are value-layer (mutable) ``Set``\ s so they match a
-     * live ``TSS`` delta and compare order-independently via the hash-based set
-     * equality (list fields would make delta comparison order-dependent and slow).
+     * Build the canonical ``TSL<C,N>`` delta value ``Map<int64, delta(C)>`` from a
+     * sparse ``index -> child-delta`` list. For a scalar child the entry value is the
+     * bare ``T``; for a container child it is a prebuilt child-delta ``Value`` (from an
+     * inner ``set_delta`` / ``list_delta``) — so construction is recursive. The result
+     * matches the runtime ``delta_value_schema`` (immutable compact ``Map``).
      */
-    template <typename TValue>
-    [[nodiscard]] inline Value make_set_delta_value(const std::vector<TValue> &added,
-                                                    const std::vector<TValue> &removed)
+    template <typename C>
+    [[nodiscard]] inline Value
+    list_delta(std::initializer_list<std::pair<std::size_t, static_node_detail::delta_input_t<C>>> entries)
     {
-        const auto &binding = set_delta_value_binding<TValue>();
-        Value       delta{binding};
-        auto  bundle = delta.as_bundle().begin_mutation();
-        populate_set_delta_bundle<TValue>(bundle, added, removed);
-        return delta;
+        std::map<std::size_t, static_node_detail::delta_input_t<C>> map;
+        for (const auto &[index, input] : entries) { map.insert_or_assign(index, input); }
+        return static_node_detail::build_list_delta<C>(map);
     }
 
-    /** Build an owning :cpp:class:`SetDelta` from element lists (added, removed). */
-    template <typename TValue>
-    [[nodiscard]] inline SetDelta<TValue> set_delta(std::vector<TValue> added, std::vector<TValue> removed)
+    /** Positional ``TSL<C,N>`` delta: position is the child index, ``none`` skips it. */
+    template <typename C>
+    [[nodiscard]] inline Value list_delta(std::vector<std::optional<static_node_detail::delta_input_t<C>>> positional)
     {
-        return SetDelta<TValue>{std::move(added), std::move(removed)};
-    }
-
-    // -----------------------------------------------------------------
-    // List time-series delta
-    // -----------------------------------------------------------------
-
-    /**
-     * Build a list-time-series **delta value** — an **immutable** value-layer
-     * ``Map<int64, T>`` mapping a child index to that child's value, for the
-     * children that ticked this cycle. The map is built once via ``MapBuilder``
-     * (compact maps have no mutation path, which is exactly the immutability a
-     * delta needs); the C++ surface speaks ``std::size_t`` indices while the
-     * value-layer key is the registered ``int64`` scalar (a ``size_t`` scalar
-     * would collide with ``uint64`` on LP64 platforms).
-     */
-    template <typename TValue>
-    [[nodiscard]] inline Value make_list_delta_value(const std::map<std::size_t, TValue> &entries)
-    {
-        const auto *key_binding = ValuePlanFactory::instance().binding_for(scalar_descriptor<std::int64_t>::value_meta());
-        const auto *val_binding = ValuePlanFactory::instance().binding_for(scalar_descriptor<TValue>::value_meta());
-        if (key_binding == nullptr || val_binding == nullptr)
-        {
-            throw std::logic_error("ListDelta could not resolve the delta value binding");
-        }
-        MapBuilder builder{*key_binding, *val_binding};
-        for (const auto &[index, value] : entries)
-        {
-            builder.set_item<std::int64_t, TValue>(static_cast<std::int64_t>(index), value);
-        }
-        return builder.build();
-    }
-
-    /**
-     * Lightweight wrapper over a list-time-series **delta value** — an immutable
-     * ``Map<int64, T>`` (child index -> value) for the children that ticked this
-     * cycle. ``ListDelta`` owns a snapshot of that map value, so it is safe to copy
-     * out of an input selector and compare after the producing call stack has
-     * unwound. The elements are read on demand; equality is order-independent
-     * (compares as maps). Build one from elements with :cpp:func:`list_delta`.
-     */
-    template <typename TValue>
-    class ListDelta
-    {
-      public:
-        ListDelta() = default;
-        /** Build from a sparse ``index -> value`` map. */
-        explicit ListDelta(const std::map<std::size_t, TValue> &entries) : storage_(make_storage(entries)) {}
-        /** Copy an external delta map view into an owned snapshot. */
-        explicit ListDelta(const ValueView &map) : storage_(make_storage(map)) {}
-        /** Copy a built delta map into this handle's storage. */
-        explicit ListDelta(const Value &owned) : ListDelta(owned.view()) {}
-        explicit ListDelta(Value &&owned) : ListDelta(owned.view()) {}
-
-        [[nodiscard]] bool valid() const noexcept { return storage_.has_value(); }
-
-        /** The underlying delta map value (``Map<int64, T>``). */
-        [[nodiscard]] ValueView value() const noexcept { return ValueView{storage_.binding(), storage_.data()}; }
-
-        [[nodiscard]] bool contains(std::size_t index) const
-        {
-            if (!valid()) { return false; }
-            return value().as_map().contains(index_key(index).view());
-        }
-
-        /** Value of the child at ``index`` (must be present). */
-        [[nodiscard]] TValue at(std::size_t index) const
-        {
-            return value().as_map().at(index_key(index).view()).template checked_as<TValue>();
-        }
-
-        /** The modified child indices (unordered). */
-        [[nodiscard]] std::vector<std::size_t> indices() const
-        {
-            std::vector<std::size_t> out;
-            for (const auto &entry : items()) { out.push_back(entry.first); }
-            return out;
-        }
-
-        /** The ``(index, value)`` pairs of the modified children. */
-        [[nodiscard]] std::vector<std::pair<std::size_t, TValue>> items() const
-        {
-            std::vector<std::pair<std::size_t, TValue>> out;
-            if (!valid()) { return out; }
-            const auto map = value().as_map();
-            for (const auto &[key, val] : map)
-            {
-                out.emplace_back(static_cast<std::size_t>(key.template checked_as<std::int64_t>()),
-                                 val.template checked_as<TValue>());
-            }
-            return out;
-        }
-
-        bool operator==(const ListDelta &other) const { return to_map(items()) == to_map(other.items()); }
-
-      private:
-        [[nodiscard]] static Value index_key(std::size_t index)
-        {
-            (void)scalar_descriptor<std::int64_t>::value_meta();  // ensure int64 is registered
-            return Value{static_cast<std::int64_t>(index)};
-        }
-        static std::map<std::size_t, TValue> to_map(const std::vector<std::pair<std::size_t, TValue>> &v)
-        {
-            return std::map<std::size_t, TValue>{v.begin(), v.end()};
-        }
-
-        using storage_type = Value::storage_type;
-
-        /** Snapshot a delta-map view into an owning handle (deep copy via the binding). */
-        [[nodiscard]] static storage_type make_storage(const ValueView &map)
-        {
-            if (!map.valid()) { return storage_type{}; }
-            return storage_type::owning_copy(*map.binding(), map.data());
-        }
-        [[nodiscard]] static storage_type make_storage(const std::map<std::size_t, TValue> &entries)
-        {
-            return make_storage(make_list_delta_value<TValue>(entries).view());
-        }
-
-        storage_type storage_{};
-    };
-
-    /**
-     * Build an owning :cpp:class:`ListDelta` from a sparse index -> value map, e.g.
-     * ``list_delta<int>({{0, 10}, {2, 30}})`` (index 1 did not tick).
-     */
-    template <typename TValue>
-    [[nodiscard]] inline ListDelta<TValue> list_delta(std::initializer_list<std::pair<std::size_t, TValue>> entries)
-    {
-        std::map<std::size_t, TValue> map;
-        for (const auto &entry : entries) { map.insert_or_assign(entry.first, entry.second); }
-        return ListDelta<TValue>{map};
-    }
-
-    /**
-     * Build an owning :cpp:class:`ListDelta` from a positional sequence: position is
-     * the child index and ``std::nullopt`` is "no tick at that index", e.g.
-     * ``list_delta<int>({10, none, 30})``. (A no-tick *cycle* is expressed by
-     * ``none`` at that cycle, not by an empty ``list_delta``.)
-     */
-    template <typename TValue>
-    [[nodiscard]] inline ListDelta<TValue> list_delta(std::vector<std::optional<TValue>> positional)
-    {
-        std::map<std::size_t, TValue> map;
+        std::map<std::size_t, static_node_detail::delta_input_t<C>> map;
         for (std::size_t i = 0; i < positional.size(); ++i)
         {
             if (positional[i].has_value()) { map.emplace(i, *positional[i]); }
         }
-        return ListDelta<TValue>{map};
+        return static_node_detail::build_list_delta<C>(map);
     }
 
     // -----------------------------------------------------------------
     // Selector markers
     // -----------------------------------------------------------------
 
-    /** Typed input selector. Only the scalar ``TS<T>`` form is defined so far. */
+    /**
+     * Typed input selector — a zero-overhead facade that **derives from** the
+     * type-erased input view for its kind (``TSInputView`` / ``TSSInputView`` /
+     * ``TSLInputView`` …), inheriting the whole erased API and adding the compile-time
+     * schema plus typed sugar. Constructed from a ``TSInputView`` (by ``arg_provider``
+     * or, for a child, from ``TSLInputView::at(i)``).
+     */
     template <fixed_string Name, typename TSchema>
     class In;
 
     template <fixed_string Name, typename TValue>
-    class In<Name, TS<TValue>>
+    class In<Name, TS<TValue>> : public TSInputView
     {
       public:
-        using schema                    = TS<TValue>;
-        using value_type                = TValue;
+        using schema                     = TS<TValue>;
+        using value_type                 = TValue;
         static constexpr auto field_name = Name;
 
-        explicit In(TSInputView view) noexcept : view_(std::move(view)) {}
+        explicit In(TSInputView view) noexcept : TSInputView(std::move(view)) {}
 
-        /** Current value of the input. */
-        [[nodiscard]] value_type value() const { return view_.value().template checked_as<TValue>(); }
-
-        [[nodiscard]] bool modified() const { return view_.modified(); }
-        [[nodiscard]] bool valid() const { return view_.valid(); }
-
-        [[nodiscard]] const TSInputView &view() const noexcept { return view_; }
-
-      private:
-        TSInputView view_;
+        /** Current value of the input (typed; shadows the erased ``value() -> ValueView``). */
+        [[nodiscard]] value_type value() const { return TSInputView::value().template checked_as<TValue>(); }
+        /** The underlying erased input view (the container typed views expose the same via the CRTP base). */
+        [[nodiscard]] const TSInputView &base() const noexcept { return *this; }
+        // modified() / valid() / delta_value() inherited from TSInputView.
     };
 
     /**
-     * Set time-series input (``TSS<T>``). Exposes the current set contents and this
-     * cycle's added / removed elements (typed), plus membership and size.
+     * Set time-series input (``TSS<T>``): inherits ``TSSInputView`` and adds typed
+     * ``added`` / ``removed`` / ``values`` / ``contains``; ``delta()`` is the canonical
+     * delta ``Value`` (the inherited ``delta_value()``).
      */
     template <fixed_string Name, typename TValue>
-    class In<Name, TSS<TValue>>
+    class In<Name, TSS<TValue>> : public TSSInputView
     {
       public:
         using schema                     = TSS<TValue>;
         using value_type                 = TValue;  // the set's element type
         static constexpr auto field_name = Name;
 
-        explicit In(TSInputView view) noexcept : view_(std::move(view)) {}
+        explicit In(TSInputView view) noexcept : TSSInputView(std::move(view)) {}
 
-        [[nodiscard]] std::size_t size() const { return view_.as_set().size(); }
-        [[nodiscard]] bool        empty() const { return view_.as_set().empty(); }
-        [[nodiscard]] bool        contains(const TValue &key) const { return view_.as_set().contains(Value{key}.view()); }
+        [[nodiscard]] bool contains(const TValue &key) const { return TSSInputView::contains(Value{key}.view()); }
 
-        /** Current set contents / this cycle's added / removed elements, as typed vectors. */
-        [[nodiscard]] std::vector<TValue> values() const { return collect(view_.as_set().values()); }
-        [[nodiscard]] std::vector<TValue> added() const { return collect(view_.as_set().added()); }
-        [[nodiscard]] std::vector<TValue> removed() const { return collect(view_.as_set().removed()); }
+        /** This cycle's added / removed / current elements as typed vectors. */
+        [[nodiscard]] std::vector<TValue> values() const { return collect(TSSInputView::values()); }
+        [[nodiscard]] std::vector<TValue> added() const { return collect(TSSInputView::added()); }
+        [[nodiscard]] std::vector<TValue> removed() const { return collect(TSSInputView::removed()); }
 
-        /** This cycle's delta as an owned ``SetDelta`` snapshot. */
-        [[nodiscard]] SetDelta<TValue> delta() const { return SetDelta<TValue>{view_.delta_value()}; }
-
-        [[nodiscard]] bool modified() const { return view_.modified(); }
-        [[nodiscard]] bool valid() const { return view_.valid(); }
-
-        [[nodiscard]] TSSInputView       set_view() const { return view_.as_set(); }
-        [[nodiscard]] const TSInputView &view() const noexcept { return view_; }
+        /** This cycle's delta as the canonical ``Bundle{added, removed}`` value view. */
+        [[nodiscard]] ValueView delta() const { return delta_value(); }
+        // size() / empty() / modified() / valid() inherited from TSSInputView.
 
       private:
         template <typename RangeT>
@@ -407,220 +242,215 @@ namespace hgraph
             for (const auto &v : range) { out.push_back(v.template checked_as<TValue>()); }
             return out;
         }
-
-        TSInputView view_;
     };
 
     /**
-     * List time-series input (``TSL<TS<T>, N>``). Exposes the fixed-size collection
-     * of child time-series: their current values (by index or all-at-once), and this
-     * cycle's delta (the children that ticked) as a :cpp:class:`ListDelta`. Only
-     * scalar children (``TS<T>``) are supported in this slice.
+     * List time-series input (``TSL<C, N>``): inherits ``TSLInputView`` for the
+     * fixed-size collection. The child schema ``C`` is **any** time-series type
+     * (``TS`` / ``TSS`` / ``TSL`` …); ``operator[](i)`` / ``at(i)`` return the typed
+     * child selector ``In<"", C>`` (recursive). ``delta()`` is the canonical
+     * ``Map<int64, delta(C)>`` value view; ``size()`` / ``modified_items()`` /
+     * ``modified()`` / ``valid()`` are inherited.
      */
-    template <fixed_string Name, typename TValue, std::size_t N>
-    class In<Name, TSL<TS<TValue>, N>>
+    template <fixed_string Name, typename TElementSchema, std::size_t N>
+    class In<Name, TSL<TElementSchema, N>> : public TSLInputView
     {
       public:
-        using schema                        = TSL<TS<TValue>, N>;
-        using value_type                    = TValue;  // the child element type
+        using schema                            = TSL<TElementSchema, N>;
+        using element_schema                    = TElementSchema;
         static constexpr auto        field_name = Name;
         static constexpr std::size_t fixed_size = N;
 
-        explicit In(TSInputView view) noexcept : view_(std::move(view)) {}
+        explicit In(TSInputView view) noexcept : TSLInputView(std::move(view)) {}
 
-        [[nodiscard]] std::size_t size() const
+        /** Typed child selector for index ``i`` (recursive). */
+        [[nodiscard]] In<"", TElementSchema> operator[](std::size_t i) const
         {
-            auto list = view_.as_list();
-            return list.size();
+            return In<"", TElementSchema>{TSLInputView::at(i)};
         }
+        [[nodiscard]] In<"", TElementSchema> at(std::size_t i) const { return (*this)[i]; }
 
-        /** Current value of child ``index``. */
-        [[nodiscard]] TValue at(std::size_t index) const
-        {
-            auto list = view_.as_list();
-            return list.at(index).value().template checked_as<TValue>();
-        }
-
-        /** All children's current values; ``std::nullopt`` where a child is not valid. */
-        [[nodiscard]] std::vector<std::optional<TValue>> values() const
-        {
-            std::vector<std::optional<TValue>> out;
-            auto                               list = view_.as_list();
-            for (std::size_t i = 0; i < list.size(); ++i)
-            {
-                auto child = list.at(i);
-                if (child.valid()) { out.push_back(child.value().template checked_as<TValue>()); }
-                else { out.push_back(std::nullopt); }
-            }
-            return out;
-        }
-
-        /** This cycle's delta as an owned ``ListDelta`` (modified child index -> value). */
-        [[nodiscard]] ListDelta<TValue> delta() const
-        {
-            std::map<std::size_t, TValue> entries;
-            auto                          list = view_.as_list();
-            for (const auto &[index, child] : list.modified_items())
-            {
-                entries.emplace(index, child.value().template checked_as<TValue>());
-            }
-            return ListDelta<TValue>{entries};
-        }
-
-        [[nodiscard]] bool modified() const { return view_.modified(); }
-        [[nodiscard]] bool valid() const { return view_.valid(); }
-
-        [[nodiscard]] TSLInputView      list_view() const { return view_.as_list(); }
-        [[nodiscard]] const TSInputView &view() const noexcept { return view_; }
-
-      private:
-        TSInputView view_;
+        /** This cycle's delta as the canonical ``Map<int64, delta(C)>`` value view. */
+        [[nodiscard]] ValueView delta() const { return delta_value(); }
+        // size() / modified_items() / modified() / valid() inherited from TSLInputView.
     };
 
-    /** Typed output selector. The scalar ``TS<T>`` and set ``TSS<T>`` forms are defined. */
+    /**
+     * Typed output selector — derives from the type-erased output view for its kind
+     * (``TSOutputView`` / ``TSSOutputView`` / ``TSLOutputView`` …). The output view
+     * already carries the current ``evaluation_time``, so the selector adds no data.
+     */
     template <typename TSchema>
     class Out;
 
     template <typename TValue>
-    class Out<TS<TValue>>
+    class Out<TS<TValue>> : public TSOutputView
     {
       public:
         using schema     = TS<TValue>;
         using value_type = TValue;
 
-        Out(TSOutputView view, engine_time_t evaluation_time) noexcept
-            : view_(std::move(view)), evaluation_time_(evaluation_time)
-        {
-        }
+        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
 
         /** Write ``value`` into the output and tick it at the current evaluation time. */
         template <typename U>
         void set(U &&value) const
         {
             Value wrapped{std::forward<U>(value)};
-            auto  mutation = view_.begin_mutation(evaluation_time_);
+            auto  mutation = TSOutputView::begin_mutation(evaluation_time());
             if (!mutation.copy_value_from(wrapped.view()))
             {
                 throw std::logic_error("Out<TS<T>>::set failed to copy the value into the output");
             }
         }
 
-        /**
-         * Type-erased set: copy a value from ``value`` (a ``ValueView`` whose schema
-         * matches the output) into the output and tick it. Lets value-layer code
-         * drive the output without converting through the concrete ``T`` — the basis
-         * for generalising tooling beyond scalar values.
-         */
+        /** Type-erased set: copy a value (matching the output schema) and tick it. */
         void apply(const ValueView &value) const
         {
-            auto mutation = view_.begin_mutation(evaluation_time_);
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
             if (!mutation.copy_value_from(value))
             {
                 throw std::logic_error("Out<TS<T>>::apply failed to copy the value into the output");
             }
         }
-
-        [[nodiscard]] bool modified() const { return view_.modified(); }
-        [[nodiscard]] bool valid() const { return view_.valid(); }
-        [[nodiscard]] const TSOutputView &view() const noexcept { return view_; }
-        [[nodiscard]] engine_time_t evaluation_time() const noexcept { return evaluation_time_; }
-
-      private:
-        TSOutputView  view_;
-        engine_time_t evaluation_time_{MIN_DT};
+        // modified() / valid() / evaluation_time() inherited from TSOutputView.
     };
 
     /**
-     * Set time-series output (``TSS<T>``). Mutate the set with add / remove /
-     * clear; the delta (added / removed) accumulates across calls within the cycle.
+     * Set time-series output (``TSS<T>``): inherits ``TSSOutputView``. Mutate with
+     * add / remove / clear; the delta accumulates across calls within the cycle.
      */
     template <typename TValue>
-    class Out<TSS<TValue>>
+    class Out<TSS<TValue>> : public TSSOutputView
     {
       public:
         using schema     = TSS<TValue>;
         using value_type = TValue;
 
-        Out(TSOutputView view, engine_time_t evaluation_time) noexcept
-            : view_(std::move(view)), evaluation_time_(evaluation_time)
-        {
-        }
+        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSSOutputView(std::move(view)) {}
 
         /** Add ``key`` to the set; returns whether the set delta changed. */
-        bool add(const TValue &key) const
-        {
-            auto mutation = view_.as_set().begin_mutation(evaluation_time_);
-            return mutation.add(Value{key}.view());
-        }
+        bool add(const TValue &key) const { return TSSOutputView::begin_mutation(evaluation_time()).add(Value{key}.view()); }
         /** Remove ``key`` from the set; returns whether the set delta changed. */
         bool remove(const TValue &key) const
         {
-            auto mutation = view_.as_set().begin_mutation(evaluation_time_);
-            return mutation.remove(Value{key}.view());
+            return TSSOutputView::begin_mutation(evaluation_time()).remove(Value{key}.view());
         }
         /** Remove all elements. */
-        void clear() const { view_.as_set().begin_mutation(evaluation_time_).clear(); }
-
-        [[nodiscard]] bool modified() const { return view_.modified(); }
-        [[nodiscard]] bool valid() const { return view_.valid(); }
-        [[nodiscard]] const TSOutputView &view() const noexcept { return view_; }
-        [[nodiscard]] engine_time_t       evaluation_time() const noexcept { return evaluation_time_; }
-
-      private:
-        TSOutputView  view_;
-        engine_time_t evaluation_time_{MIN_DT};
+        void clear() const { TSSOutputView::begin_mutation(evaluation_time()).clear(); }
+        // modified() / valid() / evaluation_time() inherited from TSSOutputView.
     };
 
     /**
-     * List time-series output (``TSL<TS<T>, N>``). Tick a child time-series by index,
-     * either flat (``out.set(i, v)``) or through a per-child sub-selector
-     * (``out[i].set(v)`` / ``out[i].apply(view)``, which reuses the scalar
-     * ``Out<TS<T>>`` surface). Only scalar children (``TS<T>``) are supported here.
+     * List time-series output (``TSL<C, N>``): inherits ``TSLOutputView``. Tick a
+     * child by index through the per-child sub-selector ``out[i]`` (an ``Out<C>``,
+     * recursive): ``out[i].set(v)`` for a scalar child, ``out[i].add(...)`` for a set
+     * child, ``out[i][j]...`` for a nested list. ``set(i,v)`` / ``apply(i,v)`` are
+     * scalar-child conveniences over ``out[i]``.
      */
-    template <typename TValue, std::size_t N>
-    class Out<TSL<TS<TValue>, N>>
+    template <typename TElementSchema, std::size_t N>
+    class Out<TSL<TElementSchema, N>> : public TSLOutputView
     {
       public:
-        using schema                        = TSL<TS<TValue>, N>;
-        using value_type                    = TValue;
+        using schema                            = TSL<TElementSchema, N>;
+        using element_schema                    = TElementSchema;
         static constexpr std::size_t fixed_size = N;
 
-        Out(TSOutputView view, engine_time_t evaluation_time) noexcept
-            : view_(std::move(view)), evaluation_time_(evaluation_time)
+        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSLOutputView(std::move(view)) {}
+
+        /** Per-child output selector: ``out[i]`` is an ``Out<C>`` (recursive). */
+        [[nodiscard]] Out<TElementSchema> operator[](std::size_t index) const
         {
+            return Out<TElementSchema>{TSLOutputView::at(index), evaluation_time()};
         }
 
-        [[nodiscard]] std::size_t size() const
-        {
-            auto list = view_.as_list();
-            return list.size();
-        }
-
-        /** Per-child output selector: ``out[i].set(v)`` ticks child ``i``. */
-        [[nodiscard]] Out<TS<TValue>> operator[](std::size_t index) const
-        {
-            auto list = view_.as_list();
-            return Out<TS<TValue>>{list.at(index), evaluation_time_};
-        }
-
-        /** Set child ``index`` to ``value`` and tick it (thin wrapper over ``operator[]``). */
+        /** Scalar-child convenience: set child ``index`` to ``value`` and tick it. */
         template <typename U>
         void set(std::size_t index, U &&value) const
         {
             (*this)[index].set(std::forward<U>(value));
         }
 
-        /** Type-erased per-child set (see ``Out<TS<T>>::apply``). */
+        /** Scalar-child convenience: type-erased per-child set. */
         void apply(std::size_t index, const ValueView &value) const { (*this)[index].apply(value); }
+        // size() / modified() / valid() / evaluation_time() inherited from TSLOutputView.
+    };
 
-        [[nodiscard]] bool modified() const { return view_.modified(); }
-        [[nodiscard]] bool valid() const { return view_.valid(); }
-        [[nodiscard]] const TSOutputView &view() const noexcept { return view_; }
-        [[nodiscard]] engine_time_t       evaluation_time() const noexcept { return evaluation_time_; }
+    // -----------------------------------------------------------------
+    // ts_delta<S> — recursive delta driver
+    //
+    // ``capture`` reads a live input view and rebuilds the canonical delta ``Value``
+    // (via the value-layer builders, so the result is owned and copyable even though
+    // the runtime's transient delta storage omits copy hooks). ``apply`` is the
+    // inverse: it re-creates output ticks from a canonical delta ``Value``. Both
+    // recurse through container children, bottoming out at scalars / sets.
+    // -----------------------------------------------------------------
+    template <typename S>
+    struct ts_delta;
 
-      private:
-        TSOutputView  view_;
-        engine_time_t evaluation_time_{MIN_DT};
+    template <typename T>
+    struct ts_delta<TS<T>>
+    {
+        /** Capture the scalar delta (== the value) as an owned ``Value``. */
+        [[nodiscard]] static Value capture(const TSInputView &in) { return Value{in.value()}; }
+
+        static void apply(const Out<TS<T>> &out, const ValueView &delta) { out.apply(delta); }
+    };
+
+    template <typename T>
+    struct ts_delta<TSS<T>>
+    {
+        /** Rebuild the canonical ``Bundle{added, removed}`` from the live set delta. */
+        [[nodiscard]] static Value capture(const TSInputView &in)
+        {
+            const auto     set = in.as_set();
+            std::vector<T> added;
+            for (const auto &e : set.added()) { added.push_back(e.template checked_as<T>()); }
+            std::vector<T> removed;
+            for (const auto &e : set.removed()) { removed.push_back(e.template checked_as<T>()); }
+            return set_delta<T>(std::move(added), std::move(removed));
+        }
+
+        static void apply(const Out<TSS<T>> &out, const ValueView &delta)
+        {
+            const auto bundle  = delta.as_bundle();
+            const auto removed = bundle.field("removed").as_indexed_view();
+            for (std::size_t i = 0; i < removed.size(); ++i) { (void)out.remove(removed.at(i).template checked_as<T>()); }
+            const auto added = bundle.field("added").as_indexed_view();
+            for (std::size_t i = 0; i < added.size(); ++i) { (void)out.add(added.at(i).template checked_as<T>()); }
+        }
+    };
+
+    template <typename C, std::size_t N>
+    struct ts_delta<TSL<C, N>>
+    {
+        /** Rebuild the canonical ``Map<int64, delta(C)>`` from the modified children. */
+        [[nodiscard]] static Value capture(const TSInputView &in)
+        {
+            std::map<std::size_t, static_node_detail::delta_input_t<C>> entries;
+            const auto                                                  list = in.as_list();
+            for (const auto &[index, child] : list.modified_items())
+            {
+                if constexpr (static_node_detail::is_scalar_ts<C>::value)
+                {
+                    entries.emplace(index, child.value().template checked_as<typename C::value_type>());
+                }
+                else
+                {
+                    entries.emplace(index, ts_delta<C>::capture(child));
+                }
+            }
+            return static_node_detail::build_list_delta<C>(entries);
+        }
+
+        static void apply(const Out<TSL<C, N>> &out, const ValueView &delta)
+        {
+            const auto map = delta.as_map();
+            for (const auto &[key, child_delta] : map)
+            {
+                ts_delta<C>::apply(out[static_cast<std::size_t>(key.template checked_as<std::int64_t>())], child_delta);
+            }
+        }
     };
 
     /** Typed handle into node-local (value-layer) state. One state slot per node. */

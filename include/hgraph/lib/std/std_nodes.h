@@ -41,8 +41,9 @@ namespace hgraph::stdlib
         static void           eval(In<"ts", TS<T>> ts, Scalar<"label", std::string> label)
         {
             // The value is rendered via the type-erased view ``to_string`` (works
-            // for any value type); only the label/layout goes through fmt.
-            fmt::print("{}: {}\n", label.value(), ts.view().value().to_string());
+            // for any value type); only the label/layout goes through fmt. ``ts`` is
+            // itself the input view, so reach the erased ``value()`` through the base.
+            fmt::print("{}: {}\n", label.value(), ts.TSInputView::value().to_string());
         }
     };
 

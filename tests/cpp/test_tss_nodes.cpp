@@ -32,13 +32,13 @@ namespace
         static void           eval(In<"s", TSS<int>> s, Out<TS<int>> out) { out.set(static_cast<int>(s.size())); }
     };
 
-    // Emit how many elements were added this cycle, read via the SetDelta wrapper.
+    // Emit how many elements were added this cycle, via the typed In<TSS> accessor.
     struct AddedCount
     {
         static constexpr auto name = "added_count";
         static void           eval(In<"s", TSS<int>> s, Out<TS<int>> out)
         {
-            out.set(static_cast<int>(s.delta().added().size()));
+            out.set(static_cast<int>(s.added().size()));
         }
     };
 
@@ -98,36 +98,36 @@ TEST_CASE("tss: replay<TSS> -> record<TSS> round-trips set deltas (added/removed
 {
     (void)TypeRegistry::instance().register_scalar<int>("int");
 
-    const std::vector<std::optional<SetDelta<int>>> deltas{
+    const std::vector<std::optional<Value>> deltas{
         set_delta<int>({1, 2}, {}),   // add 1,2          -> {1,2}
         set_delta<int>({3}, {1}),      // add 3, remove 1  -> {2,3}
         set_delta<int>({}, {2, 3}),    // remove 2,3       -> {}
     };
 
     GraphBuilder gb = build_graph<TssDeltaGraph>();
-    testing::set_replay_deltas<int>(gb.global_state(), "in", deltas);
+    testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
     GraphExecutorBuilder eb;
     eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
-    CHECK_OUTPUT(testing::get_recorded_deltas<int>(ex.view().graph().global_state(), "out"),
+    CHECK_OUTPUT(testing::get_recorded_deltas(ex.view().graph().global_state(), "out"),
                  {set_delta<int>({1, 2}, {}), set_delta<int>({3}, {1}), set_delta<int>({}, {2, 3})});
 }
 
-TEST_CASE("tss: In<TSS>::delta() exposes this cycle's added/removed as a SetDelta")
+TEST_CASE("tss: In<TSS> typed added() exposes this cycle's added elements")
 {
     (void)TypeRegistry::instance().register_scalar<int>("int");
 
-    const std::vector<std::optional<SetDelta<int>>> deltas{
+    const std::vector<std::optional<Value>> deltas{
         set_delta<int>({1, 2}, {}),   // 2 added
         set_delta<int>({3}, {1}),      // 1 added
         set_delta<int>({}, {2, 3}),    // 0 added
     };
 
     GraphBuilder gb = build_graph<TssAddedCountGraph>();
-    testing::set_replay_deltas<int>(gb.global_state(), "in", deltas);
+    testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
     GraphExecutorBuilder eb;
     eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});

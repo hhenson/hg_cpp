@@ -8,10 +8,10 @@
 #include <fmt/core.h>
 
 #include <algorithm>
-#include <concepts>
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 // Catch2-integrated assertions for comparing an ``eval_node`` style result — a
@@ -34,22 +34,25 @@ namespace hgraph::testing
 
     namespace detail
     {
-        // A delta-like element (e.g. SetDelta, ListDelta) wraps a value: render via
-        // its ``value().to_string()`` rather than constructing a scalar ``Value``.
+        // A harness element is either a scalar ``T`` (compared with ``==``) or a
+        // canonical delta ``Value`` (compared with ``Value::equals``, order-independent
+        // for sets/maps). Both render through the value-layer ``to_string`` so display
+        // is consistent and fixable in one place (e.g. 1-byte integers show numerically).
         template <typename T>
-        concept value_wrapper = requires(const T &x) {
-            { x.value().to_string() } -> std::convertible_to<std::string>;
-        };
-
-        template <typename T>
-        std::string format_opt(const std::optional<T> &v)
+        [[nodiscard]] std::string format_opt(const std::optional<T> &v)
         {
             if (!v.has_value()) { return std::string{"none"}; }
-            // Render through the type-erased value ``to_string`` so display is
-            // consistent across all value types and fixable in one place (the value
-            // layer) — e.g. 1-byte integers show numerically, not as characters.
-            if constexpr (value_wrapper<T>) { return v->value().to_string(); }
+            if constexpr (std::is_same_v<T, Value>) { return v->view().to_string(); }
             else { return Value{*v}.to_string(); }
+        }
+
+        template <typename T>
+        [[nodiscard]] bool elem_equal(const std::optional<T> &a, const std::optional<T> &b)
+        {
+            if (a.has_value() != b.has_value()) { return false; }
+            if (!a.has_value()) { return true; }
+            if constexpr (std::is_same_v<T, Value>) { return a->equals(*b); }
+            else { return *a == *b; }
         }
 
         template <typename T>
@@ -84,7 +87,7 @@ namespace hgraph::testing
                 const bool in_e = i < ne;
                 if (in_a && in_e)
                 {
-                    if (actual[i] != expected[i])
+                    if (!elem_equal(actual[i], expected[i]))
                     {
                         msg += fmt::format("\n  > index {}: actual = {}, expected = {}", i, format_opt(actual[i]),
                                            format_opt(expected[i]));
@@ -109,7 +112,9 @@ namespace hgraph::testing
         bool compare_output(const std::vector<std::optional<T>> &actual, const std::vector<std::optional<T>> &expected,
                             std::string &msg_out)
         {
-            if (actual == expected) { return true; }
+            bool equal = actual.size() == expected.size();
+            for (std::size_t i = 0; equal && i < actual.size(); ++i) { equal = elem_equal(actual[i], expected[i]); }
+            if (equal) { return true; }
             msg_out = output_delta_message(actual, expected);
             return false;
         }

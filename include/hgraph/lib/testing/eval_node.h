@@ -18,109 +18,43 @@
 namespace hgraph::testing
 {
     /**
-     * Per-time-series-schema harness traits — the extension point that lets
-     * ``eval_node`` drive each input/output through the right replay / record node
-     * and exchange the right per-cycle "harness element" with the test.
+     * Per-time-series-schema harness trait — the single extension point that lets
+     * ``eval_node`` exchange the right per-cycle "harness element" with the test and
+     * wire the matching ``replay`` source / ``record`` sink.
      *
-     * For a schema ``S`` the trait names:
-     *
-     * - ``element`` — the per-cycle value the test deals in (``T`` for ``TS<T>``,
-     *   ``SetDelta<T>`` for ``TSS<T>``);
-     * - ``wire_replay`` — wires the source that emits a seeded buffer;
-     * - ``seed`` — seeds that buffer from a ``vector<optional<element>>``;
-     * - ``wire_record`` — wires the sink that captures the output;
-     * - ``read`` — reads the captured buffer back as a ``vector<optional<element>>``.
-     *
-     * Adding a new time-series kind (``TSL`` / ``TSD`` next) is a new
-     * specialisation here plus its ``replay`` / ``record`` pair — ``eval_node``
-     * itself does not change.
+     * The harness element is the typed scalar ``T`` for a scalar ``TS<T>`` (so a test
+     * writes ``{1, none, 3}``) and the **canonical delta ``Value``** for any container
+     * (``TSS`` / ``TSL`` / …, built by ``set_delta`` / ``list_delta`` and compared with
+     * ``Value::equals``). One generic template covers every schema — ``replay<S>`` /
+     * ``record<S>`` are themselves generic, so no per-kind specialisation is needed.
      */
+    template <typename S> struct harness_element { using type = Value; };
+    template <typename T> struct harness_element<TS<T>> { using type = T; };
+
     template <typename S>
-    struct ts_harness;  // primary intentionally undefined: unsupported schema -> hard error
-
-    template <typename T>
-    struct ts_harness<TS<T>>
+    struct ts_harness
     {
-        using element = T;
+        using element                       = typename harness_element<S>::type;
+        static constexpr bool is_scalar     = static_node_detail::is_scalar_ts<S>::value;
 
-        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay<TS<T>>>(w, key); }
+        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay<S>>(w, key); }
 
-        static void seed(const GlobalStateView &gs, std::string_view key,
-                         const std::vector<std::optional<element>> &seq)
+        static void seed(const GlobalStateView &gs, std::string_view key, const std::vector<std::optional<element>> &seq)
         {
-            set_replay_values<T>(gs, key, seq);
+            if constexpr (is_scalar) { set_replay_values<element>(gs, key, seq); }
+            else { set_replay_deltas(gs, key, seq); }
         }
 
         template <typename Port>
         static void wire_record(Wiring &w, Port port, const std::string &key)
         {
-            wire<record<TS<T>>>(w, port, key);
+            wire<record<S>>(w, port, key);
         }
 
         static std::vector<std::optional<element>> read(const GlobalStateView &gs, std::string_view key)
         {
-            return get_recorded_values<T>(gs, key);
-        }
-    };
-
-    template <typename T>
-    struct ts_harness<TSS<T>>
-    {
-        using element = SetDelta<T>;
-
-        static auto wire_replay(Wiring &w, const std::string &key) { return wire<replay<TSS<T>>>(w, key); }
-
-        static void seed(const GlobalStateView &gs, std::string_view key,
-                         const std::vector<std::optional<element>> &seq)
-        {
-            set_replay_deltas<T>(gs, key, seq);
-        }
-
-        template <typename Port>
-        static void wire_record(Wiring &w, Port port, const std::string &key)
-        {
-            wire<record<TSS<T>>>(w, port, key);
-        }
-
-        static std::vector<std::optional<element>> read(const GlobalStateView &gs, std::string_view key)
-        {
-            return get_recorded_deltas<T>(gs, key);
-        }
-    };
-
-    // Detect a scalar time-series child schema (TSL's first slice supports TS<T>
-    // children only).
-    template <typename S> struct is_scalar_ts : std::false_type {};
-    template <typename V> struct is_scalar_ts<TS<V>> : std::true_type {};
-
-    template <typename TElementSchema, std::size_t FixedSize>
-    struct ts_harness<TSL<TElementSchema, FixedSize>>
-    {
-        static_assert(is_scalar_ts<TElementSchema>::value,
-                      "eval_node TSL support is limited to scalar TS<T> children in this slice");
-        using T       = typename TElementSchema::value_type;
-        using element = ListDelta<T>;
-
-        static auto wire_replay(Wiring &w, const std::string &key)
-        {
-            return wire<replay<TSL<TElementSchema, FixedSize>>>(w, key);
-        }
-
-        static void seed(const GlobalStateView &gs, std::string_view key,
-                         const std::vector<std::optional<element>> &seq)
-        {
-            set_replay_list_deltas<T>(gs, key, seq);
-        }
-
-        template <typename Port>
-        static void wire_record(Wiring &w, Port port, const std::string &key)
-        {
-            wire<record<TSL<TElementSchema, FixedSize>>>(w, port, key);
-        }
-
-        static std::vector<std::optional<element>> read(const GlobalStateView &gs, std::string_view key)
-        {
-            return get_recorded_list_deltas<T>(gs, key);
+            if constexpr (is_scalar) { return get_recorded_values<element>(gs, key); }
+            else { return get_recorded_deltas(gs, key); }
         }
     };
 

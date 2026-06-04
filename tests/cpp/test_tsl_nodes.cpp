@@ -1,6 +1,8 @@
-// TSL (list time-series) authoring + testing: the In<TSL>/Out<TSL> selectors, the
-// ListDelta wrapper (map + positional construction), delta-aware replay_list /
-// record_list, and eval_node dispatch over a fixed-size list of scalar children.
+// TSL (list time-series) authoring + testing, recursive over an arbitrary child
+// schema. In<TSL<C,N>>/Out<TSL<C,N>> derive from the erased list views and expose
+// recursive child selectors (in[i] -> In<"",C>, out[i] -> Out<C>); the per-cycle
+// delta is the canonical Map<int64, delta(C)> Value built by list_delta and compared
+// via Value::equals. Covers scalar children (TS) and a nested set child (TSS).
 
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
@@ -12,6 +14,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -19,10 +22,10 @@
 namespace
 {
     using namespace hgraph;
-    using namespace hgraph::testing;  // `none`, eval_node, replay_list, ...
+    using namespace hgraph::testing;  // `none`, eval_node, replay, record, set_delta, list_delta
 
-    // TS<int> -> TSL<TS<int>, 2>: child 0 = value, child 1 = value * 10. Exercises
-    // both Out<TSL> forms — the flat `set(i, v)` and the per-child `out[i].set(v)`.
+    // TS<int> -> TSL<TS<int>, 2>: child 0 = value, child 1 = value * 10. Exercises both
+    // Out<TSL> forms — the flat `set(i, v)` and the per-child `out[i].set(v)`.
     struct Spread
     {
         static constexpr auto name = "tsl_spread";
@@ -33,30 +36,33 @@ namespace
         }
     };
 
-    // TSL<TS<int>, 2> -> TS<int>: sum of the two children's current values.
+    // TSL<TS<int>, 2> -> TS<int>: sum of the two children's current values (recursive
+    // child selectors: l[i] is an In<"", TS<int>>).
     struct Total
     {
         static constexpr auto name = "tsl_total";
-        static void           eval(In<"l", TSL<TS<int>, 2>> l, Out<TS<int>> out) { out.set(l.at(0) + l.at(1)); }
+        static void           eval(In<"l", TSL<TS<int>, 2>> l, Out<TS<int>> out) { out.set(l[0].value() + l[1].value()); }
     };
 
-    // TSL<TS<int>, 2> -> TS<int>: number of children that ticked this cycle.
+    // TSL<TS<int>, 2> -> TS<int>: number of children that ticked this cycle (the size
+    // of the canonical delta map).
     struct ModifiedCount
     {
         static constexpr auto name = "tsl_modified_count";
         static void           eval(In<"l", TSL<TS<int>, 2>> l, Out<TS<int>> out)
         {
-            out.set(static_cast<int>(l.delta().items().size()));
+            out.set(static_cast<int>(l.delta().as_map().size()));
         }
     };
 
-    // TSL -> TSL: re-applies this cycle's delta, so the output delta mirrors the input.
+    // TSL<TS<int>> -> TSL<TS<int>>: re-tick each modified child, so the output delta
+    // mirrors the input.
     struct MirrorList
     {
         static constexpr auto name = "tsl_mirror";
         static void           eval(In<"l", TSL<TS<int>, 2>> l, Out<TSL<TS<int>, 2>> out)
         {
-            for (const auto &[index, value] : l.delta().items()) { out.set(index, value); }
+            for (auto &&[index, child] : l.modified_items()) { out.set(index, child.value().template checked_as<int>()); }
         }
     };
 
@@ -83,20 +89,21 @@ namespace
     };
 }  // namespace
 
-TEST_CASE("tsl: ListDelta map and positional construction forms agree")
+TEST_CASE("tsl: list_delta map and positional forms agree (canonical Value)")
 {
     (void)TypeRegistry::instance().register_scalar<int>("int");
 
-    const ListDelta<int> a = list_delta<int>({{0, 10}, {2, 30}});
-    const ListDelta<int> b = list_delta<int>({10, none, 30});  // positional: index 1 skipped
-    CHECK(a == b);
-    CHECK(a.valid());
-    CHECK(a.contains(0));
-    CHECK_FALSE(a.contains(1));
-    CHECK(a.contains(2));
-    CHECK(a.at(2) == 30);
-    CHECK(a.indices().size() == 2);
-    CHECK_FALSE(a == list_delta<int>({{0, 10}, {2, 31}}));  // different value
+    const Value a = list_delta<TS<int>>({{0, 10}, {2, 30}});
+    const Value b = list_delta<TS<int>>({10, none, 30});  // positional: index 1 skipped
+    CHECK(a.equals(b));
+
+    const auto map = a.view().as_map();
+    CHECK(map.size() == 2);
+    CHECK(map.contains(Value{std::int64_t{0}}.view()));
+    CHECK_FALSE(map.contains(Value{std::int64_t{1}}.view()));
+    CHECK(map.at(Value{std::int64_t{2}}.view()).checked_as<int>() == 30);
+
+    CHECK_FALSE(a.equals(list_delta<TS<int>>({{0, 10}, {2, 31}})));  // different value
 }
 
 TEST_CASE("tsl: Out<TSL> sets children and In<TSL> reads the values back")
@@ -119,34 +126,34 @@ TEST_CASE("tsl: replay<TSL> -> record<TSL> round-trips list deltas (modified chi
 {
     (void)TypeRegistry::instance().register_scalar<int>("int");
 
-    const std::vector<std::optional<ListDelta<int>>> deltas{
-        list_delta<int>({{0, 1}, {1, 2}}),   // both children tick
-        list_delta<int>({{0, 5}}),            // only child 0 ticks
-        list_delta<int>({{1, 9}}),            // only child 1 ticks
+    const std::vector<std::optional<Value>> deltas{
+        list_delta<TS<int>>({{0, 1}, {1, 2}}),   // both children tick
+        list_delta<TS<int>>({{0, 5}}),            // only child 0 ticks
+        list_delta<TS<int>>({{1, 9}}),            // only child 1 ticks
     };
 
     GraphBuilder gb = build_graph<ListDeltaGraph>();
-    testing::set_replay_list_deltas<int>(gb.global_state(), "in", deltas);
+    testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
     GraphExecutorBuilder eb;
     eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
-    CHECK_OUTPUT(testing::get_recorded_list_deltas<int>(ex.view().graph().global_state(), "out"),
-                 {list_delta<int>({{0, 1}, {1, 2}}), list_delta<int>({{0, 5}}), list_delta<int>({{1, 9}})});
+    CHECK_OUTPUT(testing::get_recorded_deltas(ex.view().graph().global_state(), "out"),
+                 {list_delta<TS<int>>({{0, 1}, {1, 2}}), list_delta<TS<int>>({{0, 5}}), list_delta<TS<int>>({{1, 9}})});
 }
 
-TEST_CASE("tsl: eval_node drives TSL inputs/outputs as ListDelta")
+TEST_CASE("tsl: eval_node drives scalar-child TSL inputs/outputs as canonical deltas")
 {
     (void)TypeRegistry::instance().register_scalar<int>("int");
 
     // TS -> TSL: each value spreads to {0: v, 1: 10v}.
     CHECK_OUTPUT(testing::eval_node<Spread>({1, 2}),
-                 {list_delta<int>({{0, 1}, {1, 10}}), list_delta<int>({{0, 2}, {1, 20}})});
+                 {list_delta<TS<int>>({{0, 1}, {1, 10}}), list_delta<TS<int>>({{0, 2}, {1, 20}})});
 
     // TSL -> TS: sum of children (child 1 persists across the second cycle).
-    const std::vector<std::optional<ListDelta<int>>> in{list_delta<int>({{0, 1}, {1, 2}}), list_delta<int>({{0, 5}})};
+    const std::vector<std::optional<Value>> in{list_delta<TS<int>>({{0, 1}, {1, 2}}), list_delta<TS<int>>({{0, 5}})};
     CHECK_OUTPUT(testing::eval_node<Total>(in), {3, 7});
 
     // TSL -> TS: count of children modified each cycle.
@@ -154,4 +161,31 @@ TEST_CASE("tsl: eval_node drives TSL inputs/outputs as ListDelta")
 
     // TSL -> TSL: re-applying the delta round-trips it.
     CHECK_OUTPUT(testing::eval_node<MirrorList>(in), in);
+}
+
+TEST_CASE("tsl: recursive — list_delta over container children builds nested canonical Values")
+{
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    // TSL<TSS<int>> delta: Map<int64, Bundle{added:Set, removed:Set}> — set_delta nested
+    // in list_delta. Equality is order-independent at every level (map keys + set elems).
+    const Value sd = list_delta<TSS<int>>({{0, set_delta<int>({1, 2}, {})}, {1, set_delta<int>({9}, {})}});
+    CHECK(sd.equals(list_delta<TSS<int>>({{1, set_delta<int>({9}, {})}, {0, set_delta<int>({2, 1}, {})}})));
+    CHECK_FALSE(sd.equals(list_delta<TSS<int>>({{0, set_delta<int>({1, 2}, {})}})));
+    {
+        const auto map    = sd.view().as_map();
+        const auto child0 = map.at(Value{std::int64_t{0}}.view()).as_bundle();  // a Bundle{added,removed}
+        CHECK(map.size() == 2);
+        CHECK(child0.field("added").as_set().size() == 2);
+        CHECK(child0.field("removed").as_set().size() == 0);
+    }
+
+    // TSL<TSL<TS<int>,2>> delta: Map<int64, Map<int64, int>> — list_delta nested in list_delta.
+    const Value nd = list_delta<TSL<TS<int>, 2>>({{0, list_delta<TS<int>>({{0, 7}, {1, 8}})}});
+    CHECK(nd.equals(list_delta<TSL<TS<int>, 2>>({{0, list_delta<TS<int>>({{1, 8}, {0, 7}})}})));
+    CHECK(nd.view().as_map().at(Value{std::int64_t{0}}.view()).as_map().size() == 2);
+
+    // NOTE: executing a graph over a TSL whose child is a slot-oriented time-series
+    // (TSS/TSD/dynamic-TSL) needs runtime embedded-slot-storage support, which is not
+    // implemented yet (see docs). The authoring + delta layers above are fully recursive.
 }

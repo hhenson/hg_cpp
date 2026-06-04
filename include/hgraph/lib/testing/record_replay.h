@@ -70,102 +70,112 @@ namespace hgraph::testing
         return static_cast<std::size_t>((now - MIN_ST) / MIN_TD);
     }
 
-    /**
-     * Seed a replay buffer in the ``GlobalState``: one entry per engine cycle,
-     * ``std::nullopt`` meaning "no tick that cycle".
-     */
-    template <typename T>
-    void set_replay_values(const GlobalStateView &gs, std::string_view key,
-                           const std::vector<std::optional<T>> &values)
+    // -----------------------------------------------------------------
+    // Delta buffer helpers (canonical delta Values <-> cycle-aligned buffer)
+    //
+    // A cycle's entry is the canonical per-tick delta ``Value`` (``TS<T>`` -> the
+    // scalar; ``TSS``/``TSL`` -> the bundle/map; see ``static_node.h``), or empty for
+    // "no tick". These are schema-agnostic — they move ``Value``s, not typed wrappers.
+    // -----------------------------------------------------------------
+
+    /** Seed a replay buffer from a sequence of canonical delta ``Value``s (nullopt = no tick). */
+    inline void set_replay_deltas(const GlobalStateView &gs, std::string_view key,
+                                  const std::vector<std::optional<Value>> &deltas)
     {
-        Value buffer  = make_buffer();
+        Value buffer   = make_buffer();
         auto  mutation = buffer.as_list().begin_mutation();
-        for (const auto &value : values)
+        for (const auto &delta : deltas)
         {
-            if (value.has_value()) { mutation.push_back(make_any(Value{*value}).view()); }
+            if (delta.has_value()) { mutation.push_back(make_any(delta->view()).view()); }
             else { mutation.push_back(empty_any().view()); }
         }
         gs.set(key, buffer);
     }
 
-    /** Read a recorded buffer back out of the ``GlobalState`` as a C++ vector. */
-    template <typename T>
-    [[nodiscard]] std::vector<std::optional<T>> get_recorded_values(const GlobalStateView &gs, std::string_view key)
+    /** Read a recorded buffer back as a sequence of canonical delta ``Value``s (owning copies). */
+    [[nodiscard]] inline std::vector<std::optional<Value>> get_recorded_deltas(const GlobalStateView &gs,
+                                                                               std::string_view key)
     {
-        std::vector<std::optional<T>> result;
-        const ValueView               buffer = gs.get(key);
+        std::vector<std::optional<Value>> result;
+        const ValueView                   buffer = gs.get(key);
         if (!buffer.valid()) { return result; }
         const auto list = buffer.as_list();
         result.reserve(list.size());
         for (std::size_t i = 0; i < list.size(); ++i)
         {
             const auto element = list.at(i).as_any();
-            if (element.has_value()) { result.push_back(element.get().template checked_as<T>()); }
-            else { result.push_back(std::nullopt); }
+            if (element.has_value()) { result.emplace_back(Value{element.get()}); }
+            else { result.emplace_back(std::nullopt); }
         }
         return result;
     }
 
-    // -----------------------------------------------------------------
-    // replay<S> / record<S> — schema-keyed multi-cycle source / sink over a
-    // cycle-aligned buffer. One template per direction, specialised per
-    // time-series schema (``TS<T>`` scalar, ``TSS<T>`` set, ``TSL<TS<T>, N>``
-    // list). There are no named variants — wire e.g. ``replay<TS<int>>``,
-    // ``replay<TSS<int>>``, or ``record<TSL<TS<int>, 3>>``.
-    // -----------------------------------------------------------------
-
-    /** Multi-cycle source: emits a recorded sequence for the time-series schema ``S``. */
-    template <typename TSchema>
-    struct replay;
-
-    /** Multi-cycle sink: captures a time-series of schema ``S`` into a cycle-aligned buffer. */
-    template <typename TSchema>
-    struct record;
-
-    /**
-     * Scalar ``TS<T>`` source: one output tick per cycle whose buffer element has a
-     * value, rescheduling itself until the buffer is exhausted.
-     */
+    /** Scalar convenience: seed a ``TS<T>`` buffer from plain C++ values (nullopt = no tick). */
     template <typename T>
-    struct replay<TS<T>>
+    void set_replay_values(const GlobalStateView &gs, std::string_view key, const std::vector<std::optional<T>> &values)
+    {
+        std::vector<std::optional<Value>> deltas;
+        deltas.reserve(values.size());
+        for (const auto &value : values)
+        {
+            if (value.has_value()) { deltas.emplace_back(Value{*value}); }
+            else { deltas.emplace_back(std::nullopt); }
+        }
+        set_replay_deltas(gs, key, deltas);
+    }
+
+    /** Scalar convenience: read a recorded ``TS<T>`` buffer back as plain C++ values. */
+    template <typename T>
+    [[nodiscard]] std::vector<std::optional<T>> get_recorded_values(const GlobalStateView &gs, std::string_view key)
+    {
+        std::vector<std::optional<T>> out;
+        for (const auto &delta : get_recorded_deltas(gs, key))
+        {
+            if (delta.has_value()) { out.push_back(delta->view().template checked_as<T>()); }
+            else { out.push_back(std::nullopt); }
+        }
+        return out;
+    }
+
+    // -----------------------------------------------------------------
+    // replay<S> / record<S> — one generic source / sink per direction, over a
+    // cycle-aligned buffer of canonical delta ``Value``s. ``record`` captures the
+    // input's ``delta_value()``; ``replay`` re-creates ticks via the recursive
+    // ``ts_delta<S>::apply``. Works for any time-series schema (TS / TSS / TSL / …,
+    // recursively). Wire e.g. ``replay<TS<int>>``, ``record<TSL<TSS<int>, 2>>``.
+    // -----------------------------------------------------------------
+
+    /** Multi-cycle source: emits a recorded delta sequence for time-series schema ``S``. */
+    template <typename S>
+    struct replay
     {
         static constexpr auto name = "replay";
-
-        // A source initiates itself at the start cycle; the declarative attribute
-        // inserts that scheduling (default = not scheduled). Per-cycle rescheduling
-        // below uses the full NodeScheduler.
+        // A source initiates itself at the start cycle (default = not scheduled);
+        // per-cycle rescheduling below uses the full NodeScheduler.
         static constexpr bool schedule_on_start = true;
 
-        static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched,
-                         State<int> index, Out<TS<T>> out)
+        static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched, State<int> index,
+                         Out<S> out)
         {
             const ValueView buffer = gs.get(key.value());
             if (!buffer.valid()) { return; }  // nothing seeded under this key
 
-            const auto      list = buffer.as_list();
-            const int       i    = index.get();
-            const int       size = static_cast<int>(list.size());
+            const auto list = buffer.as_list();
+            const int  i    = index.get();
+            const int  size = static_cast<int>(list.size());
             if (i < size)
             {
                 const auto element = list.at(static_cast<std::size_t>(i)).as_any();
-                // Type-erased: copy the stored value straight into the output.
-                if (element.has_value()) { out.apply(element.get()); }
+                if (element.has_value()) { ts_delta<S>::apply(out, element.get()); }
             }
             index.set(i + 1);
             if (i + 1 < size) { sched.schedule(MIN_TD); }  // re-arm for the next cycle
         }
     };
 
-    /**
-     * Scalar ``TS<T>`` sink: captures each tick of its input into a cycle-aligned
-     * ``List<Any>`` in the ``GlobalState`` under ``key`` (created on ``start``). It
-     * records the input's ``delta_value`` (the per-tick event), not the cumulative
-     * ``value`` — they coincide for scalar time-series but differ for compound types.
-     * Skipped cycles are padded with empty ``Any`` entries so the buffer index matches
-     * the engine cycle, mirroring the replay buffer shape.
-     */
-    template <typename T>
-    struct record<TS<T>>
+    /** Multi-cycle sink: captures each tick's canonical ``delta_value()`` into the buffer. */
+    template <typename S>
+    struct record
     {
         static constexpr auto name = "record";
 
@@ -174,236 +184,21 @@ namespace hgraph::testing
             gs.set(key.value(), make_buffer());  // fresh, empty cycle-aligned buffer
         }
 
-        static void eval(In<"ts", TS<T>> ts, Scalar<"key", std::string> key, GlobalStateView gs, engine_time_t now)
-        {
-            const std::size_t offset = cycle_offset(now);
-
-            // The buffer is a mutable List<Any> in the GlobalState, so it is
-            // appended in place: the GlobalState hands back a writable view of a
-            // mutable value.
-            const ValueView buffer   = gs.get(key.value());
-            auto            list     = buffer.as_list();
-            std::size_t     size     = list.size();
-            auto            mutation = list.begin_mutation();
-            while (size < offset)  // pad the skipped cycles
-            {
-                mutation.push_back(empty_any().view());
-                ++size;
-            }
-            // Record the per-tick delta_value (the event), not the cumulative
-            // value — they coincide for scalar TS but differ for compound types.
-            mutation.push_back(make_any(ts.view().delta_value()).view());
-        }
-    };
-
-    // -----------------------------------------------------------------
-    // TSS (set time-series): delta-aware replay / record
-    //
-    // A set time-series ticks a *delta* each cycle — the elements added and
-    // removed — represented by the core ``SetDelta<T>`` (a lightweight wrapper
-    // over a ``Bundle{added, removed}`` value; see ``static_node.h``). Build
-    // deltas with ``set_delta(added, removed)``. The per-cycle buffer is the usual
-    // ``List<Any>`` of these (empty Any = no tick).
-    // -----------------------------------------------------------------
-
-    /** Seed a TSS replay buffer from a sequence of ``SetDelta``s (nullopt = no tick). */
-    template <typename T>
-    void set_replay_deltas(const GlobalStateView &gs, std::string_view key,
-                           const std::vector<std::optional<SetDelta<T>>> &deltas)
-    {
-        Value buffer   = make_buffer();
-        auto  mutation = buffer.as_list().begin_mutation();
-        for (const auto &delta : deltas)
-        {
-            if (!delta.has_value()) { mutation.push_back(empty_any().view()); continue; }
-            mutation.push_back(make_any(make_set_delta_value<T>(delta->added(), delta->removed()).view()).view());
-        }
-        gs.set(key, buffer);
-    }
-
-    /** Read a recorded TSS buffer back as a sequence of ``SetDelta``s (owning copies). */
-    template <typename T>
-    [[nodiscard]] std::vector<std::optional<SetDelta<T>>> get_recorded_deltas(const GlobalStateView &gs,
-                                                                              std::string_view key)
-    {
-        std::vector<std::optional<SetDelta<T>>> result;
-        const ValueView                         buffer = gs.get(key);
-        if (!buffer.valid()) { return result; }
-        const auto list = buffer.as_list();
-        for (std::size_t i = 0; i < list.size(); ++i)
-        {
-            const auto element = list.at(i).as_any();
-            if (!element.has_value()) { result.push_back(std::nullopt); continue; }
-            result.push_back(SetDelta<T>{element.get()});
-        }
-        return result;
-    }
-
-    /**
-     * Replays a recorded sequence of set deltas onto a ``TSS<T>`` output: each
-     * cycle it applies the buffered delta (remove then add). Like ``replay``, it
-     * initiates at start and reschedules until the buffer is exhausted.
-     */
-    template <typename T>
-    struct replay<TSS<T>>
-    {
-        static constexpr auto name              = "replay";
-        static constexpr bool schedule_on_start = true;
-
-        static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched, State<int> index,
-                         Out<TSS<T>> out)
-        {
-            const ValueView buffer = gs.get(key.value());
-            if (!buffer.valid()) { return; }
-            const auto list = buffer.as_list();
-            const int  i    = index.get();
-            const int  size = static_cast<int>(list.size());
-            if (i < size)
-            {
-                const auto element = list.at(static_cast<std::size_t>(i)).as_any();
-                if (element.has_value())
-                {
-                    const auto bundle   = element.get().as_bundle();
-                    auto       mutation = out.view().as_set().begin_mutation(out.evaluation_time());
-                    const auto removed  = bundle.field("removed").as_indexed_view();
-                    for (std::size_t k = 0; k < removed.size(); ++k) { (void)mutation.remove(removed.at(k)); }
-                    const auto added = bundle.field("added").as_indexed_view();
-                    for (std::size_t k = 0; k < added.size(); ++k) { (void)mutation.add(added.at(k)); }
-                }
-            }
-            index.set(i + 1);
-            if (i + 1 < size) { sched.schedule(MIN_TD); }
-        }
-    };
-
-    /** Captures each tick of a ``TSS<T>`` input as a ``SetDelta`` into the buffer. */
-    template <typename T>
-    struct record<TSS<T>>
-    {
-        static constexpr auto name = "record";
-
-        static void start(Scalar<"key", std::string> key, GlobalStateView gs) { gs.set(key.value(), make_buffer()); }
-
-        static void eval(In<"ts", TSS<T>> ts, Scalar<"key", std::string> key, GlobalStateView gs, engine_time_t now)
+        static void eval(In<"ts", S> ts, Scalar<"key", std::string> key, GlobalStateView gs, engine_time_t now)
         {
             const std::size_t offset   = cycle_offset(now);
             const ValueView   buffer   = gs.get(key.value());
             auto              list     = buffer.as_list();
             std::size_t       size     = list.size();
             auto              mutation = list.begin_mutation();
-            while (size < offset)
+            while (size < offset)  // pad skipped cycles so the buffer index matches the engine cycle
             {
                 mutation.push_back(empty_any().view());
                 ++size;
             }
-            // Capture this cycle's delta (added/removed) from the typed views.
-            mutation.push_back(make_any(make_set_delta_value<T>(ts.added(), ts.removed()).view()).view());
-        }
-    };
-
-    // -----------------------------------------------------------------
-    // TSL (list time-series): delta-aware replay / record
-    //
-    // A list time-series ticks a *delta* each cycle — the children that ticked and
-    // their values — represented by the core ``ListDelta<T>`` (a wrapper over an
-    // immutable ``Map<int64, T>`` value; see ``static_node.h``). Build deltas with
-    // ``list_delta(...)``. The per-cycle buffer is the usual ``List<Any>`` (empty
-    // Any = no tick). First slice: scalar children ``TS<T>``.
-    // -----------------------------------------------------------------
-
-    /** Seed a TSL replay buffer from a sequence of ``ListDelta``s (nullopt = no tick). */
-    template <typename T>
-    void set_replay_list_deltas(const GlobalStateView &gs, std::string_view key,
-                                const std::vector<std::optional<ListDelta<T>>> &deltas)
-    {
-        Value buffer   = make_buffer();
-        auto  mutation = buffer.as_list().begin_mutation();
-        for (const auto &delta : deltas)
-        {
-            if (!delta.has_value()) { mutation.push_back(empty_any().view()); continue; }
-            mutation.push_back(make_any(delta->value()).view());  // the immutable delta map
-        }
-        gs.set(key, buffer);
-    }
-
-    /** Read a recorded TSL buffer back as a sequence of ``ListDelta``s (owning copies). */
-    template <typename T>
-    [[nodiscard]] std::vector<std::optional<ListDelta<T>>> get_recorded_list_deltas(const GlobalStateView &gs,
-                                                                                    std::string_view key)
-    {
-        std::vector<std::optional<ListDelta<T>>> result;
-        const ValueView                          buffer = gs.get(key);
-        if (!buffer.valid()) { return result; }
-        const auto list = buffer.as_list();
-        for (std::size_t i = 0; i < list.size(); ++i)
-        {
-            const auto element = list.at(i).as_any();
-            if (!element.has_value()) { result.push_back(std::nullopt); continue; }
-            result.push_back(ListDelta<T>{element.get()});
-        }
-        return result;
-    }
-
-    /**
-     * Replays a recorded sequence of list deltas onto a ``TSL<TS<T>, N>`` output:
-     * each cycle it sets every ``(index -> value)`` in the buffered delta map. Like
-     * ``replay``, it initiates at start and reschedules until the buffer is exhausted.
-     */
-    template <typename T, std::size_t N>
-    struct replay<TSL<TS<T>, N>>
-    {
-        static constexpr auto name              = "replay";
-        static constexpr bool schedule_on_start = true;
-
-        static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched, State<int> index,
-                         Out<TSL<TS<T>, N>> out)
-        {
-            const ValueView buffer = gs.get(key.value());
-            if (!buffer.valid()) { return; }
-            const auto list = buffer.as_list();
-            const int  i    = index.get();
-            const int  size = static_cast<int>(list.size());
-            if (i < size)
-            {
-                const auto element = list.at(static_cast<std::size_t>(i)).as_any();
-                if (element.has_value())
-                {
-                    const ValueView delta_value = element.get();
-                    const auto      map         = delta_value.as_map();
-                    for (const auto &[child_index, value] : map)
-                    {
-                        out.apply(static_cast<std::size_t>(child_index.template checked_as<std::int64_t>()), value);
-                    }
-                }
-            }
-            index.set(i + 1);
-            if (i + 1 < size) { sched.schedule(MIN_TD); }
-        }
-    };
-
-    /** Captures each tick of a ``TSL<TS<T>, N>`` input as a ``ListDelta`` into the buffer. */
-    template <typename T, std::size_t N>
-    struct record<TSL<TS<T>, N>>
-    {
-        static constexpr auto name = "record";
-
-        static void start(Scalar<"key", std::string> key, GlobalStateView gs) { gs.set(key.value(), make_buffer()); }
-
-        static void eval(In<"ts", TSL<TS<T>, N>> ts, Scalar<"key", std::string> key, GlobalStateView gs,
-                         engine_time_t now)
-        {
-            const std::size_t offset   = cycle_offset(now);
-            const ValueView   buffer   = gs.get(key.value());
-            auto              list     = buffer.as_list();
-            std::size_t       size     = list.size();
-            auto              mutation = list.begin_mutation();
-            while (size < offset)
-            {
-                mutation.push_back(empty_any().view());
-                ++size;
-            }
-            // Capture this cycle's delta (modified child index -> value).
-            mutation.push_back(make_any(ts.delta().value()).view());
+            // The canonical per-tick delta, rebuilt as an owned value-layer Value (the
+            // runtime's transient delta storage omits copy hooks), then boxed.
+            mutation.push_back(make_any(ts_delta<S>::capture(ts.base())).view());
         }
     };
 }  // namespace hgraph::testing

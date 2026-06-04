@@ -307,16 +307,32 @@ the per-cycle delta ``Value`` from ``list_delta`` (recursive in ``C``).
    };
    CHECK_OUTPUT(testing::eval_node<MirrorList>(deltas), deltas);
 
-   // TSL of sets — same harness, child delta Values are themselves set_delta(...)
-   const std::vector<std::optional<Value>> set_deltas{
-       list_delta<TSS<int>>({{0, set_delta<int>({1, 2}, {})}, {1, set_delta<int>({9}, {})}}),
-   };
-   CHECK_OUTPUT(testing::eval_node<MirrorSetList>(set_deltas), set_deltas);
+The delta builders are **fully recursive** — a TSL-of-sets delta is a ``Map`` whose values
+are themselves ``set_delta`` ``Value``\ s, a TSL-of-TSL delta a ``Map`` of ``Map``\ s — and
+``Value::equals`` is order-independent at every level (map keys, set elements):
+
+.. code-block:: cpp
+
+   // TSL<TSS<int>> delta: Map<int64, Bundle{added:Set, removed:Set}>
+   const Value sd = list_delta<TSS<int>>({{0, set_delta<int>({1, 2}, {})}, {1, set_delta<int>({9}, {})}});
+   CHECK(sd.equals(list_delta<TSS<int>>({{1, set_delta<int>({9}, {})}, {0, set_delta<int>({2, 1}, {})}})));
+
+   // TSL<TSL<TS<int>,2>> delta: Map<int64, Map<int64, int>>
+   const Value nd = list_delta<TSL<TS<int>, 2>>({{0, list_delta<TS<int>>({{0, 7}, {1, 8}})}});
 
 By hand: ``replay<TSL<C, N>>`` re-creates ticks by recursively applying each
 ``index -> child_delta`` of the buffered delta to ``out[index]`` (an ``Out<C>``);
 ``record<TSL<C, N>>`` captures ``ts.delta_value()`` (only the children that ticked);
 ``CHECK_OUTPUT`` renders each delta as the map ``{0: 1, 1: 10}`` on mismatch.
 
-Dynamic (resizable) ``TSL`` (``N == 0``) and ``TSD``/``TSW`` children are future
-extensions; fixed-size ``TSL`` over ``TS``/``TSS``/``TSL`` children works today.
+.. note::
+
+   The **authoring and delta layers are recursive over any child schema** today —
+   ``In``/``Out<TSL<C, N>>`` compose for any ``C`` and ``list_delta``/``set_delta`` build
+   the nested canonical ``Value``. **Executing a graph** over a ``TSL`` whose child is a
+   *slot-oriented* time-series (``TSS``, ``TSD``, or a dynamic ``TSL``) additionally needs
+   runtime support for embedding slot-oriented storage inside a fixed list, which is not
+   implemented yet. So ``eval_node<…>`` round-trips run today for ``TSL`` over **scalar
+   (``TS``) children**; nested-container TSLs are exercised at the delta/value layer (as
+   above) until that runtime feature lands. Dynamic (``N == 0``) ``TSL`` and ``TSW``
+   children are also future extensions.

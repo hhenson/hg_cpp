@@ -143,14 +143,14 @@ TEST_CASE("static node: signature detects ambiguous selector contracts")
     STATIC_REQUIRE(StaticNodeSignature<MultipleStateSlots>::state_count() == 2);
 }
 
-TEST_CASE("static node: SetDelta construction survives value registry resets")
+TEST_CASE("static node: set_delta construction survives value registry resets")
 {
     using namespace hgraph;
 
     {
         (void)TypeRegistry::instance().register_scalar<int>("int");
-        const auto first = set_delta<int>({1}, {});
-        CHECK(first.added() == std::vector<int>{1});
+        const Value first = set_delta<int>({1}, {});  // canonical Bundle{added:{1}, removed:{}}
+        CHECK(first.equals(set_delta<int>({1}, {})));
     }
 
     ValuePlanFactory::instance().reset();
@@ -158,9 +158,9 @@ TEST_CASE("static node: SetDelta construction survives value registry resets")
     TypeRegistry::instance().reset();
 
     (void)TypeRegistry::instance().register_scalar<int>("int");
-    const auto second = set_delta<int>({2}, {1});
-    CHECK(second.added() == std::vector<int>{2});
-    CHECK(second.removed() == std::vector<int>{1});
+    const Value second = set_delta<int>({2}, {1});
+    CHECK(second.equals(set_delta<int>({2}, {1})));       // order-independent, type-erased
+    CHECK_FALSE(second.equals(set_delta<int>({2}, {})));  // different removed -> not equal
 }
 
 TEST_CASE("static node: source -> compute graph runs in simulation mode")

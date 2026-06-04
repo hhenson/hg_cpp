@@ -254,6 +254,15 @@ child facade — ``fixed_string`` admits ``""``); ``Out<TSL<C,N>>::operator[](i)
 returns ``Out<C>``. The same recursion applies to ``TSB`` field access once those
 selectors land.
 
+This selector recursion (and the delta construction below) is purely a
+compile-time/value-layer concern and works for any child *now*. **Runtime
+execution** of a node whose ``TSL`` child is a *slot-oriented* time-series
+(``TSS`` / ``TSD`` / dynamic ``TSL``) is a separate matter: the fixed-structured
+``ts_data`` plan cannot yet embed slot-oriented child storage inside a fixed list
+(``embedded_ts_data_binding`` rejects it), so the first example above composes and
+builds deltas today but cannot be *run* in a graph until that runtime feature
+lands. ``TSL`` over scalar (``TS``) children runs end-to-end now.
+
 **Deltas are canonical type-erased Values.** A selector does *not* introduce a
 parallel delta representation. The delta of any time-series is the canonical
 ``Value`` whose schema is the runtime ``delta_value_schema`` (``TS<T>`` → ``T``;

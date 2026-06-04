@@ -183,7 +183,7 @@ TEST_CASE("eval_node: TSS on both input and output round-trips the delta")
     using namespace hgraph;
     (void)TypeRegistry::instance().register_scalar<int>("int");
 
-    const std::vector<std::optional<SetDelta<int>>> deltas{
+    const std::vector<std::optional<Value>> deltas{
         set_delta<int>({1, 2}, {}), set_delta<int>({3}, {1}), set_delta<int>({}, {2, 3})};
     CHECK_OUTPUT(testing::eval_node<MirrorSet>(deltas), deltas);
 }
