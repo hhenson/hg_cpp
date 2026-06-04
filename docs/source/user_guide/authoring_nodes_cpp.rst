@@ -447,35 +447,76 @@ parameter becomes one field of it — which is why a node's inputs and a ``TSB``
 share the same structure.
 
 
-Collections — ``TSS`` / ``TSD`` / ``TSL`` / ``TSW``
----------------------------------------------------
+Collections — ``TSS`` / ``TSL`` (``TSD`` / ``TSW`` planned)
+-----------------------------------------------------------
 
-**Planned selectors.** Collection time-series carry per-element tick state and a
-delta (added / removed / modified). The Python iteration API maps onto C++ view
-methods:
+Collection selectors **derive from the type-erased collection view** for their
+kind (``In<…, TSS<T>> : TSSInputView``, ``In<…, TSL<C,N>> : TSLInputView``, and the
+``Out`` duals — see *Schemas > Static Schema > Selector wrappers*), so they inherit
+the full view API and add typed sugar. The per-cycle **delta** is the canonical
+type-erased ``Value`` (``In<…>::delta()`` is the inherited ``delta_value()``).
+
+**Set (``TSS<T>``) — available.** Read membership / this tick's changes; write with
+``add`` / ``remove`` / ``clear``:
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
+   struct AddedCount
+   {
+       static void eval(In<"s", TSS<int>> s, Out<TS<int>> out)
+       {
+           out.set(static_cast<int>(s.added().size()));   // s also has removed()/values()/contains()
+       }
+   };
+
+**List (``TSL<C, N>``) — available and recursive.** A fixed-size list of ``N``
+children whose schema ``C`` is **any** time-series type — ``TS<T>``, ``TSS<T>``,
+or another ``TSL`` — nested arbitrarily. ``in[i]`` yields the child input selector
+``In<"", C>`` and ``out[i]`` the child output ``Out<C>``, so you compose recursively:
+
+.. code-block:: cpp
+
+   // TSL of scalars: sum the children
+   struct SumList
+   {
+       static void eval(In<"l", TSL<TS<int>, 3>> l, Out<TS<int>> out)
+       {
+           int total = 0;
+           for (std::size_t i = 0; i < l.size(); ++i) total += l[i].value();
+           out.set(total);
+       }
+   };
+
+   // TSL of sets: forward each child's added elements (out[i] is an Out<TSS<int>>)
+   struct FanIn
+   {
+       static void eval(In<"l", TSL<TSS<int>, 2>> l, Out<TSL<TSS<int>, 2>> out)
+       {
+           for (auto &&[i, child] : l.modified_items())
+               for (int e : l[i].added()) out[i].add(e);
+       }
+   };
+
+A ``TSL`` delta is the canonical ``Map<int64, delta(C)>`` ``Value`` (recursive in
+``C``); build one for tests with ``list_delta`` (see *Testing Graphs in C++*).
+
+**Planned.** ``TSD<K, V>`` (dict) and ``TSW<T, …>`` (window) selectors follow the
+same derive-from-view pattern; the Python iteration API
+(``added_items`` / ``removed_items`` / ``modified_items``) maps onto the C++ view
+methods.
+
+.. code-block:: cpp
+
+   // Planned — TSD, provisional syntax
    struct SumValues
    {
        static void eval(In<"d", TSD<std::string, TS<int>>> d, Out<TS<int>> out)
        {
            int total = 0;
-           for (auto &&[key, v] : d.items()) { total += v.value(); }
+           for (auto &&[key, v] : d.items()) total += v.value();
            out.set(total);
        }
    };
-
-.. code-block:: python
-
-   @compute_node
-   def sum_values(d: TSD[str, TS[int]]) -> TS[int]:
-       return sum(v.value for v in d.values())
-
-The delta surfaces (``d.added()`` / ``d.removed()`` / ``d.modified()`` in C++,
-``d.added_items()`` / ``d.removed_items()`` / ``d.modified_items()`` in Python)
-will follow the same naming as the Python collection time-series.
 
 
 References and signals

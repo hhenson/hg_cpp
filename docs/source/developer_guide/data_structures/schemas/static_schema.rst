@@ -181,8 +181,8 @@ described in *Schemas > Node Schemas > Generic Resolution*.
 Selector wrappers
 -----------------
 
-The selector layer wraps a static-schema marker with a runtime view,
-so a node ``eval`` can take a typed handle as a parameter:
+The selector layer pairs a static-schema marker with a runtime view, so a
+node ``eval`` can take a typed handle as a parameter:
 
 .. code-block:: cpp
 
@@ -198,29 +198,93 @@ so a node ``eval`` can take a typed handle as a parameter:
        }
    };
 
-Implemented today (scalar time-series path), defined in
-``<hgraph/types/static_node.h>``:
+**Selectors derive from the type-erased view** (defined in
+``<hgraph/types/static_node.h>``). A selector is a *zero-overhead, compile-time
+typed facade* that **inherits** the matching erased view for its kind and layers
+typed sugar on top — it does **not** re-implement or duplicate the view's data
+ops:
 
-- ``In<Name, TS<T>>`` — typed input view. ``value()`` reads the current
-  value; ``modified()`` / ``valid()`` report tick state.
-- ``Out<TS<T>>`` — typed output view; carries the current
-  ``evaluation_time`` so ``set(v)`` writes and ticks the output.
-- ``State<T>`` — typed handle into node-local (value-layer) state, with
-  ``get()`` / ``set(v)``.
+.. code-block:: text
 
+   In<Name, TS<T>>     : TSInputView      Out<TS<T>>     : TSOutputView
+   In<Name, TSS<T>>    : TSSInputView     Out<TSS<T>>    : TSSOutputView
+   In<Name, TSL<C,N>>  : TSLInputView     Out<TSL<C,N>>  : TSLOutputView
+   …                   : TS{B,D,W}…View   …              : TS{B,D,W}…View
+
+The erased views are themselves CRTP (``TSLInputView : TSInputTypedView<…> :
+TSTypedTimeSeriesView<…, TSInputView>``); a selector inherits the whole erased
+surface (``modified()`` / ``valid()`` / ``value()`` / ``delta_value()`` /
+``size()`` / ``at(i)`` / ``modified_items()`` / ``as_set()`` / …) for free and
+adds only:
+
+- ``using schema = …`` and ``static constexpr field_name`` — the compile-time
+  signature, consumed by ``StaticNodeSignature`` / ``input_selector_traits`` /
+  ``schema_descriptor<S>`` for plan and metadata construction;
+- a constructor from the endpoint view (so ``arg_provider`` builds it from a
+  ``TSInputView`` / ``TSOutputView``);
+- **typed sugar**: ``In<TS<T>>::value() -> T`` (shadows the erased
+  ``value() -> ValueView``; the raw form stays reachable through the base);
+  ``In<TSS<T>>::added()/removed()/contains()``; ``Out<TS<T>>::set/apply``;
+  ``Out<TSS<T>>::add/remove/clear``.
+
+A selector carries **no state beyond the inherited view** (``Name`` is a
+``static constexpr``; the output's ``evaluation_time`` comes from the view), so
+the typed layer is free at runtime and everything routes through the canonical
+type-erased ops — which the *Allocation, Plans and Ops* performance contract
+requires (a typed path is only justified when it is faster than the erased ops).
+
+**Recursive, nestable children.** Because a container selector *is* its erased
+view, child access falls straight out of the inherited ``at(i)`` and composes to
+**any** child schema, to any depth:
+
+.. code-block:: cpp
+
+   // TSL of sets:  out[i] is an Out<TSS<int>>, in[i] is an In<"", TSS<int>>
+   static void eval(In<"l", TSL<TSS<int>, 2>> l, Out<TSL<TSS<int>, 2>> out)
+   {
+       for (auto &&[idx, child] : l.modified_items())  // inherited from TSLInputView
+           out[idx].add(*l[idx].added().begin());      // out[idx] : Out<TSS<int>>
+   }
+
+   // TSL of TSL of TS:  in[i][j].value()  (recursion bottoms out at a scalar)
+   In<"g", TSL<TSL<TS<int>, 2>, 3>> g;  g[0][1].value();
+
+``In<Name, TSL<C,N>>::operator[](i)`` returns ``In<"", C>`` (a name-agnostic
+child facade — ``fixed_string`` admits ``""``); ``Out<TSL<C,N>>::operator[](i)``
+returns ``Out<C>``. The same recursion applies to ``TSB`` field access once those
+selectors land.
+
+**Deltas are canonical type-erased Values.** A selector does *not* introduce a
+parallel delta representation. The delta of any time-series is the canonical
+``Value`` whose schema is the runtime ``delta_value_schema`` (``TS<T>`` → ``T``;
+``TSS<T>`` → ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSL<C,N>`` →
+``Map<int64, delta(C)>``; recursive). ``In<…>::delta()`` is just the inherited
+``delta_value()``. To **construct** a delta for tests/wiring, recursive builder
+functions produce the canonical ``Value`` (see *Allocation, Plans and Ops >
+Value builders* and *Testing Graphs in C++*):
+
+.. code-block:: cpp
+
+   set_delta<int>({1, 2}, {})                       // -> Bundle{added:{1,2}, removed:{}}
+   list_delta<TSS<int>>({{0, set_delta<int>({1},{})}})  // -> Map<int64, Bundle>
+
+Comparison and display go through the value-layer ops (``Value::equals`` —
+order-independent for sets/maps — and ``to_string``); no wrapper type
+re-implements them.
+
+``State<T>`` is a typed handle into node-local (value-layer) state, with
+``get()`` / ``set(v)``. ``Scalar<"name", T>`` is a named wiring-time scalar.
 How these markers drive node construction — ``StaticNodeSignature`` and
 ``NodeBuilder::implementation<T>()`` — is described in *Wiring*.
 
 Planned, landing with their runtime layers:
 
-- container-shaped selectors (``In`` / ``Out`` over ``TSB`` / ``TSL`` /
-  ``TSS`` / ``TSD`` / ``TSW``), with optional ``InputActivity`` /
-  ``InputValidity`` policy flags;
+- the remaining container selectors (``In`` / ``Out`` over ``TSB`` / ``TSD`` /
+  ``TSW``) — the same derive-from-view pattern — with optional
+  ``InputActivity`` / ``InputValidity`` policy flags;
 - ``RecordableState<TSchema, Id<"...">>`` — typed recordable-state output; the
   optional ``Id<"...">`` names the recordable (Python's optional
   ``recordable_id``);
-- ``Scalar<"name", T>`` — named scalar parameter (a wiring argument or a
-  push-source message);
 - ``PythonScalar<"name", Type<"my.module.type">>`` — a named Python-object
   scalar whose expected Python type is named (as a string) for type-checking;
   omitting the type (``PythonScalar<"name">``) defaults to ``object`` (any
@@ -234,17 +298,24 @@ Today: ``fixed_string``, marker types (``TS``, ``TSS``, ``TSD``,
 ``TSL``, ``TSW`` tick-only, ``REF``, ``SIGNAL``, ``Field``, named &
 un-named ``Bundle`` / ``TSB``, ``ScalarVar``, ``TsVar``), the
 ``scalar_descriptor`` / ``schema_descriptor`` / ``field_descriptor``
-traits, **and the node-authoring selectors** ``In<Name, TS<T>>`` /
-``Out<TS<T>>`` / ``State<T>`` together with ``StaticNodeSignature`` and
-``NodeBuilder::implementation<T>()`` (see *Wiring*). These build on top
-of the live ``TypeRegistry`` API (including the named/un-named bundle
-split) so static schemas register and resolve identically to schemas
-constructed by direct factory calls, and the scalar time-series path is
-wired from a node struct through to a running graph.
+traits, and the **derive-from-view node-authoring selectors** —
+``In<Name, TS<T>>`` / ``In<Name, TSS<T>>`` / ``In<Name, TSL<C,N>>`` (and the
+``Out<…>`` duals) deriving from ``TSInputView`` / ``TSSInputView`` /
+``TSLInputView`` (resp. the output views), plus ``State<T>`` and
+``Scalar<Name, T>`` — together with ``StaticNodeSignature`` and
+``NodeBuilder::implementation<T>()`` (see *Wiring*). ``TSL`` is **recursive**:
+its child may be any supported time-series schema (``TS`` / ``TSS`` / ``TSL``),
+nested arbitrarily, and the canonical delta ``Value`` (``Map<int64, delta(C)>``)
+is built/compared through the value layer. These build on the live
+``TypeRegistry`` API (including the named/un-named bundle split), so static
+schemas register and resolve identically to direct factory calls, and the
+scalar/set/list time-series paths wire from a node struct through to a running
+graph.
 
-Deferred until the relevant runtime layer lands: container-shaped
-selectors (``TSB`` / ``TSL`` / ``TSS`` / ``TSD`` / ``TSW`` inputs and
-outputs), ``RecordableState``, ``EvaluationClock`` / ``NodeScheduler``
-injection, push-source ``apply_message``, ``Scalar`` arguments, named state,
-input activity/validity policy flags, duration-based ``TSW``, the
-Python-export bridge, and generic-resolution substitution.
+Deferred until the relevant runtime layer lands: the remaining container
+selectors (``TSB`` / ``TSD`` / ``TSW`` inputs and outputs — same
+derive-from-view pattern), ``RecordableState``, ``EvaluationClock`` injection,
+push-source ``apply_message``, named state, input activity/validity policy
+flags, duration-based ``TSW``, the Python-export bridge, and generic-resolution
+substitution. (``NodeScheduler`` / ``SingleShotScheduler`` injection is now
+implemented; see *Authoring Nodes in C++*.)
