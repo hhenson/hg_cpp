@@ -567,6 +567,22 @@ bundle field whose payload is the fixed list value plan; the child and
 grandchild TSData views use embedded bindings with offsets into the
 shared value and auxiliary regions.
 
+**Embedded TSS children.** A fixed parent may also own a slot-oriented
+``TSS`` child. The child's slot storage is placed as that child's
+auxiliary node, and the parent indexed TSData ops return a pointer to the
+child storage subobject when the child is selected. The child binding is
+the normal slot binding over the child slot plan; the slot ops still
+receive a pointer to their own storage object and do not know about the
+parent's root allocation. Parent notification uses the existing
+``TSDataParentLink`` installed by child view projection.
+
+When a fixed parent contains such projected child storage, its
+``value()`` surface is also projected from the child value views instead
+of exposing a stale canonical value-region copy. Copying that transient
+view materialises the normal canonical value-layer ``List`` / ``Bundle``.
+This supports ``TSL[TSS[int], Size[N]]`` execution. Embedded ``TSD`` and
+dynamic ``TSL`` storage remain future runtime work.
+
 .. mermaid::
 
    flowchart LR

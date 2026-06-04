@@ -36,7 +36,8 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                 const MemoryUtils::StoragePlan &plan,
                                                                 std::size_t value_offset, std::size_t aux_offset,
                                                                 std::size_t tracking_offset,
-                                                                std::vector<const TSDataBinding *> element_bindings);
+                                                                std::vector<const TSDataBinding *> element_bindings,
+                                                                std::vector<std::size_t> element_data_offsets);
 
     [[nodiscard]] const TSDataOps &window_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                       const MemoryUtils::StoragePlan &plan,

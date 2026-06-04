@@ -87,6 +87,17 @@ namespace
             wire<testing::record>(w, src, std::string{"out"});
         }
     };
+
+    // A fixed TSL whose child is a slot-oriented TSS — exercises embedded child storage.
+    struct ListSetDeltaGraph
+    {
+        static constexpr auto name = "tsl_set_delta_graph";
+        static void           compose(Wiring &w)
+        {
+            auto src = wire<testing::replay, TSL<TSS<int>, 2>>(w, std::string{"in"});
+            wire<testing::record>(w, src, std::string{"out"});
+        }
+    };
 }  // namespace
 
 TEST_CASE("tsl: list_delta map and positional forms agree (canonical Value)")
@@ -185,7 +196,33 @@ TEST_CASE("tsl: recursive — list_delta over container children builds nested c
     CHECK(nd.equals(list_delta<TSL<TS<int>, 2>>({{0, list_delta<TS<int>>({{1, 8}, {0, 7}})}})));
     CHECK(nd.view().as_map().at(Value{std::int64_t{0}}.view()).as_map().size() == 2);
 
-    // NOTE: executing a graph over a TSL whose child is a slot-oriented time-series
-    // (TSS/TSD/dynamic-TSL) needs runtime embedded-slot-storage support, which is not
-    // implemented yet (see docs). The authoring + delta layers above are fully recursive.
+    // A TSL<TSS> now executes in a graph. TSD and dynamic TSL children still need
+    // additional runtime coverage before they should be enabled.
+}
+
+TEST_CASE("tsl: a TSL<TSS> executes end-to-end (replay -> record round-trips list-of-set deltas)")
+{
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    // Each cycle's delta is Map<int64, Bundle{added,removed}> (list_delta over set_delta).
+    // The second cycle modifies ONLY element 1, exercising a non-root child slot
+    // storage object owned by the fixed list.
+    const std::vector<std::optional<Value>> deltas{
+        list_delta<TSS<int>>({{0, set_delta<int>({1, 2}, {})}, {1, set_delta<int>({9}, {})}}),
+        list_delta<TSS<int>>({{1, set_delta<int>({8}, {9})}}),
+        list_delta<TSS<int>>({{0, set_delta<int>({3}, {1})}}),
+    };
+
+    GraphBuilder gb = build_graph<ListSetDeltaGraph>();
+    testing::set_replay_deltas(gb.global_state(), "in", deltas);
+
+    GraphExecutorBuilder eb;
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    GraphExecutorValue ex = eb.make_executor();
+    ex.view().run();
+
+    CHECK_OUTPUT(testing::get_recorded_deltas(ex.view().graph().global_state(), "out"),
+                 {list_delta<TSS<int>>({{0, set_delta<int>({1, 2}, {})}, {1, set_delta<int>({9}, {})}}),
+                  list_delta<TSS<int>>({{1, set_delta<int>({8}, {9})}}),
+                  list_delta<TSS<int>>({{0, set_delta<int>({3}, {1})}})});
 }

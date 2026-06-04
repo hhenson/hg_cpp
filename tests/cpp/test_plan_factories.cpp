@@ -743,6 +743,65 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
     REQUIRE(delta.key_set().contains(key_view));
 }
 
+TEST_CASE("TSDataPlanFactory: fixed TSL owns embedded TSS child storage")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    auto       &factory  = TSDataPlanFactory::instance();
+    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *tss_int  = registry.tss(int_meta);
+    const auto *tsl      = registry.tsl(tss_int, 2);
+
+    const auto *binding = factory.binding_for(tsl);
+    REQUIRE(binding != nullptr);
+    const auto *aux_component = binding->plan()->find_component("aux");
+    REQUIRE(aux_component != nullptr);
+    const auto *elements_component = aux_component->plan->find_component("elements");
+    REQUIRE(elements_component != nullptr);
+    REQUIRE(elements_component->plan != nullptr);
+    REQUIRE(elements_component->plan->is_array());
+    REQUIRE(&elements_component->plan->array_element_plan() == factory.plan_for(tss_int));
+
+    TSData data{*binding};
+    auto   view = data.view();
+    auto   list = view.as_list();
+    REQUIRE(list.size() == 2);
+
+    const auto t1 = MIN_ST;
+    Value      one{1};
+    Value      two{2};
+    {
+        auto child_view = list.at(1);
+        auto child    = child_view.as_set();
+        auto mutation = child.begin_mutation(t1);
+        REQUIRE(mutation.add(one.view()));
+        REQUIRE(mutation.add(two.view()));
+    }
+
+    REQUIRE(view.modified(t1));
+    auto child0_view = list.at(0);
+    auto child1_view = list.at(1);
+    REQUIRE_FALSE(child0_view.as_set().contains(one.view()));
+    REQUIRE(child1_view.as_set().contains(one.view()));
+    REQUIRE(child1_view.as_set().contains(two.view()));
+
+    const auto value_list = view.value().as_list();
+    REQUIRE(value_list.at(0).as_set().empty());
+    REQUIRE(value_list.at(1).as_set().contains(one.view()));
+    REQUIRE(value_list.at(1).as_set().contains(two.view()));
+
+    Value child_snapshot{list.at(1).value()};
+    REQUIRE(child_snapshot.binding() == ValuePlanFactory::instance().binding_for(tss_int->value_schema));
+    REQUIRE(child_snapshot.view().as_set().contains(one.view()));
+    REQUIRE(child_snapshot.view().as_set().contains(two.view()));
+
+    Value parent_snapshot{view.value()};
+    REQUIRE(parent_snapshot.binding() == ValuePlanFactory::instance().binding_for(tsl->value_schema));
+    REQUIRE(parent_snapshot.view().as_list().at(0).as_set().empty());
+    REQUIRE(parent_snapshot.view().as_list().at(1).as_set().contains(one.view()));
+    REQUIRE(parent_snapshot.view().as_list().at(1).as_set().contains(two.view()));
+}
+
 TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
 {
     using namespace hgraph;

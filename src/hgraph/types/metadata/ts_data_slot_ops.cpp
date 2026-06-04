@@ -7,6 +7,7 @@
 #include <hgraph/types/utils/value_slot_store.h>
 #include <hgraph/types/value/specialized_views.h>
 #include <hgraph/types/value/value.h>
+#include <hgraph/types/value/value_builder.h>
 #include <hgraph/util/scope.h>
 
 #include <sul/dynamic_bitset.hpp>
@@ -723,6 +724,9 @@ namespace hgraph::ts_data_plan_factory_detail
                     &delta_bundle_make_range,
                     nullptr,
                 };
+                delta_bundle_ops.owning_binding_impl      = &canonical_value_binding;
+                delta_bundle_ops.copy_construct_view_impl = &delta_copy_construct_view;
+                delta_bundle_ops.copy_assign_view_impl    = &delta_copy_assign_view;
             }
 
             void bind_tss_delta_surfaces()
@@ -741,7 +745,7 @@ namespace hgraph::ts_data_plan_factory_detail
             template <SlotSetSurface Surface>
             [[nodiscard]] SetValueOps set_ops_for_surface()
             {
-                return SetValueOps{
+                SetValueOps ops{
                     {{this, false, &set_hash<Surface>, &set_equals<Surface>, &set_compare<Surface>,
                       &set_to_string<Surface>
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -756,11 +760,109 @@ namespace hgraph::ts_data_plan_factory_detail
                      nullptr},
                     &set_contains<Surface>,
                 };
+                ops.owning_binding_impl      = &canonical_value_binding;
+                ops.copy_construct_view_impl = &set_copy_construct_view<Surface>;
+                ops.copy_assign_view_impl    = &set_copy_assign_view<Surface>;
+                return ops;
             }
 
             [[nodiscard]] static const TSSContextBase *ctx(const void *context) noexcept
             {
                 return static_cast<const TSSContextBase *>(context);
+            }
+
+            [[nodiscard]] static const ValueTypeBinding *
+            canonical_value_binding(const void *, const ValueTypeBinding &view_binding)
+            {
+                const auto *binding = ValuePlanFactory::instance().binding_for(view_binding.type_meta);
+                if (binding == nullptr)
+                {
+                    throw std::logic_error("TSS value surface has no canonical owning binding");
+                }
+                return binding;
+            }
+
+            template <SlotSetSurface Surface>
+            static void set_copy_construct_view(const void *context,
+                                                const ValueTypeBinding &binding,
+                                                void *dst,
+                                                const void *memory)
+            {
+                auto storage = build_set_storage<Surface>(context, binding, memory);
+                std::construct_at(static_cast<SetStorage *>(dst), std::move(storage));
+            }
+
+            template <SlotSetSurface Surface>
+            static void set_copy_assign_view(const void *context,
+                                             const ValueTypeBinding &binding,
+                                             void *dst,
+                                             const void *memory)
+            {
+                *static_cast<SetStorage *>(dst) = build_set_storage<Surface>(context, binding, memory);
+            }
+
+            template <SlotSetSurface Surface>
+            [[nodiscard]] static SetStorage build_set_storage(const void *context,
+                                                              const ValueTypeBinding &binding,
+                                                              const void *memory)
+            {
+                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Set)
+                {
+                    throw std::logic_error("TSS set copy requires a canonical set binding");
+                }
+                const auto *key_binding = ValuePlanFactory::instance().binding_for(binding.type_meta->element_type);
+                if (key_binding == nullptr || key_binding != ctx(context)->set_layout.key_binding)
+                {
+                    throw std::logic_error("TSS set copy key binding is not resolved");
+                }
+
+                SetBuilder builder{*key_binding};
+                for (const auto key : set_make_range<Surface>(context, memory))
+                {
+                    builder.insert_copy(key.data());
+                }
+                return builder.build_storage();
+            }
+
+            static void delta_copy_construct_view(const void *context,
+                                                  const ValueTypeBinding &binding,
+                                                  void *dst,
+                                                  const void *memory)
+            {
+                const auto &plan = binding.checked_plan();
+                plan.default_construct(dst);
+                auto rollback = make_scope_exit([&]() noexcept { plan.destroy(dst); });
+                delta_copy_assign_view(context, binding, dst, memory);
+                rollback.release();
+            }
+
+            static void delta_copy_assign_view(const void *context,
+                                               const ValueTypeBinding &binding,
+                                               void *dst,
+                                               const void *memory)
+            {
+                if (binding.type_meta == nullptr || binding.type_meta->kind != ValueTypeKind::Bundle ||
+                    binding.type_meta->field_count != 2)
+                {
+                    throw std::logic_error("TSS delta copy requires canonical Bundle{added, removed}");
+                }
+
+                const auto &plan = binding.checked_plan();
+                if (!plan.is_composite() || plan.component_count() != 2)
+                {
+                    throw std::logic_error("TSS delta copy requires a two-field structured plan");
+                }
+
+                auto added = Value{ValueView{delta_bundle_element_binding(context, memory, 0),
+                                             delta_bundle_element_at(context, memory, 0)}};
+                auto removed = Value{ValueView{delta_bundle_element_binding(context, memory, 1),
+                                               delta_bundle_element_at(context, memory, 1)}};
+
+                auto       *bytes             = static_cast<std::byte *>(dst);
+                const auto &added_component   = plan.component(0);
+                const auto &removed_component = plan.component(1);
+                added_component.plan->copy_assign(bytes + added_component.offset, added.view().data());
+                removed_component.plan->copy_assign(bytes + removed_component.offset, removed.view().data());
             }
 
             [[nodiscard]] static const TSDataLayout *tss_layout(const void *context) noexcept

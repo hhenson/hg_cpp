@@ -500,11 +500,11 @@ or another ``TSL`` — nested arbitrarily. ``in[i]`` yields the child input sele
 A ``TSL`` delta is the canonical ``Map<int64, delta(C)>`` ``Value`` (recursive in
 ``C``); build one for tests with ``list_delta`` (see *Testing Graphs in C++*).
 
-The selector composition above is recursive over **any** child today. Note, however,
-that *running a graph* over a ``TSL`` whose child is a slot-oriented time-series
-(``TSS``, ``TSD``, or a dynamic ``TSL``) — such as ``FanIn`` above — additionally needs
-runtime support for embedding slot-oriented storage inside a fixed list, which is not
-implemented yet; ``TSL`` over scalar (``TS``) children executes today.
+The selector composition above is recursive over **any** child today, and *running a
+graph* now works for a ``TSL`` over scalar (``TS``) and set (``TSS``) children. A
+``TSL<TSS<int>, N>`` such as ``FanIn`` owns each child set's slot storage inside the
+fixed list and projects the parent value from those child views. A ``TSL`` whose child
+is a ``TSD`` or a dynamic ``TSL`` still needs further runtime support.
 
 **Planned.** ``TSD<K, V>`` (dict) and ``TSW<T, …>`` (window) selectors follow the
 same derive-from-view pattern; the Python iteration API
@@ -892,9 +892,8 @@ variable ``T`` is inferred from the configured value, so ``TS<T>`` resolves with
 
 A dict-keyed generic uses ``ScalarVar`` / ``TsVar`` in C++ and ``K`` / ``V`` in
 Python. The resolver/unifier recursion handles such composites (``K`` and ``V``
-bind from the connected ``TSD`` port); note that *executing* a node over ``TSD`` /
-``TSS``-valued containers additionally needs the corresponding runtime layer
-(see below):
+bind from the connected ``TSD`` port); note that *executing* a node over ``TSD`` still
+needs the corresponding runtime layer (a ``TSL`` of ``TSS`` already runs):
 
 .. code-block:: cpp
 

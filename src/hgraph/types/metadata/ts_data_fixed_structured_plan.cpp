@@ -96,6 +96,14 @@ namespace hgraph::ts_data_plan_factory_detail
             builder.add_field("tracking", MemoryUtils::plan_for<TSDataTracking>());
             return builder.build();
         }
+        if (schema.kind == TSTypeKind::TSS)
+        {
+            return *synthesise_slot_plan(schema);
+        }
+        if (is_slot_ts_data(schema))
+        {
+            throw std::logic_error("TSDataPlanFactory: embedded TSD slot storage is not implemented");
+        }
         if (!is_fixed_structured_ts_data(schema))
         {
             throw std::logic_error(
@@ -189,6 +197,21 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                 const MemoryUtils::StoragePlan &root_plan,
                                                                 std::size_t value_offset, std::size_t aux_offset)
     {
+        if (schema.kind == TSTypeKind::TSS)
+        {
+            const auto *plan = synthesise_slot_plan(schema);
+            if (plan == nullptr)
+            {
+                throw std::logic_error("TSDataPlanFactory: slot TSData plan is not resolved");
+            }
+            const auto &ops = slot_ts_data_ops(schema, *plan, 0);
+            return &TSDataBinding::intern(schema, *plan, ops);
+        }
+        if (is_slot_ts_data(schema))
+        {
+            throw std::logic_error("TSDataPlanFactory: embedded TSD slot storage is not implemented");
+        }
+
         const auto &aux_plan        = ts_data_aux_plan(schema);
         const auto  tracking_offset = aux_offset + tracking_offset_in_aux(aux_plan);
 
@@ -221,7 +244,9 @@ namespace hgraph::ts_data_plan_factory_detail
         const auto                        &value_plan = value_binding->checked_plan();
         const auto                         count      = fixed_element_count(schema);
         std::vector<const TSDataBinding *> element_bindings;
+        std::vector<std::size_t>           element_data_offsets;
         element_bindings.reserve(count);
+        element_data_offsets.reserve(count);
         for (std::size_t index = 0; index < count; ++index)
         {
             const auto *element_schema = fixed_element_schema(schema, index);
@@ -230,13 +255,20 @@ namespace hgraph::ts_data_plan_factory_detail
                 throw std::logic_error("TSDataPlanFactory: embedded fixed element schema is not resolved");
             }
 
-            element_bindings.push_back(embedded_ts_data_binding(
-                *element_schema, root_plan, value_offset + fixed_element_value_offset(schema, value_plan, index),
-                aux_offset + fixed_element_aux_offset(schema, aux_plan, index)));
+            const auto child_value_offset = value_offset + fixed_element_value_offset(schema, value_plan, index);
+            const auto child_aux_offset   = aux_offset + fixed_element_aux_offset(schema, aux_plan, index);
+            const auto *child_binding =
+                embedded_ts_data_binding(*element_schema, root_plan, child_value_offset, child_aux_offset);
+            if (child_binding == nullptr)
+            {
+                throw std::logic_error("TSDataPlanFactory: embedded fixed element binding is not resolved");
+            }
+            element_bindings.push_back(child_binding);
+            element_data_offsets.push_back(child_binding->plan() == &root_plan ? 0 : child_aux_offset);
         }
 
         const auto &ops = fixed_structured_ts_data_ops(schema, root_plan, value_offset, aux_offset, tracking_offset,
-                                                       std::move(element_bindings));
+                                                       std::move(element_bindings), std::move(element_data_offsets));
         return &TSDataBinding::intern(schema, root_plan, ops);
     }
 
