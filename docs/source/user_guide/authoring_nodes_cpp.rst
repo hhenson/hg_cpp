@@ -351,8 +351,8 @@ Time-series type vocabulary
 ---------------------------
 
 Schemas are expressed as compile-time **marker types** that mirror the Python
-time-series types. All markers exist today; the **selectors** that read/write
-each kind through ``In`` / ``Out`` are arriving kind by kind.
+time-series types. All markers exist today; the C++ ``In`` / ``Out`` selectors
+cover the supported non-``REF`` time-series kinds.
 
 .. list-table::
    :header-rows: 1
@@ -369,27 +369,27 @@ each kind through ``In`` / ``Out`` are arriving kind by kind.
    * - signal (valueless tick)
      - ``SIGNAL``
      - ``SIGNAL``
-     - planned
+     - **available**
    * - bundle (named fields)
      - ``TSB<"Name", Field<…>…>``
      - ``TSB[Schema]``
-     - planned
+     - **available**
    * - list (fixed / dynamic)
      - ``TSL<T, N>``
      - ``TSL[T, Size[N]]``
-     - planned
+     - **available**
    * - set
      - ``TSS<T>``
      - ``TSS[T]``
-     - planned
+     - **available**
    * - dict (keyed)
      - ``TSD<K, V>``
      - ``TSD[K, V]``
-     - planned
+     - **available**
    * - rolling window
      - ``TSW<T, Period>``
      - ``TSW[T, ...]``
-     - planned
+     - **available** (tick-count windows)
    * - reference
      - ``REF<TSchema>``
      - ``REF[...]``
@@ -420,19 +420,27 @@ of bundles keyed by string:
 Bundles and compound shapes
 ---------------------------
 
-**Planned selectors.** A bundle groups named time-series. It is how a node takes
-several related inputs as one parameter, or returns several outputs.
+**Available.** A bundle groups named time-series. It is how a node takes several
+related inputs as one parameter, or returns several outputs.
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
    using Quote = TSB<"Quote", Field<"bid", TS<double>>, Field<"ask", TS<double>>>;
 
    struct MidPrice
    {
        static void eval(In<"q", Quote> q, Out<TS<double>> out)
        {
-           out.set((q.bid().value() + q.ask().value()) / 2.0);
+           out.set((q.field<"bid">().value() + q.field<"ask">().value()) / 2.0);
+       }
+   };
+
+   struct MakeQuote
+   {
+       static void eval(In<"px", TS<double>> px, Out<Quote> out)
+       {
+           out.field<"bid">().set(px.value());
+           out.field<"ask">().set(px.value() + 0.01);
        }
    };
 
@@ -445,6 +453,11 @@ several related inputs as one parameter, or returns several outputs.
 Internally the top-level input of every node is already a bundle — each ``In``
 parameter becomes one field of it — which is why a node's inputs and a ``TSB``
 share the same structure.
+
+The typed ``TSB`` selectors work for authored nodes. The erased replay/record
+delta path intentionally does not yet accept ``TSB`` directly: a sparse field
+delta convention is still needed before ``capture_delta`` / ``apply_delta`` can
+round-trip a bundle as schema data.
 
 
 Collections — ``TSS`` / ``TSL`` / ``TSD`` / ``TSW``
@@ -470,9 +483,11 @@ type-erased ``Value`` (``In<…>::delta()`` is the inherited ``delta_value()``).
    };
 
 **List (``TSL<C, N>``) — available and recursive.** A fixed-size list of ``N``
-children whose schema ``C`` is **any** time-series type — ``TS<T>``, ``TSS<T>``,
-``TSD<K,V>``, ``TSW<T>``, or another ``TSL`` — nested arbitrarily. ``in[i]`` yields the child input selector
-``In<"", C>`` and ``out[i]`` the child output ``Out<C>``, so you compose recursively:
+children whose schema ``C`` is any supported non-``REF`` time-series type -
+``TS<T>``, ``SIGNAL``, ``TSS<T>``, ``TSD<K,V>``, fixed or dynamic ``TSL``,
+``TSB<...>``, or ``TSW<T,...>`` - nested arbitrarily. ``in[i]`` yields the child
+input selector ``In<"", C>`` and ``out[i]`` the child output ``Out<C>``, so you
+compose recursively:
 
 .. code-block:: cpp
 
@@ -508,9 +523,15 @@ fixed list and projects the parent value from those child views. Dynamic ``TSL``
 storage is grow-only: output indexing can allocate new children, but shorter-list
 value copies are rejected until the ``TSL`` delta schema can represent removals.
 
-``TSD<K, V>`` (dict) and ``TSW<T, …>`` (window) selectors follow the same
-derive-from-view pattern; the Python iteration API (``added_items`` /
-``removed_items`` / ``modified_items``) maps onto the C++ view methods.
+**Dict (``TSD<K, V>``) — available and recursive.** ``In`` derives from
+``TSDInputView`` and adds typed key lookup. ``contains(key)`` and
+``find_slot(key)`` are typed; ``at(key)`` / ``operator[](key)`` return
+``In<"", V>`` for an existing child. Iteration helpers such as ``valid_items()``,
+``modified_items()``, ``added_items()``, and ``removed_items()`` return
+``(ValueView key, In<"", V> child)`` pairs. ``Out`` derives from
+``TSDOutputView``; ``out[key]`` creates the child if needed and returns
+``Out<V>``, with ``set(key, value)`` / ``apply(key, value_view)`` as scalar-child
+conveniences.
 
 .. code-block:: cpp
 
@@ -520,7 +541,46 @@ derive-from-view pattern; the Python iteration API (``added_items`` /
        static void eval(In<"d", TSD<std::string, TS<int>>> d, Out<TS<int>> out)
        {
            int total = 0;
-           for (auto &&[key, v] : d.items()) total += v.value();
+           for (auto &&[key, v] : d.valid_items()) total += v.value();
+           out.set(total);
+       }
+   };
+
+   struct SetValue
+   {
+       static void eval(In<"key", TS<std::string>> key, In<"value", TS<int>> value,
+                        Out<TSD<std::string, TS<int>>> out)
+       {
+           out[key.value()].set(value.value());
+       }
+   };
+
+``TSD`` replay/record uses the canonical
+``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}`` delta. Build expected
+test deltas with ``dict_delta<K, V>``.
+
+**Window (``TSW<T, Period, MinPeriod>``) — available for tick-count windows.**
+``In`` derives from ``TSWInputView`` and adds typed ``at(i)``, ``operator[](i)``,
+``front()``, and ``back()`` accessors. ``Out`` derives from ``TSWOutputView`` and
+adds ``push(value)`` / ``apply(value_view)``. The per-tick delta is the scalar
+element pushed in the current cycle.
+
+.. code-block:: cpp
+
+   struct PushWindow
+   {
+       static void eval(In<"x", TS<int>> x, Out<TSW<int, 3, 1>> out)
+       {
+           out.push(x.value());
+       }
+   };
+
+   struct WindowSum
+   {
+       static void eval(In<"w", TSW<int, 3, 1>> w, Out<TS<int>> out)
+       {
+           int total = 0;
+           for (std::size_t i = 0; i < w.size(); ++i) total += w[i];
            out.set(total);
        }
    };
@@ -529,24 +589,28 @@ derive-from-view pattern; the Python iteration API (``added_items`` /
 References and signals
 ----------------------
 
-**Planned selectors.**
+``SIGNAL`` is available. It is a valueless tick: a node depends only on *that
+something changed*, not on a value. ``In<..., SIGNAL>::ticked()`` reports whether
+the signal ticked in the current cycle, and ``Out<SIGNAL>::tick()`` emits one.
+Wiring treats ``SIGNAL`` specially on the input side: any time-series output can
+be connected to an ``In<..., SIGNAL>``, and the input observes the upstream
+modified/ticked state without reading the upstream value.
 
-- ``REF<TSchema>`` passes a *reference* to a time-series rather than its value —
-  used to rebind what an input points at without copying data. Mirrors Python
-  ``REF[...]``.
-- ``SIGNAL`` is a valueless tick: a node depends only on *that something
-  changed*, not on a value. Mirrors Python ``SIGNAL``.
+``REF<TSchema>`` selectors are planned. A reference passes a handle to a
+time-series rather than its value, used to rebind what an input points at without
+copying data. Mirrors Python ``REF[...]``.
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
    struct CountTicks
    {
        static void eval(In<"trigger", SIGNAL> trigger, State<int> n, Out<TS<int>> out)
        {
-           (void) trigger;
-           n.set(n.get() + 1);
-           out.set(n.get());
+           if (trigger.ticked())
+           {
+               n.set(n.get() + 1);
+               out.set(n.get());
+           }
        }
    };
 
@@ -846,7 +910,8 @@ explicit output type — and builds the concrete node. A ``TsVar`` ``In`` / ``Ou
 element type yet), so the body is driven by the runtime ``capture_delta`` /
 ``apply_delta`` (``<hgraph/types/time_series/ts_delta.h>``). The framework's own
 ``replay`` / ``record`` / ``const_`` / ``debug_print`` / ``null_sink`` are authored
-exactly this way.
+exactly this way. Direct erased ``TSB`` replay/record is still excluded until the
+runtime has a sparse field-delta convention; ``REF`` is a separate binding surface.
 
 A passthrough generic over any time-series type:
 
@@ -856,7 +921,8 @@ A passthrough generic over any time-series type:
    {
        static void eval(In<"in", TsVar<"T">> in, Out<TsVar<"T">> out)
        {
-           apply_delta(out, capture_delta(in.base()).view());  // 'T' resolved at wiring
+           Value delta = capture_delta(in.base());  // 'T' resolved at wiring
+           apply_delta(out, delta.view());
        }
    };
 
@@ -893,24 +959,26 @@ variable ``T`` is inferred from the configured value, so ``TS<T>`` resolves with
 
 A dict-keyed generic uses ``ScalarVar`` / ``TsVar`` in C++ and ``K`` / ``V`` in
 Python. The resolver/unifier recursion handles such composites (``K`` and ``V``
-bind from the connected ``TSD`` port); note that *executing* a node over ``TSD`` still
-needs the corresponding runtime layer (a ``TSL`` of ``TSS`` already runs):
+bind from the connected ``TSD`` port). Generic nodes that only need to forward
+the per-tick delta can stay erased through ``capture_delta`` / ``apply_delta``:
 
 .. code-block:: cpp
 
-   struct keys_of
+   struct dict_passthrough
    {
-       static void eval(In<"d", TSD<ScalarVar<"K">, TsVar<"V">>> d, Out<TSS<ScalarVar<"K">>> out)
+       static void eval(In<"d", TSD<ScalarVar<"K">, TsVar<"V">>> d,
+                        Out<TSD<ScalarVar<"K">, TsVar<"V">>> out)
        {
-           out.apply_delta(d.key_set().delta_value());   // tick added / removed keys
+           Value delta = capture_delta(d.base());
+           apply_delta(out.base(), delta.view());
        }
    };
 
 .. code-block:: python
 
    @compute_node
-   def keys_of(d: TSD[K, V]) -> TSS[K]:
-       return d.key_set.delta_value
+   def dict_passthrough(d: TSD[K, V]) -> TSD[K, V]:
+       return d.delta_value
 
 
 Assembling and running a graph
@@ -1005,9 +1073,12 @@ Feature status
      - available
      - available
    * - Container selectors (``In``/``Out`` over ``TSB``/``TSL``/``TSD``/``TSW``)
-     - planned
      - available
-   * - ``SIGNAL`` / ``REF`` selectors
+     - available
+   * - ``SIGNAL`` selectors
+     - available
+     - available
+   * - ``REF`` selectors
      - planned
      - available
    * - ``GlobalStateView`` injectable (shared ``string -> value`` store)

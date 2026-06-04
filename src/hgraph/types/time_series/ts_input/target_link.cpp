@@ -277,8 +277,9 @@ namespace hgraph::detail
         {
             throw std::invalid_argument("TSInput target binding requires a bound output view");
         }
-        auto target = output.binding_for(schema);
-        if (!time_series_schema_equivalent(target.schema(), &schema))
+
+        auto target = schema.kind == TSTypeKind::SIGNAL ? output.handle() : output.binding_for(schema);
+        if (schema.kind != TSTypeKind::SIGNAL && !time_series_schema_equivalent(target.schema(), &schema))
         {
             throw std::invalid_argument("TSInput target binding schema does not match the input slot schema");
         }

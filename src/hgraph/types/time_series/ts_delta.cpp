@@ -21,7 +21,7 @@ namespace hgraph
         [[noreturn]] void unsupported(const char *fn, const TSValueTypeMetaData *schema)
         {
             throw std::logic_error(
-                fmt::format("{}: time-series kind {} is not yet supported (only TS / TSS / TSL)", fn,
+                fmt::format("{}: time-series kind {} is not yet supported (supported: TS / SIGNAL / TSS / TSD / TSL / TSW)", fn,
                             schema != nullptr ? static_cast<int>(schema->kind) : -1));
         }
 
@@ -44,6 +44,15 @@ namespace hgraph
             // delta_value_schema == value_type; the scalar value IS the delta.
             return Value{in.value()};
 
+        case TSTypeKind::SIGNAL:
+            // SIGNAL is an input-side tick projection. Its canonical delta is the
+            // boolean tick marker, independent of the upstream value schema.
+            return Value{true};
+
+        case TSTypeKind::TSW:
+            // TSW delta_value_schema == element type; the pushed element is the delta.
+            return Value{in.delta_value()};
+
         case TSTypeKind::TSS:
         {
             // delta_value_schema == Bundle{added: Set<E>, removed: Set<E>}.
@@ -60,6 +69,32 @@ namespace hgraph
             BundleBuilder bundle{binding_for(bundle_meta, "capture_delta")};
             bundle.set("added", added.build().view());
             bundle.set("removed", removed.build().view());
+            return bundle.build();
+        }
+
+        case TSTypeKind::TSD:
+        {
+            // delta_value_schema == Bundle{removed: Set<K>, modified: Map<K, delta(V)>}.
+            const ValueTypeMetaData *bundle_meta = schema->delta_value_schema;
+            const ValueTypeBinding  &bundle_binding = binding_for(bundle_meta, "capture_delta");
+            const ValueTypeBinding  &key_binding = binding_for(schema->key_type(), "capture_delta");
+            const ValueTypeBinding  &delta_binding =
+                binding_for(schema->element_ts()->delta_value_schema, "capture_delta");
+
+            const auto dict = in.as_dict();
+            SetBuilder removed{key_binding};
+            for (const auto &key : dict.removed_keys()) { (void)removed.insert_copy(key.data()); }
+
+            MapBuilder modified{key_binding, delta_binding};
+            for (const auto &[key, child] : dict.modified_items())
+            {
+                const Value child_delta = capture_delta(child);
+                modified.set_item_copy(key.data(), child_delta.view().data());
+            }
+
+            BundleBuilder bundle{bundle_binding};
+            bundle.set("removed", removed.build().view());
+            bundle.set("modified", modified.build().view());
             return bundle.build();
         }
 
@@ -96,9 +131,17 @@ namespace hgraph
         switch (schema->kind)
         {
         case TSTypeKind::TS:
+        case TSTypeKind::SIGNAL:
         {
             auto mutation = out.begin_mutation(out.evaluation_time());
-            if (!mutation.copy_value_from(delta)) { throw std::logic_error("apply_delta: failed to copy TS value"); }
+            if (!mutation.copy_value_from(delta)) { throw std::logic_error("apply_delta: failed to copy scalar value"); }
+            break;
+        }
+
+        case TSTypeKind::TSW:
+        {
+            auto window_out = out.as_window();
+            window_out.begin_mutation(out.evaluation_time()).push(delta);
             break;
         }
 
@@ -112,6 +155,24 @@ namespace hgraph
             for (std::size_t i = 0; i < removed.size(); ++i) { (void)mutation.remove(removed.at(i)); }
             const auto added = bundle.field("added").as_indexed_view();
             for (std::size_t i = 0; i < added.size(); ++i) { (void)mutation.add(added.at(i)); }
+            break;
+        }
+
+        case TSTypeKind::TSD:
+        {
+            const auto bundle = delta.as_bundle();
+            auto       dict_out = out.as_dict();
+            auto       mutation = dict_out.begin_mutation(out.evaluation_time());
+
+            const auto removed = bundle.field("removed").as_indexed_view();
+            for (std::size_t i = 0; i < removed.size(); ++i) { (void)mutation.erase(removed.at(i)); }
+
+            const auto modified = bundle.field("modified").as_map();
+            for (const auto &[key, child_delta] : modified)
+            {
+                auto child = mutation.at(key);
+                apply_delta(TSOutputView{out.output(), child, out.evaluation_time()}, child_delta);
+            }
             break;
         }
 

@@ -23,12 +23,14 @@ namespace hgraph
      * output ticks from such a canonical delta ``Value``.
      *
      * The canonical per-kind delta shape (``type_registry.cpp``):
-     *   ``TS<T>``  -> ``T``;  ``TSS<T>`` -> ``Bundle{added: Set<T>, removed: Set<T>}``;
+     *   ``TS<T>`` / ``SIGNAL`` / ``TSW<T>`` -> scalar; ``TSS<T>`` ->
+     *   ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSD<K,V>`` ->
+     *   ``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}``;
      *   ``TSL<C,N>`` -> ``Map<int64, delta(C)>`` (recursive in ``C``).
      *
-     * Kinds beyond TS / TSS / TSL (TSB / TSD / TSW / SIGNAL / REF) throw a clear
-     * ``std::logic_error`` — they are not yet exercised end-to-end and (for TSB) need
-     * a per-field present-flag delta convention that is its own design step.
+     * ``TSB`` and ``REF`` throw a clear ``std::logic_error``. ``TSB`` still needs
+     * a sparse field-delta convention; ``REF`` is a separate reference-binding
+     * surface rather than ordinary value replay.
      */
     [[nodiscard]] Value capture_delta(const TSInputView &in);
 

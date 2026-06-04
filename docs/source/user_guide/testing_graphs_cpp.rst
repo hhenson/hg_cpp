@@ -72,14 +72,15 @@ input may be a braced list (its type is inferred); later inputs are passed as
    CHECK_OUTPUT(testing::eval_node<Sum>({1, none, 3}, rhs), {11, 21, 33});  // lhs persists at cycle 1
 
 The first parameter must be a time-series input, and the node must have exactly one
-output. ``eval_node`` drives **scalar** ``TS<T>``, **set** ``TSS<T>``, and fixed-size
-**list** ``TSL<C, N>`` inputs and outputs, the last **recursively** in its child
-``C`` (``TS`` / ``TSS`` / ``TSL``). A scalar input/output exchanges a bare ``T`` per
-cycle; a **container** input/output exchanges the per-cycle **delta as a canonical
-type-erased ``Value``** built by ``set_delta`` / ``list_delta`` (see *Set time-series*
-and *List time-series* below). The remaining container types (``TSB`` / ``TSD`` /
-``TSW``) are a future extension — each is a new kind case in the runtime
-``capture_delta`` / ``apply_delta`` dispatch.
+output. ``eval_node`` drives scalar ``TS<T>``, ``SIGNAL``, ``TSS<T>``,
+``TSD<K,V>``, ``TSW<T,Period,MinPeriod>``, and ``TSL<C, N>`` inputs and outputs.
+``TSL`` is recursive in any supported non-``REF`` child ``C``. ``TS<T>`` and
+tick-count ``TSW<T,...>`` exchange a bare ``T`` per cycle, ``SIGNAL`` exchanges
+``bool`` ticks, and collection inputs/outputs exchange the per-cycle **delta as a
+canonical type-erased ``Value``** built by helpers such as ``set_delta`` /
+``list_delta`` / ``dict_delta`` (see the collection sections below).
+Direct erased ``TSB`` replay/record remains intentionally unsupported until the
+runtime has a sparse field-delta convention.
 
 .. _ts-harness:
 
@@ -88,18 +89,19 @@ How the harness dispatches per schema
 
 ``eval_node`` itself is schema-agnostic: for each input and the output it consults a
 ``ts_harness<S>`` adapter (in ``<hgraph/lib/testing/eval_node.h>``) that names the
-per-cycle **harness element** — ``T`` for a scalar ``TS<T>``, and the canonical delta
-``Value`` for a container (``TSS`` / ``TSL`` / …) — and wires the (single, erased)
-``replay`` source / ``record`` sink and seeds/reads the cycle-aligned buffer.
+per-cycle **harness element** — ``T`` for ``TS<T>`` and tick-count ``TSW<T,...>``,
+``bool`` for ``SIGNAL``, and the canonical delta ``Value`` for a collection
+(``TSS`` / ``TSD`` / ``TSL`` / …) — and wires the (single, erased) ``replay`` source
+/ ``record`` sink and seeds/reads the cycle-aligned buffer.
 Containers flow as canonical ``Value``\ s end to end: ``record`` captures the per-tick
 delta via the runtime ``capture_delta``, ``replay`` re-creates ticks via
 ``apply_delta``, and ``CHECK_OUTPUT`` compares with ``Value::equals``
 (order-independent) and renders with ``to_string``. The first input's element type is
 what the (braced) first argument
 holds; the output's element type is what the returned ``std::vector<std::optional<…>>``
-holds. Supporting a new time-series kind is a localised change — a kind case in the
-runtime ``capture_delta`` / ``apply_delta``; ``eval_node`` and the erased
-``replay`` / ``record`` do not change.
+holds. Supporting a new replayable time-series kind is a localised change — a kind
+case in the runtime ``capture_delta`` / ``apply_delta``; ``eval_node`` and the
+erased ``replay`` / ``record`` do not change.
 
 Comparing results: ``CHECK_OUTPUT``
 ....................................
@@ -153,9 +155,14 @@ comparing them is an element-wise list compare.
 ``replay`` is the source node — a **single erased node** (not templated per schema):
 it is authored over a deferred output type (``Out<TsVar<"S">>``) and resolved at
 wiring. Supply the output type explicitly, which also gives back a typed port:
-``wire<testing::replay, TS<int>>(w, key)`` for a scalar source, or
-``wire<testing::replay, TSS<int>>`` / ``wire<testing::replay, TSL<TS<int>, N>>`` to
-replay set / list deltas (see below). It initiates itself at start via
+
+* ``wire<testing::replay, TS<int>>(w, key)`` for a scalar source.
+* ``wire<testing::replay, TSS<int>>(w, key)`` for a set.
+* ``wire<testing::replay, TSD<std::string, TS<int>>>(w, key)`` for a dict.
+* ``wire<testing::replay, TSL<TS<int>, N>>(w, key)`` for a list.
+* ``wire<testing::replay, TSW<int, 3, 1>>(w, key)`` for a tick window.
+
+It initiates itself at start via
 ``schedule_on_start`` (sources are not scheduled by default), reads its buffer from
 the ``GlobalState`` under the ``key`` scalar, ticks once per cycle that has a value
 (re-creating the tick via the runtime ``apply_delta``), and reschedules itself (via
@@ -245,13 +252,16 @@ A small set of reusable nodes lives in ``<hgraph/lib/std/std_nodes.h>`` (namespa
 Deltas are canonical ``Value``\ s
 ---------------------------------
 
-A container time-series ticks a **delta** each cycle, and that delta is the **canonical
-type-erased** ``Value`` whose schema is the runtime ``delta_value_schema`` —
-``Bundle{added: Set<T>, removed: Set<T>}`` for ``TSS<T>``, ``Map<int64, delta(C)>`` for
-``TSL<C, N>`` (recursive in ``C``). Tests build these with **recursive builder
-functions** that *produce a standard* ``Value`` *matching the type-erased signature*
-(there is no parallel wrapper type — comparison is ``Value::equals``, display is
-``to_string``):
+A collection time-series ticks a **delta** each cycle, and that delta is the
+**canonical type-erased** ``Value`` whose schema is the runtime
+``delta_value_schema``: ``Bundle{added: Set<T>, removed: Set<T>}`` for ``TSS<T>``,
+``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}`` for ``TSD<K,V>``, and
+``Map<int64, delta(C)>`` for ``TSL<C, N>`` (recursive in ``C``). Tick-count
+``TSW<T,...>`` and ``SIGNAL`` have scalar deltas, so the harness exchanges plain
+``T`` / ``bool`` elements for those shapes. Tests build collection deltas with
+**recursive builder functions** that *produce a standard* ``Value`` *matching the
+type-erased signature* (there is no parallel wrapper type — comparison is
+``Value::equals``, display is ``to_string``):
 
 .. code-block:: cpp
 
@@ -260,6 +270,24 @@ functions** that *produce a standard* ``Value`` *matching the type-erased signat
    list_delta<TS<int>>({10, none, 30})                   // positional: position is the index, none = skip
    list_delta<TSS<int>>({{0, set_delta<int>({1}, {})}})  // -> Map<int64, Bundle>   (TSL of sets)
    list_delta<TSL<TS<int>,2>>({{0, list_delta<TS<int>>({{0,1}})}})   // nested, recursive
+   dict_delta<std::string, TS<int>>({{"a", 1}}, {"b"})   // remove b, modify a
+
+Signal time-series (``SIGNAL``)
+-------------------------------
+
+Author with ``In<Name, SIGNAL>`` (``ticked()``) and ``Out<SIGNAL>`` (``tick()``).
+The test harness exchanges ``bool`` elements: ``true`` means "tick this cycle" and
+``none`` means "no tick".
+In normal graph wiring, ``In<Name, SIGNAL>`` can bind to any time-series output;
+the signal input observes whether that upstream output ticked, independent of its
+value schema.
+
+.. code-block:: cpp
+
+   struct MirrorSignal { static void eval(In<"s", SIGNAL> s, Out<SIGNAL> out)
+                         { if (s.ticked()) out.tick(); } };
+
+   CHECK_OUTPUT(testing::eval_node<MirrorSignal>({true, none, true}), {true, none, true});
 
 Set time-series (``TSS``)
 -------------------------
@@ -290,13 +318,15 @@ is still future work — it needs a set-valued wiring scalar.
 List time-series (``TSL``) — recursive
 --------------------------------------
 
-A fixed-size ``TSL<C, N>`` is ``N`` child time-series whose schema ``C`` is **any**
-supported time-series — ``TS`` / ``TSS`` / ``TSL`` — nested arbitrarily. Author with
-``In<Name, TSL<C, N>>`` (``size``, ``operator[](i) -> In<"", C>``, ``modified_items``;
-``delta()`` is the canonical ``Map<int64, delta(C)>`` ``ValueView``) and
-``Out<TSL<C, N>>`` (``operator[](i) -> Out<C>``; ``set(i, v)`` is a scalar-child
-convenience). Children compose recursively — ``out[i]`` is an ``Out<C>``, so a TSL of
-sets writes via ``out[i].add(...)`` and a TSL of TSL via ``out[i][j].set(...)``.
+A fixed-size ``TSL<C, N>`` is ``N`` child time-series whose schema ``C`` is any
+supported non-``REF`` time-series — ``TS`` / ``SIGNAL`` / ``TSS`` / ``TSD`` /
+fixed or dynamic ``TSL`` / ``TSB`` / ``TSW`` — nested arbitrarily. Author with
+``In<Name, TSL<C, N>>`` (``size``, ``operator[](i) -> In<"", C>``,
+``modified_items``; ``delta()`` is the canonical ``Map<int64, delta(C)>``
+``ValueView``) and ``Out<TSL<C, N>>`` (``operator[](i) -> Out<C>``; ``set(i, v)``
+is a scalar-child convenience). Children compose recursively — ``out[i]`` is an
+``Out<C>``, so a TSL of sets writes via ``out[i].add(...)`` and a TSL of TSL via
+``out[i][j].set(...)``.
 
 The simplest test path is :ref:`eval_node <eval-node>`: a ``TSL`` input/output exchanges
 the per-cycle delta ``Value`` from ``list_delta`` (recursive in ``C``).
@@ -335,8 +365,57 @@ each ``index -> child_delta`` of the buffered delta to the matching child output
 
    The **authoring and delta layers are recursive over any child schema** today —
    ``In``/``Out<TSL<C, N>>`` compose for any ``C`` and ``list_delta``/``set_delta`` build
-   the nested canonical ``Value``. TSData storage for fixed ``TSL`` now covers the
-   implemented non-``REF`` child kinds: ``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed
-   and dynamic ``TSL``, ``TSB``, and ``TSW``. Dynamic (``N == 0``) ``TSL`` storage
-   is grow-only; tests should not expect shorter-list copies to produce a removal
-   delta until ``TSL`` has a structural removal surface.
+   the nested canonical ``Value`` for replayable child kinds. TSData storage for fixed
+   ``TSL`` now covers the implemented non-``REF`` child kinds: ``TS``, ``SIGNAL``,
+   ``TSS``, ``TSD``, fixed and dynamic ``TSL``, ``TSB``, and ``TSW``. Dynamic
+   (``N == 0``) ``TSL`` storage is grow-only; tests should not expect shorter-list
+   copies to produce a removal delta until ``TSL`` has a structural removal surface.
+
+Dict time-series (``TSD``)
+--------------------------
+
+Author with ``In<Name, TSD<K,V>>`` (typed ``contains`` / ``find_slot`` /
+``operator[]`` plus ``valid_items`` / ``modified_items`` / ``added_items`` /
+``removed_items``) and ``Out<TSD<K,V>>`` (``out[key] -> Out<V>``; ``set(key, v)``
+for scalar children). The simplest replay/record path exchanges the canonical
+``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}`` ``Value`` from
+``dict_delta``.
+
+.. code-block:: cpp
+
+   using IntDict = TSD<std::string, TS<int>>;
+
+   struct MirrorDict
+   {
+       static void eval(In<"d", IntDict> d, Out<IntDict> out)
+       {
+           Value delta = capture_delta(d.base());
+           apply_delta(out.base(), delta.view());
+       }
+   };
+
+   const std::vector<std::optional<Value>> deltas{
+       dict_delta<std::string, TS<int>>({{"a", 1}, {"b", 2}}),
+       dict_delta<std::string, TS<int>>({{"a", 5}}, {"b"}),
+   };
+   CHECK_OUTPUT(testing::eval_node<MirrorDict>(deltas), deltas);
+
+Window time-series (``TSW``)
+----------------------------
+
+Tick-count ``TSW<T, Period, MinPeriod>`` windows replay and record their per-tick
+push value. Author with ``In<Name, TSW<T,...>>`` (``size`` / ``operator[]`` /
+``front`` / ``back``) and ``Out<TSW<T,...>>`` (``push`` / ``apply``). The test
+harness exchanges plain ``T`` elements.
+
+.. code-block:: cpp
+
+   struct MirrorWindow
+   {
+       static void eval(In<"w", TSW<int, 3, 1>> w, Out<TSW<int, 3, 1>> out)
+       {
+           if (w.modified()) { out.apply(w.delta()); }
+       }
+   };
+
+   CHECK_OUTPUT(testing::eval_node<MirrorWindow>({1, none, 3, 4}), {1, none, 3, 4});

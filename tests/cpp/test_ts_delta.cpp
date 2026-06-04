@@ -200,3 +200,44 @@ TEST_CASE("ts_delta: capture/apply round-trip a dynamic TSL-of-scalar list delta
                  {list_delta<TS<int>>({{0, 1}}), list_delta<TS<int>>({{0, 5}, {1, 9}}),
                   list_delta<TS<int>>({{1, 11}})});
 }
+
+TEST_CASE("ts_delta: capture/apply round-trip a TSD-of-scalar dict delta")
+{
+    using namespace std::string_literals;
+
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+    (void)TypeRegistry::instance().register_scalar<std::string>("string");
+    const std::vector<std::optional<Value>> deltas{
+        dict_delta<std::string, TS<int>>({{"a"s, 1}, {"b"s, 2}}),
+        dict_delta<std::string, TS<int>>({{"a"s, 5}}, {"b"s}),
+        dict_delta<std::string, TS<int>>({{"b"s, 9}}),
+    };
+
+    auto rt = run_graph<RoundTripGraph<TSD<std::string, TS<int>>>>(
+        [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
+    CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
+                 {dict_delta<std::string, TS<int>>({{"a"s, 1}, {"b"s, 2}}),
+                  dict_delta<std::string, TS<int>>({{"a"s, 5}}, {"b"s}),
+                  dict_delta<std::string, TS<int>>({{"b"s, 9}})});
+}
+
+TEST_CASE("ts_delta: capture/apply round-trip a TSW scalar push delta")
+{
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+    const std::vector<std::optional<Value>> deltas{Value{1}, Value{2}, Value{3}};
+
+    auto rt = run_graph<RoundTripGraph<TSW<int, 3, 1>>>(
+        [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
+    CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"), {Value{1}, Value{2}, Value{3}});
+}
+
+TEST_CASE("ts_delta: capture/apply round-trip a SIGNAL tick delta")
+{
+    (void)TypeRegistry::instance().register_scalar<bool>("bool");
+    const std::vector<std::optional<Value>> deltas{Value{true}, Value{true}, Value{true}};
+
+    auto rt = run_graph<RoundTripGraph<SIGNAL>>(
+        [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
+    CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
+                 {Value{true}, Value{true}, Value{true}});
+}

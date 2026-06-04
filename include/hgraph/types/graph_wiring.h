@@ -6,6 +6,7 @@
 #include <hgraph/types/metadata/value_plan_factory.h>   // ValuePlanFactory (scalar bundle binding)
 #include <hgraph/types/static_node.h>                   // StaticNodeSignature, In/Out/State/Scalar markers
 #include <hgraph/types/static_schema.h>                 // schema_descriptor
+#include <hgraph/types/time_series/endpoint_schema.h>   // time_series_schema_equivalent
 #include <hgraph/types/type_resolution.h>               // ResolutionMap, ts_resolver, unifiers, ts_type
 #include <hgraph/types/value/value.h>                   // Value (scalar configuration)
 
@@ -201,6 +202,18 @@ namespace hgraph
         template <typename T> struct is_scalar_var : std::false_type {};
         template <fixed_string N, typename... C> struct is_scalar_var<ScalarVar<N, C...>> : std::true_type {};
 
+        template <typename InputSchema, typename OutputSchema>
+        inline constexpr bool statically_accepts_output_v =
+            std::is_same_v<InputSchema, SIGNAL> || std::is_same_v<InputSchema, OutputSchema>;
+
+        [[nodiscard]] inline bool input_accepts_output_schema(const TSValueTypeMetaData *input_schema,
+                                                              const TSValueTypeMetaData *output_schema)
+        {
+            if (input_schema == nullptr || output_schema == nullptr) { return false; }
+            if (input_schema->kind == TSTypeKind::SIGNAL) { return true; }
+            return time_series_schema_equivalent(input_schema, output_schema);
+        }
+
         // Drop the leading ``Wiring &`` from a ``compose`` parameter tuple.
         template <typename Tuple> struct drop_first;
         template <typename A0, typename... As> struct drop_first<std::tuple<A0, As...>> { using type = std::tuple<As...>; };
@@ -267,8 +280,20 @@ namespace hgraph
             {
                 using A = std::remove_cvref_t<Arg>;
                 static_assert(is_port<A>::value, "wire<G>: a time-series input expects a Port argument");
-                static_assert(std::is_same_v<typename A::schema, typename P::schema>,
-                              "wire<G>: input port schema does not match the sub-graph's time-series input");
+                if constexpr (is_erased_port<A>::value)
+                {
+                    const auto *expected = schema_descriptor<typename P::schema>::ts_meta();
+                    if (!input_accepts_output_schema(expected, arg.erased().schema))
+                    {
+                        throw std::logic_error(
+                            "wire<G>: erased input port schema does not match the sub-graph's time-series input");
+                    }
+                }
+                else
+                {
+                    static_assert(statically_accepts_output_v<typename P::schema, typename A::schema>,
+                                  "wire<G>: input port schema does not match the sub-graph's time-series input");
+                }
                 return std::forward<Arg>(arg);
             }
             else
@@ -352,7 +377,7 @@ namespace hgraph
                         ...);
                 }(std::make_index_sequence<sizeof...(Args)>{});
 
-                // Input ports (the In positions): bindings are already validated above.
+                // Input ports (the In positions): validate against the resolved input schema.
                 std::vector<WiringPortRef> inputs;
                 inputs.reserve(signature::input_count());
                 [&]<std::size_t... I>(std::index_sequence<I...>) {
@@ -361,7 +386,15 @@ namespace hgraph
                             using P = std::tuple_element_t<I, wire_params>;
                             if constexpr (static_node_detail::is_input_selector<P>::value)
                             {
-                                inputs.push_back(std::get<I>(arg_tuple).erased());
+                                const WiringPortRef ref = std::get<I>(arg_tuple).erased();
+                                const auto         *expected =
+                                    ts_resolver<typename graph_wiring_detail::in_param_schema<P>::type>::resolve(map);
+                                if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
+                                {
+                                    throw std::logic_error(
+                                        "wire<T>: input port schema does not match the node's time-series input");
+                                }
+                                inputs.push_back(ref);
                             }
                         }(),
                         ...);
@@ -430,7 +463,7 @@ namespace hgraph
                                     const WiringPortRef ref      = std::get<I>(arg_tuple).erased();
                                     const auto         *expected = schema_descriptor<
                                         typename graph_wiring_detail::in_param_schema<P>::type>::ts_meta();
-                                    if (expected != nullptr && ref.schema != expected)
+                                    if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
                                     {
                                         throw std::logic_error(
                                             "wire<T>: erased port schema does not match the node's time-series input");
@@ -439,8 +472,9 @@ namespace hgraph
                                 }
                                 else
                                 {
-                                    static_assert(std::is_same_v<typename A::schema,
-                                                                 typename graph_wiring_detail::in_param_schema<P>::type>,
+                                    static_assert(graph_wiring_detail::statically_accepts_output_v<
+                                                      typename graph_wiring_detail::in_param_schema<P>::type,
+                                                      typename A::schema>,
                                                   "wire<T>: input port schema does not match the node's time-series input");
                                     inputs.push_back(std::get<I>(arg_tuple).erased());
                                 }

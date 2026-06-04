@@ -22,15 +22,23 @@ namespace hgraph::testing
      * ``eval_node`` exchange the right per-cycle "harness element" with the test and
      * wire the matching ``replay`` source / ``record`` sink.
      *
-     * The harness element is the typed scalar ``T`` for a scalar ``TS<T>`` (so a test
-     * writes ``{1, none, 3}``) and the **canonical delta ``Value``** for any container
-     * (``TSS`` / ``TSL`` / …, built by ``set_delta`` / ``list_delta`` and compared with
-     * ``Value::equals``). One adapter covers every schema — ``replay`` / ``record`` are
-     * SINGLE erased nodes resolved at wiring (``replay`` from the explicit type ``S``,
-     * ``record`` from its connected input port), so no per-kind variant is needed.
+     * The harness element is the typed scalar ``T`` for scalar-delta leaves
+     * (``TS<T>`` and tick-count ``TSW<T,...>``, so a test writes ``{1, none, 3}``),
+     * ``bool`` for ``SIGNAL``, and the **canonical delta ``Value``** for collection
+     * kinds (``TSS`` / ``TSD`` / ``TSL`` / …, built by ``set_delta`` / ``dict_delta`` /
+     * ``list_delta`` and compared with ``Value::equals``). One adapter covers every
+     * schema — ``replay`` / ``record`` are SINGLE erased nodes resolved at wiring
+     * (``replay`` from the explicit type ``S``, ``record`` from its connected input
+     * port), so no per-kind variant is needed.
      */
     template <typename S> struct harness_element { using type = Value; };
     template <typename T> struct harness_element<TS<T>> { using type = T; };
+    template <typename T, std::size_t Period, std::size_t MinPeriod>
+    struct harness_element<TSW<T, Period, MinPeriod>>
+    {
+        using type = T;
+    };
+    template <> struct harness_element<SIGNAL> { using type = bool; };
 
     template <typename S>
     struct ts_harness
@@ -119,8 +127,9 @@ namespace hgraph::testing
      * Arguments are given in the node's **eval-parameter order** (its ``In`` and
      * ``Scalar`` parameters): a **time-series input** is a
      * ``std::vector<std::optional<E>>`` where ``E`` is that input's harness element
-     * (``T`` for ``TS<T>`` and the canonical delta ``Value`` for container kinds
-     * such as ``TSS`` / fixed or dynamic ``TSL`` — see :cpp:class:`ts_harness`),
+     * (``T`` for scalar-delta leaves, ``bool`` for ``SIGNAL``, and the canonical
+     * delta ``Value`` for collection kinds such as ``TSS`` / ``TSD`` / fixed or
+     * dynamic ``TSL`` — see :cpp:class:`ts_harness`),
      * one element per engine cycle from ``MIN_ST`` (``none`` = no tick), and a
      * **scalar input** is the value itself. The harness wires the matching ``replay``
      * per time-series input, the node, then the matching ``record`` on the output,

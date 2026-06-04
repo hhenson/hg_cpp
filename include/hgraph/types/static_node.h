@@ -9,10 +9,15 @@
 #include <hgraph/types/type_resolution.h>
 #include <hgraph/types/time_series/ts_data/set_view.h>
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
+#include <hgraph/types/time_series/ts_input/dict_view.h>
 #include <hgraph/types/time_series/ts_input/list_view.h>
 #include <hgraph/types/time_series/ts_input/set_view.h>
+#include <hgraph/types/time_series/ts_input/window_view.h>
+#include <hgraph/types/time_series/ts_output/bundle_view.h>
+#include <hgraph/types/time_series/ts_output/dict_view.h>
 #include <hgraph/types/time_series/ts_output/list_view.h>
 #include <hgraph/types/time_series/ts_output/set_view.h>
+#include <hgraph/types/time_series/ts_output/window_view.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/types/value/value_builder.h>
 #include <hgraph/types/value/value_view.h>
@@ -46,18 +51,22 @@ namespace hgraph
      * See ``data_structures`` developer guide: *Wiring* and
      * *Schemas > Static Schema*.
      *
-     * The typed selector surface currently covers scalar ``TS<T>`` values,
-     * set ``TSS<T>`` values, scalar ``State<T>``, wiring-time ``Scalar<Name, T>``
-     * values, graph-level ``GlobalState<T>``, and scheduler injection. Other
-     * container shapes and push-source selectors are still being filled in.
+     * The typed selector surface covers the supported non-``REF`` time-series
+     * shapes (``TS`` / ``SIGNAL`` / ``TSS`` / ``TSD`` / ``TSL`` / ``TSB`` /
+     * tick-count ``TSW``), scalar ``State<T>``, wiring-time ``Scalar<Name, T>``
+     * values, graph-level ``GlobalState<T>``, and scheduler injection. ``REF``,
+     * push-source selectors, policy flags, and recordable state are still being
+     * filled in.
      */
 
     // -----------------------------------------------------------------
     // Time-series deltas — canonical type-erased Values
     //
     // The per-cycle delta of any time-series is the canonical ``Value`` whose schema
-    // is the runtime ``delta_value_schema`` (``TS<T>`` -> ``T``; ``TSS<T>`` ->
-    // ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSL<C,N>`` ->
+    // is the runtime ``delta_value_schema`` (``TS<T>`` / ``SIGNAL`` /
+    // ``TSW<T,...>`` -> scalar; ``TSS<T>`` ->
+    // ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSD<K,V>`` ->
+    // ``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}``; ``TSL<C,N>`` ->
     // ``Map<int64, delta(C)>``, recursive). These builders *produce that exact
     // canonical Value*, so a built delta compares to a runtime-produced one via
     // ``Value::equals`` — there is no parallel wrapper type. These are the
@@ -68,15 +77,41 @@ namespace hgraph
 
     namespace static_node_detail
     {
-        /** True for a scalar time-series schema ``TS<T>`` (the TSL recursion base). */
+        /** True when a schema's delta input is a scalar value rather than a child ``Value``. */
         template <typename S> struct is_scalar_ts : std::false_type {};
         template <typename V> struct is_scalar_ts<TS<V>> : std::true_type {};
+        template <typename V, std::size_t P, std::size_t M> struct is_scalar_ts<TSW<V, P, M>> : std::true_type {};
+        template <> struct is_scalar_ts<SIGNAL> : std::true_type {};
 
         /** The user-supplied per-entry delta input for child schema ``C``: the bare
-         *  scalar ``T`` for ``TS<T>``, otherwise a prebuilt child-delta ``Value``. */
+         *  scalar for ``TS`` / ``SIGNAL`` / ``TSW``, otherwise a prebuilt child-delta
+         *  ``Value``. */
         template <typename C> struct delta_input { using type = Value; };
         template <typename V> struct delta_input<TS<V>> { using type = V; };
+        template <typename V, std::size_t P, std::size_t M> struct delta_input<TSW<V, P, M>> { using type = V; };
+        template <> struct delta_input<SIGNAL> { using type = bool; };
         template <typename C> using delta_input_t = typename delta_input<C>::type;
+
+        template <fixed_string Wanted, typename... Fields>
+        struct tsb_field_lookup
+        {
+            static constexpr bool found = false;
+            using type                  = void;
+            static constexpr std::size_t index = 0;
+        };
+
+        template <fixed_string Wanted, fixed_string Name, typename Schema, typename... Rest>
+        struct tsb_field_lookup<Wanted, Field<Name, Schema>, Rest...>
+        {
+          private:
+            using next = tsb_field_lookup<Wanted, Rest...>;
+            static constexpr bool matches = Wanted.sv() == Name.sv();
+
+          public:
+            static constexpr bool found = matches || next::found;
+            using type                  = std::conditional_t<matches, Schema, typename next::type>;
+            static constexpr std::size_t index = matches ? 0 : 1 + next::index;
+        };
     }  // namespace static_node_detail
 
     /** The canonical delta-value schema for time-series schema ``S`` (recursive). */
@@ -150,6 +185,45 @@ namespace hgraph
             }
             return builder.build();
         }
+
+        template <typename K, typename V>
+        [[nodiscard]] inline Value build_dict_delta(const std::map<K, delta_input_t<V>> &modified,
+                                                    const std::vector<K>                &removed)
+        {
+            const auto *key_meta = scalar_descriptor<K>::value_meta();
+            const auto *key_binding = ValuePlanFactory::instance().binding_for(key_meta);
+            const auto &val_binding = delta_value_binding<V>();
+            if (key_binding == nullptr) { throw std::logic_error("dict_delta: unresolved key binding"); }
+
+            auto       &registry      = TypeRegistry::instance();
+            const auto *removed_schema = registry.set(key_meta);
+            const auto *modified_schema = registry.map(key_meta, delta_value_schema<V>());
+            const auto *bundle_schema =
+                registry.un_named_bundle({{"removed", removed_schema}, {"modified", modified_schema}});
+            const auto *bundle_binding = ValuePlanFactory::instance().binding_for(bundle_schema);
+            if (bundle_binding == nullptr) { throw std::logic_error("dict_delta: unresolved bundle binding"); }
+
+            SetBuilder removed_set{*key_binding};
+            for (const auto &key : removed) { (void)removed_set.insert_copy(std::addressof(key)); }
+
+            MapBuilder modified_map{*key_binding, val_binding};
+            for (const auto &[key, input] : modified)
+            {
+                if constexpr (is_scalar_ts<V>::value)
+                {
+                    modified_map.set_item_copy(std::addressof(key), std::addressof(input));
+                }
+                else
+                {
+                    modified_map.set_item_copy(std::addressof(key), input.view().data());
+                }
+            }
+
+            BundleBuilder bundle{*bundle_binding};
+            bundle.set("removed", removed_set.build().view());
+            bundle.set("modified", modified_map.build().view());
+            return bundle.build();
+        }
     }  // namespace static_node_detail
 
     /**
@@ -178,6 +252,20 @@ namespace hgraph
             if (positional[i].has_value()) { map.emplace(i, *positional[i]); }
         }
         return static_node_detail::build_list_delta<C>(map);
+    }
+
+    /**
+     * Build the canonical ``TSD<K,V>`` delta value
+     * ``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}``.
+     */
+    template <typename K, typename V>
+    [[nodiscard]] inline Value
+    dict_delta(std::initializer_list<std::pair<K, static_node_detail::delta_input_t<V>>> modified,
+               std::vector<K> removed = {})
+    {
+        std::map<K, static_node_detail::delta_input_t<V>> map;
+        for (const auto &[key, input] : modified) { map.insert_or_assign(key, input); }
+        return static_node_detail::build_dict_delta<K, V>(map, removed);
     }
 
     // -----------------------------------------------------------------
@@ -209,6 +297,19 @@ namespace hgraph
         /** The underlying erased input view (the container typed views expose the same via the CRTP base). */
         [[nodiscard]] const TSInputView &base() const noexcept { return *this; }
         // modified() / valid() / delta_value() inherited from TSInputView.
+    };
+
+    template <fixed_string Name>
+    class In<Name, SIGNAL> : public TSInputView
+    {
+      public:
+        using schema                     = SIGNAL;
+        static constexpr auto field_name = Name;
+
+        explicit In(TSInputView view) noexcept : TSInputView(std::move(view)) {}
+
+        [[nodiscard]] bool ticked() const { return modified(); }
+        [[nodiscard]] const TSInputView &base() const noexcept { return *this; }
     };
 
     /**
@@ -279,6 +380,216 @@ namespace hgraph
     };
 
     /**
+     * Dict time-series input (``TSD<K, V>``): inherits ``TSDInputView`` and adds
+     * typed key lookup. ``at(key)`` / ``operator[](key)`` return ``In<"", V>``.
+     * Iteration helpers return typed child selectors while preserving ``ValueView``
+     * keys.
+     */
+    template <fixed_string Name, typename TKey, typename TValueSchema>
+    class In<Name, TSD<TKey, TValueSchema>> : public TSDInputView
+    {
+      public:
+        using schema                     = TSD<TKey, TValueSchema>;
+        using key_type                   = TKey;
+        using value_schema               = TValueSchema;
+        static constexpr auto field_name = Name;
+
+        explicit In(TSInputView view) noexcept : TSDInputView(std::move(view)) {}
+
+        [[nodiscard]] bool contains(const TKey &key) const { return TSDInputView::contains(Value{key}.view()); }
+        [[nodiscard]] std::size_t find_slot(const TKey &key) const { return TSDInputView::find_slot(Value{key}.view()); }
+
+        [[nodiscard]] In<"", TValueSchema> at_slot(std::size_t slot) const
+        {
+            return In<"", TValueSchema>{TSDInputView::at_slot(slot)};
+        }
+
+        [[nodiscard]] In<"", TValueSchema> at(const TKey &key) const
+        {
+            return In<"", TValueSchema>{TSDInputView::at(Value{key}.view())};
+        }
+        [[nodiscard]] In<"", TValueSchema> operator[](const TKey &key) const { return at(key); }
+
+        [[nodiscard]] Range<In<"", TValueSchema>> values() const
+        {
+            return typed_values(&live_slot);
+        }
+        [[nodiscard]] KeyValueRange<ValueView, In<"", TValueSchema>> items() const
+        {
+            return typed_items(&live_slot);
+        }
+        [[nodiscard]] Range<In<"", TValueSchema>> valid_values() const
+        {
+            return typed_values(&valid_slot);
+        }
+        [[nodiscard]] KeyValueRange<ValueView, In<"", TValueSchema>> valid_items() const
+        {
+            return typed_items(&valid_slot);
+        }
+        [[nodiscard]] Range<In<"", TValueSchema>> modified_values() const
+        {
+            if (!modified()) { return empty_values(); }
+            return typed_values(&modified_slot);
+        }
+        [[nodiscard]] KeyValueRange<ValueView, In<"", TValueSchema>> modified_items() const
+        {
+            if (!modified()) { return empty_items(); }
+            return typed_items(&modified_slot);
+        }
+        [[nodiscard]] Range<In<"", TValueSchema>> added_values() const
+        {
+            return typed_values(&added_slot);
+        }
+        [[nodiscard]] KeyValueRange<ValueView, In<"", TValueSchema>> added_items() const
+        {
+            return typed_items(&added_slot);
+        }
+        [[nodiscard]] Range<In<"", TValueSchema>> removed_values() const
+        {
+            return typed_values(&removed_slot);
+        }
+        [[nodiscard]] KeyValueRange<ValueView, In<"", TValueSchema>> removed_items() const
+        {
+            return typed_items(&removed_slot);
+        }
+
+        /** This cycle's delta as the canonical ``Bundle{removed, modified}`` value view. */
+        [[nodiscard]] ValueView delta() const { return delta_value(); }
+
+      private:
+        static bool live_slot(const void *context, const void *, std::size_t slot)
+        {
+            return static_cast<const In *>(context)->slot_live(slot);
+        }
+        static bool valid_slot(const void *context, const void *, std::size_t slot)
+        {
+            const auto *self = static_cast<const In *>(context);
+            return self->slot_live(slot) && self->TSDInputView::at_slot(slot).valid();
+        }
+        static bool modified_slot(const void *context, const void *, std::size_t slot)
+        {
+            const auto *self = static_cast<const In *>(context);
+            return self->slot_live(slot) && self->slot_modified(slot);
+        }
+        static bool added_slot(const void *context, const void *, std::size_t slot)
+        {
+            const auto *self = static_cast<const In *>(context);
+            return self->slot_occupied(slot) && self->slot_added(slot);
+        }
+        static bool removed_slot(const void *context, const void *, std::size_t slot)
+        {
+            const auto *self = static_cast<const In *>(context);
+            return self->slot_occupied(slot) && self->slot_removed(slot);
+        }
+        static In<"", TValueSchema> project_value(const void *context, const void *, std::size_t slot)
+        {
+            return static_cast<const In *>(context)->at_slot(slot);
+        }
+        static std::pair<ValueView, In<"", TValueSchema>> project_item(const void *context,
+                                                                       const void *,
+                                                                       std::size_t slot)
+        {
+            const auto *self = static_cast<const In *>(context);
+            return {self->key_at_slot(slot), self->at_slot(slot)};
+        }
+
+        [[nodiscard]] Range<In<"", TValueSchema>> typed_values(
+            typename Range<In<"", TValueSchema>>::predicate_fn predicate) const
+        {
+            return Range<In<"", TValueSchema>>{.context = this, .memory = nullptr, .limit = slot_capacity(),
+                                               .predicate = predicate, .projector = &project_value};
+        }
+        [[nodiscard]] KeyValueRange<ValueView, In<"", TValueSchema>> typed_items(
+            typename KeyValueRange<ValueView, In<"", TValueSchema>>::predicate_fn predicate) const
+        {
+            return KeyValueRange<ValueView, In<"", TValueSchema>>{.context = this, .memory = nullptr,
+                                                                  .limit = slot_capacity(), .predicate = predicate,
+                                                                  .projector = &project_item};
+        }
+        [[nodiscard]] static Range<In<"", TValueSchema>> empty_values() noexcept
+        {
+            return Range<In<"", TValueSchema>>{.context = nullptr, .memory = nullptr, .limit = 0,
+                                               .predicate = nullptr, .projector = nullptr};
+        }
+        [[nodiscard]] static KeyValueRange<ValueView, In<"", TValueSchema>> empty_items() noexcept
+        {
+            return KeyValueRange<ValueView, In<"", TValueSchema>>{.context = nullptr, .memory = nullptr,
+                                                                  .limit = 0, .predicate = nullptr,
+                                                                  .projector = nullptr};
+        }
+    };
+
+    /**
+     * Bundle time-series input (``TSB`` / ``UnNamedTSB``): inherits
+     * ``TSBInputView`` and adds compile-time field selection via
+     * ``field<"name">()``.
+     */
+    template <fixed_string Name, typename... TFields>
+    class In<Name, UnNamedTSB<TFields...>> : public TSBInputView
+    {
+      public:
+        using schema                     = UnNamedTSB<TFields...>;
+        static constexpr auto field_name = Name;
+
+        explicit In(TSInputView view) noexcept : TSBInputView(std::move(view)) {}
+
+        template <fixed_string FieldName>
+        [[nodiscard]] auto field() const
+        {
+            using lookup = static_node_detail::tsb_field_lookup<FieldName, TFields...>;
+            static_assert(lookup::found, "In<TSB>::field requested an unknown field");
+            return In<FieldName, typename lookup::type>{TSBInputView::at(lookup::index)};
+        }
+        template <fixed_string FieldName>
+        [[nodiscard]] auto get() const { return field<FieldName>(); }
+
+        [[nodiscard]] ValueView delta() const { return delta_value(); }
+    };
+
+    template <fixed_string Name, fixed_string BundleName, typename... TFields>
+    class In<Name, TSB<BundleName, TFields...>> : public TSBInputView
+    {
+      public:
+        using schema                     = TSB<BundleName, TFields...>;
+        static constexpr auto field_name = Name;
+
+        explicit In(TSInputView view) noexcept : TSBInputView(std::move(view)) {}
+
+        template <fixed_string FieldName>
+        [[nodiscard]] auto field() const
+        {
+            using lookup = static_node_detail::tsb_field_lookup<FieldName, TFields...>;
+            static_assert(lookup::found, "In<TSB>::field requested an unknown field");
+            return In<FieldName, typename lookup::type>{TSBInputView::at(lookup::index)};
+        }
+        template <fixed_string FieldName>
+        [[nodiscard]] auto get() const { return field<FieldName>(); }
+
+        [[nodiscard]] ValueView delta() const { return delta_value(); }
+    };
+
+    /**
+     * Window time-series input (``TSW<T>``): inherits ``TSWInputView`` and adds
+     * typed accessors for the scalar window elements.
+     */
+    template <fixed_string Name, typename TValue, std::size_t Period, std::size_t MinPeriod>
+    class In<Name, TSW<TValue, Period, MinPeriod>> : public TSWInputView
+    {
+      public:
+        using schema     = TSW<TValue, Period, MinPeriod>;
+        using value_type = TValue;
+        static constexpr auto field_name = Name;
+
+        explicit In(TSInputView view) noexcept : TSWInputView(std::move(view)) {}
+
+        [[nodiscard]] TValue at(std::size_t index) const { return TSWInputView::at(index).template checked_as<TValue>(); }
+        [[nodiscard]] TValue operator[](std::size_t index) const { return at(index); }
+        [[nodiscard]] TValue front() const { return TSWInputView::front().template checked_as<TValue>(); }
+        [[nodiscard]] TValue back() const { return TSWInputView::back().template checked_as<TValue>(); }
+        [[nodiscard]] ValueView delta() const { return delta_value(); }
+    };
+
+    /**
      * **Deferred** (generic) input selector — the schema is a ``TsVar`` type variable
      * resolved at wiring time, not a concrete time-series. It IS a ``TSInputView``
      * (no typed sugar, since there is no concrete element type); the node drives it
@@ -339,6 +650,34 @@ namespace hgraph
             }
         }
         // modified() / valid() / evaluation_time() inherited from TSOutputView.
+    };
+
+    template <>
+    class Out<SIGNAL> : public TSOutputView
+    {
+      public:
+        using schema = SIGNAL;
+
+        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
+
+        void tick() const
+        {
+            Value value{true};
+            auto  mutation = TSOutputView::begin_mutation(evaluation_time());
+            if (!mutation.copy_value_from(value.view()))
+            {
+                throw std::logic_error("Out<SIGNAL>::tick failed to copy the signal tick");
+            }
+        }
+
+        void apply(const ValueView &value) const
+        {
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
+            if (!mutation.copy_value_from(value))
+            {
+                throw std::logic_error("Out<SIGNAL>::apply failed to copy the signal tick");
+            }
+        }
     };
 
     /**
@@ -402,6 +741,190 @@ namespace hgraph
     };
 
     /**
+     * Dict time-series output (``TSD<K, V>``): inherits ``TSDOutputView`` and adds
+     * typed key lookup. ``out[key]`` creates the key when needed and returns
+     * ``Out<V>`` for the child.
+     */
+    template <typename TKey, typename TValueSchema>
+    class Out<TSD<TKey, TValueSchema>> : public TSDOutputView
+    {
+      public:
+        using schema       = TSD<TKey, TValueSchema>;
+        using key_type     = TKey;
+        using value_schema = TValueSchema;
+
+        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSDOutputView(std::move(view)) {}
+
+        [[nodiscard]] bool contains(const TKey &key) const { return TSDOutputView::contains(Value{key}.view()); }
+        [[nodiscard]] std::size_t find_slot(const TKey &key) const { return TSDOutputView::find_slot(Value{key}.view()); }
+
+        [[nodiscard]] Out<TValueSchema> at_slot(std::size_t slot) const
+        {
+            return Out<TValueSchema>{TSDOutputView::at_slot(slot), evaluation_time()};
+        }
+
+        [[nodiscard]] Out<TValueSchema> at(const TKey &key) const
+        {
+            auto mutation = TSDOutputView::begin_mutation(evaluation_time());
+            auto child    = mutation.at(Value{key}.view());
+            return Out<TValueSchema>{TSOutputView{base().output(), child, evaluation_time()}, evaluation_time()};
+        }
+        [[nodiscard]] Out<TValueSchema> operator[](const TKey &key) const { return at(key); }
+
+        template <typename U>
+        void set(const TKey &key, U &&value) const
+        {
+            (*this)[key].set(std::forward<U>(value));
+        }
+
+        void apply(const TKey &key, const ValueView &value) const { (*this)[key].apply(value); }
+
+        [[nodiscard]] Range<Out<TValueSchema>> values() const
+        {
+            return typed_values(&live_slot);
+        }
+        [[nodiscard]] KeyValueRange<ValueView, Out<TValueSchema>> items() const
+        {
+            return typed_items(&live_slot);
+        }
+        [[nodiscard]] Range<Out<TValueSchema>> valid_values() const
+        {
+            return typed_values(&valid_slot);
+        }
+        [[nodiscard]] KeyValueRange<ValueView, Out<TValueSchema>> valid_items() const
+        {
+            return typed_items(&valid_slot);
+        }
+        [[nodiscard]] Range<Out<TValueSchema>> modified_values() const
+        {
+            if (!modified()) { return empty_values(); }
+            return typed_values(&modified_slot);
+        }
+        [[nodiscard]] KeyValueRange<ValueView, Out<TValueSchema>> modified_items() const
+        {
+            if (!modified()) { return empty_items(); }
+            return typed_items(&modified_slot);
+        }
+
+      private:
+        static bool live_slot(const void *context, const void *, std::size_t slot)
+        {
+            return static_cast<const Out *>(context)->slot_live(slot);
+        }
+        static bool valid_slot(const void *context, const void *, std::size_t slot)
+        {
+            const auto *self = static_cast<const Out *>(context);
+            return self->slot_live(slot) && self->TSDOutputView::at_slot(slot).valid();
+        }
+        static bool modified_slot(const void *context, const void *, std::size_t slot)
+        {
+            const auto *self = static_cast<const Out *>(context);
+            return self->slot_live(slot) && self->slot_modified(slot);
+        }
+        static Out<TValueSchema> project_value(const void *context, const void *, std::size_t slot)
+        {
+            return static_cast<const Out *>(context)->at_slot(slot);
+        }
+        static std::pair<ValueView, Out<TValueSchema>> project_item(const void *context,
+                                                                    const void *,
+                                                                    std::size_t slot)
+        {
+            const auto *self = static_cast<const Out *>(context);
+            return {self->key_at_slot(slot), self->at_slot(slot)};
+        }
+
+        [[nodiscard]] Range<Out<TValueSchema>> typed_values(
+            typename Range<Out<TValueSchema>>::predicate_fn predicate) const
+        {
+            return Range<Out<TValueSchema>>{.context = this, .memory = nullptr, .limit = slot_capacity(),
+                                            .predicate = predicate, .projector = &project_value};
+        }
+        [[nodiscard]] KeyValueRange<ValueView, Out<TValueSchema>> typed_items(
+            typename KeyValueRange<ValueView, Out<TValueSchema>>::predicate_fn predicate) const
+        {
+            return KeyValueRange<ValueView, Out<TValueSchema>>{.context = this, .memory = nullptr,
+                                                               .limit = slot_capacity(), .predicate = predicate,
+                                                               .projector = &project_item};
+        }
+        [[nodiscard]] static Range<Out<TValueSchema>> empty_values() noexcept
+        {
+            return Range<Out<TValueSchema>>{.context = nullptr, .memory = nullptr, .limit = 0,
+                                            .predicate = nullptr, .projector = nullptr};
+        }
+        [[nodiscard]] static KeyValueRange<ValueView, Out<TValueSchema>> empty_items() noexcept
+        {
+            return KeyValueRange<ValueView, Out<TValueSchema>>{.context = nullptr, .memory = nullptr, .limit = 0,
+                                                               .predicate = nullptr, .projector = nullptr};
+        }
+    };
+
+    /**
+     * Bundle time-series output (``TSB`` / ``UnNamedTSB``): inherits
+     * ``TSBOutputView`` and adds compile-time field selection via
+     * ``field<"name">()``.
+     */
+    template <typename... TFields>
+    class Out<UnNamedTSB<TFields...>> : public TSBOutputView
+    {
+      public:
+        using schema = UnNamedTSB<TFields...>;
+
+        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSBOutputView(std::move(view)) {}
+
+        template <fixed_string FieldName>
+        [[nodiscard]] auto field() const
+        {
+            using lookup = static_node_detail::tsb_field_lookup<FieldName, TFields...>;
+            static_assert(lookup::found, "Out<TSB>::field requested an unknown field");
+            return Out<typename lookup::type>{TSBOutputView::at(lookup::index), evaluation_time()};
+        }
+        template <fixed_string FieldName>
+        [[nodiscard]] auto get() const { return field<FieldName>(); }
+    };
+
+    template <fixed_string Name, typename... TFields>
+    class Out<TSB<Name, TFields...>> : public TSBOutputView
+    {
+      public:
+        using schema = TSB<Name, TFields...>;
+
+        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSBOutputView(std::move(view)) {}
+
+        template <fixed_string FieldName>
+        [[nodiscard]] auto field() const
+        {
+            using lookup = static_node_detail::tsb_field_lookup<FieldName, TFields...>;
+            static_assert(lookup::found, "Out<TSB>::field requested an unknown field");
+            return Out<typename lookup::type>{TSBOutputView::at(lookup::index), evaluation_time()};
+        }
+        template <fixed_string FieldName>
+        [[nodiscard]] auto get() const { return field<FieldName>(); }
+    };
+
+    /**
+     * Window time-series output (``TSW<T>``): inherits ``TSWOutputView`` and adds
+     * typed ``push``.
+     */
+    template <typename TValue, std::size_t Period, std::size_t MinPeriod>
+    class Out<TSW<TValue, Period, MinPeriod>> : public TSWOutputView
+    {
+      public:
+        using schema     = TSW<TValue, Period, MinPeriod>;
+        using value_type = TValue;
+
+        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSWOutputView(std::move(view)) {}
+
+        template <typename U>
+        void push(U &&value) const
+        {
+            Value wrapped{std::forward<U>(value)};
+            TSWOutputView::begin_mutation(evaluation_time()).push(wrapped.view());
+        }
+
+        void apply(const ValueView &value) const { TSWOutputView::begin_mutation(evaluation_time()).push(value); }
+    };
+
+    /**
      * **Deferred** (generic) output selector — the schema is a ``TsVar`` resolved at
      * wiring time. It IS a ``TSOutputView``; the node drives it through the erased
      * API and ``apply_delta``. ``apply`` is a scalar (TS-kind) convenience that
@@ -431,7 +954,7 @@ namespace hgraph
     // use is now the runtime, type-erased ``capture_delta`` / ``apply_delta``
     // (``<hgraph/types/time_series/ts_delta.h>``) — schema-as-data, dispatched on the
     // live endpoint's kind — which replaced the compile-time ``ts_delta<S>`` driver.
-    // The ``set_delta`` / ``list_delta`` builders above remain as the test-authoring
+    // The ``set_delta`` / ``list_delta`` / ``dict_delta`` builders above remain as the test-authoring
     // way to construct an *expected* canonical delta ``Value`` (compared via
     // ``Value::equals`` against a captured one).
 
