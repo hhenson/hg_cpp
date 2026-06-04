@@ -38,6 +38,15 @@ namespace hgraph::ts_data_plan_factory_detail
                 .delta_memory_impl         = &atomic_delta_memory,
                 .mutable_delta_memory_impl = &atomic_mutable_delta_memory,
                 .copy_value_from_impl      = &atomic_copy_value_from,
+                .empty_delta_impl          = kind == TSTypeKind::REF ? &ts_data_detail::missing_empty_delta
+                                                                     : &ts_data_detail::empty_delta_atomic,
+                .capture_delta_impl        = kind == TSTypeKind::SIGNAL ? &ts_data_detail::capture_delta_signal
+                                              : kind == TSTypeKind::TS     ? &ts_data_detail::capture_delta_ts
+                                                                          : &ts_data_detail::missing_capture_delta,
+                .delta_has_effect_impl     = kind == TSTypeKind::REF ? &ts_data_detail::missing_delta_has_effect
+                                                                     : &ts_data_detail::delta_has_effect_atomic,
+                .apply_delta_impl          = kind == TSTypeKind::REF ? &ts_data_detail::missing_apply_delta
+                                                                     : &ts_data_detail::apply_delta_atomic,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                 .from_python_impl          = &atomic_from_python,
                 .to_python_impl            = &atomic_to_python,

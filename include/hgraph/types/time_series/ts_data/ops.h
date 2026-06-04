@@ -11,6 +11,10 @@
 
 namespace hgraph
 {
+    class TSInputView;
+    class TSOutputView;
+    class Value;
+
     namespace ts_data_detail
     {
         /** Throw the standard missing-operation exception used by default ops thunks. */
@@ -29,6 +33,10 @@ namespace hgraph
         void noop_cleanup_delta(const void *, void *, engine_time_t);
         void noop_record_child_modified(const void *, void *, std::size_t, engine_time_t);
         [[nodiscard]] bool missing_copy_value_from(const void *, void *, const ValueView &, engine_time_t);
+        [[nodiscard]] Value missing_empty_delta(const TSDataBinding &);
+        [[nodiscard]] Value missing_capture_delta(const TSInputView &);
+        [[nodiscard]] bool missing_delta_has_effect(const TSOutputView &, const ValueView &);
+        void missing_apply_delta(const TSOutputView &, const ValueView &);
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         [[nodiscard]] bool missing_from_python(const void *, void *, nb::handle, engine_time_t);
         [[nodiscard]] nb::object missing_to_python(const void *, const void *);
@@ -56,6 +64,33 @@ namespace hgraph
         void missing_subscribe_slot_observer(const void *, void *, SlotObserver *);
         void missing_unsubscribe_slot_observer(const void *, void *, SlotObserver *);
         [[nodiscard]] const void *missing_child_at_slot(const void *, const void *, std::size_t);
+
+        [[nodiscard]] Value empty_delta_atomic(const TSDataBinding &binding);
+        [[nodiscard]] Value empty_delta_tss(const TSDataBinding &binding);
+        [[nodiscard]] Value empty_delta_tsd(const TSDataBinding &binding);
+        [[nodiscard]] Value empty_delta_tsl(const TSDataBinding &binding);
+        [[nodiscard]] Value empty_delta_tsb(const TSDataBinding &binding);
+
+        [[nodiscard]] Value capture_delta_ts(const TSInputView &in);
+        [[nodiscard]] Value capture_delta_signal(const TSInputView &in);
+        [[nodiscard]] Value capture_delta_tsw(const TSInputView &in);
+        [[nodiscard]] Value capture_delta_tss(const TSInputView &in);
+        [[nodiscard]] Value capture_delta_tsd(const TSInputView &in);
+        [[nodiscard]] Value capture_delta_tsl(const TSInputView &in);
+        [[nodiscard]] Value capture_delta_tsb(const TSInputView &in);
+
+        [[nodiscard]] bool delta_has_effect_atomic(const TSOutputView &out, const ValueView &delta);
+        [[nodiscard]] bool delta_has_effect_tss(const TSOutputView &out, const ValueView &delta);
+        [[nodiscard]] bool delta_has_effect_tsd(const TSOutputView &out, const ValueView &delta);
+        [[nodiscard]] bool delta_has_effect_tsl(const TSOutputView &out, const ValueView &delta);
+        [[nodiscard]] bool delta_has_effect_tsb(const TSOutputView &out, const ValueView &delta);
+
+        void apply_delta_atomic(const TSOutputView &out, const ValueView &delta);
+        void apply_delta_tsw(const TSOutputView &out, const ValueView &delta);
+        void apply_delta_tss(const TSOutputView &out, const ValueView &delta);
+        void apply_delta_tsd(const TSOutputView &out, const ValueView &delta);
+        void apply_delta_tsl(const TSOutputView &out, const ValueView &delta);
+        void apply_delta_tsb(const TSOutputView &out, const ValueView &delta);
 
     }  // namespace ts_data_detail
 
@@ -97,6 +132,12 @@ namespace hgraph
                                            engine_time_t modified_time) = &ts_data_detail::noop_record_child_modified;
         bool (*copy_value_from_impl)(const void *context, void *memory, const ValueView &source,
                                      engine_time_t modified_time) = &ts_data_detail::missing_copy_value_from;
+        Value (*empty_delta_impl)(const TSDataBinding &binding) = &ts_data_detail::missing_empty_delta;
+        Value (*capture_delta_impl)(const TSInputView &in) = &ts_data_detail::missing_capture_delta;
+        bool (*delta_has_effect_impl)(const TSOutputView &out,
+                                      const ValueView &delta) = &ts_data_detail::missing_delta_has_effect;
+        void (*apply_delta_impl)(const TSOutputView &out, const ValueView &delta) =
+            &ts_data_detail::missing_apply_delta;
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         bool (*from_python_impl)(const void *context, void *memory, nb::handle source,
                                  engine_time_t modified_time) = &ts_data_detail::missing_from_python;

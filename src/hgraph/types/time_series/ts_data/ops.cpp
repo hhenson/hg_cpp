@@ -1,5 +1,7 @@
 #include <hgraph/types/time_series/ts_data/ops.h>
 
+#include <hgraph/types/value/value.h>
+
 #include <stdexcept>
 #include <string>
 
@@ -64,6 +66,26 @@ namespace hgraph::ts_data_detail
     bool missing_copy_value_from(const void *, void *, const ValueView &, engine_time_t)
     {
         missing_ts_data_op("copy value");
+    }
+
+    Value missing_empty_delta(const TSDataBinding &)
+    {
+        missing_ts_data_op("empty delta");
+    }
+
+    Value missing_capture_delta(const TSInputView &)
+    {
+        missing_ts_data_op("capture delta");
+    }
+
+    bool missing_delta_has_effect(const TSOutputView &, const ValueView &)
+    {
+        missing_ts_data_op("delta effect test");
+    }
+
+    void missing_apply_delta(const TSOutputView &, const ValueView &)
+    {
+        missing_ts_data_op("apply delta");
     }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES

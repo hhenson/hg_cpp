@@ -10,10 +10,10 @@ namespace hgraph
 
     /**
      * Runtime, type-erased per-cycle delta capture / apply — the schema-as-data
-     * twin of the compile-time ``ts_delta<S>`` (``static_node.h``). Both dispatch on
-     * the live endpoint's ``schema()->kind`` and recurse through container children,
-     * so a single (non-templated) implementation serves every time-series schema —
-     * the basis for the erased ``replay`` / ``record`` utility nodes.
+     * twin of the compile-time ``ts_delta<S>`` (``static_node.h``). Both dispatch
+     * through the live endpoint's ``TSDataOps`` table and recurse through child
+     * ops, so a single (non-templated) API serves every replayable time-series
+     * schema — the basis for the erased ``replay`` / ``record`` utility nodes.
      *
      * ``capture_delta`` reads a live input and **rebuilds** the canonical delta
      * ``Value`` whose schema is ``in.schema()->delta_value_schema`` (via the

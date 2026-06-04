@@ -270,6 +270,10 @@ namespace hgraph::ts_data_plan_factory_detail
                     .mutable_delta_memory_impl = &dynamic_mutable_delta_memory,
                     .cleanup_delta_impl        = &dynamic_cleanup_delta,
                     .copy_value_from_impl      = &dynamic_copy_value_from,
+                    .empty_delta_impl          = &ts_data_detail::empty_delta_tsl,
+                    .capture_delta_impl        = &ts_data_detail::capture_delta_tsl,
+                    .delta_has_effect_impl     = &ts_data_detail::delta_has_effect_tsl,
+                    .apply_delta_impl          = &ts_data_detail::apply_delta_tsl,
                 };
                 ops.size_impl                   = &dynamic_indexed_size;
                 ops.element_binding_impl        = &dynamic_indexed_element_binding;

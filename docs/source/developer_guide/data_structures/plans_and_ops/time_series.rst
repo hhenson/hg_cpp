@@ -63,10 +63,10 @@ The implementation uses the following names consistently:
     The type-erased operation table over a ``TSData`` memory region:
     the literal ``allows_mutation`` property, common layout access,
     current-value validity, recursive ``all_valid`` checks, read/write
-    memory access, delta reset, copy, and the per-kind hook used when a
-    child time-series value reports that it modified. The table is
-    deliberately passive; generic mutation sequencing and propagation
-    rules live on ``TSDataView`` /
+    memory access, delta reset, copy, canonical delta construction,
+    erased delta capture/apply, and the per-kind hook used when a child
+    time-series value reports that it modified. The table is deliberately
+    passive; generic mutation sequencing and propagation rules live on ``TSDataView`` /
     ``TSDataMutationView``. For a real bound ``TSData``
     implementation the table is total: required entries are never null,
     empty optional behaviours use no-op thunks, and unsupported

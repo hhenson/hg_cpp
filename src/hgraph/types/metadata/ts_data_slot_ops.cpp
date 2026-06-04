@@ -675,6 +675,10 @@ namespace hgraph::ts_data_plan_factory_detail
                     .reset_delta_impl          = &tss_reset_delta,
                     .cleanup_delta_impl        = &tss_cleanup_delta,
                     .copy_value_from_impl      = &tss_copy_value_from,
+                    .empty_delta_impl          = &ts_data_detail::empty_delta_tss,
+                    .capture_delta_impl        = &ts_data_detail::capture_delta_tss,
+                    .delta_has_effect_impl     = &ts_data_detail::delta_has_effect_tss,
+                    .apply_delta_impl          = &ts_data_detail::apply_delta_tss,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                     .from_python_impl          = &tss_from_python,
                     .to_python_impl            = &tss_to_python,
@@ -1469,6 +1473,10 @@ namespace hgraph::ts_data_plan_factory_detail
                 base_ops.cleanup_delta_impl = &tsd_cleanup_delta;
                 base_ops.record_child_modified_impl = &tsd_record_child_modified;
                 base_ops.copy_value_from_impl = &tsd_copy_value_from;
+                base_ops.empty_delta_impl = &ts_data_detail::empty_delta_tsd;
+                base_ops.capture_delta_impl = &ts_data_detail::capture_delta_tsd;
+                base_ops.delta_has_effect_impl = &ts_data_detail::delta_has_effect_tsd;
+                base_ops.apply_delta_impl = &ts_data_detail::apply_delta_tsd;
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                 base_ops.from_python_impl = &tsd_from_python;
                 base_ops.to_python_impl = &tsd_to_python;

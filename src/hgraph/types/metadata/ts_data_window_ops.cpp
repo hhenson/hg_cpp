@@ -722,6 +722,10 @@ namespace hgraph::ts_data_plan_factory_detail
                     .delta_memory_impl         = &window_delta_memory,
                     .mutable_delta_memory_impl = &window_mutable_delta_memory,
                     .copy_value_from_impl      = &window_copy_value_from,
+                    .empty_delta_impl          = &ts_data_detail::empty_delta_atomic,
+                    .capture_delta_impl        = &ts_data_detail::capture_delta_tsw,
+                    .delta_has_effect_impl     = &ts_data_detail::delta_has_effect_atomic,
+                    .apply_delta_impl          = &ts_data_detail::apply_delta_tsw,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                     .from_python_impl          = &window_from_python,
                     .to_python_impl            = &window_to_python,

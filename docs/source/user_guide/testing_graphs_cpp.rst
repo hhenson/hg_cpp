@@ -99,8 +99,8 @@ delta via the runtime ``capture_delta``, ``replay`` re-creates ticks via
 what the (braced) first argument
 holds; the output's element type is what the returned ``std::vector<std::optional<…>>``
 holds. Supporting a new replayable time-series kind is a localised change — a kind
-case in the runtime ``capture_delta`` / ``apply_delta``; ``eval_node`` and the
-erased ``replay`` / ``record`` do not change.
+implementation wires the runtime delta hooks on its ``TSDataOps`` table;
+``eval_node`` and the erased ``replay`` / ``record`` do not change.
 
 Comparing results: ``CHECK_OUTPUT``
 ....................................

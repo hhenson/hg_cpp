@@ -255,6 +255,14 @@ namespace hgraph::ts_data_plan_factory_detail
                 .mutable_delta_memory_impl = &fixed_mutable_delta_memory,
                 .cleanup_delta_impl        = &fixed_cleanup_delta,
                 .copy_value_from_impl      = &fixed_copy_value_from,
+                .empty_delta_impl          = schema->kind == TSTypeKind::TSB ? &ts_data_detail::empty_delta_tsb
+                                                                             : &ts_data_detail::empty_delta_tsl,
+                .capture_delta_impl        = schema->kind == TSTypeKind::TSB ? &ts_data_detail::capture_delta_tsb
+                                                                             : &ts_data_detail::capture_delta_tsl,
+                .delta_has_effect_impl     = schema->kind == TSTypeKind::TSB ? &ts_data_detail::delta_has_effect_tsb
+                                                                             : &ts_data_detail::delta_has_effect_tsl,
+                .apply_delta_impl          = schema->kind == TSTypeKind::TSB ? &ts_data_detail::apply_delta_tsb
+                                                                             : &ts_data_detail::apply_delta_tsl,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                 .from_python_impl          = &fixed_from_python,
                 .to_python_impl            = &fixed_to_python,

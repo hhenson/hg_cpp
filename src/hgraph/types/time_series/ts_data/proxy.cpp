@@ -165,6 +165,10 @@ namespace hgraph
                     .mutable_delta_memory_impl = &mutable_delta_memory,
                     .cleanup_delta_impl        = &cleanup_delta,
                     .record_child_modified_impl = &record_child_modified,
+                    .empty_delta_impl          = &ts_data_detail::empty_delta_tss,
+                    .capture_delta_impl        = &ts_data_detail::capture_delta_tss,
+                    .delta_has_effect_impl     = &ts_data_detail::delta_has_effect_tss,
+                    .apply_delta_impl          = &ts_data_detail::apply_delta_tss,
                 };
                 key_set_ts_ops.size_impl                      = &set_size<TSDProxySetSurface::Live>;
                 key_set_ts_ops.slot_capacity_impl             = &slot_capacity;
@@ -187,6 +191,10 @@ namespace hgraph
                 TSDataOps &dict_base = dict_ops;
                 dict_base.kind = TSTypeKind::TSD;
                 dict_base.context = this;
+                dict_base.empty_delta_impl = &ts_data_detail::empty_delta_tsd;
+                dict_base.capture_delta_impl = &ts_data_detail::capture_delta_tsd;
+                dict_base.delta_has_effect_impl = &ts_data_detail::delta_has_effect_tsd;
+                dict_base.apply_delta_impl = &ts_data_detail::apply_delta_tsd;
                 dict_ops.child_at_slot_impl = &tsd_child_at_slot;
                 dict_ops.slot_modified_impl = &slot_modified;
                 dict_ops.make_ts_values_range_impl = &ts_value_range<TSDProxyMapSurface::Live>;
