@@ -5,6 +5,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/runtime/node.cpp
     hgraph/types/metadata/type_registry.cpp
     hgraph/types/metadata/ts_data_atomic_ops.cpp
+    hgraph/types/metadata/ts_data_dynamic_list_ops.cpp
     hgraph/types/metadata/ts_data_fixed_structured_ops.cpp
     hgraph/types/metadata/ts_data_fixed_structured_plan.cpp
     hgraph/types/metadata/ts_data_slot_ops.cpp

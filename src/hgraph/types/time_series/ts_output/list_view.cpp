@@ -2,6 +2,7 @@
 
 #include <hgraph/types/time_series/ts_output/view_common.h>
 
+#include <stdexcept>
 #include <utility>
 
 namespace hgraph
@@ -103,7 +104,18 @@ namespace hgraph
 
     TSOutputView TSLOutputView::at(std::size_t index) &
     {
-        auto data = data_view();
+        auto &base = view_.data_view();
+        auto  data = base.as_list();
+        if (schema() != nullptr && schema()->fixed_size() == 0 && index >= data.size())
+        {
+            if (view_.evaluation_time() == MIN_DT)
+            {
+                throw std::invalid_argument("dynamic TSL output growth requires a concrete evaluation time");
+            }
+            const auto &ops = static_cast<const IndexedTSDataOps &>(base.ops());
+            static_cast<void>(ops.mutable_element_memory_impl(ops.context, base.mutable_data(), index));
+            data = base.as_list();
+        }
         return TSOutputView{view_.output(), data.at(index), view_.evaluation_time()};
     }
 

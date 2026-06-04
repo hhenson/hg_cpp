@@ -190,12 +190,22 @@ TSData implementation families
 
 ``SlotTSDataStorage``
     Used for keyed or dynamically-sized collection time-series data
-    such as ``TSS`` and ``TSD``. Dynamic ``TSL`` will use the same
-    family when its dynamic storage is implemented. The data store is
-    slot-oriented: every child or element has a stable slot id and the
-    current payload, validity, and delta information are aligned by
-    that slot id. Collection mutation changes slot state instead of
-    compacting or relocating already-published child addresses.
+    such as ``TSS`` and ``TSD``. The data store is slot-oriented:
+    every child or element has a stable slot id and the current payload,
+    validity, and delta information are aligned by that slot id.
+    Collection mutation changes slot state instead of compacting or
+    relocating already-published child addresses.
+
+``DynamicTSLStorage``
+    Used for ``TSL<C, 0>``. It is indexed, homogeneous child TSData
+    storage rather than key/slot storage: each element owns a stable
+    child ``TSData`` handle and vector growth moves only those handles,
+    not the child TSData allocations they point at. The current value is
+    projected as a dynamic value-layer ``List`` over child current values
+    and the delta is projected as ``Map<int64, delta(C)>`` over children
+    modified with the parent. Because that delta schema has no removal
+    surface, dynamic ``TSL`` TSData is currently grow-only; copying a
+    shorter list is rejected.
 
 The terms above keep three layers distinct: scalar ``Value`` storage,
 ``TSData`` payload/delta storage, and top-level ``TSOutput`` /
@@ -260,12 +270,13 @@ subtree from that point downward is associated with one output peering;
 the TSInput implementation represents that peering with TargetLink
 storage inside the input data plan.
 
-Dynamic ``TSL`` prefixes are not part of the first implementation
-because their input-side path identity needs the same slot-oriented
-machinery as dynamic TSData. Peered terminals may still bind to
-collection outputs; once bound, input navigation inside that target
-uses the output's ``TSData`` internally while still returning
-input-shaped endpoint views from the public API.
+Non-peered dynamic ``TSL`` prefixes are still not supported because
+input-side path identity for unbounded indices needs an explicit
+structural policy. Peered terminals may still bind to collection
+outputs; once bound, input navigation inside that target uses the
+output's ``TSData`` internally while still returning input-shaped
+endpoint views from the public API. For a target-bound dynamic ``TSL``,
+``TSLInputView::size()`` reports the target output's live list size.
 
 .. mermaid::
 
@@ -569,13 +580,14 @@ shared value and auxiliary regions.
 
 **Embedded projected children.** A fixed parent may also own children
 whose storage is not just an offset into the parent's value region. This
-includes slot-oriented ``TSS`` / ``TSD`` children and window-oriented
-``TSW`` children. The child's complete TSData storage plan is placed as
-that child's auxiliary node, and the parent indexed TSData ops return a
-pointer to that child storage subobject when the child is selected. The
-child binding is the normal binding over the child plan; slot and window
-ops still receive a pointer to their own storage object and do not know
-about the parent's root allocation. Parent notification uses the existing
+includes slot-oriented ``TSS`` / ``TSD`` children, dynamic-list ``TSL``
+children, and window-oriented ``TSW`` children. The child's complete
+TSData storage plan is placed as that child's auxiliary node, and the
+parent indexed TSData ops return a pointer to that child storage
+subobject when the child is selected. The child binding is the normal
+binding over the child plan; slot, dynamic-list, and window ops still
+receive a pointer to their own storage object and do not know about the
+parent's root allocation. Parent notification uses the existing
 ``TSDataParentLink`` installed by child view projection.
 
 When a fixed parent contains projected child storage, its ``value()`` and
@@ -584,8 +596,10 @@ canonical value-region copy. Copying those transient views materialises
 normal canonical value-layer ``List`` / ``Bundle`` / ``Map`` / ``Set``
 storage. Fixed ``TSL`` and ``TSB`` can therefore contain any implemented
 non-``REF`` child kind: ``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed
-``TSL``, ``TSB``, and ``TSW``. Dynamic ``TSL`` storage remains future
-runtime work.
+and dynamic ``TSL``, ``TSB``, and ``TSW``. Dynamic ``TSL`` storage is
+grow-only: it can add indexed children and project current/delta values,
+but it cannot shrink because ``Map<int64, delta(C)>`` has no removal
+surface.
 
 .. mermaid::
 
@@ -600,9 +614,11 @@ runtime work.
       ChildView --> Value
       ChildView --> Aux
 
-Child storage is therefore prepared and default-constructed as part of
-parent construction; no child region is allocated lazily on first
-access.
+Projected child storage objects are therefore prepared and
+default-constructed as part of parent construction. Dynamic ``TSL``
+elements are the exception: the dynamic list storage object is
+constructed with the parent, but indexed child TSData elements are
+allocated lazily as the list grows.
 
 The parent ``value()`` view is the canonical value-layer view over the
 value region. ``TSB.value()`` exposes the bundle binding for the full
@@ -1007,13 +1023,17 @@ object stable, but its internal queue may grow; callers should treat
 element ``ValueView`` handles as short-lived projections rather than
 stable child time-series addresses.
 
-For TSD, and for the future dynamic TSL storage shape, stability is
-harder. Elements are added and removed during evaluation, but a consumer
-that bound to one of them on the previous tick must still be able to
-dereference it on the current tick. Compacting storage cannot be used.
-The runtime instead
-uses chained, non-relocating slot blocks: new capacity is appended
-without moving previously published slot addresses.
+For TSD, stability is harder. Elements are added and removed during
+evaluation, but a consumer that bound to one of them on the previous
+tick must still be able to dereference it on the current tick.
+Compacting storage cannot be used. The runtime instead uses chained,
+non-relocating slot blocks: new capacity is appended without moving
+previously published slot addresses.
+
+Dynamic ``TSL`` has indexed growth but no removals today. It keeps child
+TSData storage stable by allocating each child behind its own TSData
+storage handle; growing the parent list can relocate handles, but not
+the child allocations they reference.
 
 .. _ts-path-construction:
 

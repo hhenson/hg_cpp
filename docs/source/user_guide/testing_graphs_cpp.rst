@@ -337,4 +337,6 @@ each ``index -> child_delta`` of the buffered delta to the matching child output
    ``In``/``Out<TSL<C, N>>`` compose for any ``C`` and ``list_delta``/``set_delta`` build
    the nested canonical ``Value``. TSData storage for fixed ``TSL`` now covers the
    implemented non-``REF`` child kinds: ``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed
-   ``TSL``, ``TSB``, and ``TSW``. Still future: dynamic (``N == 0``) ``TSL`` storage.
+   and dynamic ``TSL``, ``TSB``, and ``TSW``. Dynamic (``N == 0``) ``TSL`` storage
+   is grow-only; tests should not expect shorter-list copies to produce a removal
+   delta until ``TSL`` has a structural removal surface.

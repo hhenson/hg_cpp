@@ -43,6 +43,11 @@ namespace hgraph
 
     std::size_t TSLInputView::size() const
     {
+        if (view_.is_target_position())
+        {
+            const auto &data = view_.data_view();
+            if (data.valid()) { return data.as_list().size(); }
+        }
         const auto &ops = detail::input_endpoint_ops_for(schema());
         return ops.child_count != nullptr ? ops.child_count(schema()) : 0;
     }

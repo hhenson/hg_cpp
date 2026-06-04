@@ -12,6 +12,7 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -81,6 +82,26 @@ namespace
         case TSTypeKind::TSL:
         {
             auto list = child.as_list();
+            if (schema->fixed_size() == 0 && list.size() == 0)
+            {
+                const auto *element_ts = schema->element_ts();
+                REQUIRE(element_ts != nullptr);
+                REQUIRE(element_ts->kind == TSTypeKind::TS);
+                const auto *element_binding =
+                    ValuePlanFactory::instance().binding_for(element_ts->value_schema);
+                const auto *source_binding =
+                    ValuePlanFactory::instance().binding_for(schema->value_schema);
+                REQUIRE(element_binding != nullptr);
+                REQUIRE(source_binding != nullptr);
+                Value       value{seed};
+                ListBuilder builder{*element_binding};
+                builder.push_back_copy(value.view().data());
+                auto  source_storage = builder.build_storage();
+                Value source{*source_binding, &source_storage};
+                auto  mutation = child.begin_mutation(modified_time);
+                REQUIRE(mutation.copy_value_from(source.view()));
+                break;
+            }
             REQUIRE(list.size() > 0);
             auto nested = list.at(0);
             mutate_supported_ts_child(std::move(nested), modified_time, seed + 1);
@@ -900,6 +921,7 @@ TEST_CASE("TSDataPlanFactory: collections nest every supported non-REF TSData ki
     const auto *tss_int    = registry.tss(int_meta);
     const auto *tsd_ts     = registry.tsd(int_meta, ts_int);
     const auto *tsl_ts     = registry.tsl(ts_int, 2);
+    const auto *dynamic_tsl_ts = registry.tsl(ts_int, 0);
     const auto *tsb_ts     = registry.tsb("NestedMatrixChildBundle", {{"x", ts_int}, {"tick", signal}});
     const auto *tsw_int    = registry.tsw(int_meta, 3, 1);
 
@@ -914,6 +936,7 @@ TEST_CASE("TSDataPlanFactory: collections nest every supported non-REF TSData ki
         {"TSS", tss_int},
         {"TSD", tsd_ts},
         {"TSL", tsl_ts},
+        {"dynamic TSL", dynamic_tsl_ts},
         {"TSB", tsb_ts},
         {"TSW", tsw_int},
     };
@@ -1482,15 +1505,105 @@ TEST_CASE("TSDataPlanFactory: empty collection copy still marks the collection m
     REQUIRE(dict_delta.at("modified").as_map().empty());
 }
 
-TEST_CASE("TSDataPlanFactory::plan_for throws for dynamic TSL until slot list storage is implemented")
+TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
     const auto *int_meta = registry.register_scalar<int>("int");
     const auto *ts_int   = registry.ts(int_meta);
+    const auto *tsl      = registry.tsl(ts_int, 0);
 
-    REQUIRE_THROWS_AS(factory.plan_for(registry.tsl(ts_int, 0)), std::logic_error);
+    const auto *binding = factory.binding_for(tsl);
+    REQUIRE(binding != nullptr);
+    REQUIRE(factory.plan_for(tsl) == binding->plan());
+
+    const auto *source_binding = ValuePlanFactory::instance().binding_for(tsl->value_schema);
+    const auto *element_binding = registry.scalar_binding<int>();
+    REQUIRE(source_binding != nullptr);
+    REQUIRE(element_binding != nullptr);
+
+    auto make_list = [&](std::initializer_list<int> values) {
+        ListBuilder builder{*element_binding};
+        for (int value : values)
+        {
+            Value item{value};
+            builder.push_back_copy(item.view().data());
+        }
+        auto storage = builder.build_storage();
+        return Value{*source_binding, &storage};
+    };
+
+    TSData data{*binding};
+    auto   view = data.view();
+    REQUIRE(view.as_list().empty());
+    REQUIRE_FALSE(view.has_current_value());
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t3 = t2 + engine_time_delta_t{1};
+    {
+        auto source = make_list({11, 22});
+        auto mutation = view.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(source.view()));
+    }
+
+    auto list = view.as_list();
+    REQUIRE(list.size() == 2);
+    REQUIRE(view.has_current_value());
+    REQUIRE(view.all_valid());
+    REQUIRE(list.at(0).value().checked_as<int>() == 11);
+    REQUIRE(list.at(1).value().checked_as<int>() == 22);
+
+    Value parent_snapshot{view.value()};
+    REQUIRE(parent_snapshot.binding() == ValuePlanFactory::instance().binding_for(tsl->value_schema));
+    REQUIRE(parent_snapshot.view().as_list().at(0).checked_as<int>() == 11);
+    REQUIRE(parent_snapshot.view().as_list().at(1).checked_as<int>() == 22);
+
+    Value key_zero{std::int64_t{0}};
+    Value key_one{std::int64_t{1}};
+    Value key_two{std::int64_t{2}};
+    auto  t1_delta = view.delta_value(t1).as_map();
+    REQUIRE(t1_delta.contains(key_zero.view()));
+    REQUIRE(t1_delta.contains(key_one.view()));
+    REQUIRE(t1_delta.at(key_zero.view()).checked_as<int>() == 11);
+    REQUIRE(t1_delta.at(key_one.view()).checked_as<int>() == 22);
+
+    {
+        auto longer = make_list({11, 22, 44});
+        auto mutation = view.begin_mutation(t1);
+        REQUIRE_FALSE(mutation.copy_value_from(longer.view()));
+    }
+    list = view.as_list();
+    REQUIRE(list.size() == 3);
+    REQUIRE(list.at(2).value().checked_as<int>() == 44);
+    auto grown_t1_delta = view.delta_value(t1).as_map();
+    REQUIRE(grown_t1_delta.contains(key_zero.view()));
+    REQUIRE(grown_t1_delta.contains(key_one.view()));
+    REQUIRE(grown_t1_delta.contains(key_two.view()));
+    REQUIRE(grown_t1_delta.at(key_two.view()).checked_as<int>() == 44);
+
+    {
+        Value updated{33};
+        auto  child = list.at(1);
+        auto  mutation = child.begin_mutation(t2);
+        REQUIRE(mutation.copy_value_from(updated.view()));
+    }
+    REQUIRE(view.modified(t2));
+    REQUIRE(list.at(1).value().checked_as<int>() == 33);
+    auto t2_delta = view.delta_value(t2).as_map();
+    REQUIRE_FALSE(t2_delta.contains(key_zero.view()));
+    REQUIRE(t2_delta.contains(key_one.view()));
+    REQUIRE_FALSE(t2_delta.contains(key_two.view()));
+    REQUIRE(t2_delta.at(key_one.view()).checked_as<int>() == 33);
+
+    {
+        auto shorter = make_list({1});
+        auto mutation = view.begin_mutation(t3);
+        REQUIRE_THROWS_AS(mutation.copy_value_from(shorter.view()), std::invalid_argument);
+    }
+    REQUIRE_FALSE(view.modified(t3));
+    REQUIRE(view.as_list().size() == 3);
 }
 
 TEST_CASE("TSDataPlanFactory::find returns null and null schemas return null")

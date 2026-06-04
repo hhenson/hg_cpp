@@ -65,6 +65,7 @@ namespace hgraph
         binding_cache_.clear();
         plan_detail::clear_atomic_ts_data_ops();
         plan_detail::clear_fixed_ts_data_contexts();
+        plan_detail::clear_dynamic_list_ts_data_contexts();
         plan_detail::clear_window_ts_data_contexts();
         plan_detail::clear_slot_ts_data_contexts();
     }
@@ -104,6 +105,18 @@ namespace hgraph
         if (schema == nullptr)
         {
             return nullptr;
+        }
+        if (plan_detail::is_dynamic_list_ts_data(*schema))
+        {
+            const auto *plan = plan_detail::synthesise_dynamic_list_plan(*schema);
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (const auto it = cache_.find(schema); it != cache_.end())
+            {
+                return it->second;
+            }
+            cache_.emplace(schema, plan);
+            return plan;
         }
         if (plan_detail::is_fixed_structured_ts_data(*schema))
         {
@@ -172,6 +185,36 @@ namespace hgraph
         if (schema == nullptr)
         {
             return nullptr;
+        }
+        if (plan_detail::is_dynamic_list_ts_data(*schema))
+        {
+            const auto *plan = plan_for(schema);
+            if (plan == nullptr)
+            {
+                throw std::logic_error("TSDataPlanFactory: dynamic TSL plan is not resolvable");
+            }
+
+            const auto &ops = plan_detail::dynamic_list_ts_data_ops(*schema, *plan, 0);
+            const auto &binding = TSDataBinding::intern(*schema, *plan, ops);
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (const auto it = binding_cache_.find(schema); it != binding_cache_.end())
+            {
+                return it->second;
+            }
+            binding_cache_.emplace(schema, &binding);
+            if (const auto plan_it = cache_.find(schema); plan_it != cache_.end())
+            {
+                if (plan_it->second != binding.plan())
+                {
+                    throw std::logic_error("TSDataPlanFactory: synthesised binding does not match cached plan");
+                }
+            }
+            else
+            {
+                cache_.emplace(schema, binding.plan());
+            }
+            return &binding;
         }
         if (plan_detail::is_fixed_structured_ts_data(*schema))
         {

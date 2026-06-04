@@ -447,8 +447,8 @@ parameter becomes one field of it — which is why a node's inputs and a ``TSB``
 share the same structure.
 
 
-Collections — ``TSS`` / ``TSL`` (``TSD`` / ``TSW`` planned)
------------------------------------------------------------
+Collections — ``TSS`` / ``TSL`` / ``TSD`` / ``TSW``
+---------------------------------------------------
 
 Collection selectors **derive from the type-erased collection view** for their
 kind (``In<…, TSS<T>> : TSSInputView``, ``In<…, TSL<C,N>> : TSLInputView``, and the
@@ -471,7 +471,7 @@ type-erased ``Value`` (``In<…>::delta()`` is the inherited ``delta_value()``).
 
 **List (``TSL<C, N>``) — available and recursive.** A fixed-size list of ``N``
 children whose schema ``C`` is **any** time-series type — ``TS<T>``, ``TSS<T>``,
-or another ``TSL`` — nested arbitrarily. ``in[i]`` yields the child input selector
+``TSD<K,V>``, ``TSW<T>``, or another ``TSL`` — nested arbitrarily. ``in[i]`` yields the child input selector
 ``In<"", C>`` and ``out[i]`` the child output ``Out<C>``, so you compose recursively:
 
 .. code-block:: cpp
@@ -502,19 +502,19 @@ A ``TSL`` delta is the canonical ``Map<int64, delta(C)>`` ``Value`` (recursive i
 
 The selector composition above is recursive over **any** child today, and the TSData
 runtime supports fixed ``TSL`` children across the implemented non-``REF`` kinds:
-``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed ``TSL``, ``TSB``, and ``TSW``. A
+``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed and dynamic ``TSL``, ``TSB``, and ``TSW``. A
 ``TSL<TSS<int>, N>`` such as ``FanIn`` owns each child set's slot storage inside the
 fixed list and projects the parent value from those child views. Dynamic ``TSL``
-storage still needs further runtime support.
+storage is grow-only: output indexing can allocate new children, but shorter-list
+value copies are rejected until the ``TSL`` delta schema can represent removals.
 
-**Planned.** ``TSD<K, V>`` (dict) and ``TSW<T, …>`` (window) selectors follow the
-same derive-from-view pattern; the Python iteration API
-(``added_items`` / ``removed_items`` / ``modified_items``) maps onto the C++ view
-methods.
+``TSD<K, V>`` (dict) and ``TSW<T, …>`` (window) selectors follow the same
+derive-from-view pattern; the Python iteration API (``added_items`` /
+``removed_items`` / ``modified_items``) maps onto the C++ view methods.
 
 .. code-block:: cpp
 
-   // Planned — TSD, provisional syntax
+   // TSD of scalar TS values
    struct SumValues
    {
        static void eval(In<"d", TSD<std::string, TS<int>>> d, Out<TS<int>> out)

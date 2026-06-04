@@ -28,13 +28,15 @@ namespace hgraph
      * child/parent tracking or projected child storage in a separate
      * auxiliary tree. Keyed collection TSData uses slot-oriented storage so
      * current payload and delta bookkeeping stay aligned by stable slot id.
+     * Dynamic ``TSL`` uses grow-only indexed child storage with stable child
+     * TSData handles; shrink/removal is rejected because the current ``TSL``
+     * delta schema is only ``Map<int64, delta(C)>``.
      *
      * Implemented synthesis paths cover atomic TSData (``TS<T>``, ``REF<T>``,
      * and ``SIGNAL``), fixed structured TSData (``TSB`` and fixed-size
-     * ``TSL``), window TSData (``TSW``), and keyed slot TSData (``TSS`` and
-     * ``TSD``). Fixed structured parents can nest any implemented non-``REF``
-     * child kind. Dynamic ``TSL`` currently throws ``std::logic_error`` until
-     * its slot-oriented storage is implemented.
+     * ``TSL``), dynamic list TSData (``TSL`` with size ``0``), window TSData
+     * (``TSW``), and keyed slot TSData (``TSS`` and ``TSD``). Fixed
+     * structured parents can nest any implemented non-``REF`` child kind.
      *
      * The factory is a process-wide singleton via ``instance()``;
      * non-copyable and non-movable.
@@ -53,9 +55,7 @@ namespace hgraph
         /**
          * Look up or synthesise the canonical plan for ``schema``.
          *
-         * Returns ``nullptr`` when ``schema`` is null. Dynamic ``TSL``
-         * currently throws ``std::logic_error`` until its slot-oriented
-         * TSData store is implemented.
+         * Returns ``nullptr`` when ``schema`` is null.
          */
         const MemoryUtils::StoragePlan *plan_for(const TSValueTypeMetaData *schema);
 

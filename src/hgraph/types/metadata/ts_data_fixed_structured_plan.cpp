@@ -100,6 +100,10 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             return *synthesise_slot_plan(schema);
         }
+        if (is_dynamic_list_ts_data(schema))
+        {
+            return *synthesise_dynamic_list_plan(schema);
+        }
         if (is_window_ts_data(schema))
         {
             return *synthesise_window_plan(schema);
@@ -205,6 +209,16 @@ namespace hgraph::ts_data_plan_factory_detail
                 throw std::logic_error("TSDataPlanFactory: slot TSData plan is not resolved");
             }
             const auto &ops = slot_ts_data_ops(schema, *plan, 0);
+            return &TSDataBinding::intern(schema, *plan, ops);
+        }
+        if (is_dynamic_list_ts_data(schema))
+        {
+            const auto *plan = synthesise_dynamic_list_plan(schema);
+            if (plan == nullptr)
+            {
+                throw std::logic_error("TSDataPlanFactory: dynamic TSL TSData plan is not resolved");
+            }
+            const auto &ops = dynamic_list_ts_data_ops(schema, *plan, 0);
             return &TSDataBinding::intern(schema, *plan, ops);
         }
         if (is_window_ts_data(schema))

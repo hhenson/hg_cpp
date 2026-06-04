@@ -274,10 +274,11 @@ selectors land.
 This selector recursion (and the delta construction below) is purely a
 compile-time/value-layer concern and works for any child. The TSData runtime
 now covers fixed ``TSL`` children across the implemented non-``REF`` kinds:
-``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed ``TSL``, ``TSB``, and ``TSW``.
-Slot and window children are owned as child auxiliary storage, while fixed
-children recurse through the parent value/auxiliary layout. Dynamic ``TSL``
-storage is still pending.
+``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed and dynamic ``TSL``, ``TSB``,
+and ``TSW``. Slot, dynamic-list, and window children are owned as child
+auxiliary storage, while fixed children recurse through the parent
+value/auxiliary layout. Dynamic ``TSL`` storage is grow-only until the
+``TSL`` delta schema grows a structural removal surface.
 
 **Deltas are canonical type-erased Values.** A selector does *not* introduce a
 parallel delta representation. The delta of any time-series is the canonical
