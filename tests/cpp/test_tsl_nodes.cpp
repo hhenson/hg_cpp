@@ -2,7 +2,8 @@
 // schema. In<TSL<C,N>>/Out<TSL<C,N>> derive from the erased list views and expose
 // recursive child selectors (in[i] -> In<"",C>, out[i] -> Out<C>); the per-cycle
 // delta is the canonical Map<int64, delta(C)> Value built by list_delta and compared
-// via Value::equals. Covers scalar children (TS) and a nested set child (TSS).
+// via Value::equals. Covers fixed and dynamic lists, scalar children (TS), and a
+// nested set child (TSS).
 
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
@@ -66,6 +67,44 @@ namespace
         }
     };
 
+    // TS<int> -> dynamic TSL<TS<int>>: index 0 exists from the first tick and index 1
+    // is appended later. This exercises dynamic Out<TSL>::at growth.
+    struct DynamicSpread
+    {
+        static constexpr auto name = "dynamic_tsl_spread";
+        static void           eval(In<"in", TS<int>> in, Out<TSL<TS<int>>> out)
+        {
+            out[0].set(in.value());
+            if (in.value() >= 2) { out[1].set(in.value() * 10); }
+        }
+    };
+
+    // dynamic TSL<TS<int>> -> TS<int>: reads the live target-bound size and sums the
+    // currently valid child values.
+    struct DynamicTotal
+    {
+        static constexpr auto name = "dynamic_tsl_total";
+        static void           eval(In<"l", TSL<TS<int>>> l, Out<TS<int>> out)
+        {
+            int total = 0;
+            for (std::size_t i = 0; i < l.size(); ++i)
+            {
+                auto child = l[i];
+                if (child.valid()) { total += child.value(); }
+            }
+            out.set(total);
+        }
+    };
+
+    struct DynamicMirrorList
+    {
+        static constexpr auto name = "dynamic_tsl_mirror";
+        static void           eval(In<"l", TSL<TS<int>>> l, Out<TSL<TS<int>>> out)
+        {
+            for (auto &&[index, child] : l.modified_items()) { out.set(index, child.value().template checked_as<int>()); }
+        }
+    };
+
     struct SpreadGraph
     {
         static constexpr auto name = "tsl_spread_graph";
@@ -84,6 +123,28 @@ namespace
         static void           compose(Wiring &w)
         {
             auto src = wire<testing::replay, TSL<TS<int>, 2>>(w, std::string{"in"});
+            wire<testing::record>(w, src, std::string{"out"});
+        }
+    };
+
+    struct DynamicSpreadGraph
+    {
+        static constexpr auto name = "dynamic_tsl_spread_graph";
+        static void           compose(Wiring &w)
+        {
+            auto src = wire<testing::replay, TS<int>>(w, std::string{"in"});
+            auto sp  = wire<DynamicSpread>(w, src);  // -> Port<TSL<TS<int>>>
+            auto tot = wire<DynamicTotal>(w, sp);
+            wire<testing::record>(w, tot, std::string{"out"});
+        }
+    };
+
+    struct DynamicListDeltaGraph
+    {
+        static constexpr auto name = "dynamic_tsl_delta_graph";
+        static void           compose(Wiring &w)
+        {
+            auto src = wire<testing::replay, TSL<TS<int>>>(w, std::string{"in"});
             wire<testing::record>(w, src, std::string{"out"});
         }
     };
@@ -133,6 +194,22 @@ TEST_CASE("tsl: Out<TSL> sets children and In<TSL> reads the values back")
     CHECK_OUTPUT(testing::get_recorded_values<int>(ex.view().graph().global_state(), "out"), {11, 22, 33});
 }
 
+TEST_CASE("tsl: dynamic TSL output grows and target-bound input reads the live size")
+{
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    GraphBuilder gb = build_graph<DynamicSpreadGraph>();
+    testing::set_replay_values<int>(gb.global_state(), "in", {1, 2, 3});
+
+    GraphExecutorBuilder eb;
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    GraphExecutorValue ex = eb.make_executor();
+    ex.view().run();
+
+    // tick 1: [1], tick 2: [2,20], tick 3: [3,30].
+    CHECK_OUTPUT(testing::get_recorded_values<int>(ex.view().graph().global_state(), "out"), {1, 22, 33});
+}
+
 TEST_CASE("tsl: replay<TSL> -> record<TSL> round-trips list deltas (modified children only)")
 {
     (void)TypeRegistry::instance().register_scalar<int>("int");
@@ -155,6 +232,29 @@ TEST_CASE("tsl: replay<TSL> -> record<TSL> round-trips list deltas (modified chi
                  {list_delta<TS<int>>({{0, 1}, {1, 2}}), list_delta<TS<int>>({{0, 5}}), list_delta<TS<int>>({{1, 9}})});
 }
 
+TEST_CASE("tsl: dynamic replay<TSL> -> record<TSL> round-trips grow-only list deltas")
+{
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    const std::vector<std::optional<Value>> deltas{
+        list_delta<TS<int>>({{0, 1}}),
+        list_delta<TS<int>>({{0, 5}, {1, 9}}),
+        list_delta<TS<int>>({{1, 11}}),
+    };
+
+    GraphBuilder gb = build_graph<DynamicListDeltaGraph>();
+    testing::set_replay_deltas(gb.global_state(), "in", deltas);
+
+    GraphExecutorBuilder eb;
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    GraphExecutorValue ex = eb.make_executor();
+    ex.view().run();
+
+    CHECK_OUTPUT(testing::get_recorded_deltas(ex.view().graph().global_state(), "out"),
+                 {list_delta<TS<int>>({{0, 1}}), list_delta<TS<int>>({{0, 5}, {1, 9}}),
+                  list_delta<TS<int>>({{1, 11}})});
+}
+
 TEST_CASE("tsl: eval_node drives scalar-child TSL inputs/outputs as canonical deltas")
 {
     (void)TypeRegistry::instance().register_scalar<int>("int");
@@ -172,6 +272,13 @@ TEST_CASE("tsl: eval_node drives scalar-child TSL inputs/outputs as canonical de
 
     // TSL -> TSL: re-applying the delta round-trips it.
     CHECK_OUTPUT(testing::eval_node<MirrorList>(in), in);
+
+    // Dynamic TSL -> dynamic TSL: the same erased replay/record harness applies to
+    // grow-only dynamic lists.
+    const std::vector<std::optional<Value>> dynamic_in{list_delta<TS<int>>({{0, 1}}),
+                                                       list_delta<TS<int>>({{0, 5}, {1, 9}}),
+                                                       list_delta<TS<int>>({{1, 11}})};
+    CHECK_OUTPUT(testing::eval_node<DynamicMirrorList>(dynamic_in), dynamic_in);
 }
 
 TEST_CASE("tsl: recursive — list_delta over container children builds nested canonical Values")
@@ -196,8 +303,8 @@ TEST_CASE("tsl: recursive — list_delta over container children builds nested c
     CHECK(nd.equals(list_delta<TSL<TS<int>, 2>>({{0, list_delta<TS<int>>({{1, 8}, {0, 7}})}})));
     CHECK(nd.view().as_map().at(Value{std::int64_t{0}}.view()).as_map().size() == 2);
 
-    // TSData storage now supports fixed TSL over every implemented non-REF child kind.
-    // Dynamic TSL storage remains a separate runtime shape.
+    // TSData storage supports fixed and dynamic TSL over every implemented non-REF
+    // child kind; dynamic TSL is grow-only because its delta has no removal surface.
 }
 
 TEST_CASE("tsl: a TSL<TSS> executes end-to-end (replay -> record round-trips list-of-set deltas)")

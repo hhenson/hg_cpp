@@ -184,3 +184,19 @@ TEST_CASE("ts_delta: capture/apply round-trip a fixed-TSL-of-scalar list delta")
     CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
                  {list_delta<TS<int>>({{0, 1}, {1, 2}}), list_delta<TS<int>>({{0, 5}}), list_delta<TS<int>>({{1, 9}})});
 }
+
+TEST_CASE("ts_delta: capture/apply round-trip a dynamic TSL-of-scalar list delta")
+{
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+    const std::vector<std::optional<Value>> deltas{
+        list_delta<TS<int>>({{0, 1}}),
+        list_delta<TS<int>>({{0, 5}, {1, 9}}),
+        list_delta<TS<int>>({{1, 11}}),
+    };
+
+    auto rt = run_graph<RoundTripGraph<TSL<TS<int>>>>(
+        [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
+    CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
+                 {list_delta<TS<int>>({{0, 1}}), list_delta<TS<int>>({{0, 5}, {1, 9}}),
+                  list_delta<TS<int>>({{1, 11}})});
+}

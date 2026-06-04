@@ -171,7 +171,9 @@ namespace hgraph
         [[nodiscard]] const TSValueTypeMetaData *tsl_endpoint_child_schema(const TSValueTypeMetaData *schema,
                                                                            std::size_t                index) noexcept
         {
-            return schema != nullptr && index < schema->fixed_size() ? schema->element_ts() : nullptr;
+            if (schema == nullptr) { return nullptr; }
+            if (schema->fixed_size() == 0) { return schema->element_ts(); }
+            return index < schema->fixed_size() ? schema->element_ts() : nullptr;
         }
 
         [[nodiscard]] const TSValueTypeMetaData *tsd_endpoint_child_schema(const TSValueTypeMetaData *schema,

@@ -119,8 +119,8 @@ namespace hgraph::testing
      * Arguments are given in the node's **eval-parameter order** (its ``In`` and
      * ``Scalar`` parameters): a **time-series input** is a
      * ``std::vector<std::optional<E>>`` where ``E`` is that input's harness element
-     * (``T`` for ``TS<T>``, ``SetDelta<T>`` for ``TSS<T>``, ``ListDelta<T>`` for
-     * fixed scalar-child ``TSL<TS<T>, N>`` — see :cpp:class:`ts_harness`),
+     * (``T`` for ``TS<T>`` and the canonical delta ``Value`` for container kinds
+     * such as ``TSS`` / fixed or dynamic ``TSL`` — see :cpp:class:`ts_harness`),
      * one element per engine cycle from ``MIN_ST`` (``none`` = no tick), and a
      * **scalar input** is the value itself. The harness wires the matching ``replay``
      * per time-series input, the node, then the matching ``record`` on the output,
@@ -131,10 +131,8 @@ namespace hgraph::testing
      * The **first** parameter must be a time-series input (so it can be a braced
      * list — its element type is inferred from the node); any later time-series
      * inputs are passed as ``std::vector<std::optional<E>>``. The node must have
-     * exactly one output. Scalar (``TS``), set (``TSS``), and fixed scalar-child
-     * list (``TSL<TS<T>, N>``) time-series are supported on inputs and the output;
-     * other container kinds (``TSB``/``TSD``/``TSW``) are a future extension (a new
-     * :cpp:class:`ts_harness` specialisation plus its replay/record pair).
+     * exactly one output. Scalar (``TS``) and any container kind supported by the
+     * erased replay/record delta path are accepted on inputs and the output.
      */
     template <typename NodeT, typename... Rest>
     [[nodiscard]] std::vector<std::optional<eval_node_detail::output_element_t<NodeT>>>
