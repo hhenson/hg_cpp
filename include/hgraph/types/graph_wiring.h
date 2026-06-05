@@ -229,16 +229,65 @@ namespace hgraph
             T::resolve_default_types(resolution);
         };
 
+        template <typename T>
+        struct dereferenced_static_schema
+        {
+            using type = T;
+        };
+        template <typename T>
+        using dereferenced_static_schema_t = typename dereferenced_static_schema<T>::type;
+
+        template <typename TSchema>
+        struct dereferenced_static_schema<REF<TSchema>>
+        {
+            using type = dereferenced_static_schema_t<TSchema>;
+        };
+        template <typename TKey, typename TValueSchema>
+        struct dereferenced_static_schema<TSD<TKey, TValueSchema>>
+        {
+            using type = TSD<TKey, dereferenced_static_schema_t<TValueSchema>>;
+        };
+        template <typename TElementSchema, std::size_t FixedSize>
+        struct dereferenced_static_schema<TSL<TElementSchema, FixedSize>>
+        {
+            using type = TSL<dereferenced_static_schema_t<TElementSchema>, FixedSize>;
+        };
+        template <fixed_string Name, typename TSchema>
+        struct dereferenced_field
+        {
+            using type = Field<Name, dereferenced_static_schema_t<TSchema>>;
+        };
+        template <typename TField>
+        struct dereferenced_static_field;
+        template <fixed_string Name, typename TSchema>
+        struct dereferenced_static_field<Field<Name, TSchema>> : dereferenced_field<Name, TSchema>
+        {
+        };
+        template <typename... TFields>
+        struct dereferenced_static_schema<UnNamedTSB<TFields...>>
+        {
+            using type = UnNamedTSB<typename dereferenced_static_field<TFields>::type...>;
+        };
+        template <fixed_string Name, typename... TFields>
+        struct dereferenced_static_schema<TSB<Name, TFields...>>
+        {
+            using type = TSB<Name, typename dereferenced_static_field<TFields>::type...>;
+        };
+
         template <typename InputSchema, typename OutputSchema>
         inline constexpr bool statically_accepts_output_v =
-            std::is_same_v<InputSchema, SIGNAL> || std::is_same_v<InputSchema, OutputSchema>;
+            std::is_same_v<InputSchema, SIGNAL> ||
+            std::is_same_v<dereferenced_static_schema_t<InputSchema>, dereferenced_static_schema_t<OutputSchema>>;
 
         [[nodiscard]] inline bool input_accepts_output_schema(const TSValueTypeMetaData *input_schema,
                                                               const TSValueTypeMetaData *output_schema)
         {
             if (input_schema == nullptr || output_schema == nullptr) { return false; }
             if (input_schema->kind == TSTypeKind::SIGNAL) { return true; }
-            return time_series_schema_equivalent(input_schema, output_schema);
+
+            auto &registry = TypeRegistry::instance();
+            return time_series_schema_equivalent(registry.dereference(input_schema),
+                                                 registry.dereference(output_schema));
         }
 
         // Drop the leading ``Wiring &`` from a ``compose`` parameter tuple.

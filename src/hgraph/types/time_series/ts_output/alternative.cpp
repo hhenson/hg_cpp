@@ -24,6 +24,11 @@ namespace hgraph::detail
             const TSOutput *output{nullptr};
         };
 
+        [[nodiscard]] engine_time_t concrete_reference_time(engine_time_t time) noexcept
+        {
+            return time != MIN_DT ? time : MIN_ST;
+        }
+
         [[nodiscard]] bool schema_equivalent_after_dereference(const TSValueTypeMetaData *lhs,
                                                                const TSValueTypeMetaData *rhs)
         {
@@ -407,6 +412,7 @@ namespace hgraph::detail
         void refresh(engine_time_t modified_time)
         {
             if (requested_schema == nullptr || !source.bound()) { return; }
+            modified_time = concrete_reference_time(modified_time);
             auto target = data.view();
             populate_to_ref_data(target, source.view(modified_time), *requested_schema, modified_time, build_context);
         }

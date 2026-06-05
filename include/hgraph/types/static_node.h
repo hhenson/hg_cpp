@@ -8,6 +8,7 @@
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/type_resolution.h>
 #include <hgraph/types/time_series/ts_data/set_view.h>
+#include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
 #include <hgraph/types/time_series/ts_input/dict_view.h>
 #include <hgraph/types/time_series/ts_input/list_view.h>
@@ -51,12 +52,11 @@ namespace hgraph
      * See ``data_structures`` developer guide: *Wiring* and
      * *Schemas > Static Schema*.
      *
-     * The typed selector surface covers the supported non-``REF`` time-series
-     * shapes (``TS`` / ``SIGNAL`` / ``TSS`` / ``TSD`` / ``TSL`` / ``TSB`` /
-     * tick-count ``TSW``), scalar ``State<T>``, wiring-time ``Scalar<Name, T>``
-     * values, graph-level ``GlobalState<T>``, and scheduler injection. ``REF``,
-     * push-source selectors, policy flags, and recordable state are still being
-     * filled in.
+     * The typed selector surface covers the supported time-series shapes (``TS`` /
+     * ``SIGNAL`` / ``REF`` / ``TSS`` / ``TSD`` / ``TSL`` / ``TSB`` / tick-count
+     * ``TSW``), scalar ``State<T>``, wiring-time ``Scalar<Name, T>`` values,
+     * graph-level ``GlobalState<T>``, and scheduler injection. Push-source selectors,
+     * policy flags, and recordable state are still being filled in.
      */
 
     // -----------------------------------------------------------------
@@ -439,6 +439,29 @@ namespace hgraph
     };
 
     /**
+     * Reference time-series input (``REF<S>``): reads the current reference token.
+     * The reference points at ``S``; ``base()`` remains the erased view over the REF
+     * time-series itself.
+     */
+    template <fixed_string Name, typename TSchema>
+    class In<Name, REF<TSchema>> : public TSInputView
+    {
+      public:
+        using schema                     = REF<TSchema>;
+        using target_schema              = TSchema;
+        using value_type                 = TimeSeriesReference;
+        static constexpr auto field_name = Name;
+
+        explicit In(TSInputView view) noexcept : TSInputView(std::move(view)) {}
+
+        [[nodiscard]] TimeSeriesReference value() const
+        {
+            return TSInputView::value().template checked_as<TimeSeriesReference>();
+        }
+        [[nodiscard]] const TSInputView &base() const noexcept { return *this; }
+    };
+
+    /**
      * Set time-series input (``TSS<T>``): inherits ``TSSInputView`` and adds typed
      * ``added`` / ``removed`` / ``values`` / ``contains``; ``delta()`` is the canonical
      * delta ``Value`` (the inherited ``delta_value()``).
@@ -803,6 +826,62 @@ namespace hgraph
             {
                 throw std::logic_error("Out<SIGNAL>::apply failed to copy the signal tick");
             }
+        }
+    };
+
+    template <typename TSchema>
+    class Out<REF<TSchema>> : public TSOutputView
+    {
+      public:
+        using schema        = REF<TSchema>;
+        using target_schema = TSchema;
+        using value_type    = TimeSeriesReference;
+
+        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
+
+        void set(const TimeSeriesReference &reference) const
+        {
+            TimeSeriesReference typed_reference = normalize(reference);
+            Value               wrapped{std::move(typed_reference)};
+            copy_reference_value(wrapped.view());
+        }
+
+        void apply(const ValueView &value) const
+        {
+            if (value.valid())
+            {
+                set(value.checked_as<TimeSeriesReference>());
+                return;
+            }
+            copy_reference_value(value);
+        }
+
+      private:
+        void copy_reference_value(const ValueView &value) const
+        {
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
+            if (!mutation.copy_value_from(value))
+            {
+                throw std::logic_error("Out<REF<S>>::apply failed to copy the reference into the output");
+            }
+        }
+
+        [[nodiscard]] static TimeSeriesReference normalize(const TimeSeriesReference &reference)
+        {
+            const auto *expected = schema_descriptor<TSchema>::ts_meta();
+            const auto *actual   = reference.target_schema();
+            if (actual == nullptr)
+            {
+                if (reference.is_empty()) { return TimeSeriesReference::empty(expected); }
+                throw std::invalid_argument("Out<REF<S>>::set reference has no target schema");
+            }
+
+            auto &registry = TypeRegistry::instance();
+            if (!time_series_schema_equivalent(registry.dereference(actual), registry.dereference(expected)))
+            {
+                throw std::invalid_argument("Out<REF<S>>::set reference target schema does not match output schema");
+            }
+            return reference;
         }
     };
 

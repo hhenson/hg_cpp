@@ -207,6 +207,64 @@ namespace
             wire<CountSignalSubGraph>(w, source);
         }
     };
+
+    struct RefProbe
+    {
+        static constexpr auto name              = "ref_probe";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(In<"ref", REF<TS<Int>>> ref, Out<TS<Bool>> out)
+        {
+            const TimeSeriesReference value = ref.value();
+            out.set(value.is_peered() &&
+                    time_series_schema_equivalent(value.target_schema(), ts_type<TS<Int>>()));
+        }
+    };
+
+    struct RefCopy
+    {
+        static constexpr auto name              = "ref_copy";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(In<"ref", REF<TS<Int>>> ref, Out<REF<TS<Int>>> out)
+        {
+            out.set(ref.value());
+        }
+    };
+
+    struct RefDeref
+    {
+        static constexpr auto name              = "ref_deref";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(In<"value", TS<Int>> value, Out<TS<Int>> out)
+        {
+            out.set(value.value());
+        }
+    };
+
+    struct RefProbeGraph
+    {
+        static constexpr auto name = "ref_probe_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            wire<RefProbe>(w, source);
+        }
+    };
+
+    struct RefRoundTripGraph
+    {
+        static constexpr auto name = "ref_round_trip_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            auto ref    = wire<RefCopy>(w, source);
+            wire<RefDeref>(w, ref);
+        }
+    };
 }  // namespace
 
 TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulation")
@@ -304,6 +362,46 @@ TEST_CASE("graph wiring: sub-graph SIGNAL input accepts any time-series port")
     auto graph = view.graph();
     REQUIRE(graph.node_count() == 2);
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{1});
+}
+
+TEST_CASE("graph wiring: TS output can bind to a REF input")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<RefProbeGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 2);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Bool>());
+}
+
+TEST_CASE("graph wiring: REF output can bind back to a dereferenced TS input")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<RefRoundTripGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 3);
+    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Int>() == Int{41});
 }
 
 TEST_CASE("graph wiring: multi-input node wires and type-checks its ports")
