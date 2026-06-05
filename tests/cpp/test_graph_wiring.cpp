@@ -6,14 +6,30 @@
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/time_series/ts_delta.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <type_traits>
+#include <utility>
 
 namespace
 {
     using namespace hgraph;
+
+    template <typename TSchema>
+    [[nodiscard]] const TSOutputView &erased_output(const Out<TSchema> &out)
+    {
+        if constexpr (std::is_base_of_v<TSOutputView, Out<TSchema>>)
+        {
+            return out;
+        }
+        else
+        {
+            return out.base();
+        }
+    }
 
     struct ConstantSource
     {
@@ -266,6 +282,121 @@ namespace
             wire<RefDeref>(w, ref);
         }
     };
+
+    template <typename TSchema>
+    struct RefCopyFor
+    {
+        static constexpr auto name              = "ref_copy_for";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(In<"ref", REF<TSchema>> ref, Out<REF<TSchema>> out)
+        {
+            out.set(ref.value());
+        }
+    };
+
+    template <typename TSchema>
+    struct RefDerefPass
+    {
+        static constexpr auto name              = "ref_deref_pass";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(In<"value", TSchema> value, Out<TSchema> out)
+        {
+            Value delta = capture_delta(value.base());
+            apply_delta(erased_output(out), delta.view());
+        }
+    };
+
+    template <typename TSource, typename TSchema>
+    struct RefRoundTripFor
+    {
+        static constexpr auto name = "ref_round_trip_for";
+
+        static void compose(Wiring &w)
+        {
+            auto source = wire<TSource>(w);
+            auto ref    = wire<RefCopyFor<TSchema>>(w, source);
+            wire<RefDerefPass<TSchema>>(w, ref);
+        }
+    };
+
+    struct SetSource
+    {
+        static constexpr auto name              = "set_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Out<TSS<Int>> out)
+        {
+            out.add(Int{1});
+            out.add(Int{2});
+        }
+    };
+
+    struct DictSource
+    {
+        static constexpr auto name              = "dict_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Out<TSD<Int, TS<Int>>> out)
+        {
+            out.set(Int{1}, Int{10});
+            out.set(Int{2}, Int{20});
+        }
+    };
+
+    struct ListSource
+    {
+        static constexpr auto name              = "list_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Out<TSL<TS<Int>, 2>> out)
+        {
+            out.set(0, Int{7});
+            out.set(1, Int{8});
+        }
+    };
+
+    using RefRoundTripBundle = TSB<"RefRoundTripBundle",
+                                   Field<"a", TS<Int>>,
+                                   Field<"b", TS<Int>>>;
+
+    struct BundleSource
+    {
+        static constexpr auto name              = "bundle_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Out<RefRoundTripBundle> out)
+        {
+            out.field<"a">().set(Int{11});
+            out.field<"b">().set(Int{12});
+        }
+    };
+
+    struct NestedListSetSource
+    {
+        static constexpr auto name              = "nested_list_set_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Out<TSL<TSS<Int>, 2>> out)
+        {
+            out[0].add(Int{3});
+            out[0].add(Int{4});
+            out[1].add(Int{5});
+        }
+    };
+
+    GraphExecutorValue run_start(GraphBuilder graph_builder)
+    {
+        GraphExecutorBuilder executor_builder;
+        executor_builder.graph_builder(std::move(graph_builder))
+            .start_time(MIN_ST)
+            .end_time(MIN_ST + engine_time_delta_t{2});
+
+        GraphExecutorValue executor = executor_builder.make_executor();
+        executor.view().run();
+        return executor;
+    }
 }  // namespace
 
 TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulation")
@@ -404,6 +535,100 @@ TEST_CASE("graph wiring: REF output can bind back to a dereferenced TS input")
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 3);
     CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Int>() == Int{41});
+}
+
+TEST_CASE("graph wiring: REF round trip supports TSS")
+{
+    using namespace hgraph;
+
+    GraphExecutorValue executor = run_start(build_graph<RefRoundTripFor<SetSource, TSS<Int>>>());
+
+    auto graph  = executor.view().graph();
+    auto output = graph.node_at(2).output(MIN_ST);
+    auto set    = output.as_set();
+    Value one{Int{1}};
+    Value two{Int{2}};
+
+    REQUIRE(graph.node_count() == 3);
+    CHECK(set.size() == 2);
+    CHECK(set.contains(one.view()));
+    CHECK(set.contains(two.view()));
+}
+
+TEST_CASE("graph wiring: REF round trip supports TSD")
+{
+    using namespace hgraph;
+
+    GraphExecutorValue executor = run_start(build_graph<RefRoundTripFor<DictSource, TSD<Int, TS<Int>>>>());
+
+    auto graph  = executor.view().graph();
+    auto output = graph.node_at(2).output(MIN_ST);
+    auto dict   = output.as_dict();
+    Value one{Int{1}};
+    Value two{Int{2}};
+
+    REQUIRE(graph.node_count() == 3);
+    REQUIRE(dict.contains(one.view()));
+    REQUIRE(dict.contains(two.view()));
+    CHECK(dict.at(one.view()).value().checked_as<Int>() == Int{10});
+    CHECK(dict.at(two.view()).value().checked_as<Int>() == Int{20});
+}
+
+TEST_CASE("graph wiring: REF round trip supports fixed TSL")
+{
+    using namespace hgraph;
+
+    GraphExecutorValue executor = run_start(build_graph<RefRoundTripFor<ListSource, TSL<TS<Int>, 2>>>());
+
+    auto graph  = executor.view().graph();
+    auto output = graph.node_at(2).output(MIN_ST);
+    auto list   = output.as_list();
+
+    REQUIRE(graph.node_count() == 3);
+    REQUIRE(list.size() == 2);
+    CHECK(list.at(0).value().checked_as<Int>() == Int{7});
+    CHECK(list.at(1).value().checked_as<Int>() == Int{8});
+}
+
+TEST_CASE("graph wiring: REF round trip supports TSB")
+{
+    using namespace hgraph;
+
+    GraphExecutorValue executor = run_start(build_graph<RefRoundTripFor<BundleSource, RefRoundTripBundle>>());
+
+    auto graph  = executor.view().graph();
+    auto output = graph.node_at(2).output(MIN_ST);
+    auto bundle = output.as_bundle();
+
+    REQUIRE(graph.node_count() == 3);
+    CHECK(bundle.field("a").value().checked_as<Int>() == Int{11});
+    CHECK(bundle.field("b").value().checked_as<Int>() == Int{12});
+}
+
+TEST_CASE("graph wiring: REF round trip supports nested collection children")
+{
+    using namespace hgraph;
+
+    GraphExecutorValue executor =
+        run_start(build_graph<RefRoundTripFor<NestedListSetSource, TSL<TSS<Int>, 2>>>());
+
+    auto graph         = executor.view().graph();
+    auto output        = graph.node_at(2).output(MIN_ST);
+    auto list          = output.as_list();
+    auto first_child   = list.at(0);
+    auto second_child  = list.at(1);
+    auto first_values  = first_child.as_set();
+    auto second_values = second_child.as_set();
+    Value three{Int{3}};
+    Value four{Int{4}};
+    Value five{Int{5}};
+
+    REQUIRE(graph.node_count() == 3);
+    CHECK(first_values.size() == 2);
+    CHECK(first_values.contains(three.view()));
+    CHECK(first_values.contains(four.view()));
+    CHECK(second_values.size() == 1);
+    CHECK(second_values.contains(five.view()));
 }
 
 TEST_CASE("graph wiring: multi-input node wires and type-checks its ports")
