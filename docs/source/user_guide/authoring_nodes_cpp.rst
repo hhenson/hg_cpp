@@ -937,20 +937,40 @@ A passthrough generic over any time-series type:
    def passthrough(in_: TIME_SERIES_TYPE) -> TIME_SERIES_TYPE:
        return in_.delta_value
 
-A node generic over a scalar type (this is exactly ``stdlib::const_``) — the scalar
-variable ``T`` is inferred from the configured value, so ``TS<T>`` resolves with it:
+A node generic over a scalar type and a source output type (this is exactly
+``stdlib::const_``) — the scalar variable ``T`` is inferred from the configured
+value. If the caller does not supply an explicit output schema, the node's
+default resolver binds ``S`` to ``TS<T>``; if the caller writes
+``wire<stdlib::const_, SomeTS>(...)``, ``S`` is that explicit output schema and
+the value must match ``SomeTS``'s current-value schema:
 
 .. code-block:: cpp
 
    struct const_
    {
        static constexpr bool schedule_on_start = true;
-       static void eval(Scalar<"value", ScalarVar<"T">> value, Out<TS<ScalarVar<"T">>> out)
+
+       static void resolve_default_types(ResolutionMap& resolution)
+       {
+           const auto* value_schema = resolution.scalar("T");
+           const auto* output_schema = resolution.find_ts("S");
+           if (output_schema == nullptr)
+           {
+               resolution.bind_ts("S", TypeRegistry::instance().ts(value_schema));
+           }
+           else if (output_schema->value_schema != value_schema)
+           {
+               throw std::logic_error("const value schema does not match output value schema");
+           }
+       }
+
+       static void eval(Scalar<"value", ScalarVar<"T">> value, Out<TsVar<"S">> out)
        {
            out.apply(value.value());   // erased copy of the configured value
        }
    };
-   // wired as: wire<stdlib::const_>(w, 42);    // T inferred = int
+   // wire<stdlib::const_>(w, 42);             // defaults to TS<int>
+   // wire<stdlib::const_, TSS<int>>(w, set);  // explicit output; set is a Set<int> Value
 
 .. code-block:: python
 

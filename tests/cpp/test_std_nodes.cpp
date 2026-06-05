@@ -6,16 +6,28 @@
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_node.h>
+#include <hgraph/types/value/value_builder.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <initializer_list>
 #include <optional>
 #include <string>
 
 namespace
 {
     using namespace hgraph;
+
+    Value make_int_set(std::initializer_list<int> values)
+    {
+        const auto *int_meta    = TypeRegistry::instance().register_scalar<int>("int");
+        const auto *int_binding = ValuePlanFactory::instance().binding_for(int_meta);
+        SetBuilder  builder{*int_binding};
+        for (const int value : values) { (void)builder.insert(value); }
+        return builder.build();
+    }
 
     // const_(7) -> record: the constant is emitted once at start.
     struct ConstRecordGraph
@@ -24,6 +36,28 @@ namespace
         static void           compose(Wiring &w)
         {
             auto c = wire<stdlib::const_>(w, 7);
+            wire<testing::record>(w, c, std::string{"out"});
+        }
+    };
+
+    // Explicit TS output resolution: still scalar, but now resolved via TsVar<"S">.
+    struct ExplicitTsConstRecordGraph
+    {
+        static constexpr auto name = "explicit_ts_const_record_graph";
+        static void           compose(Wiring &w)
+        {
+            auto c = wire<stdlib::const_, TS<int>>(w, 11);
+            wire<testing::record>(w, c, std::string{"out"});
+        }
+    };
+
+    // Explicit collection output resolution: the scalar argument is a value-layer set.
+    struct ConstSetRecordGraph
+    {
+        static constexpr auto name = "const_set_record_graph";
+        static void           compose(Wiring &w)
+        {
+            auto c = wire<stdlib::const_, TSS<int>>(w, make_int_set({1, 2}));
             wire<testing::record>(w, c, std::string{"out"});
         }
     };
@@ -69,6 +103,38 @@ TEST_CASE("stdlib::const_ emits its configured value once at start")
     const auto         out      = testing::get_recorded_values<int>(executor.view().graph().global_state(), "out");
     REQUIRE(out.size() == 1);
     CHECK(out[0] == std::optional<int>{7});
+}
+
+TEST_CASE("stdlib::const_ accepts an explicit scalar output resolution")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    GraphExecutorValue executor = run_once(build_graph<ExplicitTsConstRecordGraph>());
+    const auto         out      = testing::get_recorded_values<int>(executor.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 1);
+    CHECK(out[0] == std::optional<int>{11});
+}
+
+TEST_CASE("stdlib::const_ accepts an explicit collection output resolution")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    GraphExecutorValue executor = run_once(build_graph<ConstSetRecordGraph>());
+    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 1);
+    REQUIRE(out[0].has_value());
+    CHECK(out[0]->equals(set_delta<int>({1, 2}, {})));
+}
+
+TEST_CASE("stdlib::const_ rejects explicit output resolution when the value schema differs")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<int>("int");
+
+    Wiring w;
+    CHECK_THROWS_AS((wire<stdlib::const_, TSS<int>>(w, 7)), std::logic_error);
 }
 
 TEST_CASE("stdlib::null_sink consumes its input without error")

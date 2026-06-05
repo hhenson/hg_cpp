@@ -1,7 +1,7 @@
 // The runtime, type-erased delta machinery `capture_delta(const TSInputView&) ->
 // Value` / `apply_delta(const TSOutputView&, const ValueView&)` — schema-as-data,
-// dispatched on the live endpoint's kind. This suite drives them directly through
-// hand-authored probe source/sink nodes and shows the cycle-aligned buffers
+// dispatched through the live endpoint's TSDataOps table. This suite drives them
+// directly through hand-authored probe source/sink nodes and shows the cycle-aligned buffers
 // round-trip identically (against the canonical delta builders) for TS / SIGNAL /
 // TSS / TSD / TSL / TSB / TSW.
 

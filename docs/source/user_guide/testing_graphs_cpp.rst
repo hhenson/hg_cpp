@@ -235,9 +235,11 @@ Standard helper nodes (``lib/std``)
 A small set of reusable nodes lives in ``<hgraph/lib/std/std_nodes.h>`` (namespace
 ``hgraph::stdlib``) — the building blocks graphs and tests reach for most:
 
-* ``const_<T>`` — a constant source: emits its ``value`` scalar once at start
+* ``const_`` — a constant source: emits its ``value`` scalar once at start
   (named with a trailing underscore because ``const`` is a C++ keyword; the Python
-  operator is ``const``).
+  operator is ``const``). Without an explicit output schema it resolves to
+  ``TS<T>`` from the scalar value type; pass ``wire<stdlib::const_, S>(...)`` to
+  emit a constant value for another time-series shape ``S``.
 * ``debug_print<T>`` — a sink that prints ``label: value`` on each tick (a
   diagnostic aid; ``T`` must be ``fmt``-formattable).
 * ``null_sink<T>`` — a sink that consumes its input and does nothing (gives a graph
@@ -245,8 +247,8 @@ A small set of reusable nodes lives in ``<hgraph/lib/std/std_nodes.h>`` (namespa
 
 .. code-block:: cpp
 
-   auto c = wire<stdlib::const_<int>>(w, 7);        // source emitting 7 at start
-   wire<stdlib::debug_print<int>>(w, c, "value");   // prints "value: 7"
+   auto c = wire<stdlib::const_>(w, 7);             // source emitting 7 at start
+   wire<stdlib::debug_print>(w, c, "value");        // prints "value: 7"
 
 Deltas are canonical ``Value``\ s
 ---------------------------------
@@ -316,8 +318,9 @@ delta ``Value`` from ``set_delta``.
 
 By hand: ``wire<testing::replay, TSS<T>>`` re-creates ticks from a delta ``Value``
 (remove then add); ``wire<testing::record>`` captures the per-tick delta; ``CHECK_OUTPUT`` renders each delta as
-``{added: {…}, removed: {…}}`` on mismatch. A ``TSS`` ``const_`` (a constant set source)
-is still future work — it needs a set-valued wiring scalar.
+``{added: {…}, removed: {…}}`` on mismatch. A constant set source is
+``wire<stdlib::const_, TSS<T>>(w, set_value)``, where ``set_value`` is a value-layer
+``Set<T>`` ``Value``.
 
 List time-series (``TSL``) — recursive
 --------------------------------------

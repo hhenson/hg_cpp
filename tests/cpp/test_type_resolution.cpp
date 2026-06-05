@@ -1,8 +1,8 @@
 // Phase 3 of the type-var node work: a node authored ONCE over deferred schemas
 // (TsVar / ScalarVar) is resolved to a concrete schema at WIRING time — from a
 // connected input port, from an inferred scalar value, or from an explicit type.
-// These hand-authored generic nodes exercise that resolution end-to-end, ahead of
-// migrating the real utility nodes (replay/record/const_) in later phases.
+// These hand-authored generic nodes exercise that resolution end-to-end alongside
+// the real utility nodes (replay/record/const_).
 
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/record_replay.h>
@@ -37,12 +37,17 @@ namespace
     };
 
     // Generic source: emit a configured constant. The scalar variable ``T`` is
-    // inferred from the supplied value; the output ``TS<T>`` is then fully resolved.
+    // inferred from the supplied value; the default resolver binds output ``S`` to
+    // ``TS<T>`` when no explicit output schema is supplied.
     struct GenConst
     {
         static constexpr auto name             = "rt_gen_const";
         static constexpr bool schedule_on_start = true;
-        static void           eval(Scalar<"value", ScalarVar<"T">> value, Out<TS<ScalarVar<"T">>> out)
+        static void resolve_default_types(ResolutionMap &resolution)
+        {
+            resolution.bind_ts("S", TypeRegistry::instance().ts(resolution.scalar("T")));
+        }
+        static void eval(Scalar<"value", ScalarVar<"T">> value, Out<TsVar<"S">> out)
         {
             out.apply(value.value());
         }

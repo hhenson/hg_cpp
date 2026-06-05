@@ -202,6 +202,11 @@ namespace hgraph
         template <typename T> struct is_scalar_var : std::false_type {};
         template <fixed_string N, typename... C> struct is_scalar_var<ScalarVar<N, C...>> : std::true_type {};
 
+        template <typename T>
+        concept has_resolve_default_types = requires(ResolutionMap &resolution) {
+            T::resolve_default_types(resolution);
+        };
+
         template <typename InputSchema, typename OutputSchema>
         inline constexpr bool statically_accepts_output_v =
             std::is_same_v<InputSchema, SIGNAL> || std::is_same_v<InputSchema, OutputSchema>;
@@ -242,6 +247,32 @@ namespace hgraph
             }
         }
 
+        template <typename Arg>
+        [[nodiscard]] const ValueTypeMetaData *scalar_argument_meta(const Arg &arg)
+        {
+            using A = std::remove_cvref_t<Arg>;
+            if constexpr (static_node_detail::is_scalar_selector<A>::value)
+            {
+                using V = typename arg_value_type<A>::type;
+                if constexpr (std::is_same_v<V, Value>)
+                {
+                    return arg.value().schema();
+                }
+                else
+                {
+                    return scalar_descriptor<V>::value_meta();
+                }
+            }
+            else if constexpr (std::is_same_v<A, Value>)
+            {
+                return arg.schema();
+            }
+            else
+            {
+                return scalar_descriptor<A>::value_meta();
+            }
+        }
+
         // Build a graph ``compose`` ``Scalar<Name, T>`` parameter from a wiring
         // argument (a plain value or a ``Scalar<>`` selector to unpack).
         template <typename ScalarParam, typename Arg>
@@ -261,7 +292,14 @@ namespace hgraph
             if constexpr (is_scalar_var<ST>::value)
             {
                 using VT = typename arg_value_type<std::remove_cvref_t<Arg>>::type;
-                return Value{coerce_scalar_value<VT>(std::forward<Arg>(arg))};
+                if constexpr (std::is_same_v<VT, Value>)
+                {
+                    return coerce_scalar_value<VT>(std::forward<Arg>(arg));
+                }
+                else
+                {
+                    return Value{coerce_scalar_value<VT>(std::forward<Arg>(arg))};
+                }
             }
             else
             {
@@ -375,12 +413,17 @@ namespace hgraph
                             else if constexpr (static_node_detail::is_scalar_selector<P>::value)
                             {
                                 using ST = typename graph_wiring_detail::scalar_param_schema<P>::type;
-                                using VT = typename graph_wiring_detail::arg_value_type<A>::type;
-                                scalar_unifier<ST>::unify(scalar_descriptor<VT>::value_meta(), map);
+                                scalar_unifier<ST>::unify(
+                                    graph_wiring_detail::scalar_argument_meta(std::get<I>(arg_tuple)), map);
                             }
                         }(),
                         ...);
                 }(std::make_index_sequence<sizeof...(Args)>{});
+
+                if constexpr (graph_wiring_detail::has_resolve_default_types<X>)
+                {
+                    X::resolve_default_types(map);
+                }
 
                 // Input ports (the In positions): validate against the resolved input schema.
                 std::vector<WiringPortRef> inputs;

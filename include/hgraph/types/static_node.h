@@ -1053,8 +1053,8 @@ namespace hgraph
     /**
      * **Deferred** (generic) output selector — the schema is a ``TsVar`` resolved at
      * wiring time. It IS a ``TSOutputView``; the node drives it through the erased
-     * API and ``apply_delta``. ``apply`` is a scalar (TS-kind) convenience that
-     * copies a value and ticks it; container kinds go through ``apply_delta``.
+     * API. ``apply`` copies a whole current value matching the resolved output's
+     * value schema and ticks it; per-cycle replay deltas go through ``apply_delta``.
      */
     template <fixed_string VarName, typename... TConstraints>
     class Out<TsVar<VarName, TConstraints...>> : public TSOutputView
@@ -1078,8 +1078,9 @@ namespace hgraph
 
     // The per-cycle delta capture / apply that ``replay`` / ``record`` and the harness
     // use is now the runtime, type-erased ``capture_delta`` / ``apply_delta``
-    // (``<hgraph/types/time_series/ts_delta.h>``) — schema-as-data, dispatched on the
-    // live endpoint's kind — which replaced the compile-time ``ts_delta<S>`` driver.
+    // (``<hgraph/types/time_series/ts_delta.h>``) — schema-as-data, dispatched through
+    // the live endpoint's ``TSDataOps`` table — which replaced the compile-time
+    // ``ts_delta<S>`` driver.
     // The ``set_delta`` / ``list_delta`` / ``dict_delta`` builders above remain as the test-authoring
     // way to construct an *expected* canonical delta ``Value`` (compared via
     // ``Value::equals`` against a captured one).

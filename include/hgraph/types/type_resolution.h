@@ -61,11 +61,23 @@ namespace hgraph
             return it->second;
         }
 
+        [[nodiscard]] const TSValueTypeMetaData *find_ts(std::string_view name) const
+        {
+            auto it = ts_vars.find(std::string{name});
+            return it != ts_vars.end() ? it->second : nullptr;
+        }
+
         [[nodiscard]] const ValueTypeMetaData *scalar(std::string_view name) const
         {
             auto it = scalar_vars.find(std::string{name});
             if (it == scalar_vars.end()) { throw std::logic_error(fmt::format("unresolved scalar variable '{}'", name)); }
             return it->second;
+        }
+
+        [[nodiscard]] const ValueTypeMetaData *find_scalar(std::string_view name) const
+        {
+            auto it = scalar_vars.find(std::string{name});
+            return it != scalar_vars.end() ? it->second : nullptr;
         }
     };
 
