@@ -196,11 +196,11 @@ that persists across evaluations. Use ``start`` to initialise it.
    {
        static constexpr auto name = "counter";
 
-       static void start(State<Int> state) { state.set(0); }
+       static void start(State<Int> state) { state.set(Int{0}); }
 
        static void eval(State<Int> state, Out<TS<Int>> out)
        {
-           const int next = state.get() + 1;
+           const Int next = state.get() + Int{1};
            state.set(next);
            out.set(next);
        }
@@ -263,7 +263,7 @@ A sink node (side effect, no output):
    struct Print
    {
        static constexpr auto name = "print";
-       static void eval(In<"in", TS<Int>> in) { std::printf("%d\n", in.value()); }
+       static void eval(In<"in", TS<Int>> in) { std::printf("%lld\n", static_cast<long long>(in.value())); }
    };
 
 .. code-block:: python
@@ -322,7 +322,7 @@ teardown.
 
    struct WithLifecycle
    {
-       static void start(State<Int> s) { s.set(0); }
+       static void start(State<Int> s) { s.set(Int{0}); }
        static void eval(In<"in", TS<Int>> in, State<Int> s, Out<TS<Int>> out)
        {
            s.set(s.get() + in.value());
@@ -431,7 +431,7 @@ related inputs as one parameter, or returns several outputs.
    {
        static void eval(In<"q", Quote> q, Out<TS<Float>> out)
        {
-           out.set((q.field<"bid">().value() + q.field<"ask">().value()) / 2.0);
+           out.set((q.field<"bid">().value() + q.field<"ask">().value()) / Float{2.0});
        }
    };
 
@@ -440,7 +440,7 @@ related inputs as one parameter, or returns several outputs.
        static void eval(In<"px", TS<Float>> px, Out<Quote> out)
        {
            out.field<"bid">().set(px.value());
-           out.field<"ask">().set(px.value() + 0.01);
+           out.field<"ask">().set(px.value() + Float{0.01});
        }
    };
 
@@ -969,8 +969,8 @@ the value must match ``SomeTS``'s current-value schema:
            out.apply(value.value());   // erased copy of the configured value
        }
    };
-   // wire<stdlib::const_>(w, 42);             // defaults to TS<Int>
-   // wire<stdlib::const_, TSS<Int>>(w, stdlib::make_set<Int>({1, 2}));
+   // wire<stdlib::const_>(w, Int{42});        // defaults to TS<Int>
+   // wire<stdlib::const_, TSS<Int>>(w, stdlib::make_set<Int>({Int{1}, Int{2}}));
 
 .. code-block:: python
 

@@ -30,7 +30,7 @@ returns its per-cycle outputs — the one call most node tests need:
    };
 
    // One engine cycle per element; `none` (= std::nullopt) means no tick that cycle.
-   CHECK_OUTPUT(testing::eval_node<AddOne>({1, none, 3}), {2, none, 4});
+   CHECK_OUTPUT(testing::eval_node<AddOne>({Int{1}, none, Int{3}}), {Int{2}, none, Int{4}});
 
 Each input element is fed at successive engine cycles from ``MIN_ST`` and the graph
 runs until it is **quiescent**; the result is the recorded output, cycle-aligned
@@ -42,7 +42,8 @@ a stateful node accumulates as expected:
 
 .. code-block:: cpp
 
-   CHECK_OUTPUT(testing::eval_node<RunningSum>({1, 2, 3, 4}), {1, 3, 6, 10});
+   CHECK_OUTPUT(testing::eval_node<RunningSum>({Int{1}, Int{2}, Int{3}, Int{4}}),
+                {Int{1}, Int{3}, Int{6}, Int{10}});
 
 Arguments are given in the node's **eval-parameter order**. A time-series input is
 a ``std::vector<std::optional<T>>``; a scalar input is the value itself. Value types
@@ -57,7 +58,8 @@ A node configured by a **scalar** takes the scalar after its inputs:
    struct Shift { static void eval(In<"in", TS<Int>> in, Scalar<"delta", Int> d, Out<TS<Int>> o)
                   { o.set(in.value() + d.value()); } };
 
-   CHECK_OUTPUT(testing::eval_node<Shift>({1, 2, 3}, 5), {6, 7, 8});
+   CHECK_OUTPUT(testing::eval_node<Shift>({Int{1}, Int{2}, Int{3}}, Int{5}),
+                {Int{6}, Int{7}, Int{8}});
 
 A node with **multiple time-series inputs** takes one sequence per input. The first
 input may be a braced list (its type is inferred); later inputs are passed as
@@ -69,7 +71,8 @@ input may be a braced list (its type is inferred); later inputs are passed as
                 { o.set(a.value() + b.value()); } };
 
    std::vector<std::optional<Int>> rhs{10, 20, 30};
-   CHECK_OUTPUT(testing::eval_node<Sum>({1, none, 3}, rhs), {11, 21, 33});  // lhs persists at cycle 1
+   CHECK_OUTPUT(testing::eval_node<Sum>({Int{1}, none, Int{3}}, rhs),
+                {Int{11}, Int{21}, Int{33}});  // lhs persists at cycle 1
 
 The first parameter must be a time-series input, and the node must have exactly one
 output. ``eval_node`` drives scalar ``TS<T>``, ``SIGNAL``, ``TSS<T>``,
@@ -220,7 +223,7 @@ Wiring ``replay → add_one → record`` and reading the result back:
 
    // Seed the input [1, <skip>, 3], run, and read back [2, <skip>, 4].
    GraphBuilder gb = build_graph<ReplayRecordGraph>();
-   testing::set_replay_values<Int>(gb.global_state(), "in", {1, std::nullopt, 3});
+   testing::set_replay_values<Int>(gb.global_state(), "in", {Int{1}, std::nullopt, Int{3}});
    /* ... run an executor over [MIN_ST, MIN_ST + n*MIN_TD) ... */
    auto out = testing::get_recorded_values<Int>(executor.view().graph().global_state(), "out");
    // out == { 2, std::nullopt, 4 }
@@ -247,8 +250,8 @@ A small set of reusable nodes lives in ``<hgraph/lib/std/std_nodes.h>`` (namespa
 
 .. code-block:: cpp
 
-   auto c = wire<stdlib::const_>(w, 7);             // source emitting 7 at start
-   wire<stdlib::debug_print>(w, c, "value");        // prints "value: 7"
+   auto c = wire<stdlib::const_>(w, Int{7});        // source emitting 7 at start
+   wire<stdlib::debug_print>(w, c, Str{"value"});   // prints "value: 7"
 
 The same namespace has small value-layer construction helpers in
 ``<hgraph/lib/std/value_util.h>``. They wrap the standard compact container
@@ -256,10 +259,10 @@ builders for scalar element types:
 
 .. code-block:: cpp
 
-   Value set   = stdlib::make_set<Int>({1, 2});
-   Value list  = stdlib::make_list<Int>({1, 2, 3});
-   Value map   = stdlib::make_map<Str, Int>({{"a", 1}, {"b", 2}});
-   Value queue = stdlib::make_queue<Int>({1, 2, 3});
+   Value set   = stdlib::make_set<Int>({Int{1}, Int{2}});
+   Value list  = stdlib::make_list<Int>({Int{1}, Int{2}, Int{3}});
+   Value map   = stdlib::make_map<Str, Int>({{Str{"a"}, Int{1}}, {Str{"b"}, Int{2}}});
+   Value queue = stdlib::make_queue<Int>({Int{1}, Int{2}, Int{3}});
 
 ``TypeRegistry::instance()`` automatically registers the common scalar
 vocabulary and pre-interns matching ``TS[...]`` / ``TSS[...]`` schemas. The
@@ -299,14 +302,14 @@ type-erased signature* (there is no parallel wrapper type — comparison is
 
 .. code-block:: cpp
 
-   set_delta<Int>({1, 2}, {})                            // -> Bundle{added:{1,2}, removed:{}}
-   list_delta<TS<Int>>({{0, 10}, {2, 30}})               // -> Map<int, int>   (sparse: idx 0->10, 2->30)
-   list_delta<TS<Int>>({10, none, 30})                   // positional: position is the index, none = skip
-   list_delta<TSS<Int>>({{0, set_delta<Int>({1}, {})}})  // -> Map<int, Bundle>   (TSL of sets)
-   list_delta<TSL<TS<Int>,2>>({{0, list_delta<TS<Int>>({{0,1}})}})   // nested, recursive
-   dict_delta<Str, TS<Int>>({{"a", 1}}, {"b"})   // remove b, modify a
+   set_delta<Int>({Int{1}, Int{2}}, {})                       // -> Bundle{added:{1,2}, removed:{}}
+   list_delta<TS<Int>>({{0, Int{10}}, {2, Int{30}}})          // -> Map<int, int>   (sparse: idx 0->10, 2->30)
+   list_delta<TS<Int>>({Int{10}, none, Int{30}})              // positional: position is the index, none = skip
+   list_delta<TSS<Int>>({{0, set_delta<Int>({Int{1}}, {})}})  // -> Map<int, Bundle>   (TSL of sets)
+   list_delta<TSL<TS<Int>,2>>({{0, list_delta<TS<Int>>({{0, Int{1}}})}})   // nested, recursive
+   dict_delta<Str, TS<Int>>({{Str{"a"}, Int{1}}}, {Str{"b"}})   // remove b, modify a
    using Quote = TSB<"Quote", Field<"bid", TS<Int>>, Field<"ask", TS<Int>>>;
-   tsb_delta<Quote>(101, std::nullopt)                    // bid ticked, ask is typed-null
+   tsb_delta<Quote>(Int{101}, std::nullopt)               // bid ticked, ask is typed-null
 
 Signal time-series (``SIGNAL``)
 -------------------------------
@@ -337,12 +340,12 @@ delta ``Value`` from ``set_delta``.
 .. code-block:: cpp
 
    struct MirrorSet { static void eval(In<"s", TSS<Int>> s, Out<TSS<Int>> out)
-                      { for (int r : s.removed()) out.remove(r); for (int a : s.added()) out.add(a); } };
+                      { for (Int r : s.removed()) out.remove(r); for (Int a : s.added()) out.add(a); } };
 
    const std::vector<std::optional<Value>> deltas{
-       set_delta<Int>({1, 2}, {}),   // add 1,2
-       set_delta<Int>({3}, {1}),      // add 3, remove 1
-       set_delta<Int>({}, {2, 3}),    // remove 2,3
+       set_delta<Int>({Int{1}, Int{2}}, {}),         // add 1,2
+       set_delta<Int>({Int{3}}, {Int{1}}),           // add 3, remove 1
+       set_delta<Int>({}, {Int{2}, Int{3}}),         // remove 2,3
    };
    CHECK_OUTPUT(testing::eval_node<MirrorSet>(deltas), deltas);   // round-trips the deltas
 
@@ -374,8 +377,8 @@ the per-cycle delta ``Value`` from ``list_delta`` (recursive in ``C``).
                        { for (std::size_t i = 0; i < l.size(); ++i) if (l[i].modified()) out.set(i, l[i].value()); } };
 
    const std::vector<std::optional<Value>> deltas{
-       list_delta<TS<Int>>({{0, 1}, {1, 2}}),   // both children tick
-       list_delta<TS<Int>>({{0, 5}}),            // only child 0 ticks
+       list_delta<TS<Int>>({{0, Int{1}}, {1, Int{2}}}),   // both children tick
+       list_delta<TS<Int>>({{0, Int{5}}}),                // only child 0 ticks
    };
    CHECK_OUTPUT(testing::eval_node<MirrorList>(deltas), deltas);
 
@@ -386,11 +389,11 @@ are themselves ``set_delta`` ``Value``\ s, a TSL-of-TSL delta a ``Map`` of ``Map
 .. code-block:: cpp
 
    // TSL<TSS<Int>> delta: Map<int, Bundle{added:Set, removed:Set}>
-   const Value sd = list_delta<TSS<Int>>({{0, set_delta<Int>({1, 2}, {})}, {1, set_delta<Int>({9}, {})}});
-   CHECK(sd.equals(list_delta<TSS<Int>>({{1, set_delta<Int>({9}, {})}, {0, set_delta<Int>({2, 1}, {})}})));
+   const Value sd = list_delta<TSS<Int>>({{0, set_delta<Int>({Int{1}, Int{2}}, {})}, {1, set_delta<Int>({Int{9}}, {})}});
+   CHECK(sd.equals(list_delta<TSS<Int>>({{1, set_delta<Int>({Int{9}}, {})}, {0, set_delta<Int>({Int{2}, Int{1}}, {})}})));
 
    // TSL<TSL<TS<Int>,2>> delta: Map<int, Map<int, int>>
-   const Value nd = list_delta<TSL<TS<Int>, 2>>({{0, list_delta<TS<Int>>({{0, 7}, {1, 8}})}});
+   const Value nd = list_delta<TSL<TS<Int>, 2>>({{0, list_delta<TS<Int>>({{0, Int{7}}, {1, Int{8}}})}});
 
 By hand: ``wire<testing::replay, TSL<C, N>>`` re-creates ticks by recursively applying
 each ``index -> child_delta`` of the buffered delta to the matching child output;
@@ -431,8 +434,8 @@ for scalar children). The simplest replay/record path exchanges the canonical
    };
 
    const std::vector<std::optional<Value>> deltas{
-       dict_delta<Str, TS<Int>>({{"a", 1}, {"b", 2}}),
-       dict_delta<Str, TS<Int>>({{"a", 5}}, {"b"}),
+       dict_delta<Str, TS<Int>>({{Str{"a"}, Int{1}}, {Str{"b"}, Int{2}}}),
+       dict_delta<Str, TS<Int>>({{Str{"a"}, Int{5}}}, {Str{"b"}}),
    };
    CHECK_OUTPUT(testing::eval_node<MirrorDict>(deltas), deltas);
 
@@ -454,4 +457,5 @@ harness exchanges plain ``T`` elements.
        }
    };
 
-   CHECK_OUTPUT(testing::eval_node<MirrorWindow>({1, none, 3, 4}), {1, none, 3, 4});
+   CHECK_OUTPUT(testing::eval_node<MirrorWindow>({Int{1}, none, Int{3}, Int{4}}),
+                {Int{1}, none, Int{3}, Int{4}});

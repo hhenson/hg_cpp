@@ -301,9 +301,9 @@ builder functions produce the canonical ``Value`` (see *Allocation, Plans and Op
 
 .. code-block:: cpp
 
-   set_delta<Int>({1, 2}, {})                       // -> Bundle{added:{1,2}, removed:{}}
-   list_delta<TSS<Int>>({{0, set_delta<Int>({1},{})}})  // -> Map<int, Bundle>
-   dict_delta<Str, TS<Int>>({{"a", 1}}, {"b"})   // -> Bundle{removed, modified}
+   set_delta<Int>({Int{1}, Int{2}}, {})                       // -> Bundle{added:{1,2}, removed:{}}
+   list_delta<TSS<Int>>({{0, set_delta<Int>({Int{1}}, {})}})  // -> Map<int, Bundle>
+   dict_delta<Str, TS<Int>>({{Str{"a"}, Int{1}}}, {Str{"b"}})   // -> Bundle{removed, modified}
    tsb_delta<PriceTick>(101.0, std::nullopt, 5)     // ask is typed-null
 
 Comparison and display go through the value-layer ops (``Value::equals`` —

@@ -23,7 +23,8 @@ TEST_CASE("static_schema: scalar_descriptor maps built-ins to standard registry 
     REQUIRE(std::string{scalar_descriptor<Int>::value_meta()->name()} == "int");
     REQUIRE(scalar_descriptor<double>::value_meta() == registry.value_type("float"));
     REQUIRE(scalar_descriptor<double>::value_meta() == registry.register_scalar<double>("double"));
-    REQUIRE(scalar_descriptor<std::string>::value_meta() == registry.register_scalar<std::string>("string"));
+    REQUIRE(scalar_descriptor<Str>::value_meta() == registry.value_type("str"));
+    REQUIRE(std::string{scalar_descriptor<Str>::value_meta()->name()} == "str");
     REQUIRE(scalar_descriptor<bool>::value_meta() == registry.register_scalar<bool>("bool"));
 }
 
@@ -42,7 +43,7 @@ TEST_CASE("static_schema: TSS<T> descriptor matches registry.tss(...)")
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    const auto *expected = registry.tss(registry.register_scalar<std::string>("string"));
+    const auto *expected = registry.tss(registry.value_type("str"));
     REQUIRE(schema_descriptor<TSS<std::string>>::is_concrete());
     REQUIRE(schema_descriptor<TSS<std::string>>::ts_meta() == expected);
 }
@@ -52,11 +53,11 @@ TEST_CASE("static_schema: TSD<K, V> descriptor matches registry.tsd(...)")
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    const auto *str_meta = registry.register_scalar<std::string>("string");
+    const auto *str_meta = registry.value_type("str");
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *expected = registry.tsd(str_meta, registry.ts(int_meta));
 
-    using DictSchema = TSD<std::string, TS<std::int32_t>>;
+    using DictSchema = TSD<Str, TS<std::int32_t>>;
     REQUIRE(schema_descriptor<DictSchema>::is_concrete());
     REQUIRE(schema_descriptor<DictSchema>::ts_meta() == expected);
 }
@@ -66,11 +67,11 @@ TEST_CASE("static_schema: TSL<T, N> descriptor matches registry.tsl(...) for fix
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    const auto *double_meta = registry.register_scalar<double>("double");
-    const auto *ts_double   = registry.ts(double_meta);
+    const auto *float_meta = registry.value_type("float");
+    const auto *ts_float   = registry.ts(float_meta);
 
-    REQUIRE(schema_descriptor<TSL<TS<double>, 4>>::ts_meta() == registry.tsl(ts_double, 4));
-    REQUIRE(schema_descriptor<TSL<TS<double>>>::ts_meta() == registry.tsl(ts_double, 0));
+    REQUIRE(schema_descriptor<TSL<TS<Float>, 4>>::ts_meta() == registry.tsl(ts_float, 4));
+    REQUIRE(schema_descriptor<TSL<TS<Float>>>::ts_meta() == registry.tsl(ts_float, 0));
 }
 
 TEST_CASE("static_schema: TSW<T, period, min_period> descriptor matches registry.tsw(...)")
@@ -78,9 +79,9 @@ TEST_CASE("static_schema: TSW<T, period, min_period> descriptor matches registry
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    const auto *double_meta = registry.register_scalar<double>("double");
-    REQUIRE(schema_descriptor<TSW<double, 10, 3>>::ts_meta() == registry.tsw(double_meta, 10, 3));
-    REQUIRE(schema_descriptor<TSW<double, 5>>::ts_meta() == registry.tsw(double_meta, 5, 0));
+    const auto *float_meta = registry.value_type("float");
+    REQUIRE(schema_descriptor<TSW<Float, 10, 3>>::ts_meta() == registry.tsw(float_meta, 10, 3));
+    REQUIRE(schema_descriptor<TSW<Float, 5>>::ts_meta() == registry.tsw(float_meta, 5, 0));
 }
 
 TEST_CASE("static_schema: REF<T> descriptor matches registry.ref(...)")
@@ -107,17 +108,17 @@ TEST_CASE("static_schema: UnNamedTSB resolves to registry.un_named_tsb(...)")
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    const auto *double_meta = registry.register_scalar<double>("double");
-    const auto *int_meta    = registry.register_scalar<std::int32_t>("int32");
-    const auto *ts_double   = registry.ts(double_meta);
+    const auto *float_meta = registry.value_type("float");
+    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts_float   = registry.ts(float_meta);
     const auto *ts_int      = registry.ts(int_meta);
 
-    using BundleSchema = UnNamedTSB<Field<"price", TS<double>>, Field<"size", TS<std::int32_t>>>;
+    using BundleSchema = UnNamedTSB<Field<"price", TS<Float>>, Field<"size", TS<std::int32_t>>>;
     const auto *got = schema_descriptor<BundleSchema>::ts_meta();
 
     REQUIRE(got != nullptr);
     REQUIRE(got->is_un_named_tsb());
-    REQUIRE(got == registry.un_named_tsb({{"price", ts_double}, {"size", ts_int}}));
+    REQUIRE(got == registry.un_named_tsb({{"price", ts_float}, {"size", ts_int}}));
 }
 
 TEST_CASE("static_schema: TSB<\"Name\", ...> resolves to registry.tsb(name, ...)")
@@ -125,18 +126,18 @@ TEST_CASE("static_schema: TSB<\"Name\", ...> resolves to registry.tsb(name, ...)
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    const auto *double_meta = registry.register_scalar<double>("double");
-    const auto *int_meta    = registry.register_scalar<std::int32_t>("int32");
-    const auto *ts_double   = registry.ts(double_meta);
+    const auto *float_meta = registry.value_type("float");
+    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts_float   = registry.ts(float_meta);
     const auto *ts_int      = registry.ts(int_meta);
 
-    using NamedBundle = TSB<"PriceTick", Field<"price", TS<double>>, Field<"size", TS<std::int32_t>>>;
+    using NamedBundle = TSB<"PriceTick", Field<"price", TS<Float>>, Field<"size", TS<std::int32_t>>>;
     const auto *got = schema_descriptor<NamedBundle>::ts_meta();
 
     REQUIRE(got != nullptr);
     REQUIRE(got->is_named_tsb());
     REQUIRE(std::string(got->name()) == std::string("PriceTick"));
-    REQUIRE(got == registry.tsb("PriceTick", {{"price", ts_double}, {"size", ts_int}}));
+    REQUIRE(got == registry.tsb("PriceTick", {{"price", ts_float}, {"size", ts_int}}));
 }
 
 TEST_CASE("static_schema: UnNamedBundle (value layer) resolves to registry.un_named_bundle(...)")
@@ -145,9 +146,9 @@ TEST_CASE("static_schema: UnNamedBundle (value layer) resolves to registry.un_na
     auto &registry = TypeRegistry::instance();
 
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
-    const auto *str_meta = registry.register_scalar<std::string>("string");
+    const auto *str_meta = registry.value_type("str");
 
-    using PointSchema = UnNamedBundle<Field<"x", std::int32_t>, Field<"label", std::string>>;
+    using PointSchema = UnNamedBundle<Field<"x", std::int32_t>, Field<"label", Str>>;
     const auto *got = value_schema_descriptor<PointSchema>::value_meta();
 
     REQUIRE(got != nullptr);
@@ -161,9 +162,9 @@ TEST_CASE("static_schema: Bundle<\"Name\", ...> resolves to registry.bundle(name
     auto &registry = TypeRegistry::instance();
 
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
-    const auto *str_meta = registry.register_scalar<std::string>("string");
+    const auto *str_meta = registry.value_type("str");
 
-    using LabelledPoint = Bundle<"LabelledPoint", Field<"x", std::int32_t>, Field<"label", std::string>>;
+    using LabelledPoint = Bundle<"LabelledPoint", Field<"x", std::int32_t>, Field<"label", Str>>;
     const auto *got = value_schema_descriptor<LabelledPoint>::value_meta();
 
     REQUIRE(got != nullptr);
@@ -197,13 +198,13 @@ TEST_CASE("static_schema: nested compositions resolve recursively")
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    // TSD<string, TSL<TS<double>, 4>> — keyed by string, value is a list of TS<double>.
-    using NestedSchema = TSD<std::string, TSL<TS<double>, 4>>;
+    // TSD<Str, TSL<TS<Float>, 4>> — keyed by str, value is a list of TS[float].
+    using NestedSchema = TSD<Str, TSL<TS<Float>, 4>>;
 
-    const auto *str_meta    = registry.register_scalar<std::string>("string");
-    const auto *double_meta = registry.register_scalar<double>("double");
-    const auto *ts_double   = registry.ts(double_meta);
-    const auto *expected    = registry.tsd(str_meta, registry.tsl(ts_double, 4));
+    const auto *str_meta   = registry.value_type("str");
+    const auto *float_meta = registry.value_type("float");
+    const auto *ts_float   = registry.ts(float_meta);
+    const auto *expected   = registry.tsd(str_meta, registry.tsl(ts_float, 4));
 
     REQUIRE(schema_descriptor<NestedSchema>::is_concrete());
     REQUIRE(schema_descriptor<NestedSchema>::ts_meta() == expected);

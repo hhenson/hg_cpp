@@ -35,9 +35,9 @@ data and its sinks consume it. It *may*, however, take **scalar** inputs: plain
 Graph-level scalar inputs appear as extra ``compose`` parameters and are supplied
 to ``build_graph`` — e.g.
 ``static void compose(Wiring &w, Scalar<"window", Int> window)`` built with
-``build_graph<MyGraph>(20)`` (the plain value is wrapped into the ``window``
-parameter). The simplest graph takes no scalars; its ``compose`` body just adds
-nodes:
+``build_graph<MyGraph>(Int{20})`` (the typed value is wrapped into the
+``window`` parameter). The simplest graph takes no scalars; its ``compose`` body
+just adds nodes:
 
 .. code-block:: cpp
 
@@ -70,7 +70,7 @@ A graph that takes a scalar parameter is built by supplying the value:
        }
    };
 
-   GraphBuilder g = build_graph<ScaledPriceGraph>(2.0);   // factor = 2.0
+   GraphBuilder g = build_graph<ScaledPriceGraph>(Float{2.0});   // factor = 2.0
 
 A scalar received as a parameter (here ``factor``) can be passed **straight on** to
 a node's or sub-graph's scalar — the wiring layer unpacks it for you, so an explicit
@@ -116,7 +116,7 @@ Pass one value per ``Scalar<>`` parameter, **in ``compose``-parameter order**:
    };
 
    // window = 20, factor = 1.5 — positional, in compose order.
-   GraphBuilder g = build_graph<ReportGraph>(20, 1.5);
+   GraphBuilder g = build_graph<ReportGraph>(Int{20}, Float{1.5});
 
 The arguments are checked at compile time: the count must match the graph's
 ``Scalar<>`` parameters and each value must be convertible to its parameter's type.
@@ -127,7 +127,7 @@ A graph with no scalar parameters is simply ``build_graph<G>()``. The resulting
 .. note::
 
    **Positional only, for now.** Arguments are matched by position. Supplying them
-   **by name** (so order does not matter, e.g. ``arg<"factor">(1.5)``) and
+   **by name** (so order does not matter, e.g. ``arg<"factor">(Float{1.5})``) and
    **default values** for omitted parameters are planned but not yet implemented.
 
 
@@ -165,7 +165,7 @@ and a plain value for each ``Scalar``.
 
    // node: eval(In<"in", TS<Int>> in, Scalar<"delta", Int> delta, Out<TS<Int>> out)
    auto src = wire<ConstantSource>(w);   // 41
-   auto out = wire<Shift>(w, src, 5);    // port for `in`, then 5 for `delta` -> 46
+   auto out = wire<Shift>(w, src, Int{5});   // port for `in`, then 5 for `delta` -> 46
 
 The scalar value is checked against the node's ``Scalar<>`` type at compile time,
 and it becomes part of the node's wiring identity: two ``wire`` calls dedup only
@@ -249,7 +249,7 @@ scalar (it is wrapped into the sub-graph's ``Scalar<>`` parameter):
 .. code-block:: cpp
 
    // sub-graph: compose(Wiring &, Port<TS<Int>> x, Scalar<"by", Int> by) -> TS<Int>
-   auto shifted = wire<ShiftBy>(w, src, 5);   // port for `x`, 5 wrapped into `by`
+   auto shifted = wire<ShiftBy>(w, src, Int{5});   // port for `x`, 5 wrapped into `by`
 
 
 Ordering is automatic

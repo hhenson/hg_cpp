@@ -34,7 +34,7 @@ runtime view:
    {
        static constexpr auto name = "counter";
 
-       static void start(State<Int> state) { state.set(0); }
+       static void start(State<Int> state) { state.set(Int{0}); }
        static void eval(State<Int> state, Out<TS<Int>> out)
        {
            const int next = state.get() + 1;
