@@ -8,10 +8,12 @@
 #include <hgraph/util/date_time.h>
 
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <optional>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -110,12 +112,61 @@ namespace hgraph::testing
         {
         };
 
+        // A concrete static node has a static ``eval``; an operator marker does not.
+        template <typename T>
+        concept has_eval = requires { &T::eval; };
+
+        // ``first_input_element_t`` / ``output_element_t`` appear in the *signature* of the
+        // concrete ``eval_node`` overload. For an operator marker (no ``eval``) those
+        // ``StaticNodeSignature``-based computations would be a hard error (not SFINAE), so
+        // they are guarded: a non-eval type falls back to ``Value`` and the concrete overload
+        // is removed by its ``operator_tag`` constraint instead of failing to compile.
+        template <typename NodeT, bool = has_eval<NodeT>>
+        struct first_input_element_lazy
+        {
+            using type = Value;
+        };
+        template <typename NodeT>
+        struct first_input_element_lazy<NodeT, true>
+        {
+            using type = typename first_input_element<NodeT, wire_params_t<NodeT>>::type;
+        };
+
+        template <typename NodeT, bool = has_eval<NodeT>>
+        struct output_element_lazy
+        {
+            using type = Value;
+        };
+        template <typename NodeT>
+        struct output_element_lazy<NodeT, true>
+        {
+            using type = typename ts_harness<output_schema_t<NodeT>>::element;
+        };
+
         // Per-cycle harness element of the first input / the output (T, SetDelta<T>, ...).
         template <typename NodeT>
-        using first_input_element_t = typename first_input_element<NodeT, wire_params_t<NodeT>>::type;
+        using first_input_element_t = typename first_input_element_lazy<NodeT>::type;
 
         template <typename NodeT>
-        using output_element_t = typename ts_harness<output_schema_t<NodeT>>::element;
+        using output_element_t = typename output_element_lazy<NodeT>::type;
+
+        // A time-series input argument to the operator harness is a ``vector<optional<T>>``;
+        // any other argument is a wiring-time scalar.
+        template <typename A>
+        struct is_optional_vector : std::false_type
+        {
+        };
+        template <typename T>
+        struct is_optional_vector<std::vector<std::optional<T>>> : std::true_type
+        {
+        };
+        template <typename A>
+        struct optional_vector_element;
+        template <typename T>
+        struct optional_vector_element<std::vector<std::optional<T>>>
+        {
+            using type = T;
+        };
 
         inline std::string input_key(std::size_t index) { return "eval_node::in" + std::to_string(index); }
     }  // namespace eval_node_detail
@@ -144,6 +195,7 @@ namespace hgraph::testing
      * erased replay/record delta path are accepted on inputs and the output.
      */
     template <typename NodeT, typename... Rest>
+        requires(!std::derived_from<NodeT, operator_tag>)
     [[nodiscard]] std::vector<std::optional<eval_node_detail::output_element_t<NodeT>>>
     eval_node(const std::vector<std::optional<eval_node_detail::first_input_element_t<NodeT>>> &input0, Rest &&...rest)
     {
@@ -208,6 +260,84 @@ namespace hgraph::testing
 
         // Cycle-align: pad to the longest input, never truncate (see record).
         auto out = ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
+        if (out.size() < max_len) { out.resize(max_len); }
+        return out;
+    }
+
+    /**
+     * Evaluate an **operator** over per-cycle inputs — the operator counterpart of
+     * ``eval_node``. The overload to wire is resolved **at wiring time** from the supplied
+     * argument schemas (operator dispatch), and the resolved port already carries the
+     * output schema; the result is therefore returned **type-erased** as the per-cycle
+     * canonical ``Value`` deltas and is compared with ``Value`` equality (``CHECK_OUTPUT``).
+     *
+     * Arguments are in the operator's call order: a **time-series input** is a
+     * ``std::vector<std::optional<T>>`` (a scalar leaf ``T`` -> ``TS<T>``; build it with
+     * ``testing::values<T>(...)``), a **scalar input** is the value itself. Scope: the
+     * operator must have at least one time-series input and exactly one output — sinks (no
+     * output) and sources (no time-series input), and collection time-series *inputs*, are
+     * out of scope (wire those as a graph and use ``record`` directly).
+     */
+    template <typename Op, typename Input0, typename... Rest>
+        requires std::derived_from<Op, operator_tag>
+    [[nodiscard]] std::vector<std::optional<Value>> eval_node(const Input0 &input0, Rest &&...rest)
+    {
+        static_assert(Op::has_output, "eval_node<Op>: the operator must have an output (sinks are out of scope)");
+        static_assert(eval_node_detail::is_optional_vector<Input0>::value,
+                      "eval_node<Op>: the first argument must be a time-series input (vector<optional<T>>)");
+
+        constexpr std::size_t arg_count = 1 + sizeof...(Rest);
+        Wiring                w;
+        auto                  all = std::forward_as_tuple(input0, std::forward<Rest>(rest)...);
+
+        // Pass 1: wire a replay per time-series input (vector<optional<T>> -> TS<T>), pass
+        // scalar values straight through, dispatch the operator, then record its output.
+        auto wire_arg = [&]<std::size_t I>() {
+            using A = std::remove_cvref_t<std::tuple_element_t<I, decltype(all)>>;
+            if constexpr (eval_node_detail::is_optional_vector<A>::value)
+            {
+                using T = typename eval_node_detail::optional_vector_element<A>::type;
+                return wire<replay, TS<T>>(w, eval_node_detail::input_key(I));
+            }
+            else
+            {
+                return std::get<I>(all);  // scalar value
+            }
+        };
+
+        auto out_port = [&]<std::size_t... I>(std::index_sequence<I...>) {
+            return wire<Op>(w, wire_arg.template operator()<I>()...);
+        }(std::make_index_sequence<arg_count>{});
+
+        wire<record>(w, out_port, std::string{"eval_node::out"});
+        GraphBuilder gb = std::move(w).finish();
+
+        // Pass 2: seed each time-series input's replay buffer; track the longest input.
+        std::size_t max_len = 0;
+        [&]<std::size_t... I>(std::index_sequence<I...>) {
+            (
+                [&] {
+                    using A = std::remove_cvref_t<std::tuple_element_t<I, decltype(all)>>;
+                    if constexpr (eval_node_detail::is_optional_vector<A>::value)
+                    {
+                        using T         = typename eval_node_detail::optional_vector_element<A>::type;
+                        const auto &seq = std::get<I>(all);
+                        max_len         = std::max(max_len, seq.size());
+                        set_replay_values<T>(gb.global_state(), eval_node_detail::input_key(I), seq);
+                    }
+                }(),
+                ...);
+        }(std::make_index_sequence<arg_count>{});
+
+        GraphExecutorBuilder eb;
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
+        GraphExecutorValue executor = eb.make_executor();
+        auto               view     = executor.view();
+        view.run();
+
+        // Type-erased per-cycle deltas, read at the wiring-resolved output schema; pad to
+        // the longest input, never truncate.
+        auto out = get_recorded_deltas(view.graph().global_state(), "eval_node::out");
         if (out.size() < max_len) { out.resize(max_len); }
         return out;
     }

@@ -120,6 +120,26 @@ namespace hgraph::testing
             return false;
         }
 
+        // Compare a *type-erased* actual (per-cycle canonical ``Value`` deltas — e.g. from the
+        // operator ``eval_node`` harness) against a **typed** expected sequence: each expected
+        // scalar is boxed into a ``Value`` and compared with ``Value::equals``. This lets a
+        // test write the expected with the same ``values<T>(...)`` helper it uses for inputs,
+        // instead of spelling out ``value<T>(...)`` per element.
+        template <typename U>
+            requires(!std::is_same_v<U, Value>)
+        bool compare_output(const std::vector<std::optional<Value>> &actual,
+                            const std::vector<std::optional<U>> &expected, std::string &msg_out)
+        {
+            std::vector<std::optional<Value>> boxed;
+            boxed.reserve(expected.size());
+            for (const std::optional<U> &element : expected)
+            {
+                if (element.has_value()) { boxed.emplace_back(Value{*element}); }
+                else { boxed.emplace_back(std::nullopt); }
+            }
+            return compare_output<Value>(actual, boxed, msg_out);
+        }
+
         template <typename T, typename U>
         [[nodiscard]] std::optional<T> make_optional_value(U &&value)
         {

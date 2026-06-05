@@ -393,6 +393,12 @@ supplies an explicit output schema such as ``wire<zero_, TS<Int>>(w)``. A sink
 operator, whose marker has no ``Out<>`` selector, returns ``void`` and rejects an
 explicit output schema.
 
+**Testing.** An operator (≥1 time-series input, one output) is evaluated through the
+``eval_node<Op>(...)`` harness: it wires the operator, lets dispatch resolve the
+overload at wiring time, and returns the result **type-erased** as per-cycle ``Value``
+deltas, checked with ``Value`` equality and the ``values<T>(...)`` helper. See
+*User Guide > Testing Graphs in C++ > Evaluating operators*.
+
 
 Test isolation
 --------------

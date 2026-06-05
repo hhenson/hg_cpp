@@ -4,6 +4,7 @@
 // is the fallback, and no-match / ambiguity raise.
 
 #include <hgraph/lib/testing/check_output.h>
+#include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/std_operators.h>
@@ -212,43 +213,6 @@ namespace
         return arg;
     }
 
-    // replay("a"), replay("b") -> add_(a, b) -> record("out"), over element type ``ElemTS``.
-    template <typename ElemTS>
-    struct AddGraph
-    {
-        static constexpr auto name = "add_graph";
-        static void           compose(Wiring &w)
-        {
-            auto a   = wire<testing::replay, ElemTS>(w, Str{"a"});
-            auto b   = wire<testing::replay, ElemTS>(w, Str{"b"});
-            auto sum = wire<add_>(w, a, b);   // operator dispatch -> erased Port
-            wire<testing::record>(w, sum, Str{"out"});
-        }
-    };
-
-    // replay("a") -> scale_(a, 3) -> record("out").
-    struct ScaleGraph
-    {
-        static constexpr auto name = "scale_graph";
-        static void           compose(Wiring &w)
-        {
-            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
-            auto r = wire<scale_>(w, a, std::int32_t{3});
-            wire<testing::record>(w, r, Str{"out"});
-        }
-    };
-
-    struct AddScalarGraph
-    {
-        static constexpr auto name = "add_scalar_graph";
-        static void           compose(Wiring &w)
-        {
-            auto a   = wire<testing::replay, TS<Int>>(w, Str{"a"});
-            auto sum = wire<add_>(w, a, Int{3});
-            wire<testing::record>(w, sum, Str{"out"});
-        }
-    };
-
     struct SinkGraph
     {
         static constexpr auto name = "sink_graph";
@@ -256,29 +220,6 @@ namespace
         {
             auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
             wire<sink_>(w, a);
-        }
-    };
-
-    struct DoubleGraph
-    {
-        static constexpr auto name = "double_graph_test";
-        static void           compose(Wiring &w)
-        {
-            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
-            auto r = wire<double_>(w, a);
-            wire<testing::record>(w, r, Str{"out"});
-        }
-    };
-
-    struct ChooseGraph
-    {
-        static constexpr auto name = "choose_graph";
-        static void           compose(Wiring &w)
-        {
-            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
-            auto b = wire<testing::replay, TS<Int>>(w, Str{"b"});
-            auto r = wire<choose_>(w, a, b, Str{"rhs"});
-            wire<testing::record>(w, r, Str{"out"});
         }
     };
 
@@ -321,13 +262,8 @@ TEST_CASE("operators: the most specific overload is selected (TS<Int> beats the 
     register_overload<add_, add_ints>();
     register_overload<add_, add_generic>();
 
-    auto ex = run_graph<AddGraph<TS<Int>>>([](const GlobalStateView &gs) {
-        set_replay_values<Int>(gs, "a", {1, 2, 3});
-        set_replay_values<Int>(gs, "b", {10, 20, 30});
-    });
-
     // add_ints ran (sums); had the generic won, the output would equal "a".
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {11, 22, 33});
+    CHECK_OUTPUT(eval_node<add_>(values<Int>(1, 2, 3), values<Int>(10, 20, 30)), values<Int>(11, 22, 33));
 }
 
 TEST_CASE("operators: the generic overload is the fallback when no specific one matches")
@@ -336,13 +272,9 @@ TEST_CASE("operators: the generic overload is the fallback when no specific one 
     register_overload<add_, add_ints>();     // rejects TS<Str>
     register_overload<add_, add_generic>();  // matches anything
 
-    auto ex = run_graph<AddGraph<TS<Str>>>([](const GlobalStateView &gs) {
-        set_replay_values<Str>(gs, "a", {Str{"x"}, Str{"y"}});
-        set_replay_values<Str>(gs, "b", {Str{"p"}, Str{"q"}});
-    });
-
     // add_generic ran: it emits its left input.
-    CHECK_OUTPUT(get_recorded_values<Str>(ex.view().graph().global_state(), "out"), {Str{"x"}, Str{"y"}});
+    CHECK_OUTPUT(eval_node<add_>(values<Str>(Str{"x"}, Str{"y"}), values<Str>(Str{"p"}, Str{"q"})),
+                 values<Str>(Str{"x"}, Str{"y"}));
 }
 
 TEST_CASE("operators: no matching overload raises")
@@ -350,7 +282,7 @@ TEST_CASE("operators: no matching overload raises")
     (void)TypeRegistry::instance().register_scalar<Str>("str");
     register_overload<add_, add_ints>();  // only the int overload — nothing matches TS<Str>
 
-    REQUIRE_THROWS_AS(build_graph<AddGraph<TS<Str>>>(), OperatorResolutionError);
+    REQUIRE_THROWS_AS(eval_node<add_>(values<Str>(Str{"x"}), values<Str>(Str{"y"})), OperatorResolutionError);
 }
 
 TEST_CASE("operators: an ambiguous overload (tied at the minimum rank) raises")
@@ -359,14 +291,14 @@ TEST_CASE("operators: an ambiguous overload (tied at the minimum rank) raises")
     register_overload<add_, add_ints>();
     register_overload<add_, add_ints_dup>();  // identical signature -> same rank
 
-    REQUIRE_THROWS_AS(build_graph<AddGraph<TS<Int>>>(), OperatorResolutionError);
+    REQUIRE_THROWS_AS(eval_node<add_>(values<Int>(1), values<Int>(2)), OperatorResolutionError);
 }
 
 TEST_CASE("operators: an unregistered operator name raises")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     // No overloads registered this case (the registry is reset between cases).
-    REQUIRE_THROWS_AS(build_graph<AddGraph<TS<Int>>>(), OperatorResolutionError);
+    REQUIRE_THROWS_AS(eval_node<add_>(values<Int>(1), values<Int>(2)), OperatorResolutionError);
 }
 
 TEST_CASE("operators: a scalar argument is coerced and forwarded to the resolved node")
@@ -374,9 +306,8 @@ TEST_CASE("operators: a scalar argument is coerced and forwarded to the resolved
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     register_overload<scale_, scale_int>();
 
-    auto ex = run_graph<ScaleGraph>(
-        [](const GlobalStateView &gs) { set_replay_values<Int>(gs, "a", {1, 2, 3}); });
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {3, 6, 9});
+    // The int32 factor is a wiring-time scalar argument; the resolved node coerces it to Int.
+    CHECK_OUTPUT(eval_node<scale_>(values<Int>(1, 2, 3), std::int32_t{3}), values<Int>(3, 6, 9));
 }
 
 TEST_CASE("operators: a requires_ predicate that passes keeps the specific overload")
@@ -445,9 +376,9 @@ TEST_CASE("operators: scalar values auto-wire as const inputs for TS parameters"
 {
     register_overload<add_, add_ints>();
 
-    auto ex = run_graph<AddScalarGraph>(
-        [](const GlobalStateView &gs) { set_replay_values<Int>(gs, "a", {1, 2, 3}); });
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {4, 5, 6});
+    // The Int{3} second argument is a scalar where add_ expects a TS input; it auto-wires as
+    // a const TS<Int> and is added per cycle.
+    CHECK_OUTPUT(eval_node<add_>(values<Int>(1, 2, 3), Int{3}), values<Int>(4, 5, 6));
 }
 
 TEST_CASE("operators: sink operators return void and do not expose a null output port")
@@ -463,9 +394,7 @@ TEST_CASE("operators: graph implementations can be registered as overloads")
 {
     register_graph_overload<double_, double_graph>();
 
-    auto ex = run_graph<DoubleGraph>(
-        [](const GlobalStateView &gs) { set_replay_values<Int>(gs, "a", {1, 2, 3}); });
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {2, 4, 6});
+    CHECK_OUTPUT(eval_node<double_>(values<Int>(1, 2, 3)), values<Int>(2, 4, 6));
 }
 
 TEST_CASE("operators: requires_ can inspect named scalar arguments")
@@ -473,11 +402,9 @@ TEST_CASE("operators: requires_ can inspect named scalar arguments")
     register_overload<choose_, choose_lhs>();
     register_overload<choose_, choose_rhs>();
 
-    auto ex = run_graph<ChooseGraph>([](const GlobalStateView &gs) {
-        set_replay_values<Int>(gs, "a", {1, 2, 3});
-        set_replay_values<Int>(gs, "b", {10, 20, 30});
-    });
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {10, 20, 30});
+    // The "side" scalar selects the rhs implementation via its requires_ predicate.
+    CHECK_OUTPUT(eval_node<choose_>(values<Int>(1, 2, 3), values<Int>(10, 20, 30), Str{"rhs"}),
+                 values<Int>(10, 20, 30));
 }
 
 TEST_CASE("operators: repeated generic variables rank ahead of independent variables")

@@ -137,6 +137,34 @@ directly:
    auto input = testing::values<Int>(1, none, 3);
    CHECK_OUTPUT(testing::eval_node<AddOne>(input), {2, none, 4});
 
+Evaluating operators
+....................
+
+An :doc:`operator <../../developer_guide/operators>` (e.g. ``stdlib::add_``) is not a
+node — it is a name standing for a family of implementations, resolved **at wiring
+time** from the supplied argument types. ``eval_node<Op>(...)`` wires the operator, lets
+dispatch pick the overload, and returns the result **type-erased** as per-cycle
+``Value`` deltas (the output schema is whatever dispatch resolved, so the harness does
+not name it in the call). Write the expected with the same ``values<T>(...)`` helper
+used for the inputs; ``CHECK_OUTPUT`` boxes it and compares with ``Value`` equality:
+
+.. code-block:: cpp
+
+   stdlib::register_standard_operators();
+   // operands and result may all differ; a wiring-time scalar follows the inputs.
+   CHECK_OUTPUT(testing::eval_node<stdlib::add_>(values<Int>(1, 2, 3), values<Int>(10, 20, 30)),
+                values<Int>(11, 22, 33));
+   CHECK_OUTPUT(testing::eval_node<stdlib::div_>(values<Int>(1, 1), values<Int>(2, 0),
+                                                 stdlib::DivideByZero::Inf),
+                values<Float>(0.5, std::numeric_limits<Float>::infinity()));
+
+Arguments are in the operator's call order: a time-series input is a ``values<T>(...)``
+sequence (a scalar leaf ``T`` → ``TS<T>``), a scalar input is the value itself. Scope:
+the operator must have **at least one time-series input and exactly one output** — sinks
+(no output) and sources (no time-series input), and collection time-series *inputs*, are
+wired as a graph instead. A no-match / ambiguous dispatch raises
+``OperatorResolutionError`` from the ``eval_node`` call.
+
 The cycle-aligned buffer
 ------------------------
 

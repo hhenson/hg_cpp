@@ -126,14 +126,17 @@ only if that proves insufficient.
 
 **Graph unit-testing toolkit — DONE.** Built on the above: `replay<T>`/`record<T>`
 nodes over a cycle-aligned `List<Any>` buffer in `GlobalState`, the `eval_node<NodeT>`
-harness (`tests deal in `vector<optional<T>>`; first slice = single In + single Out),
+harness (tests deal in `vector<optional<T>>`; supports **multiple TS inputs and scalar
+params**, and an **operator overload** `eval_node<Op>(...)` that dispatches the operator
+at wiring time and returns type-erased `vector<optional<Value>>` checked with `Value`
+equality — write the expected with the same `values<T>(...)` helper used for inputs),
 and a small `lib/std` (`stdlib::const_`, `debug_print`, `null_sink`). Sources are
 **not scheduled by default** — they initiate via `schedule_on_start = true` (declarative),
 `SingleShotScheduler` (lightweight one-shot in `start`), or `NodeScheduler` (full,
 stateful). See `docs/.../testing_graphs_cpp.rst` + memory `value-any-globalstate-testing-plan`.
 `ext/2603` is the working reference.
 
-**Next milestone:** to be decided — candidates include multi-input/scalar `eval_node`,
+**Next milestone:** to be decided — candidates include
 more `lib/std` operators, or beginning the non-flattening nested-graph work
 (`map_`/`reduce`/`switch_`). **C++ only for now** — keep Python out of the
 configure/build/run path.
