@@ -30,6 +30,11 @@ namespace hgraph::detail
             return static_cast<std::size_t>(kind);
         }
 
+        [[nodiscard]] constexpr std::size_t endpoint_role_index(TSEndpointRole role) noexcept
+        {
+            return static_cast<std::size_t>(role);
+        }
+
         [[nodiscard]] engine_time_t concrete_reference_time(engine_time_t time) noexcept
         {
             return time != MIN_DT ? time : MIN_ST;
@@ -272,16 +277,17 @@ namespace hgraph::detail
                                               const TimeSeriesReference &reference,
                                               engine_time_t modified_time);
 
-        void unbind_from_ref_data(const TSDataView &target,
-                                  const TSEndpointSchema &endpoint_schema,
-                                  engine_time_t modified_time)
+        void unbind_from_ref_peered(const TSDataView &target,
+                                    const TSEndpointSchema &,
+                                    engine_time_t modified_time)
         {
-            if (endpoint_schema.is_peered())
-            {
-                unbind_target_link_at(target, modified_time);
-                return;
-            }
+            unbind_target_link_at(target, modified_time);
+        }
 
+        void unbind_from_ref_non_peered(const TSDataView &target,
+                                        const TSEndpointSchema &endpoint_schema,
+                                        engine_time_t modified_time)
+        {
             for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
             {
                 auto child = endpoint_child_view(target, index);
@@ -289,23 +295,114 @@ namespace hgraph::detail
             }
         }
 
-        void apply_output_to_from_ref_data(const TSDataView &target,
-                                           const TSEndpointSchema &endpoint_schema,
-                                           const TSOutputView &output,
-                                           engine_time_t modified_time)
-        {
-            if (endpoint_schema.is_peered())
-            {
-                bind_target_link_at(target, output, modified_time);
-                return;
-            }
+        using FromRefUnbindFn = void (*)(const TSDataView &, const TSEndpointSchema &, engine_time_t);
 
+        [[nodiscard]] FromRefUnbindFn from_ref_unbind_for(TSEndpointRole role) noexcept
+        {
+            static const std::array<FromRefUnbindFn, 2> table{
+                &unbind_from_ref_peered,
+                &unbind_from_ref_non_peered,
+            };
+
+            const auto index = endpoint_role_index(role);
+            return index < table.size() ? table[index] : &unbind_from_ref_peered;
+        }
+
+        void unbind_from_ref_data(const TSDataView &target,
+                                  const TSEndpointSchema &endpoint_schema,
+                                  engine_time_t modified_time)
+        {
+            from_ref_unbind_for(endpoint_schema.role())(target, endpoint_schema, modified_time);
+        }
+
+        void apply_output_to_from_ref_peered(const TSDataView &target,
+                                             const TSEndpointSchema &,
+                                             const TSOutputView &output,
+                                             engine_time_t modified_time)
+        {
+            bind_target_link_at(target, output, modified_time);
+        }
+
+        void apply_output_to_from_ref_non_peered(const TSDataView &target,
+                                                 const TSEndpointSchema &endpoint_schema,
+                                                 const TSOutputView &output,
+                                                 engine_time_t modified_time)
+        {
             for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
             {
                 auto child = endpoint_child_view(target, index);
                 auto child_output = output_child_view(output, *endpoint_schema.schema(), index);
                 apply_output_to_from_ref_data(child, endpoint_schema.child(index), child_output, modified_time);
             }
+        }
+
+        using FromRefOutputApplyFn = void (*)(
+            const TSDataView &,
+            const TSEndpointSchema &,
+            const TSOutputView &,
+            engine_time_t);
+
+        [[nodiscard]] FromRefOutputApplyFn from_ref_output_apply_for(TSEndpointRole role) noexcept
+        {
+            static const std::array<FromRefOutputApplyFn, 2> table{
+                &apply_output_to_from_ref_peered,
+                &apply_output_to_from_ref_non_peered,
+            };
+
+            const auto index = endpoint_role_index(role);
+            return index < table.size() ? table[index] : &apply_output_to_from_ref_peered;
+        }
+
+        void apply_output_to_from_ref_data(const TSDataView &target,
+                                           const TSEndpointSchema &endpoint_schema,
+                                           const TSOutputView &output,
+                                           engine_time_t modified_time)
+        {
+            from_ref_output_apply_for(endpoint_schema.role())(target, endpoint_schema, output, modified_time);
+        }
+
+        void apply_non_peered_reference_to_peered_from_ref_data(const TSDataView &,
+                                                               const TSEndpointSchema &,
+                                                               const TimeSeriesReference &,
+                                                               engine_time_t)
+        {
+            throw std::invalid_argument("TSOutput from-REF cannot apply a non-peered reference to a peered leaf");
+        }
+
+        void apply_non_peered_reference_to_non_peered_from_ref_data(
+            const TSDataView &target,
+            const TSEndpointSchema &endpoint_schema,
+            const TimeSeriesReference &reference,
+            engine_time_t modified_time)
+        {
+            if (reference.items().size() != endpoint_schema.child_count())
+            {
+                throw std::invalid_argument("TSOutput from-REF non-peered reference has the wrong child count");
+            }
+
+            for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
+            {
+                auto child = endpoint_child_view(target, index);
+                apply_reference_to_from_ref_data(child, endpoint_schema.child(index), reference[index], modified_time);
+            }
+        }
+
+        using FromRefNonPeeredReferenceApplyFn = void (*)(
+            const TSDataView &,
+            const TSEndpointSchema &,
+            const TimeSeriesReference &,
+            engine_time_t);
+
+        [[nodiscard]] FromRefNonPeeredReferenceApplyFn from_ref_non_peered_reference_apply_for(
+            TSEndpointRole role) noexcept
+        {
+            static const std::array<FromRefNonPeeredReferenceApplyFn, 2> table{
+                &apply_non_peered_reference_to_peered_from_ref_data,
+                &apply_non_peered_reference_to_non_peered_from_ref_data,
+            };
+
+            const auto index = endpoint_role_index(role);
+            return index < table.size() ? table[index] : &apply_non_peered_reference_to_peered_from_ref_data;
         }
 
         void apply_reference_to_from_ref_data(const TSDataView &target,
@@ -326,20 +423,8 @@ namespace hgraph::detail
                 return;
             }
 
-            if (endpoint_schema.is_peered())
-            {
-                throw std::invalid_argument("TSOutput from-REF cannot apply a non-peered reference to a peered leaf");
-            }
-            if (reference.items().size() != endpoint_schema.child_count())
-            {
-                throw std::invalid_argument("TSOutput from-REF non-peered reference has the wrong child count");
-            }
-
-            for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
-            {
-                auto child = endpoint_child_view(target, index);
-                apply_reference_to_from_ref_data(child, endpoint_schema.child(index), reference[index], modified_time);
-            }
+            from_ref_non_peered_reference_apply_for(endpoint_schema.role())(target, endpoint_schema, reference,
+                                                                           modified_time);
         }
 
         [[nodiscard]] const TSDataBinding &to_ref_ts_data_binding_for(const TSValueTypeMetaData &schema);
