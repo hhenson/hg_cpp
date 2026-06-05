@@ -10,6 +10,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <hgraph/lib/std/value_util.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/value/compact_container_ops.h>
 #include <hgraph/types/value/compact_storage.h>
@@ -414,10 +415,7 @@ TEST_CASE("Value and ValueView expose direct specialized casts for compact conta
     const auto *int_binding = registry.scalar_binding<int>();
     const auto *str_binding = registry.scalar_binding<std::string>();
 
-    ListBuilder list_builder{*int_binding};
-    list_builder.push_back<int>(4);
-    list_builder.push_back<int>(5);
-    Value list_value = list_builder.build();
+    Value list_value = stdlib::make_list<int>({4, 5});
     auto  list_view  = list_value.view();
     const auto indexed_list = list_view.as_indexed_view();
     REQUIRE(indexed_list.size() == 2);
@@ -432,38 +430,26 @@ TEST_CASE("Value and ValueView expose direct specialized casts for compact conta
     REQUIRE_THROWS_AS(list_value.view().begin_mutation(), std::logic_error);
     REQUIRE_THROWS_AS(list_value.as_list().begin_mutation(), std::logic_error);
 
-    SetBuilder set_builder{*int_binding};
-    set_builder.insert<int>(7);
-    set_builder.insert<int>(11);
-    Value set_value = set_builder.build();
+    Value set_value = stdlib::make_set<int>({7, 11});
     int seven = 7;
     REQUIRE(set_value.as_set().contains(ValueView{int_binding, &seven}));
     REQUIRE_FALSE(set_value.view().can_begin_mutation());
     REQUIRE_THROWS_AS(set_value.view().begin_mutation(), std::logic_error);
 
-    MapBuilder map_builder{*str_binding, *int_binding};
-    map_builder.set_item<std::string, int>(std::string{"x"}, 10);
-    Value map_value = map_builder.build();
+    Value map_value = stdlib::make_map<std::string, int>({{"x", 10}});
     const std::string x{"x"};
     REQUIRE(map_value.as_map().at(ValueView{str_binding, const_cast<std::string *>(&x)}).checked_as<int>() == 10);
     REQUIRE_FALSE(map_value.view().can_begin_mutation());
     REQUIRE_THROWS_AS(map_value.view().begin_mutation(), std::logic_error);
 
-    CyclicBufferBuilder cyclic_builder{*int_binding, 2};
-    cyclic_builder.push_back<int>(1);
-    cyclic_builder.push_back<int>(2);
-    cyclic_builder.push_back<int>(3);
-    Value cyclic_value = cyclic_builder.build();
+    Value cyclic_value = stdlib::make_cyclic_buffer<int>(2, {1, 2, 3});
     REQUIRE(cyclic_value.as_cyclic_buffer().size() == 2);
     REQUIRE(cyclic_value.as_cyclic_buffer().at(0).checked_as<int>() == 2);
     REQUIRE(cyclic_value.as_cyclic_buffer().full());
     REQUIRE_FALSE(cyclic_value.view().can_begin_mutation());
     REQUIRE_THROWS_AS(cyclic_value.as_cyclic_buffer().begin_mutation(), std::logic_error);
 
-    QueueBuilder queue_builder{*int_binding, 2};
-    queue_builder.push<int>(8);
-    queue_builder.push<int>(9);
-    Value queue_value = queue_builder.build();
+    Value queue_value = stdlib::make_queue<int>({8, 9}, 2);
     REQUIRE(queue_value.as_queue().front().checked_as<int>() == 8);
     REQUIRE(queue_value.as_queue().full());
     REQUIRE_FALSE(queue_value.view().can_begin_mutation());
@@ -544,7 +530,6 @@ TEST_CASE("ValueView semantic fallback compares fixed and compact lists by index
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = ValuePlanFactory::instance();
     const auto *int_meta = registry.register_scalar<int>("int");
-    const auto *int_binding = registry.scalar_binding<int>();
 
     const auto *fixed_list_meta = registry.list(int_meta, 3);
     const auto *fixed_list_binding = factory.binding_for(fixed_list_meta);
@@ -556,17 +541,8 @@ TEST_CASE("ValueView semantic fallback compares fixed and compact lists by index
     fixed_mutation.at(1).checked_mutable_as<int>() = 2;
     fixed_mutation.at(2).checked_mutable_as<int>() = 3;
 
-    ListBuilder same_builder{*int_binding};
-    same_builder.push_back<int>(1);
-    same_builder.push_back<int>(2);
-    same_builder.push_back<int>(3);
-    Value same = same_builder.build();
-
-    ListBuilder different_builder{*int_binding};
-    different_builder.push_back<int>(1);
-    different_builder.push_back<int>(2);
-    different_builder.push_back<int>(4);
-    Value different = different_builder.build();
+    Value same      = stdlib::make_list<int>({1, 2, 3});
+    Value different = stdlib::make_list<int>({1, 2, 4});
 
     REQUIRE(fixed.binding() != same.binding());
     REQUIRE(fixed.view().equals(same.view()));
@@ -619,24 +595,12 @@ TEST_CASE("ValueView semantic fallback compares set-compatible lookup surfaces")
     auto       &registry = TypeRegistry::instance();
     (void)registry.register_scalar<std::string>("string");
     (void)registry.register_scalar<int>("int");
-    const auto *key_binding   = registry.scalar_binding<std::string>();
-    const auto *value_binding = registry.scalar_binding<int>();
 
-    MapBuilder map_builder{*key_binding, *value_binding};
-    map_builder.set_item<std::string, int>(std::string{"a"}, 1);
-    map_builder.set_item<std::string, int>(std::string{"b"}, 2);
-    Value map_value = map_builder.build();
+    Value   map_value = stdlib::make_map<std::string, int>({{"a", 1}, {"b", 2}});
     SetView keys = map_value.as_map().key_set();
 
-    SetBuilder set_builder{*key_binding};
-    set_builder.insert<std::string>(std::string{"b"});
-    set_builder.insert<std::string>(std::string{"a"});
-    Value set_value = set_builder.build();
-
-    SetBuilder different_builder{*key_binding};
-    different_builder.insert<std::string>(std::string{"a"});
-    different_builder.insert<std::string>(std::string{"c"});
-    Value different = different_builder.build();
+    Value set_value = stdlib::make_set<std::string>({"b", "a"});
+    Value different = stdlib::make_set<std::string>({"a", "c"});
 
     REQUIRE(keys.binding() != set_value.binding());
     REQUIRE(keys.equals(set_value.view()));
@@ -644,9 +608,7 @@ TEST_CASE("ValueView semantic fallback compares set-compatible lookup surfaces")
     REQUIRE_FALSE(keys.equals(different.view()));
     REQUIRE(keys.compare(different.view()) == std::partial_ordering::unordered);
 
-    SetBuilder smaller_builder{*key_binding};
-    smaller_builder.insert<std::string>(std::string{"a"});
-    Value smaller = smaller_builder.build();
+    Value smaller = stdlib::make_set<std::string>({"a"});
     REQUIRE(std::is_lt(smaller.view().compare(keys)));
     REQUIRE(std::is_gt(keys.compare(smaller.view())));
 }
@@ -659,7 +621,6 @@ TEST_CASE("ValueView semantic fallback compares maps with equivalent value layou
     const auto *int_meta = registry.register_scalar<int>("int");
     (void)registry.register_scalar<std::string>("string");
     const auto *key_binding = registry.scalar_binding<std::string>();
-    const auto *int_binding = registry.scalar_binding<int>();
 
     const auto *fixed_list_meta    = registry.list(int_meta, 3);
     const auto *fixed_list_binding = factory.binding_for(fixed_list_meta);
@@ -675,11 +636,7 @@ TEST_CASE("ValueView semantic fallback compares maps with equivalent value layou
     };
 
     auto make_compact_list = [&](int a, int b, int c) {
-        ListBuilder builder{*int_binding};
-        builder.push_back<int>(a);
-        builder.push_back<int>(b);
-        builder.push_back<int>(c);
-        return builder.build();
+        return stdlib::make_list<int>({a, b, c});
     };
 
     const std::string alpha{"alpha"};

@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <hgraph/lib/std/value_util.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
@@ -1465,16 +1466,13 @@ TEST_CASE("TSDataPlanFactory: empty collection copy still marks the collection m
     const auto *ts_int      = registry.ts(int_meta);
     const auto *tss         = registry.tss(int_meta);
     const auto *tsd         = registry.tsd(int_meta, ts_int);
-    const auto *int_binding = registry.scalar_binding<int>();
-    REQUIRE(int_binding != nullptr);
 
     const auto t1 = MIN_ST;
 
-    SetBuilder empty_set_builder{*int_binding};
-    auto       empty_set = empty_set_builder.build();
-    TSData     set_data{*factory.binding_for(tss)};
-    auto       set_view = set_data.view();
-    auto       set      = set_view.as_set();
+    Value  empty_set = stdlib::make_set<int>({});
+    TSData set_data{*factory.binding_for(tss)};
+    auto   set_view = set_data.view();
+    auto   set      = set_view.as_set();
     {
         auto mutation = set.begin_mutation(t1);
         REQUIRE(mutation.copy_value_from(empty_set.view()));
@@ -1487,11 +1485,10 @@ TEST_CASE("TSDataPlanFactory: empty collection copy still marks the collection m
     REQUIRE(set_delta.at("added").as_set().empty());
     REQUIRE(set_delta.at("removed").as_set().empty());
 
-    MapBuilder empty_map_builder{*int_binding, *int_binding};
-    auto       empty_map = empty_map_builder.build();
-    TSData     dict_data{*factory.binding_for(tsd)};
-    auto       dict_view = dict_data.view();
-    auto       dict      = dict_view.as_dict();
+    Value  empty_map = stdlib::make_map<int, int>({});
+    TSData dict_data{*factory.binding_for(tsd)};
+    auto   dict_view = dict_data.view();
+    auto   dict      = dict_view.as_dict();
     {
         auto mutation = dict.begin_mutation(t1);
         REQUIRE(mutation.copy_value_from(empty_map.view()));
@@ -1518,22 +1515,6 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     REQUIRE(binding != nullptr);
     REQUIRE(factory.plan_for(tsl) == binding->plan());
 
-    const auto *source_binding = ValuePlanFactory::instance().binding_for(tsl->value_schema);
-    const auto *element_binding = registry.scalar_binding<int>();
-    REQUIRE(source_binding != nullptr);
-    REQUIRE(element_binding != nullptr);
-
-    auto make_list = [&](std::initializer_list<int> values) {
-        ListBuilder builder{*element_binding};
-        for (int value : values)
-        {
-            Value item{value};
-            builder.push_back_copy(item.view().data());
-        }
-        auto storage = builder.build_storage();
-        return Value{*source_binding, &storage};
-    };
-
     TSData data{*binding};
     auto   view = data.view();
     REQUIRE(view.as_list().empty());
@@ -1543,7 +1524,7 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     const auto t2 = t1 + engine_time_delta_t{1};
     const auto t3 = t2 + engine_time_delta_t{1};
     {
-        auto source = make_list({11, 22});
+        auto source = stdlib::make_list<int>({11, 22});
         auto mutation = view.begin_mutation(t1);
         REQUIRE(mutation.copy_value_from(source.view()));
     }
@@ -1570,7 +1551,7 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     REQUIRE(t1_delta.at(key_one.view()).checked_as<int>() == 22);
 
     {
-        auto longer = make_list({11, 22, 44});
+        auto longer = stdlib::make_list<int>({11, 22, 44});
         auto mutation = view.begin_mutation(t1);
         REQUIRE_FALSE(mutation.copy_value_from(longer.view()));
     }
@@ -1598,7 +1579,7 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     REQUIRE(t2_delta.at(key_one.view()).checked_as<int>() == 33);
 
     {
-        auto shorter = make_list({1});
+        auto shorter = stdlib::make_list<int>({1});
         auto mutation = view.begin_mutation(t3);
         REQUIRE_THROWS_AS(mutation.copy_value_from(shorter.view()), std::invalid_argument);
     }

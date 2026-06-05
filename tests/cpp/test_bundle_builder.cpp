@@ -6,6 +6,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <hgraph/lib/std/value_util.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/value.h>
@@ -15,26 +16,17 @@ namespace
 {
     using namespace hgraph;
 
-    // Build an immutable compact Set<int> from elements.
-    Value make_set(const ValueTypeBinding &element_binding, std::initializer_list<int> elements)
-    {
-        SetBuilder builder{element_binding};
-        for (int e : elements) { builder.insert(e); }
-        return builder.build();
-    }
-
     // Build the canonical TSS-delta bundle: Bundle{added: Set<int>, removed: Set<int>}.
     Value make_delta_bundle(std::initializer_list<int> added, std::initializer_list<int> removed)
     {
         auto       &registry      = TypeRegistry::instance();
         const auto *int_meta       = registry.register_scalar<int>("int");
-        const auto *int_binding    = ValuePlanFactory::instance().binding_for(int_meta);
         const auto *set_meta        = registry.set(int_meta);
         const auto *bundle_schema   = registry.un_named_bundle({{"added", set_meta}, {"removed", set_meta}});
         const auto *bundle_binding  = ValuePlanFactory::instance().binding_for(bundle_schema);
 
-        Value added_set   = make_set(*int_binding, added);
-        Value removed_set = make_set(*int_binding, removed);
+        Value added_set   = stdlib::make_set<int>(added);
+        Value removed_set = stdlib::make_set<int>(removed);
 
         BundleBuilder builder{*bundle_binding};
         builder.set("added", added_set.view());
