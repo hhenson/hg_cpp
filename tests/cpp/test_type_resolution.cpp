@@ -23,6 +23,7 @@
 namespace
 {
     using namespace hgraph;
+    using namespace hgraph::literals;
     using namespace hgraph::testing;
 
     // Generic compute node: re-emit the input's per-cycle delta. Authored once over
@@ -61,9 +62,9 @@ namespace
         static constexpr auto name = "rt_passthrough_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
+            auto src = wire<testing::replay, TS<Int>>(w, "in"_str);
             auto pt  = wire<Passthrough>(w, src);   // generic; returns an erased Port
-            wire<testing::record>(w, pt, Str{"out"});
+            wire<testing::record>(w, pt, "out"_str);
         }
     };
 
@@ -73,9 +74,9 @@ namespace
         static constexpr auto name = "rt_passthrough_set_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TSS<Int>>(w, Str{"in"});
+            auto src = wire<testing::replay, TSS<Int>>(w, "in"_str);
             auto pt  = wire<Passthrough>(w, src);
-            wire<testing::record>(w, pt, Str{"out"});
+            wire<testing::record>(w, pt, "out"_str);
         }
     };
 
@@ -85,8 +86,8 @@ namespace
         static constexpr auto name = "rt_gen_const_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<GenConst>(w, Int{7});   // T inferred = Int; output TS<Int> (erased Port)
-            wire<testing::record>(w, src, Str{"out"});
+            auto src = wire<GenConst>(w, 7_i);   // T inferred = Int; output TS<Int> (erased Port)
+            wire<testing::record>(w, src, "out"_str);
         }
     };
 
@@ -97,8 +98,8 @@ namespace
         static constexpr auto name = "rt_gen_const_double_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<GenConst>(w, Float{2.5});
-            wire<testing::record>(w, src, Str{"out"});
+            auto src = wire<GenConst>(w, 2.5_f);
+            wire<testing::record>(w, src, "out"_str);
         }
     };
 
@@ -136,12 +137,12 @@ TEST_CASE("type_resolution: a generic source infers its type from the configured
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     auto ex = run_graph<GenConstGraph>([](const GlobalStateView &) {});
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {Int{7}});
+    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {7_i});
 }
 
 TEST_CASE("type_resolution: a second resolution of the same generic source does not collide")
 {
     (void)TypeRegistry::instance().register_scalar<Float>("float");
     auto ex = run_graph<GenConstDoubleGraph>([](const GlobalStateView &) {});
-    CHECK_OUTPUT(get_recorded_values<Float>(ex.view().graph().global_state(), "out"), {Float{2.5}});
+    CHECK_OUTPUT(get_recorded_values<Float>(ex.view().graph().global_state(), "out"), {2.5_f});
 }

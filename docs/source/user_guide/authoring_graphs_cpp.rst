@@ -39,6 +39,11 @@ to ``build_graph`` — e.g.
 ``window`` parameter). The simplest graph takes no scalars; its ``compose`` body
 just adds nodes:
 
+The standard aliases ``Bool``/``Int``/``Float``/``Str`` map to the hgraph/Python
+scalar vocabulary. For shorter wiring call sites, opt into
+``hgraph::literals`` and use literals such as ``20_i``, ``2.0_f`` and
+``"out"_str``; they are not imported by default.
+
 .. code-block:: cpp
 
    struct PriceGraph
@@ -70,7 +75,9 @@ A graph that takes a scalar parameter is built by supplying the value:
        }
    };
 
-   GraphBuilder g = build_graph<ScaledPriceGraph>(Float{2.0});   // factor = 2.0
+   using namespace hgraph::literals;
+
+   GraphBuilder g = build_graph<ScaledPriceGraph>(2.0_f);   // factor = 2.0
 
 A scalar received as a parameter (here ``factor``) can be passed **straight on** to
 a node's or sub-graph's scalar — the wiring layer unpacks it for you, so an explicit
@@ -116,7 +123,9 @@ Pass one value per ``Scalar<>`` parameter, **in ``compose``-parameter order**:
    };
 
    // window = 20, factor = 1.5 — positional, in compose order.
-   GraphBuilder g = build_graph<ReportGraph>(Int{20}, Float{1.5});
+   using namespace hgraph::literals;
+
+   GraphBuilder g = build_graph<ReportGraph>(20_i, 1.5_f);
 
 The arguments are checked at compile time: the count must match the graph's
 ``Scalar<>`` parameters and each value must be convertible to its parameter's type.
@@ -163,9 +172,11 @@ and a plain value for each ``Scalar``.
 
 .. code-block:: cpp
 
+   using namespace hgraph::literals;
+
    // node: eval(In<"in", TS<Int>> in, Scalar<"delta", Int> delta, Out<TS<Int>> out)
    auto src = wire<ConstantSource>(w);   // 41
-   auto out = wire<Shift>(w, src, Int{5});   // port for `in`, then 5 for `delta` -> 46
+   auto out = wire<Shift>(w, src, 5_i);   // port for `in`, then 5 for `delta` -> 46
 
 The scalar value is checked against the node's ``Scalar<>`` type at compile time,
 and it becomes part of the node's wiring identity: two ``wire`` calls dedup only
@@ -248,8 +259,10 @@ scalar (it is wrapped into the sub-graph's ``Scalar<>`` parameter):
 
 .. code-block:: cpp
 
+   using namespace hgraph::literals;
+
    // sub-graph: compose(Wiring &, Port<TS<Int>> x, Scalar<"by", Int> by) -> TS<Int>
-   auto shifted = wire<ShiftBy>(w, src, Int{5});   // port for `x`, 5 wrapped into `by`
+   auto shifted = wire<ShiftBy>(w, src, 5_i);   // port for `x`, 5 wrapped into `by`
 
 
 Ordering is automatic

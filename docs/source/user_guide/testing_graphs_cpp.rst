@@ -128,6 +128,15 @@ mismatch. The expected argument is a braced list (element type inferred from
 ``std::vector<std::optional<T>>``. (This is a test-only header — it depends on
 Catch2 and is not part of the ``hgraph_core`` library.)
 
+For fixtures that are clearer without repeated typed braces,
+``testing::values<T>(...)`` builds the ``std::vector<std::optional<T>>`` form
+directly:
+
+.. code-block:: cpp
+
+   auto input = testing::values<Int>(1, none, 3);
+   CHECK_OUTPUT(testing::eval_node<AddOne>(input), {2, none, 4});
+
 The cycle-aligned buffer
 ------------------------
 
@@ -250,19 +259,32 @@ A small set of reusable nodes lives in ``<hgraph/lib/std/std_nodes.h>`` (namespa
 
 .. code-block:: cpp
 
-   auto c = wire<stdlib::const_>(w, Int{7});        // source emitting 7 at start
-   wire<stdlib::debug_print>(w, c, Str{"value"});   // prints "value: 7"
+   using namespace hgraph::literals;
 
-The same namespace has small value-layer construction helpers in
+   auto c = wire<stdlib::const_>(w, 7_i);              // source emitting 7 at start
+   wire<stdlib::debug_print>(w, c, "value"_str);       // prints "value: 7"
+
+Standard scalar aliases and constructors live in
+``<hgraph/types/primitive_types.h>``: ``Bool``/``Int``/``Float``/``Str`` map to
+Python's ``bool``/``int``/``float``/``str``, and ``bool_``/``int_``/``float_``/
+``str_`` construct those exact C++ types from ordinary inputs. The optional
+user-defined literals are deliberately kept in ``hgraph::literals``; opt in with
+``using namespace hgraph::literals;`` when you want ``7_i``, ``2.5_f`` or
+``"name"_str``.
+
+The ``hgraph::stdlib`` namespace also has small value-layer construction helpers in
 ``<hgraph/lib/std/value_util.h>``. They wrap the standard compact container
 builders for scalar element types:
 
 .. code-block:: cpp
 
-   Value set   = stdlib::make_set<Int>({Int{1}, Int{2}});
-   Value list  = stdlib::make_list<Int>({Int{1}, Int{2}, Int{3}});
-   Value map   = stdlib::make_map<Str, Int>({{Str{"a"}, Int{1}}, {Str{"b"}, Int{2}}});
-   Value queue = stdlib::make_queue<Int>({Int{1}, Int{2}, Int{3}});
+   using namespace hgraph::literals;
+
+   Value one   = stdlib::value<Int>(1);
+   Value set   = stdlib::make_set<Int>({1_i, 2_i});
+   Value list  = stdlib::make_list<Int>({1_i, 2_i, 3_i});
+   Value map   = stdlib::make_map<Str, Int>({{"a"_str, 1_i}, {"b"_str, 2_i}});
+   Value queue = stdlib::make_queue<Int>({1_i, 2_i, 3_i});
 
 ``TypeRegistry::instance()`` automatically registers the common scalar
 vocabulary and pre-interns matching ``TS[...]`` / ``TSS[...]`` schemas. The

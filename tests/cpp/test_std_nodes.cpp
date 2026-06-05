@@ -20,6 +20,7 @@
 namespace
 {
     using namespace hgraph;
+    using namespace hgraph::literals;
 
     // const_(7) -> record: the constant is emitted once at start.
     struct ConstRecordGraph
@@ -27,8 +28,8 @@ namespace
         static constexpr auto name = "const_record_graph";
         static void           compose(Wiring &w)
         {
-            auto c = wire<stdlib::const_>(w, Int{7});
-            wire<testing::record>(w, c, Str{"out"});
+            auto c = wire<stdlib::const_>(w, 7_i);
+            wire<testing::record>(w, c, "out"_str);
         }
     };
 
@@ -38,8 +39,8 @@ namespace
         static constexpr auto name = "explicit_ts_const_record_graph";
         static void           compose(Wiring &w)
         {
-            auto c = wire<stdlib::const_, TS<Int>>(w, Int{11});
-            wire<testing::record>(w, c, Str{"out"});
+            auto c = wire<stdlib::const_, TS<Int>>(w, 11_i);
+            wire<testing::record>(w, c, "out"_str);
         }
     };
 
@@ -49,8 +50,8 @@ namespace
         static constexpr auto name = "const_set_record_graph";
         static void           compose(Wiring &w)
         {
-            auto c = wire<stdlib::const_, TSS<Int>>(w, stdlib::make_set<Int>({Int{1}, Int{2}}));
-            wire<testing::record>(w, c, Str{"out"});
+            auto c = wire<stdlib::const_, TSS<Int>>(w, stdlib::make_set<Int>({1_i, 2_i}));
+            wire<testing::record>(w, c, "out"_str);
         }
     };
 
@@ -60,7 +61,7 @@ namespace
         static constexpr auto name = "null_sink_graph";
         static void           compose(Wiring &w)
         {
-            auto c = wire<stdlib::const_>(w, Int{5});
+            auto c = wire<stdlib::const_>(w, 5_i);
             wire<stdlib::null_sink>(w, c);
         }
     };
@@ -71,8 +72,8 @@ namespace
         static constexpr auto name = "debug_print_graph";
         static void           compose(Wiring &w)
         {
-            auto c = wire<stdlib::const_>(w, Int{3});
-            wire<stdlib::debug_print>(w, c, Str{"demo"});
+            auto c = wire<stdlib::const_>(w, 3_i);
+            wire<stdlib::debug_print>(w, c, "demo"_str);
         }
     };
 

@@ -34,6 +34,14 @@ namespace hgraph::stdlib
         return *binding;
     }
 
+    template <typename T, typename U>
+    requires std::constructible_from<std::remove_cvref_t<T>, U &&>
+    [[nodiscard]] Value value(U &&input)
+    {
+        using ValueT = std::remove_cvref_t<T>;
+        return Value{ValueT{std::forward<U>(input)}};
+    }
+
     template <typename T, std::input_iterator TIterator, std::sentinel_for<TIterator> TSentinel>
     requires std::constructible_from<std::remove_cvref_t<T>, std::iter_reference_t<TIterator>>
     [[nodiscard]] Value make_list(TIterator first, TSentinel last)

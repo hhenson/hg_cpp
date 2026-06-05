@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 // Catch2-integrated assertions for comparing an ``eval_node`` style result — a
@@ -118,7 +119,28 @@ namespace hgraph::testing
             msg_out = output_delta_message(actual, expected);
             return false;
         }
+
+        template <typename T, typename U>
+        [[nodiscard]] std::optional<T> make_optional_value(U &&value)
+        {
+            return T{std::forward<U>(value)};
+        }
+
+        template <typename T>
+        [[nodiscard]] std::optional<T> make_optional_value(std::nullopt_t)
+        {
+            return std::nullopt;
+        }
     }  // namespace detail
+
+    template <typename T, typename... Args>
+    [[nodiscard]] std::vector<std::optional<T>> values(Args &&...args)
+    {
+        std::vector<std::optional<T>> out;
+        out.reserve(sizeof...(Args));
+        (out.push_back(detail::make_optional_value<T>(std::forward<Args>(args))), ...);
+        return out;
+    }
 }  // namespace hgraph::testing
 
 /** Non-fatal: compare ``actual`` to a per-cycle expected sequence; on mismatch

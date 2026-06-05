@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <hgraph/lib/std/standard_types.h>
+#include <hgraph/lib/std/value_util.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/util/date_time.h>
 
@@ -8,6 +9,34 @@
 #include <cstdint>
 #include <string>
 #include <type_traits>
+
+TEST_CASE("standard scalar constructors and literals produce Python-aligned C++ types")
+{
+    using namespace hgraph;
+    using namespace hgraph::literals;
+
+    STATIC_REQUIRE(std::is_same_v<decltype(int_(7)), Int>);
+    STATIC_REQUIRE(std::is_same_v<decltype(float_(1)), Float>);
+    STATIC_REQUIRE(std::is_same_v<decltype(bool_(true)), Bool>);
+    STATIC_REQUIRE(std::is_same_v<decltype(7_i), Int>);
+    STATIC_REQUIRE(std::is_same_v<decltype(7_f), Float>);
+    STATIC_REQUIRE(std::is_same_v<decltype(1.25_f), Float>);
+    STATIC_REQUIRE(std::is_same_v<decltype("x"_str), Str>);
+
+    CHECK(int_(7) == Int{7});
+    CHECK(float_(1.5) == Float{1.5});
+    CHECK(bool_(true) == Bool{true});
+    CHECK(str_("abc") == Str{"abc"});
+    CHECK(7_i == Int{7});
+    CHECK(7_f == Float{7.0});
+    CHECK(1.25_f == Float{1.25});
+    CHECK("abc"_str == Str{"abc"});
+
+    const Value int_value = stdlib::value<Int>(7);
+    const Value str_value = stdlib::value<Str>("abc");
+    CHECK(int_value.view().checked_as<Int>() == Int{7});
+    CHECK(str_value.view().checked_as<Str>() == Str{"abc"});
+}
 
 TEST_CASE("stdlib::register_standard_types registers scalar aliases")
 {

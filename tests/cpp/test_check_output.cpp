@@ -40,6 +40,15 @@ TEST_CASE("CHECK_OUTPUT also compares against an existing vector")
     REQUIRE_OUTPUT(actual, {1, none, 2});
 }
 
+TEST_CASE("testing::values builds typed optional sequences")
+{
+    const auto ints = testing::values<Int>(1, none, 3);
+    REQUIRE(ints.size() == 3);
+    CHECK(ints[0] == std::optional<Int>{Int{1}});
+    CHECK_FALSE(ints[1].has_value());
+    CHECK(ints[2] == std::optional<Int>{Int{3}});
+}
+
 TEST_CASE("output delta message pinpoints a value difference")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");  // display renders via the value layer
