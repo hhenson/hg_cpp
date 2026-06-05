@@ -197,6 +197,16 @@ namespace hgraph
         return it == ts_name_cache_.end() ? nullptr : it->second;
     }
 
+    void TypeRegistry::register_value_type_alias(std::string_view name, const ValueTypeMetaData *meta)
+    {
+        register_value_alias(name, meta);
+    }
+
+    void TypeRegistry::register_time_series_type_alias(std::string_view name, const TSValueTypeMetaData *meta)
+    {
+        register_ts_alias(name, meta);
+    }
+
     const ValueTypeMetaData *TypeRegistry::named_bundle(std::string_view name) const
     {
         const ValueTypeMetaData *meta = value_type(name);

@@ -216,6 +216,12 @@ namespace hgraph
         struct scalar_name<double>      { static constexpr std::string_view value{"double"};      };
         template <>
         struct scalar_name<std::string> { static constexpr std::string_view value{"string"};      };
+        template <>
+        struct scalar_name<engine_date_t> { static constexpr std::string_view value{"date"};      };
+        template <>
+        struct scalar_name<engine_time_t> { static constexpr std::string_view value{"datetime"};  };
+        template <>
+        struct scalar_name<engine_time_delta_t> { static constexpr std::string_view value{"timedelta"}; };
     }  // namespace static_schema_detail
 
     /**

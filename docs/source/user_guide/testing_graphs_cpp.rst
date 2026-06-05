@@ -261,6 +261,19 @@ builders for scalar element types:
    Value map   = stdlib::make_map<std::string, int>({{"a", 1}, {"b", 2}});
    Value queue = stdlib::make_queue<int>({1, 2, 3});
 
+``<hgraph/lib/std/standard_types.h>`` registers the common scalar vocabulary and
+pre-interns matching ``TS[...]`` / ``TSS[...]`` schemas:
+
+.. code-block:: cpp
+
+   stdlib::register_standard_types();
+
+This registers ``bool``, ``int`` (``std::int64_t``), ``float`` (``double``),
+``date`` (``engine_date_t``), ``datetime`` (``engine_time_t``), ``timedelta``
+(``engine_time_delta_t``), and ``str`` (``std::string``), plus explicit aliases
+such as ``int8``/``int16``/``int32``/``int64`` and ``uint8``/``uint16``/
+``uint32``/``uint64``.
+
 Deltas are canonical ``Value``\ s
 ---------------------------------
 

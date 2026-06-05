@@ -62,6 +62,18 @@ namespace hgraph
         /** Look up a time-series schema by display name; returns null when unknown. */
         [[nodiscard]] const TSValueTypeMetaData *time_series_type(std::string_view name) const;
 
+        /**
+         * Register an additional display-name alias for an already-interned
+         * value-layer schema. This is intended for standard-library aliases
+         * such as ``int`` -> ``int64`` and ``str`` -> ``std::string``.
+         */
+        void register_value_type_alias(std::string_view name, const ValueTypeMetaData *meta);
+        /**
+         * Register an additional display-name alias for an already-interned
+         * time-series schema, e.g. ``TS[int]`` or ``TSS[datetime]``.
+         */
+        void register_time_series_type_alias(std::string_view name, const TSValueTypeMetaData *meta);
+
         /** Intern a positional tuple value-schema with the given element types. */
         const ValueTypeMetaData *tuple(const std::vector<const ValueTypeMetaData *> &element_types);
         /**

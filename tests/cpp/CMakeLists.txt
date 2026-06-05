@@ -47,6 +47,7 @@ add_executable(hgraph_unit_tests
     test_record_replay.cpp
     test_eval_node.cpp
     test_std_nodes.cpp
+    test_std_type_registration.cpp
     test_check_output.cpp
     test_value_types.cpp
     test_collection_nodes.cpp
