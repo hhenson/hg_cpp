@@ -1,7 +1,6 @@
 #include "target_link_ops.h"
 
 #include <hgraph/types/metadata/type_registry.h>
-#include <hgraph/util/scope.h>
 
 #include <array>
 #include <stdexcept>
@@ -9,6 +8,25 @@
 
 namespace hgraph::detail
 {
+    struct TSInputTargetLinkSlotAccess
+    {
+        std::size_t (*size)(const TSDataView &target) = nullptr;
+        std::size_t (*slot_capacity)(const TSDataView &target) = nullptr;
+        bool (*slot_occupied)(const TSDataView &target, std::size_t slot) = nullptr;
+        bool (*slot_live)(const TSDataView &target, std::size_t slot) = nullptr;
+        bool (*slot_added)(const TSDataView &target, std::size_t slot) = nullptr;
+        bool (*slot_removed)(const TSDataView &target, std::size_t slot) = nullptr;
+        const void *(*key_at_slot)(const TSDataView &target, std::size_t slot) = nullptr;
+        bool (*contains)(const TSDataView &target, const ValueView &key) = nullptr;
+        std::size_t (*find_slot)(const TSDataView &target, const ValueView &key) = nullptr;
+    };
+
+    struct TSInputTargetLinkIndexedAccess
+    {
+        std::size_t (*size)(const TSDataView &target) = nullptr;
+        TSDataView (*child)(const TSDataView &target, std::size_t index) = nullptr;
+    };
+
     namespace
     {
         template <typename Layout, typename Ops>
@@ -91,6 +109,152 @@ namespace hgraph::detail
             return link != nullptr ? link->target_view() : TSDataView{};
         }
 
+        [[nodiscard]] std::size_t set_access_size(const TSDataView &target)
+        {
+            return target.as_set().size();
+        }
+
+        [[nodiscard]] std::size_t set_access_slot_capacity(const TSDataView &target)
+        {
+            return target.as_set().slot_capacity();
+        }
+
+        [[nodiscard]] bool set_access_slot_occupied(const TSDataView &target, std::size_t slot)
+        {
+            return target.as_set().slot_occupied(slot);
+        }
+
+        [[nodiscard]] bool set_access_slot_live(const TSDataView &target, std::size_t slot)
+        {
+            return target.as_set().slot_live(slot);
+        }
+
+        [[nodiscard]] bool set_access_slot_added(const TSDataView &target, std::size_t slot)
+        {
+            return target.as_set().slot_added(slot);
+        }
+
+        [[nodiscard]] bool set_access_slot_removed(const TSDataView &target, std::size_t slot)
+        {
+            return target.as_set().slot_removed(slot);
+        }
+
+        [[nodiscard]] const void *set_access_key_at_slot(const TSDataView &target, std::size_t slot)
+        {
+            return target.as_set().at_slot(slot).data();
+        }
+
+        [[nodiscard]] bool set_access_contains(const TSDataView &target, const ValueView &key)
+        {
+            return target.as_set().contains(key);
+        }
+
+        [[nodiscard]] std::size_t set_access_find_slot(const TSDataView &target, const ValueView &key)
+        {
+            return target.as_set().find_slot(key);
+        }
+
+        [[nodiscard]] std::size_t dict_access_size(const TSDataView &target)
+        {
+            return target.as_dict().size();
+        }
+
+        [[nodiscard]] std::size_t dict_access_slot_capacity(const TSDataView &target)
+        {
+            return target.as_dict().slot_capacity();
+        }
+
+        [[nodiscard]] bool dict_access_slot_occupied(const TSDataView &target, std::size_t slot)
+        {
+            return target.as_dict().slot_occupied(slot);
+        }
+
+        [[nodiscard]] bool dict_access_slot_live(const TSDataView &target, std::size_t slot)
+        {
+            return target.as_dict().slot_live(slot);
+        }
+
+        [[nodiscard]] bool dict_access_slot_added(const TSDataView &target, std::size_t slot)
+        {
+            return target.as_dict().slot_added(slot);
+        }
+
+        [[nodiscard]] bool dict_access_slot_removed(const TSDataView &target, std::size_t slot)
+        {
+            return target.as_dict().slot_removed(slot);
+        }
+
+        [[nodiscard]] const void *dict_access_key_at_slot(const TSDataView &target, std::size_t slot)
+        {
+            return target.as_dict().key_at_slot(slot).data();
+        }
+
+        [[nodiscard]] bool dict_access_contains(const TSDataView &target, const ValueView &key)
+        {
+            return target.as_dict().contains(key);
+        }
+
+        [[nodiscard]] std::size_t dict_access_find_slot(const TSDataView &target, const ValueView &key)
+        {
+            return target.as_dict().find_slot(key);
+        }
+
+        [[nodiscard]] std::size_t bundle_access_size(const TSDataView &target)
+        {
+            return target.as_bundle().size();
+        }
+
+        [[nodiscard]] TSDataView bundle_access_child(const TSDataView &target, std::size_t index)
+        {
+            auto bundle = target.as_bundle();
+            return bundle.at(index);
+        }
+
+        [[nodiscard]] std::size_t list_access_size(const TSDataView &target)
+        {
+            return target.as_list().size();
+        }
+
+        [[nodiscard]] TSDataView list_access_child(const TSDataView &target, std::size_t index)
+        {
+            auto list = target.as_list();
+            return list.at(index);
+        }
+
+        const TSInputTargetLinkSlotAccess target_link_set_access{
+            .size = &set_access_size,
+            .slot_capacity = &set_access_slot_capacity,
+            .slot_occupied = &set_access_slot_occupied,
+            .slot_live = &set_access_slot_live,
+            .slot_added = &set_access_slot_added,
+            .slot_removed = &set_access_slot_removed,
+            .key_at_slot = &set_access_key_at_slot,
+            .contains = &set_access_contains,
+            .find_slot = &set_access_find_slot,
+        };
+
+        const TSInputTargetLinkSlotAccess target_link_dict_key_access{
+            .size = &dict_access_size,
+            .slot_capacity = &dict_access_slot_capacity,
+            .slot_occupied = &dict_access_slot_occupied,
+            .slot_live = &dict_access_slot_live,
+            .slot_added = &dict_access_slot_added,
+            .slot_removed = &dict_access_slot_removed,
+            .key_at_slot = &dict_access_key_at_slot,
+            .contains = &dict_access_contains,
+            .find_slot = &dict_access_find_slot,
+        };
+
+        const TSInputTargetLinkIndexedAccess target_link_bundle_access{
+            .size = &bundle_access_size,
+            .child = &bundle_access_child,
+        };
+
+        const TSInputTargetLinkIndexedAccess target_link_list_access{
+            .size = &list_access_size,
+            .child = &list_access_child,
+        };
+
         [[nodiscard]] TSDDataView target_link_dict_view(const void *context, const void *memory)
         {
             auto target = target_link_target_view(context, memory);
@@ -101,13 +265,10 @@ namespace hgraph::detail
         [[nodiscard]] std::size_t target_link_slot_capacity_or_zero(const void *context, const void *memory) noexcept
         {
             return fallback_on_exception(std::size_t{0}, [&] {
+                const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
                 auto target = target_link_target_view(context, memory);
-                if (!target.valid()) { return std::size_t{0}; }
-                if (target.schema() != nullptr && target.schema()->kind == TSTypeKind::TSD)
-                {
-                    return target.as_dict().slot_capacity();
-                }
-                return target.as_set().slot_capacity();
+                return target.valid() && state->slot_access != nullptr ? state->slot_access->slot_capacity(target)
+                                                                       : std::size_t{0};
             });
         }
 
@@ -132,13 +293,10 @@ namespace hgraph::detail
         [[nodiscard]] std::size_t target_link_set_size(const void *context, const void *memory) noexcept
         {
             return fallback_on_exception(std::size_t{0}, [&] {
+                const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
                 auto target = target_link_target_view(context, memory);
-                if (!target.valid()) { return std::size_t{0}; }
-                if (target.schema() != nullptr && target.schema()->kind == TSTypeKind::TSD)
-                {
-                    return target.as_dict().size();
-                }
-                return target.as_set().size();
+                return target.valid() && state->slot_access != nullptr ? state->slot_access->size(target)
+                                                                       : std::size_t{0};
             });
         }
 
@@ -149,83 +307,60 @@ namespace hgraph::detail
 
         [[nodiscard]] bool target_link_set_slot_occupied(const void *context, const void *memory, std::size_t slot)
         {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
             auto target = target_link_target_view(context, memory);
-            if (!target.valid()) { return false; }
-            if (target.schema() != nullptr && target.schema()->kind == TSTypeKind::TSD)
-            {
-                return target.as_dict().slot_occupied(slot);
-            }
-            return target.as_set().slot_occupied(slot);
+            return target.valid() && state->slot_access != nullptr && state->slot_access->slot_occupied(target, slot);
         }
 
         [[nodiscard]] bool target_link_set_slot_live(const void *context, const void *memory, std::size_t slot)
         {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
             auto target = target_link_target_view(context, memory);
-            if (!target.valid()) { return false; }
-            if (target.schema() != nullptr && target.schema()->kind == TSTypeKind::TSD)
-            {
-                return target.as_dict().slot_live(slot);
-            }
-            return target.as_set().slot_live(slot);
+            return target.valid() && state->slot_access != nullptr && state->slot_access->slot_live(target, slot);
         }
 
         [[nodiscard]] bool target_link_set_slot_added(const void *context, const void *memory, std::size_t slot)
         {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
             auto target = target_link_target_view(context, memory);
-            if (!target.valid()) { return false; }
-            if (target.schema() != nullptr && target.schema()->kind == TSTypeKind::TSD)
-            {
-                return target.as_dict().slot_added(slot);
-            }
-            return target.as_set().slot_added(slot);
+            return target.valid() && state->slot_access != nullptr && state->slot_access->slot_added(target, slot);
         }
 
         [[nodiscard]] bool target_link_set_slot_removed(const void *context, const void *memory, std::size_t slot)
         {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
             auto target = target_link_target_view(context, memory);
-            if (!target.valid()) { return false; }
-            if (target.schema() != nullptr && target.schema()->kind == TSTypeKind::TSD)
-            {
-                return target.as_dict().slot_removed(slot);
-            }
-            return target.as_set().slot_removed(slot);
+            return target.valid() && state->slot_access != nullptr && state->slot_access->slot_removed(target, slot);
         }
 
         [[nodiscard]] const void *target_link_set_key_at_slot(const void *context,
                                                               const void *memory,
                                                               std::size_t slot)
         {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
             auto target = target_link_target_view(context, memory);
-            if (!target.valid()) { throw std::logic_error("TSInput target-link set access requires a bound target"); }
-            if (target.schema() != nullptr && target.schema()->kind == TSTypeKind::TSD)
+            if (!target.valid() || state->slot_access == nullptr)
             {
-                return target.as_dict().key_at_slot(slot).data();
+                throw std::logic_error("TSInput target-link set access requires a bound target");
             }
-            return target.as_set().at_slot(slot).data();
+            return state->slot_access->key_at_slot(target, slot);
         }
 
         [[nodiscard]] bool target_link_set_contains(const void *context, const void *memory, const ValueView &key)
         {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
             auto target = target_link_target_view(context, memory);
-            if (!target.valid()) { return false; }
-            if (target.schema() != nullptr && target.schema()->kind == TSTypeKind::TSD)
-            {
-                return target.as_dict().contains(key);
-            }
-            return target.as_set().contains(key);
+            return target.valid() && state->slot_access != nullptr && state->slot_access->contains(target, key);
         }
 
         [[nodiscard]] std::size_t target_link_set_find_slot(const void *context,
                                                             const void *memory,
                                                             const ValueView &key)
         {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
             auto target = target_link_target_view(context, memory);
-            if (!target.valid()) { return TS_DATA_NO_CHILD_ID; }
-            if (target.schema() != nullptr && target.schema()->kind == TSTypeKind::TSD)
-            {
-                return target.as_dict().find_slot(key);
-            }
-            return target.as_set().find_slot(key);
+            return target.valid() && state->slot_access != nullptr ? state->slot_access->find_slot(target, key)
+                                                                   : TS_DATA_NO_CHILD_ID;
         }
 
         [[nodiscard]] ValueView target_link_set_key_projector(const void *context,
@@ -432,11 +567,10 @@ namespace hgraph::detail
         [[nodiscard]] std::size_t target_link_indexed_size(const void *context, const void *memory) noexcept
         {
             return fallback_on_exception(std::size_t{0}, [&] {
+                const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
                 auto target = target_link_target_view(context, memory);
-                if (!target.valid()) { return std::size_t{0}; }
-                const auto *schema = static_cast<const TSInputTargetLinkContext *>(context)->schema;
-                if (schema != nullptr && schema->kind == TSTypeKind::TSB) { return target.as_bundle().size(); }
-                return target.as_list().size();
+                return target.valid() && state->indexed_access != nullptr ? state->indexed_access->size(target)
+                                                                          : std::size_t{0};
             });
         }
 
@@ -444,16 +578,10 @@ namespace hgraph::detail
                                                            const void *memory,
                                                            std::size_t index)
         {
+            const auto *state = static_cast<const TSInputTargetLinkContext *>(context);
             auto target = target_link_target_view(context, memory);
-            if (!target.valid()) { return {}; }
-            const auto *schema = static_cast<const TSInputTargetLinkContext *>(context)->schema;
-            if (schema != nullptr && schema->kind == TSTypeKind::TSB)
-            {
-                auto bundle = target.as_bundle();
-                return bundle.at(index);
-            }
-            auto list = target.as_list();
-            return list.at(index);
+            return target.valid() && state->indexed_access != nullptr ? state->indexed_access->child(target, index)
+                                                                      : TSDataView{};
         }
 
         [[nodiscard]] const TSDataBinding *target_link_indexed_element_binding(const void *context,
@@ -639,6 +767,7 @@ namespace hgraph::detail
             context->ops = TSSDataOps{};
             static_cast<TSDataOps &>(context->ops) = target_link_base_ops(*context);
             configure_target_link_set_ops(context->ops);
+            context->slot_access = &target_link_set_access;
             context->active_layout = &context->layout;
             context->active_ops = &context->ops;
             return context;
@@ -653,6 +782,7 @@ namespace hgraph::detail
         {
             auto context = std::make_unique<TargetLinkDictContext>();
             initialise_target_link_context(*context, schema, storage_offset, regular_binding);
+            context->slot_access = &target_link_dict_key_access;
 
             context->dict_layout = static_cast<const TSDDataLayout &>(regular_layout);
             context->dict_layout.tracking_offset = storage_offset;
@@ -710,6 +840,8 @@ namespace hgraph::detail
             context->ops.element_binding_impl = &target_link_indexed_element_binding;
             context->ops.element_memory_impl = &target_link_indexed_element_memory;
             context->ops.mutable_element_memory_impl = &target_link_indexed_mutable_element_memory;
+            context->indexed_access = schema.kind == TSTypeKind::TSB ? &target_link_bundle_access
+                                                                     : &target_link_list_access;
             context->active_layout = &context->layout;
             context->active_ops = &context->ops;
             return context;

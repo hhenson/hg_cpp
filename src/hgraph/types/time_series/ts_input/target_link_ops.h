@@ -10,6 +10,9 @@
 
 namespace hgraph::detail
 {
+    struct TSInputTargetLinkIndexedAccess;
+    struct TSInputTargetLinkSlotAccess;
+
     struct TSInputTargetLinkContext
     {
         virtual ~TSInputTargetLinkContext() = default;
@@ -19,6 +22,8 @@ namespace hgraph::detail
         const TSDataBinding       *regular_binding{nullptr};
         const TSDataLayout        *active_layout{nullptr};
         const TSDataOps           *active_ops{nullptr};
+        const TSInputTargetLinkSlotAccess *slot_access{nullptr};
+        const TSInputTargetLinkIndexedAccess *indexed_access{nullptr};
     };
 
     using TSInputTargetLinkContextBuilder = std::unique_ptr<TSInputTargetLinkContext> (*)(
