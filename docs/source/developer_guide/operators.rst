@@ -28,10 +28,11 @@ chosen implementation is baked into the graph.
    ``TSL`` / ``TSD`` / ``REF`` / ``Signal`` and the scalar variants); the remaining
    slices wire more of it into dispatch. Phases 2–3 are **also implemented**:
    scalar-argument matching, a ``static bool requires_(const ResolutionMap &)``
-   veto, and a ``lib/std`` operator family (``add_`` / ``eq_`` in
-   ``include/hgraph/lib/std/std_operators.h``), proven by
+   veto, and a ``lib/std`` operator family (``add_`` / ``sub_`` / ``div_`` / ``eq_``
+   in ``include/hgraph/lib/std/std_operators.h``) — covering homogeneous, mixed,
+   heterogeneous-temporal and result-differs overloads — proven by
    ``tests/cpp/test_std_operators.cpp`` and the scalar / ``requires`` / nested-``TSL``
-   cases in ``tests/cpp/test_operators.cpp``. Still to come (see *Roadmap*): Phase 4 —
+   / alignment cases in ``tests/cpp/test_operators.cpp``. Still to come (see *Roadmap*): Phase 4 —
    the Python implementation path (behind ``HGRAPH_ENABLE_PYTHON_USER_NODES``). (The
    operator path's scalar-configuration
    bundle is assembled by the same ``BundleBuilder`` + ``scalar_schema(map)``
@@ -272,31 +273,53 @@ that operator:
 
 .. code-block:: cpp
 
-   // The operator: a name + general signature. Not executable (no eval).
+   // The operator: a name + general signature. Not executable (no eval). The three
+   // variables L / R / O are *independent* (different names) — operands and result
+   // may all differ.
    struct add_ : Operator<"add",
-                          In<"lhs", TsVar<"S">>, In<"rhs", TsVar<"S">>, Out<TsVar<"S">>> {};
+                          In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>> {};
 
-   // Two implementations.
-   struct add_ts_int {
-       static void eval(In<"lhs", TS<Int>> a, In<"rhs", TS<Int>> b, Out<TS<Int>> o) {
-           o.set(a.value() + b.value());
-       }
+   // Homogeneous implementation: a single ``T`` repeated across both operands and the
+   // result — the repeated name *aligns* them (both operands must be the same type).
+   template <typename T> struct add_same {
+       static void eval(In<"lhs", TS<T>> a, In<"rhs", TS<T>> b, Out<TS<T>> o) { o.set(a.value() + b.value()); }
    };
-   struct add_ts_scalar {                                   // generic fallback
-       static void eval(In<"lhs", TS<ScalarVar<"T">>> a, In<"rhs", TS<ScalarVar<"T">>> b,
-                        Out<TS<ScalarVar<"T">>> o) { /* generic add */ }
+   // Heterogeneous implementation: operands and result differ.
+   template <typename L, typename R, typename O> struct add_binary {
+       static void eval(In<"lhs", TS<L>> a, In<"rhs", TS<R>> b, Out<TS<O>> o) { o.set(a.value() + b.value()); }
    };
 
-   // Registration — explicit, grouped into a seed function.
    void register_standard_operators() {
-       register_overload<add_, add_ts_int>();
-       register_overload<add_, add_ts_scalar>();
+       register_overload<add_, add_same<Int>>();                                    // int + int -> int
+       register_overload<add_, add_binary<Int, Float, Float>>();                    // int + float -> float
+       register_overload<add_, add_binary<engine_time_t, engine_time_delta_t, engine_time_t>>();  // datetime + timedelta
    }
 
-Like ``ext/2603``, an implementation is **not** required to structurally conform
-to the operator's abstract signature; the abstract signature documents the
-operator and supplies its name and nominal arity for error messages. Matching is
-by rank against the supplied arguments, not against the abstract signature.
+**The operator signature is a suggestion, not a rule.** An implementation is **not**
+required to structurally conform to the operator's abstract signature; that signature
+only documents the operator and supplies its name and nominal arity for error
+messages. Matching is by rank against the supplied arguments, using each
+*implementation's* own signature. This is why one name (``add_``) covers homogeneous,
+mixed, and heterogeneous cases.
+
+**Aligned vs independent type variables.** A type variable that appears more than once
+in one implementation's signature is a *constraint*: the matcher binds it on the first
+occurrence and **rejects** any later occurrence that resolves to a different type
+(``ResolutionMap::bind_ts`` / the ``Var`` consistency check in ``ts_pattern_match``).
+So ``add_same<T>`` (the repeated ``T``) accepts ``(int, int)`` but rejects
+``(int, float)``; ``add_binary<L, R, O>`` (distinct names) accepts both because the
+operands are independent. The **result type can differ from the operands**, which is
+the same machinery viewed from the output: ``div_: int / int -> float`` (aligned
+operands, independent result) and ``sub_: datetime - datetime -> timedelta`` (result
+differs from *both* operands) are ordinary overloads.
+
+**C++ note.** Python expresses the homogeneous case as a *single* generic overload
+gated by a ``requires`` predicate (e.g. ``add_scalars(TS[SCALAR], TS[SCALAR])`` with
+``requires=lambda m: hasattr(m[SCALAR].py_type, "__add__")``), because Python's ``+``
+dispatches at runtime. A C++ ``eval`` is concrete, so the homogeneous case is a
+*template* instantiated per addable type (``add_same<Int>``, ``add_same<Float>``,
+``add_same<engine_time_delta_t>``, …) — the registration list plays the role of the
+``requires`` capability gate.
 
 **Registration is explicit, never static-init.** The test harness wipes every
 registry between cases (see *Test isolation*), so a static-initialiser overload
@@ -390,10 +413,13 @@ Roadmap
 2. **Phase 2 — scalars, predicates — done.** ``WiringArg`` scalar matching wired
    into dispatch; an optional per-candidate ``static bool requires_(const
    ResolutionMap &)`` veto that rejects a candidate after its types resolve.
-3. **Phase 3 — ``lib/std`` operator family — done.** ``add_`` (per-type
-   implementations) and ``eq_`` (``-> TS<Bool>``) in
-   ``include/hgraph/lib/std/std_operators.h``, selected by the supplied operand
-   types, with an explicit ``register_standard_operators()``.
+3. **Phase 3 — ``lib/std`` operator family — done.** ``add_`` / ``sub_`` / ``div_``
+   / ``eq_`` in ``include/hgraph/lib/std/std_operators.h``, with homogeneous,
+   mixed-numeric (``int + float -> float``), heterogeneous-temporal
+   (``datetime + timedelta -> datetime``, ``date + timedelta -> date``) and
+   result-differs (``div_: int / int -> float``, ``sub_: datetime - datetime ->
+   timedelta``) overloads, selected by the supplied operand types, with an explicit
+   ``register_standard_operators()``.
 4. **Phase 4 — Python implementation path.** Runtime-data ``OperatorImpl`` from a
    Python signature; ``NodeCallbacks`` hosting a Python callable; cross-boundary
    identity asserted. Behind ``HGRAPH_ENABLE_PYTHON_USER_NODES``.

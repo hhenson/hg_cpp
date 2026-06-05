@@ -1,5 +1,11 @@
-// Phase 3: a real lib/std operator family (`add_`, `eq_`) with several per-type
-// implementations under one name, selected by the supplied argument types at wiring.
+// Phase 3: a real lib/std operator family (`add_`, `sub_`, `div_`, `eq_`). One name
+// collects several per-type implementations; the most specific is selected at wiring.
+//
+// These exercise the "operator signature is a suggestion" principle: the operators
+// declare independent type variables for lhs / rhs / result, so a single name covers
+// homogeneous (int + int), mixed (int + float -> float), heterogeneous
+// (datetime + timedelta -> datetime), and result-differs cases (div int / int -> float;
+// datetime - datetime -> timedelta).
 
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/testing/check_output.h>
@@ -10,9 +16,11 @@
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/time_series/ts_delta.h>
+#include <hgraph/util/date_time.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -22,8 +30,9 @@ namespace
 {
     using namespace hgraph;
     using namespace hgraph::testing;
+    using namespace std::chrono;
 
-    // replay("a"), replay("b") -> Op(a, b) -> record("out"), over element type ``ElemTS``.
+    // replay("a"), replay("b") -> Op(a, b) -> record("out") over a single element type.
     template <typename Op, typename ElemTS>
     struct BinOpGraph
     {
@@ -32,6 +41,20 @@ namespace
         {
             auto a = wire<testing::replay, ElemTS>(w, Str{"a"});
             auto b = wire<testing::replay, ElemTS>(w, Str{"b"});
+            auto r = wire<Op>(w, a, b);
+            wire<testing::record>(w, r, Str{"out"});
+        }
+    };
+
+    // Heterogeneous variant: the two operands have *different* element types.
+    template <typename Op, typename LhsTS, typename RhsTS>
+    struct BinOpGraph2
+    {
+        static constexpr auto name = "bin_op_graph2";
+        static void           compose(Wiring &w)
+        {
+            auto a = wire<testing::replay, LhsTS>(w, Str{"a"});
+            auto b = wire<testing::replay, RhsTS>(w, Str{"b"});
             auto r = wire<Op>(w, a, b);
             wire<testing::record>(w, r, Str{"out"});
         }
@@ -48,11 +71,16 @@ namespace
         ex.view().run();
         return ex;
     }
+
+    [[nodiscard]] engine_time_t dt(std::int64_t micros) { return engine_time_t{microseconds{micros}}; }
+    [[nodiscard]] engine_date_t ymd(int y, unsigned m, unsigned d)
+    {
+        return engine_date_t{year{y} / month{m} / day{d}};
+    }
 }  // namespace
 
 TEST_CASE("std operators: add_ selects the int implementation for TS<Int> operands")
 {
-    (void)TypeRegistry::instance().register_scalar<Int>("int");
     stdlib::register_standard_operators();
 
     auto ex = run_graph<BinOpGraph<stdlib::add_, TS<Int>>>([](const GlobalStateView &gs) {
@@ -62,21 +90,72 @@ TEST_CASE("std operators: add_ selects the int implementation for TS<Int> operan
     CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {11, 22, 33});
 }
 
-TEST_CASE("std operators: add_ selects the float implementation for TS<Float> operands")
+TEST_CASE("std operators: add_ supports mixed numeric operands (int + float -> float)")
 {
-    (void)TypeRegistry::instance().register_scalar<Float>("float");
     stdlib::register_standard_operators();
 
-    auto ex = run_graph<BinOpGraph<stdlib::add_, TS<Float>>>([](const GlobalStateView &gs) {
-        set_replay_values<Float>(gs, "a", {Float{1.5}, Float{2.25}});
-        set_replay_values<Float>(gs, "b", {Float{0.5}, Float{0.75}});
+    auto ex = run_graph<BinOpGraph2<stdlib::add_, TS<Int>, TS<Float>>>([](const GlobalStateView &gs) {
+        set_replay_values<Int>(gs, "a", {1, 2, 3});
+        set_replay_values<Float>(gs, "b", {Float{0.5}, Float{1.5}, Float{2.5}});
     });
-    CHECK_OUTPUT(get_recorded_values<Float>(ex.view().graph().global_state(), "out"), {Float{2.0}, Float{3.0}});
+    CHECK_OUTPUT(get_recorded_values<Float>(ex.view().graph().global_state(), "out"),
+                 {Float{1.5}, Float{3.5}, Float{5.5}});
+}
+
+TEST_CASE("std operators: add_ supports datetime + timedelta -> datetime")
+{
+    stdlib::register_standard_operators();
+
+    auto ex = run_graph<BinOpGraph2<stdlib::add_, TS<engine_time_t>, TS<engine_time_delta_t>>>(
+        [](const GlobalStateView &gs) {
+            set_replay_values<engine_time_t>(gs, "a", {dt(1'000'000), dt(2'000'000)});
+            set_replay_values<engine_time_delta_t>(gs, "b", {microseconds{500'000}, microseconds{1'500'000}});
+        });
+    CHECK_OUTPUT(get_recorded_values<engine_time_t>(ex.view().graph().global_state(), "out"),
+                 {dt(1'500'000), dt(3'500'000)});
+}
+
+TEST_CASE("std operators: add_ supports date + timedelta -> date (whole days)")
+{
+    stdlib::register_standard_operators();
+
+    const engine_time_delta_t two_days  = duration_cast<engine_time_delta_t>(days{2});
+    const engine_time_delta_t five_days = duration_cast<engine_time_delta_t>(days{5});
+
+    auto ex = run_graph<BinOpGraph2<stdlib::add_, TS<engine_date_t>, TS<engine_time_delta_t>>>(
+        [&](const GlobalStateView &gs) {
+            set_replay_values<engine_date_t>(gs, "a", {ymd(2020, 1, 1), ymd(2020, 1, 10)});
+            set_replay_values<engine_time_delta_t>(gs, "b", {two_days, five_days});
+        });
+    CHECK_OUTPUT(get_recorded_values<engine_date_t>(ex.view().graph().global_state(), "out"),
+                 {ymd(2020, 1, 3), ymd(2020, 1, 15)});
+}
+
+TEST_CASE("std operators: div_ produces a different result type (int / int -> float)")
+{
+    stdlib::register_standard_operators();
+
+    auto ex = run_graph<BinOpGraph<stdlib::div_, TS<Int>>>([](const GlobalStateView &gs) {
+        set_replay_values<Int>(gs, "a", {7, 9});
+        set_replay_values<Int>(gs, "b", {2, 3});
+    });
+    CHECK_OUTPUT(get_recorded_values<Float>(ex.view().graph().global_state(), "out"), {Float{3.5}, Float{3.0}});
+}
+
+TEST_CASE("std operators: sub_ of two datetimes yields a timedelta (result differs from both operands)")
+{
+    stdlib::register_standard_operators();
+
+    auto ex = run_graph<BinOpGraph<stdlib::sub_, TS<engine_time_t>>>([](const GlobalStateView &gs) {
+        set_replay_values<engine_time_t>(gs, "a", {dt(3'000'000), dt(5'000'000)});
+        set_replay_values<engine_time_t>(gs, "b", {dt(1'000'000), dt(2'000'000)});
+    });
+    CHECK_OUTPUT(get_recorded_values<engine_time_delta_t>(ex.view().graph().global_state(), "out"),
+                 {microseconds{2'000'000}, microseconds{3'000'000}});
 }
 
 TEST_CASE("std operators: eq_ resolves its TS<Bool> output independently of the operand type")
 {
-    (void)TypeRegistry::instance().register_scalar<Int>("int");
     stdlib::register_standard_operators();
 
     auto ex = run_graph<BinOpGraph<stdlib::eq_, TS<Int>>>([](const GlobalStateView &gs) {
@@ -86,9 +165,8 @@ TEST_CASE("std operators: eq_ resolves its TS<Bool> output independently of the 
     CHECK_OUTPUT(get_recorded_values<Bool>(ex.view().graph().global_state(), "out"), {true, false, true});
 }
 
-TEST_CASE("std operators: eq_ works for strings (the str implementation)")
+TEST_CASE("std operators: eq_ works for strings")
 {
-    (void)TypeRegistry::instance().register_scalar<Str>("str");
     stdlib::register_standard_operators();
 
     auto ex = run_graph<BinOpGraph<stdlib::eq_, TS<Str>>>([](const GlobalStateView &gs) {
@@ -98,10 +176,10 @@ TEST_CASE("std operators: eq_ works for strings (the str implementation)")
     CHECK_OUTPUT(get_recorded_values<Bool>(ex.view().graph().global_state(), "out"), {true, false});
 }
 
-TEST_CASE("std operators: a type with no registered implementation raises")
+TEST_CASE("std operators: an operand combination with no registered implementation raises")
 {
     (void)TypeRegistry::instance().register_scalar<Str>("str");
-    stdlib::register_standard_operators();   // add_ has int / float impls only
+    stdlib::register_standard_operators();   // add_ has no str overload
 
     REQUIRE_THROWS_AS((build_graph<BinOpGraph<stdlib::add_, TS<Str>>>()), OperatorResolutionError);
 }

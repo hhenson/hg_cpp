@@ -254,3 +254,26 @@ TEST_CASE("operators: the TypePattern interpreter matches and ranks a nested TSL
     ResolutionMap other;
     CHECK_FALSE(ts_pattern_match(to_pattern<TSL<TS<ScalarVar<"T">>, 3>>(), concrete, other));
 }
+
+TEST_CASE("operators: a repeated type-variable name forces the operands to be aligned")
+{
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    (void)TypeRegistry::instance().register_scalar<Float>("float");
+    // add_generic is In<~S>, In<~S>, Out<~S> — the repeated ``S`` aligns both operands.
+    register_overload<add_, add_generic>();
+
+    // Aligned operands (both TS<Int>): ``S`` binds consistently -> matches.
+    {
+        std::array<WiringArg, 2> args{ts_arg(ts_type<TS<Int>>()), ts_arg(ts_type<TS<Int>>())};
+        auto [impl, map] = OperatorRegistry::instance().resolve("add", std::span<const WiringArg>{args});
+        CHECK(impl != nullptr);
+        CHECK(map.find_ts("S") == ts_type<TS<Int>>());
+    }
+
+    // Misaligned operands (TS<Int>, TS<Float>): ``S`` cannot be both -> no candidate.
+    {
+        std::array<WiringArg, 2> args{ts_arg(ts_type<TS<Int>>()), ts_arg(ts_type<TS<Float>>())};
+        REQUIRE_THROWS_AS(OperatorRegistry::instance().resolve("add", std::span<const WiringArg>{args}),
+                          OperatorResolutionError);
+    }
+}
