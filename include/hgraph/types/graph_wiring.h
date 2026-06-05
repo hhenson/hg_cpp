@@ -160,6 +160,20 @@ namespace hgraph
         const TSValueTypeMetaData *schema_{nullptr};
     };
 
+    /** Base of every ``Operator<>`` marker; ``wire<>`` routes a type deriving it to operator dispatch. */
+    struct operator_tag
+    {
+    };
+
+    namespace operator_dispatch_detail
+    {
+        // The operator arm of ``wire<>`` — defined in ``operator_dispatch.h`` (a
+        // translation unit that wires operators must include it). Forward-declared
+        // here so the ``wire<>`` body parses; only instantiated for an ``Operator``.
+        template <typename X, typename... Args>
+        Port<void> wire_operator(Wiring &w, const Args &...args);
+    }  // namespace operator_dispatch_detail
+
     template <typename G>
     struct StaticGraphSignature;   // defined below; forward-declared for use in wire<G>
 
@@ -376,6 +390,14 @@ namespace hgraph
                 return X::compose(w, graph_wiring_detail::make_compose_arg<
                                          std::tuple_element_t<I, typename sig::param_types>>(std::get<I>(arg_tuple))...);
             }(std::make_index_sequence<sizeof...(Args)>{});
+        }
+        else if constexpr (std::is_base_of_v<operator_tag, X>)
+        {
+            // operator: erase the arguments and dispatch to the registry, which picks
+            // the most specific registered overload and builds it (see *Operators*).
+            static_assert(std::is_void_v<OutSchema>,
+                          "wire<Operator>: an explicit output schema is not used for operator dispatch");
+            return operator_dispatch_detail::wire_operator<X>(w, args...);
         }
         else
         {

@@ -46,6 +46,8 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/value/compact_container_ops.cpp
     hgraph/types/value/value_view.cpp
     hgraph/types/graph_wiring.cpp
+    hgraph/types/type_pattern.cpp
+    hgraph/types/operator_dispatch.cpp
 )
 
 # Public headers — listed so CLion (and other IDEs) pick them up under the
@@ -65,6 +67,8 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_schema.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/graph_wiring.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/type_pattern.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/operator_dispatch.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series_reference.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_data_plan_factory.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_data_plan_factory_detail.h

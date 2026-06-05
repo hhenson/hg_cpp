@@ -14,6 +14,7 @@
 #include <catch2/reporters/catch_reporter_registrars.hpp>
 
 #include <hgraph/lib/std/standard_types.h>
+#include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -27,6 +28,10 @@ namespace
 {
     void reset_registries() noexcept
     {
+        // The operator registry holds borrowed interned schema pointers inside its
+        // candidate patterns; clear it first, before the type registry reset frees
+        // those schemas (the plan-registries-clear-on-reset ordering).
+        hgraph::OperatorRegistry::instance().reset();
         // Plan factories hold borrowed schema pointers; bindings hold
         // borrowed schema + plan + ops pointers; compact-container plan
         // registries hold lifecycle context that references those

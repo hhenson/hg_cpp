@@ -8,6 +8,13 @@ assembled into a graph with the runtime builders. Python wiring remains a
 compatibility goal that *lowers* to the same runtime primitives (deferred; see
 *Project Boundary*).
 
+.. seealso::
+
+   *Graph Wiring* assembles authored nodes into a graph and resolves generic
+   (type-variable) nodes at the ``wire<>`` call. *Operators* generalises that to
+   **overload dispatch**: one logical name collecting many implementations, with
+   the most specific selected at wiring time.
+
 Authoring a node
 ----------------
 

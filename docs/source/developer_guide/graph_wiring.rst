@@ -285,6 +285,13 @@ Slices:
    not collide. The framework's own ``replay`` / ``record`` / ``const_`` /
    ``debug_print`` / ``null_sink`` are authored this way. Tests:
    ``tests/cpp/test_type_resolution.cpp``.
+
+   *Operator overload dispatch* — one logical name (``add_``) collecting many
+   implementations and selecting the most specific at the ``wire<>`` call — builds
+   directly on this generic-resolution machinery (same ``ResolutionMap``, same
+   ``NodeBuilder::implementation<Impl>(map)``) and is specified on its own page,
+   *Operators*. It is the multi-candidate generalisation of the single-implementation
+   resolution above.
 6. **Next.** Standalone sub-graph building / time-series **boundary binding**
    (supplying ``Port`` inputs to ``build_graph`` / ``wire<G>``) — **deferred until
    it has a consumer**, the non-flattening nested graphs (``map_`` / ``reduce`` /
