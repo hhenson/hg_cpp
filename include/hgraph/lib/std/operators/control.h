@@ -26,17 +26,17 @@ namespace hgraph::stdlib
     };
 
     /** ``all_`` — graph ``all``: ``True`` when every boolean input is ``True`` (variadic). */
-    struct all_ : Operator<"all", In<"args", TsVar<"S">>, Out<TS<Bool>>>
+    struct all_ : Operator<"all_", In<"args", TsVar<"S">>, Out<TS<Bool>>>
     {
     };
 
     /** ``any_`` — graph ``any``: ``True`` when any boolean input is ``True`` (variadic). */
-    struct any_ : Operator<"any", In<"args", TsVar<"S">>, Out<TS<Bool>>>
+    struct any_ : Operator<"any_", In<"args", TsVar<"S">>, Out<TS<Bool>>>
     {
     };
 
     /** ``if_`` — route ``ts`` to a ``true`` / ``false`` bundle output by ``condition``. */
-    struct if_ : Operator<"if", In<"condition", TS<Bool>>, In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct if_ : Operator<"if_", In<"condition", TS<Bool>>, In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };
 

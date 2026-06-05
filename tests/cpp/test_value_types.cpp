@@ -6,6 +6,7 @@
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/std/std_nodes.h>
+#include <hgraph/lib/std/std_operators.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/value/value.h>
 #include <hgraph/types/static_node.h>
@@ -92,6 +93,7 @@ TEST_CASE("value to_string renders 1-byte integers numerically, not as character
 TEST_CASE("stdlib::const_ produces the configured value for non-int scalar types")
 {
     using namespace std::string_literals;
+    hgraph::stdlib::register_standard_operators();   // const_ is an operator
 
     GraphExecutorValue dbl = run_once(build_graph<ConstDoubleGraph>());
     CHECK_OUTPUT(testing::get_recorded_values<double>(dbl.view().graph().global_state(), "out"), {3.5});

@@ -17,29 +17,29 @@ namespace hgraph::stdlib
      */
 
     /** ``getitem_`` — the ``[]`` operator: ``ts[key]``. */
-    struct getitem_ : Operator<"getitem", In<"ts", TsVar<"S">>, In<"key", TsVar<"K">>, Out<TsVar<"O">>>
+    struct getitem_ : Operator<"getitem_", In<"ts", TsVar<"S">>, In<"key", TsVar<"K">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``getattr_`` — the ``.`` (attribute access) operator: ``ts.attr``. ``attr`` is a wiring-time
         string; an optional ``default_value`` may be supplied by an implementation. */
-    struct getattr_ : Operator<"getattr", In<"ts", TsVar<"S">>, Scalar<"attr", Str>, Out<TsVar<"O">>>
+    struct getattr_ : Operator<"getattr_", In<"ts", TsVar<"S">>, Scalar<"attr", Str>, Out<TsVar<"O">>>
     {
     };
 
     /** ``setattr_`` — sets ``ts.attr`` to ``value`` and returns the updated bundle. */
     struct setattr_
-        : Operator<"setattr", In<"ts", TsVar<"S">>, Scalar<"attr", Str>, In<"value", TsVar<"V">>, Out<TsVar<"O">>>
+        : Operator<"setattr_", In<"ts", TsVar<"S">>, Scalar<"attr", Str>, In<"value", TsVar<"V">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``contains_`` — the ``in`` operator: ``item in ts`` -> ``TS<Bool>``. */
-    struct contains_ : Operator<"contains", In<"ts", TsVar<"S">>, In<"item", TsVar<"I">>, Out<TS<Bool>>>
+    struct contains_ : Operator<"contains_", In<"ts", TsVar<"S">>, In<"item", TsVar<"I">>, Out<TS<Bool>>>
     {
     };
 
     /** ``len_`` — the ``len`` operator -> ``TS<Int>``. */
-    struct len_ : Operator<"len", In<"ts", TsVar<"S">>, Out<TS<Int>>>
+    struct len_ : Operator<"len_", In<"ts", TsVar<"S">>, Out<TS<Int>>>
     {
     };
 

@@ -2,11 +2,13 @@
 // pass_through_node and debug_print, exercised through wired graphs.
 
 #include <hgraph/lib/std/std_nodes.h>
+#include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/value/specialized_views.h>
 
@@ -85,7 +87,7 @@ namespace
         static void           compose(Wiring &w)
         {
             auto c = wire<stdlib::const_>(w, 3_i);
-            wire<stdlib::debug_print>(w, c, "demo"_str);
+            wire<stdlib::debug_print>(w, "demo"_str, c);   // operator order: (label, ts)
         }
     };
 
@@ -103,6 +105,7 @@ TEST_CASE("stdlib::const_ emits its configured value once at start")
 {
     using namespace hgraph;
     (void)TypeRegistry::instance().register_scalar<Int>("int");
+    stdlib::register_standard_operators();
 
     GraphExecutorValue executor = run_once(build_graph<ConstRecordGraph>());
     const auto         out      = testing::get_recorded_values<Int>(executor.view().graph().global_state(), "out");
@@ -114,6 +117,7 @@ TEST_CASE("stdlib::const_ accepts an explicit scalar output resolution")
 {
     using namespace hgraph;
     (void)TypeRegistry::instance().register_scalar<Int>("int");
+    stdlib::register_standard_operators();
 
     GraphExecutorValue executor = run_once(build_graph<ExplicitTsConstRecordGraph>());
     const auto         out      = testing::get_recorded_values<Int>(executor.view().graph().global_state(), "out");
@@ -125,6 +129,7 @@ TEST_CASE("stdlib::const_ accepts an explicit collection output resolution")
 {
     using namespace hgraph;
     (void)TypeRegistry::instance().register_scalar<Int>("int");
+    stdlib::register_standard_operators();
 
     GraphExecutorValue executor = run_once(build_graph<ConstSetRecordGraph>());
     const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
@@ -137,9 +142,12 @@ TEST_CASE("stdlib::const_ rejects explicit output resolution when the value sche
 {
     using namespace hgraph;
     (void)TypeRegistry::instance().register_scalar<Int>("int");
+    stdlib::register_standard_operators();
 
+    // const_ is now an operator: a value-schema mismatch makes the only candidate reject,
+    // so dispatch reports no matching overload rather than the node's logic_error.
     Wiring w;
-    CHECK_THROWS_AS((wire<stdlib::const_, TSS<Int>>(w, Int{7})), std::logic_error);
+    CHECK_THROWS_AS((wire<stdlib::const_, TSS<Int>>(w, Int{7})), OperatorResolutionError);
 }
 
 TEST_CASE("stdlib value utilities build compact scalar containers")
@@ -185,6 +193,7 @@ TEST_CASE("stdlib::null_sink consumes its input without error")
 {
     using namespace hgraph;
     (void)TypeRegistry::instance().register_scalar<Int>("int");
+    stdlib::register_standard_operators();
 
     GraphExecutorValue executor = run_once(build_graph<NullSinkGraph>());
     // The source ticked and the sink consumed it; reaching here (no throw) is the check.
@@ -195,6 +204,7 @@ TEST_CASE("stdlib::pass_through_node preserves input ticks")
 {
     using namespace hgraph;
     (void)TypeRegistry::instance().register_scalar<Int>("int");
+    stdlib::register_standard_operators();
 
     GraphBuilder gb = build_graph<PassThroughGraph>();
     testing::set_replay_values<Int>(gb.global_state(), "in",
@@ -211,6 +221,7 @@ TEST_CASE("stdlib::debug_print runs over a tick")
 {
     using namespace hgraph;
     (void)TypeRegistry::instance().register_scalar<Int>("int");
+    stdlib::register_standard_operators();
 
     GraphExecutorValue executor = run_once(build_graph<DebugPrintGraph>());
     CHECK(executor.view().graph().node_count() == 2);

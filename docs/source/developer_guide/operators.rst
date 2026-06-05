@@ -465,27 +465,38 @@ under ``include/hgraph/lib/std/operators/``, grouped by family and pulled togeth
 - ``collection.h`` — aggregations (``sum_`` / ``mean`` / ``std_`` / ``var_``), set ops
   (``union_`` / ``intersection_`` / ``difference_`` / ``symmetric_difference_``) and ``TSD``
   re-shaping (``keys_`` / ``values_`` / ``rekey`` / ``flip`` / ``partition`` / … );
-- ``conversion.h`` — ``convert`` / ``combine`` / ``collect`` / ``emit`` / ``cast_`` /
-  ``downcast_`` / ``str_`` / ``type_`` / ``zero_`` / ``nothing`` / ``default_``;
+- ``conversion.h`` — ``const_`` / ``convert`` / ``combine`` / ``collect`` / ``emit`` /
+  ``cast_`` / ``downcast_`` / ``str_`` / ``type_`` / ``zero_`` / ``nothing`` / ``default_``;
 - ``string.h`` — ``match_`` / ``replace`` / ``substr`` / ``split`` / ``join`` / ``format_``;
-- ``stream.h`` — ``sample`` / ``lag`` / ``resample`` / ``filter_`` / ``throttle`` / ``take`` /
-  ``drop`` / ``gate`` / ``window`` / ``to_window`` / … plus analytics (``diff`` / ``count`` /
-  ``clip`` / ``ewma``);
+- ``stream.h`` — ``sample`` / ``lag`` / ``resample`` / ``filter_`` / ``filter_by`` /
+  ``until_true`` / ``freeze`` / ``throttle`` / ``take`` / ``drop`` / ``gate`` / ``window`` /
+  ``to_window`` / … plus analytics (``diff`` / ``count`` / ``clip`` / ``ewma``);
 - ``control.h`` — ``merge`` / ``race`` / ``all_`` / ``any_`` / ``if_`` / ``if_then_else`` /
   ``if_cmp`` / ``route_by_index`` / ``if_true``;
 - ``temporal.h`` — date components (``year`` / ``month_of_year`` / …) and time-series
   introspection (``valid`` / ``modified`` / ``last_modified_time`` / …);
-- ``io.h`` — sinks and record/replay (``print_`` / ``log_`` / ``assert_`` / ``record`` /
-  ``replay`` / ``compare``).
+- ``io.h`` — sinks and record/replay (``debug_print`` / ``null_sink`` / ``print_`` /
+  ``log_`` / ``assert_`` / ``record`` / ``replay`` / ``compare``).
 
 The marker's signature is documentary (a *suggestion*); each operator names independent
 type variables where operands and result may differ, mirroring the Python ``hgraph``
-catalogue under ``ext/2603/hgraph/_operators/``. **Implementations are a separate slice** —
-only a small set (``add_`` / ``sub_`` / ``div_`` / ``eq_`` / ``zero_``) are implemented and
-registered (``register_standard_operators`` in ``std_operators.h``). Deferred from the
-catalogue: ``const_`` / ``debug_print`` / ``null_sink`` (they exist as concrete nodes in
-``std_nodes.h``) and the JSON / table / data-frame family (it needs scalar value types the
-value layer does not model yet).
+catalogue under ``ext/main/hgraph/_operators/`` (the canonical Python reference). Each
+operator's **registry name string matches the Python operator name exactly** — including
+its trailing underscore where Python has one (``Operator<"add_">`` / ``"eq_">`` /
+``"sum_">``, but ``"sign">`` / ``"mean">`` / ``"zero">``) — so the name is the shared key
+for the future Python bridge. Deferred from the catalogue: the JSON / table / data-frame
+family (it needs scalar value types the value layer does not model yet).
+
+**Implementations** are a parallel tree under ``include/hgraph/lib/std/operators/impl/``:
+each definition file ``<family>.h`` has a matching ``impl/<family>_impl.h`` holding the
+concrete overloads and a ``register_<family>_operators()`` function, and
+``impl/operators_impl.h`` aggregates them into ``register_standard_operators()``. Only a
+small set is implemented so far — ``add_`` / ``sub_`` / ``div_`` (``impl/arithmetic_impl.h``),
+``eq_`` (``impl/comparison_impl.h``), ``const_`` / ``zero_`` (``impl/conversion_impl.h``)
+and ``debug_print`` / ``null_sink`` (``impl/io_impl.h``); further families gain their
+``impl/<family>_impl.h`` (and a registration call) as they land. The
+``<hgraph/lib/std/std_operators.h>`` umbrella pulls in both the definitions and the
+implementations.
 
 
 Roadmap

@@ -19,7 +19,7 @@ namespace hgraph::stdlib
     // ---- Aggregations / reductions ----
 
     /** ``sum_`` — running / element-wise sum. */
-    struct sum_ : Operator<"sum", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct sum_ : Operator<"sum_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };
 
@@ -63,12 +63,12 @@ namespace hgraph::stdlib
     // ---- TSD / dictionary re-shaping ----
 
     /** ``keys_`` — the keys of a dictionary (as a ``TSS`` / set). */
-    struct keys_ : Operator<"keys", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct keys_ : Operator<"keys_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``values_`` — the values of a dictionary. */
-    struct values_ : Operator<"values", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct values_ : Operator<"values_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };
 

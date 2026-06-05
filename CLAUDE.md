@@ -91,10 +91,13 @@ over an `InternTable`.
 - `ts_input` = the **input proxies** (non-owning endpoints that bind to an output and
   read it).
 
-**Reference branches (read-only, never edit):** `ext/2603` (mature design + *working*
-runtime; primary reference for node/graph/execution; works in-sample only), `ext/2604`
-(structural cleanup). Memory: `reference_branches`, `ext_2603_design_corpus`,
-`ext_2604_cleanup_steps`.
+**Reference trees (read-only, never edit):** `ext/main` is the **canonical Python
+`hgraph` reference — use it (not `ext/2603`) whenever you look at the Python code** (e.g.
+operator/node signatures, `_operators/`, semantics). `ext/2603` (mature design + *working*
+runtime; reference for node/graph/execution; works in-sample only) and `ext/2604`
+(structural cleanup) are older snapshots — keep them for prior C++ runtime ideas, but
+treat `ext/main` as authoritative for Python behaviour. Memory: `reference_branches`,
+`ext_2603_design_corpus`, `ext_2604_cleanup_steps`.
 
 ---
 
@@ -130,7 +133,10 @@ harness (tests deal in `vector<optional<T>>`; supports **multiple TS inputs and 
 params**, and an **operator overload** `eval_node<Op>(...)` that dispatches the operator
 at wiring time and returns type-erased `vector<optional<Value>>` checked with `Value`
 equality — write the expected with the same `values<T>(...)` helper used for inputs),
-and a small `lib/std` (`stdlib::const_`, `debug_print`, `null_sink`). Sources are
+and a small `lib/std`. `const_`/`debug_print`/`null_sink` are now **operators** (catalogue
+`operators/` + impls `operators/impl/`, registered via `register_standard_operators()`),
+matching the Python target API; `pass_through_node` stays a plain node in `std_nodes.h`.
+Sources are
 **not scheduled by default** — they initiate via `schedule_on_start = true` (declarative),
 `SingleShotScheduler` (lightweight one-shot in `start`), or `NodeScheduler` (full,
 stateful). See `docs/.../testing_graphs_cpp.rst` + memory `value-any-globalstate-testing-plan`.

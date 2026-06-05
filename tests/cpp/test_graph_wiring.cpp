@@ -3,6 +3,7 @@
 // build_graph<G>() — no node indices or edges by hand. See docs: Graph Wiring.
 
 #include <hgraph/lib/std/std_nodes.h>
+#include <hgraph/lib/std/std_operators.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 
@@ -327,6 +328,7 @@ TEST_CASE("graph wiring: sub-graph composition inlines (flattens) into the paren
 TEST_CASE("graph wiring: sub-graph typed input accepts an erased generic source port")
 {
     using namespace hgraph;
+    stdlib::register_standard_operators();   // const_ is an operator
 
     GraphBuilder graph_builder = build_graph<GenericSourceIntoTypedSubGraph>();
 

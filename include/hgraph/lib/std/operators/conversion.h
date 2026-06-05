@@ -23,6 +23,14 @@ namespace hgraph::stdlib
      *    C++ value layer does not model yet.
      */
 
+    /** ``const_`` — a source that emits a configured ``value`` once at the start cycle. The
+        output type is the registered ``TS`` of the value's type, or an explicit output schema
+        at the wiring site (``wire<const_, TSS<Int>>(w, set_value)``). (Python ``const`` also
+        takes an optional ``delay`` — not yet modelled.) */
+    struct const_ : Operator<"const", Scalar<"value", ScalarVar<"T">>, Out<TsVar<"S">>>
+    {
+    };
+
     /** ``convert`` — convert the incoming time-series to the requested output type. */
     struct convert : Operator<"convert", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
@@ -44,12 +52,12 @@ namespace hgraph::stdlib
     };
 
     /** ``cast_`` — cast a ``TS`` value to a different scalar type (output type supplied explicitly). */
-    struct cast_ : Operator<"cast", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct cast_ : Operator<"cast_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``downcast_`` — downcast a ``TS`` value to a (checked) derived type. */
-    struct downcast_ : Operator<"downcast", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct downcast_ : Operator<"downcast_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };
 
@@ -59,12 +67,12 @@ namespace hgraph::stdlib
     };
 
     /** ``str_`` — convert the incoming time-series to its ``TS<Str>`` representation. */
-    struct str_ : Operator<"str", In<"ts", TsVar<"S">>, Out<TS<Str>>>
+    struct str_ : Operator<"str_", In<"ts", TsVar<"S">>, Out<TS<Str>>>
     {
     };
 
     /** ``type_`` — the (python) type of the time-series value. */
-    struct type_ : Operator<"type", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct type_ : Operator<"type_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };
 

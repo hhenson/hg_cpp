@@ -14,7 +14,7 @@ namespace hgraph::stdlib
      */
 
     /** ``match_`` — match a regex ``pattern`` against ``s``; result is a bundle (``is_match`` / ``groups``). */
-    struct match_ : Operator<"match", In<"pattern", TS<Str>>, In<"s", TS<Str>>, Out<TsVar<"O">>>
+    struct match_ : Operator<"match_", In<"pattern", TS<Str>>, In<"s", TS<Str>>, Out<TsVar<"O">>>
     {
     };
 
@@ -39,7 +39,7 @@ namespace hgraph::stdlib
     };
 
     /** ``format_`` — format the supplied time-series values into a string using ``fmt`` (variadic args). */
-    struct format_ : Operator<"format", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>, Out<TS<Str>>>
+    struct format_ : Operator<"format_", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>, Out<TS<Str>>>
     {
     };
 }  // namespace hgraph::stdlib

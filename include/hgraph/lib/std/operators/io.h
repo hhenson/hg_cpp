@@ -10,30 +10,40 @@ namespace hgraph::stdlib
 {
     /**
      * I/O, logging and record/replay operator **definitions** (markers only). Mirrors the
-     * Python ``hgraph`` graph-utility sinks (``_graph_operators.py``) and record/replay
-     * operators (``_record_replay.py``). The sinks (``print_`` / ``log_`` / ``assert_`` /
+     * Python ``hgraph`` debug tools (``_debug_tools.py``), graph-utility sinks
+     * (``_graph_operators.py``) and record/replay operators (``_record_replay.py``). The
+     * sinks (``debug_print`` / ``null_sink`` / ``print_`` / ``log_`` / ``assert_`` /
      * ``record`` / ``compare``) have no output.
      *
      * .. note::
      *
-     *    ``null_sink`` / ``debug_print`` already exist as concrete nodes in ``std_nodes.h``
-     *    and so are not redefined here as operators; reconciling node-vs-operator is a later
-     *    step. The data-frame record/replay operators are deferred with the rest of the
-     *    table / data-frame family (see *conversion*).
+     *    The data-frame record/replay operators are deferred with the rest of the table /
+     *    data-frame family (see *conversion*).
      */
 
+    /** ``debug_print`` — print ``label: value`` on each tick of ``ts`` (a diagnostic sink).
+        (Python also takes ``print_delta`` / ``sample`` — not yet modelled.) */
+    struct debug_print : Operator<"debug_print", Scalar<"label", Str>, In<"ts", TsVar<"S">>>
+    {
+    };
+
+    /** ``null_sink`` — consume ``ts`` and do nothing (a terminal sink). */
+    struct null_sink : Operator<"null_sink", In<"ts", TsVar<"S">>>
+    {
+    };
+
     /** ``print_`` — format and write the supplied values to std-out (a sink, variadic args). */
-    struct print_ : Operator<"print", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>>
+    struct print_ : Operator<"print_", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>>
     {
     };
 
     /** ``log_`` — format and log the supplied values at ``level`` (a sink, variadic args). */
-    struct log_ : Operator<"log", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>, Scalar<"level", Int>>
+    struct log_ : Operator<"log_", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>, Scalar<"level", Int>>
     {
     };
 
     /** ``assert_`` — assert ``condition`` holds, raising ``error_msg`` otherwise (a sink). */
-    struct assert_ : Operator<"assert", In<"condition", TS<Bool>>, Scalar<"error_msg", Str>>
+    struct assert_ : Operator<"assert_", In<"condition", TS<Bool>>, Scalar<"error_msg", Str>>
     {
     };
 

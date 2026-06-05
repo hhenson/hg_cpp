@@ -14,7 +14,7 @@ namespace hgraph::stdlib
     /**
      * Arithmetic operator **definitions** — the abstract markers only; implementations
      * are registered separately (see ``register_standard_operators``). Mirrors the
-     * Python ``hgraph`` arithmetic operators (``ext/2603/hgraph/_operators/_operators.py``).
+     * Python ``hgraph`` arithmetic operators (``ext/main/hgraph/_operators/_operators.py``).
      *
      * The operator signature is a *suggestion*: binary operators declare independent
      * type variables for ``lhs`` / ``rhs`` / the result so a single name spans
@@ -25,7 +25,7 @@ namespace hgraph::stdlib
 
     /**
      * Divide-by-zero policy — the wiring-time choice of what ``div_`` (and other dividing
-     * operators) produce when the divisor is zero. Mirrors ``ext/2603``'s ``DivideByZero``:
+     * operators) produce when the divisor is zero. Mirrors ``ext/main``'s ``DivideByZero``:
      * ``Error`` raise · ``Nan`` · ``Inf`` · ``NoTick`` (no tick; Python ``NONE``) · ``Zero`` · ``One``.
      * Registered as a scalar so it can be a wiring-time ``Scalar<>`` argument.
      */
@@ -52,58 +52,58 @@ namespace hgraph::static_schema_detail
 namespace hgraph::stdlib
 {
     /** ``add_`` — the ``+`` operator. Operands and result may all differ (``L + R -> O``). */
-    struct add_ : Operator<"add", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
+    struct add_ : Operator<"add_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``sub_`` — the ``-`` operator (``L - R -> O``). */
-    struct sub_ : Operator<"sub", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
+    struct sub_ : Operator<"sub_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``mul_`` — the ``*`` operator (``L * R -> O``). (Python takes an optional ``__strict__`` flag.) */
-    struct mul_ : Operator<"mul", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
+    struct mul_ : Operator<"mul_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``div_`` — the ``/`` (true division) operator (``L / R -> O``). Implementations may take an
         optional ``Scalar<"divide_by_zero", DivideByZero>`` wiring-time policy. */
-    struct div_ : Operator<"div", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
+    struct div_ : Operator<"div_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``floordiv_`` — the ``//`` (floor division) operator (``L // R -> O``). */
-    struct floordiv_ : Operator<"floordiv", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
+    struct floordiv_ : Operator<"floordiv_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``mod_`` — the ``%`` operator (``L % R -> O``). */
-    struct mod_ : Operator<"mod", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
+    struct mod_ : Operator<"mod_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``divmod_`` — the ``divmod`` operator. Result is a 2-element list ``(quotient, remainder)``. */
-    struct divmod_ : Operator<"divmod", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
+    struct divmod_ : Operator<"divmod_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``pow_`` — the ``**`` operator (``L ** R -> O``). */
-    struct pow_ : Operator<"pow", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
+    struct pow_ : Operator<"pow_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``neg_`` — the unary ``-`` operator (``-ts -> O``). */
-    struct neg_ : Operator<"neg", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct neg_ : Operator<"neg_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``pos_`` — the unary ``+`` operator (``+ts -> O``). */
-    struct pos_ : Operator<"pos", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct pos_ : Operator<"pos_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``abs_`` — the ``abs`` operator (``abs(ts) -> O``). */
-    struct abs_ : Operator<"abs", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct abs_ : Operator<"abs_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };
 

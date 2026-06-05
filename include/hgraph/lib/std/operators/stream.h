@@ -43,12 +43,22 @@ namespace hgraph::stdlib
     };
 
     /** ``filter_`` — suppress ticks of ``ts`` while ``condition`` is ``False``. */
-    struct filter_ : Operator<"filter", In<"condition", TS<Bool>>, In<"ts", TsVar<"S">>, Out<TsVar<"S">>>
+    struct filter_ : Operator<"filter_", In<"condition", TS<Bool>>, In<"ts", TsVar<"S">>, Out<TsVar<"S">>>
     {
     };
 
     /** ``filter_by`` — filter ``ts`` by a predicate expression (supplied by the implementation). */
     struct filter_by : Operator<"filter_by", In<"ts", TsVar<"S">>, Out<TsVar<"S">>>
+    {
+    };
+
+    /** ``until_true`` — emit ``False`` until ``predicate`` first holds, then ``True`` (and passivate ``ts``). */
+    struct until_true : Operator<"until_true", In<"ts", TsVar<"S">>, Out<TS<Bool>>>
+    {
+    };
+
+    /** ``freeze`` — forward ``ts`` until ``predicate`` first holds, then passivate ``ts`` (stop forwarding). */
+    struct freeze : Operator<"freeze", In<"ts", TsVar<"S">>, Out<TsVar<"S">>>
     {
     };
 
@@ -95,7 +105,7 @@ namespace hgraph::stdlib
     };
 
     /** ``slice_`` — ``drop`` + ``take`` + ``step`` combined over ``[start, stop)`` by ``step_size``. */
-    struct slice_ : Operator<"slice", In<"ts", TsVar<"S">>, Scalar<"start", Int>, Scalar<"stop", Int>,
+    struct slice_ : Operator<"slice_", In<"ts", TsVar<"S">>, Scalar<"start", Int>, Scalar<"stop", Int>,
                              Scalar<"step_size", Int>, Out<TsVar<"S">>>
     {
     };

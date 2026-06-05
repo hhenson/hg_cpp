@@ -8,12 +8,9 @@
  * ``register_standard_operators`` in ``<hgraph/lib/std/std_operators.h>``).
  *
  * The catalogue mirrors the Python ``hgraph`` operators under
- * ``ext/2603/hgraph/_operators/``. A handful are intentionally **not** defined here yet:
- *
- * - ``const_`` / ``debug_print`` / ``null_sink`` already exist as concrete nodes in
- *   ``<hgraph/lib/std/std_nodes.h>`` (node-vs-operator reconciliation is a later step);
- * - the JSON / table / data-frame conversion family needs scalar value types
- *   (``Frame`` / ``JSON`` / ``TABLE``) the value layer does not model yet.
+ * ``ext/main/hgraph/_operators/``. The JSON / table / data-frame conversion family is
+ * intentionally **not** defined here yet — it needs scalar value types
+ * (``Frame`` / ``JSON`` / ``TABLE``) the value layer does not model yet.
  *
  * See ``docs/source/developer_guide/operators.rst``.
  */

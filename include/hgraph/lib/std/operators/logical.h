@@ -15,22 +15,22 @@ namespace hgraph::stdlib
      */
 
     /** ``and_`` — the ``and`` operator (truthy combination), yielding ``TS<Bool>``. */
-    struct and_ : Operator<"and", In<"lhs", TsVar<"S">>, In<"rhs", TsVar<"S">>, Out<TS<Bool>>>
+    struct and_ : Operator<"and_", In<"lhs", TsVar<"S">>, In<"rhs", TsVar<"S">>, Out<TS<Bool>>>
     {
     };
 
     /** ``or_`` — the ``or`` operator, yielding ``TS<Bool>``. */
-    struct or_ : Operator<"or", In<"lhs", TsVar<"S">>, In<"rhs", TsVar<"S">>, Out<TS<Bool>>>
+    struct or_ : Operator<"or_", In<"lhs", TsVar<"S">>, In<"rhs", TsVar<"S">>, Out<TS<Bool>>>
     {
     };
 
     /** ``not_`` — the unary ``not`` operator, yielding ``TS<Bool>``. */
-    struct not_ : Operator<"not", In<"ts", TsVar<"S">>, Out<TS<Bool>>>
+    struct not_ : Operator<"not_", In<"ts", TsVar<"S">>, Out<TS<Bool>>>
     {
     };
 
     /** ``invert_`` — the unary ``~`` (bitwise invert) operator (``~ts -> O``). */
-    struct invert_ : Operator<"invert", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    struct invert_ : Operator<"invert_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };
 
@@ -50,12 +50,12 @@ namespace hgraph::stdlib
     };
 
     /** ``lshift_`` — the ``<<`` operator (``L << R -> O``). */
-    struct lshift_ : Operator<"lshift", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
+    struct lshift_ : Operator<"lshift_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 
     /** ``rshift_`` — the ``>>`` operator (``L >> R -> O``). */
-    struct rshift_ : Operator<"rshift", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
+    struct rshift_ : Operator<"rshift_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 }  // namespace hgraph::stdlib
