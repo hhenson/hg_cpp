@@ -28,6 +28,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series/ts_input/list_view.cpp
     hgraph/types/time_series/ts_input/set_view.cpp
     hgraph/types/time_series/ts_input/target_link.cpp
+    hgraph/types/time_series/ts_input/target_link_ops.cpp
     hgraph/types/time_series/ts_input/window_view.cpp
     hgraph/types/time_series/ts_input.cpp
     hgraph/types/time_series/ts_output/base_view.cpp

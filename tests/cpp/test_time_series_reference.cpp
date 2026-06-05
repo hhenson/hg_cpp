@@ -15,6 +15,7 @@
 #include <hgraph/types/value/value.h>
 
 #include <array>
+#include <initializer_list>
 #include <string>
 #include <type_traits>
 #include <unordered_set>
@@ -69,6 +70,34 @@ namespace
         hgraph::Value stored{std::move(reference)};
         auto          mutation = output.begin_mutation(time);
         REQUIRE(mutation.copy_value_from(stored.view()));
+    }
+
+    void add_set_values(hgraph::TSOutput &output,
+                        std::initializer_list<std::int32_t> values,
+                        hgraph::engine_time_t time)
+    {
+        auto data     = output.data_view();
+        auto set      = data.as_set();
+        auto mutation = set.begin_mutation(time);
+        for (const auto value : values)
+        {
+            hgraph::Value key{value};
+            REQUIRE(mutation.add(key.view()));
+        }
+    }
+
+    void set_dict_value(hgraph::TSOutput &output,
+                        std::int32_t key,
+                        std::int32_t value,
+                        hgraph::engine_time_t time)
+    {
+        hgraph::Value key_value{key};
+        hgraph::Value stored{value};
+        auto          data = output.data_view();
+        auto          dict = data.as_dict();
+        auto          mutation = dict.begin_mutation(time);
+        auto          child = mutation.at(key_value.view());
+        REQUIRE(child.begin_mutation(time).copy_value_from(stored.view()));
     }
 }
 
@@ -733,6 +762,124 @@ TEST_CASE("TimeSeriesReference: from-REF alternative binds peered target and fol
     REQUIRE_FALSE(after_unbind.valid());
     REQUIRE(after_unbind.modified());
     REQUIRE(after_unbind.last_modified_time() == t5);
+}
+
+TEST_CASE("TimeSeriesReference: from-REF set alternative rebinds target links")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *set_schema  = registry.tss(int_meta);
+    const auto *ref_set     = registry.ref(set_schema);
+
+    TSOutput first_target{*set_schema};
+    TSOutput second_target{*set_schema};
+    TSOutput ref_output{*ref_set};
+
+    const auto [t1, t2, t3, t4, t5] = sequential_times<5>();
+
+    add_set_values(first_target, {std::int32_t{1}, std::int32_t{2}}, t1);
+    set_output_reference(ref_output, TimeSeriesReference{first_target.view(t1)}, t2);
+
+    auto handle       = ref_output.view(t2).binding_for(*set_schema);
+    auto dereferenced = handle.view(t2);
+    auto set          = dereferenced.as_set();
+    Value one{std::int32_t{1}};
+    Value two{std::int32_t{2}};
+    Value three{std::int32_t{3}};
+    Value four{std::int32_t{4}};
+    REQUIRE(dereferenced.valid());
+    REQUIRE(dereferenced.modified());
+    REQUIRE(set.size() == 2);
+    REQUIRE(set.contains(one.view()));
+    REQUIRE(set.contains(two.view()));
+
+    add_set_values(second_target, {std::int32_t{3}}, t3);
+    set_output_reference(ref_output, TimeSeriesReference{second_target.view(t3)}, t3);
+
+    auto after_rebind = handle.view(t3);
+    auto rebound_set  = after_rebind.as_set();
+    REQUIRE(after_rebind.valid());
+    REQUIRE(after_rebind.modified());
+    REQUIRE(rebound_set.size() == 1);
+    REQUIRE_FALSE(rebound_set.contains(one.view()));
+    REQUIRE(rebound_set.contains(three.view()));
+
+    add_set_values(second_target, {std::int32_t{4}}, t4);
+    auto after_target_tick = handle.view(t4);
+    auto ticked_set        = after_target_tick.as_set();
+    REQUIRE(after_target_tick.valid());
+    REQUIRE(after_target_tick.modified());
+    REQUIRE(ticked_set.size() == 2);
+    REQUIRE(ticked_set.contains(three.view()));
+    REQUIRE(ticked_set.contains(four.view()));
+
+    set_output_reference(ref_output, TimeSeriesReference::empty(set_schema), t5);
+    auto after_unbind = handle.view(t5);
+    auto unbound_set  = after_unbind.as_set();
+    REQUIRE_FALSE(after_unbind.valid());
+    REQUIRE(after_unbind.modified());
+    REQUIRE(unbound_set.size() == 0);
+    REQUIRE_FALSE(unbound_set.contains(three.view()));
+}
+
+TEST_CASE("TimeSeriesReference: from-REF dict alternative rebinds target links")
+{
+    using namespace hgraph;
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *ts_int      = registry.ts(int_meta);
+    const auto *dict_schema = registry.tsd(int_meta, ts_int);
+    const auto *ref_dict    = registry.ref(dict_schema);
+
+    TSOutput first_target{*dict_schema};
+    TSOutput second_target{*dict_schema};
+    TSOutput ref_output{*ref_dict};
+
+    const auto [t1, t2, t3, t4, t5] = sequential_times<5>();
+    Value      key_one{std::int32_t{1}};
+    Value      key_two{std::int32_t{2}};
+
+    set_dict_value(first_target, std::int32_t{1}, std::int32_t{11}, t1);
+    set_output_reference(ref_output, TimeSeriesReference{first_target.view(t1)}, t2);
+
+    auto handle       = ref_output.view(t2).binding_for(*dict_schema);
+    auto dereferenced = handle.view(t2);
+    auto dict         = dereferenced.as_dict();
+    REQUIRE(dereferenced.valid());
+    REQUIRE(dereferenced.modified());
+    REQUIRE(dict.size() == 1);
+    REQUIRE(dict.contains(key_one.view()));
+    REQUIRE(dict.at(key_one.view()).value().checked_as<std::int32_t>() == 11);
+
+    set_dict_value(second_target, std::int32_t{2}, std::int32_t{22}, t3);
+    set_output_reference(ref_output, TimeSeriesReference{second_target.view(t3)}, t3);
+
+    auto after_rebind = handle.view(t3);
+    auto rebound_dict = after_rebind.as_dict();
+    REQUIRE(after_rebind.valid());
+    REQUIRE(after_rebind.modified());
+    REQUIRE(rebound_dict.size() == 1);
+    REQUIRE_FALSE(rebound_dict.contains(key_one.view()));
+    REQUIRE(rebound_dict.contains(key_two.view()));
+    REQUIRE(rebound_dict.at(key_two.view()).value().checked_as<std::int32_t>() == 22);
+
+    set_dict_value(second_target, std::int32_t{2}, std::int32_t{23}, t4);
+    auto after_target_tick = handle.view(t4);
+    auto ticked_dict       = after_target_tick.as_dict();
+    REQUIRE(after_target_tick.valid());
+    REQUIRE(after_target_tick.modified());
+    REQUIRE(ticked_dict.size() == 1);
+    REQUIRE(ticked_dict.contains(key_two.view()));
+    REQUIRE(ticked_dict.at(key_two.view()).value().checked_as<std::int32_t>() == 23);
+
+    set_output_reference(ref_output, TimeSeriesReference::empty(dict_schema), t5);
+    auto after_unbind = handle.view(t5);
+    auto unbound_dict = after_unbind.as_dict();
+    REQUIRE_FALSE(after_unbind.valid());
+    REQUIRE(after_unbind.modified());
+    REQUIRE(unbound_dict.size() == 0);
+    REQUIRE_FALSE(unbound_dict.contains(key_two.view()));
 }
 
 TEST_CASE("TimeSeriesReference: from-REF alternative expands non-peered bundle references")
