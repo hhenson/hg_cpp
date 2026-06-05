@@ -9,6 +9,7 @@
 #include <hgraph/types/time_series_reference.h>
 #include <hgraph/types/value/value.h>
 
+#include <array>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
@@ -23,6 +24,11 @@ namespace hgraph::detail
         {
             const TSOutput *output{nullptr};
         };
+
+        [[nodiscard]] constexpr std::size_t ts_kind_index(TSTypeKind kind) noexcept
+        {
+            return static_cast<std::size_t>(kind);
+        }
 
         [[nodiscard]] engine_time_t concrete_reference_time(engine_time_t time) noexcept
         {
@@ -64,49 +70,84 @@ namespace hgraph::detail
         }
 
         [[nodiscard]] bool is_to_ref_shape(const TSValueTypeMetaData *source_schema,
+                                           const TSValueTypeMetaData *requested_schema);
+
+        [[nodiscard]] bool to_ref_shape_matches_unsupported(const TSValueTypeMetaData *,
+                                                            const TSValueTypeMetaData *) noexcept
+        {
+            return false;
+        }
+
+        [[nodiscard]] bool to_ref_shape_matches_ref(const TSValueTypeMetaData *source_schema,
+                                                    const TSValueTypeMetaData *requested_schema)
+        {
+            const auto *target_schema = requested_schema->referenced_ts();
+            return target_schema != nullptr && target_schema->kind != TSTypeKind::REF &&
+                   schema_equivalent_after_dereference(target_schema, source_schema);
+        }
+
+        [[nodiscard]] bool to_ref_shape_matches_bundle(const TSValueTypeMetaData *source_schema,
+                                                       const TSValueTypeMetaData *requested_schema)
+        {
+            if (source_schema->field_count() != requested_schema->field_count()) { return false; }
+            for (std::size_t index = 0; index < requested_schema->field_count(); ++index)
+            {
+                if (!field_name_equal(source_schema->fields()[index], requested_schema->fields()[index]))
+                {
+                    return false;
+                }
+                if (!is_to_ref_shape(source_schema->fields()[index].type, requested_schema->fields()[index].type))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        [[nodiscard]] bool to_ref_shape_matches_list(const TSValueTypeMetaData *source_schema,
+                                                     const TSValueTypeMetaData *requested_schema)
+        {
+            return source_schema->fixed_size() == requested_schema->fixed_size() &&
+                   requested_schema->fixed_size() != 0 &&
+                   is_to_ref_shape(source_schema->element_ts(), requested_schema->element_ts());
+        }
+
+        [[nodiscard]] bool to_ref_shape_matches_dict(const TSValueTypeMetaData *source_schema,
+                                                     const TSValueTypeMetaData *requested_schema)
+        {
+            return source_schema->key_type() == requested_schema->key_type() &&
+                   is_to_ref_shape(source_schema->element_ts(), requested_schema->element_ts());
+        }
+
+        using ToRefShapeMatchesFn = bool (*)(const TSValueTypeMetaData *, const TSValueTypeMetaData *);
+
+        [[nodiscard]] ToRefShapeMatchesFn to_ref_shape_matcher_for(TSTypeKind kind) noexcept
+        {
+            static constexpr std::size_t kind_count = ts_kind_index(TSTypeKind::SIGNAL) + 1U;
+            static const std::array<ToRefShapeMatchesFn, kind_count> table{
+                &to_ref_shape_matches_unsupported,
+                &to_ref_shape_matches_unsupported,
+                &to_ref_shape_matches_dict,
+                &to_ref_shape_matches_list,
+                &to_ref_shape_matches_unsupported,
+                &to_ref_shape_matches_bundle,
+                &to_ref_shape_matches_ref,
+                &to_ref_shape_matches_unsupported,
+            };
+
+            const auto index = ts_kind_index(kind);
+            return index < table.size() ? table[index] : &to_ref_shape_matches_unsupported;
+        }
+
+        [[nodiscard]] bool is_to_ref_shape(const TSValueTypeMetaData *source_schema,
                                            const TSValueTypeMetaData *requested_schema)
         {
             if (source_schema == nullptr || requested_schema == nullptr) { return false; }
-
-            if (requested_schema->kind == TSTypeKind::REF)
+            if (requested_schema->kind != TSTypeKind::REF && source_schema->kind != requested_schema->kind)
             {
-                const auto *target_schema = requested_schema->referenced_ts();
-                return target_schema != nullptr && target_schema->kind != TSTypeKind::REF &&
-                       schema_equivalent_after_dereference(target_schema, source_schema);
+                return false;
             }
-
-            if (source_schema->kind != requested_schema->kind) { return false; }
-
-            switch (requested_schema->kind)
-            {
-                case TSTypeKind::TSB:
-                    if (source_schema->field_count() != requested_schema->field_count()) { return false; }
-                    for (std::size_t index = 0; index < requested_schema->field_count(); ++index)
-                    {
-                        if (!field_name_equal(source_schema->fields()[index], requested_schema->fields()[index]))
-                        {
-                            return false;
-                        }
-                        if (!is_to_ref_shape(source_schema->fields()[index].type,
-                                             requested_schema->fields()[index].type))
-                        {
-                            return false;
-                        }
-                    }
-                    return true;
-
-                case TSTypeKind::TSL:
-                    return source_schema->fixed_size() == requested_schema->fixed_size() &&
-                           requested_schema->fixed_size() != 0 &&
-                           is_to_ref_shape(source_schema->element_ts(), requested_schema->element_ts());
-
-                case TSTypeKind::TSD:
-                    return source_schema->key_type() == requested_schema->key_type() &&
-                           is_to_ref_shape(source_schema->element_ts(), requested_schema->element_ts());
-
-                default:
-                    return false;
-            }
+            return to_ref_shape_matcher_for(requested_schema->kind)(source_schema, requested_schema);
         }
 
         [[nodiscard]] TSOutputView source_child_view(const TSOutputView &parent, const TSDataView &child)
@@ -307,13 +348,137 @@ namespace hgraph::detail
                                  *build_context);
         }
 
+        [[nodiscard]] const TSDataBinding &to_ref_regular_binding_for(const TSValueTypeMetaData &schema)
+        {
+            return checked_ts_data_binding(schema);
+        }
+
+        [[nodiscard]] const TSDataBinding &to_ref_dict_binding_for(const TSValueTypeMetaData &schema)
+        {
+            return tsd_proxy_binding_for(schema, to_ref_ts_data_binding_for(*schema.element_ts()));
+        }
+
+        using ToRefBindingForFn = const TSDataBinding &(*)(const TSValueTypeMetaData &);
+
+        [[nodiscard]] ToRefBindingForFn to_ref_binding_for_kind(TSTypeKind kind) noexcept
+        {
+            static constexpr std::size_t kind_count = ts_kind_index(TSTypeKind::SIGNAL) + 1U;
+            static const std::array<ToRefBindingForFn, kind_count> table{
+                &to_ref_regular_binding_for,
+                &to_ref_regular_binding_for,
+                &to_ref_dict_binding_for,
+                &to_ref_regular_binding_for,
+                &to_ref_regular_binding_for,
+                &to_ref_regular_binding_for,
+                &to_ref_regular_binding_for,
+                &to_ref_regular_binding_for,
+            };
+
+            const auto index = ts_kind_index(kind);
+            return index < table.size() ? table[index] : &to_ref_regular_binding_for;
+        }
+
         [[nodiscard]] const TSDataBinding &to_ref_ts_data_binding_for(const TSValueTypeMetaData &schema)
         {
-            if (schema.kind == TSTypeKind::TSD)
+            return to_ref_binding_for_kind(schema.kind)(schema);
+        }
+
+        void populate_to_ref_unsupported(const TSDataView &,
+                                         const TSOutputView &,
+                                         const TSValueTypeMetaData &,
+                                         engine_time_t,
+                                         const ToRefBuildContext &)
+        {
+            throw std::logic_error("TSOutput to-REF alternative encountered unsupported requested schema");
+        }
+
+        void populate_to_ref_dict(const TSDataView           &target,
+                                  const TSOutputView         &source_view,
+                                  const TSValueTypeMetaData  &,
+                                  engine_time_t               modified_time,
+                                  const ToRefBuildContext    &build_context)
+        {
+            bind_tsd_proxy(target.borrowed_ref(),
+                           source_view.data_view().as_dict(),
+                           &build_to_ref_proxy_value,
+                           &build_context,
+                           modified_time);
+        }
+
+        void populate_to_ref_ref(const TSDataView           &target,
+                                 const TSOutputView         &source_view,
+                                 const TSValueTypeMetaData  &target_schema,
+                                 engine_time_t               modified_time,
+                                 const ToRefBuildContext    &)
+        {
+            auto reference = Value{TSOutputAlternativeStore::peered_reference_as(target_schema.referenced_ts(),
+                                                                                 source_view.handle())};
+            auto mutation = target.begin_mutation(modified_time);
+            if (!mutation.copy_value_from(reference.view()))
             {
-                return tsd_proxy_binding_for(schema, to_ref_ts_data_binding_for(*schema.element_ts()));
+                throw std::logic_error("TSOutput to-REF alternative could not copy reference value");
             }
-            return checked_ts_data_binding(schema);
+        }
+
+        void populate_to_ref_bundle(const TSDataView           &target,
+                                    const TSOutputView         &source_view,
+                                    const TSValueTypeMetaData  &target_schema,
+                                    engine_time_t               modified_time,
+                                    const ToRefBuildContext    &build_context)
+        {
+            auto target_bundle = target.as_bundle();
+            auto source_bundle = source_view.data_view().as_bundle();
+            for (std::size_t index = 0; index < target_schema.field_count(); ++index)
+            {
+                auto target_child = target_bundle.at(index);
+                auto source_child_data = source_bundle.at(index);
+                auto source_child = source_child_view(source_view, source_child_data);
+                populate_to_ref_data(target_child, source_child, *target_schema.fields()[index].type,
+                                     modified_time, build_context);
+            }
+        }
+
+        void populate_to_ref_list(const TSDataView           &target,
+                                  const TSOutputView         &source_view,
+                                  const TSValueTypeMetaData  &target_schema,
+                                  engine_time_t               modified_time,
+                                  const ToRefBuildContext    &build_context)
+        {
+            auto target_list = target.as_list();
+            auto source_list = source_view.data_view().as_list();
+            for (std::size_t index = 0; index < target_schema.fixed_size(); ++index)
+            {
+                auto target_child = target_list.at(index);
+                auto source_child_data = source_list.at(index);
+                auto source_child = source_child_view(source_view, source_child_data);
+                populate_to_ref_data(target_child, source_child, *target_schema.element_ts(), modified_time,
+                                     build_context);
+            }
+        }
+
+        using ToRefPopulateFn = void (*)(
+            const TSDataView &,
+            const TSOutputView &,
+            const TSValueTypeMetaData &,
+            engine_time_t,
+            const ToRefBuildContext &);
+
+        [[nodiscard]] ToRefPopulateFn to_ref_populator_for(TSTypeKind kind) noexcept
+        {
+            static constexpr std::size_t kind_count = ts_kind_index(TSTypeKind::SIGNAL) + 1U;
+            static const std::array<ToRefPopulateFn, kind_count> table{
+                &populate_to_ref_unsupported,
+                &populate_to_ref_unsupported,
+                &populate_to_ref_dict,
+                &populate_to_ref_list,
+                &populate_to_ref_unsupported,
+                &populate_to_ref_bundle,
+                &populate_to_ref_ref,
+                &populate_to_ref_unsupported,
+            };
+
+            const auto index = ts_kind_index(kind);
+            return index < table.size() ? table[index] : &populate_to_ref_unsupported;
         }
 
         void populate_to_ref_data(const TSDataView           &target,
@@ -322,59 +487,7 @@ namespace hgraph::detail
                                   engine_time_t               modified_time,
                                   const ToRefBuildContext    &build_context)
         {
-            if (target_schema.kind == TSTypeKind::TSD)
-            {
-                bind_tsd_proxy(target.borrowed_ref(),
-                               source_view.data_view().as_dict(),
-                               &build_to_ref_proxy_value,
-                               &build_context,
-                               modified_time);
-                return;
-            }
-
-            if (target_schema.kind == TSTypeKind::REF)
-            {
-                auto reference = Value{TSOutputAlternativeStore::peered_reference_as(target_schema.referenced_ts(),
-                                                                                     source_view.handle())};
-                auto mutation = target.begin_mutation(modified_time);
-                if (!mutation.copy_value_from(reference.view()))
-                {
-                    throw std::logic_error("TSOutput to-REF alternative could not copy reference value");
-                }
-                return;
-            }
-
-            if (target_schema.kind == TSTypeKind::TSB)
-            {
-                auto target_bundle = target.as_bundle();
-                auto source_bundle = source_view.data_view().as_bundle();
-                for (std::size_t index = 0; index < target_schema.field_count(); ++index)
-                {
-                    auto target_child = target_bundle.at(index);
-                    auto source_child_data = source_bundle.at(index);
-                    auto source_child = source_child_view(source_view, source_child_data);
-                    populate_to_ref_data(target_child, source_child, *target_schema.fields()[index].type,
-                                         modified_time, build_context);
-                }
-                return;
-            }
-
-            if (target_schema.kind == TSTypeKind::TSL)
-            {
-                auto target_list = target.as_list();
-                auto source_list = source_view.data_view().as_list();
-                for (std::size_t index = 0; index < target_schema.fixed_size(); ++index)
-                {
-                    auto target_child = target_list.at(index);
-                    auto source_child_data = source_list.at(index);
-                    auto source_child = source_child_view(source_view, source_child_data);
-                    populate_to_ref_data(target_child, source_child, *target_schema.element_ts(), modified_time,
-                                         build_context);
-                }
-                return;
-            }
-
-            throw std::logic_error("TSOutput to-REF alternative encountered unsupported requested schema");
+            to_ref_populator_for(target_schema.kind)(target, source_view, target_schema, modified_time, build_context);
         }
     }  // namespace
 
