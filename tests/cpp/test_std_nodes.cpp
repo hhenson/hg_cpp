@@ -1,5 +1,5 @@
-// Tests for the small standard library nodes (lib/std): const_, null_sink and
-// debug_print, exercised through wired graphs.
+// Tests for the small standard library nodes (lib/std): const_, null_sink,
+// pass_through_node and debug_print, exercised through wired graphs.
 
 #include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/value_util.h>
@@ -63,6 +63,18 @@ namespace
         {
             auto c = wire<stdlib::const_>(w, 5_i);
             wire<stdlib::null_sink>(w, c);
+        }
+    };
+
+    // replay("in") -> pass_through_node -> record("out").
+    struct PassThroughGraph
+    {
+        static constexpr auto name = "pass_through_graph";
+        static void           compose(Wiring &w)
+        {
+            auto input = wire<testing::replay, TS<Int>>(w, "in"_str);
+            auto out   = wire<stdlib::pass_through_node>(w, input);
+            wire<testing::record>(w, out, "out"_str);
         }
     };
 
@@ -177,6 +189,22 @@ TEST_CASE("stdlib::null_sink consumes its input without error")
     GraphExecutorValue executor = run_once(build_graph<NullSinkGraph>());
     // The source ticked and the sink consumed it; reaching here (no throw) is the check.
     CHECK(executor.view().graph().node_count() == 2);
+}
+
+TEST_CASE("stdlib::pass_through_node preserves input ticks")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    GraphBuilder gb = build_graph<PassThroughGraph>();
+    testing::set_replay_values<Int>(gb.global_state(), "in",
+                                    {std::optional<Int>{Int{1}}, std::nullopt, std::optional<Int>{Int{3}}});
+    GraphExecutorValue executor = run_once(std::move(gb));
+    const auto         out      = testing::get_recorded_values<Int>(executor.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 3);
+    CHECK(out[0] == std::optional<Int>{Int{1}});
+    CHECK_FALSE(out[1].has_value());
+    CHECK(out[2] == std::optional<Int>{Int{3}});
 }
 
 TEST_CASE("stdlib::debug_print runs over a tick")

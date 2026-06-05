@@ -2,6 +2,7 @@
 #define HGRAPH_LIB_STD_STD_NODES_H
 
 #include <hgraph/types/static_node.h>
+#include <hgraph/types/time_series/ts_delta.h>
 
 #include <fmt/core.h>
 
@@ -77,6 +78,22 @@ namespace hgraph::stdlib
     {
         static constexpr auto name = "null_sink";
         static void           eval(In<"ts", TsVar<"S">> ts) { static_cast<void>(ts); }
+    };
+
+    /**
+     * Pass-through node: emits exactly the input delta. This mirrors Python's
+     * ``pass_through_node`` and is useful both for tests and for forcing a real
+     * runtime node into a graph without changing the data.
+     */
+    struct pass_through_node
+    {
+        static constexpr auto name = "pass_through_node";
+
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TsVar<"S">> out)
+        {
+            const Value delta = capture_delta(ts.base());
+            apply_delta(out, delta.view());
+        }
     };
 }  // namespace hgraph::stdlib
 

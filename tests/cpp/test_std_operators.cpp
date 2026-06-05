@@ -94,6 +94,17 @@ namespace
         }
     };
 
+    template <typename Schema>
+    struct ZeroGraph
+    {
+        static constexpr auto name = "zero_graph";
+        static void           compose(Wiring &w)
+        {
+            auto z = wire<stdlib::zero_, Schema>(w);
+            wire<testing::record>(w, z, Str{"out"});
+        }
+    };
+
     [[nodiscard]] std::vector<std::optional<Float>> run_div_policy(stdlib::DivideByZero policy,
                                                                   const std::vector<std::optional<Int>> &a,
                                                                   const std::vector<std::optional<Int>> &b)
@@ -204,6 +215,24 @@ TEST_CASE("std operators: eq_ works for strings")
         set_replay_values<Str>(gs, "b", {Str{"x"}, Str{"z"}});
     });
     CHECK_OUTPUT(get_recorded_values<Bool>(ex.view().graph().global_state(), "out"), {true, false});
+}
+
+TEST_CASE("std operators: zero_ emits the additive zero for standard scalar outputs")
+{
+    stdlib::register_standard_operators();
+
+    {
+        auto ex = run_graph<ZeroGraph<TS<Int>>>([](const GlobalStateView &) {});
+        CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {0});
+    }
+    {
+        auto ex = run_graph<ZeroGraph<TS<Float>>>([](const GlobalStateView &) {});
+        CHECK_OUTPUT(get_recorded_values<Float>(ex.view().graph().global_state(), "out"), {Float{0}});
+    }
+    {
+        auto ex = run_graph<ZeroGraph<TS<Str>>>([](const GlobalStateView &) {});
+        CHECK_OUTPUT(get_recorded_values<Str>(ex.view().graph().global_state(), "out"), {Str{}});
+    }
 }
 
 TEST_CASE("std operators: an operand combination with no registered implementation raises")

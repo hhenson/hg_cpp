@@ -5,6 +5,8 @@
 
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/record_replay.h>
+#include <hgraph/lib/std/std_nodes.h>
+#include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
@@ -202,24 +204,6 @@ namespace
     struct echo_ : Operator<"echo", In<"in", TsVar<"S">>, Out<TsVar<"S">>>
     {
     };
-    struct echo_generic
-    {
-        static void eval(In<"in", TsVar<"S">> in, Out<TsVar<"S">> out)
-        {
-            const Value delta = capture_delta(in.base());
-            apply_delta(out, delta.view());
-        }
-    };
-
-    struct zero_ : Operator<"zero", Out<TsVar<"S">>>
-    {
-    };
-    struct zero_int
-    {
-        static constexpr bool schedule_on_start = true;
-        static void eval(Out<TS<Int>> out) { out.set(Int{0}); }
-    };
-
     [[nodiscard]] inline WiringArg ts_arg(const TSValueTypeMetaData *schema)
     {
         WiringArg arg;
@@ -303,7 +287,7 @@ namespace
         static constexpr auto name = "zero_graph";
         static void           compose(Wiring &w)
         {
-            auto z = wire<zero_, TS<Int>>(w);
+            auto z = wire<stdlib::zero_, TS<Int>>(w);
             wire<testing::record>(w, z, Str{"out"});
         }
     };
@@ -549,7 +533,7 @@ TEST_CASE("operators: TypePattern matches generic TSW and TSB structures")
 
 TEST_CASE("operators: explicit output schemas participate in operator resolution")
 {
-    register_overload<zero_, zero_int>();
+    register_overload<stdlib::zero_, stdlib::zero_int>();
 
     auto ex = run_graph<ZeroGraph>([](const GlobalStateView &) {});
     CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {0});
@@ -557,7 +541,7 @@ TEST_CASE("operators: explicit output schemas participate in operator resolution
 
 TEST_CASE("operators: explicit collection output schema drives scalar auto-const matching")
 {
-    register_overload<echo_, echo_generic>();
+    register_overload<echo_, stdlib::pass_through_node>();
 
     auto ex = run_graph<EchoSetGraph>([](const GlobalStateView &) {});
     const auto out = get_recorded_deltas(ex.view().graph().global_state(), "out");

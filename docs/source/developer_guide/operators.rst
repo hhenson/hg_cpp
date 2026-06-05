@@ -31,7 +31,7 @@ chosen implementation is baked into the graph.
    scalar-argument matching, scalar-to-time-series auto-const promotion,
    scalar-aware ``requires_`` / ``resolve_default_types`` hooks, graph overloads,
    sink operators, explicit output schema resolution, and a ``lib/std`` operator family
-   (``add_`` / ``sub_`` / ``div_`` / ``eq_``
+   (``add_`` / ``sub_`` / ``div_`` / ``eq_`` / ``zero_``
    in ``include/hgraph/lib/std/std_operators.h``) — covering homogeneous, mixed,
    heterogeneous-temporal, result-differs and optional-scalar (``div_``'s
    ``DivideByZero`` policy) overloads — proven by
@@ -455,7 +455,7 @@ Roadmap
    schema filtering, sink return shaping, graph overload registration, constrained
    variables, repeated-variable ranking, and ``TSW`` / ``TSB`` pattern support.
 3. **Phase 3 — ``lib/std`` operator family — done.** ``add_`` / ``sub_`` / ``div_``
-   / ``eq_`` in ``include/hgraph/lib/std/std_operators.h``, with homogeneous,
+   / ``eq_`` / ``zero_`` in ``include/hgraph/lib/std/std_operators.h``, with homogeneous,
    mixed-numeric (``int + float -> float``), heterogeneous-temporal
    (``datetime + timedelta -> datetime``, ``date + timedelta -> date``) and
    result-differs (``div_: int / int -> float``, ``sub_: datetime - datetime ->
@@ -467,6 +467,8 @@ Roadmap
    parameter defaults are not yet a framework feature, the *optional* scalar is
    modelled as two overloads selected by **arity** — ``div_(a, b)`` (defaults to
    ``Error``) and ``div_(a, b, policy)`` — which the registry's arity filter resolves.
+   ``zero_`` currently covers the additive scalar zeros mirrored from Python's
+   ``zero`` helper for ``int`` / ``float`` / ``str``.
 4. **Phase 4 — Python implementation path.** Runtime-data ``OperatorImpl`` from a
    Python signature; ``NodeCallbacks`` hosting a Python callable; cross-boundary
    identity asserted. Behind ``HGRAPH_ENABLE_PYTHON_USER_NODES``.

@@ -97,6 +97,18 @@ namespace hgraph::stdlib
     {
     };
 
+    /**
+     * ``zero_`` — additive zero source for a requested output type.
+     *
+     * Python's ``zero(tp, op)`` is operation-aware; this initial C++ overload set
+     * covers the additive zero source used by the C++ reduce/operator tests. The
+     * operation-aware form can be layered on once the C++ wiring path has an
+     * equivalent of Python's ``WiringNodeClass`` context.
+     */
+    struct zero_ : Operator<"zero", Out<TsVar<"S">>>
+    {
+    };
+
     // ---- Homogeneous implementations: both operands the *same* type T (aligned). ----
 
     template <typename T>
@@ -124,6 +136,24 @@ namespace hgraph::stdlib
         {
             out.set(lhs.value() == rhs.value());
         }
+    };
+
+    struct zero_int
+    {
+        static constexpr bool schedule_on_start = true;
+        static void           eval(Out<TS<Int>> out) { out.set(Int{0}); }
+    };
+
+    struct zero_float
+    {
+        static constexpr bool schedule_on_start = true;
+        static void           eval(Out<TS<Float>> out) { out.set(Float{0}); }
+    };
+
+    struct zero_str
+    {
+        static constexpr bool schedule_on_start = true;
+        static void           eval(Out<TS<Str>> out) { out.set(Str{}); }
     };
 
     // ---- Heterogeneous implementations: operands / result may all differ. ----
@@ -267,6 +297,11 @@ namespace hgraph::stdlib
         register_overload<eq_, eq_same<Int>>();
         register_overload<eq_, eq_same<Float>>();
         register_overload<eq_, eq_same<Str>>();
+
+        // zero_ — additive zero values.
+        register_overload<zero_, zero_int>();
+        register_overload<zero_, zero_float>();
+        register_overload<zero_, zero_str>();
     }
 }  // namespace hgraph::stdlib
 
