@@ -638,7 +638,7 @@ the input-side target link states what schema it wants; the output-side
 binding provider returns the canonical or alternative output shape that
 satisfies that request.
 
-Recursion is automatic: the metadata for a nested ``TSD<string,
-TSL<TS<double>>>`` reads its inner ``TSL``'s ``delta_value_schema``
+Recursion is automatic: the metadata for a nested ``TSD<Str,
+TSL<TS<Float>>>`` reads its inner ``TSL``'s ``delta_value_schema``
 directly off the inner schema, so the registry never has to recompose
 known schemas.

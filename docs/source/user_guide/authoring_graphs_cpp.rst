@@ -34,7 +34,7 @@ data and its sinks consume it. It *may*, however, take **scalar** inputs: plain
 (non-time-series) configuration values that parameterise the graph at wiring time.
 Graph-level scalar inputs appear as extra ``compose`` parameters and are supplied
 to ``build_graph`` — e.g.
-``static void compose(Wiring &w, Scalar<"window", std::int32_t> window)`` built with
+``static void compose(Wiring &w, Scalar<"window", Int> window)`` built with
 ``build_graph<MyGraph>(20)`` (the plain value is wrapped into the ``window``
 parameter). The simplest graph takes no scalars; its ``compose`` body just adds
 nodes:
@@ -63,7 +63,7 @@ A graph that takes a scalar parameter is built by supplying the value:
    {
        static constexpr auto name = "scaled_price_graph";
 
-       static void compose(Wiring &w, Scalar<"factor", double> factor)
+       static void compose(Wiring &w, Scalar<"factor", Float> factor)
        {
            auto px = wire<ConstantSource>(w);
            wire<Print>(w, wire<Scale>(w, px, factor));   // graph scalar forwarded to node scalar
@@ -108,7 +108,7 @@ Pass one value per ``Scalar<>`` parameter, **in ``compose``-parameter order**:
    {
        static constexpr auto name = "report_graph";
        //                                   two scalar build parameters
-       static void compose(Wiring &w, Scalar<"window", std::int32_t> window, Scalar<"factor", double> factor)
+       static void compose(Wiring &w, Scalar<"window", Int> window, Scalar<"factor", Float> factor)
        {
            auto px = wire<ConstantSource>(w);
            wire<Print>(w, wire<RollingMean>(w, px, window, factor));
@@ -134,19 +134,19 @@ A graph with no scalar parameters is simply ``build_graph<G>()``. The resulting
 Ports
 -----
 
-A ``Port<TS<std::int32_t>>`` is a **wiring-time handle** to a node's output — not a value.
+A ``Port<TS<Int>>`` is a **wiring-time handle** to a node's output — not a value.
 You obtain one from ``wire<T>(...)`` and pass it as an input to another node:
 
 .. code-block:: cpp
 
-   Port<TS<std::int32_t>> a = wire<ConstantSource>(w);   // handle to the source's output
-   Port<TS<std::int32_t>> s = wire<Sum>(w, a, a);        // a is fed into both inputs of Sum
+   Port<TS<Int>> a = wire<ConstantSource>(w);   // handle to the source's output
+   Port<TS<Int>> s = wire<Sum>(w, a, a);        // a is fed into both inputs of Sum
 
 Ports are typed, so passing the wrong port type — or the wrong number of inputs —
 to ``wire<T>`` is a **compile error**. (Python catches the same mistakes, but only
 when the graph is wired at run time.)
 
-``SIGNAL`` is the exception on the input side: a ``Port<TS<std::int32_t>>``,
+``SIGNAL`` is the exception on the input side: a ``Port<TS<Int>>``,
 ``Port<TSD<...>>`` or any other time-series output port may be passed to a node or
 sub-graph input declared as ``SIGNAL``. The input observes the upstream tick rather
 than the upstream value.
@@ -163,7 +163,7 @@ and a plain value for each ``Scalar``.
 
 .. code-block:: cpp
 
-   // node: eval(In<"in", TS<std::int32_t>> in, Scalar<"delta", std::int32_t> delta, Out<TS<std::int32_t>> out)
+   // node: eval(In<"in", TS<Int>> in, Scalar<"delta", Int> delta, Out<TS<Int>> out)
    auto src = wire<ConstantSource>(w);   // 41
    auto out = wire<Shift>(w, src, 5);    // port for `in`, then 5 for `delta` -> 46
 
@@ -204,8 +204,8 @@ parameters after the context are the graph's inputs; the return is its output:
    struct Mid
    {
        static constexpr auto name = "mid";
-       // logical signature: (TS<double>, TS<double>) -> TS<double>
-       static Port<TS<double>> compose(Wiring &w, Port<TS<double>> bid, Port<TS<double>> ask)
+       // logical signature: (TS<Float>, TS<Float>) -> TS<Float>
+       static Port<TS<Float>> compose(Wiring &w, Port<TS<Float>> bid, Port<TS<Float>> ask)
        {
            return wire<Average>(w, bid, ask);
        }
@@ -217,7 +217,7 @@ parameters after the context are the graph's inputs; the return is its output:
    def mid(bid: TS[float], ask: TS[float]) -> TS[float]:
        return average(bid, ask)
 
-The logical signature ``(TS<double>, TS<double>) -> TS<double>`` is the same one
+The logical signature ``(TS<Float>, TS<Float>) -> TS<Float>`` is the same one
 the Python ``@graph`` declares. The leading ``Wiring &w`` is plumbing (always the
 first parameter, by convention); it is not part of the logical signature.
 
@@ -237,7 +237,7 @@ node is produced.
 
 .. code-block:: cpp
 
-   static Port<TS<double>> compose(Wiring &w, Port<TS<double>> bid, Port<TS<double>> ask)
+   static Port<TS<Float>> compose(Wiring &w, Port<TS<Float>> bid, Port<TS<Float>> ask)
    {
        auto m = wire<Mid>(w, bid, ask);   // inline the Mid sub-graph
        return wire<Scale>(w, m);
@@ -248,7 +248,7 @@ scalar (it is wrapped into the sub-graph's ``Scalar<>`` parameter):
 
 .. code-block:: cpp
 
-   // sub-graph: compose(Wiring &, Port<TS<std::int32_t>> x, Scalar<"by", std::int32_t> by) -> TS<std::int32_t>
+   // sub-graph: compose(Wiring &, Port<TS<Int>> x, Scalar<"by", Int> by) -> TS<Int>
    auto shifted = wire<ShiftBy>(w, src, 5);   // port for `x`, 5 wrapped into `by`
 
 
@@ -292,7 +292,7 @@ run; a node sees the same store via the ``GlobalStateView`` injectable (see
 .. code-block:: cpp
 
    GraphBuilder gb = build_graph<MyGraph>();
-   gb.global_state().set("seed", Value{std::int32_t{20}});   // seed at wiring time
+   gb.global_state().set("seed", Value{Int{20}});   // seed at wiring time
 
    GraphExecutorBuilder ex;
    ex.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(end);
@@ -300,7 +300,7 @@ run; a node sees the same store via the ``GlobalStateView`` injectable (see
    executor.view().run();
 
    // read results the nodes wrote into the store
-   const int total = executor.view().graph().global_state().get_as<std::int32_t>("total");
+   const Int total = executor.view().graph().global_state().get_as<Int>("total");
 
 A ``compose`` body can also seed the store **during wiring**, via
 ``Wiring::global_state()`` — ``finish`` carries those entries onto the graph, so a
@@ -314,11 +314,11 @@ their ``eval``):
        static constexpr auto name = "counter_graph";
        static void compose(Wiring &w)
        {
-           w.global_state().set("counter", Value{std::int32_t{100}});   // set at wiring time
+           w.global_state().set("counter", Value{Int{100}});   // set at wiring time
            wire<BumpCounter>(w);                           // a node whose eval bumps "counter"
        }
    };
-   // after running: global_state().get_as<std::int32_t>("counter") == 101
+   // after running: global_state().get_as<Int>("counter") == 101
 
 Each built graph gets its own copy seeded with the wiring-time entries, so the
 builder stays reusable. Values are heterogeneous (a mutable ``Map<string, Any>``
@@ -362,7 +362,7 @@ C++ ↔ Python cheat sheet
      - calling a node — ``t(ports...)``
    * - ``wire<G>(w, ports...)`` (sub-graph, inlined)
      - calling a sub-graph — ``g(ports...)``
-   * - ``Port<TS<std::int32_t>>``
+   * - ``Port<TS<Int>>``
      - a wiring-time time-series handle
    * - ``build_graph<G>()`` → ``GraphExecutor``
      - wiring the ``@graph`` + ``run_graph(...)``

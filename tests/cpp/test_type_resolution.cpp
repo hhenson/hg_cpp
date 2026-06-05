@@ -55,50 +55,50 @@ namespace
         }
     };
 
-    // replay<TS<std::int32_t>> -> Passthrough (resolved from the port) -> record<TS<std::int32_t>>.
+    // replay<TS<Int>> -> Passthrough (resolved from the port) -> record<TS<Int>>.
     struct PassthroughGraph
     {
         static constexpr auto name = "rt_passthrough_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<std::int32_t>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
             auto pt  = wire<Passthrough>(w, src);   // generic; returns an erased Port
-            wire<testing::record>(w, pt, std::string{"out"});
+            wire<testing::record>(w, pt, Str{"out"});
         }
     };
 
-    // Same Passthrough definition, now resolved to TSS<std::int32_t> from its input port.
+    // Same Passthrough definition, now resolved to TSS<Int> from its input port.
     struct PassthroughSetGraph
     {
         static constexpr auto name = "rt_passthrough_set_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TSS<std::int32_t>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TSS<Int>>(w, Str{"in"});
             auto pt  = wire<Passthrough>(w, src);
-            wire<testing::record>(w, pt, std::string{"out"});
+            wire<testing::record>(w, pt, Str{"out"});
         }
     };
 
-    // GenConst resolved to TS<std::int32_t> from the value 7 -> record<TS<std::int32_t>>.
+    // GenConst resolved to TS<Int> from the value 7 -> record<TS<Int>>.
     struct GenConstGraph
     {
         static constexpr auto name = "rt_gen_const_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<GenConst>(w, 7);   // T inferred = int; output TS<std::int32_t> (erased Port)
-            wire<testing::record>(w, src, std::string{"out"});
+            auto src = wire<GenConst>(w, Int{7});   // T inferred = Int; output TS<Int> (erased Port)
+            wire<testing::record>(w, src, Str{"out"});
         }
     };
 
-    // The SAME GenConst definition resolved to TS<double> from the value 2.5 — proves
+    // The SAME GenConst definition resolved to TS<Float> from the value 2.5 — proves
     // two resolutions of one generic source do not collide when interned.
     struct GenConstDoubleGraph
     {
         static constexpr auto name = "rt_gen_const_double_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<GenConst>(w, 2.5);
-            wire<testing::record>(w, src, std::string{"out"});
+            auto src = wire<GenConst>(w, Float{2.5});
+            wire<testing::record>(w, src, Str{"out"});
         }
     };
 
@@ -117,31 +117,31 @@ namespace
 
 TEST_CASE("type_resolution: a generic node resolves its TS type from the connected input port")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
     auto ex = run_graph<PassthroughGraph>(
-        [](const GlobalStateView &gs) { set_replay_values<std::int32_t>(gs, "in", {1, none, 3}); });
-    CHECK_OUTPUT(get_recorded_values<std::int32_t>(ex.view().graph().global_state(), "out"), {1, none, 3});
+        [](const GlobalStateView &gs) { set_replay_values<Int>(gs, "in", {1, none, 3}); });
+    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {1, none, 3});
 }
 
 TEST_CASE("type_resolution: the same generic node resolves to TSS from a set-valued port")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
-    const std::vector<std::optional<Value>> deltas{set_delta<std::int32_t>({1, 2}, {}), set_delta<std::int32_t>({3}, {1})};
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    const std::vector<std::optional<Value>> deltas{set_delta<Int>({1, 2}, {}), set_delta<Int>({3}, {1})};
     auto ex = run_graph<PassthroughSetGraph>([&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
     CHECK_OUTPUT(get_recorded_deltas(ex.view().graph().global_state(), "out"),
-                 {set_delta<std::int32_t>({1, 2}, {}), set_delta<std::int32_t>({3}, {1})});
+                 {set_delta<Int>({1, 2}, {}), set_delta<Int>({3}, {1})});
 }
 
 TEST_CASE("type_resolution: a generic source infers its type from the configured scalar value")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
     auto ex = run_graph<GenConstGraph>([](const GlobalStateView &) {});
-    CHECK_OUTPUT(get_recorded_values<std::int32_t>(ex.view().graph().global_state(), "out"), {7});
+    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {Int{7}});
 }
 
 TEST_CASE("type_resolution: a second resolution of the same generic source does not collide")
 {
-    (void)TypeRegistry::instance().register_scalar<double>("double");
+    (void)TypeRegistry::instance().register_scalar<Float>("float");
     auto ex = run_graph<GenConstDoubleGraph>([](const GlobalStateView &) {});
-    CHECK_OUTPUT(get_recorded_values<double>(ex.view().graph().global_state(), "out"), {2.5});
+    CHECK_OUTPUT(get_recorded_values<Float>(ex.view().graph().global_state(), "out"), {Float{2.5}});
 }

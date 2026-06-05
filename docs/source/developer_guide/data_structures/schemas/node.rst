@@ -67,7 +67,7 @@ A ``NodeTypeMetaData`` carries:
 ``output_schema``
     The time-series schema for the node's primary output (named
     ``output`` at runtime — see *Overview > Node Layer*). It is a
-    single TS-shaped schema (``TS<std::int32_t>``, ``TSD<string, double>``,
+    single TS-shaped schema (``TS<Int>``, ``TSD<Str, TS<Float>>``,
     …) — at most one main output per node. A sink node records
     ``nullptr`` for ``output_schema``. Auxiliary outputs (error,
     recordable state) are recorded as separate properties below, not

@@ -24,7 +24,7 @@ runtime view:
    {
        static constexpr auto name = "add_one";
 
-       static void eval(In<"in", TS<std::int32_t>> in, Out<TS<std::int32_t>> out)
+       static void eval(In<"in", TS<Int>> in, Out<TS<Int>> out)
        {
            out.set(in.value() + 1);
        }
@@ -34,8 +34,8 @@ runtime view:
    {
        static constexpr auto name = "counter";
 
-       static void start(State<std::int32_t> state) { state.set(0); }
-       static void eval(State<std::int32_t> state, Out<TS<std::int32_t>> out)
+       static void start(State<Int> state) { state.set(0); }
+       static void eval(State<Int> state, Out<TS<Int>> out)
        {
            const int next = state.get() + 1;
            state.set(next);

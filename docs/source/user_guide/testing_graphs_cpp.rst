@@ -26,7 +26,7 @@ returns its per-cycle outputs — the one call most node tests need:
    struct AddOne
    {
        static constexpr auto name = "add_one";
-       static void           eval(In<"in", TS<std::int32_t>> in, Out<TS<std::int32_t>> out) { out.set(in.value() + 1); }
+       static void           eval(In<"in", TS<Int>> in, Out<TS<Int>> out) { out.set(in.value() + 1); }
    };
 
    // One engine cycle per element; `none` (= std::nullopt) means no tick that cycle.
@@ -54,7 +54,7 @@ A node configured by a **scalar** takes the scalar after its inputs:
 
 .. code-block:: cpp
 
-   struct Shift { static void eval(In<"in", TS<std::int32_t>> in, Scalar<"delta", std::int32_t> d, Out<TS<std::int32_t>> o)
+   struct Shift { static void eval(In<"in", TS<Int>> in, Scalar<"delta", Int> d, Out<TS<Int>> o)
                   { o.set(in.value() + d.value()); } };
 
    CHECK_OUTPUT(testing::eval_node<Shift>({1, 2, 3}, 5), {6, 7, 8});
@@ -65,10 +65,10 @@ input may be a braced list (its type is inferred); later inputs are passed as
 
 .. code-block:: cpp
 
-   struct Sum { static void eval(In<"lhs", TS<std::int32_t>> a, In<"rhs", TS<std::int32_t>> b, Out<TS<std::int32_t>> o)
+   struct Sum { static void eval(In<"lhs", TS<Int>> a, In<"rhs", TS<Int>> b, Out<TS<Int>> o)
                 { o.set(a.value() + b.value()); } };
 
-   std::vector<std::optional<std::int32_t>> rhs{10, 20, 30};
+   std::vector<std::optional<Int>> rhs{10, 20, 30};
    CHECK_OUTPUT(testing::eval_node<Sum>({1, none, 3}, rhs), {11, 21, 33});  // lhs persists at cycle 1
 
 The first parameter must be a time-series input, and the node must have exactly one
@@ -155,11 +155,11 @@ comparing them is an element-wise list compare.
 it is authored over a deferred output type (``Out<TsVar<"S">>``) and resolved at
 wiring. Supply the output type explicitly, which also gives back a typed port:
 
-* ``wire<testing::replay, TS<std::int32_t>>(w, key)`` for a scalar source.
-* ``wire<testing::replay, TSS<std::int32_t>>(w, key)`` for a set.
-* ``wire<testing::replay, TSD<std::string, TS<std::int32_t>>>(w, key)`` for a dict.
-* ``wire<testing::replay, TSL<TS<std::int32_t>, N>>(w, key)`` for a list.
-* ``wire<testing::replay, TSW<std::int32_t, 3, 1>>(w, key)`` for a tick window.
+* ``wire<testing::replay, TS<Int>>(w, key)`` for a scalar source.
+* ``wire<testing::replay, TSS<Int>>(w, key)`` for a set.
+* ``wire<testing::replay, TSD<Str, TS<Int>>>(w, key)`` for a dict.
+* ``wire<testing::replay, TSL<TS<Int>, N>>(w, key)`` for a list.
+* ``wire<testing::replay, TSW<Int, 3, 1>>(w, key)`` for a tick window.
 
 It initiates itself at start via
 ``schedule_on_start`` (sources are not scheduled by default), reads its buffer from
@@ -170,7 +170,7 @@ the ``GlobalState`` under the ``key`` scalar, ticks once per cycle that has a va
 .. code-block:: cpp
 
    // emits the value at the current cycle, then re-arms for the next
-   auto src = wire<testing::replay, TS<std::int32_t>>(w, std::string{"in"});
+   auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
 
 The ``key`` names the ``GlobalState`` entry holding the input buffer; seed it
 before running (``gs.set("in", buffer)``). A cycle whose element is an empty
@@ -192,7 +192,7 @@ the recorded output, readable from the ``GlobalState``.
 
 .. code-block:: cpp
 
-   wire<testing::record>(w, inc, std::string{"out"});  // (input port, key)
+   wire<testing::record>(w, inc, Str{"out"});  // (input port, key)
 
 Worked example
 --------------
@@ -204,7 +204,7 @@ Wiring ``replay → add_one → record`` and reading the result back:
    struct AddOne
    {
        static constexpr auto name = "add_one";
-       static void           eval(In<"in", TS<std::int32_t>> in, Out<TS<std::int32_t>> out) { out.set(in.value() + 1); }
+       static void           eval(In<"in", TS<Int>> in, Out<TS<Int>> out) { out.set(in.value() + 1); }
    };
 
    struct ReplayRecordGraph
@@ -212,17 +212,17 @@ Wiring ``replay → add_one → record`` and reading the result back:
        static constexpr auto name = "replay_record_graph";
        static void           compose(Wiring &w)
        {
-           auto src = wire<testing::replay, TS<std::int32_t>>(w, std::string{"in"});
+           auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
            auto inc = wire<AddOne>(w, src);
-           wire<testing::record>(w, inc, std::string{"out"});
+           wire<testing::record>(w, inc, Str{"out"});
        }
    };
 
    // Seed the input [1, <skip>, 3], run, and read back [2, <skip>, 4].
    GraphBuilder gb = build_graph<ReplayRecordGraph>();
-   testing::set_replay_values<std::int32_t>(gb.global_state(), "in", {1, std::nullopt, 3});
+   testing::set_replay_values<Int>(gb.global_state(), "in", {1, std::nullopt, 3});
    /* ... run an executor over [MIN_ST, MIN_ST + n*MIN_TD) ... */
-   auto out = testing::get_recorded_values<std::int32_t>(executor.view().graph().global_state(), "out");
+   auto out = testing::get_recorded_values<Int>(executor.view().graph().global_state(), "out");
    // out == { 2, std::nullopt, 4 }
 
 ``set_replay_values`` / ``get_recorded_values`` are convenience helpers that build
@@ -256,10 +256,10 @@ builders for scalar element types:
 
 .. code-block:: cpp
 
-   Value set   = stdlib::make_set<std::int32_t>({1, 2});
-   Value list  = stdlib::make_list<std::int32_t>({1, 2, 3});
-   Value map   = stdlib::make_map<std::string, std::int32_t>({{"a", 1}, {"b", 2}});
-   Value queue = stdlib::make_queue<std::int32_t>({1, 2, 3});
+   Value set   = stdlib::make_set<Int>({1, 2});
+   Value list  = stdlib::make_list<Int>({1, 2, 3});
+   Value map   = stdlib::make_map<Str, Int>({{"a", 1}, {"b", 2}});
+   Value queue = stdlib::make_queue<Int>({1, 2, 3});
 
 ``TypeRegistry::instance()`` automatically registers the common scalar
 vocabulary and pre-interns matching ``TS[...]`` / ``TSS[...]`` schemas. The
@@ -299,13 +299,13 @@ type-erased signature* (there is no parallel wrapper type — comparison is
 
 .. code-block:: cpp
 
-   set_delta<std::int32_t>({1, 2}, {})                            // -> Bundle{added:{1,2}, removed:{}}
-   list_delta<TS<std::int32_t>>({{0, 10}, {2, 30}})               // -> Map<int, int>   (sparse: idx 0->10, 2->30)
-   list_delta<TS<std::int32_t>>({10, none, 30})                   // positional: position is the index, none = skip
-   list_delta<TSS<std::int32_t>>({{0, set_delta<std::int32_t>({1}, {})}})  // -> Map<int, Bundle>   (TSL of sets)
-   list_delta<TSL<TS<std::int32_t>,2>>({{0, list_delta<TS<std::int32_t>>({{0,1}})}})   // nested, recursive
-   dict_delta<std::string, TS<std::int32_t>>({{"a", 1}}, {"b"})   // remove b, modify a
-   using Quote = TSB<"Quote", Field<"bid", TS<std::int32_t>>, Field<"ask", TS<std::int32_t>>>;
+   set_delta<Int>({1, 2}, {})                            // -> Bundle{added:{1,2}, removed:{}}
+   list_delta<TS<Int>>({{0, 10}, {2, 30}})               // -> Map<int, int>   (sparse: idx 0->10, 2->30)
+   list_delta<TS<Int>>({10, none, 30})                   // positional: position is the index, none = skip
+   list_delta<TSS<Int>>({{0, set_delta<Int>({1}, {})}})  // -> Map<int, Bundle>   (TSL of sets)
+   list_delta<TSL<TS<Int>,2>>({{0, list_delta<TS<Int>>({{0,1}})}})   // nested, recursive
+   dict_delta<Str, TS<Int>>({{"a", 1}}, {"b"})   // remove b, modify a
+   using Quote = TSB<"Quote", Field<"bid", TS<Int>>, Field<"ask", TS<Int>>>;
    tsb_delta<Quote>(101, std::nullopt)                    // bid ticked, ask is typed-null
 
 Signal time-series (``SIGNAL``)
@@ -336,13 +336,13 @@ delta ``Value`` from ``set_delta``.
 
 .. code-block:: cpp
 
-   struct MirrorSet { static void eval(In<"s", TSS<std::int32_t>> s, Out<TSS<std::int32_t>> out)
+   struct MirrorSet { static void eval(In<"s", TSS<Int>> s, Out<TSS<Int>> out)
                       { for (int r : s.removed()) out.remove(r); for (int a : s.added()) out.add(a); } };
 
    const std::vector<std::optional<Value>> deltas{
-       set_delta<std::int32_t>({1, 2}, {}),   // add 1,2
-       set_delta<std::int32_t>({3}, {1}),      // add 3, remove 1
-       set_delta<std::int32_t>({}, {2, 3}),    // remove 2,3
+       set_delta<Int>({1, 2}, {}),   // add 1,2
+       set_delta<Int>({3}, {1}),      // add 3, remove 1
+       set_delta<Int>({}, {2, 3}),    // remove 2,3
    };
    CHECK_OUTPUT(testing::eval_node<MirrorSet>(deltas), deltas);   // round-trips the deltas
 
@@ -370,12 +370,12 @@ the per-cycle delta ``Value`` from ``list_delta`` (recursive in ``C``).
 .. code-block:: cpp
 
    // TSL of scalars
-   struct MirrorList { static void eval(In<"l", TSL<TS<std::int32_t>, 2>> l, Out<TSL<TS<std::int32_t>, 2>> out)
+   struct MirrorList { static void eval(In<"l", TSL<TS<Int>, 2>> l, Out<TSL<TS<Int>, 2>> out)
                        { for (std::size_t i = 0; i < l.size(); ++i) if (l[i].modified()) out.set(i, l[i].value()); } };
 
    const std::vector<std::optional<Value>> deltas{
-       list_delta<TS<std::int32_t>>({{0, 1}, {1, 2}}),   // both children tick
-       list_delta<TS<std::int32_t>>({{0, 5}}),            // only child 0 ticks
+       list_delta<TS<Int>>({{0, 1}, {1, 2}}),   // both children tick
+       list_delta<TS<Int>>({{0, 5}}),            // only child 0 ticks
    };
    CHECK_OUTPUT(testing::eval_node<MirrorList>(deltas), deltas);
 
@@ -385,12 +385,12 @@ are themselves ``set_delta`` ``Value``\ s, a TSL-of-TSL delta a ``Map`` of ``Map
 
 .. code-block:: cpp
 
-   // TSL<TSS<std::int32_t>> delta: Map<int, Bundle{added:Set, removed:Set}>
-   const Value sd = list_delta<TSS<std::int32_t>>({{0, set_delta<std::int32_t>({1, 2}, {})}, {1, set_delta<std::int32_t>({9}, {})}});
-   CHECK(sd.equals(list_delta<TSS<std::int32_t>>({{1, set_delta<std::int32_t>({9}, {})}, {0, set_delta<std::int32_t>({2, 1}, {})}})));
+   // TSL<TSS<Int>> delta: Map<int, Bundle{added:Set, removed:Set}>
+   const Value sd = list_delta<TSS<Int>>({{0, set_delta<Int>({1, 2}, {})}, {1, set_delta<Int>({9}, {})}});
+   CHECK(sd.equals(list_delta<TSS<Int>>({{1, set_delta<Int>({9}, {})}, {0, set_delta<Int>({2, 1}, {})}})));
 
-   // TSL<TSL<TS<std::int32_t>,2>> delta: Map<int, Map<int, int>>
-   const Value nd = list_delta<TSL<TS<std::int32_t>, 2>>({{0, list_delta<TS<std::int32_t>>({{0, 7}, {1, 8}})}});
+   // TSL<TSL<TS<Int>,2>> delta: Map<int, Map<int, int>>
+   const Value nd = list_delta<TSL<TS<Int>, 2>>({{0, list_delta<TS<Int>>({{0, 7}, {1, 8}})}});
 
 By hand: ``wire<testing::replay, TSL<C, N>>`` re-creates ticks by recursively applying
 each ``index -> child_delta`` of the buffered delta to the matching child output;
@@ -419,7 +419,7 @@ for scalar children). The simplest replay/record path exchanges the canonical
 
 .. code-block:: cpp
 
-   using IntDict = TSD<std::string, TS<std::int32_t>>;
+   using IntDict = TSD<Str, TS<Int>>;
 
    struct MirrorDict
    {
@@ -431,8 +431,8 @@ for scalar children). The simplest replay/record path exchanges the canonical
    };
 
    const std::vector<std::optional<Value>> deltas{
-       dict_delta<std::string, TS<std::int32_t>>({{"a", 1}, {"b", 2}}),
-       dict_delta<std::string, TS<std::int32_t>>({{"a", 5}}, {"b"}),
+       dict_delta<Str, TS<Int>>({{"a", 1}, {"b", 2}}),
+       dict_delta<Str, TS<Int>>({{"a", 5}}, {"b"}),
    };
    CHECK_OUTPUT(testing::eval_node<MirrorDict>(deltas), deltas);
 
@@ -448,7 +448,7 @@ harness exchanges plain ``T`` elements.
 
    struct MirrorWindow
    {
-       static void eval(In<"w", TSW<std::int32_t, 3, 1>> w, Out<TSW<std::int32_t, 3, 1>> out)
+       static void eval(In<"w", TSW<Int, 3, 1>> w, Out<TSW<Int, 3, 1>> out)
        {
            if (w.modified()) { out.apply(w.delta()); }
        }

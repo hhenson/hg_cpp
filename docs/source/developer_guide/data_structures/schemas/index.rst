@@ -89,7 +89,7 @@ The two relevant registries are:
 A schema's identity is its pointer. Two schemas with the same kind,
 component types, and metadata fields produce the same key tuple, hash
 to the same bucket, and resolve to the same ``TypeMetaData *``. This
-holds for nested compositions: ``TSD<string, TSL<TS<double>>>`` is a
+holds for nested compositions: ``TSD<Str, TSL<TS<Float>>>`` is a
 single interned schema, and the registry never re-synthesises any of
 its components on subsequent lookups.
 

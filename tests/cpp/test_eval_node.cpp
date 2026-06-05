@@ -21,14 +21,14 @@ namespace
     struct AddOne
     {
         static constexpr auto name = "add_one";
-        static void           eval(In<"in", TS<std::int32_t>> in, Out<TS<std::int32_t>> out) { out.set(in.value() + 1); }
+        static void           eval(In<"in", TS<Int>> in, Out<TS<Int>> out) { out.set(in.value() + 1); }
     };
 
     // A stateful node: a running sum, to show state persists across cycles.
     struct RunningSum
     {
         static constexpr auto name = "running_sum";
-        static void           eval(In<"in", TS<std::int32_t>> in, State<std::int32_t> total, Out<TS<std::int32_t>> out)
+        static void           eval(In<"in", TS<Int>> in, State<Int> total, Out<TS<Int>> out)
         {
             total.set(total.get() + in.value());
             out.set(total.get());
@@ -39,7 +39,7 @@ namespace
     struct Shift
     {
         static constexpr auto name = "eval_node_shift";
-        static void           eval(In<"in", TS<std::int32_t>> in, Scalar<"delta", std::int32_t> delta, Out<TS<std::int32_t>> out)
+        static void           eval(In<"in", TS<Int>> in, Scalar<"delta", Int> delta, Out<TS<Int>> out)
         {
             out.set(in.value() + delta.value());
         }
@@ -50,7 +50,7 @@ namespace
     struct Sum
     {
         static constexpr auto name = "eval_node_sum";
-        static void           eval(In<"lhs", TS<std::int32_t>> lhs, In<"rhs", TS<std::int32_t>> rhs, Out<TS<std::int32_t>> out)
+        static void           eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out)
         {
             out.set(lhs.value() + rhs.value());
         }
@@ -61,7 +61,7 @@ namespace
     struct EchoOnce
     {
         static constexpr auto name = "echo_once";
-        static void           eval(In<"in", TS<std::int32_t>> in, NodeScheduler sched, State<std::int32_t> echo, Out<TS<std::int32_t>> out)
+        static void           eval(In<"in", TS<Int>> in, NodeScheduler sched, State<Int> echo, Out<TS<Int>> out)
         {
             if (in.modified())
             {
@@ -76,31 +76,31 @@ namespace
         }
     };
 
-    // TS<std::int32_t> in -> TSS<std::int32_t> out: each ticked value is added to the set (the
+    // TS<Int> in -> TSS<Int> out: each ticked value is added to the set (the
     // per-cycle delta is therefore {added: {value}}). Exercises a TSS *output*.
     struct AccumulateSet
     {
         static constexpr auto name = "eval_accumulate_set";
-        static void           eval(In<"in", TS<std::int32_t>> in, Out<TSS<std::int32_t>> out) { out.add(in.value()); }
+        static void           eval(In<"in", TS<Int>> in, Out<TSS<Int>> out) { out.add(in.value()); }
     };
 
-    // TSS<std::int32_t> in -> TS<std::int32_t> out: emits the cumulative set size. Exercises a TSS
+    // TSS<Int> in -> TS<Int> out: emits the cumulative set size. Exercises a TSS
     // *input* (the first, braced, parameter).
     struct SetSizeNode
     {
         static constexpr auto name = "eval_set_size";
-        static void           eval(In<"s", TSS<std::int32_t>> s, Out<TS<std::int32_t>> out) { out.set(static_cast<std::int32_t>(s.size())); }
+        static void           eval(In<"s", TSS<Int>> s, Out<TS<Int>> out) { out.set(static_cast<Int>(s.size())); }
     };
 
-    // TSS<std::int32_t> in -> TSS<std::int32_t> out: re-applies this cycle's delta (remove then add),
+    // TSS<Int> in -> TSS<Int> out: re-applies this cycle's delta (remove then add),
     // so the output delta mirrors the input. Exercises TSS on both ends.
     struct MirrorSet
     {
         static constexpr auto name = "eval_mirror_set";
-        static void           eval(In<"s", TSS<std::int32_t>> s, Out<TSS<std::int32_t>> out)
+        static void           eval(In<"s", TSS<Int>> s, Out<TSS<Int>> out)
         {
-            for (std::int32_t r : s.removed()) { out.remove(r); }
-            for (std::int32_t a : s.added()) { out.add(a); }
+            for (Int r : s.removed()) { out.remove(r); }
+            for (Int a : s.added()) { out.add(a); }
         }
     };
 }  // namespace
@@ -108,7 +108,7 @@ namespace
 TEST_CASE("eval_node: maps each input tick through a compute node")
 {
     using namespace hgraph;
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     // A skipped input cycle (none) stays skipped in the output.
     CHECK_OUTPUT(testing::eval_node<AddOne>({1, none, 3}), {2, none, 4});
@@ -117,7 +117,7 @@ TEST_CASE("eval_node: maps each input tick through a compute node")
 TEST_CASE("eval_node: node state persists across cycles")
 {
     using namespace hgraph;
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     CHECK_OUTPUT(testing::eval_node<RunningSum>({1, 2, 3, 4}), {1, 3, 6, 10});
 }
@@ -125,7 +125,7 @@ TEST_CASE("eval_node: node state persists across cycles")
 TEST_CASE("eval_node: an all-empty input produces no output ticks")
 {
     using namespace hgraph;
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     CHECK_OUTPUT(testing::eval_node<AddOne>({none, none}), {none, none});
 }
@@ -133,7 +133,7 @@ TEST_CASE("eval_node: an all-empty input produces no output ticks")
 TEST_CASE("eval_node: output longer than the input is not truncated")
 {
     using namespace hgraph;
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     // One input (5) produces two output cycles: 5, then the echo 105.
     CHECK_OUTPUT(testing::eval_node<EchoOnce>({5}), {5, 105});
@@ -142,7 +142,7 @@ TEST_CASE("eval_node: output longer than the input is not truncated")
 TEST_CASE("eval_node: passes scalar inputs to the node-under-test")
 {
     using namespace hgraph;
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     // The time-series input is braced; the scalar arg (delta = 5) follows.
     CHECK_OUTPUT(testing::eval_node<Shift>({1, 2, 3}, 5), {6, 7, 8});
@@ -151,41 +151,41 @@ TEST_CASE("eval_node: passes scalar inputs to the node-under-test")
 TEST_CASE("eval_node: drives a node with multiple time-series inputs")
 {
     using namespace hgraph;
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     // First input braced; later inputs as named vectors. rhs ticks every cycle, so
     // at cycle 1 lhs's persisted value (1) is summed with rhs (20) -> 21.
-    const std::vector<std::optional<std::int32_t>> rhs{10, 20, 30};
+    const std::vector<std::optional<Int>> rhs{10, 20, 30};
     CHECK_OUTPUT(testing::eval_node<Sum>({1, none, 3}, rhs), {11, 21, 33});
 }
 
 TEST_CASE("eval_node: a TSS output is read back as a per-cycle SetDelta")
 {
     using namespace hgraph;
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     // Each cycle adds one element, so each delta is {added: {value}}.
     CHECK_OUTPUT(testing::eval_node<AccumulateSet>({1, 2, 3}),
-                 {set_delta<std::int32_t>({1}, {}), set_delta<std::int32_t>({2}, {}), set_delta<std::int32_t>({3}, {})});
+                 {set_delta<Int>({1}, {}), set_delta<Int>({2}, {}), set_delta<Int>({3}, {})});
 }
 
 TEST_CASE("eval_node: a TSS input is fed from a per-cycle SetDelta sequence")
 {
     using namespace hgraph;
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     // {1,2} -> +3 -1 -> {2,3} -> -2 -3 -> {}; cumulative sizes 2, 2, 0.
     CHECK_OUTPUT(testing::eval_node<SetSizeNode>(
-                     {set_delta<std::int32_t>({1, 2}, {}), set_delta<std::int32_t>({3}, {1}), set_delta<std::int32_t>({}, {2, 3})}),
+                     {set_delta<Int>({1, 2}, {}), set_delta<Int>({3}, {1}), set_delta<Int>({}, {2, 3})}),
                  {2, 2, 0});
 }
 
 TEST_CASE("eval_node: TSS on both input and output round-trips the delta")
 {
     using namespace hgraph;
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     const std::vector<std::optional<Value>> deltas{
-        set_delta<std::int32_t>({1, 2}, {}), set_delta<std::int32_t>({3}, {1}), set_delta<std::int32_t>({}, {2, 3})};
+        set_delta<Int>({1, 2}, {}), set_delta<Int>({3}, {1}), set_delta<Int>({}, {2, 3})};
     CHECK_OUTPUT(testing::eval_node<MirrorSet>(deltas), deltas);
 }

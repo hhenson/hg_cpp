@@ -18,13 +18,13 @@ namespace
     {
         static constexpr auto name              = "source";
         static constexpr bool schedule_on_start = true;
-        static void           eval(Out<TS<std::int32_t>> out) { out.set(41); }
+        static void           eval(Out<TS<Int>> out) { out.set(Int{41}); }
     };
 
     struct AddOne
     {
         static constexpr auto name = "add_one";
-        static void           eval(In<"in", TS<std::int32_t>> in, Out<TS<std::int32_t>> out) { out.set(in.value() + 1); }
+        static void           eval(In<"in", TS<Int>> in, Out<TS<Int>> out) { out.set(in.value() + 1); }
     };
 
     // source -> add_one, wired declaratively.
@@ -38,10 +38,10 @@ namespace
         }
     };
 
-    // A sub-graph: TS<std::int32_t> -> TS<std::int32_t>, adding two via two add_one nodes.
+    // A sub-graph: TS<Int> -> TS<Int>, adding two via two add_one nodes.
     struct PlusTwo
     {
-        static Port<TS<std::int32_t>> compose(Wiring &w, Port<TS<std::int32_t>> x)
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> x)
         {
             return wire<AddOne>(w, wire<AddOne>(w, x));
         }
@@ -62,7 +62,7 @@ namespace
     struct Sum
     {
         static constexpr auto name = "sum";
-        static void           eval(In<"lhs", TS<std::int32_t>> lhs, In<"rhs", TS<std::int32_t>> rhs, Out<TS<std::int32_t>> out)
+        static void           eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out)
         {
             out.set(lhs.value() + rhs.value());
         }
@@ -83,13 +83,13 @@ namespace
     {
         static constexpr auto name              = "scaled_source";
         static constexpr bool schedule_on_start = true;
-        static void           eval(Scalar<"value", std::int32_t> value, Out<TS<std::int32_t>> out) { out.set(value.value()); }
+        static void           eval(Scalar<"value", Int> value, Out<TS<Int>> out) { out.set(value.value()); }
     };
 
     struct ScaledSourceGraph
     {
         static constexpr auto name = "scaled_source_graph";
-        static void           compose(Wiring &w) { wire<ScaledSource>(w, 7); }
+        static void           compose(Wiring &w) { wire<ScaledSource>(w, Int{7}); }
     };
 
     // Compute node mixing a TS input port with a scalar argument; wire args are
@@ -97,7 +97,7 @@ namespace
     struct Shift
     {
         static constexpr auto name = "shift";
-        static void           eval(In<"in", TS<std::int32_t>> in, Scalar<"delta", std::int32_t> delta, Out<TS<std::int32_t>> out)
+        static void           eval(In<"in", TS<Int>> in, Scalar<"delta", Int> delta, Out<TS<Int>> out)
         {
             out.set(in.value() + delta.value());
         }
@@ -109,7 +109,7 @@ namespace
         static void           compose(Wiring &w)
         {
             auto source = wire<ConstantSource>(w);   // 41
-            wire<Shift>(w, source, 5);               // 41 + 5 = 46
+            wire<Shift>(w, source, Int{5});          // 41 + 5 = 46
         }
     };
 
@@ -117,7 +117,7 @@ namespace
     struct ConfiguredSourceGraph
     {
         static constexpr auto name = "configured_source_graph";
-        static void           compose(Wiring &w, Scalar<"value", std::int32_t> value)
+        static void           compose(Wiring &w, Scalar<"value", Int> value)
         {
             wire<ScaledSource>(w, value.value());
         }
@@ -127,40 +127,40 @@ namespace
     struct OffsetGraph
     {
         static constexpr auto name = "offset_graph";
-        static void           compose(Wiring &w, Scalar<"offset", std::int32_t> offset)
+        static void           compose(Wiring &w, Scalar<"offset", Int> offset)
         {
             auto source = wire<ConstantSource>(w);    // 41
             wire<Shift>(w, source, offset.value());   // 41 + offset
         }
     };
 
-    // Sub-graph with a port input AND a scalar parameter: (TS<std::int32_t>, by) -> TS<std::int32_t>.
-    // The received Scalar<"by", std::int32_t> is forwarded straight to wire<Shift> (whose
-    // scalar parameter is Scalar<"delta", std::int32_t>) — no .value() needed; the wiring
+    // Sub-graph with a port input AND a scalar parameter: (TS<Int>, by) -> TS<Int>.
+    // The received Scalar<"by", Int> is forwarded straight to wire<Shift> (whose
+    // scalar parameter is Scalar<"delta", Int>) — no .value() needed; the wiring
     // layer unpacks the Scalar and re-applies it (names need not match).
     struct ShiftBy
     {
-        static Port<TS<std::int32_t>> compose(Wiring &w, Port<TS<std::int32_t>> x, Scalar<"by", std::int32_t> by)
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> x, Scalar<"by", Int> by)
         {
             return wire<Shift>(w, x, by);
         }
     };
 
     // Top-level: source(41) -> ShiftBy(by=5) -> 46. The literal 5 is auto-wrapped
-    // into the sub-graph's Scalar<"by", std::int32_t> parameter, and ShiftBy flattens.
+    // into the sub-graph's Scalar<"by", Int> parameter, and ShiftBy flattens.
     struct ShiftBySubGraph
     {
         static constexpr auto name = "shift_by_sub_graph";
         static void           compose(Wiring &w)
         {
             auto source = wire<ConstantSource>(w);
-            wire<ShiftBy>(w, source, 5);
+            wire<ShiftBy>(w, source, Int{5});
         }
     };
 
     struct AddOneSubGraph
     {
-        static Port<TS<std::int32_t>> compose(Wiring &w, Port<TS<std::int32_t>> x)
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> x)
         {
             return wire<AddOne>(w, x);
         }
@@ -171,7 +171,7 @@ namespace
         static constexpr auto name = "generic_source_into_typed_sub_graph";
         static void           compose(Wiring &w)
         {
-            auto source = wire<stdlib::const_>(w, 41);  // erased Port<void>, resolved to TS<std::int32_t>
+            auto source = wire<stdlib::const_>(w, Int{41});  // erased Port<void>, resolved to TS<Int>
             wire<AddOneSubGraph>(w, source);
         }
     };
@@ -179,11 +179,11 @@ namespace
     struct CountSignal
     {
         static constexpr auto name = "count_signal";
-        static void           eval(In<"pulse", SIGNAL> pulse, State<std::int32_t> count, Out<TS<std::int32_t>> out)
+        static void           eval(In<"pulse", SIGNAL> pulse, State<Int> count, Out<TS<Int>> out)
         {
             if (pulse.ticked())
             {
-                const std::int32_t next = count.get() + 1;
+                const Int next = count.get() + 1;
                 count.set(next);
                 out.set(next);
             }
@@ -192,7 +192,7 @@ namespace
 
     struct CountSignalSubGraph
     {
-        static Port<TS<std::int32_t>> compose(Wiring &w, Port<SIGNAL> pulse)
+        static Port<TS<Int>> compose(Wiring &w, Port<SIGNAL> pulse)
         {
             return wire<CountSignal>(w, pulse);
         }
@@ -227,7 +227,7 @@ TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulat
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 2);
     // The rank pass orders source (no inputs) before add_one, so node 1 is add_one.
-    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 42);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{42});
 }
 
 TEST_CASE("graph wiring: identical nodes are interned to one")
@@ -263,7 +263,7 @@ TEST_CASE("graph wiring: sub-graph composition inlines (flattens) into the paren
 
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 3);   // source + two add_one (the PlusTwo sub-graph flattened)
-    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<std::int32_t>() == 43);
+    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Int>() == Int{43});
 }
 
 TEST_CASE("graph wiring: sub-graph typed input accepts an erased generic source port")
@@ -283,7 +283,7 @@ TEST_CASE("graph wiring: sub-graph typed input accepts an erased generic source 
 
     auto graph = view.graph();
     REQUIRE(graph.node_count() == 2);
-    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 42);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{42});
 }
 
 TEST_CASE("graph wiring: sub-graph SIGNAL input accepts any time-series port")
@@ -303,7 +303,7 @@ TEST_CASE("graph wiring: sub-graph SIGNAL input accepts any time-series port")
 
     auto graph = view.graph();
     REQUIRE(graph.node_count() == 2);
-    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 1);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{1});
 }
 
 TEST_CASE("graph wiring: multi-input node wires and type-checks its ports")
@@ -323,7 +323,7 @@ TEST_CASE("graph wiring: multi-input node wires and type-checks its ports")
 
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 2);   // one interned source + sum
-    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 82);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{82});
 }
 
 TEST_CASE("graph wiring: a scalar argument configures a wired node")
@@ -343,7 +343,7 @@ TEST_CASE("graph wiring: a scalar argument configures a wired node")
 
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 1);
-    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<std::int32_t>() == 7);
+    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<Int>() == Int{7});
 }
 
 TEST_CASE("graph wiring: a scalar argument coexists with a time-series input port")
@@ -363,7 +363,7 @@ TEST_CASE("graph wiring: a scalar argument coexists with a time-series input por
 
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 2);   // source + shift
-    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 46);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{46});
 }
 
 TEST_CASE("graph wiring: scalar values participate in node interning")
@@ -371,9 +371,9 @@ TEST_CASE("graph wiring: scalar values participate in node interning")
     using namespace hgraph;
 
     Wiring w;
-    auto   a = wire<ScaledSource>(w, 7);
-    auto   b = wire<ScaledSource>(w, 7);   // equal scalar -> same interned instance
-    auto   c = wire<ScaledSource>(w, 8);   // different scalar -> distinct instance
+    auto   a = wire<ScaledSource>(w, Int{7});
+    auto   b = wire<ScaledSource>(w, Int{7});   // equal scalar -> same interned instance
+    auto   c = wire<ScaledSource>(w, Int{8});   // different scalar -> distinct instance
 
     CHECK(a.node() == b.node());
     CHECK(a.node() != c.node());
@@ -402,7 +402,7 @@ TEST_CASE("graph wiring: a top-level graph takes a scalar parameter via build_gr
 {
     using namespace hgraph;
 
-    GraphBuilder graph_builder = build_graph<ConfiguredSourceGraph>(9);
+    GraphBuilder graph_builder = build_graph<ConfiguredSourceGraph>(Int{9});
 
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
@@ -415,14 +415,14 @@ TEST_CASE("graph wiring: a top-level graph takes a scalar parameter via build_gr
 
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 1);
-    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<std::int32_t>() == 9);
+    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<Int>() == Int{9});
 }
 
 TEST_CASE("graph wiring: a graph scalar parameter threads into a node's scalar")
 {
     using namespace hgraph;
 
-    GraphBuilder graph_builder = build_graph<OffsetGraph>(5);   // 41 + 5
+    GraphBuilder graph_builder = build_graph<OffsetGraph>(Int{5});   // 41 + 5
 
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
@@ -435,7 +435,7 @@ TEST_CASE("graph wiring: a graph scalar parameter threads into a node's scalar")
 
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 2);
-    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 46);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{46});
 }
 
 TEST_CASE("graph wiring: wire<G> auto-wraps a scalar literal for a sub-graph parameter")
@@ -455,5 +455,5 @@ TEST_CASE("graph wiring: wire<G> auto-wraps a scalar literal for a sub-graph par
 
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 2);   // source + shift (ShiftBy flattened away)
-    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 46);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{46});
 }

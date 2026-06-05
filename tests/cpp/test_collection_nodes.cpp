@@ -21,16 +21,16 @@ namespace
     using namespace hgraph::testing;
     using namespace std::string_literals;
 
-    using IntDict = TSD<std::string, TS<std::int32_t>>;
-    using IntWindow = TSW<std::int32_t, 3, 1>;
-    using Quote = TSB<"Quote", Field<"bid", TS<std::int32_t>>, Field<"ask", TS<std::int32_t>>>;
+    using IntDict = TSD<Str, TS<Int>>;
+    using IntWindow = TSW<Int, 3, 1>;
+    using Quote = TSB<"Quote", Field<"bid", TS<Int>>, Field<"ask", TS<Int>>>;
     using QuoteList = TSL<Quote, 2>;
-    using QuoteDict = TSD<std::string, Quote>;
+    using QuoteDict = TSD<Str, Quote>;
 
     struct DictSpread
     {
         static constexpr auto name = "dict_spread";
-        static void           eval(In<"in", TS<std::int32_t>> in, Out<IntDict> out)
+        static void           eval(In<"in", TS<Int>> in, Out<IntDict> out)
         {
             out["a"s].set(in.value());
             if (in.value() >= 2) { out["b"s].set(in.value() * 10); }
@@ -40,9 +40,9 @@ namespace
     struct DictTotal
     {
         static constexpr auto name = "dict_total";
-        static void           eval(In<"d", IntDict> d, Out<TS<std::int32_t>> out)
+        static void           eval(In<"d", IntDict> d, Out<TS<Int>> out)
         {
-            std::int32_t total = 0;
+            Int total = 0;
             for (auto &&[key, child] : d.valid_items())
             {
                 static_cast<void>(key);
@@ -57,10 +57,10 @@ namespace
         static constexpr auto name = "dict_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<std::int32_t>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
             auto d   = wire<DictSpread>(w, src);
             auto sum = wire<DictTotal>(w, d);
-            wire<testing::record>(w, sum, std::string{"out"});
+            wire<testing::record>(w, sum, Str{"out"});
         }
     };
 
@@ -69,23 +69,23 @@ namespace
         static constexpr auto name = "dict_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, IntDict>(w, std::string{"in"});
-            wire<testing::record>(w, src, std::string{"out"});
+            auto src = wire<testing::replay, IntDict>(w, Str{"in"});
+            wire<testing::record>(w, src, Str{"out"});
         }
     };
 
     struct WindowPush
     {
         static constexpr auto name = "window_push";
-        static void           eval(In<"in", TS<std::int32_t>> in, Out<IntWindow> out) { out.push(in.value()); }
+        static void           eval(In<"in", TS<Int>> in, Out<IntWindow> out) { out.push(in.value()); }
     };
 
     struct WindowTotal
     {
         static constexpr auto name = "window_total";
-        static void           eval(In<"w", IntWindow> w, Out<TS<std::int32_t>> out)
+        static void           eval(In<"w", IntWindow> w, Out<TS<Int>> out)
         {
-            std::int32_t total = 0;
+            Int total = 0;
             for (std::size_t i = 0; i < w.size(); ++i) { total += w[i]; }
             out.set(total);
         }
@@ -96,10 +96,10 @@ namespace
         static constexpr auto name = "window_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<std::int32_t>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
             auto win = wire<WindowPush>(w, src);
             auto sum = wire<WindowTotal>(w, win);
-            wire<testing::record>(w, sum, std::string{"out"});
+            wire<testing::record>(w, sum, Str{"out"});
         }
     };
 
@@ -108,15 +108,15 @@ namespace
         static constexpr auto name = "window_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, IntWindow>(w, std::string{"in"});
-            wire<testing::record>(w, src, std::string{"out"});
+            auto src = wire<testing::replay, IntWindow>(w, Str{"in"});
+            wire<testing::record>(w, src, Str{"out"});
         }
     };
 
     struct QuoteSpread
     {
         static constexpr auto name = "quote_spread";
-        static void           eval(In<"in", TS<std::int32_t>> in, Out<Quote> out)
+        static void           eval(In<"in", TS<Int>> in, Out<Quote> out)
         {
             out.field<"bid">().set(in.value());
             out.field<"ask">().set(in.value() * 10);
@@ -126,7 +126,7 @@ namespace
     struct QuoteTotal
     {
         static constexpr auto name = "quote_total";
-        static void           eval(In<"q", Quote> q, Out<TS<std::int32_t>> out)
+        static void           eval(In<"q", Quote> q, Out<TS<Int>> out)
         {
             out.set(q.field<"bid">().value() + q.field<"ask">().value());
         }
@@ -137,10 +137,10 @@ namespace
         static constexpr auto name = "quote_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<std::int32_t>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
             auto q   = wire<QuoteSpread>(w, src);
             auto sum = wire<QuoteTotal>(w, q);
-            wire<testing::record>(w, sum, std::string{"out"});
+            wire<testing::record>(w, sum, Str{"out"});
         }
     };
 
@@ -149,8 +149,8 @@ namespace
         static constexpr auto name = "quote_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, Quote>(w, std::string{"in"});
-            wire<testing::record>(w, src, std::string{"out"});
+            auto src = wire<testing::replay, Quote>(w, Str{"in"});
+            wire<testing::record>(w, src, Str{"out"});
         }
     };
 
@@ -159,8 +159,8 @@ namespace
         static constexpr auto name = "quote_list_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, QuoteList>(w, std::string{"in"});
-            wire<testing::record>(w, src, std::string{"out"});
+            auto src = wire<testing::replay, QuoteList>(w, Str{"in"});
+            wire<testing::record>(w, src, Str{"out"});
         }
     };
 
@@ -169,15 +169,15 @@ namespace
         static constexpr auto name = "quote_dict_delta_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, QuoteDict>(w, std::string{"in"});
-            wire<testing::record>(w, src, std::string{"out"});
+            auto src = wire<testing::replay, QuoteDict>(w, Str{"in"});
+            wire<testing::record>(w, src, Str{"out"});
         }
     };
 
     struct Pulse
     {
         static constexpr auto name = "pulse";
-        static void           eval(In<"in", TS<std::int32_t>> in, Out<SIGNAL> out)
+        static void           eval(In<"in", TS<Int>> in, Out<SIGNAL> out)
         {
             static_cast<void>(in);
             out.tick();
@@ -187,11 +187,11 @@ namespace
     struct CountPulses
     {
         static constexpr auto name = "count_pulses";
-        static void           eval(In<"pulse", SIGNAL> pulse, State<std::int32_t> count, Out<TS<std::int32_t>> out)
+        static void           eval(In<"pulse", SIGNAL> pulse, State<Int> count, Out<TS<Int>> out)
         {
             if (pulse.ticked())
             {
-                const std::int32_t next = count.get() + 1;
+                const Int next = count.get() + 1;
                 count.set(next);
                 out.set(next);
             }
@@ -203,10 +203,10 @@ namespace
         static constexpr auto name = "signal_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<std::int32_t>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
             auto sig = wire<Pulse>(w, src);
             auto cnt = wire<CountPulses>(w, sig);
-            wire<testing::record>(w, cnt, std::string{"out"});
+            wire<testing::record>(w, cnt, Str{"out"});
         }
     };
 
@@ -215,9 +215,9 @@ namespace
         static constexpr auto name = "signal_from_ts_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<std::int32_t>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
             auto cnt = wire<CountPulses>(w, src);
-            wire<testing::record>(w, cnt, std::string{"out"});
+            wire<testing::record>(w, cnt, Str{"out"});
         }
     };
 
@@ -226,10 +226,10 @@ namespace
         static constexpr auto name = "signal_from_dict_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<std::int32_t>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
             auto d   = wire<DictSpread>(w, src);
             auto cnt = wire<CountPulses>(w, d);
-            wire<testing::record>(w, cnt, std::string{"out"});
+            wire<testing::record>(w, cnt, Str{"out"});
         }
     };
 
@@ -238,10 +238,10 @@ namespace
         static constexpr auto name = "signal_from_window_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<std::int32_t>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
             auto win = wire<WindowPush>(w, src);
             auto cnt = wire<CountPulses>(w, win);
-            wire<testing::record>(w, cnt, std::string{"out"});
+            wire<testing::record>(w, cnt, Str{"out"});
         }
     };
 
@@ -260,9 +260,9 @@ namespace
         static constexpr auto name = "signal_delta_from_ts_graph";
         static void           compose(Wiring &w)
         {
-            auto src = wire<testing::replay, TS<std::int32_t>>(w, std::string{"in"});
+            auto src = wire<testing::replay, TS<Int>>(w, Str{"in"});
             auto out = wire<SignalDeltaToBool>(w, src);
-            wire<testing::record>(w, out, std::string{"out"});
+            wire<testing::record>(w, out, Str{"out"});
         }
     };
 
@@ -287,29 +287,29 @@ namespace
 
 TEST_CASE("collections: TSD typed output creates keys and typed input iterates child values")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
     (void)TypeRegistry::instance().register_scalar<std::string>("string");
 
     GraphBuilder gb = build_graph<DictGraph>();
-    testing::set_replay_values<std::int32_t>(gb.global_state(), "in", {1, 2, 3});
+    testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
     GraphExecutorBuilder eb;
     eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
-    CHECK_OUTPUT(testing::get_recorded_values<std::int32_t>(ex.view().graph().global_state(), "out"), {1, 22, 33});
+    CHECK_OUTPUT(testing::get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {1, 22, 33});
 }
 
 TEST_CASE("collections: TSD replay and record round-trip removed and modified deltas")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
     (void)TypeRegistry::instance().register_scalar<std::string>("string");
 
     const std::vector<std::optional<Value>> deltas{
-        dict_delta<std::string, TS<std::int32_t>>({{"a"s, 1}, {"b"s, 2}}),
-        dict_delta<std::string, TS<std::int32_t>>({{"a"s, 5}}, {"b"s}),
-        dict_delta<std::string, TS<std::int32_t>>({{"b"s, 9}}),
+        dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+        dict_delta<Str, TS<Int>>({{"a"s, 5}}, {"b"s}),
+        dict_delta<Str, TS<Int>>({{"b"s, 9}}),
     };
 
     GraphBuilder gb = build_graph<DictDeltaGraph>();
@@ -321,31 +321,31 @@ TEST_CASE("collections: TSD replay and record round-trip removed and modified de
     ex.view().run();
 
     CHECK_OUTPUT(testing::get_recorded_deltas(ex.view().graph().global_state(), "out"),
-                 {dict_delta<std::string, TS<std::int32_t>>({{"a"s, 1}, {"b"s, 2}}),
-                  dict_delta<std::string, TS<std::int32_t>>({{"a"s, 5}}, {"b"s}),
-                  dict_delta<std::string, TS<std::int32_t>>({{"b"s, 9}})});
+                 {dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+                  dict_delta<Str, TS<Int>>({{"a"s, 5}}, {"b"s}),
+                  dict_delta<Str, TS<Int>>({{"b"s, 9}})});
 }
 
 TEST_CASE("collections: TSW typed output pushes values and typed input reads the window")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     GraphBuilder gb = build_graph<WindowGraph>();
-    testing::set_replay_values<std::int32_t>(gb.global_state(), "in", {1, 2, 3, 4});
+    testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3, 4});
 
     GraphExecutorBuilder eb;
     eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
-    CHECK_OUTPUT(testing::get_recorded_values<std::int32_t>(ex.view().graph().global_state(), "out"), {1, 3, 6, 9});
+    CHECK_OUTPUT(testing::get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {1, 3, 6, 9});
 }
 
 TEST_CASE("collections: TSW replay and record round-trip scalar push deltas")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
-    const std::vector<std::optional<Value>> deltas{Value{std::int32_t{1}}, Value{std::int32_t{2}}, Value{std::int32_t{3}}, Value{std::int32_t{4}}};
+    const std::vector<std::optional<Value>> deltas{Value{Int{1}}, Value{Int{2}}, Value{Int{3}}, Value{Int{4}}};
 
     GraphBuilder gb = build_graph<WindowDeltaGraph>();
     testing::set_replay_deltas(gb.global_state(), "in", deltas);
@@ -356,34 +356,34 @@ TEST_CASE("collections: TSW replay and record round-trip scalar push deltas")
     ex.view().run();
 
     CHECK_OUTPUT(testing::get_recorded_deltas(ex.view().graph().global_state(), "out"),
-                 {Value{std::int32_t{1}}, Value{std::int32_t{2}}, Value{std::int32_t{3}}, Value{std::int32_t{4}}});
+                 {Value{Int{1}}, Value{Int{2}}, Value{Int{3}}, Value{Int{4}}});
 }
 
 TEST_CASE("collections: eval_node exchanges bare scalar deltas for TSW")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     CHECK_OUTPUT(testing::eval_node<MirrorWindowForEvalNode>({1, none, 3, 4}), {1, none, 3, 4});
 }
 
 TEST_CASE("collections: TSB typed field selectors work through node wiring")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     GraphBuilder gb = build_graph<QuoteGraph>();
-    testing::set_replay_values<std::int32_t>(gb.global_state(), "in", {1, 2, 3});
+    testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
     GraphExecutorBuilder eb;
     eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
-    CHECK_OUTPUT(testing::get_recorded_values<std::int32_t>(ex.view().graph().global_state(), "out"), {11, 22, 33});
+    CHECK_OUTPUT(testing::get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {11, 22, 33});
 }
 
 TEST_CASE("collections: TSB replay and record round-trip sparse field deltas")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     const std::vector<std::optional<Value>> deltas{
         tsb_delta<Quote>(1, 10),
@@ -405,7 +405,7 @@ TEST_CASE("collections: TSB replay and record round-trip sparse field deltas")
 
 TEST_CASE("collections: TSL and TSD replay and record recurse through TSB children")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
     (void)TypeRegistry::instance().register_scalar<std::string>("string");
 
     {
@@ -431,9 +431,9 @@ TEST_CASE("collections: TSL and TSD replay and record recurse through TSB childr
 
     {
         const std::vector<std::optional<Value>> deltas{
-            dict_delta<std::string, Quote>({{"a"s, tsb_delta<Quote>(1, 10)}, {"b"s, tsb_delta<Quote>(2, 20)}}),
-            dict_delta<std::string, Quote>({{"a"s, tsb_delta<Quote>(std::nullopt, 30)}}, {"b"s}),
-            dict_delta<std::string, Quote>({{"b"s, tsb_delta<Quote>(4, std::nullopt)}}),
+            dict_delta<Str, Quote>({{"a"s, tsb_delta<Quote>(1, 10)}, {"b"s, tsb_delta<Quote>(2, 20)}}),
+            dict_delta<Str, Quote>({{"a"s, tsb_delta<Quote>(std::nullopt, 30)}}, {"b"s}),
+            dict_delta<Str, Quote>({{"b"s, tsb_delta<Quote>(4, std::nullopt)}}),
         };
 
         GraphBuilder gb = build_graph<QuoteDictDeltaGraph>();
@@ -445,80 +445,80 @@ TEST_CASE("collections: TSL and TSD replay and record recurse through TSB childr
         ex.view().run();
 
         CHECK_OUTPUT(testing::get_recorded_deltas(ex.view().graph().global_state(), "out"),
-                     {dict_delta<std::string, Quote>({{"a"s, tsb_delta<Quote>(1, 10)}, {"b"s, tsb_delta<Quote>(2, 20)}}),
-                      dict_delta<std::string, Quote>({{"a"s, tsb_delta<Quote>(std::nullopt, 30)}}, {"b"s}),
-                      dict_delta<std::string, Quote>({{"b"s, tsb_delta<Quote>(4, std::nullopt)}})});
+                     {dict_delta<Str, Quote>({{"a"s, tsb_delta<Quote>(1, 10)}, {"b"s, tsb_delta<Quote>(2, 20)}}),
+                      dict_delta<Str, Quote>({{"a"s, tsb_delta<Quote>(std::nullopt, 30)}}, {"b"s}),
+                      dict_delta<Str, Quote>({{"b"s, tsb_delta<Quote>(4, std::nullopt)}})});
     }
 }
 
 TEST_CASE("collections: SIGNAL typed output ticks and typed input observes the tick")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
     (void)TypeRegistry::instance().register_scalar<bool>("bool");
 
     GraphBuilder gb = build_graph<SignalGraph>();
-    testing::set_replay_values<std::int32_t>(gb.global_state(), "in", {1, 2, 3});
+    testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
     GraphExecutorBuilder eb;
     eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
-    CHECK_OUTPUT(testing::get_recorded_values<std::int32_t>(ex.view().graph().global_state(), "out"), {1, 2, 3});
+    CHECK_OUTPUT(testing::get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {1, 2, 3});
 }
 
 TEST_CASE("collections: SIGNAL input binds directly to a scalar TS output")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     GraphBuilder gb = build_graph<SignalFromTsGraph>();
-    testing::set_replay_values<std::int32_t>(gb.global_state(), "in", {1, none, 3});
+    testing::set_replay_values<Int>(gb.global_state(), "in", {1, none, 3});
 
     GraphExecutorBuilder eb;
     eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
-    CHECK_OUTPUT(testing::get_recorded_values<std::int32_t>(ex.view().graph().global_state(), "out"), {1, none, 2});
+    CHECK_OUTPUT(testing::get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {1, none, 2});
 }
 
 TEST_CASE("collections: SIGNAL input binds directly to collection and window outputs")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
     (void)TypeRegistry::instance().register_scalar<std::string>("string");
 
     {
         GraphBuilder gb = build_graph<SignalFromDictGraph>();
-        testing::set_replay_values<std::int32_t>(gb.global_state(), "in", {1, 2, 3});
+        testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
         GraphExecutorBuilder eb;
         eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
         GraphExecutorValue ex = eb.make_executor();
         ex.view().run();
 
-        CHECK_OUTPUT(testing::get_recorded_values<std::int32_t>(ex.view().graph().global_state(), "out"), {1, 2, 3});
+        CHECK_OUTPUT(testing::get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {1, 2, 3});
     }
 
     {
         GraphBuilder gb = build_graph<SignalFromWindowGraph>();
-        testing::set_replay_values<std::int32_t>(gb.global_state(), "in", {1, 2, 3});
+        testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
         GraphExecutorBuilder eb;
         eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
         GraphExecutorValue ex = eb.make_executor();
         ex.view().run();
 
-        CHECK_OUTPUT(testing::get_recorded_values<std::int32_t>(ex.view().graph().global_state(), "out"), {1, 2, 3});
+        CHECK_OUTPUT(testing::get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {1, 2, 3});
     }
 }
 
 TEST_CASE("collections: SIGNAL input bound to TS captures a bool tick delta")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
     (void)TypeRegistry::instance().register_scalar<bool>("bool");
 
     GraphBuilder gb = build_graph<SignalDeltaFromTsGraph>();
-    testing::set_replay_values<std::int32_t>(gb.global_state(), "in", {1, none, 3});
+    testing::set_replay_values<Int>(gb.global_state(), "in", {1, none, 3});
 
     GraphExecutorBuilder eb;
     eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});

@@ -43,7 +43,7 @@ Your first node
    {
        static constexpr auto name = "add";
 
-       static void eval(In<"lhs", TS<std::int32_t>> lhs, In<"rhs", TS<std::int32_t>> rhs, Out<TS<std::int32_t>> out)
+       static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out)
        {
            out.set(lhs.value() + rhs.value());
        }
@@ -97,7 +97,7 @@ its output last.
 
    // 'Out' is identified by its type so it may sit anywhere, but by convention it
    // goes last. The input order (lhs, rhs) is the argument schema.
-   static void eval(In<"lhs", TS<std::int32_t>> lhs, In<"rhs", TS<std::int32_t>> rhs, Out<TS<std::int32_t>> out);
+   static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out);
 
 ``start`` and ``stop`` are **not** the argument schema. Each lists only the
 parameters it needs — matched **by name** (the ``In<>`` name, or the selector for
@@ -143,7 +143,7 @@ a time-series:
    {
        static constexpr auto name = "gate_on_change";
 
-       static void eval(In<"in", TS<std::int32_t>> in, Out<TS<std::int32_t>> out)
+       static void eval(In<"in", TS<Int>> in, Out<TS<Int>> out)
        {
            if (in.modified()) { out.set(in.value()); }
        }
@@ -169,7 +169,7 @@ ticks the output at the current evaluation time. A node has **at most one**
 
    struct Increment
    {
-       static void eval(In<"in", TS<std::int32_t>> in, Out<TS<std::int32_t>> out) { out.set(in.value() + 1); }
+       static void eval(In<"in", TS<Int>> in, Out<TS<Int>> out) { out.set(in.value() + 1); }
    };
 
 .. code-block:: python
@@ -196,9 +196,9 @@ that persists across evaluations. Use ``start`` to initialise it.
    {
        static constexpr auto name = "counter";
 
-       static void start(State<std::int32_t> state) { state.set(0); }
+       static void start(State<Int> state) { state.set(0); }
 
-       static void eval(State<std::int32_t> state, Out<TS<std::int32_t>> out)
+       static void eval(State<Int> state, Out<TS<Int>> out)
        {
            const int next = state.get() + 1;
            state.set(next);
@@ -263,7 +263,7 @@ A sink node (side effect, no output):
    struct Print
    {
        static constexpr auto name = "print";
-       static void eval(In<"in", TS<std::int32_t>> in) { std::printf("%d\n", in.value()); }
+       static void eval(In<"in", TS<Int>> in) { std::printf("%d\n", in.value()); }
    };
 
 .. code-block:: python
@@ -287,10 +287,10 @@ output tick by ``apply_message``:
        static constexpr auto name = "from_queue";
 
        // Required for a push source: receive the Sender used to enqueue messages.
-       static void start(Sender<std::int32_t> sender) { /* register sender with a producer */ }
+       static void start(Sender<Int> sender) { /* register sender with a producer */ }
 
        // Convert each scalar message into an output tick.
-       static bool apply_message(Scalar<"message", std::int32_t> message, Out<TS<std::int32_t>> out)
+       static bool apply_message(Scalar<"message", Int> message, Out<TS<Int>> out)
        {
            out.set(message.value());
            return true;
@@ -303,7 +303,7 @@ output tick by ``apply_message``:
    def from_queue(sender: Callable[[int], None]):
        ...  # register `sender`; call sender(value) from another thread to inject ticks
 
-The message is a named ``Scalar<"message", std::int32_t>``, not a bare ``int`` — like
+The message is a named ``Scalar<"message", Int>``, not a bare ``int`` — like
 ``In``, a ``Scalar`` carries a name and type, which makes explicit that a push
 source consumes *scalar messages* to produce a *time-series* response. (A
 lightweight implicit ``int`` → ``Scalar`` conversion may be offered as a
@@ -322,13 +322,13 @@ teardown.
 
    struct WithLifecycle
    {
-       static void start(State<std::int32_t> s) { s.set(0); }
-       static void eval(In<"in", TS<std::int32_t>> in, State<std::int32_t> s, Out<TS<std::int32_t>> out)
+       static void start(State<Int> s) { s.set(0); }
+       static void eval(In<"in", TS<Int>> in, State<Int> s, Out<TS<Int>> out)
        {
            s.set(s.get() + in.value());
            out.set(s.get());
        }
-       static void stop(State<std::int32_t> s) { /* flush / release */ (void) s; }
+       static void stop(State<Int> s) { /* flush / release */ (void) s; }
    };
 
 .. code-block:: python
@@ -401,10 +401,10 @@ of bundles keyed by string:
 .. code-block:: cpp
 
    using PriceTick = TSB<"PriceTick",
-                         Field<"bid", TS<double>>,
-                         Field<"ask", TS<double>>>;
+                         Field<"bid", TS<Float>>,
+                         Field<"ask", TS<Float>>>;
 
-   using QuoteFeed = TSD<std::string, PriceTick>;
+   using QuoteFeed = TSD<Str, PriceTick>;
 
 .. code-block:: python
 
@@ -425,11 +425,11 @@ related inputs as one parameter, or returns several outputs.
 
 .. code-block:: cpp
 
-   using Quote = TSB<"Quote", Field<"bid", TS<double>>, Field<"ask", TS<double>>>;
+   using Quote = TSB<"Quote", Field<"bid", TS<Float>>, Field<"ask", TS<Float>>>;
 
    struct MidPrice
    {
-       static void eval(In<"q", Quote> q, Out<TS<double>> out)
+       static void eval(In<"q", Quote> q, Out<TS<Float>> out)
        {
            out.set((q.field<"bid">().value() + q.field<"ask">().value()) / 2.0);
        }
@@ -437,7 +437,7 @@ related inputs as one parameter, or returns several outputs.
 
    struct MakeQuote
    {
-       static void eval(In<"px", TS<double>> px, Out<Quote> out)
+       static void eval(In<"px", TS<Float>> px, Out<Quote> out)
        {
            out.field<"bid">().set(px.value());
            out.field<"ask">().set(px.value() + 0.01);
@@ -478,9 +478,9 @@ type-erased ``Value`` (``In<…>::delta()`` is the inherited ``delta_value()``).
 
    struct AddedCount
    {
-       static void eval(In<"s", TSS<std::int32_t>> s, Out<TS<std::int32_t>> out)
+       static void eval(In<"s", TSS<Int>> s, Out<TS<Int>> out)
        {
-           out.set(static_cast<std::int32_t>(s.added().size()));   // s also has removed()/values()/contains()
+           out.set(static_cast<Int>(s.added().size()));   // s also has removed()/values()/contains()
        }
    };
 
@@ -496,18 +496,18 @@ compose recursively:
    // TSL of scalars: sum the children
    struct SumList
    {
-       static void eval(In<"l", TSL<TS<std::int32_t>, 3>> l, Out<TS<std::int32_t>> out)
+       static void eval(In<"l", TSL<TS<Int>, 3>> l, Out<TS<Int>> out)
        {
-           int total = 0;
+           Int total = 0;
            for (std::size_t i = 0; i < l.size(); ++i) total += l[i].value();
            out.set(total);
        }
    };
 
-   // TSL of sets: forward each child's added elements (out[i] is an Out<TSS<std::int32_t>>)
+   // TSL of sets: forward each child's added elements (out[i] is an Out<TSS<Int>>)
    struct FanIn
    {
-       static void eval(In<"l", TSL<TSS<std::int32_t>, 2>> l, Out<TSL<TSS<std::int32_t>, 2>> out)
+       static void eval(In<"l", TSL<TSS<Int>, 2>> l, Out<TSL<TSS<Int>, 2>> out)
        {
            for (auto &&[i, child] : l.modified_items())
                for (int e : l[i].added()) out[i].add(e);
@@ -520,7 +520,7 @@ A ``TSL`` delta is the canonical ``Map<int, delta(C)>`` ``Value`` (recursive in
 The selector composition above is recursive over **any** child today, and the TSData
 runtime supports fixed ``TSL`` children across the implemented non-``REF`` kinds:
 ``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed and dynamic ``TSL``, ``TSB``, and ``TSW``. A
-``TSL<TSS<std::int32_t>, N>`` such as ``FanIn`` owns each child set's slot storage inside the
+``TSL<TSS<Int>, N>`` such as ``FanIn`` owns each child set's slot storage inside the
 fixed list and projects the parent value from those child views. Dynamic ``TSL``
 storage is grow-only: output indexing can allocate new children, but shorter-list
 value copies are rejected until the ``TSL`` delta schema can represent removals.
@@ -540,9 +540,9 @@ conveniences.
    // TSD of scalar TS values
    struct SumValues
    {
-       static void eval(In<"d", TSD<std::string, TS<std::int32_t>>> d, Out<TS<std::int32_t>> out)
+       static void eval(In<"d", TSD<Str, TS<Int>>> d, Out<TS<Int>> out)
        {
-           int total = 0;
+           Int total = 0;
            for (auto &&[key, v] : d.valid_items()) total += v.value();
            out.set(total);
        }
@@ -550,8 +550,8 @@ conveniences.
 
    struct SetValue
    {
-       static void eval(In<"key", TS<std::string>> key, In<"value", TS<std::int32_t>> value,
-                        Out<TSD<std::string, TS<std::int32_t>>> out)
+       static void eval(In<"key", TS<Str>> key, In<"value", TS<Int>> value,
+                        Out<TSD<Str, TS<Int>>> out)
        {
            out[key.value()].set(value.value());
        }
@@ -572,7 +572,7 @@ element pushed in the current cycle.
 
    struct PushWindow
    {
-       static void eval(In<"x", TS<std::int32_t>> x, Out<TSW<std::int32_t, 3, 1>> out)
+       static void eval(In<"x", TS<Int>> x, Out<TSW<Int, 3, 1>> out)
        {
            out.push(x.value());
        }
@@ -580,9 +580,9 @@ element pushed in the current cycle.
 
    struct WindowSum
    {
-       static void eval(In<"w", TSW<std::int32_t, 3, 1>> w, Out<TS<std::int32_t>> out)
+       static void eval(In<"w", TSW<Int, 3, 1>> w, Out<TS<Int>> out)
        {
-           int total = 0;
+           Int total = 0;
            for (std::size_t i = 0; i < w.size(); ++i) total += w[i];
            out.set(total);
        }
@@ -607,7 +607,7 @@ copying data. Mirrors Python ``REF[...]``.
 
    struct CountTicks
    {
-       static void eval(In<"trigger", SIGNAL> trigger, State<std::int32_t> n, Out<TS<std::int32_t>> out)
+       static void eval(In<"trigger", SIGNAL> trigger, State<Int> n, Out<TS<Int>> out)
        {
            if (trigger.ticked())
            {
@@ -666,10 +666,10 @@ node that declares it can read and write the store during evaluation:
 
    struct EmitSeed
    {
-       static void eval(GlobalStateView gs, Out<TS<std::int32_t>> out)
+       static void eval(GlobalStateView gs, Out<TS<Int>> out)
        {
-           out.set(gs.get_as<std::int32_t>("seed"));   // read a value seeded at wiring time
-           gs.set("emitted", Value{std::int32_t{1}});       // ...and write back into the store
+           out.set(gs.get_as<Int>("seed"));   // read a value seeded at wiring time
+           gs.set("emitted", Value{Int{1}});       // ...and write back into the store
        }
    };
 
@@ -718,7 +718,7 @@ time (the data-driven, multi-cycle counterpart to a one-shot constant source).
    struct Ticker
    {
        static constexpr bool schedule_on_start = true;   // first tick at start
-       static void eval(NodeScheduler sched, State<std::int32_t> n, Out<TS<std::int32_t>> out)
+       static void eval(NodeScheduler sched, State<Int> n, Out<TS<Int>> out)
        {
            out.set(n.get());
            n.set(n.get() + 1);
@@ -785,7 +785,7 @@ Scalar values and arguments
 ---------------------------
 
 **Available as ``eval`` arguments.** Not every value in HGraph is a time-series.
-A *scalar* is a plain value (an ``int``, ``double``, string, …).
+A *scalar* is a plain value (an ``Int``, ``Float``, ``Str``, …).
 ``Scalar<"name", T>`` is the scalar analog of ``In`` — like ``In`` it carries a
 **name and type** (read it with ``.value()``) — and it is a first-class node
 parameter alongside ``In`` / ``Out`` / ``State``. Scalars are **read-only**
@@ -802,7 +802,7 @@ planned.
 
    struct Scale
    {
-       static void eval(In<"in", TS<double>> in, Scalar<"factor", double> factor, Out<TS<double>> out)
+       static void eval(In<"in", TS<Float>> in, Scalar<"factor", Float> factor, Out<TS<Float>> out)
        {
            out.set(in.value() * factor.value());
        }
@@ -842,13 +842,13 @@ names the recordable — the C++ counterpart of Python's optional
 .. code-block:: cpp
 
    // Planned — provisional syntax
-   using LastSeen = TSB<"LastSeen", Field<"last", TS<std::int32_t>>>;
+   using LastSeen = TSB<"LastSeen", Field<"last", TS<Int>>>;
 
    struct PreviousValue
    {
-       static void eval(In<"in", TS<std::int32_t>> in,
+       static void eval(In<"in", TS<Int>> in,
                         RecordableState<LastSeen, Id<"previous_value">> state,   // Id<> optional
-                        Out<TS<std::int32_t>> out)
+                        Out<TS<Int>> out)
        {
            auto last = state.last();
            out.set(last.valid() ? last.value() : -1);
@@ -880,8 +880,8 @@ the Python form lists them on the decorator:
    {
        // 'signal' drives evaluation; 'value' is read but does not by itself trigger.
        static void eval(In<"signal", SIGNAL> signal,
-                        In<"value", TS<std::int32_t>, InputActivity::Passive> value,
-                        Out<TS<std::int32_t>> out)
+                        In<"value", TS<Int>, InputActivity::Passive> value,
+                        Out<TS<Int>> out)
        {
            (void) signal;
            if (value.valid()) { out.set(value.value()); }
@@ -969,8 +969,8 @@ the value must match ``SomeTS``'s current-value schema:
            out.apply(value.value());   // erased copy of the configured value
        }
    };
-   // wire<stdlib::const_>(w, 42);             // defaults to TS<std::int32_t>
-   // wire<stdlib::const_, TSS<std::int32_t>>(w, stdlib::make_set<std::int32_t>({1, 2}));
+   // wire<stdlib::const_>(w, 42);             // defaults to TS<Int>
+   // wire<stdlib::const_, TSS<Int>>(w, stdlib::make_set<Int>({1, 2}));
 
 .. code-block:: python
 
@@ -1019,7 +1019,7 @@ node's input). The graph runs under a ``GraphExecutor`` in simulation mode.
    using namespace hgraph;
 
    GraphBuilder builder;
-   builder.add_node(NodeBuilder{}.label("src").implementation<ConstantSource>())   // -> TS<std::int32_t>
+   builder.add_node(NodeBuilder{}.label("src").implementation<ConstantSource>())   // -> TS<Int>
           .add_node(NodeBuilder{}.label("inc").implementation<Increment>())
           .add_edge(GraphEdge{.source_node = 0, .source_path = {},
                               .target_node = 1, .target_path = {0}});   // src -> inc."in"
@@ -1147,19 +1147,19 @@ C++ ↔ Python cheat sheet
      - Python
    * - ``struct N { static void eval(...){} };``
      - ``@compute_node`` / ``@generator`` / ``@sink_node`` function
-   * - ``In<"x", TS<std::int32_t>> x`` → ``x.value()``
+   * - ``In<"x", TS<Int>> x`` → ``x.value()``
      - ``x: TS[int]`` → ``x.value``
    * - ``x.modified()`` / ``x.valid()``
      - ``x.modified`` / ``x.valid``
-   * - ``Out<TS<std::int32_t>> out`` → ``out.set(v)``
+   * - ``Out<TS<Int>> out`` → ``out.set(v)``
      - ``-> TS[int]`` → ``return v``
-   * - ``State<std::int32_t> s`` → ``s.get()`` / ``s.set(v)``
+   * - ``State<Int> s`` → ``s.get()`` / ``s.set(v)``
      - ``_state: STATE[...]`` → ``_state.field``
    * - ``EvaluationClock`` *(planned)*
      - ``_clock: EvaluationClock``
    * - ``NodeScheduler sched`` → ``sched.schedule(...)``
      - ``_scheduler: SCHEDULER``
-   * - ``Scalar<"f", double>``
+   * - ``Scalar<"f", Float>``
      - plain arg ``f: float``
    * - ``TsVar<"T">`` / ``ScalarVar<"T">`` (resolved at wiring)
      - ``TIME_SERIES_TYPE`` / ``SCALAR``

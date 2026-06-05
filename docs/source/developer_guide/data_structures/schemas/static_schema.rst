@@ -11,11 +11,11 @@ same shapes as **types** at compile time:
 .. code-block:: cpp
 
    using PriceTick = TSB<"PriceTick",
-                         Field<"bid",   TS<double>>,
-                         Field<"ask",   TS<double>>,
-                         Field<"size",  TS<std::int32_t>>>;
+                         Field<"bid",   TS<Float>>,
+                         Field<"ask",   TS<Float>>,
+                         Field<"size",  TS<Int>>>;
 
-   using QuoteFeed = TSD<std::string, PriceTick>;
+   using QuoteFeed = TSD<Str, PriceTick>;
 
 The compiler carries the shape; a small set of *descriptor* traits
 turn that compile-time type into the matching runtime metadata
@@ -73,7 +73,7 @@ runtime — they exist purely to drive the descriptor traits.
     Time-series set of ``T``.
 
 ``TSD<K, V>``
-    Time-series dict. ``K`` is a scalar (``int``, ``std::string``,
+    Time-series dict. ``K`` is a scalar (``Int``, ``Str``,
     …); ``V`` is itself a static-schema time-series type.
 
 ``TSL<T, N = 0>``
@@ -150,8 +150,8 @@ Example (rendered as the doc lands alongside an actual implementation):
 .. code-block:: cpp
 
    using PriceTick = TSB<"PriceTick",
-                         Field<"bid",  TS<double>>,
-                         Field<"ask",  TS<double>>>;
+                         Field<"bid",  TS<Float>>,
+                         Field<"ask",  TS<Float>>>;
 
    const TSValueTypeMetaData *meta =
        schema_descriptor<PriceTick>::ts_meta();
@@ -207,9 +207,9 @@ node ``eval`` can take a typed handle as a parameter:
    {
        static constexpr auto name = "sum";
 
-       static void eval(In<"lhs", TS<std::int32_t>> lhs,
-                        In<"rhs", TS<std::int32_t>> rhs,
-                        Out<TS<std::int32_t>>      out)
+       static void eval(In<"lhs", TS<Int>> lhs,
+                        In<"rhs", TS<Int>> rhs,
+                        Out<TS<Int>>      out)
        {
            out.set(lhs.value() + rhs.value());
        }
@@ -263,15 +263,15 @@ view, child access falls straight out of the inherited ``at(i)`` and composes to
 
 .. code-block:: cpp
 
-   // TSL of sets:  out[i] is an Out<TSS<std::int32_t>>, in[i] is an In<"", TSS<std::int32_t>>
-   static void eval(In<"l", TSL<TSS<std::int32_t>, 2>> l, Out<TSL<TSS<std::int32_t>, 2>> out)
+   // TSL of sets:  out[i] is an Out<TSS<Int>>, in[i] is an In<"", TSS<Int>>
+   static void eval(In<"l", TSL<TSS<Int>, 2>> l, Out<TSL<TSS<Int>, 2>> out)
    {
        for (auto &&[idx, child] : l.modified_items())  // inherited from TSLInputView
-           out[idx].add(*l[idx].added().begin());      // out[idx] : Out<TSS<std::int32_t>>
+           out[idx].add(*l[idx].added().begin());      // out[idx] : Out<TSS<Int>>
    }
 
    // TSL of TSL of TS:  in[i][j].value()  (recursion bottoms out at a scalar)
-   In<"g", TSL<TSL<TS<std::int32_t>, 2>, 3>> g;  g[0][1].value();
+   In<"g", TSL<TSL<TS<Int>, 2>, 3>> g;  g[0][1].value();
 
 ``In<Name, TSL<C,N>>::operator[](i)`` returns ``In<"", C>`` (a name-agnostic
 child facade — ``fixed_string`` admits ``""``); ``Out<TSL<C,N>>::operator[](i)``
@@ -301,9 +301,9 @@ builder functions produce the canonical ``Value`` (see *Allocation, Plans and Op
 
 .. code-block:: cpp
 
-   set_delta<std::int32_t>({1, 2}, {})                       // -> Bundle{added:{1,2}, removed:{}}
-   list_delta<TSS<std::int32_t>>({{0, set_delta<std::int32_t>({1},{})}})  // -> Map<int, Bundle>
-   dict_delta<std::string, TS<std::int32_t>>({{"a", 1}}, {"b"})   // -> Bundle{removed, modified}
+   set_delta<Int>({1, 2}, {})                       // -> Bundle{added:{1,2}, removed:{}}
+   list_delta<TSS<Int>>({{0, set_delta<Int>({1},{})}})  // -> Map<int, Bundle>
+   dict_delta<Str, TS<Int>>({{"a", 1}}, {"b"})   // -> Bundle{removed, modified}
    tsb_delta<PriceTick>(101.0, std::nullopt, 5)     // ask is typed-null
 
 Comparison and display go through the value-layer ops (``Value::equals`` —

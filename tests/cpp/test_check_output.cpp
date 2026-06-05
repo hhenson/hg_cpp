@@ -23,28 +23,28 @@ namespace
     struct AddOne
     {
         static constexpr auto name = "add_one";
-        static void           eval(In<"in", TS<std::int32_t>> in, Out<TS<std::int32_t>> out) { out.set(in.value() + 1); }
+        static void           eval(In<"in", TS<Int>> in, Out<TS<Int>> out) { out.set(in.value() + 1); }
     };
 }  // namespace
 
 TEST_CASE("CHECK_OUTPUT passes when an eval_node result matches the expected sequence")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
     CHECK_OUTPUT(testing::eval_node<AddOne>({1, none, 3}), {2, none, 4});
 }
 
 TEST_CASE("CHECK_OUTPUT also compares against an existing vector")
 {
-    const std::vector<std::optional<std::int32_t>> actual{1, std::nullopt, 2};
+    const std::vector<std::optional<Int>> actual{1, std::nullopt, 2};
     CHECK_OUTPUT(actual, {1, none, 2});
     REQUIRE_OUTPUT(actual, {1, none, 2});
 }
 
 TEST_CASE("output delta message pinpoints a value difference")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");  // display renders via the value layer
-    const std::vector<std::optional<std::int32_t>> actual{1, 2, std::nullopt, 3};
-    const std::vector<std::optional<std::int32_t>> expected{1, 5, std::nullopt, 3};
+    (void)TypeRegistry::instance().register_scalar<Int>("int");  // display renders via the value layer
+    const std::vector<std::optional<Int>> actual{1, 2, std::nullopt, 3};
+    const std::vector<std::optional<Int>> expected{1, 5, std::nullopt, 3};
 
     const std::string msg = testing::detail::output_delta_message(actual, expected);
     CHECK(msg.find("[1, 2, none, 3]") != std::string::npos);    // actual rendered with none
@@ -56,9 +56,9 @@ TEST_CASE("output delta message pinpoints a value difference")
 
 TEST_CASE("output delta message reports a size difference")
 {
-    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");  // display renders via the value layer
-    const std::vector<std::optional<std::int32_t>> actual{1, 2};
-    const std::vector<std::optional<std::int32_t>> expected{1, 2, 3};
+    (void)TypeRegistry::instance().register_scalar<Int>("int");  // display renders via the value layer
+    const std::vector<std::optional<Int>> actual{1, 2};
+    const std::vector<std::optional<Int>> expected{1, 2, 3};
 
     const std::string msg = testing::detail::output_delta_message(actual, expected);
     CHECK(msg.find("sizes differ") != std::string::npos);
