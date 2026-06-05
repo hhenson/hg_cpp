@@ -5,6 +5,7 @@
 
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/record_replay.h>
+#include <hgraph/lib/std/value_util.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -105,6 +106,120 @@ namespace
         static void eval(In<"in", TS<Int>> in, Out<TS<Int>> out) { out.set(in.value()); }
     };
 
+    struct sink_ : Operator<"sink", In<"ts", TsVar<"S">>>
+    {
+    };
+    struct sink_any
+    {
+        static void eval(In<"ts", TsVar<"S">> ts) { static_cast<void>(ts); }
+    };
+
+    struct double_ : Operator<"double", In<"in", TS<Int>>, Out<TS<Int>>>
+    {
+    };
+    struct double_graph
+    {
+        static constexpr auto name = "double_graph";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in)
+        {
+            return wire<add_ints>(w, in, in);
+        }
+    };
+
+    struct choose_ : Operator<"choose", In<"lhs", TS<Int>>, In<"rhs", TS<Int>>,
+                                      Scalar<"side", Str>, Out<TS<Int>>>
+    {
+    };
+    struct choose_lhs
+    {
+        static constexpr auto name = "choose_lhs";
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const Str *side = context.scalar_as<Str>("side");
+            return side != nullptr && *side == "lhs";
+        }
+        static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs,
+                         Scalar<"side", Str> side, Out<TS<Int>> out)
+        {
+            static_cast<void>(rhs);
+            static_cast<void>(side);
+            out.set(lhs.value());
+        }
+    };
+    struct choose_rhs
+    {
+        static constexpr auto name = "choose_rhs";
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            const Str *side = context.scalar_as<Str>("side");
+            return side != nullptr && *side == "rhs";
+        }
+        static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs,
+                         Scalar<"side", Str> side, Out<TS<Int>> out)
+        {
+            static_cast<void>(lhs);
+            static_cast<void>(side);
+            out.set(rhs.value());
+        }
+    };
+
+    struct rank_ : Operator<"rank", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
+    {
+    };
+    struct rank_aligned
+    {
+        static constexpr auto name = "rank_aligned";
+        static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
+                         Out<TS<ScalarVar<"T">>> out)
+        {
+            static_cast<void>(rhs);
+            out.apply(lhs.base().value());
+        }
+    };
+    struct rank_independent
+    {
+        static constexpr auto name = "rank_independent";
+        static void eval(In<"lhs", TS<ScalarVar<"A">>> lhs, In<"rhs", TS<ScalarVar<"B">>> rhs,
+                         Out<TS<ScalarVar<"A">>> out)
+        {
+            static_cast<void>(rhs);
+            out.apply(lhs.base().value());
+        }
+    };
+
+    struct constrained_ : Operator<"constrained", In<"in", TsVar<"S">>, Out<TsVar<"S">>>
+    {
+    };
+    struct constrained_int
+    {
+        static void eval(In<"in", TS<ScalarVar<"T", Int>>> in,
+                         Out<TS<ScalarVar<"T", Int>>> out)
+        {
+            out.apply(in.base().value());
+        }
+    };
+
+    struct echo_ : Operator<"echo", In<"in", TsVar<"S">>, Out<TsVar<"S">>>
+    {
+    };
+    struct echo_generic
+    {
+        static void eval(In<"in", TsVar<"S">> in, Out<TsVar<"S">> out)
+        {
+            const Value delta = capture_delta(in.base());
+            apply_delta(out, delta.view());
+        }
+    };
+
+    struct zero_ : Operator<"zero", Out<TsVar<"S">>>
+    {
+    };
+    struct zero_int
+    {
+        static constexpr bool schedule_on_start = true;
+        static void eval(Out<TS<Int>> out) { out.set(Int{0}); }
+    };
+
     [[nodiscard]] inline WiringArg ts_arg(const TSValueTypeMetaData *schema)
     {
         WiringArg arg;
@@ -136,6 +251,70 @@ namespace
             auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
             auto r = wire<scale_>(w, a, std::int32_t{3});
             wire<testing::record>(w, r, Str{"out"});
+        }
+    };
+
+    struct AddScalarGraph
+    {
+        static constexpr auto name = "add_scalar_graph";
+        static void           compose(Wiring &w)
+        {
+            auto a   = wire<testing::replay, TS<Int>>(w, Str{"a"});
+            auto sum = wire<add_>(w, a, Int{3});
+            wire<testing::record>(w, sum, Str{"out"});
+        }
+    };
+
+    struct SinkGraph
+    {
+        static constexpr auto name = "sink_graph";
+        static void           compose(Wiring &w)
+        {
+            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
+            wire<sink_>(w, a);
+        }
+    };
+
+    struct DoubleGraph
+    {
+        static constexpr auto name = "double_graph_test";
+        static void           compose(Wiring &w)
+        {
+            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
+            auto r = wire<double_>(w, a);
+            wire<testing::record>(w, r, Str{"out"});
+        }
+    };
+
+    struct ChooseGraph
+    {
+        static constexpr auto name = "choose_graph";
+        static void           compose(Wiring &w)
+        {
+            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
+            auto b = wire<testing::replay, TS<Int>>(w, Str{"b"});
+            auto r = wire<choose_>(w, a, b, Str{"rhs"});
+            wire<testing::record>(w, r, Str{"out"});
+        }
+    };
+
+    struct ZeroGraph
+    {
+        static constexpr auto name = "zero_graph";
+        static void           compose(Wiring &w)
+        {
+            auto z = wire<zero_, TS<Int>>(w);
+            wire<testing::record>(w, z, Str{"out"});
+        }
+    };
+
+    struct EchoSetGraph
+    {
+        static constexpr auto name = "echo_set_graph";
+        static void           compose(Wiring &w)
+        {
+            auto out = wire<echo_, TSS<Int>>(w, stdlib::make_set<Int>({Int{1}, Int{2}}));
+            wire<testing::record>(w, out, Str{"out"});
         }
     };
 
@@ -276,4 +455,113 @@ TEST_CASE("operators: a repeated type-variable name forces the operands to be al
         REQUIRE_THROWS_AS(OperatorRegistry::instance().resolve("add", std::span<const WiringArg>{args}),
                           OperatorResolutionError);
     }
+}
+
+TEST_CASE("operators: scalar values auto-wire as const inputs for TS parameters")
+{
+    register_overload<add_, add_ints>();
+
+    auto ex = run_graph<AddScalarGraph>(
+        [](const GlobalStateView &gs) { set_replay_values<Int>(gs, "a", {1, 2, 3}); });
+    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {4, 5, 6});
+}
+
+TEST_CASE("operators: sink operators return void and do not expose a null output port")
+{
+    register_overload<sink_, sink_any>();
+
+    auto ex = run_graph<SinkGraph>(
+        [](const GlobalStateView &gs) { set_replay_values<Int>(gs, "a", {1, 2, 3}); });
+    static_cast<void>(ex);
+}
+
+TEST_CASE("operators: graph implementations can be registered as overloads")
+{
+    register_graph_overload<double_, double_graph>();
+
+    auto ex = run_graph<DoubleGraph>(
+        [](const GlobalStateView &gs) { set_replay_values<Int>(gs, "a", {1, 2, 3}); });
+    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {2, 4, 6});
+}
+
+TEST_CASE("operators: requires_ can inspect named scalar arguments")
+{
+    register_overload<choose_, choose_lhs>();
+    register_overload<choose_, choose_rhs>();
+
+    auto ex = run_graph<ChooseGraph>([](const GlobalStateView &gs) {
+        set_replay_values<Int>(gs, "a", {1, 2, 3});
+        set_replay_values<Int>(gs, "b", {10, 20, 30});
+    });
+    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {10, 20, 30});
+}
+
+TEST_CASE("operators: repeated generic variables rank ahead of independent variables")
+{
+    register_overload<rank_, rank_independent>();
+    register_overload<rank_, rank_aligned>();
+
+    std::array<WiringArg, 2> args{ts_arg(ts_type<TS<Int>>()), ts_arg(ts_type<TS<Int>>())};
+    auto [impl, map] = OperatorRegistry::instance().resolve("rank", std::span<const WiringArg>{args});
+    REQUIRE(impl != nullptr);
+    CHECK(impl->label.find("rank_aligned") != std::string::npos);
+}
+
+TEST_CASE("operators: scalar variable constraints reject unsupported scalar types")
+{
+    register_overload<constrained_, constrained_int>();
+
+    std::array<WiringArg, 1> int_args{ts_arg(ts_type<TS<Int>>())};
+    auto [impl, map] = OperatorRegistry::instance().resolve("constrained", std::span<const WiringArg>{int_args});
+    CHECK(impl != nullptr);
+    CHECK(map.find_scalar("T") == scalar_type<Int>());
+
+    std::array<WiringArg, 1> float_args{ts_arg(ts_type<TS<Float>>())};
+    REQUIRE_THROWS_AS(OperatorRegistry::instance().resolve("constrained", std::span<const WiringArg>{float_args}),
+                      OperatorResolutionError);
+
+    ResolutionMap late_constraint;
+    REQUIRE(ts_pattern_match(to_pattern<TS<ScalarVar<"T">>>(), ts_type<TS<Float>>(), late_constraint));
+    CHECK_FALSE(ts_pattern_match(to_pattern<TS<ScalarVar<"T", Int>>>(), ts_type<TS<Float>>(), late_constraint));
+}
+
+TEST_CASE("operators: TypePattern matches generic TSW and TSB structures")
+{
+    {
+        const TypePattern pattern = to_pattern<TSW<ScalarVar<"T">, 3, 1>>();
+        ResolutionMap map;
+        REQUIRE(ts_pattern_match(pattern, ts_type<TSW<Int, 3, 1>>(), map));
+        CHECK(map.find_scalar("T") == scalar_type<Int>());
+        ResolutionMap other;
+        CHECK_FALSE(ts_pattern_match(pattern, ts_type<TSW<Int, 4, 1>>(), other));
+    }
+
+    {
+        using GenericBundle = UnNamedTSB<Field<"x", TS<ScalarVar<"T">>>,
+                                         Field<"w", TSW<ScalarVar<"T">, 3, 1>>>;
+        using ConcreteBundle = UnNamedTSB<Field<"x", TS<Int>>, Field<"w", TSW<Int, 3, 1>>>;
+        const TypePattern pattern = to_pattern<GenericBundle>();
+        ResolutionMap map;
+        REQUIRE(ts_pattern_match(pattern, ts_type<ConcreteBundle>(), map));
+        CHECK(map.find_scalar("T") == scalar_type<Int>());
+    }
+}
+
+TEST_CASE("operators: explicit output schemas participate in operator resolution")
+{
+    register_overload<zero_, zero_int>();
+
+    auto ex = run_graph<ZeroGraph>([](const GlobalStateView &) {});
+    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {0});
+}
+
+TEST_CASE("operators: explicit collection output schema drives scalar auto-const matching")
+{
+    register_overload<echo_, echo_generic>();
+
+    auto ex = run_graph<EchoSetGraph>([](const GlobalStateView &) {});
+    const auto out = get_recorded_deltas(ex.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 1);
+    REQUIRE(out[0].has_value());
+    CHECK(out[0]->equals(set_delta<Int>({1, 2}, {})));
 }

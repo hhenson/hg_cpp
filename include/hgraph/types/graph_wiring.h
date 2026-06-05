@@ -13,6 +13,7 @@
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <stdexcept>
 #include <span>
 #include <string>
 #include <tuple>
@@ -160,6 +161,13 @@ namespace hgraph
         const TSValueTypeMetaData *schema_{nullptr};
     };
 
+    /** Result of type-erased operator wiring before the public ``wire<>`` return is shaped by the operator marker. */
+    struct OperatorWireResult
+    {
+        bool       has_output{false};
+        Port<void> output{};
+    };
+
     /** Base of every ``Operator<>`` marker; ``wire<>`` routes a type deriving it to operator dispatch. */
     struct operator_tag
     {
@@ -170,8 +178,8 @@ namespace hgraph
         // The operator arm of ``wire<>`` — defined in ``operator_dispatch.h`` (a
         // translation unit that wires operators must include it). Forward-declared
         // here so the ``wire<>`` body parses; only instantiated for an ``Operator``.
-        template <typename X, typename... Args>
-        Port<void> wire_operator(Wiring &w, const Args &...args);
+        template <typename X, typename OutSchema, typename... Args>
+        OperatorWireResult wire_operator_result(Wiring &w, const Args &...args);
     }  // namespace operator_dispatch_detail
 
     template <typename G>
@@ -394,10 +402,38 @@ namespace hgraph
         else if constexpr (std::is_base_of_v<operator_tag, X>)
         {
             // operator: erase the arguments and dispatch to the registry, which picks
-            // the most specific registered overload and builds it (see *Operators*).
-            static_assert(std::is_void_v<OutSchema>,
-                          "wire<Operator>: an explicit output schema is not used for operator dispatch");
-            return operator_dispatch_detail::wire_operator<X>(w, args...);
+            // the most specific registered overload and wires it (see *Operators*).
+            OperatorWireResult result = operator_dispatch_detail::wire_operator_result<X, OutSchema>(w, args...);
+            if constexpr (X::has_output)
+            {
+                if (!result.has_output)
+                {
+                    throw std::logic_error("wire<Operator>: selected overload has no output");
+                }
+                if constexpr (!std::is_void_v<OutSchema>)
+                {
+                    const auto *expected = ts_type<OutSchema>();
+                    if (!graph_wiring_detail::input_accepts_output_schema(expected, result.output.erased().schema))
+                    {
+                        throw std::logic_error("wire<Operator, OutSchema>: selected overload output schema does not match");
+                    }
+                    return Port<OutSchema>{result.output.node(), result.output.path()};
+                }
+                else
+                {
+                    return result.output;
+                }
+            }
+            else
+            {
+                static_assert(std::is_void_v<OutSchema>,
+                              "wire<Operator, OutSchema>: an explicit output schema requires an output operator");
+                if (result.has_output)
+                {
+                    throw std::logic_error("wire<Operator>: selected overload unexpectedly produced an output");
+                }
+                return;
+            }
         }
         else
         {

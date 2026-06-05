@@ -24,16 +24,20 @@ chosen implementation is baked into the graph.
    (``include/hgraph/types/operator_dispatch.h`` + ``.cpp``), with the reset-listener
    hook — proven by ``tests/cpp/test_operators.cpp`` (specific-beats-generic, generic
    fallback, no-match and ambiguity errors). The ``TypePattern`` AST and its
-   ``match`` / ``rank`` / ``resolve`` already cover every kind (``TS`` / ``TSS`` /
-   ``TSL`` / ``TSD`` / ``REF`` / ``Signal`` and the scalar variants); the remaining
-   slices wire more of it into dispatch. Phases 2–3 are **also implemented**:
-   scalar-argument matching, a ``static bool requires_(const ResolutionMap &)``
-   veto, and a ``lib/std`` operator family (``add_`` / ``sub_`` / ``div_`` / ``eq_``
+   ``match`` / ``rank`` / ``resolve`` cover every static schema kind used by the C++
+   wiring path (``TS`` / ``TSS`` / ``TSL`` / ``TSD`` / ``TSW`` / ``TSB`` / ``REF`` /
+   ``Signal`` and scalar variants), including constrained ``TsVar`` /
+   ``ScalarVar`` leaves. Phases 2–3 are **also implemented**:
+   scalar-argument matching, scalar-to-time-series auto-const promotion,
+   scalar-aware ``requires_`` / ``resolve_default_types`` hooks, graph overloads,
+   sink operators, explicit output schema resolution, and a ``lib/std`` operator family
+   (``add_`` / ``sub_`` / ``div_`` / ``eq_``
    in ``include/hgraph/lib/std/std_operators.h``) — covering homogeneous, mixed,
    heterogeneous-temporal, result-differs and optional-scalar (``div_``'s
    ``DivideByZero`` policy) overloads — proven by
-   ``tests/cpp/test_std_operators.cpp`` and the scalar / ``requires`` / nested-``TSL``
-   / alignment cases in ``tests/cpp/test_operators.cpp``. Still to come (see *Roadmap*): Phase 4 —
+   ``tests/cpp/test_std_operators.cpp`` and the scalar / auto-const / ``requires`` /
+   nested-collection / sink / graph-overload / alignment cases in
+   ``tests/cpp/test_operators.cpp``. Still to come (see *Roadmap*): Phase 4 —
    the Python implementation path (behind ``HGRAPH_ENABLE_PYTHON_USER_NODES``). (The
    operator path's scalar-configuration
    bundle is assembled by the same ``BundleBuilder`` + ``scalar_schema(map)``
@@ -47,23 +51,23 @@ One runtime model, not a second resolver
 
 The guardrail for this subsystem (*CLAUDE.md* §3) is **one runtime model, no
 parallel abstraction**. The operator registry is therefore an **index over
-candidates plus a ranking loop** — it adds selection, *not* a second way to
-resolve and build a generic node:
+candidates plus a ranking loop** — it adds selection, *not* a second type
+resolver or graph-building model:
 
 - a candidate **resolves** into the **same** ``ResolutionMap``
   (``include/hgraph/types/type_resolution.h``) the generic ``wire<>`` path uses;
-- a candidate **builds** through the **same**
-  ``NodeBuilder::implementation<Impl>(map)`` call (*Wiring*,
-  ``include/hgraph/types/static_node.h``);
-- the resolved node is interned through the **same** ``Wiring::add_node`` (so a
-  resolved operator dedups and ranks identically to any other node).
+- a static-node candidate **builds** through the **same**
+  ``NodeBuilder::implementation<Impl>(map)`` call and ``Wiring::add_node``
+  interning path (*Wiring*, ``include/hgraph/types/static_node.h``);
+- a graph candidate calls its ``compose`` function directly, so it flattens into
+  the same graph wiring structure as an ordinary graph.
 
 A single-implementation generic node (``const_``, ``replay``, a passthrough) is
 **not** an operator and stays on the ordinary ``wire<>`` path; an operator is the
 case where *more than one* implementation competes for one name. Conceptually a
 non-overloaded node is just an operator with exactly one candidate and no ranking
-step — the two share the resolve/build machinery and differ only in whether the
-ranking loop runs.
+step — the two share the same resolution and wiring primitives and differ only in
+whether the ranking loop runs.
 
 What the operator subsystem genuinely adds: a name → candidates **index**, a
 **matcher/ranker** that can compare a candidate's (possibly generic) declared
@@ -82,7 +86,7 @@ operator matching/ranking is a **runtime** computation over interned metadata
 pointers.
 
 That single decision is what makes Python drop-in (Phase 4): because matching,
-ranking and building are expressed over **runtime data** behind a type-erased
+ranking and wiring are expressed over **runtime data** behind a type-erased
 candidate, a Python-defined implementation registers as just another candidate —
 the dispatcher cannot tell it from a C++ one. The C++ compile-time reflection
 only *feeds* the runtime representation; it is not on the resolution path.
@@ -99,12 +103,13 @@ C++ and Python candidates:
 
 .. code-block:: text
 
-   TypePattern   = Var(name)                        # a TsVar / TIME_SERIES_TYPE variable
+   TypePattern   = Var(name, constraints...)        # a TsVar / TIME_SERIES_TYPE variable
                  | Concrete(const TSValueTypeMetaData*)   # a fully-interned TS leaf
                  | TS(ScalarPattern)  | TSS(ScalarPattern)
                  | TSL(TypePattern, N) | TSD(ScalarPattern key, TypePattern value)
-                 | REF(TypePattern)   | Signal
-   ScalarPattern = ScalarVar(name) | ScalarConcrete(const ValueTypeMetaData*)
+                 | TSW(ScalarPattern, period, min_period)
+                 | TSB(fields...) | REF(TypePattern) | Signal
+   ScalarPattern = ScalarVar(name, constraints...) | ScalarConcrete(const ValueTypeMetaData*)
 
 Three runtime functions are the source of truth:
 
@@ -112,7 +117,8 @@ Three runtime functions are the source of truth:
   walks the pattern against a concrete schema. A ``Var`` / ``ScalarVar`` leaf
   **binds** into the map (reusing ``ResolutionMap::bind_ts`` / ``bind_scalar``,
   which already reject an inconsistent re-bind — so a shared variable such as
-  ``add(TS<S>, TS<S>)`` is enforced for free). A ``Concrete`` leaf is **verified**
+  ``add(TS<S>, TS<S>)`` is enforced for free). Constrained variables only bind
+  schemas accepted by their constraint set. A ``Concrete`` leaf is **verified**
   (``time_series_schema_equivalent`` / pointer identity), which is exactly the
   check the compile-time ``ts_unifier`` deliberately omits (it trusts the
   static path). Composite kinds check ``concrete->kind`` then recurse, short-
@@ -122,7 +128,7 @@ Three runtime functions are the source of truth:
 - ``const TSValueTypeMetaData* resolve(pattern, const ResolutionMap&)`` —
   substitutes bound variables to produce the concrete meta. Used to compute (and
   verify the resolvability of) a candidate's output schema, and by the Phase-4
-  Python build.
+  Python wiring path.
 
 C++ candidates obtain their patterns by **lowering** their selector schema types
 at compile time: ``to_pattern<S>()`` / ``to_scalar_pattern<T>()`` mirror the
@@ -132,7 +138,7 @@ candidates build the same ``TypePattern`` directly from their type metadata. One
 pattern representation, one matcher — no drift.
 
 Note the division of labour: the ``TypePattern`` interpreter is the *matcher*
-across candidates. Building the chosen C++ candidate still goes through
+across candidates. Building the chosen static-node C++ candidate still goes through
 ``NodeBuilder::implementation<Impl>(map)``, whose internal ``ts_resolver`` is the
 *builder's* compile-time schema substitution for that one known ``Impl`` — it is
 not a second matcher.
@@ -158,6 +164,13 @@ bundle. This mirrors the ordinary ``wire<>`` scalar path: standard numeric
 arguments can be supplied as narrower explicit C++ types and are coerced into the
 implementation's declared scalar type.
 
+When a candidate expects a time-series input and the call supplies a scalar value,
+the matcher tries the Python-style auto-const rule: the scalar value must match the
+candidate's current-value schema (with the same standard numeric coercions), and
+the selected candidate wires an internal one-shot const source to supply that input.
+For example ``wire<add_>(w, price, Int{3})`` selects the same ``TS<Int>`` overload as
+``wire<add_>(w, price, const_3)``.
+
 
 ``OperatorImpl`` — a type-erased candidate
 ------------------------------------------
@@ -168,30 +181,42 @@ from a C++ template (this is the load-bearing Python seam):
 .. code-block:: cpp
 
    struct OperatorImpl {
-       std::string                params_label;   // signature text, for error messages
+       std::string                name;
+       std::string                label;          // signature text, for error messages
        std::vector<TypePattern>   params;          // one per In / Scalar position
+       bool                       has_output;
+       TypePattern                output;
        int                        rank;            // precomputed from params
-       std::function<bool(std::span<const WiringArg>, ResolutionMap&, std::string& why)> try_resolve;
-       std::function<NodeBuilder(const ResolutionMap&, std::span<const WiringArg>)>       build;
-       enum class Source { Cpp, Python } source;
+       std::function<void(ResolutionMap&, OperatorCallContext)>             default_resolver;
+       std::function<bool(const ResolutionMap&, OperatorCallContext)>       requires_predicate;
+       std::function<OperatorWireResult(Wiring&, const ResolutionMap&,
+                                        std::span<const WiringArg>)>        wire;
+       enum class Source { Cpp, Python };
+       Source                     source;
    };
 
-- ``make_operator_impl<Impl>()`` is **one** factory: it lowers
-  ``StaticNodeSignature<Impl>``'s selectors into ``params`` via ``to_pattern``,
-  precomputes ``rank``, and wraps a ``build`` closure that assembles the scalar
-  bundle (the shared ``assemble_scalars<Impl>`` helper, factored out of
-  ``wire<>``) and delegates to ``NodeBuilder::implementation<Impl>(map)``.
-- ``try_resolve`` runs ``match`` for each parameter, then runs
-  ``Impl::resolve_default_types(map)`` if present (the same hook the generic
-  ``wire<>`` path uses), then checks the **output** pattern resolves. A still-
+- ``make_operator_impl<Impl>()`` lowers a static-node implementation's
+  ``StaticNodeSignature<Impl>`` selectors into ``params`` via ``to_pattern``,
+  precomputes ``rank``, and wraps a ``wire`` closure that assembles the scalar
+  bundle, materialises any scalar-to-TS auto-const inputs, and delegates to
+  ``NodeBuilder::implementation<Impl>(map)`` + ``Wiring::add_node``.
+- ``make_operator_graph_impl<Impl>()`` lowers a sub-graph implementation's
+  ``StaticGraphSignature<Impl>`` ``Port`` / ``Scalar`` compose parameters into the
+  same ``params`` representation and wraps a ``wire`` closure that calls
+  ``Impl::compose`` directly. Register these with ``register_graph_overload``.
+- The registry's match step runs ``match`` for each parameter, then runs
+  ``Impl::resolve_default_types(map)`` or
+  ``Impl::resolve_default_types(map, OperatorCallContext)`` if present (the same
+  hook the generic ``wire<>`` path uses, with an optional scalar-aware context),
+  then checks the **output** pattern resolves. A still-
   unbound output variable is a **non-match** (reject with a reason), never an
   exception — an operator overload whose output is a free variable with no
   resolver can never produce a typed port and is ill-formed.
+  ``requires_`` has the same map-only and context-aware forms.
 - A **Python** candidate (Phase 4) fills the *same* struct: ``params`` built
-  directly as ``TypePattern``s over shared interned metas, and a ``build`` that
-  produces a ``NodeBuilder`` whose ``NodeCallbacks::evaluate`` (already a
-  type-erased ``std::function`` — ``include/hgraph/runtime/node.h``) calls the
-  retained Python callable. The registry and dispatcher are unchanged.
+  directly as ``TypePattern``s over shared interned metas, and a ``wire`` closure
+  that can create a Python-backed runtime node. The registry and dispatcher are
+  unchanged.
 
 
 ``OperatorRegistry`` and resolution
@@ -204,10 +229,13 @@ A process-wide singleton maps an operator name to its candidates:
    class OperatorRegistry {
      public:
        static OperatorRegistry &instance();                    // plain static; single-threaded, no locks
-       void register_overload(std::string name, OperatorImpl);
+       void register_overload(OperatorImpl);
        // Pick the unique best candidate and the ResolutionMap it produced.
        std::pair<const OperatorImpl*, ResolutionMap>
-            resolve(std::string_view name, std::span<const WiringArg> args) const;
+            resolve(std::string_view name,
+                    std::span<const WiringArg> args,
+                    std::optional<bool> output_required = std::nullopt,
+                    const TSValueTypeMetaData *expected_output = nullptr) const;
        void reset();                                           // test isolation
    };
 
@@ -216,8 +244,9 @@ A process-wide singleton maps an operator name to its candidates:
 (``ext/2603/hgraph/_wiring/_wiring_node_class/_operator_wiring_node.py``):
 
 1. **Filter by arity** — drop candidates whose parameter count does not match.
-2. **Try-resolve each** — run the candidate's ``try_resolve``; survivors carry
-   their precomputed ``rank`` and the ``ResolutionMap`` they produced. Rejected
+2. **Try-match each** — match every parameter, apply any default resolver,
+   requested output schema, and ``requires_`` predicate. Survivors carry their
+   precomputed ``rank`` and the ``ResolutionMap`` they produced. Rejected
    candidates keep a human-readable reason.
 3. **Rank** — sort survivors ascending by ``rank``.
 4. **Select** — the unique lowest-rank survivor wins. **No survivor** → an error
@@ -247,10 +276,12 @@ without its floating-point constants:
    rank(TSS(p))               = 1 + rank(p)
    rank(TSL(p, N))            = 1 + rank(p)
    rank(TSD(k, v))            = 1 + rank(k) + rank(v)
+   rank(TSW(p, period, min))   = 1 + rank(p)
+   rank(TSB(fields...))        = 1 + Σ rank(field)
    rank(REF(s))               = rank(s)
    rank(Var)                  = LARGE                   # a bare top-level variable is least specific
 
-   candidate rank = Σ over its In / Scalar parameter ranks
+   candidate rank = structural rank + per-variable min(rank)
 
 This yields ``TS<Int>`` < ``TS<ScalarVar>`` < a bare ``TsVar``, recursively
 (``TSL<TS<Int>,N>`` < ``TSL<TS<ScalarVar>,N>`` < ``TSL<Var,N>``) — the
@@ -259,10 +290,11 @@ This yields ``TS<Int>`` < ``TS<ScalarVar>`` < a bare ``TsVar``, recursively
 (it has no ``eval``), so unlike ``ext/2603`` there is no need for a sentinel
 "never win" rank.
 
-*Deferred:* ``ext/2603``'s per-variable ``min`` combine, which de-duplicates the
-genericness of a variable shared across multiple inputs. The integer sum induces
-the same order for non-shared-variable signatures; the combine is a later
-refinement if a real overload set needs it.
+The candidate rank intentionally de-duplicates repeated generic variables by name
+using their minimum contribution. That mirrors ``ext/2603``'s shared-variable
+ranking rule: ``TS<T>, TS<T>`` ranks ahead of ``TS<A>, TS<B>`` for two equal
+operands, because a repeated variable is a real alignment constraint rather than
+two independent generic choices.
 
 
 Defining and registering an operator
@@ -345,15 +377,21 @@ third arm:
 
    wire<X>:  X has compose  ->  inline sub-graph (flatten)                  (existing)
              X has eval     ->  add node (concrete or generic resolution)   (existing)
-             else (Operator) ->  erase args -> registry.resolve -> winner.build -> add_node
+             else (Operator) ->  erase args -> registry.resolve -> winner.wire
 
 The operator arm erases the call's arguments to ``std::vector<WiringArg>``, calls
-``OperatorRegistry::resolve(name, args)``, builds the winner via its ``build``
-closure, and lowers to ``w.add_node(typeid(winner-impl), …)`` so the resolved
-node inherits the ordinary interning and ranking. It returns the **erased**
-``Port<void>`` carrying the resolved output schema (the winner's output type is
-only known at wiring time); downstream ``wire<>`` accepts an erased port exactly
-as it does today for generic-node outputs.
+``OperatorRegistry::resolve(name, args, output_required, expected_output)``, then
+invokes the winner's type-erased ``wire`` closure. A static-node overload lowers
+through ``Wiring::add_node`` so it inherits ordinary interning and ranking; a graph
+overload calls ``compose`` directly and contributes whatever nodes that graph wires.
+Scalar arguments supplied for time-series inputs are materialised as internal const
+sources before the selected implementation is wired.
+
+The public return is shaped by the operator marker. An output operator returns an
+erased ``Port<void>`` by default, or a typed ``Port<OutSchema>`` when the caller
+supplies an explicit output schema such as ``wire<zero_, TS<Int>>(w)``. A sink
+operator, whose marker has no ``Out<>`` selector, returns ``void`` and rejects an
+explicit output schema.
 
 
 Test isolation
@@ -376,16 +414,17 @@ ad-hoc operators); a test that needs the ``lib/std`` family calls
 The Python implementation path (Phase 4)
 ----------------------------------------
 
-Python overloads are drop-in because the candidate is type-erased and built from
+Python overloads are drop-in because the candidate is type-erased and wired from
 runtime data. A Python overload supplies the **same** ``OperatorImpl``:
 
 - **patterns** — built directly as ``TypePattern``s over schemas interned in the
   shared ``TypeRegistry``;
-- **rank** — computed by the same ``rank(TypePattern)`` (identical to C++);
-- **build** — produces a ``NodeBuilder`` whose ``NodeCallbacks::evaluate``
-  (a type-erased ``std::function``) acquires the GIL, marshals the ``NodeView``
-  inputs to Python, calls the retained callable, and writes the result back
-  through the ``TSOutputView`` — behind ``HGRAPH_ENABLE_PYTHON_USER_NODES``.
+- **rank** — computed by the same operator ranking helper as C++ candidates;
+- **wire** — returns an ``OperatorWireResult``. A Python static-node candidate can
+  produce a ``NodeBuilder`` whose ``NodeCallbacks::evaluate`` (a type-erased
+  ``std::function``) acquires the GIL, marshals the ``NodeView`` inputs to Python,
+  calls the retained callable, and writes the result back through the
+  ``TSOutputView`` — behind ``HGRAPH_ENABLE_PYTHON_USER_NODES``.
 
 **Cross-boundary type identity is the precondition.** Matching is pointer
 equality of interned metadata, so a Python ``TS[int]`` and a C++ ``TS<Int>`` must
@@ -409,11 +448,12 @@ Roadmap
    ``WiringArg`` / ``OperatorImpl`` / ``OperatorRegistry`` / ``register_overload``;
    the ``wire<>`` operator arm; the reset-listener hook. Proven by ``add_``
    (``TS<Int>`` specific beats the generic; the generic wins for ``TS<Str>``) plus
-   no-match and ambiguity errors. Time-series arguments only; scalar arguments are
-   accepted by the API but their *matching* lands in Phase 2.
-2. **Phase 2 — scalars, predicates — done.** ``WiringArg`` scalar matching wired
-   into dispatch; an optional per-candidate ``static bool requires_(const
-   ResolutionMap &)`` veto that rejects a candidate after its types resolve.
+   no-match and ambiguity errors.
+2. **Phase 2 — scalars, predicates, and shape support — done.** ``WiringArg``
+   scalar matching, scalar-to-time-series auto-const promotion, map-only and
+   context-aware ``requires_`` / ``resolve_default_types`` hooks, explicit output
+   schema filtering, sink return shaping, graph overload registration, constrained
+   variables, repeated-variable ranking, and ``TSW`` / ``TSB`` pattern support.
 3. **Phase 3 — ``lib/std`` operator family — done.** ``add_`` / ``sub_`` / ``div_``
    / ``eq_`` in ``include/hgraph/lib/std/std_operators.h``, with homogeneous,
    mixed-numeric (``int + float -> float``), heterogeneous-temporal

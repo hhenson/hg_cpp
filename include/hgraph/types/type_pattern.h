@@ -40,14 +40,16 @@ namespace hgraph
         Kind                     kind{Kind::Concrete};
         std::string              name{};            ///< ``Var``: the variable name.
         const ValueTypeMetaData *meta{nullptr};     ///< ``Concrete``: the interned scalar.
+        std::vector<const ValueTypeMetaData *> constraints{};  ///< ``Var``: accepted concrete scalar schemas.
 
-        [[nodiscard]] static ScalarPattern var(std::string name)
+        [[nodiscard]] static ScalarPattern var(std::string name,
+                                               std::vector<const ValueTypeMetaData *> constraints = {})
         {
-            return ScalarPattern{Kind::Var, std::move(name), nullptr};
+            return ScalarPattern{Kind::Var, std::move(name), nullptr, std::move(constraints)};
         }
         [[nodiscard]] static ScalarPattern concrete(const ValueTypeMetaData *meta)
         {
-            return ScalarPattern{Kind::Concrete, {}, meta};
+            return ScalarPattern{Kind::Concrete, {}, meta, {}};
         }
     };
 
@@ -62,6 +64,8 @@ namespace hgraph
             TSS,        ///< ``TSS<scalar>``   (element held in ``scalar``)
             TSL,        ///< ``TSL<elem, N>``  (element held in ``children[0]``, size in ``fixed_size``)
             TSD,        ///< ``TSD<key, val>`` (key in ``scalar``, value in ``children[0]``)
+            TSW,        ///< ``TSW<scalar,P,M>`` (element held in ``scalar``, sizes in ``fixed_size`` / ``min_size``)
+            TSB,        ///< ``TSB`` / ``UnNamedTSB`` (fields in ``field_names`` + ``children``)
             REF,        ///< ``REF<target>``   (target in ``children[0]``)
             Signal      ///< ``SIGNAL``
         };
@@ -69,15 +73,22 @@ namespace hgraph
         Kind                       kind{Kind::Signal};
         std::string                name{};          ///< ``Var``: the variable name.
         const TSValueTypeMetaData *meta{nullptr};    ///< ``Concrete``: the interned TS schema.
+        std::vector<const TSValueTypeMetaData *> constraints{};  ///< ``Var``: accepted concrete TS schemas.
         ScalarPattern              scalar{};         ///< ``TS`` / ``TSS`` payload, ``TSD`` key.
         std::vector<TypePattern>   children{};       ///< ``TSL`` elem / ``TSD`` value / ``REF`` target.
-        std::size_t                fixed_size{0};    ///< ``TSL`` fixed size (0 = dynamic / unconstrained).
+        std::vector<std::string>   field_names{};    ///< ``TSB`` fields, parallel to ``children``.
+        std::string                bundle_name{};    ///< named ``TSB`` bundle name.
+        std::size_t                fixed_size{0};    ///< ``TSL`` fixed size / ``TSW`` period (0 = dynamic / unconstrained).
+        std::size_t                min_size{0};      ///< ``TSW`` min period.
+        bool                       named_bundle{false}; ///< true for nominal ``TSB<Name,...>``.
 
-        [[nodiscard]] static TypePattern var(std::string name)
+        [[nodiscard]] static TypePattern var(std::string name,
+                                             std::vector<const TSValueTypeMetaData *> constraints = {})
         {
             TypePattern p;
-            p.kind = Kind::Var;
-            p.name = std::move(name);
+            p.kind        = Kind::Var;
+            p.name        = std::move(name);
+            p.constraints = std::move(constraints);
             return p;
         }
         [[nodiscard]] static TypePattern concrete(const TSValueTypeMetaData *meta)
@@ -109,12 +120,34 @@ namespace hgraph
             p.children.push_back(std::move(element));
             return p;
         }
+        [[nodiscard]] static TypePattern tsw(ScalarPattern element, std::size_t period, std::size_t min_period)
+        {
+            TypePattern p;
+            p.kind       = Kind::TSW;
+            p.scalar     = std::move(element);
+            p.fixed_size = period;
+            p.min_size   = min_period;
+            return p;
+        }
         [[nodiscard]] static TypePattern tsd(ScalarPattern key, TypePattern value)
         {
             TypePattern p;
             p.kind   = Kind::TSD;
             p.scalar = std::move(key);
             p.children.push_back(std::move(value));
+            return p;
+        }
+        [[nodiscard]] static TypePattern tsb(std::vector<std::string> field_names,
+                                             std::vector<TypePattern> children,
+                                             std::string bundle_name = {},
+                                             bool named_bundle = false)
+        {
+            TypePattern p;
+            p.kind         = Kind::TSB;
+            p.field_names  = std::move(field_names);
+            p.children     = std::move(children);
+            p.bundle_name  = std::move(bundle_name);
+            p.named_bundle = named_bundle;
             return p;
         }
         [[nodiscard]] static TypePattern ref(TypePattern target)
@@ -180,6 +213,51 @@ namespace hgraph
     struct scalar_pattern_lower;  // specialised for ScalarVar below
 
     template <typename S>
+    [[nodiscard]] inline TypePattern to_pattern();
+
+    template <typename T>
+    [[nodiscard]] inline ScalarPattern to_scalar_pattern();
+
+    namespace type_pattern_detail
+    {
+        template <typename... C>
+        [[nodiscard]] inline std::vector<const TSValueTypeMetaData *> ts_constraints()
+        {
+            std::vector<const TSValueTypeMetaData *> out;
+            out.reserve(sizeof...(C));
+            (out.push_back(schema_descriptor<C>::ts_meta()), ...);
+            return out;
+        }
+
+        template <typename... C>
+        [[nodiscard]] inline std::vector<const ValueTypeMetaData *> scalar_constraints()
+        {
+            std::vector<const ValueTypeMetaData *> out;
+            out.reserve(sizeof...(C));
+            (out.push_back(scalar_descriptor<C>::value_meta()), ...);
+            return out;
+        }
+
+        template <typename... Fields>
+        [[nodiscard]] inline std::vector<std::string> tsb_field_names()
+        {
+            std::vector<std::string> names;
+            names.reserve(sizeof...(Fields));
+            (names.emplace_back(ts_field_descriptor<Fields>::field_name()), ...);
+            return names;
+        }
+
+        template <typename... Fields>
+        [[nodiscard]] inline std::vector<TypePattern> tsb_field_patterns()
+        {
+            std::vector<TypePattern> patterns;
+            patterns.reserve(sizeof...(Fields));
+            (patterns.push_back(to_pattern<typename ts_field_descriptor<Fields>::schema>()), ...);
+            return patterns;
+        }
+    }  // namespace type_pattern_detail
+
+    template <typename S>
     [[nodiscard]] inline TypePattern to_pattern()
     {
         if constexpr (schema_descriptor<S>::is_concrete()) { return TypePattern::concrete(schema_descriptor<S>::ts_meta()); }
@@ -196,7 +274,10 @@ namespace hgraph
     template <fixed_string Name, typename... C>
     struct ts_pattern_lower<TsVar<Name, C...>>
     {
-        [[nodiscard]] static TypePattern lower() { return TypePattern::var(std::string{Name.sv()}); }
+        [[nodiscard]] static TypePattern lower()
+        {
+            return TypePattern::var(std::string{Name.sv()}, type_pattern_detail::ts_constraints<C...>());
+        }
     };
 
     template <typename V>
@@ -217,6 +298,15 @@ namespace hgraph
         [[nodiscard]] static TypePattern lower() { return TypePattern::tsl(to_pattern<C>(), N); }
     };
 
+    template <typename V, std::size_t Period, std::size_t MinPeriod>
+    struct ts_pattern_lower<TSW<V, Period, MinPeriod>>
+    {
+        [[nodiscard]] static TypePattern lower()
+        {
+            return TypePattern::tsw(to_scalar_pattern<V>(), Period, MinPeriod);
+        }
+    };
+
     template <typename K, typename V>
     struct ts_pattern_lower<TSD<K, V>>
     {
@@ -229,10 +319,34 @@ namespace hgraph
         [[nodiscard]] static TypePattern lower() { return TypePattern::ref(to_pattern<S>()); }
     };
 
+    template <typename... Fields>
+    struct ts_pattern_lower<UnNamedTSB<Fields...>>
+    {
+        [[nodiscard]] static TypePattern lower()
+        {
+            return TypePattern::tsb(type_pattern_detail::tsb_field_names<Fields...>(),
+                                    type_pattern_detail::tsb_field_patterns<Fields...>());
+        }
+    };
+
+    template <fixed_string Name, typename... Fields>
+    struct ts_pattern_lower<TSB<Name, Fields...>>
+    {
+        [[nodiscard]] static TypePattern lower()
+        {
+            return TypePattern::tsb(type_pattern_detail::tsb_field_names<Fields...>(),
+                                    type_pattern_detail::tsb_field_patterns<Fields...>(),
+                                    std::string{Name.sv()}, true);
+        }
+    };
+
     template <fixed_string Name, typename... C>
     struct scalar_pattern_lower<ScalarVar<Name, C...>>
     {
-        [[nodiscard]] static ScalarPattern lower() { return ScalarPattern::var(std::string{Name.sv()}); }
+        [[nodiscard]] static ScalarPattern lower()
+        {
+            return ScalarPattern::var(std::string{Name.sv()}, type_pattern_detail::scalar_constraints<C...>());
+        }
     };
 }  // namespace hgraph
 
