@@ -155,6 +155,21 @@ namespace hgraph::detail
             return to_ref_shape_matcher_for(requested_schema->kind)(source_schema, requested_schema);
         }
 
+        using AlternativeRouteMatchesFn = bool (*)(const TSValueTypeMetaData *, const TSValueTypeMetaData &);
+
+        [[nodiscard]] bool alternative_route_matches_to_ref(const TSValueTypeMetaData *source_schema,
+                                                            const TSValueTypeMetaData &requested_schema)
+        {
+            return is_to_ref_shape(source_schema, &requested_schema);
+        }
+
+        [[nodiscard]] bool alternative_route_matches_from_ref(const TSValueTypeMetaData *source_schema,
+                                                              const TSValueTypeMetaData &requested_schema) noexcept
+        {
+            return source_schema != nullptr && source_schema->kind == TSTypeKind::REF &&
+                   requested_schema.kind != TSTypeKind::REF;
+        }
+
         [[nodiscard]] TSOutputView source_child_view(const TSOutputView &parent, const TSDataView &child)
         {
             return TSOutputView{parent.output(), child.borrowed_ref(), parent.evaluation_time()};
@@ -767,6 +782,22 @@ namespace hgraph::detail
     TSOutputHandle TSOutputAlternativeStore::binding_for(const TSOutputView &source,
                                                          const TSValueTypeMetaData &requested_schema)
     {
+        struct AlternativeRoute
+        {
+            using BindFn = TSOutputHandle (TSOutputAlternativeStore::*)(
+                const AlternativeKey &,
+                const TSOutputView &,
+                const TSValueTypeMetaData &);
+
+            AlternativeRouteMatchesFn matches{nullptr};
+            BindFn                    bind{nullptr};
+        };
+
+        static constexpr std::array<AlternativeRoute, 2> routes{{
+            {&alternative_route_matches_to_ref, &TSOutputAlternativeStore::to_ref_binding},
+            {&alternative_route_matches_from_ref, &TSOutputAlternativeStore::from_ref_binding},
+        }};
+
         const auto *source_schema = source.schema();
         if (source_schema == nullptr)
         {
@@ -774,14 +805,12 @@ namespace hgraph::detail
         }
 
         const auto key = key_for(source, requested_schema);
-        if (is_to_ref_shape(source_schema, &requested_schema))
+        for (const auto &route : routes)
         {
-            return to_ref_binding(key, source, requested_schema);
-        }
-
-        if (source_schema->kind == TSTypeKind::REF && requested_schema.kind != TSTypeKind::REF)
-        {
-            return from_ref_binding(key, source, requested_schema);
+            if (route.matches(source_schema, requested_schema))
+            {
+                return (this->*route.bind)(key, source, requested_schema);
+            }
         }
 
         throw std::logic_error("TSOutput structural reference alternatives are not implemented yet");
