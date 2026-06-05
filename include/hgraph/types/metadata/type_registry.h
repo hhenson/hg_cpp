@@ -193,7 +193,11 @@ namespace hgraph
         [[nodiscard]] static bool contains_ref(const TSValueTypeMetaData *meta);
 
         /**
-         * Drop every interned schema, alias, and auxiliary storage block.
+         * Drop every interned schema, alias, and auxiliary storage block, then
+         * re-seed the standard scalar / ``TS`` / ``TSS`` vocabulary so the registry
+         * is left in the same default-seeded state as on first construction (the
+         * standard types — ``int`` / ``float`` / ``str`` / ``bool`` / ``date`` /
+         * ``datetime`` / ``timedelta`` / … — are always registered).
          *
          * Test-only helper used to isolate test cases from each other —
          * pointers previously handed out by *any* registry method become

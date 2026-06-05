@@ -264,6 +264,13 @@ namespace hgraph
         // Reset singletons that don't fit any of the keyed caches.
         signal_meta_.reset();
         time_series_reference_meta_ = nullptr;
+
+        // Restore the standard scalar / TS / TSS vocabulary so the registry is always left
+        // in its default-seeded state — the documented "automatically seeded" contract, and
+        // the same seed applied on first construction (see ``instance()``).
+        // ``register_standard_types`` is idempotent; like the construction seed, an
+        // allocation failure here is unrecoverable.
+        (void)stdlib::register_standard_types(*this);
     }
 
     const char *TypeRegistry::store_name(std::string_view name)

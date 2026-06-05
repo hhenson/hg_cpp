@@ -187,6 +187,25 @@ TEST_CASE("stdlib::register_standard_types is idempotent")
     CHECK(TypeRegistry::instance().time_series_type("TSS[int64]") == first.tss_int);
 }
 
+TEST_CASE("TypeRegistry::reset leaves the standard types registered by default")
+{
+    using namespace hgraph;
+
+    // reset() restores the default-seeded vocabulary, so the standard scalar types are
+    // always available without any explicit registration (the same as on construction).
+    TypeRegistry::instance().reset();
+
+    const TypeRegistry &registry = TypeRegistry::instance();
+    for (const char *name : {"bool", "int", "int64", "float", "float64", "str", "string", "date", "datetime",
+                             "timedelta"})
+    {
+        CHECK(registry.value_type(name) != nullptr);
+    }
+    // The standard TS / TSS aliases come back too.
+    CHECK(registry.time_series_type("TS[int]") != nullptr);
+    CHECK(registry.time_series_type("TS[timedelta]") != nullptr);
+}
+
 TEST_CASE("date-time aliases and constants match the 2603 runtime definitions")
 {
     using namespace hgraph;

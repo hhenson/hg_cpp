@@ -5,6 +5,7 @@
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
+#include <hgraph/util/date_time.h>
 
 namespace hgraph::stdlib
 {
@@ -23,11 +24,13 @@ namespace hgraph::stdlib
      *    C++ value layer does not model yet.
      */
 
-    /** ``const_`` — a source that emits a configured ``value`` once at the start cycle. The
-        output type is the registered ``TS`` of the value's type, or an explicit output schema
-        at the wiring site (``wire<const_, TSS<Int>>(w, set_value)``). (Python ``const`` also
-        takes an optional ``delay`` — not yet modelled.) */
-    struct const_ : Operator<"const", Scalar<"value", ScalarVar<"T">>, Out<TsVar<"S">>>
+    /** ``const_`` — a source that emits a configured ``value`` once at the start cycle, or
+        ``delay`` after it. The output type is the registered ``TS`` of the value's type, or an
+        explicit output schema at the wiring site (``wire<const_, TSS<Int>>(w, set_value)``).
+        Two arities: ``const(value)`` (tick at start) and ``const(value, delay)`` (tick at
+        ``start_time + delay``). */
+    struct const_
+        : Operator<"const", Scalar<"value", ScalarVar<"T">>, Scalar<"delay", engine_time_delta_t>, Out<TsVar<"S">>>
     {
     };
 

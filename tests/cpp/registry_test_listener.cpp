@@ -1,5 +1,7 @@
 // Catch2 event listener that resets every process-wide registry/factory
-// before each test case, then seeds the standard scalar/TS vocabulary.
+// before each test case. ``TypeRegistry::reset()`` re-seeds the standard
+// scalar/TS vocabulary itself, so each case starts with the default types
+// (int / float / str / bool / date / datetime / timedelta / …) registered.
 // Tests that mutate the registries (intern atomic scalars, register named
 // bundles, etc.) would otherwise leak state into later cases — most visibly
 // through the named-bundle / named-tsb uniqueness checks, which see prior
@@ -43,12 +45,7 @@ namespace
         hgraph::clear_compact_container_plans();
         hgraph::TSDataBinding::clear();
         hgraph::ValueTypeBinding::clear();
-        hgraph::TypeRegistry::instance().reset();
-    }
-
-    void seed_standard_registries()
-    {
-        (void)hgraph::stdlib::register_standard_types();
+        hgraph::TypeRegistry::instance().reset();   // re-seeds the standard scalar/TS vocabulary
     }
 
     class RegistryResetListener final : public Catch::EventListenerBase
@@ -56,11 +53,7 @@ namespace
       public:
         using Catch::EventListenerBase::EventListenerBase;
 
-        void testCaseStarting(const Catch::TestCaseInfo &) override
-        {
-            reset_registries();
-            seed_standard_registries();
-        }
+        void testCaseStarting(const Catch::TestCaseInfo &) override { reset_registries(); }
 
         void testCaseEnded(const Catch::TestCaseStats &) override { reset_registries(); }
     };

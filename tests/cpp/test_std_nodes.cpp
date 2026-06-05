@@ -57,6 +57,17 @@ namespace
         }
     };
 
+    // const_(7, delay=2*MIN_TD) -> record: a single delayed tick (Python yields start + delay).
+    struct DelayedConstRecordGraph
+    {
+        static constexpr auto name = "delayed_const_record_graph";
+        static void           compose(Wiring &w)
+        {
+            auto c = wire<stdlib::const_>(w, 7_i, MIN_TD * 2);   // value=7, delay=2*MIN_TD
+            wire<testing::record>(w, c, "out"_str);
+        }
+    };
+
     // const_(5) -> null_sink: the sink consumes the tick without effect.
     struct NullSinkGraph
     {
@@ -111,6 +122,22 @@ TEST_CASE("stdlib::const_ emits its configured value once at start")
     const auto         out      = testing::get_recorded_values<Int>(executor.view().graph().global_state(), "out");
     REQUIRE(out.size() == 1);
     CHECK(out[0] == std::optional<Int>{Int{7}});
+}
+
+TEST_CASE("stdlib::const_ delays its single tick by the configured delay")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    stdlib::register_standard_operators();
+
+    // const_(7, delay=2*MIN_TD): no tick until start + 2 cycles, then the value once.
+    // Matches Python `eval_node(const, 7, delay=MIN_TD * 2) == [None, None, 7]`.
+    GraphExecutorValue executor = run_once(build_graph<DelayedConstRecordGraph>());
+    const auto         out      = testing::get_recorded_values<Int>(executor.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 3);
+    CHECK_FALSE(out[0].has_value());
+    CHECK_FALSE(out[1].has_value());
+    CHECK(out[2] == std::optional<Int>{Int{7}});
 }
 
 TEST_CASE("stdlib::const_ accepts an explicit scalar output resolution")
