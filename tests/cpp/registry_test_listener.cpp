@@ -1,8 +1,9 @@
 // Catch2 event listener that resets every process-wide registry/factory
-// before each test case. Tests that mutate the registries (intern atomic
-// scalars, register named bundles, etc.) would otherwise leak state into
-// later cases — most visibly through the named-bundle / named-tsb
-// uniqueness checks, which see prior registrations as conflicts.
+// before each test case, then seeds the standard scalar/TS vocabulary.
+// Tests that mutate the registries (intern atomic scalars, register named
+// bundles, etc.) would otherwise leak state into later cases — most visibly
+// through the named-bundle / named-tsb uniqueness checks, which see prior
+// registrations as conflicts.
 //
 // Linking this translation unit into the test executable activates the
 // listener via Catch2's CATCH_REGISTER_LISTENER macro; no test code needs
@@ -12,6 +13,7 @@
 #include <catch2/reporters/catch_reporter_event_listener.hpp>
 #include <catch2/reporters/catch_reporter_registrars.hpp>
 
+#include <hgraph/lib/std/standard_types.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -39,12 +41,22 @@ namespace
         hgraph::TypeRegistry::instance().reset();
     }
 
+    void seed_standard_registries()
+    {
+        (void)hgraph::stdlib::register_standard_types();
+    }
+
     class RegistryResetListener final : public Catch::EventListenerBase
     {
       public:
         using Catch::EventListenerBase::EventListenerBase;
 
-        void testCaseStarting(const Catch::TestCaseInfo &) override { reset_registries(); }
+        void testCaseStarting(const Catch::TestCaseInfo &) override
+        {
+            reset_registries();
+            seed_standard_registries();
+        }
+
         void testCaseEnded(const Catch::TestCaseStats &) override { reset_registries(); }
     };
 }  // namespace

@@ -25,6 +25,11 @@ namespace
     {
         int value{0};
     };
+
+    struct UnregisteredScalar
+    {
+        int value{0};
+    };
 }
 
 TEST_CASE("ValueOps: ops_for<T> returns a stable canonical vtable")
@@ -142,7 +147,7 @@ TEST_CASE("TypeRegistry::scalar_binding returns null for unregistered types")
 {
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
-    REQUIRE(registry.scalar_binding<int>() == nullptr);  // no register_scalar yet
+    REQUIRE(registry.scalar_binding<UnregisteredScalar>() == nullptr);
 }
 
 // ``StorageHandle`` itself has its own coverage in ``test_memory_utils.cpp``;
@@ -340,5 +345,5 @@ TEST_CASE("Value: move construction transfers ownership")
 TEST_CASE("Value: throws when a scalar type has not been registered")
 {
     using namespace hgraph;
-    REQUIRE_THROWS_AS(Value(42), std::logic_error);
+    REQUIRE_THROWS_AS(Value(UnregisteredScalar{}), std::logic_error);
 }

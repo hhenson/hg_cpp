@@ -16,6 +16,13 @@ C++ tests live under ``tests/cpp``. They should cover:
 - node lifecycle behavior,
 - graph execution behavior.
 
+The Catch2 unit-test executable links ``registry_test_listener.cpp``. The
+listener resets all process-wide registries/factories before and after each
+test case, and seeds the standard scalar/time-series vocabulary before the test
+body runs. Tests should normally use the default registry state instead of
+calling ``stdlib::register_standard_types()`` themselves; use a private test-only
+scalar type when a test needs to exercise unregistered-type behaviour.
+
 Python Compatibility Tests
 --------------------------
 
