@@ -134,7 +134,7 @@ namespace
         static void           compose(Wiring &w)
         {
             auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
-            auto r = wire<scale_>(w, a, Int{3});
+            auto r = wire<scale_>(w, a, std::int32_t{3});
             wire<testing::record>(w, r, Str{"out"});
         }
     };
@@ -206,7 +206,7 @@ TEST_CASE("operators: an unregistered operator name raises")
     REQUIRE_THROWS_AS(build_graph<AddGraph<TS<Int>>>(), OperatorResolutionError);
 }
 
-TEST_CASE("operators: a scalar argument is matched and forwarded to the resolved node")
+TEST_CASE("operators: a scalar argument is coerced and forwarded to the resolved node")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     register_overload<scale_, scale_int>();

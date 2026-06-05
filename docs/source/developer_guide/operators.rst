@@ -148,9 +148,13 @@ runtime and type-erased (which is what lets Python candidates participate):
    WiringArg = TimeSeries(WiringPortRef)            # carries const TSValueTypeMetaData* schema
              | ScalarValue(Value, const ValueTypeMetaData*)   # an owned, self-describing value
 
-Scalars are erased to an owned ``Value`` immediately, so they are self-describing;
-the chosen candidate sets bundle fields from the ``Value`` by schema without
-needing the original typed argument.
+Scalars are erased to an owned ``Value`` immediately, so they are self-describing.
+A scalar **variable** parameter binds to the argument's own schema. A scalar
+**concrete** parameter accepts the argument when it can be converted to that
+schema, and the chosen candidate writes the converted ``Value`` into the scalar
+bundle. This mirrors the ordinary ``wire<>`` scalar path: standard numeric
+arguments can be supplied as narrower explicit C++ types and are coerced into the
+implementation's declared scalar type.
 
 
 ``OperatorImpl`` — a type-erased candidate

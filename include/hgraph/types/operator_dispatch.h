@@ -14,12 +14,14 @@
 #include <concepts>
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <tuple>
 #include <typeindex>
 #include <typeinfo>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -139,6 +141,84 @@ namespace hgraph
 
     namespace operator_dispatch_detail
     {
+        template <typename TTarget, typename TSource>
+        concept scalar_static_castable = requires(const TSource &source) {
+            static_cast<TTarget>(source);
+        };
+
+        template <typename TTarget, typename TSource>
+        void try_coerce_standard_scalar_from(const Value &source, std::optional<Value> &out)
+        {
+            if (out.has_value()) { return; }
+            if constexpr (scalar_static_castable<TTarget, TSource>)
+            {
+                if (const auto *value = source.try_as<TSource>())
+                {
+                    out = Value{static_cast<TTarget>(*value)};
+                }
+            }
+        }
+
+        template <typename TTarget>
+        [[nodiscard]] std::optional<Value> coerce_standard_numeric_scalar(const Value &source)
+        {
+            std::optional<Value> out;
+            try_coerce_standard_scalar_from<TTarget, Bool>(source, out);
+            try_coerce_standard_scalar_from<TTarget, std::int8_t>(source, out);
+            try_coerce_standard_scalar_from<TTarget, std::int16_t>(source, out);
+            try_coerce_standard_scalar_from<TTarget, std::int32_t>(source, out);
+            try_coerce_standard_scalar_from<TTarget, Int>(source, out);
+            try_coerce_standard_scalar_from<TTarget, std::uint8_t>(source, out);
+            try_coerce_standard_scalar_from<TTarget, std::uint16_t>(source, out);
+            try_coerce_standard_scalar_from<TTarget, std::uint32_t>(source, out);
+            try_coerce_standard_scalar_from<TTarget, std::uint64_t>(source, out);
+            try_coerce_standard_scalar_from<TTarget, float>(source, out);
+            try_coerce_standard_scalar_from<TTarget, Float>(source, out);
+            return out;
+        }
+
+        [[nodiscard]] inline std::optional<Value> coerce_scalar_value_to_meta(const Value &source,
+                                                                              const ValueTypeMetaData *target)
+        {
+            if (target == nullptr) { return std::nullopt; }
+            if (source.schema() == target) { return source; }
+
+            if (target == scalar_descriptor<Bool>::value_meta()) { return coerce_standard_numeric_scalar<Bool>(source); }
+            if (target == scalar_descriptor<std::int8_t>::value_meta())
+            {
+                return coerce_standard_numeric_scalar<std::int8_t>(source);
+            }
+            if (target == scalar_descriptor<std::int16_t>::value_meta())
+            {
+                return coerce_standard_numeric_scalar<std::int16_t>(source);
+            }
+            if (target == scalar_descriptor<std::int32_t>::value_meta())
+            {
+                return coerce_standard_numeric_scalar<std::int32_t>(source);
+            }
+            if (target == scalar_descriptor<Int>::value_meta()) { return coerce_standard_numeric_scalar<Int>(source); }
+            if (target == scalar_descriptor<std::uint8_t>::value_meta())
+            {
+                return coerce_standard_numeric_scalar<std::uint8_t>(source);
+            }
+            if (target == scalar_descriptor<std::uint16_t>::value_meta())
+            {
+                return coerce_standard_numeric_scalar<std::uint16_t>(source);
+            }
+            if (target == scalar_descriptor<std::uint32_t>::value_meta())
+            {
+                return coerce_standard_numeric_scalar<std::uint32_t>(source);
+            }
+            if (target == scalar_descriptor<std::uint64_t>::value_meta())
+            {
+                return coerce_standard_numeric_scalar<std::uint64_t>(source);
+            }
+            if (target == scalar_descriptor<float>::value_meta()) { return coerce_standard_numeric_scalar<float>(source); }
+            if (target == scalar_descriptor<Float>::value_meta()) { return coerce_standard_numeric_scalar<Float>(source); }
+
+            return std::nullopt;
+        }
+
         // An implementation may declare ``static bool requires_(const ResolutionMap &)``
         // to reject a candidate after its types resolve (e.g. a capability constraint).
         template <typename T>
@@ -192,7 +272,16 @@ namespace hgraph
                             using P = std::tuple_element_t<I, wire_params>;
                             if constexpr (static_node_detail::is_scalar_selector<P>::value)
                             {
-                                bundle.set(P::field_name.sv(), args[I].scalar_value.view());
+                                using ST = typename graph_wiring_detail::scalar_param_schema<P>::type;
+                                const auto *target = scalar_resolver<ST>::resolve(map);
+                                std::optional<Value> coerced =
+                                    operator_dispatch_detail::coerce_scalar_value_to_meta(args[I].scalar_value, target);
+                                if (!coerced.has_value())
+                                {
+                                    throw std::logic_error("operator scalar argument could not be coerced to the "
+                                                           "resolved scalar schema");
+                                }
+                                bundle.set(P::field_name.sv(), coerced->view());
                             }
                         }(),
                         ...);

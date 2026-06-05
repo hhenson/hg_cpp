@@ -50,7 +50,18 @@ namespace hgraph
                         why = fmt::format("argument {} should be a scalar", i);
                         return false;
                     }
-                    if (!scalar_pattern_match(param.scalar, arg.scalar_meta, map))
+                    bool scalar_matches = false;
+                    if (param.scalar.kind == ScalarPattern::Kind::Concrete)
+                    {
+                        scalar_matches =
+                            operator_dispatch_detail::coerce_scalar_value_to_meta(arg.scalar_value, param.scalar.meta)
+                                .has_value();
+                    }
+                    else
+                    {
+                        scalar_matches = scalar_pattern_match(param.scalar, arg.scalar_meta, map);
+                    }
+                    if (!scalar_matches)
                     {
                         why = fmt::format("scalar argument {} does not match {}", i,
                                           scalar_pattern_to_string(param.scalar));
