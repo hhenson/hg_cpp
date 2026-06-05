@@ -25,8 +25,8 @@ namespace
 {
     using namespace hgraph;
     using namespace hgraph::testing;  // none, make_buffer/make_any/empty_any/cycle_offset, set_replay_*, get_recorded_*
-    using Quote = TSB<"DeltaQuote", Field<"bid", TS<int>>, Field<"ask", TS<int>>>;
-    using QuoteWithSet = TSB<"DeltaQuoteWithSet", Field<"levels", TSS<int>>, Field<"last", TS<int>>>;
+    using Quote = TSB<"DeltaQuote", Field<"bid", TS<std::int32_t>>, Field<"ask", TS<std::int32_t>>>;
+    using QuoteWithSet = TSB<"DeltaQuoteWithSet", Field<"levels", TSS<std::int32_t>>, Field<"last", TS<std::int32_t>>>;
 
     // The erased free functions take the base TSInputView / TSOutputView. A typed
     // `In<Name,S>` reaches it uniformly via `base()`; a typed `Out<S>` is the base
@@ -73,7 +73,7 @@ namespace
         static constexpr auto name             = "ts_delta_probe_replay";
         static constexpr bool schedule_on_start = true;
         static void           eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched,
-                                   State<int> index, Out<S> out)
+                                   State<std::int32_t> index, Out<S> out)
         {
             const ValueView buffer = gs.get(key.value());
             if (!buffer.valid()) { return; }
@@ -141,91 +141,91 @@ namespace
 
 TEST_CASE("ts_delta: capture_delta matches ts_delta<S>::capture for a scalar TS")
 {
-    (void)TypeRegistry::instance().register_scalar<int>("int");
-    auto ex = run_graph<CaptureGraph<TS<int>>>(
-        [](const GlobalStateView &gs) { set_replay_values<int>(gs, "in", {1, none, 3}); });
-    CHECK_OUTPUT(get_recorded_values<int>(ex.view().graph().global_state(), "out"), {1, none, 3});
+    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    auto ex = run_graph<CaptureGraph<TS<std::int32_t>>>(
+        [](const GlobalStateView &gs) { set_replay_values<std::int32_t>(gs, "in", {1, none, 3}); });
+    CHECK_OUTPUT(get_recorded_values<std::int32_t>(ex.view().graph().global_state(), "out"), {1, none, 3});
 }
 
 TEST_CASE("ts_delta: apply_delta matches ts_delta<S>::apply for a scalar TS")
 {
-    (void)TypeRegistry::instance().register_scalar<int>("int");
-    auto ex = run_graph<ApplyGraph<TS<int>>>(
-        [](const GlobalStateView &gs) { set_replay_values<int>(gs, "in", {4, none, 6}); });
-    CHECK_OUTPUT(get_recorded_values<int>(ex.view().graph().global_state(), "out"), {4, none, 6});
+    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    auto ex = run_graph<ApplyGraph<TS<std::int32_t>>>(
+        [](const GlobalStateView &gs) { set_replay_values<std::int32_t>(gs, "in", {4, none, 6}); });
+    CHECK_OUTPUT(get_recorded_values<std::int32_t>(ex.view().graph().global_state(), "out"), {4, none, 6});
 }
 
 TEST_CASE("ts_delta: capture/apply round-trip a TSS set delta")
 {
-    (void)TypeRegistry::instance().register_scalar<int>("int");
+    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
     const std::vector<std::optional<Value>> deltas{
-        set_delta<int>({1, 2}, {}), set_delta<int>({3}, {1}), set_delta<int>({}, {2, 3})};
+        set_delta<std::int32_t>({1, 2}, {}), set_delta<std::int32_t>({3}, {1}), set_delta<std::int32_t>({}, {2, 3})};
 
     // capture parity
-    auto cap = run_graph<CaptureGraph<TSS<int>>>(
+    auto cap = run_graph<CaptureGraph<TSS<std::int32_t>>>(
         [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
     CHECK_OUTPUT(get_recorded_deltas(cap.view().graph().global_state(), "out"),
-                 {set_delta<int>({1, 2}, {}), set_delta<int>({3}, {1}), set_delta<int>({}, {2, 3})});
+                 {set_delta<std::int32_t>({1, 2}, {}), set_delta<std::int32_t>({3}, {1}), set_delta<std::int32_t>({}, {2, 3})});
 
     // apply parity
-    auto app = run_graph<ApplyGraph<TSS<int>>>(
+    auto app = run_graph<ApplyGraph<TSS<std::int32_t>>>(
         [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
     CHECK_OUTPUT(get_recorded_deltas(app.view().graph().global_state(), "out"),
-                 {set_delta<int>({1, 2}, {}), set_delta<int>({3}, {1}), set_delta<int>({}, {2, 3})});
+                 {set_delta<std::int32_t>({1, 2}, {}), set_delta<std::int32_t>({3}, {1}), set_delta<std::int32_t>({}, {2, 3})});
 }
 
 TEST_CASE("ts_delta: capture/apply round-trip a fixed-TSL-of-scalar list delta")
 {
-    (void)TypeRegistry::instance().register_scalar<int>("int");
+    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
     const std::vector<std::optional<Value>> deltas{
-        list_delta<TS<int>>({{0, 1}, {1, 2}}), list_delta<TS<int>>({{0, 5}}), list_delta<TS<int>>({{1, 9}})};
+        list_delta<TS<std::int32_t>>({{0, 1}, {1, 2}}), list_delta<TS<std::int32_t>>({{0, 5}}), list_delta<TS<std::int32_t>>({{1, 9}})};
 
     // both new functions together: ProbeReplay -> ProbeRecord must reproduce the input.
-    auto rt = run_graph<RoundTripGraph<TSL<TS<int>, 2>>>(
+    auto rt = run_graph<RoundTripGraph<TSL<TS<std::int32_t>, 2>>>(
         [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
     CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
-                 {list_delta<TS<int>>({{0, 1}, {1, 2}}), list_delta<TS<int>>({{0, 5}}), list_delta<TS<int>>({{1, 9}})});
+                 {list_delta<TS<std::int32_t>>({{0, 1}, {1, 2}}), list_delta<TS<std::int32_t>>({{0, 5}}), list_delta<TS<std::int32_t>>({{1, 9}})});
 }
 
 TEST_CASE("ts_delta: capture/apply round-trip a dynamic TSL-of-scalar list delta")
 {
-    (void)TypeRegistry::instance().register_scalar<int>("int");
+    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
     const std::vector<std::optional<Value>> deltas{
-        list_delta<TS<int>>({{0, 1}}),
-        list_delta<TS<int>>({{0, 5}, {1, 9}}),
-        list_delta<TS<int>>({{1, 11}}),
+        list_delta<TS<std::int32_t>>({{0, 1}}),
+        list_delta<TS<std::int32_t>>({{0, 5}, {1, 9}}),
+        list_delta<TS<std::int32_t>>({{1, 11}}),
     };
 
-    auto rt = run_graph<RoundTripGraph<TSL<TS<int>>>>(
+    auto rt = run_graph<RoundTripGraph<TSL<TS<std::int32_t>>>>(
         [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
     CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
-                 {list_delta<TS<int>>({{0, 1}}), list_delta<TS<int>>({{0, 5}, {1, 9}}),
-                  list_delta<TS<int>>({{1, 11}})});
+                 {list_delta<TS<std::int32_t>>({{0, 1}}), list_delta<TS<std::int32_t>>({{0, 5}, {1, 9}}),
+                  list_delta<TS<std::int32_t>>({{1, 11}})});
 }
 
 TEST_CASE("ts_delta: capture/apply round-trip a TSD-of-scalar dict delta")
 {
     using namespace std::string_literals;
 
-    (void)TypeRegistry::instance().register_scalar<int>("int");
+    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
     (void)TypeRegistry::instance().register_scalar<std::string>("string");
     const std::vector<std::optional<Value>> deltas{
-        dict_delta<std::string, TS<int>>({{"a"s, 1}, {"b"s, 2}}),
-        dict_delta<std::string, TS<int>>({{"a"s, 5}}, {"b"s}),
-        dict_delta<std::string, TS<int>>({{"b"s, 9}}),
+        dict_delta<std::string, TS<std::int32_t>>({{"a"s, 1}, {"b"s, 2}}),
+        dict_delta<std::string, TS<std::int32_t>>({{"a"s, 5}}, {"b"s}),
+        dict_delta<std::string, TS<std::int32_t>>({{"b"s, 9}}),
     };
 
-    auto rt = run_graph<RoundTripGraph<TSD<std::string, TS<int>>>>(
+    auto rt = run_graph<RoundTripGraph<TSD<std::string, TS<std::int32_t>>>>(
         [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
     CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
-                 {dict_delta<std::string, TS<int>>({{"a"s, 1}, {"b"s, 2}}),
-                  dict_delta<std::string, TS<int>>({{"a"s, 5}}, {"b"s}),
-                  dict_delta<std::string, TS<int>>({{"b"s, 9}})});
+                 {dict_delta<std::string, TS<std::int32_t>>({{"a"s, 1}, {"b"s, 2}}),
+                  dict_delta<std::string, TS<std::int32_t>>({{"a"s, 5}}, {"b"s}),
+                  dict_delta<std::string, TS<std::int32_t>>({{"b"s, 9}})});
 }
 
 TEST_CASE("ts_delta: capture/apply round-trip a TSB sparse field delta")
 {
-    (void)TypeRegistry::instance().register_scalar<int>("int");
+    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
     const std::vector<std::optional<Value>> deltas{
         tsb_delta<Quote>(1, 10),
         tsb_delta<Quote>(std::nullopt, 20),
@@ -240,29 +240,29 @@ TEST_CASE("ts_delta: capture/apply round-trip a TSB sparse field delta")
 
 TEST_CASE("ts_delta: capture/apply round-trip a TSB with a container field delta")
 {
-    (void)TypeRegistry::instance().register_scalar<int>("int");
+    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
     const std::vector<std::optional<Value>> deltas{
-        tsb_delta<QuoteWithSet>(set_delta<int>({1, 2}, {}), std::nullopt),
+        tsb_delta<QuoteWithSet>(set_delta<std::int32_t>({1, 2}, {}), std::nullopt),
         tsb_delta<QuoteWithSet>(std::nullopt, 5),
-        tsb_delta<QuoteWithSet>(set_delta<int>({3}, {1}), 6),
+        tsb_delta<QuoteWithSet>(set_delta<std::int32_t>({3}, {1}), 6),
     };
 
     auto rt = run_graph<RoundTripGraph<QuoteWithSet>>(
         [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
     CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"),
-                 {tsb_delta<QuoteWithSet>(set_delta<int>({1, 2}, {}), std::nullopt),
+                 {tsb_delta<QuoteWithSet>(set_delta<std::int32_t>({1, 2}, {}), std::nullopt),
                   tsb_delta<QuoteWithSet>(std::nullopt, 5),
-                  tsb_delta<QuoteWithSet>(set_delta<int>({3}, {1}), 6)});
+                  tsb_delta<QuoteWithSet>(set_delta<std::int32_t>({3}, {1}), 6)});
 }
 
 TEST_CASE("ts_delta: capture/apply round-trip a TSW scalar push delta")
 {
-    (void)TypeRegistry::instance().register_scalar<int>("int");
-    const std::vector<std::optional<Value>> deltas{Value{1}, Value{2}, Value{3}};
+    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    const std::vector<std::optional<Value>> deltas{Value{std::int32_t{1}}, Value{std::int32_t{2}}, Value{std::int32_t{3}}};
 
-    auto rt = run_graph<RoundTripGraph<TSW<int, 3, 1>>>(
+    auto rt = run_graph<RoundTripGraph<TSW<std::int32_t, 3, 1>>>(
         [&](const GlobalStateView &gs) { set_replay_deltas(gs, "in", deltas); });
-    CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"), {Value{1}, Value{2}, Value{3}});
+    CHECK_OUTPUT(get_recorded_deltas(rt.view().graph().global_state(), "out"), {Value{std::int32_t{1}}, Value{std::int32_t{2}}, Value{std::int32_t{3}}});
 }
 
 TEST_CASE("ts_delta: capture/apply round-trip a SIGNAL tick delta")

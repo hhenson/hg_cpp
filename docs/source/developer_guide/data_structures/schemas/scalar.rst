@@ -101,7 +101,7 @@ A scalar schema has one of nine kinds, recorded on its
     ``set_item`` / ``remove`` / ``clear`` through ``MutableMapView``. As with
     the list, mutability is an explicit schema axis that interns separately.
     A mutable ``Map<string, Any>`` is the backing for the runtime
-    ``GlobalState`` injectable; an **immutable** ``Map<int64, T>`` (built once
+    ``GlobalState`` injectable; an **immutable** ``Map<int, T>`` (built once
     via ``MapBuilder``) is the delta value of a ``TSL`` time-series in the
     testing toolkit.
 

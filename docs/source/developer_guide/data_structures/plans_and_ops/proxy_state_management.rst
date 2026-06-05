@@ -155,7 +155,7 @@ The essential usage shape is:
    using namespace hgraph;
 
    auto       &registry = TypeRegistry::instance();
-   const auto *int_meta = registry.register_scalar<int>("int");
+   const auto *int_meta = registry.value_type("int");
    const auto *ts_int   = registry.ts(int_meta);
    const auto *ref_int  = registry.ref(ts_int);
 
@@ -163,10 +163,10 @@ The essential usage shape is:
    const auto *requested_schema = registry.tsd(int_meta, ref_int);
 
    TSOutput output{*source_schema};
-   Value    key{1};
+   Value    key{Int{1}};
 
    {
-       Value value{42};
+       Value value{Int{42}};
        auto  dict          = output.data_view().as_dict();
        auto  dict_mutation = dict.begin_mutation(MIN_ST);
        auto  child         = dict_mutation.at(key.view());

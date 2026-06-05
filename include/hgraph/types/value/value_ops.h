@@ -535,7 +535,7 @@ namespace hgraph
      *
      * The returned reference is stable for the program lifetime: each
      * instantiation has its own function-local-static, so two callers asking
-     * for ``ops_for<int>()`` get the same address. ``TypeRegistry::register_scalar``
+     * for ``ops_for<std::int32_t>()`` get the same address. ``TypeRegistry::register_scalar``
      * uses this helper to pair an atomic schema with its ops at registration.
      */
     template <typename T>

@@ -34,7 +34,7 @@ data and its sinks consume it. It *may*, however, take **scalar** inputs: plain
 (non-time-series) configuration values that parameterise the graph at wiring time.
 Graph-level scalar inputs appear as extra ``compose`` parameters and are supplied
 to ``build_graph`` — e.g.
-``static void compose(Wiring &w, Scalar<"window", int> window)`` built with
+``static void compose(Wiring &w, Scalar<"window", std::int32_t> window)`` built with
 ``build_graph<MyGraph>(20)`` (the plain value is wrapped into the ``window``
 parameter). The simplest graph takes no scalars; its ``compose`` body just adds
 nodes:
@@ -108,7 +108,7 @@ Pass one value per ``Scalar<>`` parameter, **in ``compose``-parameter order**:
    {
        static constexpr auto name = "report_graph";
        //                                   two scalar build parameters
-       static void compose(Wiring &w, Scalar<"window", int> window, Scalar<"factor", double> factor)
+       static void compose(Wiring &w, Scalar<"window", std::int32_t> window, Scalar<"factor", double> factor)
        {
            auto px = wire<ConstantSource>(w);
            wire<Print>(w, wire<RollingMean>(w, px, window, factor));
@@ -134,19 +134,19 @@ A graph with no scalar parameters is simply ``build_graph<G>()``. The resulting
 Ports
 -----
 
-A ``Port<TS<int>>`` is a **wiring-time handle** to a node's output — not a value.
+A ``Port<TS<std::int32_t>>`` is a **wiring-time handle** to a node's output — not a value.
 You obtain one from ``wire<T>(...)`` and pass it as an input to another node:
 
 .. code-block:: cpp
 
-   Port<TS<int>> a = wire<ConstantSource>(w);   // handle to the source's output
-   Port<TS<int>> s = wire<Sum>(w, a, a);        // a is fed into both inputs of Sum
+   Port<TS<std::int32_t>> a = wire<ConstantSource>(w);   // handle to the source's output
+   Port<TS<std::int32_t>> s = wire<Sum>(w, a, a);        // a is fed into both inputs of Sum
 
 Ports are typed, so passing the wrong port type — or the wrong number of inputs —
 to ``wire<T>`` is a **compile error**. (Python catches the same mistakes, but only
 when the graph is wired at run time.)
 
-``SIGNAL`` is the exception on the input side: a ``Port<TS<int>>``,
+``SIGNAL`` is the exception on the input side: a ``Port<TS<std::int32_t>>``,
 ``Port<TSD<...>>`` or any other time-series output port may be passed to a node or
 sub-graph input declared as ``SIGNAL``. The input observes the upstream tick rather
 than the upstream value.
@@ -163,7 +163,7 @@ and a plain value for each ``Scalar``.
 
 .. code-block:: cpp
 
-   // node: eval(In<"in", TS<int>> in, Scalar<"delta", int> delta, Out<TS<int>> out)
+   // node: eval(In<"in", TS<std::int32_t>> in, Scalar<"delta", std::int32_t> delta, Out<TS<std::int32_t>> out)
    auto src = wire<ConstantSource>(w);   // 41
    auto out = wire<Shift>(w, src, 5);    // port for `in`, then 5 for `delta` -> 46
 
@@ -248,7 +248,7 @@ scalar (it is wrapped into the sub-graph's ``Scalar<>`` parameter):
 
 .. code-block:: cpp
 
-   // sub-graph: compose(Wiring &, Port<TS<int>> x, Scalar<"by", int> by) -> TS<int>
+   // sub-graph: compose(Wiring &, Port<TS<std::int32_t>> x, Scalar<"by", std::int32_t> by) -> TS<std::int32_t>
    auto shifted = wire<ShiftBy>(w, src, 5);   // port for `x`, 5 wrapped into `by`
 
 
@@ -292,7 +292,7 @@ run; a node sees the same store via the ``GlobalStateView`` injectable (see
 .. code-block:: cpp
 
    GraphBuilder gb = build_graph<MyGraph>();
-   gb.global_state().set("seed", Value{20});   // seed at wiring time
+   gb.global_state().set("seed", Value{std::int32_t{20}});   // seed at wiring time
 
    GraphExecutorBuilder ex;
    ex.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(end);
@@ -300,7 +300,7 @@ run; a node sees the same store via the ``GlobalStateView`` injectable (see
    executor.view().run();
 
    // read results the nodes wrote into the store
-   const int total = executor.view().graph().global_state().get_as<int>("total");
+   const int total = executor.view().graph().global_state().get_as<std::int32_t>("total");
 
 A ``compose`` body can also seed the store **during wiring**, via
 ``Wiring::global_state()`` — ``finish`` carries those entries onto the graph, so a
@@ -314,11 +314,11 @@ their ``eval``):
        static constexpr auto name = "counter_graph";
        static void compose(Wiring &w)
        {
-           w.global_state().set("counter", Value{100});   // set at wiring time
+           w.global_state().set("counter", Value{std::int32_t{100}});   // set at wiring time
            wire<BumpCounter>(w);                           // a node whose eval bumps "counter"
        }
    };
-   // after running: global_state().get_as<int>("counter") == 101
+   // after running: global_state().get_as<std::int32_t>("counter") == 101
 
 Each built graph gets its own copy seeded with the wiring-time entries, so the
 builder stays reusable. Values are heterogeneous (a mutable ``Map<string, Any>``
@@ -362,7 +362,7 @@ C++ ↔ Python cheat sheet
      - calling a node — ``t(ports...)``
    * - ``wire<G>(w, ports...)`` (sub-graph, inlined)
      - calling a sub-graph — ``g(ports...)``
-   * - ``Port<TS<int>>``
+   * - ``Port<TS<std::int32_t>>``
      - a wiring-time time-series handle
    * - ``build_graph<G>()`` → ``GraphExecutor``
      - wiring the ``@graph`` + ``run_graph(...)``

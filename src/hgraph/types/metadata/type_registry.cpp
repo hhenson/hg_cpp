@@ -1,5 +1,6 @@
 #include <hgraph/types/metadata/type_registry.h>
 
+#include <hgraph/lib/std/standard_types.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/time_series_reference.h>
 
@@ -182,6 +183,11 @@ namespace hgraph
     TypeRegistry &TypeRegistry::instance()
     {
         static TypeRegistry registry;
+        static const bool   seeded = [] {
+            (void)stdlib::register_standard_types(registry);
+            return true;
+        }();
+        static_cast<void>(seeded);
         return registry;
     }
 
@@ -306,7 +312,17 @@ namespace hgraph
             return;
         }
 
-        value_name_cache_[std::string(name)] = meta;
+        std::string key{name};
+        if (const auto it = value_name_cache_.find(key); it != value_name_cache_.end())
+        {
+            if (it->second != meta)
+            {
+                throw std::invalid_argument("value type alias '" + key + "' is already registered for a different schema");
+            }
+            return;
+        }
+
+        value_name_cache_.emplace(std::move(key), meta);
         if (!meta->display_name)
         {
             const_cast<ValueTypeMetaData *>(meta)->display_name = store_name_interned(name);
@@ -320,7 +336,18 @@ namespace hgraph
             return;
         }
 
-        ts_name_cache_[std::string(name)] = meta;
+        std::string key{name};
+        if (const auto it = ts_name_cache_.find(key); it != ts_name_cache_.end())
+        {
+            if (it->second != meta)
+            {
+                throw std::invalid_argument("time-series type alias '" + key +
+                                            "' is already registered for a different schema");
+            }
+            return;
+        }
+
+        ts_name_cache_.emplace(std::move(key), meta);
         if (!meta->display_name)
         {
             const_cast<TSValueTypeMetaData *>(meta)->display_name = store_name_interned(name);
@@ -608,7 +635,7 @@ namespace hgraph
 
     const TSValueTypeMetaData *TypeRegistry::tsw(const ValueTypeMetaData *value_type, size_t period, size_t min_period)
     {
-        const TSWindowKey key{value_type, false, static_cast<int64_t>(period), static_cast<int64_t>(min_period)};
+        const TSWindowKey key{value_type, false, static_cast<std::int64_t>(period), static_cast<std::int64_t>(min_period)};
         const TSValueTypeMetaData &meta = tsw_cache_.intern(key, [&]() {
             TSValueTypeMetaData m(TSTypeKind::TSW, value_type);
             m.set_tsw_tick(period, min_period);
@@ -794,7 +821,7 @@ namespace hgraph
                 meta.value_schema = meta.value_type;
                 if (const TSValueTypeMetaData *element_ts = meta.element_ts(); element_ts != nullptr)
                 {
-                    const ValueTypeMetaData *index_type    = register_scalar<int64_t>("int64");
+                    const ValueTypeMetaData *index_type    = register_scalar<Int>("int");
                     const ValueTypeMetaData *element_delta = element_ts->delta_value_schema;
                     meta.delta_value_schema                = map(index_type, element_delta);
                 }

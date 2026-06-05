@@ -6,6 +6,7 @@
 #include <hgraph/types/metadata/value_type_meta_data.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -195,25 +196,25 @@ namespace hgraph
         template <>
         struct scalar_name<bool>        { static constexpr std::string_view value{"bool"};        };
         template <>
-        struct scalar_name<int8_t>      { static constexpr std::string_view value{"int8"};        };
+        struct scalar_name<std::int8_t> { static constexpr std::string_view value{"int8"};        };
         template <>
-        struct scalar_name<int16_t>     { static constexpr std::string_view value{"int16"};       };
+        struct scalar_name<std::int16_t>{ static constexpr std::string_view value{"int16"};       };
         template <>
-        struct scalar_name<int32_t>     { static constexpr std::string_view value{"int32"};       };
+        struct scalar_name<std::int32_t>{ static constexpr std::string_view value{"int32"};       };
         template <>
-        struct scalar_name<int64_t>     { static constexpr std::string_view value{"int64"};       };
+        struct scalar_name<std::int64_t>{ static constexpr std::string_view value{"int"};         };
         template <>
-        struct scalar_name<uint8_t>     { static constexpr std::string_view value{"uint8"};       };
+        struct scalar_name<std::uint8_t>{ static constexpr std::string_view value{"uint8"};       };
         template <>
-        struct scalar_name<uint16_t>    { static constexpr std::string_view value{"uint16"};      };
+        struct scalar_name<std::uint16_t>{ static constexpr std::string_view value{"uint16"};      };
         template <>
-        struct scalar_name<uint32_t>    { static constexpr std::string_view value{"uint32"};      };
+        struct scalar_name<std::uint32_t>{ static constexpr std::string_view value{"uint32"};      };
         template <>
-        struct scalar_name<uint64_t>    { static constexpr std::string_view value{"uint64"};      };
+        struct scalar_name<std::uint64_t>{ static constexpr std::string_view value{"uint64"};      };
         template <>
-        struct scalar_name<float>       { static constexpr std::string_view value{"float"};       };
+        struct scalar_name<float>       { static constexpr std::string_view value{"float32"};     };
         template <>
-        struct scalar_name<double>      { static constexpr std::string_view value{"double"};      };
+        struct scalar_name<double>      { static constexpr std::string_view value{"float"};       };
         template <>
         struct scalar_name<std::string> { static constexpr std::string_view value{"string"};      };
         template <>

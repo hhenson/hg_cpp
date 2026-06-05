@@ -4,14 +4,15 @@
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/utils/memory_utils.h>
 
+#include <cstdint>
 #include <string>
 
 TEST_CASE("TypeRegistry::register_scalar returns canonical metadata")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *a        = registry.register_scalar<int>("int");
-    const auto *b        = registry.register_scalar<int>("int");
+    const auto *a        = registry.register_scalar<std::int32_t>("int32");
+    const auto *b        = registry.register_scalar<std::int32_t>("int32");
     REQUIRE(a == b);
     REQUIRE(a != nullptr);
     REQUIRE(a->kind == ValueTypeKind::Atomic);
@@ -23,6 +24,26 @@ TEST_CASE("TypeRegistry::register_scalar populates the value_type alias")
     auto       &registry = TypeRegistry::instance();
     const auto *meta     = registry.register_scalar<double>("double");
     REQUIRE(registry.value_type("double") == meta);
+}
+
+TEST_CASE("TypeRegistry aliases reject conflicting schema bindings")
+{
+    using namespace hgraph;
+    auto       &registry     = TypeRegistry::instance();
+    const auto *standard_int = registry.value_type("int");
+    REQUIRE(standard_int == registry.scalar_binding<std::int64_t>()->type_meta);
+
+    const auto *int32_meta = registry.register_scalar<std::int32_t>("int32");
+    REQUIRE(int32_meta != standard_int);
+    REQUIRE_THROWS_AS(registry.register_scalar<std::int32_t>("int"), std::invalid_argument);
+    REQUIRE_THROWS_AS(registry.register_value_type_alias("int", int32_meta), std::invalid_argument);
+    REQUIRE(registry.value_type("int") == standard_int);
+
+    const auto *standard_ts_int = registry.time_series_type("TS[int]");
+    REQUIRE(standard_ts_int == registry.ts(standard_int));
+    REQUIRE_THROWS_AS(registry.register_time_series_type_alias("TS[int]", registry.ts(int32_meta)),
+                      std::invalid_argument);
+    REQUIRE(registry.time_series_type("TS[int]") == standard_ts_int);
 }
 
 TEST_CASE("TypeRegistry::register_scalar wires the canonical plan into ValuePlanFactory")
@@ -38,7 +59,7 @@ TEST_CASE("TypeRegistry: different scalar types yield different metadata")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta  = registry.register_scalar<int>("int");
+    const auto *int_meta  = registry.register_scalar<std::int32_t>("int32");
     const auto *long_meta = registry.register_scalar<long>("long");
     REQUIRE(int_meta != long_meta);
 }
@@ -47,8 +68,8 @@ TEST_CASE("TypeRegistry::tuple interns by component identity and is order-sensit
 {
     using namespace hgraph;
     auto       &registry   = TypeRegistry::instance();
-    const auto *int_meta   = registry.register_scalar<int>("int");
-    const auto *float_meta = registry.register_scalar<float>("float");
+    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
+    const auto *float_meta = registry.register_scalar<float>("float32");
 
     const auto *t_if = registry.tuple({int_meta, float_meta});
     const auto *t_if_again = registry.tuple({int_meta, float_meta});
@@ -68,7 +89,7 @@ TEST_CASE("TypeRegistry::bundle interns by structural identity and registers the
 {
     using namespace hgraph;
     auto       &registry   = TypeRegistry::instance();
-    const auto *int_meta   = registry.register_scalar<int>("int");
+    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
     const auto *str_meta   = registry.register_scalar<std::string>("string");
     const auto *bundle_meta = registry.bundle("TestBundleA", {{"x", int_meta}, {"y", str_meta}});
 
@@ -86,7 +107,7 @@ TEST_CASE("TypeRegistry: un_named_bundle and bundle distinguish structural vs no
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *str_meta = registry.register_scalar<std::string>("string");
 
     const std::vector<std::pair<std::string, const ValueTypeMetaData *>> fields{
@@ -144,7 +165,7 @@ TEST_CASE("TypeRegistry::list distinguishes fixed and dynamic forms")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     const auto *fixed   = registry.list(int_meta, 4, false);
     const auto *dynamic = registry.list(int_meta, 0, false);
@@ -161,7 +182,7 @@ TEST_CASE("TypeRegistry: set, map, cyclic_buffer and queue intern correctly")
 {
     using namespace hgraph;
     auto       &registry  = TypeRegistry::instance();
-    const auto *int_meta  = registry.register_scalar<int>("int");
+    const auto *int_meta  = registry.register_scalar<std::int32_t>("int32");
 
     const auto *s = registry.set(int_meta);
     REQUIRE(s->kind == ValueTypeKind::Set);
@@ -197,7 +218,7 @@ TEST_CASE("TypeRegistry::ts / tss / tsd / tsl / tsw intern correctly")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     const auto *ts_int = registry.ts(int_meta);
     REQUIRE(ts_int->kind == TSTypeKind::TS);
@@ -240,7 +261,7 @@ TEST_CASE("TypeRegistry::tsb stores fields and registers the alias")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     const auto *tsb = registry.tsb("TestTSBundleA", {{"a", ts_int}, {"b", ts_int}});
@@ -258,7 +279,7 @@ TEST_CASE("TypeRegistry: un_named_tsb and tsb distinguish structural vs nominal 
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     const std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields{
@@ -334,7 +355,7 @@ TEST_CASE("TypeRegistry::ref creates the TimeSeriesReference singleton")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     const auto *r1 = registry.ref(ts_int);
@@ -349,7 +370,7 @@ TEST_CASE("TypeRegistry::contains_ref recurses through composite TS kinds")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
 
@@ -372,7 +393,7 @@ TEST_CASE("TypeRegistry::dereference unwraps refs and recurses into containers")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
 
@@ -395,7 +416,7 @@ TEST_CASE("TypeRegistry::synthetic_atomic interns by name")
     auto &registry = TypeRegistry::instance();
 
     // Trigger ref() to indirectly create the synthetic TimeSeriesReference atomic.
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     (void)registry.ref(ts_int);
 

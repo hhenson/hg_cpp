@@ -100,7 +100,7 @@ TEST_CASE("TSInput builds a non-peered TSB root with nested peered terminals")
     static_assert(!std::is_copy_constructible_v<TSWInputView>);
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *nested   = registry.tsb("TSInputNested", {{"x", ts_int}});
     const auto *root     = registry.tsb("TSInputRoot", {{"a", ts_int}, {"nested", nested}});
@@ -138,12 +138,12 @@ TEST_CASE("TSInput builds a non-peered TSB root with nested peered terminals")
     REQUIRE(input_root_view.bound());
     REQUIRE(root_view.bound());
     REQUIRE(scalar.valid());
-    REQUIRE(scalar.value().checked_as<int>() == 42);
+    REQUIRE(scalar.value().checked_as<std::int32_t>() == 42);
 
     scalar.bind_output(replacement.view(t1));
     REQUIRE(scalar.bound());
     REQUIRE(scalar.valid());
-    REQUIRE(scalar.value().checked_as<int>() == 99);
+    REQUIRE(scalar.value().checked_as<std::int32_t>() == 99);
 
     auto nested_input_view = input.view();
     auto nested_root = nested_input_view.as_bundle();
@@ -162,7 +162,7 @@ TEST_CASE("TSInput builds a non-peered TSB root with nested peered terminals")
     REQUIRE(nested_field.bound());
     REQUIRE(nested_bundle.bound());
     REQUIRE(nested_leaf.valid());
-    REQUIRE(nested_leaf.value().checked_as<int>() == 42);
+    REQUIRE(nested_leaf.value().checked_as<std::int32_t>() == 42);
 }
 
 TEST_CASE("TSInput construction uses generic endpoint annotations")
@@ -170,8 +170,8 @@ TEST_CASE("TSInput construction uses generic endpoint annotations")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
-    (void)registry.register_scalar<std::int64_t>("int64");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    (void)registry.register_scalar<Int>("int");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *list     = registry.tsl(ts_int, 2);
     const auto *root     = registry.tsb("TSInputAnnotatedRoot", {{"items", list}});
@@ -210,7 +210,7 @@ TEST_CASE("TSInput active non-peered prefixes schedule through peered terminal n
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *list     = registry.tsl(ts_int, 2);
     const auto *root     = registry.tsb("TSInputListRoot", {{"items", list}});
@@ -259,7 +259,7 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *list     = registry.tsl(ts_int, 2);
     const auto *root     = registry.tsb("TSInputRecursiveBindingRoot", {{"items", list}});
@@ -324,7 +324,7 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
     auto list_valid_items = collect_range(list_view.valid_items());
     REQUIRE(list_valid_items.size() == 1);
     REQUIRE(list_valid_items[0].first == 0);
-    REQUIRE(list_valid_items[0].second.value().checked_as<int>() == 10);
+    REQUIRE(list_valid_items[0].second.value().checked_as<std::int32_t>() == 10);
     REQUIRE(list_view[0].binding() != nullptr);
     REQUIRE(list_view[0].evaluation_time() == t1);
     auto list_modified_items = collect_range(list_view.modified_items());
@@ -353,7 +353,7 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
     auto t2_modified_items = collect_range(t2_list.modified_items());
     REQUIRE(t2_modified_items.size() == 1);
     REQUIRE(t2_modified_items[0].first == 1);
-    REQUIRE(t2_modified_items[0].second.value().checked_as<int>() == 20);
+    REQUIRE(t2_modified_items[0].second.value().checked_as<std::int32_t>() == 20);
 
     REQUIRE_THROWS_AS(t2_root.unbind_output(), std::logic_error);
     t2_list[0].unbind_output();
@@ -367,7 +367,7 @@ TEST_CASE("TSInput data views project non-peered prefixes")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *list     = registry.tsl(ts_int, 2);
     const auto *root_schema = registry.tsb("TSInputDataViewNonPeeredRoot", {{"items", list}});
@@ -413,7 +413,7 @@ TEST_CASE("TSInput data views project non-peered prefixes")
     auto first_child = list_data[0];
     REQUIRE(first_child.valid());
     REQUIRE(first_child.schema() == ts_int);
-    REQUIRE(first_child.value().checked_as<int>() == 11);
+    REQUIRE(first_child.value().checked_as<std::int32_t>() == 11);
 
     auto second_child = list_data[1];
     REQUIRE_FALSE(second_child.valid());
@@ -425,7 +425,7 @@ TEST_CASE("TSInput data views step through target links and rebinds")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *list     = registry.tsl(ts_int, 2);
     const auto *root_schema = registry.tsb("TSInputDataViewTargetLinkRoot", {{"items", list}});
@@ -456,7 +456,7 @@ TEST_CASE("TSInput data views step through target links and rebinds")
     auto cached_child = list_view[1];
     REQUIRE(cached_child.schema() == ts_int);
     REQUIRE(cached_child.data_view().schema() == ts_int);
-    REQUIRE(cached_child.value().checked_as<int>() == 20);
+    REQUIRE(cached_child.value().checked_as<std::int32_t>() == 20);
 
     auto root_data = root_view.data_view().borrowed_ref();
     auto root_data_bundle = root_data.as_bundle();
@@ -464,7 +464,7 @@ TEST_CASE("TSInput data views step through target links and rebinds")
     auto target_data_list = target_data.as_list();
     auto target_child_data = target_data_list[1];
     REQUIRE(target_child_data.schema() == ts_int);
-    REQUIRE(target_child_data.value().checked_as<int>() == 20);
+    REQUIRE(target_child_data.value().checked_as<std::int32_t>() == 20);
 
     auto rebound_root = input.view(nullptr, t2);
     auto rebound_bundle = rebound_root.as_bundle();
@@ -473,7 +473,7 @@ TEST_CASE("TSInput data views step through target links and rebinds")
 
     REQUIRE(cached_child.schema() == ts_int);
     REQUIRE(cached_child.data_view().schema() == ts_int);
-    REQUIRE(cached_child.value().checked_as<int>() == 200);
+    REQUIRE(cached_child.value().checked_as<std::int32_t>() == 200);
 
     auto rebound_root_view = input.view(nullptr, t2);
     auto rebound_root_data = rebound_root_view.data_view().borrowed_ref();
@@ -482,7 +482,7 @@ TEST_CASE("TSInput data views step through target links and rebinds")
     auto rebound_target_data_list = rebound_target_data.as_list();
     auto rebound_target_child_data = rebound_target_data_list[1];
     REQUIRE(rebound_target_child_data.schema() == ts_int);
-    REQUIRE(rebound_target_child_data.value().checked_as<int>() == 200);
+    REQUIRE(rebound_target_child_data.value().checked_as<std::int32_t>() == 200);
 }
 
 TEST_CASE("TSInput output binding levels expose values and data views from root to leaves")
@@ -490,7 +490,7 @@ TEST_CASE("TSInput output binding levels expose values and data views from root 
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *nested   = registry.tsb("TSInputBindingLevelsNested", {{"x", ts_int}, {"y", ts_int}});
     const auto *list     = registry.tsl(ts_int, 2);
@@ -554,7 +554,7 @@ TEST_CASE("TSInput output binding levels expose values and data views from root 
     REQUIRE(root_view.data_view().binding() == root_view.binding());
 
     REQUIRE(leaf.valid());
-    REQUIRE(leaf.value().checked_as<int>() == 7);
+    REQUIRE(leaf.value().checked_as<std::int32_t>() == 7);
     REQUIRE(leaf.data_view().schema() == ts_int);
     REQUIRE(leaf.data_view().data() == leaf_output.data_view().data());
 
@@ -567,8 +567,8 @@ TEST_CASE("TSInput output binding levels expose values and data views from root 
     REQUIRE(bundle.all_valid());
     REQUIRE(bundle.data_view().schema() == nested);
     REQUIRE(bundle.data_view().data() == bundle_output.data_view().data());
-    REQUIRE(bundle_x.value().checked_as<int>() == 10);
-    REQUIRE(bundle_y.value().checked_as<int>() == 20);
+    REQUIRE(bundle_x.value().checked_as<std::int32_t>() == 10);
+    REQUIRE(bundle_y.value().checked_as<std::int32_t>() == 20);
     REQUIRE(bundle_x.data_view().data() == output_bundle.field("x").data_view().data());
     REQUIRE(bundle_y.data_view().data() == output_bundle.field("y").data_view().data());
 
@@ -579,49 +579,49 @@ TEST_CASE("TSInput output binding levels expose values and data views from root 
     REQUIRE(whole_list.all_valid());
     REQUIRE(whole_list.data_view().schema() == list);
     REQUIRE(whole_list.data_view().data() == list_output.data_view().data());
-    REQUIRE(whole_list_view[0].value().checked_as<int>() == 100);
-    REQUIRE(whole_list_view[1].value().checked_as<int>() == 200);
+    REQUIRE(whole_list_view[0].value().checked_as<std::int32_t>() == 100);
+    REQUIRE(whole_list_view[1].value().checked_as<std::int32_t>() == 200);
     REQUIRE(whole_list_view[0].data_view().data() == output_list[0].data_view().data());
     REQUIRE(whole_list_view[1].data_view().data() == output_list[1].data_view().data());
 
     REQUIRE(leaf_list.valid());
     REQUIRE(leaf_list.all_valid());
     REQUIRE(leaf_list.data_view().schema() == list);
-    REQUIRE(leaf_list_view[0].value().checked_as<int>() == 1000);
-    REQUIRE(leaf_list_view[1].value().checked_as<int>() == 2000);
+    REQUIRE(leaf_list_view[0].value().checked_as<std::int32_t>() == 1000);
+    REQUIRE(leaf_list_view[1].value().checked_as<std::int32_t>() == 2000);
     REQUIRE(leaf_list_view[0].data_view().data() == first_element_output.data_view().data());
     REQUIRE(leaf_list_view[1].data_view().data() == second_element_output.data_view().data());
 
     REQUIRE(root_view.modified());
-    REQUIRE(leaf.delta_value().checked_as<int>() == 7);
+    REQUIRE(leaf.delta_value().checked_as<std::int32_t>() == 7);
     auto bundle_delta = bundle.delta_value().as_bundle();
-    REQUIRE(bundle_delta.at("x").checked_as<int>() == 10);
-    REQUIRE(bundle_delta.at("y").checked_as<int>() == 20);
+    REQUIRE(bundle_delta.at("x").checked_as<std::int32_t>() == 10);
+    REQUIRE(bundle_delta.at("y").checked_as<std::int32_t>() == 20);
 
-    Value key_zero{std::int64_t{0}};
-    Value key_one{std::int64_t{1}};
+    Value key_zero{Int{0}};
+    Value key_one{Int{1}};
     auto  whole_list_delta = whole_list.delta_value().as_map();
     REQUIRE(whole_list_delta.size() == 2);
-    REQUIRE(whole_list_delta.at(key_zero.view()).checked_as<int>() == 100);
-    REQUIRE(whole_list_delta.at(key_one.view()).checked_as<int>() == 200);
+    REQUIRE(whole_list_delta.at(key_zero.view()).checked_as<std::int32_t>() == 100);
+    REQUIRE(whole_list_delta.at(key_one.view()).checked_as<std::int32_t>() == 200);
 
     auto leaf_list_delta = leaf_list.delta_value().as_map();
     REQUIRE(leaf_list_delta.size() == 2);
-    REQUIRE(leaf_list_delta.at(key_zero.view()).checked_as<int>() == 1000);
-    REQUIRE(leaf_list_delta.at(key_one.view()).checked_as<int>() == 2000);
+    REQUIRE(leaf_list_delta.at(key_zero.view()).checked_as<std::int32_t>() == 1000);
+    REQUIRE(leaf_list_delta.at(key_one.view()).checked_as<std::int32_t>() == 2000);
 
     auto root_delta = root_view.delta_value().as_bundle();
-    REQUIRE(root_delta.at("leaf").checked_as<int>() == 7);
-    REQUIRE(root_delta.at("bundle").as_bundle().at("x").checked_as<int>() == 10);
-    REQUIRE(root_delta.at("bundle").as_bundle().at("y").checked_as<int>() == 20);
-    REQUIRE(root_delta.at("whole_list").as_map().at(key_zero.view()).checked_as<int>() == 100);
-    REQUIRE(root_delta.at("whole_list").as_map().at(key_one.view()).checked_as<int>() == 200);
-    REQUIRE(root_delta.at("leaf_list").as_map().at(key_zero.view()).checked_as<int>() == 1000);
-    REQUIRE(root_delta.at("leaf_list").as_map().at(key_one.view()).checked_as<int>() == 2000);
+    REQUIRE(root_delta.at("leaf").checked_as<std::int32_t>() == 7);
+    REQUIRE(root_delta.at("bundle").as_bundle().at("x").checked_as<std::int32_t>() == 10);
+    REQUIRE(root_delta.at("bundle").as_bundle().at("y").checked_as<std::int32_t>() == 20);
+    REQUIRE(root_delta.at("whole_list").as_map().at(key_zero.view()).checked_as<std::int32_t>() == 100);
+    REQUIRE(root_delta.at("whole_list").as_map().at(key_one.view()).checked_as<std::int32_t>() == 200);
+    REQUIRE(root_delta.at("leaf_list").as_map().at(key_zero.view()).checked_as<std::int32_t>() == 1000);
+    REQUIRE(root_delta.at("leaf_list").as_map().at(key_one.view()).checked_as<std::int32_t>() == 2000);
 
     auto root_data_delta = root_view.data_view().delta_value(t1).as_bundle();
-    REQUIRE(root_data_delta.at("leaf").checked_as<int>() == 7);
-    REQUIRE(root_data_delta.at("leaf_list").as_map().at(key_one.view()).checked_as<int>() == 2000);
+    REQUIRE(root_data_delta.at("leaf").checked_as<std::int32_t>() == 7);
+    REQUIRE(root_data_delta.at("leaf_list").as_map().at(key_one.view()).checked_as<std::int32_t>() == 2000);
 
     auto root_data = root_view.data_view().borrowed_ref();
     REQUIRE(root_data.valid());
@@ -635,27 +635,27 @@ TEST_CASE("TSInput output binding levels expose values and data views from root 
     auto leaf_list_data = root_data_bundle.field("leaf_list");
 
     REQUIRE(leaf_data.schema() == ts_int);
-    REQUIRE(leaf_data.value().checked_as<int>() == 7);
+    REQUIRE(leaf_data.value().checked_as<std::int32_t>() == 7);
     REQUIRE(leaf_data.data() == leaf_output.data_view().data());
 
     auto bundle_data_view = bundle_data.as_bundle();
     REQUIRE(bundle_data.schema() == nested);
     REQUIRE(bundle_data.data() == bundle_output.data_view().data());
-    REQUIRE(bundle_data_view.field("x").value().checked_as<int>() == 10);
-    REQUIRE(bundle_data_view.field("y").value().checked_as<int>() == 20);
+    REQUIRE(bundle_data_view.field("x").value().checked_as<std::int32_t>() == 10);
+    REQUIRE(bundle_data_view.field("y").value().checked_as<std::int32_t>() == 20);
 
     auto whole_list_data_view = whole_list_data.as_list();
     REQUIRE(whole_list_data.schema() == list);
     REQUIRE(whole_list_data.data() == list_output.data_view().data());
-    REQUIRE(whole_list_data_view[0].value().checked_as<int>() == 100);
-    REQUIRE(whole_list_data_view[1].value().checked_as<int>() == 200);
+    REQUIRE(whole_list_data_view[0].value().checked_as<std::int32_t>() == 100);
+    REQUIRE(whole_list_data_view[1].value().checked_as<std::int32_t>() == 200);
 
     auto leaf_list_data_view = leaf_list_data.as_list();
     REQUIRE(leaf_list_data.schema() == list);
     REQUIRE(leaf_list_data_view[0].data() == first_element_output.data_view().data());
     REQUIRE(leaf_list_data_view[1].data() == second_element_output.data_view().data());
-    REQUIRE(leaf_list_data_view[0].value().checked_as<int>() == 1000);
-    REQUIRE(leaf_list_data_view[1].value().checked_as<int>() == 2000);
+    REQUIRE(leaf_list_data_view[0].value().checked_as<std::int32_t>() == 1000);
+    REQUIRE(leaf_list_data_view[1].value().checked_as<std::int32_t>() == 2000);
 }
 
 TEST_CASE("TSInput binding rejects non-peered views and incompatible output schemas")
@@ -663,7 +663,7 @@ TEST_CASE("TSInput binding rejects non-peered views and incompatible output sche
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *dbl_meta = registry.register_scalar<double>("double");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ts_dbl   = registry.ts(dbl_meta);
@@ -694,7 +694,7 @@ TEST_CASE("TSInput active root bubbles output modifications through non-peered p
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *list     = registry.tsl(ts_int, 2);
     const auto *root     = registry.tsb("TSInputRootBubblingRoot", {{"items", list}});
@@ -755,7 +755,7 @@ TEST_CASE("TSInput peered collection descendants can be activated independently"
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *list     = registry.tsl(ts_int, 2);
     const auto *root     = registry.tsb("TSInputBoundListRoot", {{"items", list}});
@@ -834,7 +834,7 @@ TEST_CASE("TSInput shape casts return endpoint views for slot collections")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tss      = registry.tss(int_meta);
     const auto *tsd      = registry.tsd(int_meta, ts_int);
@@ -891,7 +891,7 @@ TEST_CASE("TSInput shape casts return endpoint views for slot collections")
     REQUIRE(range_size(dict_input.values()) == 1);
     auto dict_child = dict_input.at(key.view());
     REQUIRE(dict_child.valid());
-    REQUIRE(dict_child.value().checked_as<int>() == 42);
+    REQUIRE(dict_child.value().checked_as<std::int32_t>() == 42);
 
     RecordingNotifiable recorder;
     auto active_root_view = input.view(&recorder, t2);

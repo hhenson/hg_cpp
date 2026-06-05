@@ -8,6 +8,7 @@
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
+#include <hgraph/types/primitive_types.h>
 #include <hgraph/types/utils/intern_table.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value_ops.h>
@@ -33,8 +34,10 @@ namespace hgraph
      * interned names; pointers it returns remain valid for the lifetime
      * of the process.
      *
-     * Use ``TypeRegistry::instance()`` to access the singleton; the
-     * constructor is private. The class is non-copyable and non-movable.
+     * Use ``TypeRegistry::instance()`` to access the singleton; it is
+     * automatically seeded with the standard scalar and ``TS`` / ``TSS``
+     * aliases on first construction. The constructor is private. The class
+     * is non-copyable and non-movable.
      */
     class TypeRegistry
     {
@@ -411,8 +414,8 @@ namespace hgraph
         {
             const ValueTypeMetaData *value_type{nullptr};
             bool is_duration_based{false};
-            int64_t param1{0};
-            int64_t param2{0};
+            std::int64_t param1{0};
+            std::int64_t param2{0};
             bool operator==(const TSWindowKey &) const noexcept = default;
         };
         struct TSWindowKeyHash
@@ -421,8 +424,8 @@ namespace hgraph
             {
                 size_t seed = std::hash<const ValueTypeMetaData *>{}(k.value_type);
                 seed = combine(seed, std::hash<bool>{}(k.is_duration_based));
-                seed = combine(seed, std::hash<int64_t>{}(k.param1));
-                seed = combine(seed, std::hash<int64_t>{}(k.param2));
+                seed = combine(seed, std::hash<std::int64_t>{}(k.param1));
+                seed = combine(seed, std::hash<std::int64_t>{}(k.param2));
                 return seed;
             }
         };

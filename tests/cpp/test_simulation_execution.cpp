@@ -26,13 +26,15 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+
 #include <utility>
 
 namespace
 {
     using namespace hgraph;
 
-    void write_int_output(const NodeView &view, engine_time_t evaluation_time, int value)
+    void write_int_output(const NodeView &view, engine_time_t evaluation_time, std::int32_t value)
     {
         Value wrapped{value};
         auto  mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
@@ -40,7 +42,7 @@ namespace
     }
 
     // A source that writes a fixed value and counts how many times it is evaluated.
-    NodeBuilder counting_source(const TSValueTypeMetaData *ts_int, int value, int *eval_count)
+    NodeBuilder counting_source(const TSValueTypeMetaData *ts_int, int value, std::int32_t *eval_count)
     {
         NodeTypeMetaData schema;
         schema.display_name = "source";
@@ -58,7 +60,7 @@ namespace
 
     // A compute node that emits input + 1 and counts how many times it is evaluated.
     NodeBuilder counting_add_one(const TSValueTypeMetaData *input_schema,
-                                 const TSValueTypeMetaData *ts_int, int *eval_count)
+                                 const TSValueTypeMetaData *ts_int, std::int32_t *eval_count)
     {
         NodeTypeMetaData schema;
         schema.display_name = "add_one";
@@ -72,7 +74,7 @@ namespace
             auto      root  = view.input(evaluation_time);
             auto      bundle = root.as_bundle();
             auto      input = bundle[0];
-            const int value = input.value().checked_as<int>();
+            const std::int32_t value = input.value().checked_as<std::int32_t>();
             write_int_output(view, evaluation_time, value + 1);
         };
 
@@ -92,10 +94,10 @@ namespace
     {
         static constexpr auto name              = "ticking_source";
         static constexpr bool schedule_on_start = true;  // initiate at the start cycle
-        static void           eval(NodeScheduler sched, GlobalStateView gs, Scalar<"count", int> count,
-                                    State<int> emitted, Out<TS<int>> out)
+        static void           eval(NodeScheduler sched, GlobalStateView gs, Scalar<"count", std::int32_t> count,
+                                    State<std::int32_t> emitted, Out<TS<std::int32_t>> out)
         {
-            const int n = emitted.get();
+            const std::int32_t n = emitted.get();
             out.set(n);
             gs.set("ticks", Value{n + 1});
             emitted.set(n + 1);
@@ -106,7 +108,7 @@ namespace
     struct AddOneNode
     {
         static constexpr auto name = "add_one";
-        static void           eval(In<"in", TS<int>> in, Out<TS<int>> out) { out.set(in.value() + 1); }
+        static void           eval(In<"in", TS<std::int32_t>> in, Out<TS<std::int32_t>> out) { out.set(in.value() + 1); }
     };
 
     struct TickGraph
@@ -125,12 +127,12 @@ TEST_CASE("simulation: a constant source drives exactly one cycle (no tick injec
     using namespace hgraph;
 
     auto       &registry     = TypeRegistry::instance();
-    const auto *int_meta     = registry.register_scalar<int>("int");
+    const auto *int_meta     = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int       = registry.ts(int_meta);
     const auto *input_schema = registry.tsb("SimInput", {{"value", ts_int}});
 
-    int source_evals  = 0;
-    int add_one_evals = 0;
+    std::int32_t source_evals  = 0;
+    std::int32_t add_one_evals = 0;
 
     GraphBuilder graph_builder;
     graph_builder.add_node(counting_source(ts_int, 7, &source_evals))
@@ -148,7 +150,7 @@ TEST_CASE("simulation: a constant source drives exactly one cycle (no tick injec
 
     // The single cycle produced the right value...
     auto graph = executor_view.graph();
-    REQUIRE(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 8);
+    REQUIRE(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 8);
 
     // ...but across the whole [start, end) window the source ran exactly once.
     // There is no data-driven tick injection, so after the first cycle nothing
@@ -162,11 +164,11 @@ TEST_CASE("simulation: a node that does not schedule itself in start is never ev
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     // A source with NO start hook: nothing schedules it, so it must never run.
-    int              evals = 0;
+    std::int32_t              evals = 0;
     NodeTypeMetaData schema;
     schema.display_name  = "unscheduled_source";
     schema.output_schema = ts_int;
@@ -199,12 +201,12 @@ TEST_CASE("simulation: re-ticking a source reschedules its downstream via notifi
     using namespace hgraph;
 
     auto       &registry     = TypeRegistry::instance();
-    const auto *int_meta     = registry.register_scalar<int>("int");
+    const auto *int_meta     = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int       = registry.ts(int_meta);
     const auto *input_schema = registry.tsb("NotifyInput", {{"value", ts_int}});
 
-    int source_evals  = 0;
-    int add_one_evals = 0;
+    std::int32_t source_evals  = 0;
+    std::int32_t add_one_evals = 0;
 
     GraphBuilder builder;
     builder.add_node(counting_source(ts_int, 5, &source_evals))
@@ -222,7 +224,7 @@ TEST_CASE("simulation: re-ticking a source reschedules its downstream via notifi
     view.evaluate(t1);
     CHECK(source_evals == 1);
     CHECK(add_one_evals == 1);
-    CHECK(view.node_at(1).output(t1).value().checked_as<int>() == 6);
+    CHECK(view.node_at(1).output(t1).value().checked_as<std::int32_t>() == 6);
 
     // Nothing is scheduled now: the source does not reschedule itself.
     CHECK(view.next_scheduled_time() == MAX_DT);
@@ -255,7 +257,7 @@ TEST_CASE("simulation: a self-rescheduling source drives multiple cycles over ti
     using namespace hgraph;
 
     auto &registry = TypeRegistry::instance();
-    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::int32_t>("int32");
 
     GraphBuilder graph_builder = build_graph<TickGraph>();  // TickingSource(count=3) -> AddOneNode
 
@@ -271,10 +273,10 @@ TEST_CASE("simulation: a self-rescheduling source drives multiple cycles over ti
     auto graph = executor_view.graph();
 
     // The source rescheduled itself for exactly three cycles.
-    CHECK(graph.global_state().get_as<int>("ticks") == 3);
+    CHECK(graph.global_state().get_as<std::int32_t>("ticks") == 3);
 
     // It emitted 0, 1, 2 over successive cycles (last value retained on the
     // output); the downstream add_one was re-evaluated each cycle and tracked it.
-    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<int>() == 2);
-    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 3);
+    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<std::int32_t>() == 2);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 3);
 }

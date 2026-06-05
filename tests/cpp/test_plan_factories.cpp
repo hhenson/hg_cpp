@@ -23,10 +23,10 @@ namespace
 {
     struct MoveAssignableOnlyScalar
     {
-        int value{0};
+        std::int32_t value{0};
 
         MoveAssignableOnlyScalar() = default;
-        explicit MoveAssignableOnlyScalar(int v) : value(v) {}
+        explicit MoveAssignableOnlyScalar(std::int32_t v) : value(v) {}
         MoveAssignableOnlyScalar(const MoveAssignableOnlyScalar &) = default;
         MoveAssignableOnlyScalar(MoveAssignableOnlyScalar &&) noexcept = default;
         MoveAssignableOnlyScalar &operator=(const MoveAssignableOnlyScalar &) = delete;
@@ -40,7 +40,7 @@ namespace
         [[nodiscard]] auto operator<=>(const MoveAssignableOnlyScalar &) const = default;
     };
 
-    void mutate_supported_ts_child(hgraph::TSDataView child, hgraph::engine_time_t modified_time, int seed)
+    void mutate_supported_ts_child(hgraph::TSDataView child, hgraph::engine_time_t modified_time, std::int32_t seed)
     {
         using namespace hgraph;
 
@@ -149,13 +149,13 @@ TEST_CASE("ValuePlanFactory: atomic round-trip via TypeRegistry")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = ValuePlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *plan     = factory.plan_for(int_meta);
 
     REQUIRE(plan != nullptr);
-    REQUIRE(plan == &MemoryUtils::plan_for<int>());
-    REQUIRE(plan->layout.size == sizeof(int));
-    REQUIRE(plan->layout.alignment == alignof(int));
+    REQUIRE(plan == &MemoryUtils::plan_for<std::int32_t>());
+    REQUIRE(plan->layout.size == sizeof(std::int32_t));
+    REQUIRE(plan->layout.alignment == alignof(std::int32_t));
 }
 
 TEST_CASE("ValuePlanFactory::find returns null for unregistered atomic schemas")
@@ -187,8 +187,8 @@ TEST_CASE("ValuePlanFactory: tuple synthesis matches MemoryUtils::tuple_plan")
     using namespace hgraph;
     auto       &registry   = TypeRegistry::instance();
     auto       &factory    = ValuePlanFactory::instance();
-    const auto *int_meta   = registry.register_scalar<int>("int");
-    const auto *float_meta = registry.register_scalar<float>("float");
+    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
+    const auto *float_meta = registry.register_scalar<float>("float32");
     const auto *tuple_meta = registry.tuple({int_meta, float_meta});
     const auto *plan       = factory.plan_for(tuple_meta);
 
@@ -196,7 +196,7 @@ TEST_CASE("ValuePlanFactory: tuple synthesis matches MemoryUtils::tuple_plan")
     REQUIRE(plan->is_tuple());
     REQUIRE(plan->component_count() == 2);
     REQUIRE(plan == &MemoryUtils::tuple_plan(
-                        {&MemoryUtils::plan_for<int>(), &MemoryUtils::plan_for<float>()}));
+                        {&MemoryUtils::plan_for<std::int32_t>(), &MemoryUtils::plan_for<float>()}));
 }
 
 TEST_CASE("ValuePlanFactory: bundle synthesis preserves field names and shape")
@@ -204,8 +204,8 @@ TEST_CASE("ValuePlanFactory: bundle synthesis preserves field names and shape")
     using namespace hgraph;
     auto       &registry    = TypeRegistry::instance();
     auto       &factory     = ValuePlanFactory::instance();
-    const auto *int_meta    = registry.register_scalar<int>("int");
-    const auto *float_meta  = registry.register_scalar<float>("float");
+    const auto *int_meta    = registry.register_scalar<std::int32_t>("int32");
+    const auto *float_meta  = registry.register_scalar<float>("float32");
     const auto *bundle_meta = registry.bundle("PlanFactoryBundleA", {{"x", int_meta}, {"y", float_meta}});
     const auto *plan        = factory.plan_for(bundle_meta);
 
@@ -215,7 +215,7 @@ TEST_CASE("ValuePlanFactory: bundle synthesis preserves field names and shape")
 
     const auto *x_comp = plan->find_component("x");
     REQUIRE(x_comp != nullptr);
-    REQUIRE(x_comp->plan == &MemoryUtils::plan_for<int>());
+    REQUIRE(x_comp->plan == &MemoryUtils::plan_for<std::int32_t>());
 
     const auto *y_comp = plan->find_component("y");
     REQUIRE(y_comp != nullptr);
@@ -227,14 +227,14 @@ TEST_CASE("ValuePlanFactory: fixed list synthesis matches MemoryUtils::array_pla
     using namespace hgraph;
     auto       &registry  = TypeRegistry::instance();
     auto       &factory   = ValuePlanFactory::instance();
-    const auto *int_meta  = registry.register_scalar<int>("int");
+    const auto *int_meta  = registry.register_scalar<std::int32_t>("int32");
     const auto *list_meta = registry.list(int_meta, 4);
     const auto *plan      = factory.plan_for(list_meta);
 
     REQUIRE(plan != nullptr);
     REQUIRE(plan->is_array());
     REQUIRE(plan->array_count() == 4);
-    REQUIRE(plan == &MemoryUtils::array_plan(MemoryUtils::plan_for<int>(), 4));
+    REQUIRE(plan == &MemoryUtils::array_plan(MemoryUtils::plan_for<std::int32_t>(), 4));
 }
 
 TEST_CASE("ValuePlanFactory: nested composites synthesise correctly")
@@ -242,8 +242,8 @@ TEST_CASE("ValuePlanFactory: nested composites synthesise correctly")
     using namespace hgraph;
     auto       &registry   = TypeRegistry::instance();
     auto       &factory    = ValuePlanFactory::instance();
-    const auto *int_meta   = registry.register_scalar<int>("int");
-    const auto *float_meta = registry.register_scalar<float>("float");
+    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
+    const auto *float_meta = registry.register_scalar<float>("float32");
     const auto *inner      = registry.tuple({int_meta, float_meta});
     const auto *outer      = registry.tuple({inner, int_meta});
     const auto *plan       = factory.plan_for(outer);
@@ -254,7 +254,7 @@ TEST_CASE("ValuePlanFactory: nested composites synthesise correctly")
 
     const auto *inner_plan = factory.plan_for(inner);
     REQUIRE(plan->component(0).plan == inner_plan);
-    REQUIRE(plan->component(1).plan == &MemoryUtils::plan_for<int>());
+    REQUIRE(plan->component(1).plan == &MemoryUtils::plan_for<std::int32_t>());
 }
 
 TEST_CASE("ValuePlanFactory: caching returns the same pointer on repeat lookups")
@@ -262,8 +262,8 @@ TEST_CASE("ValuePlanFactory: caching returns the same pointer on repeat lookups"
     using namespace hgraph;
     auto       &registry   = TypeRegistry::instance();
     auto       &factory    = ValuePlanFactory::instance();
-    const auto *int_meta   = registry.register_scalar<int>("int");
-    const auto *float_meta = registry.register_scalar<float>("float");
+    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
+    const auto *float_meta = registry.register_scalar<float>("float32");
     const auto *tuple_meta = registry.tuple({int_meta, float_meta});
 
     const auto *first    = factory.plan_for(tuple_meta);
@@ -280,9 +280,9 @@ TEST_CASE("ValuePlanFactory: dynamic list uses compact value-layer storage")
     using namespace hgraph;
     auto       &registry  = TypeRegistry::instance();
     auto       &factory   = ValuePlanFactory::instance();
-    const auto *int_meta  = registry.register_scalar<int>("int");
+    const auto *int_meta  = registry.register_scalar<std::int32_t>("int32");
     const auto *list_meta = registry.list(int_meta, 0);
-    const auto *int_binding = registry.scalar_binding<int>();
+    const auto *int_binding = registry.scalar_binding<std::int32_t>();
 
     const auto *plan = factory.plan_for(list_meta);
     const auto *binding = factory.binding_for(list_meta);
@@ -300,8 +300,8 @@ TEST_CASE("ValuePlanFactory: container kinds use compact value-layer storage")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = ValuePlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
-    const auto *int_binding = registry.scalar_binding<int>();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *int_binding = registry.scalar_binding<std::int32_t>();
     REQUIRE(int_binding != nullptr);
 
     const auto *set_meta = registry.set(int_meta);
@@ -342,8 +342,8 @@ TEST_CASE("ValuePlanFactory: binding_for synthesises structured composite bindin
     using namespace hgraph;
     auto       &registry   = TypeRegistry::instance();
     auto       &factory    = ValuePlanFactory::instance();
-    const auto *int_meta   = registry.register_scalar<int>("int");
-    const auto *float_meta = registry.register_scalar<float>("float");
+    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
+    const auto *float_meta = registry.register_scalar<float>("float32");
 
     const auto *tuple_meta = registry.tuple({int_meta, float_meta});
     const auto *tuple_binding = factory.binding_for(tuple_meta);
@@ -370,10 +370,10 @@ TEST_CASE("ValuePlanFactory::register_atomic is idempotent for the same plan")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = ValuePlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
-    REQUIRE_NOTHROW(factory.register_atomic(int_meta, &MemoryUtils::plan_for<int>()));
-    REQUIRE(factory.find(int_meta) == &MemoryUtils::plan_for<int>());
+    REQUIRE_NOTHROW(factory.register_atomic(int_meta, &MemoryUtils::plan_for<std::int32_t>()));
+    REQUIRE(factory.find(int_meta) == &MemoryUtils::plan_for<std::int32_t>());
 }
 
 TEST_CASE("ValuePlanFactory::register_atomic rejects conflicting plans")
@@ -381,7 +381,7 @@ TEST_CASE("ValuePlanFactory::register_atomic rejects conflicting plans")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = ValuePlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     REQUIRE_THROWS_AS(
         factory.register_atomic(int_meta, &MemoryUtils::plan_for<float>()),
@@ -392,7 +392,7 @@ TEST_CASE("ValuePlanFactory::register_atomic ignores null inputs")
 {
     using namespace hgraph;
     auto &factory = ValuePlanFactory::instance();
-    REQUIRE_NOTHROW(factory.register_atomic(nullptr, &MemoryUtils::plan_for<int>()));
+    REQUIRE_NOTHROW(factory.register_atomic(nullptr, &MemoryUtils::plan_for<std::int32_t>()));
     ValueTypeMetaData orphan(ValueTypeKind::Atomic, ValueTypeFlags::None);
     REQUIRE_NOTHROW(factory.register_atomic(&orphan, nullptr));
 }
@@ -402,7 +402,7 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     const auto *plan    = factory.plan_for(ts_int);
@@ -414,7 +414,7 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified
     REQUIRE(plan->find_component("value") != nullptr);
     REQUIRE(plan->find_component("delta") == nullptr);
     REQUIRE(plan->find_component("tracking") != nullptr);
-    REQUIRE(plan->component("value").plan == &MemoryUtils::plan_for<int>());
+    REQUIRE(plan->component("value").plan == &MemoryUtils::plan_for<std::int32_t>());
     REQUIRE(plan->component("tracking").plan == &MemoryUtils::plan_for<TSDataTracking>());
     REQUIRE(plan->component("tracking").offset != plan->component("value").offset);
 
@@ -423,8 +423,8 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified
     REQUIRE(binding->plan() == plan);
     REQUIRE(binding->checked_ops().allows_mutation);
     TSData data{*binding};
-    REQUIRE(data.view().layout().value_binding == registry.scalar_binding<int>());
-    REQUIRE(data.view().layout().delta_binding == registry.scalar_binding<int>());
+    REQUIRE(data.view().layout().value_binding == registry.scalar_binding<std::int32_t>());
+    REQUIRE(data.view().layout().delta_binding == registry.scalar_binding<std::int32_t>());
     REQUIRE_FALSE(data.view().parent_link().has_parent());
 }
 
@@ -433,7 +433,7 @@ TEST_CASE("TSDataView: mutation capability is supplied by TSDataOps")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *binding  = factory.binding_for(ts_int);
     REQUIRE(binding != nullptr);
@@ -453,14 +453,14 @@ TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified ti
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *binding  = factory.binding_for(ts_int);
     REQUIRE(binding != nullptr);
 
     TSData data{*binding};
     auto   view = data.view();
-    REQUIRE(view.value().checked_as<int>() == 0);
+    REQUIRE(view.value().checked_as<std::int32_t>() == 0);
     REQUIRE(view.last_modified_time() == MIN_DT);
 
     const auto t1 = MIN_ST;
@@ -473,8 +473,8 @@ TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified ti
         auto mutation = view.begin_mutation(t1);
         REQUIRE(mutation.copy_value_from(source.view()));
     }
-    REQUIRE(view.value().checked_as<int>() == 42);
-    REQUIRE(view.delta_value(t1).checked_as<int>() == 42);
+    REQUIRE(view.value().checked_as<std::int32_t>() == 42);
+    REQUIRE(view.delta_value(t1).checked_as<std::int32_t>() == 42);
     REQUIRE(view.delta_value(t1).data() == view.value().data());
     REQUIRE(view.last_modified_time() == t1);
     REQUIRE(view.modified(t1));
@@ -486,15 +486,15 @@ TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified ti
         auto mutation = view.begin_mutation(t1);
         REQUIRE_FALSE(mutation.copy_value_from(same_tick_overwrite.view()));
     }
-    REQUIRE(view.value().checked_as<int>() == 99);
-    REQUIRE(view.delta_value(t1).checked_as<int>() == 99);
+    REQUIRE(view.value().checked_as<std::int32_t>() == 99);
+    REQUIRE(view.delta_value(t1).checked_as<std::int32_t>() == 99);
     REQUIRE(view.last_modified_time() == t1);
 
     {
         auto mutation = view.begin_mutation(t2);
         REQUIRE(mutation.copy_value_from(source.view()));
-        REQUIRE(view.value().checked_as<int>() == 42);
-        REQUIRE(view.delta_value(t2).checked_as<int>() == 42);
+        REQUIRE(view.value().checked_as<std::int32_t>() == 42);
+        REQUIRE(view.delta_value(t2).checked_as<std::int32_t>() == 42);
         REQUIRE(view.last_modified_time() == t2);
     }
 }
@@ -504,7 +504,7 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, 2);
     const auto *binding  = factory.binding_for(tsl);
@@ -543,8 +543,8 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
         }
 
         REQUIRE(parent.last_modified_time() == t1);
-        REQUIRE(child.value().checked_as<int>() == 2);
-        REQUIRE(child.delta_value(t1).checked_as<int>() == 2);
+        REQUIRE(child.value().checked_as<std::int32_t>() == 2);
+        REQUIRE(child.delta_value(t1).checked_as<std::int32_t>() == 2);
     }
 
     REQUIRE(parent.last_modified_time() == t1);
@@ -568,8 +568,8 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
     }
 
     REQUIRE(parent.last_modified_time() == t1);
-    REQUIRE(child.value().checked_as<int>() == 3);
-    REQUIRE(child.delta_value(t1).checked_as<int>() == 3);
+    REQUIRE(child.value().checked_as<std::int32_t>() == 3);
+    REQUIRE(child.delta_value(t1).checked_as<std::int32_t>() == 3);
 
     {
         auto next_tick = child.begin_mutation(t2);
@@ -597,7 +597,7 @@ TEST_CASE("TSDataView: child parent link is stored in TSData tracking")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsd      = registry.tsd(int_meta, ts_int);
     const auto *binding  = factory.binding_for(tsd);
@@ -641,7 +641,7 @@ TEST_CASE("TSDataView: child parent link is stored in TSData tracking")
     auto dict = view.as_dict();
     REQUIRE(dict.modified(t2));
     REQUIRE(dict.modified_keys(t2).begin() != dict.modified_keys(t2).end());
-    REQUIRE(dict.at(key.view()).value().checked_as<int>() == 12);
+    REQUIRE(dict.at(key.view()).value().checked_as<std::int32_t>() == 12);
 }
 
 TEST_CASE("TSDataPlanFactory: REF and SIGNAL use compact atomic TSData")
@@ -649,7 +649,7 @@ TEST_CASE("TSDataPlanFactory: REF and SIGNAL use compact atomic TSData")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     REQUIRE(factory.binding_for(registry.signal()) != nullptr);
@@ -661,7 +661,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsb      = registry.tsb("PlanFactoryTSB", {{"a", ts_int}, {"b", ts_int}});
 
@@ -697,8 +697,8 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     REQUIRE(tsb_view.valid_items().begin() == tsb_view.valid_items().end());
 
     auto current = view.value().as_bundle();
-    REQUIRE(current.at("a").checked_as<int>() == 0);
-    REQUIRE(current.at("b").checked_as<int>() == 0);
+    REQUIRE(current.at("a").checked_as<std::int32_t>() == 0);
+    REQUIRE(current.at("b").checked_as<std::int32_t>() == 0);
 
     auto immutable_ops = static_cast<const IndexedTSDataOps &>(binding->checked_ops());
     immutable_ops.allows_mutation = false;
@@ -706,7 +706,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     TSData        immutable_data{immutable_binding};
     auto          immutable_view   = immutable_data.view();
     auto          immutable_bundle = immutable_view.as_bundle();
-    REQUIRE(immutable_bundle.at(0).value().checked_as<int>() == 0);
+    REQUIRE(immutable_bundle.at(0).value().checked_as<std::int32_t>() == 0);
 
     std::size_t keyed_items = 0;
     for (const auto [name, element] : tsb_view.items())
@@ -727,14 +727,14 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
 
     REQUIRE(view.modified(t1));
     REQUIRE(view.last_modified_time() == t1);
-    REQUIRE(view.value().as_bundle().at("a").checked_as<int>() == 7);
+    REQUIRE(view.value().as_bundle().at("a").checked_as<std::int32_t>() == 7);
     {
         auto valid_items = tsb_view.valid_items();
         auto it = valid_items.begin();
         REQUIRE(it != valid_items.end());
         const auto [name, element] = *it;
         REQUIRE(std::string{name} == "a");
-        REQUIRE(element.value().checked_as<int>() == 7);
+        REQUIRE(element.value().checked_as<std::int32_t>() == 7);
         ++it;
         REQUIRE(it == valid_items.end());
     }
@@ -744,13 +744,13 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
         REQUIRE(it != modified_items.end());
         const auto [name, element] = *it;
         REQUIRE(std::string{name} == "a");
-        REQUIRE(element.delta_value(t1).checked_as<int>() == 7);
+        REQUIRE(element.delta_value(t1).checked_as<std::int32_t>() == 7);
         ++it;
         REQUIRE(it == modified_items.end());
     }
 
     auto delta = view.delta_value(t1).as_bundle();
-    REQUIRE(delta.at("a").checked_as<int>() == 7);
+    REQUIRE(delta.at("a").checked_as<std::int32_t>() == 7);
     REQUIRE_FALSE(delta.at("b").has_value());
 }
 
@@ -759,7 +759,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, 3);
 
@@ -774,7 +774,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
     REQUIRE(value_component->plan == ValuePlanFactory::instance().plan_for(tsl->value_schema));
     REQUIRE(value_component->plan->is_array());
     REQUIRE(value_component->plan->array_count() == 3);
-    REQUIRE(value_component->plan->array_stride() == sizeof(int));
+    REQUIRE(value_component->plan->array_stride() == sizeof(std::int32_t));
     const auto *elements_component = aux_component->plan->find_component("elements");
     REQUIRE(elements_component != nullptr);
     REQUIRE(elements_component->plan != nullptr);
@@ -799,7 +799,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
             aux_component->offset + elements_component->offset + 2 * elements_component->plan->array_stride());
     REQUIRE(view.value().is_list());
     REQUIRE(view.value().as_list().size() == 3);
-    REQUIRE(view.value().as_list().at(2).checked_as<int>() == 0);
+    REQUIRE(view.value().as_list().at(2).checked_as<std::int32_t>() == 0);
     REQUIRE(tsl_view.valid_values().begin() == tsl_view.valid_values().end());
     REQUIRE(tsl_view.valid_items().begin() == tsl_view.valid_items().end());
 
@@ -818,12 +818,12 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
     }
 
     REQUIRE(view.modified(t1));
-    REQUIRE(view.value().as_list().at(2).checked_as<int>() == 11);
+    REQUIRE(view.value().as_list().at(2).checked_as<std::int32_t>() == 11);
     {
         auto valid_values = tsl_view.valid_values();
         auto it = valid_values.begin();
         REQUIRE(it != valid_values.end());
-        REQUIRE((*it).value().checked_as<int>() == 11);
+        REQUIRE((*it).value().checked_as<std::int32_t>() == 11);
         ++it;
         REQUIRE(it == valid_values.end());
     }
@@ -833,7 +833,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
         REQUIRE(it != modified_items.end());
         const auto [index, element] = *it;
         REQUIRE(index == 2);
-        REQUIRE(element.delta_value(t1).checked_as<int>() == 11);
+        REQUIRE(element.delta_value(t1).checked_as<std::int32_t>() == 11);
         ++it;
         REQUIRE(it == modified_items.end());
     }
@@ -846,7 +846,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSL stores current values as a fixed value-l
     REQUIRE(delta.size() == 1);
     REQUIRE(delta.contains(key_view));
     REQUIRE_FALSE(delta.contains(miss_view));
-    REQUIRE(delta.at(key_view).checked_as<int>() == 11);
+    REQUIRE(delta.at(key_view).checked_as<std::int32_t>() == 11);
     REQUIRE(delta.key_set().contains(key_view));
 }
 
@@ -855,7 +855,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSL owns embedded TSS child storage")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tss_int  = registry.tss(int_meta);
     const auto *tsl      = registry.tsl(tss_int, 2);
 
@@ -914,7 +914,7 @@ TEST_CASE("TSDataPlanFactory: collections nest every supported non-REF TSData ki
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     (void)registry.register_scalar<bool>("bool");
 
     const auto *ts_int     = registry.ts(int_meta);
@@ -943,7 +943,7 @@ TEST_CASE("TSDataPlanFactory: collections nest every supported non-REF TSData ki
     };
 
     const auto t1 = MIN_ST;
-    int        seed = 10;
+    std::int32_t seed = 10;
     for (const auto &child : children)
     {
         SECTION(std::string{"fixed TSL child "} + child.label)
@@ -1008,7 +1008,7 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tsw      = registry.tsw(int_meta, 3, 2);
 
     const auto *binding = factory.binding_for(tsw);
@@ -1028,7 +1028,7 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     const auto &layout = window.size_layout();
     REQUIRE(layout.period == 3);
     REQUIRE(layout.min_period == 2);
-    REQUIRE(layout.element_binding == registry.scalar_binding<int>());
+    REQUIRE(layout.element_binding == registry.scalar_binding<std::int32_t>());
     REQUIRE(layout.time_binding == registry.scalar_binding<engine_time_t>());
     REQUIRE_THROWS_AS(window.time_layout(), std::logic_error);
     REQUIRE(window.value().binding()->plan() == window_component->plan);
@@ -1050,15 +1050,15 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
         auto mutation = window.begin_mutation(t1);
         mutation.push(one.view());
         REQUIRE(mutation.size() == 1);
-        REQUIRE(mutation.back().checked_as<int>() == 1);
+        REQUIRE(mutation.back().checked_as<std::int32_t>() == 1);
     }
     REQUIRE(window.size() == 1);
     REQUIRE_FALSE(window.all_valid());
-    REQUIRE(window.front().checked_as<int>() == 1);
-    REQUIRE(window.back().checked_as<int>() == 1);
+    REQUIRE(window.front().checked_as<std::int32_t>() == 1);
+    REQUIRE(window.back().checked_as<std::int32_t>() == 1);
     REQUIRE(window.time_at(0) == t1);
     REQUIRE(window.time_value_at(0).checked_as<engine_time_t>() == t1);
-    REQUIRE(window.delta_value(t1).checked_as<int>() == 1);
+    REQUIRE(window.delta_value(t1).checked_as<std::int32_t>() == 1);
 
     Value two{2};
     {
@@ -1067,8 +1067,8 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     }
     REQUIRE(window.size() == 2);
     REQUIRE(window.all_valid());
-    REQUIRE(window.value().as_list().at(0).checked_as<int>() == 1);
-    REQUIRE(window.value().as_list().at(1).checked_as<int>() == 2);
+    REQUIRE(window.value().as_list().at(0).checked_as<std::int32_t>() == 1);
+    REQUIRE(window.value().as_list().at(1).checked_as<std::int32_t>() == 2);
 
     Value three{3};
     {
@@ -1077,7 +1077,7 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     }
     REQUIRE(window.size() == 3);
     REQUIRE(window.full());
-    REQUIRE(window.back().checked_as<int>() == 3);
+    REQUIRE(window.back().checked_as<std::int32_t>() == 3);
 
     Value four{4};
     {
@@ -1102,12 +1102,12 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     REQUIRE(*time_it == t4);
     ++time_it;
     REQUIRE(time_it == times.end());
-    REQUIRE(window.at(0).checked_as<int>() == 2);
-    REQUIRE(window.at(1).checked_as<int>() == 3);
-    REQUIRE(window.at(2).checked_as<int>() == 4);
-    REQUIRE(window.value().as_list().at(0).checked_as<int>() == 2);
-    REQUIRE(window.value().as_list().at(2).checked_as<int>() == 4);
-    REQUIRE(window.delta_value(t4).checked_as<int>() == 4);
+    REQUIRE(window.at(0).checked_as<std::int32_t>() == 2);
+    REQUIRE(window.at(1).checked_as<std::int32_t>() == 3);
+    REQUIRE(window.at(2).checked_as<std::int32_t>() == 4);
+    REQUIRE(window.value().as_list().at(0).checked_as<std::int32_t>() == 2);
+    REQUIRE(window.value().as_list().at(2).checked_as<std::int32_t>() == 4);
+    REQUIRE(window.delta_value(t4).checked_as<std::int32_t>() == 4);
     REQUIRE_FALSE(window.delta_value(t3).has_value());
 
     Value duplicate{5};
@@ -1142,7 +1142,7 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tsw      = registry.tsw_duration(int_meta, engine_time_delta_t{10}, engine_time_delta_t{5});
 
     const auto *binding = factory.binding_for(tsw);
@@ -1157,7 +1157,7 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     const auto &layout = window.time_layout();
     REQUIRE(layout.time_range == engine_time_delta_t{10});
     REQUIRE(layout.min_time_range == engine_time_delta_t{5});
-    REQUIRE(layout.element_binding == registry.scalar_binding<int>());
+    REQUIRE(layout.element_binding == registry.scalar_binding<std::int32_t>());
     REQUIRE(layout.time_binding == registry.scalar_binding<engine_time_t>());
     REQUIRE_THROWS_AS(window.size_layout(), std::logic_error);
     REQUIRE(window.value().binding()->plan() == window_component->plan);
@@ -1175,13 +1175,13 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
         auto mutation = window.begin_mutation(t1);
         mutation.push(one.view());
         REQUIRE(mutation.size() == 1);
-        REQUIRE(mutation.back().checked_as<int>() == 1);
+        REQUIRE(mutation.back().checked_as<std::int32_t>() == 1);
     }
     REQUIRE(window.size() == 1);
     REQUIRE_FALSE(window.all_valid());
     REQUIRE(window.time_at(0) == t1);
     REQUIRE(window.time_value_at(0).checked_as<engine_time_t>() == t1);
-    REQUIRE(window.delta_value(t1).checked_as<int>() == 1);
+    REQUIRE(window.delta_value(t1).checked_as<std::int32_t>() == 1);
 
     Value two{2};
     {
@@ -1190,8 +1190,8 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     }
     REQUIRE(window.size() == 2);
     REQUIRE(window.all_valid());
-    REQUIRE(window.at(0).checked_as<int>() == 1);
-    REQUIRE(window.at(1).checked_as<int>() == 2);
+    REQUIRE(window.at(0).checked_as<std::int32_t>() == 1);
+    REQUIRE(window.at(1).checked_as<std::int32_t>() == 2);
 
     Value three{3};
     {
@@ -1205,12 +1205,12 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     REQUIRE(window.time_value_at(0).binding() == layout.time_binding);
     REQUIRE(window.time_value_at(0).checked_as<engine_time_t>() == t2);
     REQUIRE(window.time_value_at(1).checked_as<engine_time_t>() == t3);
-    REQUIRE(window.at(0).checked_as<int>() == 2);
-    REQUIRE(window.at(1).checked_as<int>() == 3);
+    REQUIRE(window.at(0).checked_as<std::int32_t>() == 2);
+    REQUIRE(window.at(1).checked_as<std::int32_t>() == 3);
     REQUIRE(window.value().as_list().size() == 2);
-    REQUIRE(window.value().as_list().at(0).checked_as<int>() == 2);
-    REQUIRE(window.value().as_list().at(1).checked_as<int>() == 3);
-    REQUIRE(window.delta_value(t3).checked_as<int>() == 3);
+    REQUIRE(window.value().as_list().at(0).checked_as<std::int32_t>() == 2);
+    REQUIRE(window.value().as_list().at(1).checked_as<std::int32_t>() == 3);
+    REQUIRE(window.delta_value(t3).checked_as<std::int32_t>() == 3);
     REQUIRE_FALSE(window.delta_value(t2).has_value());
 }
 
@@ -1219,7 +1219,7 @@ TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child l
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, 2);
     const auto *tsb      = registry.tsb("NestedPlanFactoryTSB", {{"xs", tsl}});
@@ -1233,7 +1233,7 @@ TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child l
     const auto &xs_value_component = root_value_component->plan->component(0);
     REQUIRE(xs_value_component.plan->is_array());
     REQUIRE(xs_value_component.plan->array_count() == 2);
-    REQUIRE(xs_value_component.plan->array_stride() == sizeof(int));
+    REQUIRE(xs_value_component.plan->array_stride() == sizeof(std::int32_t));
 
     TSData data{*binding};
     auto   root = data.view();
@@ -1258,12 +1258,12 @@ TEST_CASE("TSDataPlanFactory: fixed structured TSData recursively embeds child l
 
     REQUIRE(root.modified(t1));
     REQUIRE(list_child.modified(t1));
-    REQUIRE(root.value().as_bundle().at("xs").as_list().at(1).checked_as<int>() == 23);
+    REQUIRE(root.value().as_bundle().at("xs").as_list().at(1).checked_as<std::int32_t>() == 23);
 
     auto  nested_delta = root.delta_value(t1).as_bundle().at("xs").as_map();
     Value key{std::int64_t{1}};
     REQUIRE(nested_delta.size() == 1);
-    REQUIRE(nested_delta.at(key.view()).checked_as<int>() == 23);
+    REQUIRE(nested_delta.at(key.view()).checked_as<std::int32_t>() == 23);
 }
 
 TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed deltas")
@@ -1271,7 +1271,7 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tss      = registry.tss(int_meta);
 
     const auto *binding = factory.binding_for(tss);
@@ -1341,7 +1341,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsd      = registry.tsd(int_meta, ts_int);
 
@@ -1357,8 +1357,8 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     const auto t1 = MIN_ST;
     Value      key{7};
     Value      value{42};
-    MapBuilder source_builder{*registry.scalar_binding<int>(), *registry.scalar_binding<int>()};
-    source_builder.set_item<int, int>(7, 42);
+    MapBuilder source_builder{*registry.scalar_binding<std::int32_t>(), *registry.scalar_binding<std::int32_t>()};
+    source_builder.set_item<std::int32_t, std::int32_t>(7, 42);
     auto source_map = source_builder.build();
     {
         auto generic_mutation = view.begin_mutation(t1);
@@ -1372,15 +1372,15 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     REQUIRE(view.modified(t1));
     REQUIRE(dict.size() == 1);
     REQUIRE(dict.contains(key.view()));
-    REQUIRE(dict.at(key.view()).value().checked_as<int>() == 42);
-    REQUIRE(view.value().as_map().at(key.view()).checked_as<int>() == 42);
+    REQUIRE(dict.at(key.view()).value().checked_as<std::int32_t>() == 42);
+    REQUIRE(view.value().as_map().at(key.view()).checked_as<std::int32_t>() == 42);
 
     auto immutable_ops = static_cast<const TSDDataOps &>(binding->checked_ops());
     immutable_ops.allows_mutation = false;
     TSDataBinding immutable_binding{binding->type_meta, binding->plan(), &immutable_ops};
     auto          immutable_view = TSDataView{&immutable_binding, view.data()};
     auto          immutable_child = immutable_view.as_dict().at(key.view());
-    REQUIRE(immutable_child.value().checked_as<int>() == 42);
+    REQUIRE(immutable_child.value().checked_as<std::int32_t>() == 42);
     REQUIRE(immutable_child.has_parent());
     REQUIRE(immutable_child.parent_link().parent_binding() == binding);
     REQUIRE(immutable_child.root_view().data() == view.data());
@@ -1400,7 +1400,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     auto delta = view.delta_value(t1).as_bundle();
     REQUIRE(delta.at("removed").as_set().empty());
     REQUIRE(delta.at("modified").as_map().contains(key.view()));
-    REQUIRE(delta.at("modified").as_map().at(key.view()).checked_as<int>() == 42);
+    REQUIRE(delta.at("modified").as_map().at(key.view()).checked_as<std::int32_t>() == 42);
 
     const auto t2 = t1 + engine_time_delta_t{1};
     Value      updated{84};
@@ -1418,12 +1418,12 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     }
 
     REQUIRE(view.modified(t2));
-    REQUIRE(dict.at(key.view()).value().checked_as<int>() == 84);
+    REQUIRE(dict.at(key.view()).value().checked_as<std::int32_t>() == 84);
     REQUIRE(dict.modified_keys(t2).begin() != dict.modified_keys(t2).end());
     auto modified_delta = view.delta_value(t2).as_bundle();
     REQUIRE(modified_delta.at("removed").as_set().empty());
     REQUIRE(modified_delta.at("modified").as_map().contains(key.view()));
-    REQUIRE(modified_delta.at("modified").as_map().at(key.view()).checked_as<int>() == 84);
+    REQUIRE(modified_delta.at("modified").as_map().at(key.view()).checked_as<std::int32_t>() == 84);
 
     const auto t3 = t2 + engine_time_delta_t{1};
     {
@@ -1462,14 +1462,14 @@ TEST_CASE("TSDataPlanFactory: empty collection copy still marks the collection m
     using namespace hgraph;
     auto       &registry    = TypeRegistry::instance();
     auto       &factory     = TSDataPlanFactory::instance();
-    const auto *int_meta    = registry.register_scalar<int>("int");
+    const auto *int_meta    = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int      = registry.ts(int_meta);
     const auto *tss         = registry.tss(int_meta);
     const auto *tsd         = registry.tsd(int_meta, ts_int);
 
     const auto t1 = MIN_ST;
 
-    Value  empty_set = stdlib::make_set<int>({});
+    Value  empty_set = stdlib::make_set<std::int32_t>({});
     TSData set_data{*factory.binding_for(tss)};
     auto   set_view = set_data.view();
     auto   set      = set_view.as_set();
@@ -1485,7 +1485,7 @@ TEST_CASE("TSDataPlanFactory: empty collection copy still marks the collection m
     REQUIRE(set_delta.at("added").as_set().empty());
     REQUIRE(set_delta.at("removed").as_set().empty());
 
-    Value  empty_map = stdlib::make_map<int, int>({});
+    Value  empty_map = stdlib::make_map<std::int32_t, std::int32_t>({});
     TSData dict_data{*factory.binding_for(tsd)};
     auto   dict_view = dict_data.view();
     auto   dict      = dict_view.as_dict();
@@ -1507,7 +1507,7 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, 0);
 
@@ -1524,7 +1524,7 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     const auto t2 = t1 + engine_time_delta_t{1};
     const auto t3 = t2 + engine_time_delta_t{1};
     {
-        auto source = stdlib::make_list<int>({11, 22});
+        auto source = stdlib::make_list<std::int32_t>({11, 22});
         auto mutation = view.begin_mutation(t1);
         REQUIRE(mutation.copy_value_from(source.view()));
     }
@@ -1533,13 +1533,13 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     REQUIRE(list.size() == 2);
     REQUIRE(view.has_current_value());
     REQUIRE(view.all_valid());
-    REQUIRE(list.at(0).value().checked_as<int>() == 11);
-    REQUIRE(list.at(1).value().checked_as<int>() == 22);
+    REQUIRE(list.at(0).value().checked_as<std::int32_t>() == 11);
+    REQUIRE(list.at(1).value().checked_as<std::int32_t>() == 22);
 
     Value parent_snapshot{view.value()};
     REQUIRE(parent_snapshot.binding() == ValuePlanFactory::instance().binding_for(tsl->value_schema));
-    REQUIRE(parent_snapshot.view().as_list().at(0).checked_as<int>() == 11);
-    REQUIRE(parent_snapshot.view().as_list().at(1).checked_as<int>() == 22);
+    REQUIRE(parent_snapshot.view().as_list().at(0).checked_as<std::int32_t>() == 11);
+    REQUIRE(parent_snapshot.view().as_list().at(1).checked_as<std::int32_t>() == 22);
 
     Value key_zero{std::int64_t{0}};
     Value key_one{std::int64_t{1}};
@@ -1547,22 +1547,22 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     auto  t1_delta = view.delta_value(t1).as_map();
     REQUIRE(t1_delta.contains(key_zero.view()));
     REQUIRE(t1_delta.contains(key_one.view()));
-    REQUIRE(t1_delta.at(key_zero.view()).checked_as<int>() == 11);
-    REQUIRE(t1_delta.at(key_one.view()).checked_as<int>() == 22);
+    REQUIRE(t1_delta.at(key_zero.view()).checked_as<std::int32_t>() == 11);
+    REQUIRE(t1_delta.at(key_one.view()).checked_as<std::int32_t>() == 22);
 
     {
-        auto longer = stdlib::make_list<int>({11, 22, 44});
+        auto longer = stdlib::make_list<std::int32_t>({11, 22, 44});
         auto mutation = view.begin_mutation(t1);
         REQUIRE_FALSE(mutation.copy_value_from(longer.view()));
     }
     list = view.as_list();
     REQUIRE(list.size() == 3);
-    REQUIRE(list.at(2).value().checked_as<int>() == 44);
+    REQUIRE(list.at(2).value().checked_as<std::int32_t>() == 44);
     auto grown_t1_delta = view.delta_value(t1).as_map();
     REQUIRE(grown_t1_delta.contains(key_zero.view()));
     REQUIRE(grown_t1_delta.contains(key_one.view()));
     REQUIRE(grown_t1_delta.contains(key_two.view()));
-    REQUIRE(grown_t1_delta.at(key_two.view()).checked_as<int>() == 44);
+    REQUIRE(grown_t1_delta.at(key_two.view()).checked_as<std::int32_t>() == 44);
 
     {
         Value updated{33};
@@ -1571,15 +1571,15 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
         REQUIRE(mutation.copy_value_from(updated.view()));
     }
     REQUIRE(view.modified(t2));
-    REQUIRE(list.at(1).value().checked_as<int>() == 33);
+    REQUIRE(list.at(1).value().checked_as<std::int32_t>() == 33);
     auto t2_delta = view.delta_value(t2).as_map();
     REQUIRE_FALSE(t2_delta.contains(key_zero.view()));
     REQUIRE(t2_delta.contains(key_one.view()));
     REQUIRE_FALSE(t2_delta.contains(key_two.view()));
-    REQUIRE(t2_delta.at(key_one.view()).checked_as<int>() == 33);
+    REQUIRE(t2_delta.at(key_one.view()).checked_as<std::int32_t>() == 33);
 
     {
-        auto shorter = stdlib::make_list<int>({1});
+        auto shorter = stdlib::make_list<std::int32_t>({1});
         auto mutation = view.begin_mutation(t3);
         REQUIRE_THROWS_AS(mutation.copy_value_from(shorter.view()), std::invalid_argument);
     }
@@ -1592,7 +1592,7 @@ TEST_CASE("TSDataPlanFactory::find returns null and null schemas return null")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     REQUIRE(factory.find(ts_int) == nullptr);

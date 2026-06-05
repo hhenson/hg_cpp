@@ -5,6 +5,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/utils/memory_utils.h>
@@ -23,12 +25,12 @@ namespace
 {
     struct NoValueOpsScalar
     {
-        int value{0};
+        std::int32_t value{0};
     };
 
     struct UnregisteredScalar
     {
-        int value{0};
+        std::int32_t value{0};
     };
 }
 
@@ -52,18 +54,18 @@ TEST_CASE("ValueOps: ops_for<T> returns a stable canonical vtable")
     static_assert(!std::is_copy_constructible_v<MutableCyclicBufferView>);
     static_assert(!std::is_copy_constructible_v<MutableQueueView>);
 
-    REQUIRE(&ops_for<int>() == &ops_for<int>());
-    REQUIRE(&ops_for<int>() != &ops_for<double>());
+    REQUIRE(&ops_for<std::int32_t>() == &ops_for<std::int32_t>());
+    REQUIRE(&ops_for<std::int32_t>() != &ops_for<double>());
 
-    const ValueOps &ops = ops_for<int>();
+    const ValueOps &ops = ops_for<std::int32_t>();
     REQUIRE(ops.hash_impl != nullptr);
     REQUIRE(ops.equals_impl != nullptr);
     REQUIRE(ops.compare_impl != nullptr);
     REQUIRE(ops.to_string_impl != nullptr);
 
-    int a = 42;
-    int b = 42;
-    int c = 7;
+    std::int32_t a = 42;
+    std::int32_t b = 42;
+    std::int32_t c = 7;
     STATIC_REQUIRE(std::is_same_v<decltype(ops.compare(&a, &b)), std::partial_ordering>);
     REQUIRE(ops.equals(&a, &b));
     REQUIRE_FALSE(ops.equals(&a, &c));
@@ -129,18 +131,18 @@ TEST_CASE("TypeRegistry::register_scalar pairs the schema with a binding")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *meta     = registry.register_scalar<int>("int");
+    const auto *meta     = registry.register_scalar<std::int32_t>("int32");
 
-    const auto *binding = registry.scalar_binding<int>();
+    const auto *binding = registry.scalar_binding<std::int32_t>();
     REQUIRE(binding != nullptr);
     REQUIRE(binding->valid());
     REQUIRE(binding->type_meta == meta);
-    REQUIRE(binding->plan() == &MemoryUtils::plan_for<int>());
-    REQUIRE(binding->ops == &ops_for<int>());
+    REQUIRE(binding->plan() == &MemoryUtils::plan_for<std::int32_t>());
+    REQUIRE(binding->ops == &ops_for<std::int32_t>());
 
     // Idempotency: re-registering returns the same binding pointer.
-    (void)registry.register_scalar<int>("int");
-    REQUIRE(registry.scalar_binding<int>() == binding);
+    (void)registry.register_scalar<std::int32_t>("int32");
+    REQUIRE(registry.scalar_binding<std::int32_t>() == binding);
 }
 
 TEST_CASE("TypeRegistry::scalar_binding returns null for unregistered types")
@@ -158,7 +160,7 @@ TEST_CASE("Value: atomic round-trip — construct, view, hash/equals/to_string")
 {
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
-    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::int32_t>("int32");
 
     Value v{42};
     REQUIRE(v.has_value());
@@ -166,8 +168,8 @@ TEST_CASE("Value: atomic round-trip — construct, view, hash/equals/to_string")
     REQUIRE(v.schema()->kind == ValueTypeKind::Atomic);
 
     // Owning-handle accessors.
-    REQUIRE(v.as<int>() == 42);
-    REQUIRE(*v.try_as<int>() == 42);
+    REQUIRE(v.as<std::int32_t>() == 42);
+    REQUIRE(*v.try_as<std::int32_t>() == 42);
     REQUIRE(v.try_as<double>() == nullptr);  // type mismatch via view -> still fine, atomic but wrong T
     REQUIRE(v.to_string() == "42");
 
@@ -175,8 +177,8 @@ TEST_CASE("Value: atomic round-trip — construct, view, hash/equals/to_string")
     ValueView view = v.view();
     REQUIRE(view.valid());
     REQUIRE(view.is_atomic());
-    REQUIRE(view.checked_as<int>() == 42);
-    REQUIRE(view.hash() == ops_for<int>().hash(view.data()));
+    REQUIRE(view.checked_as<std::int32_t>() == 42);
+    REQUIRE(view.hash() == ops_for<std::int32_t>().hash(view.data()));
     REQUIRE(view.to_string() == "42");
 
     // Mutating access is explicit: a writable view is not mutable until
@@ -184,16 +186,16 @@ TEST_CASE("Value: atomic round-trip — construct, view, hash/equals/to_string")
     REQUIRE(view.writable_payload());
     REQUIRE_FALSE(view.mutable_payload());
     REQUIRE(view.can_begin_mutation());
-    REQUIRE_THROWS_AS(view.set<int>(99), std::logic_error);
+    REQUIRE_THROWS_AS(view.set<std::int32_t>(99), std::logic_error);
 
     auto mutation = view.begin_mutation();
     REQUIRE(mutation.mutable_payload());
-    mutation.as<int>() = 99;
-    REQUIRE(v.as<int>() == 99);
+    mutation.as<std::int32_t>() = 99;
+    REQUIRE(v.as<std::int32_t>() == 99);
 
-    mutation.set<int>(123);
-    REQUIRE(v.as<int>() == 123);
-    REQUIRE(view.is_scalar_type<int>());
+    mutation.set<std::int32_t>(123);
+    REQUIRE(v.as<std::int32_t>() == 123);
+    REQUIRE(view.is_scalar_type<std::int32_t>());
     REQUIRE_FALSE(view.is_scalar_type<double>());
     REQUIRE(view.is_type(v.schema()));
 
@@ -201,17 +203,17 @@ TEST_CASE("Value: atomic round-trip — construct, view, hash/equals/to_string")
     ValueView read_only = const_ref.view();
     REQUIRE(read_only.valid());
     REQUIRE_FALSE(read_only.mutable_payload());
-    REQUIRE(std::as_const(read_only).checked_as<int>() == 123);
-    REQUIRE_THROWS_AS(read_only.set<int>(456), std::logic_error);
-    REQUIRE_THROWS_AS(read_only.checked_mutable_as<int>() = 456, std::logic_error);
-    REQUIRE(v.as<int>() == 123);
+    REQUIRE(std::as_const(read_only).checked_as<std::int32_t>() == 123);
+    REQUIRE_THROWS_AS(read_only.set<std::int32_t>(456), std::logic_error);
+    REQUIRE_THROWS_AS(read_only.checked_mutable_as<std::int32_t>() = 456, std::logic_error);
+    REQUIRE(v.as<std::int32_t>() == 123);
 }
 
 TEST_CASE("Value: equality and ordering through bound ValueOps")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     (void)registry.register_scalar<double>("double");
 
     Value a{10};
@@ -254,21 +256,21 @@ TEST_CASE("ValueView: clone and copy_from preserve binding and payload")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     (void)registry.register_scalar<double>("double");
 
     Value source{42};
     Value cloned = source.view().clone();
     REQUIRE(cloned.binding() == source.binding());
-    REQUIRE(cloned.as<int>() == 42);
-    cloned.begin_mutation().as<int>() = 7;
-    REQUIRE(source.as<int>() == 42);
+    REQUIRE(cloned.as<std::int32_t>() == 42);
+    cloned.begin_mutation().as<std::int32_t>() = 7;
+    REQUIRE(source.as<std::int32_t>() == 42);
 
     Value target{0};
     target.begin_mutation().copy_from(source.view());
-    REQUIRE(target.as<int>() == 42);
+    REQUIRE(target.as<std::int32_t>() == 42);
     target.assign_from(cloned.view());
-    REQUIRE(target.as<int>() == 7);
+    REQUIRE(target.as<std::int32_t>() == 7);
 
     Value other_type{3.0};
     REQUIRE_FALSE(target.begin_mutation().try_copy_from(other_type.view()));
@@ -294,7 +296,7 @@ TEST_CASE("Value: Value(schema) preserves binding in typed-null state")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     Value v{*int_meta};
     REQUIRE_FALSE(v.has_value());
@@ -333,13 +335,13 @@ TEST_CASE("Value: move construction transfers ownership")
 {
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
-    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::int32_t>("int32");
 
     Value original{123};
     Value moved{std::move(original)};
     REQUIRE_FALSE(original.has_value());
     REQUIRE(moved.has_value());
-    REQUIRE(moved.as<int>() == 123);
+    REQUIRE(moved.as<std::int32_t>() == 123);
 }
 
 TEST_CASE("Value: throws when a scalar type has not been registered")

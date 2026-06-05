@@ -6,6 +6,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -114,7 +116,7 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     static_assert(std::is_copy_constructible_v<TSOutputHandle>);
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     TSOutput output{*ts_int};
@@ -133,7 +135,7 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     REQUIRE_FALSE(initial.all_valid());
     REQUIRE_FALSE(initial.modified());
     REQUIRE(initial.last_modified_time() == MIN_DT);
-    REQUIRE(initial.value().checked_as<int>() == 0);
+    REQUIRE(initial.value().checked_as<std::int32_t>() == 0);
     REQUIRE_FALSE(initial.delta_value().has_value());
 
     Value forty_two{42};
@@ -151,8 +153,8 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     REQUIRE(modified.modified());
     REQUIRE_FALSE(output.view(t2).modified());
     REQUIRE(modified.last_modified_time() == t1);
-    REQUIRE(modified.value().checked_as<int>() == 42);
-    REQUIRE(modified.delta_value().checked_as<int>() == 42);
+    REQUIRE(modified.value().checked_as<std::int32_t>() == 42);
+    REQUIRE(modified.delta_value().checked_as<std::int32_t>() == 42);
     REQUIRE_FALSE(output.view(t2).delta_value().has_value());
 
     output.cleanup_delta();
@@ -164,7 +166,7 @@ TEST_CASE("TSOutputHandle stores output identity without evaluation time")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     TSOutput output{*ts_int};
@@ -205,7 +207,7 @@ TEST_CASE("TSOutput REF stores TimeSeriesReference as value and delta")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
 
@@ -240,7 +242,7 @@ TEST_CASE("TSOutput dirty cleanup finalizes slot deltas")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tss      = registry.tss(int_meta);
 
     TSOutput output{*tss};
@@ -297,7 +299,7 @@ TEST_CASE("TSOutput root parent is reattached after copy and move")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     const auto t1 = MIN_ST;
@@ -340,7 +342,7 @@ TEST_CASE("TSOutputView all_valid recurses through fixed bundle children")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsb      = registry.tsb("TSOutputAllValidBundle", {{"a", ts_int}, {"b", ts_int}});
 
@@ -376,8 +378,8 @@ TEST_CASE("TSOutputView all_valid recurses through fixed bundle children")
     REQUIRE(fully_valid.all_valid());
 
     auto fully_valid_bundle = fully_valid.as_bundle();
-    REQUIRE(fully_valid_bundle.field("a").value().checked_as<int>() == 1);
-    REQUIRE(fully_valid_bundle.field("b").value().checked_as<int>() == 2);
+    REQUIRE(fully_valid_bundle.field("a").value().checked_as<std::int32_t>() == 1);
+    REQUIRE(fully_valid_bundle.field("b").value().checked_as<std::int32_t>() == 2);
 }
 
 TEST_CASE("TSData observers notify at the modified level and bubble to parents")
@@ -385,7 +387,7 @@ TEST_CASE("TSData observers notify at the modified level and bubble to parents")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsb      = registry.tsb("TSOutputObserverBundle", {{"a", ts_int}, {"b", ts_int}});
 
@@ -469,7 +471,7 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     TSOutput output{*ts_int};
@@ -598,7 +600,7 @@ TEST_CASE("TSOutputView delegates validity through slot TSData ops")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tss      = registry.tss(int_meta);
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsd      = registry.tsd(int_meta, ts_int);
@@ -649,7 +651,7 @@ TEST_CASE("TSOutput shape casts return endpoint views for slot collections")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tss      = registry.tss(int_meta);
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsd      = registry.tsd(int_meta, ts_int);
@@ -688,7 +690,7 @@ TEST_CASE("TSOutput shape casts return endpoint views for slot collections")
     REQUIRE(current_dict.contains(key.view()));
     auto child = current_dict.at(key.view());
     REQUIRE(child.valid());
-    REQUIRE(child.value().checked_as<int>() == 42);
+    REQUIRE(child.value().checked_as<std::int32_t>() == 42);
     REQUIRE(range_count(current_dict.values()) == 1);
     REQUIRE(range_count(current_dict.items()) == 1);
 }
@@ -698,7 +700,7 @@ TEST_CASE("TSOutputView delegates window all_valid through TSData ops")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *tsw      = registry.tsw(int_meta, 2, 2);
 
     const auto t1 = MIN_ST;

@@ -11,6 +11,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,7 +27,7 @@ namespace
         static constexpr auto name = "constant_source";
 
         static constexpr bool schedule_on_start = true;
-        static void           eval(Out<TS<int>> out) { out.set(41); }
+        static void           eval(Out<TS<std::int32_t>> out) { out.set(41); }
     };
 
     // Compute: In + Out -> kind inferred as Compute.
@@ -33,7 +35,7 @@ namespace
     {
         static constexpr auto name = "add_one";
 
-        static void eval(In<"in", TS<int>> in, Out<TS<int>> out) { out.set(in.value() + 1); }
+        static void eval(In<"in", TS<std::int32_t>> in, Out<TS<std::int32_t>> out) { out.set(in.value() + 1); }
     };
 
     // Compute with two named inputs.
@@ -41,22 +43,22 @@ namespace
     {
         static constexpr auto name = "sum";
 
-        static void eval(In<"lhs", TS<int>> lhs, In<"rhs", TS<int>> rhs, Out<TS<int>> out)
+        static void eval(In<"lhs", TS<std::int32_t>> lhs, In<"rhs", TS<std::int32_t>> rhs, Out<TS<std::int32_t>> out)
         {
             out.set(lhs.value() + rhs.value());
         }
     };
 
-    // Stateful source (Out only, no In -> PullSource) exercising State<int>.
+    // Stateful source (Out only, no In -> PullSource) exercising State<std::int32_t>.
     struct Counter
     {
         static constexpr auto name = "counter";
 
-        static void start(State<int> state) { state.set(0); }
+        static void start(State<std::int32_t> state) { state.set(0); }
 
-        static void eval(State<int> state, Out<TS<int>> out)
+        static void eval(State<std::int32_t> state, Out<TS<std::int32_t>> out)
         {
-            const int next = state.get() + 1;
+            const std::int32_t next = state.get() + 1;
             state.set(next);
             out.set(next);
         }
@@ -68,7 +70,7 @@ namespace
     {
         static constexpr auto name = "scaled_source";
 
-        static void eval(Scalar<"value", int> value, Out<TS<int>> out) { out.set(value.value()); }
+        static void eval(Scalar<"value", std::int32_t> value, Out<TS<std::int32_t>> out) { out.set(value.value()); }
     };
 
     // Compute node mixing a time-series input with a scalar input. The scalar
@@ -77,7 +79,7 @@ namespace
     {
         static constexpr auto name = "shift";
 
-        static void eval(In<"in", TS<int>> in, Scalar<"delta", int> delta, Out<TS<int>> out)
+        static void eval(In<"in", TS<std::int32_t>> in, Scalar<"delta", std::int32_t> delta, Out<TS<std::int32_t>> out)
         {
             out.set(in.value() + delta.value());
         }
@@ -85,31 +87,31 @@ namespace
 
     struct DuplicateInputNames
     {
-        static void eval(In<"x", TS<int>>, In<"x", TS<int>>, Out<TS<int>>);
+        static void eval(In<"x", TS<std::int32_t>>, In<"x", TS<std::int32_t>>, Out<TS<std::int32_t>>);
     };
 
     struct DuplicateScalarNames
     {
-        static void eval(Scalar<"x", int>, Scalar<"x", int>, Out<TS<int>>);
+        static void eval(Scalar<"x", std::int32_t>, Scalar<"x", std::int32_t>, Out<TS<std::int32_t>>);
     };
 
     struct MultipleStateSlots
     {
-        static void eval(State<int>, State<int>, Out<TS<int>>);
+        static void eval(State<std::int32_t>, State<std::int32_t>, Out<TS<std::int32_t>>);
     };
 
     // Build a single-field compound scalar configuration {field: value}.
-    Value int_scalar_config(std::string_view field, int value)
+    Value int_scalar_config(std::string_view field, std::int32_t value)
     {
         auto       &registry    = TypeRegistry::instance();
-        const auto *int_meta    = registry.register_scalar<int>("int");
+        const auto *int_meta    = registry.register_scalar<std::int32_t>("int32");
         const auto *bundle_meta = registry.un_named_bundle({{std::string{field}, int_meta}});
         const auto *binding     = ValuePlanFactory::instance().binding_for(bundle_meta);
 
         Value scalars{*binding};
         {
             auto mutation = scalars.as_bundle().begin_mutation();
-            mutation[field].checked_mutable_as<int>() = value;
+            mutation[field].checked_mutable_as<std::int32_t>() = value;
         }
         return scalars;
     }
@@ -148,19 +150,19 @@ TEST_CASE("static node: set_delta construction survives value registry resets")
     using namespace hgraph;
 
     {
-        (void)TypeRegistry::instance().register_scalar<int>("int");
-        const Value first = set_delta<int>({1}, {});  // canonical Bundle{added:{1}, removed:{}}
-        CHECK(first.equals(set_delta<int>({1}, {})));
+        (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+        const Value first = set_delta<std::int32_t>({1}, {});  // canonical Bundle{added:{1}, removed:{}}
+        CHECK(first.equals(set_delta<std::int32_t>({1}, {})));
     }
 
     ValuePlanFactory::instance().reset();
     ValueTypeBinding::clear();
     TypeRegistry::instance().reset();
 
-    (void)TypeRegistry::instance().register_scalar<int>("int");
-    const Value second = set_delta<int>({2}, {1});
-    CHECK(second.equals(set_delta<int>({2}, {1})));       // order-independent, type-erased
-    CHECK_FALSE(second.equals(set_delta<int>({2}, {})));  // different removed -> not equal
+    (void)TypeRegistry::instance().register_scalar<std::int32_t>("int32");
+    const Value second = set_delta<std::int32_t>({2}, {1});
+    CHECK(second.equals(set_delta<std::int32_t>({2}, {1})));       // order-independent, type-erased
+    CHECK_FALSE(second.equals(set_delta<std::int32_t>({2}, {})));  // different removed -> not equal
 }
 
 TEST_CASE("static node: source -> compute graph runs in simulation mode")
@@ -182,7 +184,7 @@ TEST_CASE("static node: source -> compute graph runs in simulation mode")
     executor_view.run();
 
     auto graph = executor_view.graph();
-    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 42);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 42);
 }
 
 TEST_CASE("static node: two sources feed a two-input compute node")
@@ -206,7 +208,7 @@ TEST_CASE("static node: two sources feed a two-input compute node")
     executor_view.run();
 
     auto graph = executor_view.graph();
-    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<int>() == 82);
+    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<std::int32_t>() == 82);
 }
 
 TEST_CASE("static node: Scalar<> configures a source from per-instance values")
@@ -224,12 +226,12 @@ TEST_CASE("static node: Scalar<> configures a source from per-instance values")
     REQUIRE(view.schema()->has_scalars());
     REQUIRE(view.has_scalars());
     REQUIRE_FALSE(view.has_input());
-    REQUIRE(view.scalars().as_bundle().field("value").checked_as<int>() == 7);
+    REQUIRE(view.scalars().as_bundle().field("value").checked_as<std::int32_t>() == 7);
 
     const auto t1 = MIN_ST;
     view.start(t1);
     view.evaluate(t1, true);
-    CHECK(node.view().output(t1).value().checked_as<int>() == 7);
+    CHECK(node.view().output(t1).value().checked_as<std::int32_t>() == 7);
 }
 
 TEST_CASE("static node: Scalar<> coexists with a time-series input")
@@ -253,10 +255,10 @@ TEST_CASE("static node: Scalar<> coexists with a time-series input")
     auto graph = executor_view.graph();
     // Compute node: Compute kind (In present), one TS input field, scalar excluded.
     REQUIRE(graph.node_at(1).node_kind() == NodeKind::Compute);
-    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<int>() == 46);   // 41 + 5
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<std::int32_t>() == 46);   // 41 + 5
 }
 
-TEST_CASE("static node: State<int> is constructed and mutated across evaluations")
+TEST_CASE("static node: State<std::int32_t> is constructed and mutated across evaluations")
 {
     using namespace hgraph;
 
@@ -269,10 +271,10 @@ TEST_CASE("static node: State<int> is constructed and mutated across evaluations
 
     view.start(t1);
     view.evaluate(t1, true);
-    CHECK(node.view().state().checked_as<int>() == 1);
-    CHECK(node.view().output(t1).value().checked_as<int>() == 1);
+    CHECK(node.view().state().checked_as<std::int32_t>() == 1);
+    CHECK(node.view().output(t1).value().checked_as<std::int32_t>() == 1);
 
     node.view().evaluate(t2, true);
-    CHECK(node.view().state().checked_as<int>() == 2);
-    CHECK(node.view().output(t2).value().checked_as<int>() == 2);
+    CHECK(node.view().state().checked_as<std::int32_t>() == 2);
+    CHECK(node.view().output(t2).value().checked_as<std::int32_t>() == 2);
 }

@@ -8,6 +8,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/util/date_time.h>
 
@@ -22,7 +24,7 @@ TEST_CASE("schema example: Atomic — register a scalar C++ type")
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     REQUIRE(int_meta != nullptr);
     REQUIRE(int_meta->kind == ValueTypeKind::Atomic);
@@ -37,7 +39,7 @@ TEST_CASE("schema example: Tuple — positional fields, possibly mixed types")
 {
     using namespace hgraph;
     auto       &registry    = TypeRegistry::instance();
-    const auto *int_meta    = registry.register_scalar<int>("int");
+    const auto *int_meta    = registry.register_scalar<std::int32_t>("int32");
     const auto *double_meta = registry.register_scalar<double>("double");
     const auto *bool_meta   = registry.register_scalar<bool>("bool");
 
@@ -81,7 +83,7 @@ TEST_CASE("schema example: List — fixed-size")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     // Static list of 4 ints (e.g. for a 4-vector).
     const auto *arr4 = registry.list(int_meta, /*fixed_size=*/4);
@@ -96,7 +98,7 @@ TEST_CASE("schema example: List — dynamic (no fixed size)")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     // Dynamic list — fixed_size == 0 means "growable".
     const auto *vec = registry.list(int_meta, /*fixed_size=*/0);
@@ -124,7 +126,7 @@ TEST_CASE("schema example: Map — keyed lookup")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     const auto *str_meta = registry.register_scalar<std::string>("string");
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     // Map<string, int> — the typical name → count pattern.
     const auto *counts = registry.map(str_meta, int_meta);
@@ -152,7 +154,7 @@ TEST_CASE("schema example: Queue — FIFO with capacity")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     // Bounded queue — at most 100 ints.
     const auto *bounded = registry.queue(int_meta, /*max_capacity=*/100);
@@ -207,7 +209,7 @@ TEST_CASE("schema example: TSD — time-series dict (string -> TS[int])")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     const auto *str_meta = registry.register_scalar<std::string>("string");
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     // Common pattern: name → counter time-series.
@@ -239,7 +241,7 @@ TEST_CASE("schema example: TSL — dynamic time-series list")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     const auto *dyn_tsl = registry.tsl(ts_int, /*fixed_size=*/0);
@@ -288,7 +290,7 @@ TEST_CASE("schema example: TSB — time-series bundle")
     using namespace hgraph;
     auto       &registry    = TypeRegistry::instance();
     const auto *double_meta = registry.register_scalar<double>("double");
-    const auto *int_meta    = registry.register_scalar<int>("int");
+    const auto *int_meta    = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_double   = registry.ts(double_meta);
     const auto *ts_int      = registry.ts(int_meta);
 
@@ -312,7 +314,7 @@ TEST_CASE("schema example: REF — reference to a time-series target")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     // REF[TS[int]] — a forwardable handle to a TS[int] target.
@@ -347,8 +349,8 @@ TEST_CASE("compositional example: nested tuple — tuple of (tuple, scalar)")
 {
     using namespace hgraph;
     auto       &registry   = TypeRegistry::instance();
-    const auto *int_meta   = registry.register_scalar<int>("int");
-    const auto *float_meta = registry.register_scalar<float>("float");
+    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
+    const auto *float_meta = registry.register_scalar<float>("float32");
 
     // Inner: (int, float). Outer: ((int, float), int).
     const auto *inner = registry.tuple({int_meta, float_meta});
@@ -404,7 +406,7 @@ TEST_CASE("compositional example: REF wrapping a TSB — reference to a time-ser
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *bundle   = registry.tsb("ExamplePairTS", {{"a", ts_int}, {"b", ts_int}});
 
@@ -422,7 +424,7 @@ TEST_CASE("compositional example: TSL of TSD — list of dicts")
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     const auto *str_meta = registry.register_scalar<std::string>("string");
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     // Each list slot holds a TSD<string, TS[int]>.

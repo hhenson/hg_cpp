@@ -41,14 +41,15 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 
 namespace {
 
 void instantiate_memory_utils() {
     using hgraph::MemoryUtils;
-    const auto &plan = MemoryUtils::plan_for<int>();
+    const auto &plan = MemoryUtils::plan_for<std::int32_t>();
     assert(plan.valid());
-    assert(plan.layout.size == sizeof(int));
+    assert(plan.layout.size == sizeof(std::int32_t));
 
     const auto &tuple_plan = MemoryUtils::tuple_plan({&plan, &plan});
     assert(tuple_plan.is_tuple());
@@ -74,8 +75,8 @@ void instantiate_slot_stores() {
     using hgraph::KeyMirroredValueSlotStore;
     using hgraph::ValueSlotStore;
 
-    KeySlotStore keys(MemoryUtils::plan_for<int>(), hgraph::key_slot_store_ops_for<int>());
-    KeyMirroredValueSlotStore mirrored_values(keys, MemoryUtils::plan_for<int>());
+    KeySlotStore keys(MemoryUtils::plan_for<std::int32_t>(), hgraph::key_slot_store_ops_for<std::int32_t>());
+    KeyMirroredValueSlotStore mirrored_values(keys, MemoryUtils::plan_for<std::int32_t>());
     int          k = 42;
     auto         result = keys.insert(k);
     assert(result.inserted);
@@ -83,9 +84,9 @@ void instantiate_slot_stores() {
     assert(mirrored_values.has_slot(result.slot));
     assert(mirrored_values.mirrors_key_construction());
 
-    ValueSlotStore values(MemoryUtils::plan_for<int>());
+    ValueSlotStore values(MemoryUtils::plan_for<std::int32_t>());
     values.reserve_to(8);
-    values.construct_at<int>(0, 13);
+    values.construct_at<std::int32_t>(0, 13);
     assert(values.has_slot(0));
 }
 
@@ -94,10 +95,14 @@ void instantiate_slot_stores() {
 void instantiate_schema() {
     using hgraph::TypeRegistry;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *standard_int_meta = registry.value_type("int");
+    assert(standard_int_meta != nullptr);
+    assert(standard_int_meta == registry.scalar_binding<std::int64_t>()->type_meta);
+
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     assert(int_meta != nullptr);
     assert(int_meta->kind == hgraph::ValueTypeKind::Atomic);
-    assert(int_meta == registry.value_type("int"));
+    assert(int_meta == registry.value_type("int32"));
 
     const auto *ts_int = registry.ts(int_meta);
     assert(ts_int != nullptr);
@@ -112,12 +117,12 @@ void instantiate_plan_factory() {
     auto &registry = TypeRegistry::instance();
     auto &factory  = ValuePlanFactory::instance();
 
-    const auto *int_meta   = registry.register_scalar<int>("int");
-    const auto *float_meta = registry.register_scalar<float>("float");
+    const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
+    const auto *float_meta = registry.register_scalar<float>("float32");
 
     const auto *int_plan   = factory.plan_for(int_meta);
     const auto *float_plan = factory.plan_for(float_meta);
-    assert(int_plan == &MemoryUtils::plan_for<int>());
+    assert(int_plan == &MemoryUtils::plan_for<std::int32_t>());
     assert(float_plan == &MemoryUtils::plan_for<float>());
 
     const auto *tuple_meta = registry.tuple({int_meta, float_meta});

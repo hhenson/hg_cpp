@@ -30,7 +30,7 @@ namespace hgraph
      * current payload and delta bookkeeping stay aligned by stable slot id.
      * Dynamic ``TSL`` uses grow-only indexed child storage with stable child
      * TSData handles; shrink/removal is rejected because the current ``TSL``
-     * delta schema is only ``Map<int64, delta(C)>``.
+     * delta schema is only ``Map<int, delta(C)>``.
      *
      * Implemented synthesis paths cover atomic TSData (``TS<T>``, ``REF<T>``,
      * and ``SIGNAL``), fixed structured TSData (``TSB`` and fixed-size

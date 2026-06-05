@@ -202,7 +202,7 @@ TSData implementation families
     child ``TSData`` handle and vector growth moves only those handles,
     not the child TSData allocations they point at. The current value is
     projected as a dynamic value-layer ``List`` over child current values
-    and the delta is projected as ``Map<int64, delta(C)>`` over children
+    and the delta is projected as ``Map<int, delta(C)>`` over children
     modified with the parent. Because that delta schema has no removal
     surface, dynamic ``TSL`` TSData is currently grow-only; copying a
     shorter list is rejected.
@@ -553,7 +553,7 @@ For ``TSL[TS[int], Size[2]]`` the current-value part is therefore:
    +-------------------------+
    | int[0] | int[1]         |
    +-------------------------+
-   | stride == sizeof(int)   |
+   | stride == sizeof(std::int32_t)   |
    +-------------------------+
 
 and the tracking side is separate:
@@ -598,7 +598,7 @@ storage. Fixed ``TSL`` and ``TSB`` can therefore contain any implemented
 non-``REF`` child kind: ``TS``, ``SIGNAL``, ``TSS``, ``TSD``, fixed
 and dynamic ``TSL``, ``TSB``, and ``TSW``. Dynamic ``TSL`` storage is
 grow-only: it can add indexed children and project current/delta values,
-but it cannot shrink because ``Map<int64, delta(C)>`` has no removal
+but it cannot shrink because ``Map<int, delta(C)>`` has no removal
 surface.
 
 .. mermaid::
@@ -651,7 +651,7 @@ The parent ``delta_value(t)`` view is valid when the parent
 delta where each field projects to the matching child's delta if that
 child also modified at ``t``; unmodified fields are typed-null. For
 fixed ``TSL`` it exposes the documented map-shaped delta
-``Map<int64, child.delta>`` and iterates only child indices modified at
+``Map<int, child.delta>`` and iterates only child indices modified at
 ``t``.
 
 Projecting a child stores a ``TSDataParentLink`` in the child node's

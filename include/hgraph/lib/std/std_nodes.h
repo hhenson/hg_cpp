@@ -23,9 +23,10 @@ namespace hgraph::stdlib
      * ``const``). A SINGLE generic node: the value type is a ``ScalarVar`` inferred
      * from the configured value. Without an explicit output type it resolves to
      * ``TS<T>``; with an explicit output type the configured value must match that
-     * time-series' current value schema. ``wire<stdlib::const_>(w, 42)`` emits a
-     * ``TS<int>`` tick, while ``wire<stdlib::const_, TSS<int>>(w, set_value)`` emits
-     * a constant set. It ticks once at start (``PullSource``) and does not reschedule.
+     * time-series' current value schema. ``wire<stdlib::const_>(w, Int{42})``
+     * emits a standard ``TS[int]`` tick, while
+     * ``wire<stdlib::const_, TSS<Int>>(w, set_value)`` emits a constant set.
+     * It ticks once at start (``PullSource``) and does not reschedule.
      */
     struct const_
     {
@@ -61,7 +62,7 @@ namespace hgraph::stdlib
     struct debug_print
     {
         static constexpr auto name = "debug_print";
-        static void           eval(In<"ts", TsVar<"S">> ts, Scalar<"label", std::string> label)
+        static void           eval(In<"ts", TsVar<"S">> ts, Scalar<"label", Str> label)
         {
             fmt::print("{}: {}\n", label.value(), ts.value().to_string());
         }

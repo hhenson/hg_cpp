@@ -145,7 +145,7 @@ namespace hgraph::testing
     // behaviour is schema-as-data, driven by the runtime ``capture_delta`` /
     // ``apply_delta``. ``record`` is a sink whose type resolves from its connected
     // input port — ``wire<record>(w, port, key)``; ``replay`` is a source whose type
-    // is supplied explicitly — ``wire<replay, TS<int>>(w, key)``.
+    // is supplied explicitly — ``wire<replay, TS<Int>>(w, key)``.
     // -----------------------------------------------------------------
 
     /** Multi-cycle source: emits a recorded delta sequence for its (resolved) output type. */
@@ -156,15 +156,18 @@ namespace hgraph::testing
         // per-cycle rescheduling below uses the full NodeScheduler.
         static constexpr bool schedule_on_start = true;
 
-        static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched, State<int> index,
+        static void eval(Scalar<"key", std::string> key,
+                         GlobalStateView gs,
+                         NodeScheduler sched,
+                         State<Int> index,
                          Out<TsVar<"S">> out)
         {
             const ValueView buffer = gs.get(key.value());
             if (!buffer.valid()) { return; }  // nothing seeded under this key
 
             const auto list = buffer.as_list();
-            const int  i    = index.get();
-            const int  size = static_cast<int>(list.size());
+            const auto i    = index.get();
+            const auto size = static_cast<Int>(list.size());
             if (i < size)
             {
                 const auto element = list.at(static_cast<std::size_t>(i)).as_any();

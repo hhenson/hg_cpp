@@ -13,7 +13,7 @@ same shapes as **types** at compile time:
    using PriceTick = TSB<"PriceTick",
                          Field<"bid",   TS<double>>,
                          Field<"ask",   TS<double>>,
-                         Field<"size",  TS<int>>>;
+                         Field<"size",  TS<std::int32_t>>>;
 
    using QuoteFeed = TSD<std::string, PriceTick>;
 
@@ -207,9 +207,9 @@ node ``eval`` can take a typed handle as a parameter:
    {
        static constexpr auto name = "sum";
 
-       static void eval(In<"lhs", TS<int>> lhs,
-                        In<"rhs", TS<int>> rhs,
-                        Out<TS<int>>      out)
+       static void eval(In<"lhs", TS<std::int32_t>> lhs,
+                        In<"rhs", TS<std::int32_t>> rhs,
+                        Out<TS<std::int32_t>>      out)
        {
            out.set(lhs.value() + rhs.value());
        }
@@ -263,15 +263,15 @@ view, child access falls straight out of the inherited ``at(i)`` and composes to
 
 .. code-block:: cpp
 
-   // TSL of sets:  out[i] is an Out<TSS<int>>, in[i] is an In<"", TSS<int>>
-   static void eval(In<"l", TSL<TSS<int>, 2>> l, Out<TSL<TSS<int>, 2>> out)
+   // TSL of sets:  out[i] is an Out<TSS<std::int32_t>>, in[i] is an In<"", TSS<std::int32_t>>
+   static void eval(In<"l", TSL<TSS<std::int32_t>, 2>> l, Out<TSL<TSS<std::int32_t>, 2>> out)
    {
        for (auto &&[idx, child] : l.modified_items())  // inherited from TSLInputView
-           out[idx].add(*l[idx].added().begin());      // out[idx] : Out<TSS<int>>
+           out[idx].add(*l[idx].added().begin());      // out[idx] : Out<TSS<std::int32_t>>
    }
 
    // TSL of TSL of TS:  in[i][j].value()  (recursion bottoms out at a scalar)
-   In<"g", TSL<TSL<TS<int>, 2>, 3>> g;  g[0][1].value();
+   In<"g", TSL<TSL<TS<std::int32_t>, 2>, 3>> g;  g[0][1].value();
 
 ``In<Name, TSL<C,N>>::operator[](i)`` returns ``In<"", C>`` (a name-agnostic
 child facade — ``fixed_string`` admits ``""``); ``Out<TSL<C,N>>::operator[](i)``
@@ -293,7 +293,7 @@ parallel delta representation. The delta of any time-series is the canonical
 ``SIGNAL`` / tick-count ``TSW<T,...>`` → scalar; ``TSS<T>`` →
 ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSD<K,V>`` →
 ``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}``; ``TSL<C,N>`` →
-``Map<int64, delta(C)>``; ``TSB{f...}`` →
+``Map<int, delta(C)>``; ``TSB{f...}`` →
 ``Bundle{f: delta(f_schema)...}``; recursive). ``In<…>::delta()`` is just the inherited
 ``delta_value()``. To **construct** a collection delta for tests/wiring, recursive
 builder functions produce the canonical ``Value`` (see *Allocation, Plans and Ops
@@ -301,9 +301,9 @@ builder functions produce the canonical ``Value`` (see *Allocation, Plans and Op
 
 .. code-block:: cpp
 
-   set_delta<int>({1, 2}, {})                       // -> Bundle{added:{1,2}, removed:{}}
-   list_delta<TSS<int>>({{0, set_delta<int>({1},{})}})  // -> Map<int64, Bundle>
-   dict_delta<std::string, TS<int>>({{"a", 1}}, {"b"})   // -> Bundle{removed, modified}
+   set_delta<std::int32_t>({1, 2}, {})                       // -> Bundle{added:{1,2}, removed:{}}
+   list_delta<TSS<std::int32_t>>({{0, set_delta<std::int32_t>({1},{})}})  // -> Map<int, Bundle>
+   dict_delta<std::string, TS<std::int32_t>>({{"a", 1}}, {"b"})   // -> Bundle{removed, modified}
    tsb_delta<PriceTick>(101.0, std::nullopt, 5)     // ask is typed-null
 
 Comparison and display go through the value-layer ops (``Value::equals`` —

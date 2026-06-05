@@ -9,15 +9,19 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/static_schema.h>
 
+#include <cstdint>
 #include <string>
 
-TEST_CASE("static_schema: scalar_descriptor maps built-ins to TypeRegistry::register_scalar")
+TEST_CASE("static_schema: scalar_descriptor maps built-ins to standard registry names")
 {
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    REQUIRE(scalar_descriptor<int32_t>::is_concrete());
-    REQUIRE(scalar_descriptor<int32_t>::value_meta() == registry.register_scalar<int32_t>("int32"));
+    REQUIRE(scalar_descriptor<std::int32_t>::is_concrete());
+    REQUIRE(scalar_descriptor<std::int32_t>::value_meta() == registry.register_scalar<std::int32_t>("int32"));
+    REQUIRE(scalar_descriptor<Int>::value_meta() == registry.value_type("int"));
+    REQUIRE(std::string{scalar_descriptor<Int>::value_meta()->name()} == "int");
+    REQUIRE(scalar_descriptor<double>::value_meta() == registry.value_type("float"));
     REQUIRE(scalar_descriptor<double>::value_meta() == registry.register_scalar<double>("double"));
     REQUIRE(scalar_descriptor<std::string>::value_meta() == registry.register_scalar<std::string>("string"));
     REQUIRE(scalar_descriptor<bool>::value_meta() == registry.register_scalar<bool>("bool"));
@@ -28,9 +32,9 @@ TEST_CASE("static_schema: TS<T> descriptor matches registry.ts(...)")
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    const auto *expected = registry.ts(registry.register_scalar<int32_t>("int32"));
-    REQUIRE(schema_descriptor<TS<int32_t>>::is_concrete());
-    REQUIRE(schema_descriptor<TS<int32_t>>::ts_meta() == expected);
+    const auto *expected = registry.ts(registry.register_scalar<std::int32_t>("int32"));
+    REQUIRE(schema_descriptor<TS<std::int32_t>>::is_concrete());
+    REQUIRE(schema_descriptor<TS<std::int32_t>>::ts_meta() == expected);
 }
 
 TEST_CASE("static_schema: TSS<T> descriptor matches registry.tss(...)")
@@ -49,10 +53,10 @@ TEST_CASE("static_schema: TSD<K, V> descriptor matches registry.tsd(...)")
     auto &registry = TypeRegistry::instance();
 
     const auto *str_meta = registry.register_scalar<std::string>("string");
-    const auto *int_meta = registry.register_scalar<int32_t>("int32");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *expected = registry.tsd(str_meta, registry.ts(int_meta));
 
-    using DictSchema = TSD<std::string, TS<int32_t>>;
+    using DictSchema = TSD<std::string, TS<std::int32_t>>;
     REQUIRE(schema_descriptor<DictSchema>::is_concrete());
     REQUIRE(schema_descriptor<DictSchema>::ts_meta() == expected);
 }
@@ -84,9 +88,9 @@ TEST_CASE("static_schema: REF<T> descriptor matches registry.ref(...)")
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    const auto *int_meta = registry.register_scalar<int32_t>("int32");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
-    REQUIRE(schema_descriptor<REF<TS<int32_t>>>::ts_meta() == registry.ref(ts_int));
+    REQUIRE(schema_descriptor<REF<TS<std::int32_t>>>::ts_meta() == registry.ref(ts_int));
 }
 
 TEST_CASE("static_schema: SIGNAL descriptor matches registry.signal()")
@@ -104,11 +108,11 @@ TEST_CASE("static_schema: UnNamedTSB resolves to registry.un_named_tsb(...)")
     auto &registry = TypeRegistry::instance();
 
     const auto *double_meta = registry.register_scalar<double>("double");
-    const auto *int_meta    = registry.register_scalar<int32_t>("int32");
+    const auto *int_meta    = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_double   = registry.ts(double_meta);
     const auto *ts_int      = registry.ts(int_meta);
 
-    using BundleSchema = UnNamedTSB<Field<"price", TS<double>>, Field<"size", TS<int32_t>>>;
+    using BundleSchema = UnNamedTSB<Field<"price", TS<double>>, Field<"size", TS<std::int32_t>>>;
     const auto *got = schema_descriptor<BundleSchema>::ts_meta();
 
     REQUIRE(got != nullptr);
@@ -122,11 +126,11 @@ TEST_CASE("static_schema: TSB<\"Name\", ...> resolves to registry.tsb(name, ...)
     auto &registry = TypeRegistry::instance();
 
     const auto *double_meta = registry.register_scalar<double>("double");
-    const auto *int_meta    = registry.register_scalar<int32_t>("int32");
+    const auto *int_meta    = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_double   = registry.ts(double_meta);
     const auto *ts_int      = registry.ts(int_meta);
 
-    using NamedBundle = TSB<"PriceTick", Field<"price", TS<double>>, Field<"size", TS<int32_t>>>;
+    using NamedBundle = TSB<"PriceTick", Field<"price", TS<double>>, Field<"size", TS<std::int32_t>>>;
     const auto *got = schema_descriptor<NamedBundle>::ts_meta();
 
     REQUIRE(got != nullptr);
@@ -140,10 +144,10 @@ TEST_CASE("static_schema: UnNamedBundle (value layer) resolves to registry.un_na
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    const auto *int_meta = registry.register_scalar<int32_t>("int32");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *str_meta = registry.register_scalar<std::string>("string");
 
-    using PointSchema = UnNamedBundle<Field<"x", int32_t>, Field<"label", std::string>>;
+    using PointSchema = UnNamedBundle<Field<"x", std::int32_t>, Field<"label", std::string>>;
     const auto *got = value_schema_descriptor<PointSchema>::value_meta();
 
     REQUIRE(got != nullptr);
@@ -156,10 +160,10 @@ TEST_CASE("static_schema: Bundle<\"Name\", ...> resolves to registry.bundle(name
     using namespace hgraph;
     auto &registry = TypeRegistry::instance();
 
-    const auto *int_meta = registry.register_scalar<int32_t>("int32");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *str_meta = registry.register_scalar<std::string>("string");
 
-    using LabelledPoint = Bundle<"LabelledPoint", Field<"x", int32_t>, Field<"label", std::string>>;
+    using LabelledPoint = Bundle<"LabelledPoint", Field<"x", std::int32_t>, Field<"label", std::string>>;
     const auto *got = value_schema_descriptor<LabelledPoint>::value_meta();
 
     REQUIRE(got != nullptr);
@@ -179,7 +183,7 @@ TEST_CASE("static_schema: TsVar / ScalarVar render schemas non-concrete")
     REQUIRE(schema_descriptor<TsVar<"X">>::ts_meta() == nullptr);
 
     // A composite carrying an unresolved variable is also non-concrete.
-    using GenericDict = TSD<ScalarVar<"K">, TS<int32_t>>;
+    using GenericDict = TSD<ScalarVar<"K">, TS<std::int32_t>>;
     REQUIRE_FALSE(schema_descriptor<GenericDict>::is_concrete());
     REQUIRE(schema_descriptor<GenericDict>::ts_meta() == nullptr);
 

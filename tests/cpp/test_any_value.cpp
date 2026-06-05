@@ -6,6 +6,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/any_ops.h>
@@ -81,16 +83,16 @@ TEST_CASE("Any: set / get a contained value and clear it")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::int32_t>("int32");
 
     Value any = make_any();
-    any.as_any().begin_mutation().set(Value{42});
+    any.as_any().begin_mutation().set(Value{std::int32_t{42}});
 
     auto view = any.as_any();
     REQUIRE(view.has_value());
     REQUIRE(view.value_schema() != nullptr);
     CHECK(view.value_schema()->kind == ValueTypeKind::Atomic);
-    CHECK(view.get().checked_as<int>() == 42);
+    CHECK(view.get().checked_as<std::int32_t>() == 42);
     CHECK(any.to_string() == "42");
 
     any.as_any().begin_mutation().clear();
@@ -102,13 +104,13 @@ TEST_CASE("Any: holds heterogeneous values (different schemas)")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::int32_t>("int32");
     (void)registry.register_scalar<std::string>("str");
 
     Value any = make_any();
 
-    any.as_any().begin_mutation().set(Value{7});
-    CHECK(any.as_any().get().checked_as<int>() == 7);
+    any.as_any().begin_mutation().set(Value{std::int32_t{7}});
+    CHECK(any.as_any().get().checked_as<std::int32_t>() == 7);
 
     // Re-assign with a different schema entirely.
     any.as_any().begin_mutation().set(Value{std::string{"hello"}});
@@ -120,13 +122,13 @@ TEST_CASE("Any: equals / compare / hash delegate to the contained value")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::int32_t>("int32");
 
     Value empty1 = make_any();
     Value empty2 = make_any();
-    Value a42    = make_any(Value{42});
-    Value b42    = make_any(Value{42});
-    Value a7     = make_any(Value{7});
+    Value a42    = make_any(Value{std::int32_t{42}});
+    Value b42    = make_any(Value{std::int32_t{42}});
+    Value a7     = make_any(Value{std::int32_t{7}});
 
     // Equality: both-empty equal; empty vs set unequal; same content equal.
     CHECK(empty1.equals(empty2));
@@ -148,15 +150,15 @@ TEST_CASE("Any: copy is a deep, independent copy of the contained value")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    (void)registry.register_scalar<int>("int");
+    (void)registry.register_scalar<std::int32_t>("int32");
 
-    Value original = make_any(Value{5});
+    Value original = make_any(Value{std::int32_t{5}});
     Value copy     = original;  // value copy
 
-    CHECK(copy.as_any().get().checked_as<int>() == 5);
+    CHECK(copy.as_any().get().checked_as<std::int32_t>() == 5);
 
     // Mutating the copy does not affect the original.
-    copy.as_any().begin_mutation().set(Value{99});
-    CHECK(copy.as_any().get().checked_as<int>() == 99);
-    CHECK(original.as_any().get().checked_as<int>() == 5);
+    copy.as_any().begin_mutation().set(Value{std::int32_t{99}});
+    CHECK(copy.as_any().get().checked_as<std::int32_t>() == 99);
+    CHECK(original.as_any().get().checked_as<std::int32_t>() == 5);
 }

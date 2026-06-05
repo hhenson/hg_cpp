@@ -107,7 +107,7 @@ namespace hgraph
      *
      * Example:
      * ```c++
-     * KeySlotStore store(MemoryUtils::plan_for<int>(), key_slot_store_ops_for<int>());
+     * KeySlotStore store(MemoryUtils::plan_for<std::int32_t>(), key_slot_store_ops_for<std::int32_t>());
      * store.insert(3);
      *
      * store.remove(3);

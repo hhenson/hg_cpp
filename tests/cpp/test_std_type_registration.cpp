@@ -15,13 +15,18 @@ TEST_CASE("stdlib::register_standard_types registers scalar aliases")
 
     auto       &registry = TypeRegistry::instance();
 
-    const auto *bool_type      = registry.scalar_binding<bool>()->type_meta;
-    const auto *int_type       = registry.scalar_binding<std::int64_t>()->type_meta;
-    const auto *float_type     = registry.scalar_binding<double>()->type_meta;
+    STATIC_REQUIRE(std::is_same_v<Bool, bool>);
+    STATIC_REQUIRE(std::is_same_v<Int, std::int64_t>);
+    STATIC_REQUIRE(std::is_same_v<Float, double>);
+    STATIC_REQUIRE(std::is_same_v<Str, std::string>);
+
+    const auto *bool_type      = registry.scalar_binding<Bool>()->type_meta;
+    const auto *int_type       = registry.scalar_binding<Int>()->type_meta;
+    const auto *float_type     = registry.scalar_binding<Float>()->type_meta;
     const auto *date_type      = registry.scalar_binding<engine_date_t>()->type_meta;
     const auto *datetime_type  = registry.scalar_binding<engine_time_t>()->type_meta;
     const auto *timedelta_type = registry.scalar_binding<engine_time_delta_t>()->type_meta;
-    const auto *str_type       = registry.scalar_binding<std::string>()->type_meta;
+    const auto *str_type       = registry.scalar_binding<Str>()->type_meta;
 
     CHECK(registry.value_type("bool") == bool_type);
     CHECK(registry.value_type("int") == int_type);

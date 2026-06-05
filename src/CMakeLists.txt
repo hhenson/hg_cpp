@@ -61,6 +61,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/runtime.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/python/chrono.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/notifiable.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/primitive_types.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_schema.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/graph_wiring.h

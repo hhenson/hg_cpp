@@ -4,20 +4,22 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+
 #include <string>
 #include <type_traits>
 #include <utility>
 
 namespace
 {
-    void write_int_output(const hgraph::NodeView &view, hgraph::engine_time_t evaluation_time, int value)
+    void write_int_output(const hgraph::NodeView &view, hgraph::engine_time_t evaluation_time, std::int32_t value)
     {
         hgraph::Value wrapped{value};
         auto mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
         REQUIRE(mutation.copy_value_from(wrapped.view()));
     }
 
-    hgraph::NodeBuilder source_node(const hgraph::TSValueTypeMetaData *ts_int, int value)
+    hgraph::NodeBuilder source_node(const hgraph::TSValueTypeMetaData *ts_int, std::int32_t value)
     {
         hgraph::NodeTypeMetaData schema;
         schema.display_name = "source";
@@ -46,7 +48,7 @@ namespace
             auto root = view.input(evaluation_time);
             auto bundle = root.as_bundle();
             auto input = bundle[0];
-            const int value = input.value().checked_as<int>();
+            const std::int32_t value = input.value().checked_as<std::int32_t>();
             write_int_output(view, evaluation_time, value + 1);
         };
 
@@ -68,7 +70,7 @@ namespace
 
         hgraph::NodeCallbacks callbacks;
         callbacks.evaluate = [](const hgraph::NodeView &view, hgraph::engine_time_t evaluation_time) {
-            const int next = view.state().checked_as<int>() + 1;
+            const std::int32_t next = view.state().checked_as<std::int32_t>() + 1;
             auto state = view.state().begin_mutation();
             state.set_scalar(next);
             write_int_output(view, evaluation_time, next);
@@ -90,7 +92,7 @@ namespace
 
         hgraph::NodeCallbacks callbacks;
         callbacks.evaluate = [](const hgraph::NodeView &view, hgraph::engine_time_t evaluation_time) {
-            write_int_output(view, evaluation_time, view.scalars().checked_as<int>());
+            write_int_output(view, evaluation_time, view.scalars().checked_as<std::int32_t>());
         };
 
         return hgraph::NodeBuilder::native(std::move(schema), std::move(callbacks));
@@ -109,7 +111,7 @@ TEST_CASE("NodeValue exposes a type-erased view over node storage")
     static_assert(!std::is_copy_assignable_v<GraphExecutorView>);
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int = registry.ts(int_meta);
 
     NodeValue node = source_node(ts_int, 41).make_node();
@@ -132,7 +134,7 @@ TEST_CASE("NodeValue exposes a type-erased view over node storage")
     auto output = node.view().output(t1);
     REQUIRE(output.valid());
     REQUIRE(output.modified());
-    REQUIRE(output.value().checked_as<int>() == 41);
+    REQUIRE(output.value().checked_as<std::int32_t>() == 41);
 }
 
 TEST_CASE("NodeValue state is read-write value storage")
@@ -140,7 +142,7 @@ TEST_CASE("NodeValue state is read-write value storage")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int = registry.ts(int_meta);
 
     NodeValue node = stateful_counter_node(int_meta, ts_int).make_node();
@@ -155,16 +157,16 @@ TEST_CASE("NodeValue state is read-write value storage")
     REQUIRE(view.binding()->checked_plan().find_component("output") != nullptr);
     REQUIRE(view.binding()->checked_plan().find_component("state") != nullptr);
     REQUIRE(view.binding()->checked_plan().find_component("input") == nullptr);
-    REQUIRE(view.state().checked_as<int>() == 0);
+    REQUIRE(view.state().checked_as<std::int32_t>() == 0);
 
     view.start(t1);
     view.evaluate(t1, true);
-    REQUIRE(node.view().state().checked_as<int>() == 1);
-    REQUIRE(node.view().output(t1).value().checked_as<int>() == 1);
+    REQUIRE(node.view().state().checked_as<std::int32_t>() == 1);
+    REQUIRE(node.view().output(t1).value().checked_as<std::int32_t>() == 1);
 
     node.view().evaluate(t2, true);
-    REQUIRE(node.view().state().checked_as<int>() == 2);
-    REQUIRE(node.view().output(t2).value().checked_as<int>() == 2);
+    REQUIRE(node.view().state().checked_as<std::int32_t>() == 2);
+    REQUIRE(node.view().output(t2).value().checked_as<std::int32_t>() == 2);
 }
 
 TEST_CASE("NodeValue scalar configuration is read-only per-instance value storage")
@@ -172,10 +174,10 @@ TEST_CASE("NodeValue scalar configuration is read-only per-instance value storag
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int = registry.ts(int_meta);
 
-    NodeValue node = scalar_source_node(int_meta, ts_int).scalars(Value{7}).make_node();
+    NodeValue node = scalar_source_node(int_meta, ts_int).scalars(Value{std::int32_t{7}}).make_node();
     const auto t1 = MIN_ST;
 
     auto view = node.view();
@@ -184,13 +186,13 @@ TEST_CASE("NodeValue scalar configuration is read-only per-instance value storag
     REQUIRE(view.has_scalars());
     REQUIRE(view.binding()->checked_plan().find_component("scalars") != nullptr);
     REQUIRE(view.binding()->checked_plan().find_component("state") == nullptr);
-    REQUIRE(view.scalars().checked_as<int>() == 7);
+    REQUIRE(view.scalars().checked_as<std::int32_t>() == 7);
 
     view.start(t1);
     view.evaluate(t1, true);
-    REQUIRE(node.view().output(t1).value().checked_as<int>() == 7);
+    REQUIRE(node.view().output(t1).value().checked_as<std::int32_t>() == 7);
     // The scalar configuration is unchanged by evaluation.
-    REQUIRE(node.view().scalars().checked_as<int>() == 7);
+    REQUIRE(node.view().scalars().checked_as<std::int32_t>() == 7);
 }
 
 TEST_CASE("GraphValue wires node views and evaluates scheduled notifications")
@@ -198,7 +200,7 @@ TEST_CASE("GraphValue wires node views and evaluates scheduled notifications")
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int = registry.ts(int_meta);
     const auto *input_schema = registry.tsb("RuntimeInput", {{"value", ts_int}});
 
@@ -233,8 +235,8 @@ TEST_CASE("GraphValue wires node views and evaluates scheduled notifications")
 
     auto source_output = graph_view.node_at(0).output(t1);
     auto compute_output = graph_view.node_at(1).output(t1);
-    REQUIRE(source_output.value().checked_as<int>() == 42);
-    REQUIRE(compute_output.value().checked_as<int>() == 43);
+    REQUIRE(source_output.value().checked_as<std::int32_t>() == 42);
+    REQUIRE(compute_output.value().checked_as<std::int32_t>() == 43);
     REQUIRE(source_output.modified());
     REQUIRE(compute_output.modified());
 
@@ -256,7 +258,7 @@ TEST_CASE("GraphExecutorValue runs the graph through the type-erased executor vi
     using namespace hgraph;
 
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int = registry.ts(int_meta);
     const auto *input_schema = registry.tsb("ExecutorInput", {{"value", ts_int}});
 
@@ -287,6 +289,6 @@ TEST_CASE("GraphExecutorValue runs the graph through the type-erased executor vi
 
     auto graph = executor_view.graph();
     auto output = graph.node_at(1).output(MIN_ST);
-    REQUIRE(output.value().checked_as<int>() == 10);
+    REQUIRE(output.value().checked_as<std::int32_t>() == 10);
     REQUIRE_FALSE(graph.started());
 }

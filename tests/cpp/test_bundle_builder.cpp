@@ -6,6 +6,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
@@ -16,17 +18,17 @@ namespace
 {
     using namespace hgraph;
 
-    // Build the canonical TSS-delta bundle: Bundle{added: Set<int>, removed: Set<int>}.
-    Value make_delta_bundle(std::initializer_list<int> added, std::initializer_list<int> removed)
+    // Build the canonical TSS-delta bundle: Bundle{added: Set<std::int32_t>, removed: Set<std::int32_t>}.
+    Value make_delta_bundle(std::initializer_list<std::int32_t> added, std::initializer_list<std::int32_t> removed)
     {
         auto       &registry      = TypeRegistry::instance();
-        const auto *int_meta       = registry.register_scalar<int>("int");
+        const auto *int_meta       = registry.register_scalar<std::int32_t>("int32");
         const auto *set_meta        = registry.set(int_meta);
         const auto *bundle_schema   = registry.un_named_bundle({{"added", set_meta}, {"removed", set_meta}});
         const auto *bundle_binding  = ValuePlanFactory::instance().binding_for(bundle_schema);
 
-        Value added_set   = stdlib::make_set<int>(added);
-        Value removed_set = stdlib::make_set<int>(removed);
+        Value added_set   = stdlib::make_set<std::int32_t>(added);
+        Value removed_set = stdlib::make_set<std::int32_t>(removed);
 
         BundleBuilder builder{*bundle_binding};
         builder.set("added", added_set.view());
@@ -45,8 +47,8 @@ TEST_CASE("BundleBuilder: assembles a Bundle{Set,Set} and reads its fields back"
     const auto view  = bundle.view().as_bundle();
     const auto added = view.field("added").as_set();
     CHECK(added.size() == 2);
-    CHECK(added.contains(Value{1}.view()));
-    CHECK(added.contains(Value{2}.view()));
+    CHECK(added.contains(Value{std::int32_t{1}}.view()));
+    CHECK(added.contains(Value{std::int32_t{2}}.view()));
     CHECK(view.field("removed").as_set().size() == 0);
 }
 
@@ -66,7 +68,7 @@ TEST_CASE("BundleBuilder: the built value matches the canonical un_named_bundle 
 {
     using namespace hgraph;
     auto       &registry     = TypeRegistry::instance();
-    const auto *int_meta      = registry.register_scalar<int>("int");
+    const auto *int_meta      = registry.register_scalar<std::int32_t>("int32");
     const auto *set_meta       = registry.set(int_meta);
     const auto *bundle_schema  = registry.un_named_bundle({{"added", set_meta}, {"removed", set_meta}});
 

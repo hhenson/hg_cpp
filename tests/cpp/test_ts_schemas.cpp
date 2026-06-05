@@ -10,11 +10,11 @@
 #include <cstdint>
 #include <string>
 
-TEST_CASE("ts_schemas: TS<int>.value_schema and delta_value_schema are int")
+TEST_CASE("ts_schemas: TS<std::int32_t>.value_schema and delta_value_schema are int")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     REQUIRE(ts_int->value_schema == int_meta);
@@ -60,7 +60,7 @@ TEST_CASE("ts_schemas: TSD<K, V>.value_schema is Map<K, V.value_schema>, delta i
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
     const auto *str_meta = registry.register_scalar<std::string>("string");
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsd      = registry.tsd(str_meta, ts_int);
 
@@ -85,7 +85,7 @@ TEST_CASE("ts_schemas: TSD<K, V>.value_schema is Map<K, V.value_schema>, delta i
     REQUIRE(tsd->delta_value_schema->fields[1].type == expected_delta_map);
 }
 
-TEST_CASE("ts_schemas: TSL<T>.value_schema is List<T.value>, delta is Map<int64, T.delta>")
+TEST_CASE("ts_schemas: TSL<T>.value_schema is List<T.value>, delta is Map<int, T.delta>")
 {
     using namespace hgraph;
     auto       &registry    = TypeRegistry::instance();
@@ -103,10 +103,10 @@ TEST_CASE("ts_schemas: TSL<T>.value_schema is List<T.value>, delta is Map<int64,
         REQUIRE(tsl->value_schema->element_type == double_meta);
         REQUIRE(tsl->value_schema->fixed_size == 4);
 
-        // delta_value_schema = Map<int64, double>
-        const auto *int64_meta         = registry.value_type("int64");
-        REQUIRE(int64_meta != nullptr);
-        const auto *expected_delta_map = registry.map(int64_meta, double_meta);
+        // delta_value_schema = Map<int, double>
+        const auto *int_meta           = registry.value_type("int");
+        REQUIRE(int_meta != nullptr);
+        const auto *expected_delta_map = registry.map(int_meta, double_meta);
         REQUIRE(tsl->delta_value_schema == expected_delta_map);
     }
 
@@ -119,9 +119,9 @@ TEST_CASE("ts_schemas: TSL<T>.value_schema is List<T.value>, delta is Map<int64,
         REQUIRE(tsl->value_schema == expected_value);
         REQUIRE(tsl->value_schema->fixed_size == 0);
 
-        // delta_value_schema = Map<int64, double>
-        const auto *int64_meta         = registry.value_type("int64");
-        const auto *expected_delta_map = registry.map(int64_meta, double_meta);
+        // delta_value_schema = Map<int, double>
+        const auto *int_meta           = registry.value_type("int");
+        const auto *expected_delta_map = registry.map(int_meta, double_meta);
         REQUIRE(tsl->delta_value_schema == expected_delta_map);
     }
 }
@@ -168,7 +168,7 @@ TEST_CASE("ts_schemas: TSB<{f...}>.value_schema is Bundle{f.value...}, delta is 
     using namespace hgraph;
     auto       &registry    = TypeRegistry::instance();
     const auto *double_meta = registry.register_scalar<double>("double");
-    const auto *int_meta    = registry.register_scalar<int>("int");
+    const auto *int_meta    = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_double   = registry.ts(double_meta);
     const auto *ts_int      = registry.ts(int_meta);
 
@@ -203,8 +203,7 @@ TEST_CASE("ts_schemas: collection value schemas compose from child value_schema"
     const auto *list = registry.tsl(window, 2);
     REQUIRE(list->value_schema == registry.list(window->value_schema, 2));
     REQUIRE(list->value_schema->element_type == window->value_schema);
-    REQUIRE(list->delta_value_schema == registry.map(registry.register_scalar<int64_t>("int64"),
-                                                     window->delta_value_schema));
+    REQUIRE(list->delta_value_schema == registry.map(registry.value_type("int"), window->delta_value_schema));
 
     const auto *dict = registry.tsd(str_meta, window);
     REQUIRE(dict->value_schema == registry.map(str_meta, window->value_schema));
@@ -220,7 +219,7 @@ TEST_CASE("ts_schemas: REF<T> value/delta schemas are TimeSeriesReference, but t
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
 
@@ -264,13 +263,13 @@ TEST_CASE("ts_schemas: nested compositions resolve recursively")
     REQUIRE(tsd->value_schema == expected_value);
 
     // tsd.delta_value_schema = Bundle{removed, modified} where the
-    // modified-map values are Map<int64, double> (TSL's delta).
+    // modified-map values are Map<int, double> (TSL's delta).
     REQUIRE(tsd->delta_value_schema != nullptr);
     REQUIRE(tsd->delta_value_schema->kind == ValueTypeKind::Bundle);
     REQUIRE(tsd->delta_value_schema->field_count == 2);
 
-    const auto *int64_meta             = registry.value_type("int64");
-    const auto *expected_inner_delta   = registry.map(int64_meta, double_meta);  // tsl's delta
+    const auto *int_meta               = registry.value_type("int");
+    const auto *expected_inner_delta   = registry.map(int_meta, double_meta);  // tsl's delta
     const auto *expected_modified_map  = registry.map(str_meta, expected_inner_delta);
     REQUIRE(tsd->delta_value_schema->fields[1].type == expected_modified_map);
 }

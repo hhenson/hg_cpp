@@ -231,7 +231,7 @@ namespace hgraph
     // -----------------------------------------------------------------
     // Explicit type-argument helpers (source-side resolution): supply a
     // concrete schema for a variable that cannot be inferred from inputs
-    // (e.g. ``replay``'s output). ``wire<replay, TS<int>>(w, key)``.
+    // (e.g. ``replay``'s output). ``wire<replay, TS<std::int32_t>>(w, key)``.
     // -----------------------------------------------------------------
     template <typename S>
     [[nodiscard]] inline const TSValueTypeMetaData *ts_type()

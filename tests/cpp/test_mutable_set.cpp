@@ -5,6 +5,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/value.h>
@@ -26,7 +28,7 @@ TEST_CASE("mutable set: the Mutable schema axis interns distinctly from the immu
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     const ValueTypeMetaData *immutable = registry.set(int_meta);
     const ValueTypeMetaData *mutable_  = registry.mutable_set(int_meta);
@@ -43,7 +45,7 @@ TEST_CASE("mutable set: add, contains, remove, clear")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     Value set = make_mutable_set(int_meta);
     CHECK(set.view().is_set());
@@ -51,23 +53,23 @@ TEST_CASE("mutable set: add, contains, remove, clear")
 
     {
         auto m = set.as_set().begin_mutation();
-        CHECK(m.add(Value{1}.view()));
-        CHECK(m.add(Value{2}.view()));
-        CHECK_FALSE(m.add(Value{1}.view()));  // duplicate: no change
+        CHECK(m.add(Value{std::int32_t{1}}.view()));
+        CHECK(m.add(Value{std::int32_t{2}}.view()));
+        CHECK_FALSE(m.add(Value{std::int32_t{1}}.view()));  // duplicate: no change
     }
     {
         auto view = set.as_set();
         CHECK(view.size() == 2);
-        CHECK(view.contains(Value{1}.view()));
-        CHECK_FALSE(view.contains(Value{3}.view()));
+        CHECK(view.contains(Value{std::int32_t{1}}.view()));
+        CHECK_FALSE(view.contains(Value{std::int32_t{3}}.view()));
     }
     {
         auto m = set.as_set().begin_mutation();
-        CHECK(m.remove(Value{1}.view()));
-        CHECK_FALSE(m.remove(Value{9}.view()));  // absent: no change
+        CHECK(m.remove(Value{std::int32_t{1}}.view()));
+        CHECK_FALSE(m.remove(Value{std::int32_t{9}}.view()));  // absent: no change
     }
     CHECK(set.as_set().size() == 1);
-    CHECK(set.as_set().contains(Value{2}.view()));
+    CHECK(set.as_set().contains(Value{std::int32_t{2}}.view()));
 
     set.as_set().begin_mutation().clear();
     CHECK(set.as_set().size() == 0);
@@ -77,21 +79,21 @@ TEST_CASE("mutable set: equality is order-independent and a copy is independent"
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
 
     Value a = make_mutable_set(int_meta);
     {
         auto m = a.as_set().begin_mutation();
-        (void)m.add(Value{1}.view());
-        (void)m.add(Value{2}.view());
-        (void)m.add(Value{3}.view());
+        (void)m.add(Value{std::int32_t{1}}.view());
+        (void)m.add(Value{std::int32_t{2}}.view());
+        (void)m.add(Value{std::int32_t{3}}.view());
     }
     Value b = make_mutable_set(int_meta);
     {
         auto m = b.as_set().begin_mutation();
-        (void)m.add(Value{3}.view());  // different insertion order
-        (void)m.add(Value{1}.view());
-        (void)m.add(Value{2}.view());
+        (void)m.add(Value{std::int32_t{3}}.view());  // different insertion order
+        (void)m.add(Value{std::int32_t{1}}.view());
+        (void)m.add(Value{std::int32_t{2}}.view());
     }
     CHECK(a.equals(b));  // order-independent
 

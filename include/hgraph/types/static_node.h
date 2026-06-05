@@ -67,7 +67,7 @@ namespace hgraph
     // ``TSW<T,...>`` -> scalar; ``TSS<T>`` ->
     // ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSD<K,V>`` ->
     // ``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}``; ``TSL<C,N>`` ->
-    // ``Map<int64, delta(C)>``; ``TSB{f...}`` -> ``Bundle{f: delta(f)...}``,
+    // ``Map<int, delta(C)>``; ``TSB{f...}`` -> ``Bundle{f: delta(f)...}``,
     // recursive). These builders *produce that exact canonical Value*, so a built
     // delta compares to a runtime-produced one via ``Value::equals`` — there is no
     // parallel wrapper type. These are the *test-authoring* builders (construct an
@@ -164,19 +164,19 @@ namespace hgraph
 
     namespace static_node_detail
     {
-        /** Build ``Map<int64, delta(C)>`` from a sparse ``index -> child-delta`` map. */
+        /** Build ``Map<int, delta(C)>`` from a sparse ``index -> child-delta`` map. */
         template <typename C>
         [[nodiscard]] inline Value build_list_delta(const std::map<std::size_t, delta_input_t<C>> &entries)
         {
             const auto *key_binding =
-                ValuePlanFactory::instance().binding_for(scalar_descriptor<std::int64_t>::value_meta());
+                ValuePlanFactory::instance().binding_for(scalar_descriptor<Int>::value_meta());
             const auto &val_binding = delta_value_binding<C>();
             if (key_binding == nullptr) { throw std::logic_error("list_delta: unresolved key binding"); }
 
             MapBuilder builder{*key_binding, val_binding};
             for (const auto &[index, input] : entries)
             {
-                const std::int64_t key = static_cast<std::int64_t>(index);
+                const Int key = static_cast<Int>(index);
                 if constexpr (is_scalar_ts<C>::value)
                 {
                     builder.set_item_copy(std::addressof(key), std::addressof(input));  // scalar child delta == value
@@ -337,7 +337,7 @@ namespace hgraph
     }  // namespace static_node_detail
 
     /**
-     * Build the canonical ``TSL<C,N>`` delta value ``Map<int64, delta(C)>`` from a
+     * Build the canonical ``TSL<C,N>`` delta value ``Map<int, delta(C)>`` from a
      * sparse ``index -> child-delta`` list. For a scalar child the entry value is the
      * bare ``T``; for a container child it is a prebuilt child-delta ``Value`` (from an
      * inner ``set_delta`` / ``list_delta``) — so construction is recursive. The result
@@ -479,7 +479,7 @@ namespace hgraph
      * fixed-size collection. The child schema ``C`` is **any** time-series type
      * (``TS`` / ``TSS`` / ``TSL`` …); ``operator[](i)`` / ``at(i)`` return the typed
      * child selector ``In<"", C>`` (recursive). ``delta()`` is the canonical
-     * ``Map<int64, delta(C)>`` value view; ``size()`` / ``modified_items()`` /
+     * ``Map<int, delta(C)>`` value view; ``size()`` / ``modified_items()`` /
      * ``modified()`` / ``valid()`` are inherited.
      */
     template <fixed_string Name, typename TElementSchema, std::size_t N>
@@ -500,7 +500,7 @@ namespace hgraph
         }
         [[nodiscard]] In<"", TElementSchema> at(std::size_t i) const { return (*this)[i]; }
 
-        /** This cycle's delta as the canonical ``Map<int64, delta(C)>`` value view. */
+        /** This cycle's delta as the canonical ``Map<int, delta(C)>`` value view. */
         [[nodiscard]] ValueView delta() const { return delta_value(); }
         // size() / modified_items() / modified() / valid() inherited from TSLInputView.
     };

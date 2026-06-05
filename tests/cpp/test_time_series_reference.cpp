@@ -4,6 +4,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
+
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/time_series/ts_input.h>
@@ -85,7 +87,7 @@ TEST_CASE("TimeSeriesReference: empty reference can record an expected target sc
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     TimeSeriesReference ref{ts_int};
@@ -97,7 +99,7 @@ TEST_CASE("TimeSeriesReference: peered reference carries kind and target schema"
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     TSOutput output{*ts_int};
@@ -112,7 +114,7 @@ TEST_CASE("TimeSeriesReference: non-peered reference holds sub-references")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsl      = registry.tsl(ts_int, /*fixed_size=*/2);
 
@@ -146,7 +148,7 @@ TEST_CASE("TimeSeriesReference: operator[] bounds-checks NON_PEERED indexes")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     TSOutput output{*ts_int};
@@ -160,7 +162,7 @@ TEST_CASE("TimeSeriesReference: equality and hash respect kind, target_schema, a
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
 
     const TimeSeriesReference empty_a;
@@ -201,7 +203,7 @@ TEST_CASE("TimeSeriesReference: input view construction handles peered terminals
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *list     = registry.tsl(ts_int, 2);
     const auto *root     = registry.tsb("TimeSeriesReferenceInputRoot", {{"leaf", ts_int}, {"items", list}});
@@ -259,7 +261,7 @@ TEST_CASE("TimeSeriesReference: target link negotiates output as REF alternative
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
     const auto *root     = registry.tsb("TimeSeriesReferenceAlternativeInputRoot", {{"ref", ref_int}});
@@ -314,7 +316,7 @@ TEST_CASE("TimeSeriesReference: to-REF alternative samples at bind time and igno
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
     const auto *root     = registry.tsb("TimeSeriesReferenceProjectionTimingRoot", {{"ref", ref_int}});
@@ -368,7 +370,7 @@ TEST_CASE("TimeSeriesReference: output alternatives are keyed by starting view a
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *named_bundle      = registry.tsb("TimeSeriesReferenceAlternativeKeyNamed", {{"value", ts_int}});
     const auto *structural_bundle = registry.un_named_tsb({{"value", ts_int}});
@@ -404,7 +406,7 @@ TEST_CASE("TimeSeriesReference: to-REF alternative stores fixed list children th
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
     const auto *source_schema = registry.tsl(ts_int, 2);
@@ -447,7 +449,7 @@ TEST_CASE("TimeSeriesReference: to-REF TSD alternative keeps keys synchronized")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
     const auto *source_schema = registry.tsd(int_meta, ts_int);
@@ -527,7 +529,7 @@ TEST_CASE("TimeSeriesReference: to-REF TSD path constructs normal child structur
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
     const auto *source_list = registry.tsl(ts_int, 2);
@@ -624,7 +626,7 @@ TEST_CASE("TimeSeriesReference: to-REF nested TSD alternative keeps each proxy s
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
     const auto *source_inner_schema = registry.tsd(int_meta, ts_int);
@@ -692,7 +694,7 @@ TEST_CASE("TimeSeriesReference: from-REF alternative binds peered target and fol
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *ref_int  = registry.ref(ts_int);
 
@@ -709,21 +711,21 @@ TEST_CASE("TimeSeriesReference: from-REF alternative binds peered target and fol
     auto dereferenced = handle.view(t2);
     REQUIRE(dereferenced.valid());
     REQUIRE(dereferenced.modified());
-    REQUIRE(dereferenced.value().checked_as<int>() == 11);
+    REQUIRE(dereferenced.value().checked_as<std::int32_t>() == 11);
     REQUIRE(dereferenced.last_modified_time() == t2);
 
     set_output_value(first_target, 12, t3);
     auto after_target_tick = handle.view(t3);
     REQUIRE(after_target_tick.valid());
     REQUIRE(after_target_tick.modified());
-    REQUIRE(after_target_tick.value().checked_as<int>() == 12);
+    REQUIRE(after_target_tick.value().checked_as<std::int32_t>() == 12);
 
     set_output_value(second_target, 21, t4);
     set_output_reference(ref_output, TimeSeriesReference{second_target.view(t4)}, t4);
     auto after_rebind = handle.view(t4);
     REQUIRE(after_rebind.valid());
     REQUIRE(after_rebind.modified());
-    REQUIRE(after_rebind.value().checked_as<int>() == 21);
+    REQUIRE(after_rebind.value().checked_as<std::int32_t>() == 21);
     REQUIRE(after_rebind.last_modified_time() == t4);
 
     set_output_reference(ref_output, TimeSeriesReference::empty(ts_int), t5);
@@ -737,7 +739,7 @@ TEST_CASE("TimeSeriesReference: from-REF alternative expands non-peered bundle r
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *bundle_schema =
         registry.tsb("TimeSeriesReferenceFromRefNonPeeredBundle", {{"lhs", ts_int}, {"rhs", ts_int}});
@@ -767,8 +769,8 @@ TEST_CASE("TimeSeriesReference: from-REF alternative expands non-peered bundle r
     auto rhs = bundle.field("rhs");
     REQUIRE(dereferenced_view.valid());
     REQUIRE(dereferenced_view.modified());
-    REQUIRE(lhs.value().checked_as<int>() == 1);
-    REQUIRE(rhs.value().checked_as<int>() == 2);
+    REQUIRE(lhs.value().checked_as<std::int32_t>() == 1);
+    REQUIRE(rhs.value().checked_as<std::int32_t>() == 2);
 
     set_output_value(rhs_target, 3, t3);
     auto after_rhs_tick_view = handle.view(t3);
@@ -777,14 +779,14 @@ TEST_CASE("TimeSeriesReference: from-REF alternative expands non-peered bundle r
     auto modified_items = collect_range(after_rhs_tick.modified_items());
     REQUIRE(modified_items.size() == 1);
     REQUIRE(std::string{modified_items[0].first} == "rhs");
-    REQUIRE(modified_items[0].second.value().checked_as<int>() == 3);
+    REQUIRE(modified_items[0].second.value().checked_as<std::int32_t>() == 3);
 }
 
 TEST_CASE("TimeSeriesReference: from-REF alternative expands non-peered fixed-list references")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *list_schema = registry.tsl(ts_int, 2);
     const auto *ref_list = registry.ref(list_schema);
@@ -811,8 +813,8 @@ TEST_CASE("TimeSeriesReference: from-REF alternative expands non-peered fixed-li
     auto list = dereferenced_view.as_list();
     REQUIRE(dereferenced_view.valid());
     REQUIRE(dereferenced_view.modified());
-    REQUIRE(list[0].value().checked_as<int>() == 4);
-    REQUIRE(list[1].value().checked_as<int>() == 5);
+    REQUIRE(list[0].value().checked_as<std::int32_t>() == 4);
+    REQUIRE(list[1].value().checked_as<std::int32_t>() == 5);
 
     set_output_value(first_target, 6, t3);
     auto after_first_tick_view = handle.view(t3);
@@ -821,14 +823,14 @@ TEST_CASE("TimeSeriesReference: from-REF alternative expands non-peered fixed-li
     auto modified_items = collect_range(after_first_tick.modified_items());
     REQUIRE(modified_items.size() == 1);
     REQUIRE(modified_items[0].first == 0);
-    REQUIRE(modified_items[0].second.value().checked_as<int>() == 6);
+    REQUIRE(modified_items[0].second.value().checked_as<std::int32_t>() == 6);
 }
 
 TEST_CASE("TimeSeriesReference: from-REF alternative splits peered bundle references into child links")
 {
     using namespace hgraph;
     auto       &registry = TypeRegistry::instance();
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *bundle_schema =
         registry.tsb("TimeSeriesReferenceFromRefPeeredBundle", {{"lhs", ts_int}, {"rhs", ts_int}});
@@ -855,8 +857,8 @@ TEST_CASE("TimeSeriesReference: from-REF alternative splits peered bundle refere
     auto handle = ref_output.view(t2).binding_for(*bundle_schema);
     auto dereferenced_view = handle.view(t2);
     auto bundle = dereferenced_view.as_bundle();
-    REQUIRE(bundle.field("lhs").value().checked_as<int>() == 5);
-    REQUIRE(bundle.field("rhs").value().checked_as<int>() == 6);
+    REQUIRE(bundle.field("lhs").value().checked_as<std::int32_t>() == 5);
+    REQUIRE(bundle.field("rhs").value().checked_as<std::int32_t>() == 6);
 
     {
         auto target_view = target.view(t3);
@@ -872,7 +874,7 @@ TEST_CASE("TimeSeriesReference: from-REF alternative splits peered bundle refere
     auto modified_items = collect_range(after_rhs_tick.modified_items());
     REQUIRE(modified_items.size() == 1);
     REQUIRE(std::string{modified_items[0].first} == "rhs");
-    REQUIRE(modified_items[0].second.value().checked_as<int>() == 7);
+    REQUIRE(modified_items[0].second.value().checked_as<std::int32_t>() == 7);
 }
 
 TEST_CASE("TimeSeriesReference: empty_reference() returns a stable singleton")
@@ -892,7 +894,7 @@ TEST_CASE("TimeSeriesReference: registry pairs the type with a real plan via Val
     auto       &factory  = ValuePlanFactory::instance();
 
     // Trigger registration by asking for any REF schema.
-    const auto *int_meta = registry.register_scalar<int>("int");
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
     const auto *ts_int   = registry.ts(int_meta);
     (void)registry.ref(ts_int);
 

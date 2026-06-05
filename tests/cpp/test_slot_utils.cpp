@@ -355,7 +355,7 @@ TEST_CASE("value slot stores can share a custom allocator", "[v2 slot utils]") {
 }
 
 TEST_CASE("key mirrored value slot store derives lifetime from key construction", "[v2 slot utils]") {
-    KeySlotStore             keys(MemoryUtils::plan_for<int>(), key_slot_store_ops_for<int>());
+    KeySlotStore             keys(MemoryUtils::plan_for<std::int32_t>(), key_slot_store_ops_for<std::int32_t>());
     KeyMirroredValueSlotStore values(keys, MemoryUtils::plan_for<std::string>());
 
     REQUIRE(values.mirrors_key_construction());
@@ -387,11 +387,11 @@ TEST_CASE("key mirrored value slot store derives lifetime from key construction"
 }
 
 TEST_CASE("key slot store tracks pending removals until explicit erase", "[v2 slot utils]") {
-    KeySlotStore      store(MemoryUtils::plan_for<int>(), key_slot_store_ops_for<int>());
+    KeySlotStore      store(MemoryUtils::plan_for<std::int32_t>(), key_slot_store_ops_for<std::int32_t>());
     RecordingObserver observer;
 
     store.add_slot_observer(&observer);
-    store.reserve_to<int>(4);
+    store.reserve_to<std::int32_t>(4);
 
     const auto first  = store.insert(11);
     const auto second = store.insert(22);
@@ -403,8 +403,8 @@ TEST_CASE("key slot store tracks pending removals until explicit erase", "[v2 sl
     REQUIRE(store.contains(11));
     REQUIRE(store.find_slot(22) == second.slot);
     REQUIRE(store.find_stored_slot(22) == second.slot);
-    REQUIRE(store.try_key<int>(first.slot) != nullptr);
-    REQUIRE(*store.try_key<int>(first.slot) == 11);
+    REQUIRE(store.try_key<std::int32_t>(first.slot) != nullptr);
+    REQUIRE(*store.try_key<std::int32_t>(first.slot) == 11);
 
     REQUIRE(store.remove(22));
     REQUIRE(store.size() == 1);
@@ -416,8 +416,8 @@ TEST_CASE("key slot store tracks pending removals until explicit erase", "[v2 sl
     REQUIRE(store.find_stored_slot(22) == second.slot);
     REQUIRE(store.find_slot(22) == KeySlotStore::npos);
     REQUIRE_FALSE(store.contains(22));
-    REQUIRE(store.try_key<int>(second.slot) != nullptr);
-    REQUIRE(*store.try_key<int>(second.slot) == 22);
+    REQUIRE(store.try_key<std::int32_t>(second.slot) != nullptr);
+    REQUIRE(*store.try_key<std::int32_t>(second.slot) == 22);
 
     CHECK(observer.events == std::vector<std::string>{"capacity:0->4", "insert:0", "insert:1", "remove:1"});
 
@@ -427,7 +427,7 @@ TEST_CASE("key slot store tracks pending removals until explicit erase", "[v2 sl
     REQUIRE(store.has_pending_erase());
     REQUIRE(store.pending_erase_count() == 1);
     REQUIRE(store.find_stored_slot(22) == second.slot);
-    REQUIRE(store.try_key<int>(second.slot) != nullptr);
+    REQUIRE(store.try_key<std::int32_t>(second.slot) != nullptr);
 
     store.erase_pending();
 
@@ -437,13 +437,13 @@ TEST_CASE("key slot store tracks pending removals until explicit erase", "[v2 sl
     REQUIRE_FALSE(store.has_pending_erase());
     REQUIRE(store.pending_erase_count() == 0);
     REQUIRE(store.find_stored_slot(22) == KeySlotStore::npos);
-    REQUIRE(store.try_key<int>(second.slot) == nullptr);
+    REQUIRE(store.try_key<std::int32_t>(second.slot) == nullptr);
 
     CHECK(observer.events == std::vector<std::string>{"capacity:0->4", "insert:0", "insert:1", "remove:1", "erase:1"});
 }
 
 TEST_CASE("key slot store resurrects removed keys before erase and reuses slots after explicit erase", "[v2 slot utils]") {
-    KeySlotStore store(MemoryUtils::plan_for<int>(), key_slot_store_ops_for<int>());
+    KeySlotStore store(MemoryUtils::plan_for<std::int32_t>(), key_slot_store_ops_for<std::int32_t>());
 
     const auto original = store.insert(3);
     REQUIRE(original.inserted);
@@ -476,11 +476,11 @@ TEST_CASE("key slot store resurrects removed keys before erase and reuses slots 
     REQUIRE(reused.inserted);
     REQUIRE(reused.slot == original.slot);
     REQUIRE(store.contains(9));
-    REQUIRE(*store.try_key<int>(reused.slot) == 9);
+    REQUIRE(*store.try_key<std::int32_t>(reused.slot) == 9);
 }
 
 TEST_CASE("key slot store bracket accessor reads constructed slots and throws after erase", "[v2 slot utils]") {
-    KeySlotStore store(MemoryUtils::plan_for<int>(), key_slot_store_ops_for<int>());
+    KeySlotStore store(MemoryUtils::plan_for<std::int32_t>(), key_slot_store_ops_for<std::int32_t>());
 
     const auto inserted = store.insert(7);
     REQUIRE(*MemoryUtils::cast<int>(store[inserted.slot]) == 7);

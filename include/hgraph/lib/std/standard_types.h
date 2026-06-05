@@ -17,8 +17,8 @@ namespace hgraph::stdlib
      * schemas after registration.
      *
      * User-facing names intentionally follow the Python-facing vocabulary:
-     * ``int`` is ``std::int64_t``, ``float`` is ``double``, and ``str`` is
-     * ``std::string``. Explicit fixed-width aliases such as ``int8`` and
+     * ``int`` is ``Int``, ``float`` is ``Float``, and ``str`` is ``Str``.
+     * Explicit fixed-width aliases such as ``int8`` and
      * ``uint32`` are also registered for callers that need narrower storage.
      */
     struct RegisteredStandardTypes
@@ -105,13 +105,13 @@ namespace hgraph::stdlib
      *
      * Primary aliases:
      *
-     * - ``bool`` -> ``bool``
-     * - ``int`` -> ``std::int64_t``
-     * - ``float`` -> ``double``
+     * - ``bool`` -> ``Bool``
+     * - ``int`` -> ``Int``
+     * - ``float`` -> ``Float``
      * - ``date`` -> ``engine_date_t``
      * - ``datetime`` -> ``engine_time_t``
      * - ``timedelta`` -> ``engine_time_delta_t``
-     * - ``str`` -> ``std::string``
+     * - ``str`` -> ``Str``
      *
      * Explicit aliases include ``int8``/``int16``/``int32``/``int64``,
      * ``uint8``/``uint16``/``uint32``/``uint64``, ``float32`` and
@@ -123,13 +123,13 @@ namespace hgraph::stdlib
     {
         RegisteredStandardTypes types{};
 
-        types.bool_type      = standard_types_detail::register_scalar_aliases<bool>(registry, {"bool"});
-        types.int_type       = standard_types_detail::register_scalar_aliases<std::int64_t>(registry, {"int", "int64"});
-        types.float_type     = standard_types_detail::register_scalar_aliases<double>(registry, {"float", "float64", "double"});
+        types.bool_type      = standard_types_detail::register_scalar_aliases<Bool>(registry, {"bool"});
+        types.int_type       = standard_types_detail::register_scalar_aliases<Int>(registry, {"int", "int64"});
+        types.float_type     = standard_types_detail::register_scalar_aliases<Float>(registry, {"float", "float64", "double"});
         types.date_type      = standard_types_detail::register_scalar_aliases<engine_date_t>(registry, {"date"});
         types.datetime_type  = standard_types_detail::register_scalar_aliases<engine_time_t>(registry, {"datetime"});
         types.timedelta_type = standard_types_detail::register_scalar_aliases<engine_time_delta_t>(registry, {"timedelta"});
-        types.str_type       = standard_types_detail::register_scalar_aliases<std::string>(registry, {"str", "string"});
+        types.str_type       = standard_types_detail::register_scalar_aliases<Str>(registry, {"str", "string"});
 
         types.int8_type    = standard_types_detail::register_scalar_aliases<std::int8_t>(registry, {"int8"});
         types.int16_type   = standard_types_detail::register_scalar_aliases<std::int16_t>(registry, {"int16"});

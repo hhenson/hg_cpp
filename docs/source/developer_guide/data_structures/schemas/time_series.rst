@@ -199,7 +199,7 @@ Per-kind mapping:
      - ``Bundle{removed: Set<K>, modified: Map<K, V.delta>}``
    * - ``TSL<T>``
      - ``List<T.value_schema, fixed_size>``
-     - ``Map<int64, T.delta_value_schema>``
+     - ``Map<int, T.delta_value_schema>``
    * - ``TSW<T>`` (tick)
      - ``List<T, period>``
      - ``T``
@@ -240,9 +240,9 @@ A few notes on the cells that aren't immediate:
   asking the registry for ``REF<REF<T>>`` returns the existing
   ``REF<T>`` schema. Nested ``REF`` is therefore not a distinct schema
   shape and must not create a separate output alternative.
-- ``TSL`` keys its delta on ``int64`` because the slot id (an integer
+- ``TSL`` keys its delta on ``int`` because the slot id (an integer
   index) is the universal path identifier into a slot store. The
-  registry auto-registers an ``int64`` scalar the first time it
+  registry uses the standard ``int`` scalar (``Int`` / ``std::int64_t``) when it
   synthesises a TSL delta schema.
 - ``TSD`` and ``TSS`` deltas are bundles because the per-tick change
   set carries more than one category. ``TSD`` collapses *added* and

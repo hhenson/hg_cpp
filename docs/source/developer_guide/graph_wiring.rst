@@ -273,8 +273,9 @@ Slices:
    (``include/hgraph/types/type_resolution.h``): each input selector's pattern is
    **unified** against the connected port's runtime schema, a scalar variable is
    inferred from the configured value's type, and a source-side output variable is
-   supplied **explicitly** — either ``wire<replay, TS<int>>(w, key)`` (an explicit
-   output schema, which also makes the returned port the typed ``Port<TS<int>>``) or
+   supplied **explicitly** — either ``wire<replay, TS<Int>>(w, key)`` (an
+   explicit output schema, which also makes the returned port the typed
+   ``Port<TS<Int>>``) or
    via ``ts_type<...>()`` / ``scalar_type<...>()`` helpers. The resolved schemas
    build the node through ``NodeBuilder::implementation<T>(map)``. When a generic
    output type is only known at wiring (resolved from inputs/values, not supplied),

@@ -26,7 +26,7 @@ namespace hgraph
      *   ``TS<T>`` / ``SIGNAL`` / ``TSW<T>`` -> scalar; ``TSS<T>`` ->
      *   ``Bundle{added: Set<T>, removed: Set<T>}``; ``TSD<K,V>`` ->
      *   ``Bundle{removed: Set<K>, modified: Map<K, delta(V)>}``;
-     *   ``TSL<C,N>`` -> ``Map<int64, delta(C)>``; ``TSB{f...}`` ->
+     *   ``TSL<C,N>`` -> ``Map<int, delta(C)>``; ``TSB{f...}`` ->
      *   ``Bundle{f: delta(f)...}`` (recursive in children).
      *
      * ``REF`` throws a clear ``std::logic_error``: it is a separate
