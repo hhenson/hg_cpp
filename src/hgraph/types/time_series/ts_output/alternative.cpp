@@ -155,30 +155,57 @@ namespace hgraph::detail
             return TSOutputView{parent.output(), child.borrowed_ref(), parent.evaluation_time()};
         }
 
+        [[nodiscard]] TSEndpointSchema from_ref_endpoint_schema_for(const TSValueTypeMetaData *schema);
+
+        [[nodiscard]] TSEndpointSchema peered_from_ref_endpoint_schema_for(const TSValueTypeMetaData *schema)
+        {
+            return TSEndpointSchema::peered(schema);
+        }
+
+        [[nodiscard]] TSEndpointSchema bundle_from_ref_endpoint_schema_for(const TSValueTypeMetaData *schema)
+        {
+            std::vector<TSEndpointSchema> children;
+            children.reserve(schema->field_count());
+            for (std::size_t index = 0; index < schema->field_count(); ++index)
+            {
+                children.push_back(from_ref_endpoint_schema_for(schema->fields()[index].type));
+            }
+            return TSEndpointSchema::non_peered(schema, std::move(children));
+        }
+
+        [[nodiscard]] TSEndpointSchema list_from_ref_endpoint_schema_for(const TSValueTypeMetaData *schema)
+        {
+            if (schema->fixed_size() == 0) { return TSEndpointSchema::peered(schema); }
+            return TSEndpointSchema::non_peered_list(schema, from_ref_endpoint_schema_for(schema->element_ts()));
+        }
+
+        using FromRefEndpointSchemaForFn = TSEndpointSchema (*)(const TSValueTypeMetaData *);
+
+        [[nodiscard]] FromRefEndpointSchemaForFn from_ref_endpoint_schema_builder_for(TSTypeKind kind) noexcept
+        {
+            static constexpr std::size_t kind_count = ts_kind_index(TSTypeKind::SIGNAL) + 1U;
+            static const std::array<FromRefEndpointSchemaForFn, kind_count> table{
+                &peered_from_ref_endpoint_schema_for,
+                &peered_from_ref_endpoint_schema_for,
+                &peered_from_ref_endpoint_schema_for,
+                &list_from_ref_endpoint_schema_for,
+                &peered_from_ref_endpoint_schema_for,
+                &bundle_from_ref_endpoint_schema_for,
+                &peered_from_ref_endpoint_schema_for,
+                &peered_from_ref_endpoint_schema_for,
+            };
+
+            const auto index = ts_kind_index(kind);
+            return index < table.size() ? table[index] : &peered_from_ref_endpoint_schema_for;
+        }
+
         [[nodiscard]] TSEndpointSchema from_ref_endpoint_schema_for(const TSValueTypeMetaData *schema)
         {
             if (schema == nullptr)
             {
                 throw std::invalid_argument("TSOutput from-REF endpoint schema requires a time-series schema");
             }
-
-            if (schema->kind == TSTypeKind::TSB)
-            {
-                std::vector<TSEndpointSchema> children;
-                children.reserve(schema->field_count());
-                for (std::size_t index = 0; index < schema->field_count(); ++index)
-                {
-                    children.push_back(from_ref_endpoint_schema_for(schema->fields()[index].type));
-                }
-                return TSEndpointSchema::non_peered(schema, std::move(children));
-            }
-
-            if (schema->kind == TSTypeKind::TSL && schema->fixed_size() != 0)
-            {
-                return TSEndpointSchema::non_peered_list(schema, from_ref_endpoint_schema_for(schema->element_ts()));
-            }
-
-            return TSEndpointSchema::peered(schema);
+            return from_ref_endpoint_schema_builder_for(schema->kind)(schema);
         }
 
         [[nodiscard]] TSDataView endpoint_child_view(const TSDataView &parent, std::size_t index)
