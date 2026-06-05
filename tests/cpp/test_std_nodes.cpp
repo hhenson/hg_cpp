@@ -2,32 +2,22 @@
 // debug_print, exercised through wired graphs.
 
 #include <hgraph/lib/std/std_nodes.h>
+#include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
-#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_node.h>
-#include <hgraph/types/value/value_builder.h>
+#include <hgraph/types/value/specialized_views.h>
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <initializer_list>
 #include <optional>
 #include <string>
 
 namespace
 {
     using namespace hgraph;
-
-    Value make_int_set(std::initializer_list<int> values)
-    {
-        const auto *int_meta    = TypeRegistry::instance().register_scalar<int>("int");
-        const auto *int_binding = ValuePlanFactory::instance().binding_for(int_meta);
-        SetBuilder  builder{*int_binding};
-        for (const int value : values) { (void)builder.insert(value); }
-        return builder.build();
-    }
 
     // const_(7) -> record: the constant is emitted once at start.
     struct ConstRecordGraph
@@ -57,7 +47,7 @@ namespace
         static constexpr auto name = "const_set_record_graph";
         static void           compose(Wiring &w)
         {
-            auto c = wire<stdlib::const_, TSS<int>>(w, make_int_set({1, 2}));
+            auto c = wire<stdlib::const_, TSS<int>>(w, stdlib::make_set<int>({1, 2}));
             wire<testing::record>(w, c, std::string{"out"});
         }
     };
@@ -135,6 +125,45 @@ TEST_CASE("stdlib::const_ rejects explicit output resolution when the value sche
 
     Wiring w;
     CHECK_THROWS_AS((wire<stdlib::const_, TSS<int>>(w, 7)), std::logic_error);
+}
+
+TEST_CASE("stdlib value utilities build compact scalar containers")
+{
+    using namespace hgraph;
+
+    Value list = stdlib::make_list<int>({1, 2, 3});
+    ListView list_view{list.view()};
+    REQUIRE(list_view.size() == 3);
+    CHECK(list_view.at(0).checked_as<int>() == 1);
+    CHECK(list_view.at(2).checked_as<int>() == 3);
+
+    Value set = stdlib::make_set<int>({1, 2, 2});
+    SetView set_view{set.view()};
+    REQUIRE(set_view.size() == 2);
+    Value one{1};
+    Value three{3};
+    CHECK(set_view.contains(one.view()));
+    CHECK_FALSE(set_view.contains(three.view()));
+
+    Value map = stdlib::make_map<int, std::string>({{1, "one"}, {2, "two"}, {2, "deux"}});
+    MapView map_view{map.view()};
+    REQUIRE(map_view.size() == 2);
+    Value two{2};
+    CHECK(map_view.at(two.view()).checked_as<std::string>() == "deux");
+
+    Value queue = stdlib::make_queue<int>({4, 5}, 4);
+    QueueView queue_view{queue.view()};
+    REQUIRE(queue_view.size() == 2);
+    CHECK(queue_view.max_capacity() == 4);
+    CHECK(queue_view.front().checked_as<int>() == 4);
+    CHECK(queue_view.back().checked_as<int>() == 5);
+
+    Value buffer = stdlib::make_cyclic_buffer<int>(2, {7, 8, 9});
+    CyclicBufferView buffer_view{buffer.view()};
+    REQUIRE(buffer_view.size() == 2);
+    CHECK(buffer_view.capacity() == 2);
+    CHECK(buffer_view.front().checked_as<int>() == 8);
+    CHECK(buffer_view.back().checked_as<int>() == 9);
 }
 
 TEST_CASE("stdlib::null_sink consumes its input without error")

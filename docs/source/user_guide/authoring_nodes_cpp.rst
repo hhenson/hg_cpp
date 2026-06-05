@@ -970,7 +970,7 @@ the value must match ``SomeTS``'s current-value schema:
        }
    };
    // wire<stdlib::const_>(w, 42);             // defaults to TS<int>
-   // wire<stdlib::const_, TSS<int>>(w, set);  // explicit output; set is a Set<int> Value
+   // wire<stdlib::const_, TSS<int>>(w, stdlib::make_set<int>({1, 2}));
 
 .. code-block:: python
 

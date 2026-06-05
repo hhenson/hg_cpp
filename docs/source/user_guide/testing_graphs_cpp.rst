@@ -229,8 +229,8 @@ Wiring ``replay → add_one → record`` and reading the result back:
 a cycle-aligned ``List<Any>`` from a ``std::vector<std::optional<T>>`` and read one
 back, so tests deal in ordinary C++ vectors rather than value-layer containers.
 
-Standard helper nodes (``lib/std``)
------------------------------------
+Standard helpers (``lib/std``)
+------------------------------
 
 A small set of reusable nodes lives in ``<hgraph/lib/std/std_nodes.h>`` (namespace
 ``hgraph::stdlib``) — the building blocks graphs and tests reach for most:
@@ -249,6 +249,17 @@ A small set of reusable nodes lives in ``<hgraph/lib/std/std_nodes.h>`` (namespa
 
    auto c = wire<stdlib::const_>(w, 7);             // source emitting 7 at start
    wire<stdlib::debug_print>(w, c, "value");        // prints "value: 7"
+
+The same namespace has small value-layer construction helpers in
+``<hgraph/lib/std/value_util.h>``. They wrap the standard compact container
+builders for scalar element types:
+
+.. code-block:: cpp
+
+   Value set   = stdlib::make_set<int>({1, 2});
+   Value list  = stdlib::make_list<int>({1, 2, 3});
+   Value map   = stdlib::make_map<std::string, int>({{"a", 1}, {"b", 2}});
+   Value queue = stdlib::make_queue<int>({1, 2, 3});
 
 Deltas are canonical ``Value``\ s
 ---------------------------------
@@ -319,8 +330,7 @@ delta ``Value`` from ``set_delta``.
 By hand: ``wire<testing::replay, TSS<T>>`` re-creates ticks from a delta ``Value``
 (remove then add); ``wire<testing::record>`` captures the per-tick delta; ``CHECK_OUTPUT`` renders each delta as
 ``{added: {…}, removed: {…}}`` on mismatch. A constant set source is
-``wire<stdlib::const_, TSS<T>>(w, set_value)``, where ``set_value`` is a value-layer
-``Set<T>`` ``Value``.
+``wire<stdlib::const_, TSS<T>>(w, stdlib::make_set<T>({values...}))``.
 
 List time-series (``TSL``) — recursive
 --------------------------------------
