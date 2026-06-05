@@ -21,7 +21,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -76,6 +78,34 @@ namespace
     [[nodiscard]] engine_date_t ymd(int y, unsigned m, unsigned d)
     {
         return engine_date_t{year{y} / month{m} / day{d}};
+    }
+
+    // div_(a, b, policy): the divide-by-zero policy is a wiring-time scalar, forwarded
+    // from a graph-level Scalar parameter to the operator.
+    struct DivPolicyGraph
+    {
+        static constexpr auto name = "div_policy_graph";
+        static void           compose(Wiring &w, Scalar<"policy", stdlib::DivideByZero> policy)
+        {
+            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
+            auto b = wire<testing::replay, TS<Int>>(w, Str{"b"});
+            auto r = wire<stdlib::div_>(w, a, b, policy);
+            wire<testing::record>(w, r, Str{"out"});
+        }
+    };
+
+    [[nodiscard]] std::vector<std::optional<Float>> run_div_policy(stdlib::DivideByZero policy,
+                                                                  const std::vector<std::optional<Int>> &a,
+                                                                  const std::vector<std::optional<Int>> &b)
+    {
+        GraphBuilder gb = build_graph<DivPolicyGraph>(policy);
+        set_replay_values<Int>(gb.global_state(), "a", a);
+        set_replay_values<Int>(gb.global_state(), "b", b);
+        GraphExecutorBuilder eb;
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+        GraphExecutorValue ex = eb.make_executor();
+        ex.view().run();
+        return get_recorded_values<Float>(ex.view().graph().global_state(), "out");
     }
 }  // namespace
 
@@ -182,4 +212,54 @@ TEST_CASE("std operators: an operand combination with no registered implementati
     stdlib::register_standard_operators();   // add_ has no str overload
 
     REQUIRE_THROWS_AS((build_graph<BinOpGraph<stdlib::add_, TS<Str>>>()), OperatorResolutionError);
+}
+
+TEST_CASE("std operators: div_ takes an optional divide-by-zero policy scalar")
+{
+    using DBZ = stdlib::DivideByZero;
+    stdlib::register_standard_operators();
+
+    const Float inf = std::numeric_limits<Float>::infinity();
+
+    // Non-zero divisors are unaffected by the policy.
+    CHECK_OUTPUT(run_div_policy(DBZ::Inf, {6, 9}, {2, 3}), {Float{3.0}, Float{3.0}});
+
+    // A zero divisor takes the policy's value.
+    CHECK_OUTPUT(run_div_policy(DBZ::Inf, {1, 1}, {2, 0}), {Float{0.5}, inf});
+    CHECK_OUTPUT(run_div_policy(DBZ::Zero, {1, 1}, {2, 0}), {Float{0.5}, Float{0.0}});
+    CHECK_OUTPUT(run_div_policy(DBZ::One, {1, 1}, {2, 0}), {Float{0.5}, Float{1.0}});
+
+    // NoTick produces a gap (no tick) on the zero-divisor cycle.
+    CHECK_OUTPUT(run_div_policy(DBZ::NoTick, {1, 1, 1}, {2, 0, 4}), {Float{0.5}, none, Float{0.25}});
+}
+
+TEST_CASE("std operators: div_ NaN policy emits NaN on a zero divisor")
+{
+    using DBZ = stdlib::DivideByZero;
+    stdlib::register_standard_operators();
+
+    const std::vector<std::optional<Float>> out = run_div_policy(DBZ::Nan, {1, 1}, {2, 0});
+    REQUIRE(out.size() == 2);
+    CHECK(out[0] == Float{0.5});
+    REQUIRE(out[1].has_value());
+    CHECK(std::isnan(*out[1]));
+}
+
+TEST_CASE("std operators: div_ Error policy raises on a zero divisor")
+{
+    using DBZ = stdlib::DivideByZero;
+    stdlib::register_standard_operators();
+
+    REQUIRE_THROWS(run_div_policy(DBZ::Error, {1}, {0}));
+}
+
+TEST_CASE("std operators: div_ without a policy defaults to Error and raises on a zero divisor")
+{
+    stdlib::register_standard_operators();
+
+    using DivIntGraph = BinOpGraph<stdlib::div_, TS<Int>>;
+    REQUIRE_THROWS(run_graph<DivIntGraph>([](const GlobalStateView &gs) {
+        set_replay_values<Int>(gs, "a", {1});
+        set_replay_values<Int>(gs, "b", {0});
+    }));
 }

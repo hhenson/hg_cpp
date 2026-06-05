@@ -8,6 +8,47 @@
 #include <hgraph/util/date_time.h>
 
 #include <chrono>
+#include <cstdint>
+#include <limits>
+#include <optional>
+#include <stdexcept>
+
+namespace hgraph::stdlib
+{
+    /**
+     * Divide-by-zero policy — the wiring-time choice of what ``div_`` (and other
+     * dividing operators) produce when the divisor is zero. Mirrors ``ext/2603``'s
+     * ``DivideByZero`` enum:
+     *
+     * - ``Error``  — raise (the default; ``div_(a, b)`` with no policy).
+     * - ``Nan``    — emit ``NaN``.
+     * - ``Inf``    — emit ``+inf``.
+     * - ``NoTick`` — produce no tick this cycle (a gap); ``ext/2603``'s ``NONE``.
+     * - ``Zero``   — emit ``0``.
+     * - ``One``    — emit ``1``.
+     *
+     * It is a registered *scalar* type so it can be a wiring-time ``Scalar<>`` argument.
+     */
+    enum class DivideByZero : std::int64_t
+    {
+        Error,
+        Nan,
+        Inf,
+        NoTick,
+        Zero,
+        One
+    };
+}  // namespace hgraph::stdlib
+
+namespace hgraph::static_schema_detail
+{
+    // Give the enum a registry name so ``scalar_descriptor<DivideByZero>`` can intern it.
+    template <>
+    struct scalar_name<hgraph::stdlib::DivideByZero>
+    {
+        static constexpr std::string_view value{"DivideByZero"};
+    };
+}  // namespace hgraph::static_schema_detail
 
 namespace hgraph::stdlib
 {
@@ -107,13 +148,50 @@ namespace hgraph::stdlib
         }
     };
 
-    /** ``T / T -> Float`` true division — aligned operands, but a *different* result type. */
-    template <typename T>
-    struct div_to_float
+    /**
+     * Apply the ``DivideByZero`` policy. Returns the quotient, or — for a zero
+     * divisor — the policy's value; ``NoTick`` returns ``nullopt`` (no tick this
+     * cycle) and ``Error`` raises.
+     */
+    [[nodiscard]] inline std::optional<Float> divide_with_policy(Float lhs, Float rhs, DivideByZero on_zero)
     {
-        static void eval(In<"lhs", TS<T>> lhs, In<"rhs", TS<T>> rhs, Out<TS<Float>> out)
+        if (rhs != Float{0}) { return lhs / rhs; }
+        switch (on_zero)
         {
-            out.set(static_cast<Float>(lhs.value()) / static_cast<Float>(rhs.value()));
+            case DivideByZero::Nan: return std::numeric_limits<Float>::quiet_NaN();
+            case DivideByZero::Inf: return std::numeric_limits<Float>::infinity();
+            case DivideByZero::Zero: return Float{0};
+            case DivideByZero::One: return Float{1};
+            case DivideByZero::NoTick: return std::nullopt;
+            case DivideByZero::Error:
+            default: throw std::domain_error("div_: division by zero");
+        }
+    }
+
+    /** ``L / R -> Float`` with an explicit divide-by-zero policy (a wiring-time scalar). */
+    template <typename L, typename R>
+    struct div_numbers
+    {
+        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs,
+                         Scalar<"divide_by_zero", DivideByZero> on_zero, Out<TS<Float>> out)
+        {
+            if (const std::optional<Float> result =
+                    divide_with_policy(static_cast<Float>(lhs.value()), static_cast<Float>(rhs.value()), on_zero.value()))
+            {
+                out.set(*result);
+            }
+            // NoTick policy on a zero divisor: leave the output un-ticked (a gap).
+        }
+    };
+
+    /** ``L / R -> Float`` with no policy supplied — defaults to ``DivideByZero::Error``. */
+    template <typename L, typename R>
+    struct div_numbers_default
+    {
+        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs, Out<TS<Float>> out)
+        {
+            out.set(*divide_with_policy(static_cast<Float>(lhs.value()), static_cast<Float>(rhs.value()),
+                                        DivideByZero::Error));
         }
     };
 
@@ -175,10 +253,15 @@ namespace hgraph::stdlib
         register_overload<sub_, sub_binary<engine_time_t, engine_time_t, engine_time_delta_t>>();// datetime - datetime -> timedelta
         register_overload<sub_, sub_dates>();                                                    // date - date -> timedelta
 
-        // div_ — true division; the result type differs from aligned operands.
-        register_overload<div_, div_to_float<Int>>();    // int / int -> float
-        register_overload<div_, div_to_float<Float>>();  // float / float -> float
-        register_overload<div_, div_timedeltas>();       // timedelta / timedelta -> float
+        // div_ — true division; the result type differs from aligned operands. The
+        // two-argument form defaults to DivideByZero::Error; the three-argument form
+        // takes an explicit divide-by-zero policy (a wiring-time scalar). Arity
+        // selects between them, so ``div_(a, b)`` and ``div_(a, b, policy)`` both work.
+        register_overload<div_, div_numbers_default<Int, Int>>();      // int / int -> float
+        register_overload<div_, div_numbers_default<Float, Float>>();  // float / float -> float
+        register_overload<div_, div_numbers<Int, Int>>();             // int / int -> float (with policy)
+        register_overload<div_, div_numbers<Float, Float>>();         // float / float -> float (with policy)
+        register_overload<div_, div_timedeltas>();                    // timedelta / timedelta -> float
 
         // eq_ — same-typed operands, Bool result.
         register_overload<eq_, eq_same<Int>>();

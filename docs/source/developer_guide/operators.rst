@@ -30,7 +30,8 @@ chosen implementation is baked into the graph.
    scalar-argument matching, a ``static bool requires_(const ResolutionMap &)``
    veto, and a ``lib/std`` operator family (``add_`` / ``sub_`` / ``div_`` / ``eq_``
    in ``include/hgraph/lib/std/std_operators.h``) — covering homogeneous, mixed,
-   heterogeneous-temporal and result-differs overloads — proven by
+   heterogeneous-temporal, result-differs and optional-scalar (``div_``'s
+   ``DivideByZero`` policy) overloads — proven by
    ``tests/cpp/test_std_operators.cpp`` and the scalar / ``requires`` / nested-``TSL``
    / alignment cases in ``tests/cpp/test_operators.cpp``. Still to come (see *Roadmap*): Phase 4 —
    the Python implementation path (behind ``HGRAPH_ENABLE_PYTHON_USER_NODES``). (The
@@ -419,7 +420,13 @@ Roadmap
    (``datetime + timedelta -> datetime``, ``date + timedelta -> date``) and
    result-differs (``div_: int / int -> float``, ``sub_: datetime - datetime ->
    timedelta``) overloads, selected by the supplied operand types, with an explicit
-   ``register_standard_operators()``.
+   ``register_standard_operators()``. ``div_`` also carries an **optional wiring-time
+   ``Scalar`` argument** — a ``DivideByZero`` policy (``Error`` / ``Nan`` / ``Inf`` /
+   ``NoTick`` / ``Zero`` / ``One``, mirroring ``ext/2603``) that controls the result
+   on a zero divisor; ``DivideByZero`` is a registered *enum scalar*. Because
+   parameter defaults are not yet a framework feature, the *optional* scalar is
+   modelled as two overloads selected by **arity** — ``div_(a, b)`` (defaults to
+   ``Error``) and ``div_(a, b, policy)`` — which the registry's arity filter resolves.
 4. **Phase 4 — Python implementation path.** Runtime-data ``OperatorImpl`` from a
    Python signature; ``NodeCallbacks`` hosting a Python callable; cross-boundary
    identity asserted. Behind ``HGRAPH_ENABLE_PYTHON_USER_NODES``.
