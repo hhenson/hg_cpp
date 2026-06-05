@@ -53,6 +53,33 @@ namespace hgraph::detail
             }
         }
 
+        [[nodiscard]] bool project_target_path(TSDataView &current,
+                                               const TSValueTypeMetaData *&current_schema,
+                                               const TSInputTargetActiveNode *node)
+        {
+            if (node == nullptr || node->parent == nullptr) { return current.valid() && current_schema != nullptr; }
+            if (!project_target_path(current, current_schema, node->parent)) { return false; }
+
+            const auto &ops = input_endpoint_ops_for(current_schema);
+            if (ops.target_child == nullptr || ops.child_schema == nullptr) { return false; }
+            current = ops.target_child(current, node->slot);
+            current_schema = ops.child_schema(current_schema, node->slot);
+            return current.valid() && current_schema != nullptr;
+        }
+
+        [[nodiscard]] const TSValueTypeMetaData *target_schema_at_node(
+            const TSValueTypeMetaData *current,
+            const TSInputTargetActiveNode *node) noexcept
+        {
+            if (node == nullptr || node->parent == nullptr) { return current; }
+            const auto *parent_schema = target_schema_at_node(current, node->parent);
+            if (parent_schema == nullptr) { return nullptr; }
+            return fallback_on_exception<const TSValueTypeMetaData *>(nullptr, [&] {
+                const auto &ops = input_endpoint_ops_for(parent_schema);
+                return ops.child_schema != nullptr ? ops.child_schema(parent_schema, node->slot) : nullptr;
+            });
+        }
+
         void resubscribe_tree(TSInputTargetLinkStorage &link,
                               const TSValueTypeMetaData &schema,
                               TSInputTargetActiveNode &node)
@@ -94,16 +121,6 @@ namespace hgraph::detail
         return std::ranges::any_of(children, [](const auto &entry) {
             return entry.second && entry.second->has_any_active();
         });
-    }
-
-    std::vector<std::size_t> TSInputTargetActiveNode::path_from_root() const
-    {
-        std::vector<std::size_t> reversed;
-        for (const auto *node = this; node != nullptr && node->parent != nullptr; node = node->parent)
-        {
-            reversed.push_back(node->slot);
-        }
-        return {reversed.rbegin(), reversed.rend()};
     }
 
     TSInputTargetActiveNode &TSInputTargetActiveNode::ensure_child(std::size_t slot)
@@ -368,15 +385,7 @@ namespace hgraph::detail
         if (!bound()) { return {}; }
         TSDataView current = target_view();
         const auto *current_schema = &schema;
-        const auto path = node != nullptr ? node->path_from_root() : std::vector<std::size_t>{};
-        for (const auto index : path)
-        {
-            const auto &ops = input_endpoint_ops_for(current_schema);
-            if (ops.target_child == nullptr || ops.child_schema == nullptr) { return {}; }
-            current = ops.target_child(current, index);
-            current_schema = ops.child_schema(current_schema, index);
-            if (current_schema == nullptr || !current.valid()) { return {}; }
-        }
+        if (!project_target_path(current, current_schema, node)) { return {}; }
         return TSOutputHandle{target_output().output(), current};
     }
 
@@ -431,16 +440,7 @@ namespace hgraph::detail
                                                   const TSInputTargetActiveNode *node) noexcept
     {
         const TSValueTypeMetaData *current = target_link_schema(target_link);
-        const auto path = node != nullptr ? node->path_from_root() : std::vector<std::size_t>{};
-        for (const auto index : path)
-        {
-            if (current == nullptr) { return nullptr; }
-            current = fallback_on_exception<const TSValueTypeMetaData *>(nullptr, [&] {
-                const auto &ops = input_endpoint_ops_for(current);
-                return ops.child_schema != nullptr ? ops.child_schema(current, index) : nullptr;
-            });
-        }
-        return current;
+        return target_schema_at_node(current, node);
     }
 
     TSInputTargetActiveNode *target_link_child_node(const TSDataView &view,

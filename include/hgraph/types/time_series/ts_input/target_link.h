@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <memory>
 #include <unordered_map>
-#include <vector>
 
 namespace hgraph::detail
 {
@@ -24,7 +23,6 @@ namespace hgraph::detail
 
         [[nodiscard]] TSInputTargetActiveNode *child_at(std::size_t slot) const noexcept;
         [[nodiscard]] bool has_any_active() const noexcept;
-        [[nodiscard]] std::vector<std::size_t> path_from_root() const;
         TSInputTargetActiveNode &ensure_child(std::size_t slot);
         bool try_prune_child(std::size_t slot);
         void clear_observed() noexcept;
