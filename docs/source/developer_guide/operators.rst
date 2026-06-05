@@ -446,6 +446,48 @@ The default build never depends on Python: Phases 1–3 include no nanobind head
 and the Python candidate path is compiled only under the opt-in flag.
 
 
+Standard operator catalogue
+---------------------------
+
+The standard library operator **definitions** (the abstract ``Operator<>`` markers) live
+under ``include/hgraph/lib/std/operators/``, grouped by family and pulled together by
+``operators/operators.h``:
+
+- ``arithmetic.h`` — ``add_`` / ``sub_`` / ``mul_`` / ``div_`` / ``floordiv_`` / ``mod_`` /
+  ``divmod_`` / ``pow_`` / ``neg_`` / ``pos_`` / ``abs_`` / ``sign`` / ``ln`` (and the
+  ``DivideByZero`` policy enum);
+- ``comparison.h`` — ``eq_`` / ``ne_`` / ``lt_`` / ``le_`` / ``gt_`` / ``ge_`` / ``cmp_`` /
+  ``min_`` / ``max_`` (and the ``CmpResult`` enum);
+- ``logical.h`` — ``and_`` / ``or_`` / ``not_`` / ``invert_`` and the bitwise
+  ``bit_and`` / ``bit_or`` / ``bit_xor`` / ``lshift_`` / ``rshift_``;
+- ``container.h`` — ``getitem_`` / ``getattr_`` / ``setattr_`` / ``contains_`` / ``len_`` /
+  ``index_of`` / ``is_empty``;
+- ``collection.h`` — aggregations (``sum_`` / ``mean`` / ``std_`` / ``var_``), set ops
+  (``union_`` / ``intersection_`` / ``difference_`` / ``symmetric_difference_``) and ``TSD``
+  re-shaping (``keys_`` / ``values_`` / ``rekey`` / ``flip`` / ``partition`` / … );
+- ``conversion.h`` — ``convert`` / ``combine`` / ``collect`` / ``emit`` / ``cast_`` /
+  ``downcast_`` / ``str_`` / ``type_`` / ``zero_`` / ``nothing`` / ``default_``;
+- ``string.h`` — ``match_`` / ``replace`` / ``substr`` / ``split`` / ``join`` / ``format_``;
+- ``stream.h`` — ``sample`` / ``lag`` / ``resample`` / ``filter_`` / ``throttle`` / ``take`` /
+  ``drop`` / ``gate`` / ``window`` / ``to_window`` / … plus analytics (``diff`` / ``count`` /
+  ``clip`` / ``ewma``);
+- ``control.h`` — ``merge`` / ``race`` / ``all_`` / ``any_`` / ``if_`` / ``if_then_else`` /
+  ``if_cmp`` / ``route_by_index`` / ``if_true``;
+- ``temporal.h`` — date components (``year`` / ``month_of_year`` / …) and time-series
+  introspection (``valid`` / ``modified`` / ``last_modified_time`` / …);
+- ``io.h`` — sinks and record/replay (``print_`` / ``log_`` / ``assert_`` / ``record`` /
+  ``replay`` / ``compare``).
+
+The marker's signature is documentary (a *suggestion*); each operator names independent
+type variables where operands and result may differ, mirroring the Python ``hgraph``
+catalogue under ``ext/2603/hgraph/_operators/``. **Implementations are a separate slice** —
+only a small set (``add_`` / ``sub_`` / ``div_`` / ``eq_`` / ``zero_``) are implemented and
+registered (``register_standard_operators`` in ``std_operators.h``). Deferred from the
+catalogue: ``const_`` / ``debug_print`` / ``null_sink`` (they exist as concrete nodes in
+``std_nodes.h``) and the JSON / table / data-frame family (it needs scalar value types the
+value layer does not model yet).
+
+
 Roadmap
 -------
 

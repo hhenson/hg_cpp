@@ -1,6 +1,7 @@
 #ifndef HGRAPH_LIB_STD_STD_OPERATORS_H
 #define HGRAPH_LIB_STD_STD_OPERATORS_H
 
+#include <hgraph/lib/std/operators/operators.h>   // operator definitions (add_/sub_/div_/eq_/zero_/DivideByZero + …)
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
@@ -16,98 +17,15 @@
 namespace hgraph::stdlib
 {
     /**
-     * Divide-by-zero policy — the wiring-time choice of what ``div_`` (and other
-     * dividing operators) produce when the divisor is zero. Mirrors ``ext/2603``'s
-     * ``DivideByZero`` enum:
+     * Standard operator **implementations** + registration.
      *
-     * - ``Error``  — raise (the default; ``div_(a, b)`` with no policy).
-     * - ``Nan``    — emit ``NaN``.
-     * - ``Inf``    — emit ``+inf``.
-     * - ``NoTick`` — produce no tick this cycle (a gap); ``ext/2603``'s ``NONE``.
-     * - ``Zero``   — emit ``0``.
-     * - ``One``    — emit ``1``.
-     *
-     * It is a registered *scalar* type so it can be a wiring-time ``Scalar<>`` argument.
+     * The operator *definitions* (the abstract ``Operator<>`` markers — ``add_`` /
+     * ``sub_`` / ``div_`` / ``eq_`` / ``zero_`` and the full catalogue) live under
+     * ``include/hgraph/lib/std/operators/`` and are pulled in via ``operators/operators.h``.
+     * This header provides a concrete (still small) set of implementations and
+     * ``register_standard_operators`` to register them. The complete implementation set is
+     * the next slice; see ``docs/source/developer_guide/operators.rst``.
      */
-    enum class DivideByZero : std::int64_t
-    {
-        Error,
-        Nan,
-        Inf,
-        NoTick,
-        Zero,
-        One
-    };
-}  // namespace hgraph::stdlib
-
-namespace hgraph::static_schema_detail
-{
-    // Give the enum a registry name so ``scalar_descriptor<DivideByZero>`` can intern it.
-    template <>
-    struct scalar_name<hgraph::stdlib::DivideByZero>
-    {
-        static constexpr std::string_view value{"DivideByZero"};
-    };
-}  // namespace hgraph::static_schema_detail
-
-namespace hgraph::stdlib
-{
-    /**
-     * A small standard operator family built on the operator-dispatch subsystem
-     * (see ``docs/source/developer_guide/operators.rst``). Each operator names a
-     * family of per-type implementations; the most specific one is selected at the
-     * ``wire<>`` call.
-     *
-     * **The operator signature is a suggestion, not a rule.** An operator's general
-     * signature declares *independent* type variables for each operand and the result
-     * (``lhs``: ``L``, ``rhs``: ``R``, result: ``O``) — different names, so the three
-     * may differ. Matching is driven by each *implementation's* own signature, not by
-     * the operator's. This is what lets one name (``add_``) cover homogeneous
-     * (``int + int -> int``), mixed (``int + float -> float``), and heterogeneous
-     * (``datetime + timedelta -> datetime``) cases, and lets the result type differ
-     * from the operands (``div_: int / int -> float``; ``sub_: datetime - datetime ->
-     * timedelta``). An implementation that *repeats* a variable name across operands
-     * (the homogeneous ``T, T -> T`` templates below) requires those operands to be the
-     * **same** type — same name = aligned constraint.
-     *
-     * Unlike ``register_standard_types`` (foundational, seeded for every test), the
-     * standard operators are registered **explicitly** by an application / the Python
-     * module at startup, or by a test that wants them — so they never collide with a
-     * test's own ad-hoc operator of the same name. The reset listener clears the
-     * operator registry between cases.
-     */
-
-    /** ``add_`` — addition. Operands and result are independent (``L + R -> O``). */
-    struct add_ : Operator<"add", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
-    {
-    };
-
-    /** ``sub_`` — subtraction. Operands and result are independent (``L - R -> O``). */
-    struct sub_ : Operator<"sub", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
-    {
-    };
-
-    /** ``div_`` — true division. Operands and result are independent (``L / R -> O``). */
-    struct div_ : Operator<"div", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
-    {
-    };
-
-    /** ``eq_`` — equality of two same-typed operands; the result is always ``TS<Bool>``. */
-    struct eq_ : Operator<"eq", In<"lhs", TsVar<"S">>, In<"rhs", TsVar<"S">>, Out<TS<Bool>>>
-    {
-    };
-
-    /**
-     * ``zero_`` — additive zero source for a requested output type.
-     *
-     * Python's ``zero(tp, op)`` is operation-aware; this initial C++ overload set
-     * covers the additive zero source used by the C++ reduce/operator tests. The
-     * operation-aware form can be layered on once the C++ wiring path has an
-     * equivalent of Python's ``WiringNodeClass`` context.
-     */
-    struct zero_ : Operator<"zero", Out<TsVar<"S">>>
-    {
-    };
 
     // ---- Homogeneous implementations: both operands the *same* type T (aligned). ----
 
