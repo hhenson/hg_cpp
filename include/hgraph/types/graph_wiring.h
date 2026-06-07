@@ -49,16 +49,23 @@ namespace hgraph
         const TSValueTypeMetaData *schema{nullptr};
     };
 
+    /** Consumer-side wiring input: source port plus optional target path on the consuming node. */
+    struct WiringInputRef
+    {
+        WiringPortRef             source{};
+        std::vector<std::size_t>  target_path{};
+    };
+
     /**
      * The interned wiring identity. It pairs a node's ``NodeBuilder`` (which
      * carries any per-instance scalar configuration) with its time-series input
-     * ports; identity is the node definition plus the input ports **and** the
-     * scalar values. Edges are derived from ``inputs`` at build time.
+     * edges; identity is the node definition plus the input edges **and** the
+     * scalar values. Runtime edges are derived from ``inputs`` at build time.
      */
     struct WiringInstance
     {
         NodeBuilder                builder;
-        std::vector<WiringPortRef> inputs;
+        std::vector<WiringInputRef> inputs;
     };
 
     /**
@@ -77,12 +84,19 @@ namespace hgraph
         Wiring &operator=(Wiring &&) noexcept;
 
         /**
-         * Intern a node with its input ports + scalar configuration and return its
+         * Intern a node with its input edges + scalar configuration and return its
          * output port. ``def`` is the node *definition's* stable identity
          * (``typeid(T)`` for a C++ static node) — two calls with the same ``def``,
          * equal inputs **and** equal ``scalars`` dedup to one instance. ``builder``
          * is the build artifact stored for ``finish`` (the ``scalars`` are recorded
          * on it). Pass an empty ``Value`` for a node with no scalar inputs.
+         */
+        WiringPortRef add_node(std::type_index def, NodeBuilder builder, std::span<const WiringInputRef> inputs,
+                               Value scalars);
+
+        /**
+         * Convenience overload for ordinary positional node inputs. Each source
+         * port is bound to the input path matching its argument index.
          */
         WiringPortRef add_node(std::type_index def, NodeBuilder builder, std::span<const WiringPortRef> inputs,
                                Value scalars);
@@ -121,7 +135,7 @@ namespace hgraph
         /** Erase to the runtime port form (the runtime schema comes from ``Schema``). */
         [[nodiscard]] WiringPortRef erased() const
         {
-            return WiringPortRef{node_, path_, schema_descriptor<Schema>::ts_meta()};
+            return WiringPortRef{.node = node_, .path = path_, .schema = schema_descriptor<Schema>::ts_meta()};
         }
 
       private:
@@ -153,7 +167,7 @@ namespace hgraph
         [[nodiscard]] const std::vector<std::size_t> &path() const noexcept { return path_; }
         [[nodiscard]] const TSValueTypeMetaData      *runtime_schema() const noexcept { return schema_; }
 
-        [[nodiscard]] WiringPortRef erased() const { return WiringPortRef{node_, path_, schema_}; }
+        [[nodiscard]] WiringPortRef erased() const { return WiringPortRef{.node = node_, .path = path_, .schema = schema_}; }
 
       private:
         const WiringInstance      *node_{nullptr};

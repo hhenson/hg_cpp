@@ -13,7 +13,7 @@ namespace hgraph
     namespace
     {
         // Interning key: node definition identity (typeid of the static node type)
-        // + input ports by (producing instance, path) + the scalar configuration
+        // + input edges by (producing instance, source path, target path) + the scalar configuration
         // values. The output schema is implied by the node + path, so it is not
         // part of the key. ``scalars`` is empty for a node with no scalar inputs.
         // The node's *resolved* schema identity: the (registry-interned, hence stable)
@@ -39,12 +39,21 @@ namespace hgraph
             return ResolvedSchema{tm->input_schema, tm->output_schema, tm->scalar_schema, tm->state_schema};
         }
 
+        struct InputKey
+        {
+            const WiringInstance    *node{nullptr};
+            std::vector<std::size_t> source_path{};
+            std::vector<std::size_t> target_path{};
+
+            bool operator==(const InputKey &) const noexcept = default;
+        };
+
         struct InstanceKey
         {
-            std::type_index                                                         def;
-            ResolvedSchema                                                          schema;
-            std::vector<std::pair<const WiringInstance *, std::vector<std::size_t>>> inputs;
-            Value                                                                   scalars;
+            std::type_index        def;
+            ResolvedSchema         schema;
+            std::vector<InputKey>  inputs;
+            Value                  scalars;
 
             bool operator==(const InstanceKey &other) const noexcept
             {
@@ -67,11 +76,13 @@ namespace hgraph
                 combine(std::hash<const void *>{}(key.schema.output));
                 combine(std::hash<const void *>{}(key.schema.scalar));
                 combine(std::hash<const void *>{}(key.schema.state));
-                for (const auto &[node, path] : key.inputs)
+                for (const auto &input : key.inputs)
                 {
-                    combine(std::hash<const void *>{}(node));
-                    for (std::size_t p : path) { combine(std::hash<std::size_t>{}(p)); }
+                    combine(std::hash<const void *>{}(input.node));
+                    for (std::size_t p : input.source_path) { combine(std::hash<std::size_t>{}(p)); }
                     combine(0xF1F1F1F1ULL);  // path separator
+                    for (std::size_t p : input.target_path) { combine(std::hash<std::size_t>{}(p)); }
+                    combine(0xA7A7A7A7ULL);  // target-path separator
                 }
                 combine(key.scalars.has_value() ? key.scalars.hash() : std::size_t{0});
                 return h;
@@ -79,11 +90,19 @@ namespace hgraph
         };
 
         [[nodiscard]] InstanceKey make_key(std::type_index def, ResolvedSchema schema,
-                                           std::span<const WiringPortRef> inputs, const Value &scalars)
+                                           std::span<const WiringInputRef> inputs, const Value &scalars)
         {
             InstanceKey key{def, schema, {}, scalars};
             key.inputs.reserve(inputs.size());
-            for (const auto &port : inputs) { key.inputs.emplace_back(port.node, port.path); }
+            for (std::size_t index = 0; index < inputs.size(); ++index)
+            {
+                const WiringInputRef &input = inputs[index];
+                key.inputs.push_back(InputKey{
+                    .node        = input.source.node,
+                    .source_path = input.source.path,
+                    .target_path = input.target_path.empty() ? std::vector<std::size_t>{index} : input.target_path,
+                });
+            }
             return key;
         }
 
@@ -106,7 +125,7 @@ namespace hgraph
     Wiring::Wiring(Wiring &&) noexcept             = default;
     Wiring &Wiring::operator=(Wiring &&) noexcept  = default;
 
-    WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder, std::span<const WiringPortRef> inputs,
+    WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder, std::span<const WiringInputRef> inputs,
                                    Value scalars)
     {
         InstanceKey key = make_key(def, resolved_schema_of(builder), inputs, scalars);
@@ -114,7 +133,7 @@ namespace hgraph
         if (auto it = impl_->interned.find(key); it != impl_->interned.end())
         {
             const WiringInstance *existing = it->second;
-            return WiringPortRef{existing, {}, output_schema_of(*existing)};
+            return WiringPortRef{.node = existing, .path = {}, .schema = output_schema_of(*existing)};
         }
 
         builder.scalars(std::move(scalars));   // record the scalar configuration on the build artifact
@@ -124,7 +143,18 @@ namespace hgraph
         instance.inputs.assign(inputs.begin(), inputs.end());
         impl_->interned.emplace(std::move(key), &instance);
 
-        return WiringPortRef{&instance, {}, output_schema_of(instance)};
+        return WiringPortRef{.node = &instance, .path = {}, .schema = output_schema_of(instance)};
+    }
+
+    WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder, std::span<const WiringPortRef> inputs,
+                                   Value scalars)
+    {
+        std::vector<WiringInputRef> input_refs;
+        input_refs.reserve(inputs.size());
+        for (const WiringPortRef &input : inputs) { input_refs.push_back(WiringInputRef{.source = input}); }
+        return add_node(def, std::move(builder),
+                        std::span<const WiringInputRef>{input_refs.data(), input_refs.size()},
+                        std::move(scalars));
     }
 
     GlobalStateView Wiring::global_state() noexcept { return impl_->global_state.view(); }
@@ -135,16 +165,16 @@ namespace hgraph
         all.reserve(impl_->instances.size());
         for (const auto &instance : impl_->instances) { all.push_back(&instance); }
 
-        // Kahn topological sort: an input port is an edge producer -> consumer.
+        // Kahn topological sort: an input edge is producer -> consumer.
         std::unordered_map<const WiringInstance *, std::size_t>                         indegree;
         std::unordered_map<const WiringInstance *, std::vector<const WiringInstance *>>  consumers;
         for (const WiringInstance *instance : all) { indegree.try_emplace(instance, 0); }
         for (const WiringInstance *instance : all)
         {
-            for (const auto &port : instance->inputs)
+            for (const auto &input : instance->inputs)
             {
                 ++indegree[instance];
-                consumers[port.node].push_back(instance);
+                consumers[input.source.node].push_back(instance);
             }
         }
 
@@ -183,12 +213,15 @@ namespace hgraph
             const WiringInstance *instance = ranked[i];
             for (std::size_t input_index = 0; input_index < instance->inputs.size(); ++input_index)
             {
-                const WiringPortRef &port = instance->inputs[input_index];
+                const WiringInputRef &input = instance->inputs[input_index];
+                const WiringPortRef  &port  = input.source;
+                std::vector<std::size_t> target_path =
+                    input.target_path.empty() ? std::vector<std::size_t>{input_index} : input.target_path;
                 graph_builder.add_edge(GraphEdge{
                     .source_node = index_of.at(port.node),
                     .source_path = port.path,
                     .target_node = i,
-                    .target_path = {input_index},
+                    .target_path = std::move(target_path),
                 });
             }
         }

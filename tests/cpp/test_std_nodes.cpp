@@ -107,6 +107,30 @@ namespace
         }
     };
 
+    struct ToTslConstRecordGraph
+    {
+        static constexpr auto name = "to_tsl_const_record_graph";
+        static void           compose(Wiring &w)
+        {
+            auto a = wire<stdlib::const_>(w, "a"_str);
+            auto b = wire<stdlib::const_>(w, "b"_str);
+            auto c = stdlib::to_tsl<TSL<TS<Str>>>(w, a, b);
+            wire<testing::record>(w, c, "out"_str);
+        }
+    };
+
+    struct ToTslReplayRecordGraph
+    {
+        static constexpr auto name = "to_tsl_replay_record_graph";
+        static void           compose(Wiring &w)
+        {
+            auto a = wire<testing::replay, TS<Str>>(w, "a"_str);
+            auto b = wire<testing::replay, TS<Str>>(w, "b"_str);
+            auto c = stdlib::to_tsl(w, a, b);
+            wire<testing::record>(w, c, "out"_str);
+        }
+    };
+
     // const_(7, delay=2*MIN_TD) -> record: a single delayed tick (Python yields start + delay).
     struct DelayedConstRecordGraph
     {
@@ -262,6 +286,56 @@ TEST_CASE("stdlib::const_ creates a non-peered TSB from a structural bundle valu
 
     Value expected = tsb_delta<ConstPairTSB>(34_i, 55_i);
     CHECK(out[0]->equals(expected));
+}
+
+TEST_CASE("stdlib::to_tsl wires const outputs into a fixed non-peered TSL")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphExecutorValue executor = run_once(build_graph<ToTslConstRecordGraph>());
+    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 1);
+    REQUIRE(out[0].has_value());
+
+    Value expected = list_delta<TS<Str>>({
+        std::pair<std::size_t, Str>{0, Str{"a"}},
+        std::pair<std::size_t, Str>{1, Str{"b"}},
+    });
+    CHECK(out[0]->equals(expected));
+}
+
+TEST_CASE("stdlib::to_tsl materializes earlier current values when the last child becomes valid")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphBuilder gb = build_graph<ToTslReplayRecordGraph>();
+    testing::set_replay_values<Str>(gb.global_state(), "a",
+                                    {std::optional<Str>{Str{"a"}},
+                                     std::nullopt,
+                                     std::optional<Str>{Str{"aa"}}});
+    testing::set_replay_values<Str>(gb.global_state(), "b",
+                                    {std::nullopt,
+                                     std::optional<Str>{Str{"b"}},
+                                     std::nullopt});
+
+    GraphExecutorValue executor = run_once(std::move(gb));
+    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 3);
+    CHECK_FALSE(out[0].has_value());
+    REQUIRE(out[1].has_value());
+    REQUIRE(out[2].has_value());
+
+    Value initial = list_delta<TS<Str>>({
+        std::pair<std::size_t, Str>{0, Str{"a"}},
+        std::pair<std::size_t, Str>{1, Str{"b"}},
+    });
+    Value update = list_delta<TS<Str>>({
+        std::pair<std::size_t, Str>{0, Str{"aa"}},
+    });
+    CHECK(out[1]->equals(initial));
+    CHECK(out[2]->equals(update));
 }
 
 TEST_CASE("stdlib::const_ rejects explicit output resolution when the value schema differs")
