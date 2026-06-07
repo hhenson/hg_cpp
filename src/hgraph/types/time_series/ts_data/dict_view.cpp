@@ -374,6 +374,15 @@ namespace hgraph
         ops.reserve_impl(ops.context, mutation_.mutable_data(), capacity);
     }
 
+    void TSDDataMutationView::touch()
+    {
+        const auto &ops = dict_ops();
+        if (ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time()))
+        {
+            mutation_.mark_modified();
+        }
+    }
+
     TSDataView TSDDataMutationView::at(const ValueView &key)
     {
         const auto &ops    = dict_ops();
@@ -428,8 +437,8 @@ namespace hgraph
         }
 
         auto       source_map    = source.as_map();
-        const auto &ops          = dict_ops();
-        const bool newly_touched = ops.touch_impl(ops.context, mutation_.mutable_data(), current_mutation_time());
+        const bool newly_touched = !modified(current_mutation_time());
+        touch();
         for (const auto [key, value] : source_map.items()) { set(key, value); }
 
         std::vector<Value> removals;
@@ -439,7 +448,6 @@ namespace hgraph
         }
         for (const auto &key : removals) { static_cast<void>(erase(key.view())); }
 
-        if (newly_touched) { mutation_.mark_modified(); }
         return newly_touched;
     }
 

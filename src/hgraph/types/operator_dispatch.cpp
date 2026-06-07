@@ -33,7 +33,8 @@ namespace hgraph
                            scalar_pattern_match(pattern.scalar, value_schema->element_type, map);
                 case TypePattern::Kind::TSL:
                     return value_schema->kind == ValueTypeKind::List &&
-                           (pattern.fixed_size == 0 || pattern.fixed_size == value_schema->fixed_size) &&
+                           (pattern.fixed_size == 0 || value_schema->fixed_size == 0 ||
+                            pattern.fixed_size == value_schema->fixed_size) &&
                            value_schema_matches_ts_pattern(pattern.children[0], value_schema->element_type, map);
                 case TypePattern::Kind::TSD:
                     return value_schema->kind == ValueTypeKind::Map &&
@@ -72,13 +73,23 @@ namespace hgraph
             {
                 if (const TSValueTypeMetaData *bound = map.find_ts(pattern.name))
                 {
+                    if (const auto *schema = value.schema();
+                        schema != nullptr && current_value_schema_compatible(*bound, *schema))
+                    {
+                        return true;
+                    }
                     return operator_dispatch_detail::coerce_scalar_value_to_meta(value, bound->value_schema).has_value();
                 }
             }
             if (pattern.kind == TypePattern::Kind::Concrete)
             {
-                return pattern.meta != nullptr &&
-                       operator_dispatch_detail::coerce_scalar_value_to_meta(value, pattern.meta->value_schema).has_value();
+                if (pattern.meta == nullptr) { return false; }
+                if (const auto *schema = value.schema();
+                    schema != nullptr && current_value_schema_compatible(*pattern.meta, *schema))
+                {
+                    return true;
+                }
+                return operator_dispatch_detail::coerce_scalar_value_to_meta(value, pattern.meta->value_schema).has_value();
             }
             if (pattern.kind == TypePattern::Kind::TS &&
                 pattern.scalar.kind == ScalarPattern::Kind::Concrete)

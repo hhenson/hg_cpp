@@ -14,6 +14,7 @@
 #include <hgraph/types/time_series/ts_input/list_view.h>
 #include <hgraph/types/time_series/ts_input/set_view.h>
 #include <hgraph/types/time_series/ts_input/window_view.h>
+#include <hgraph/types/time_series/ts_delta.h>
 #include <hgraph/types/time_series/ts_output/bundle_view.h>
 #include <hgraph/types/time_series/ts_output/dict_view.h>
 #include <hgraph/types/time_series/ts_output/list_view.h>
@@ -1146,11 +1147,7 @@ namespace hgraph
         /** Type-erased set: copy a value (matching the resolved output schema) and tick it. */
         void apply(const ValueView &value) const
         {
-            auto mutation = TSOutputView::begin_mutation(evaluation_time());
-            if (!mutation.copy_value_from(value))
-            {
-                throw std::logic_error("Out<TsVar>::apply failed to copy the value into the output");
-            }
+            apply_current_value(*this, value);
         }
         // schema() / begin_mutation() / evaluation_time() / as_set() / as_list() inherited.
     };

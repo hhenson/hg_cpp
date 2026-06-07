@@ -8,8 +8,10 @@
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
+#include <hgraph/types/value/value_builder.h>
 #include <hgraph/types/value/specialized_views.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -23,6 +25,23 @@ namespace
 {
     using namespace hgraph;
     using namespace hgraph::literals;
+
+    using ConstPairTSB = TSB<"ConstPair",
+                             Field<"left", TS<Int>>,
+                             Field<"right", TS<Int>>>;
+    using ConstPairValue = UnNamedBundle<Field<"left", Int>, Field<"right", Int>>;
+
+    Value make_const_pair_value(Int left, Int right)
+    {
+        const auto *binding = ValuePlanFactory::instance().binding_for(
+            value_schema_descriptor<ConstPairValue>::value_meta());
+        BundleBuilder builder{*binding};
+        Value         left_value{left};
+        Value         right_value{right};
+        builder.set("left", left_value.view());
+        builder.set("right", right_value.view());
+        return builder.build();
+    }
 
     // const_(7) -> record: the constant is emitted once at start.
     struct ConstRecordGraph
@@ -53,6 +72,37 @@ namespace
         static void           compose(Wiring &w)
         {
             auto c = wire<stdlib::const_, TSS<Int>>(w, stdlib::make_set<Int>({1_i, 2_i}));
+            wire<testing::record>(w, c, "out"_str);
+        }
+    };
+
+    struct ConstListRecordGraph
+    {
+        static constexpr auto name = "const_list_record_graph";
+        static void           compose(Wiring &w)
+        {
+            auto c = wire<stdlib::const_, TSL<TS<Int>, 3>>(w, stdlib::make_list<Int>({1_i, 2_i, 3_i}));
+            wire<testing::record>(w, c, "out"_str);
+        }
+    };
+
+    struct ConstDictRecordGraph
+    {
+        static constexpr auto name = "const_dict_record_graph";
+        static void           compose(Wiring &w)
+        {
+            auto c = wire<stdlib::const_, TSD<Str, TS<Int>>>(
+                w, stdlib::make_map<Str, Int>({{Str{"alpha"}, 11_i}, {Str{"beta"}, 22_i}}));
+            wire<testing::record>(w, c, "out"_str);
+        }
+    };
+
+    struct ConstBundleRecordGraph
+    {
+        static constexpr auto name = "const_bundle_record_graph";
+        static void           compose(Wiring &w)
+        {
+            auto c = wire<stdlib::const_, ConstPairTSB>(w, make_const_pair_value(34_i, 55_i));
             wire<testing::record>(w, c, "out"_str);
         }
     };
@@ -163,6 +213,55 @@ TEST_CASE("stdlib::const_ accepts an explicit collection output resolution")
     REQUIRE(out.size() == 1);
     REQUIRE(out[0].has_value());
     CHECK(out[0]->equals(set_delta<Int>({1, 2}, {})));
+}
+
+TEST_CASE("stdlib::const_ creates a non-peered fixed TSL from a list value")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphExecutorValue executor = run_once(build_graph<ConstListRecordGraph>());
+    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 1);
+    REQUIRE(out[0].has_value());
+
+    Value expected = list_delta<TS<Int>>({
+        std::pair<std::size_t, Int>{0, 1_i},
+        std::pair<std::size_t, Int>{1, 2_i},
+        std::pair<std::size_t, Int>{2, 3_i},
+    });
+    CHECK(out[0]->equals(expected));
+}
+
+TEST_CASE("stdlib::const_ creates a TSD from a map value")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphExecutorValue executor = run_once(build_graph<ConstDictRecordGraph>());
+    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 1);
+    REQUIRE(out[0].has_value());
+
+    Value expected = dict_delta<Str, TS<Int>>({
+        std::pair<Str, Int>{Str{"alpha"}, 11_i},
+        std::pair<Str, Int>{Str{"beta"}, 22_i},
+    });
+    CHECK(out[0]->equals(expected));
+}
+
+TEST_CASE("stdlib::const_ creates a non-peered TSB from a structural bundle value")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphExecutorValue executor = run_once(build_graph<ConstBundleRecordGraph>());
+    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 1);
+    REQUIRE(out[0].has_value());
+
+    Value expected = tsb_delta<ConstPairTSB>(34_i, 55_i);
+    CHECK(out[0]->equals(expected));
 }
 
 TEST_CASE("stdlib::const_ rejects explicit output resolution when the value schema differs")

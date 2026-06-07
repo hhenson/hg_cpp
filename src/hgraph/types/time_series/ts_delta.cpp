@@ -12,8 +12,11 @@
 
 #include <fmt/format.h>
 
+#include <array>
 #include <cstdint>
 #include <stdexcept>
+#include <string_view>
+#include <vector>
 
 namespace hgraph
 {
@@ -63,6 +66,211 @@ namespace hgraph
                 Value                empty         = child_ops.empty_delta_impl(child_binding);
                 builder.set(index, empty.view());
             }
+        }
+
+        [[nodiscard]] bool field_name_equal(const TSFieldMetaData &ts_field,
+                                            const ValueFieldMetaData &value_field) noexcept
+        {
+            const std::string_view ts_name =
+                ts_field.name != nullptr ? std::string_view{ts_field.name} : std::string_view{};
+            const std::string_view value_name =
+                value_field.name != nullptr ? std::string_view{value_field.name} : std::string_view{};
+            return ts_name == value_name;
+        }
+
+        [[nodiscard]] bool current_value_schema_compatible_ts(const TSValueTypeMetaData &schema,
+                                                              const ValueTypeMetaData   &value_schema) noexcept
+        {
+            return schema.value_schema == &value_schema;
+        }
+
+        [[nodiscard]] bool current_value_schema_compatible_tss(const TSValueTypeMetaData &schema,
+                                                               const ValueTypeMetaData   &value_schema) noexcept
+        {
+            return schema.value_schema == &value_schema;
+        }
+
+        [[nodiscard]] bool current_value_schema_compatible_tsd(const TSValueTypeMetaData &schema,
+                                                               const ValueTypeMetaData   &value_schema)
+        {
+            return value_schema.kind == ValueTypeKind::Map &&
+                   schema.key_type() == value_schema.key_type &&
+                   schema.element_ts() != nullptr &&
+                   value_schema.element_type != nullptr &&
+                   current_value_schema_compatible(*schema.element_ts(), *value_schema.element_type);
+        }
+
+        [[nodiscard]] bool current_value_schema_compatible_tsl(const TSValueTypeMetaData &schema,
+                                                               const ValueTypeMetaData   &value_schema)
+        {
+            return value_schema.kind == ValueTypeKind::List &&
+                   schema.element_ts() != nullptr &&
+                   value_schema.element_type != nullptr &&
+                   (schema.fixed_size() == 0 || value_schema.fixed_size == 0 ||
+                    schema.fixed_size() == value_schema.fixed_size) &&
+                   current_value_schema_compatible(*schema.element_ts(), *value_schema.element_type);
+        }
+
+        [[nodiscard]] bool current_value_schema_compatible_tsb(const TSValueTypeMetaData &schema,
+                                                               const ValueTypeMetaData   &value_schema)
+        {
+            if (value_schema.kind != ValueTypeKind::Bundle ||
+                schema.field_count() != value_schema.field_count)
+            {
+                return false;
+            }
+            for (std::size_t index = 0; index < schema.field_count(); ++index)
+            {
+                const auto &ts_field    = schema.fields()[index];
+                const auto &value_field = value_schema.fields[index];
+                if (!field_name_equal(ts_field, value_field) ||
+                    ts_field.type == nullptr ||
+                    value_field.type == nullptr ||
+                    !current_value_schema_compatible(*ts_field.type, *value_field.type))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        using CurrentValueSchemaCompatibleFn = bool (*)(const TSValueTypeMetaData &, const ValueTypeMetaData &);
+
+        [[nodiscard]] constexpr std::size_t ts_kind_index(TSTypeKind kind) noexcept
+        {
+            return static_cast<std::size_t>(kind);
+        }
+
+        [[nodiscard]] CurrentValueSchemaCompatibleFn current_value_schema_compatible_for(
+            TSTypeKind kind) noexcept
+        {
+            static constexpr std::size_t kind_count = ts_kind_index(TSTypeKind::SIGNAL) + 1U;
+            static const std::array<CurrentValueSchemaCompatibleFn, kind_count> table{
+                &current_value_schema_compatible_ts,
+                &current_value_schema_compatible_tss,
+                &current_value_schema_compatible_tsd,
+                &current_value_schema_compatible_tsl,
+                &current_value_schema_compatible_ts,
+                &current_value_schema_compatible_tsb,
+                &current_value_schema_compatible_ts,
+                &current_value_schema_compatible_ts,
+            };
+
+            const auto index = ts_kind_index(kind);
+            return index < table.size() ? table[index] : &current_value_schema_compatible_ts;
+        }
+
+        [[nodiscard]] bool schema_contains_tsd(const TSValueTypeMetaData *schema) noexcept
+        {
+            if (schema == nullptr) { return false; }
+            if (schema->kind == TSTypeKind::TSD) { return true; }
+            if (schema->kind == TSTypeKind::TSL) { return schema_contains_tsd(schema->element_ts()); }
+            if (schema->kind == TSTypeKind::TSB)
+            {
+                for (std::size_t index = 0; index < schema->field_count(); ++index)
+                {
+                    if (schema_contains_tsd(schema->fields()[index].type)) { return true; }
+                }
+            }
+            return false;
+        }
+
+        void apply_current_value_direct(const TSOutputView &out, const ValueView &value)
+        {
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            static_cast<void>(mutation.copy_value_from(value));
+        }
+
+        void apply_current_value_tsd(const TSOutputView &out, const ValueView &value)
+        {
+            auto       dict_out   = out.as_dict();
+            auto       mutation   = dict_out.begin_mutation(out.evaluation_time());
+            const auto source_map = value.as_map();
+
+            mutation.touch();
+            for (const auto &[key, child_value] : source_map)
+            {
+                auto child = mutation.at(key);
+                apply_current_value(TSOutputView{out.output(), child, out.evaluation_time()}, child_value);
+            }
+
+            std::vector<Value> removals;
+            for (const auto key : mutation.keys())
+            {
+                if (!source_map.contains(key)) { removals.emplace_back(key); }
+            }
+            for (const auto &key : removals) { static_cast<void>(mutation.erase(key.view())); }
+        }
+
+        void apply_current_value_tsl(const TSOutputView &out, const ValueView &value)
+        {
+            const auto *schema = out.schema();
+            if (schema == nullptr) { throw std::logic_error("apply_current_value: TSL output schema is missing"); }
+            if (value.schema() == schema->value_schema && !schema_contains_tsd(schema))
+            {
+                apply_current_value_direct(out, value);
+                return;
+            }
+
+            const auto source_values = value.as_indexed_view();
+            if (schema->fixed_size() != 0 && source_values.size() != schema->fixed_size())
+            {
+                throw std::invalid_argument("apply_current_value: fixed TSL value has the wrong child count");
+            }
+
+            auto list_out = out.as_list();
+            if (schema->fixed_size() == 0 && source_values.size() < list_out.size())
+            {
+                throw std::invalid_argument("apply_current_value: dynamic TSL current value cannot shrink");
+            }
+
+            for (std::size_t index = 0; index < source_values.size(); ++index)
+            {
+                apply_current_value(list_out.at(index), source_values.at(index));
+            }
+        }
+
+        void apply_current_value_tsb(const TSOutputView &out, const ValueView &value)
+        {
+            const auto *schema = out.schema();
+            if (schema == nullptr) { throw std::logic_error("apply_current_value: TSB output schema is missing"); }
+            if (value.schema() == schema->value_schema && !schema_contains_tsd(schema))
+            {
+                apply_current_value_direct(out, value);
+                return;
+            }
+
+            const auto source_values = value.as_indexed_view();
+            if (source_values.size() != schema->field_count())
+            {
+                throw std::invalid_argument("apply_current_value: TSB value has the wrong field count");
+            }
+
+            auto bundle_out = out.as_bundle();
+            for (std::size_t index = 0; index < source_values.size(); ++index)
+            {
+                apply_current_value(bundle_out.at(index), source_values.at(index));
+            }
+        }
+
+        using CurrentValueApplyFn = void (*)(const TSOutputView &, const ValueView &);
+
+        [[nodiscard]] CurrentValueApplyFn current_value_apply_for(TSTypeKind kind) noexcept
+        {
+            static constexpr std::size_t kind_count = ts_kind_index(TSTypeKind::SIGNAL) + 1U;
+            static const std::array<CurrentValueApplyFn, kind_count> table{
+                &apply_current_value_direct,
+                &apply_current_value_direct,
+                &apply_current_value_tsd,
+                &apply_current_value_tsl,
+                &apply_current_value_direct,
+                &apply_current_value_tsb,
+                &apply_current_value_direct,
+                &apply_current_value_direct,
+            };
+
+            const auto index = ts_kind_index(kind);
+            return index < table.size() ? table[index] : &apply_current_value_direct;
         }
     }  // namespace
 
@@ -357,5 +565,27 @@ namespace hgraph
         const auto &ops     = binding.checked_ops();
         if (!ops.delta_has_effect_impl(out, delta)) { return; }
         ops.apply_delta_impl(out, delta);
+    }
+
+    bool current_value_schema_compatible(const TSValueTypeMetaData &schema,
+                                         const ValueTypeMetaData   &value_schema)
+    {
+        return current_value_schema_compatible_for(schema.kind)(schema, value_schema);
+    }
+
+    void apply_current_value(const TSOutputView &out, const ValueView &value)
+    {
+        const auto &schema = require_schema(out.schema(), "apply_current_value");
+        if (!value.has_value())
+        {
+            throw std::invalid_argument("apply_current_value requires a live source value");
+        }
+        const auto *value_schema = value.schema();
+        if (value_schema == nullptr || !current_value_schema_compatible(schema, *value_schema))
+        {
+            throw std::invalid_argument("apply_current_value source value schema does not match the output schema");
+        }
+
+        current_value_apply_for(schema.kind)(out, value);
     }
 }  // namespace hgraph

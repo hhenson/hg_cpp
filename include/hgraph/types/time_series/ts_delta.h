@@ -5,6 +5,8 @@ namespace hgraph
 {
     class TSInputView;
     class TSOutputView;
+    struct TSValueTypeMetaData;
+    struct ValueTypeMetaData;
     class ValueView;
     class Value;
 
@@ -35,6 +37,18 @@ namespace hgraph
     [[nodiscard]] Value capture_delta(const TSInputView &in);
 
     void apply_delta(const TSOutputView &out, const ValueView &delta);
+
+    /**
+     * Apply a whole current value to a time-series output.
+     *
+     * This is the current-value counterpart to ``apply_delta``. It accepts the
+     * time-series schema's value-layer shape and recurses through collection
+     * children so non-peered structures such as fixed ``TSL`` and ``TSB`` can be
+     * materialized from ordinary value-layer containers.
+     */
+    [[nodiscard]] bool current_value_schema_compatible(const TSValueTypeMetaData &schema,
+                                                       const ValueTypeMetaData   &value_schema);
+    void apply_current_value(const TSOutputView &out, const ValueView &value);
 }  // namespace hgraph
 
 #endif  // HGRAPH_TYPES_TIME_SERIES_TS_DELTA_H

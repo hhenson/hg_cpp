@@ -38,7 +38,7 @@ namespace hgraph::stdlib
             resolution.bind_ts("S", TypeRegistry::instance().ts(value_schema));
             return;
         }
-        if (output_schema->value_schema != value_schema)
+        if (value_schema == nullptr || !current_value_schema_compatible(*output_schema, *value_schema))
         {
             throw std::logic_error("const: configured value schema does not match the resolved output value schema");
         }

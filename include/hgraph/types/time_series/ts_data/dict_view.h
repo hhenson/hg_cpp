@@ -131,6 +131,9 @@ namespace hgraph
         /** Reserve storage for at least ``capacity`` slots. */
         void reserve(std::size_t capacity);
 
+        /** Mark the dictionary itself as touched for this mutation cycle. */
+        void touch();
+
         /** Access or create the child TSData for ``key``. */
         [[nodiscard]] TSDataView at(const ValueView &key);
         [[nodiscard]] TSDataView operator[](const ValueView &key);
