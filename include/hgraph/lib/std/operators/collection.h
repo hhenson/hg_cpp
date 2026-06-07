@@ -133,6 +133,24 @@ namespace hgraph::stdlib
         inline constexpr bool is_tsl_schema_v = is_tsl_schema<T>::value;
 
         template <typename T>
+        struct is_tsb_schema : std::false_type
+        {
+        };
+
+        template <typename... Fields>
+        struct is_tsb_schema<UnNamedTSB<Fields...>> : std::true_type
+        {
+        };
+
+        template <fixed_string Name, typename... Fields>
+        struct is_tsb_schema<TSB<Name, Fields...>> : std::true_type
+        {
+        };
+
+        template <typename T>
+        inline constexpr bool is_tsb_schema_v = is_tsb_schema<T>::value;
+
+        template <typename T>
         struct tsl_schema_traits;
 
         template <typename ElementSchema, std::size_t FixedSize>
@@ -140,6 +158,21 @@ namespace hgraph::stdlib
         {
             using element_schema = ElementSchema;
             static constexpr std::size_t fixed_size = FixedSize;
+        };
+
+        template <typename T>
+        struct tsb_schema_traits;
+
+        template <typename... Fields>
+        struct tsb_schema_traits<UnNamedTSB<Fields...>>
+        {
+            static constexpr std::size_t field_count = sizeof...(Fields);
+        };
+
+        template <fixed_string Name, typename... Fields>
+        struct tsb_schema_traits<TSB<Name, Fields...>>
+        {
+            static constexpr std::size_t field_count = sizeof...(Fields);
         };
 
         template <typename T>
@@ -175,20 +208,17 @@ namespace hgraph::stdlib
         {
         };
 
-        inline void evaluate_to_tsl(const NodeView &view, engine_time_t evaluation_time)
+        struct to_tsb_node_tag
         {
-            auto root         = view.input(evaluation_time);
-            auto bundle       = root.as_bundle();
-            auto list_field   = bundle.field("ts");
-            auto input_list   = list_field.as_list();
-            auto output_root  = view.output(evaluation_time);
-            auto output_list  = output_root.as_list();
-            const auto count  = input_list.size();
+        };
 
+        inline void apply_modified_children(TSLInputView &input, TSLOutputView &output)
+        {
+            const auto count = input.size();
             for (std::size_t index = 0; index < count; ++index)
             {
-                auto input_child  = input_list.at(index);
-                auto output_child = output_list.at(index);
+                auto input_child  = input.at(index);
+                auto output_child = output.at(index);
                 if (!input_child.valid()) { continue; }
 
                 if (!output_child.valid())
@@ -200,6 +230,64 @@ namespace hgraph::stdlib
                     apply_delta(output_child, input_child.delta_value());
                 }
             }
+        }
+
+        inline void apply_modified_children(TSBInputView &input, TSBOutputView &output)
+        {
+            const auto count = input.size();
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                auto input_child  = input.at(index);
+                auto output_child = output.at(index);
+                if (!input_child.valid()) { continue; }
+
+                if (!output_child.valid())
+                {
+                    apply_current_value(output_child, input_child.value());
+                }
+                else if (input_child.modified())
+                {
+                    apply_delta(output_child, input_child.delta_value());
+                }
+            }
+        }
+
+        inline void evaluate_to_tsl(const NodeView &view, engine_time_t evaluation_time)
+        {
+            auto root         = view.input(evaluation_time);
+            auto bundle       = root.as_bundle();
+            auto list_field   = bundle.field("ts");
+            auto input_list   = list_field.as_list();
+            auto output_root  = view.output(evaluation_time);
+            auto output_list  = output_root.as_list();
+            apply_modified_children(input_list, output_list);
+        }
+
+        inline void evaluate_to_tsb(const NodeView &view, engine_time_t evaluation_time)
+        {
+            auto root          = view.input(evaluation_time);
+            auto bundle        = root.as_bundle();
+            auto tsb_field     = bundle.field("ts");
+            auto input_bundle  = tsb_field.as_bundle();
+            auto output_root   = view.output(evaluation_time);
+            auto output_bundle = output_root.as_bundle();
+            apply_modified_children(input_bundle, output_bundle);
+        }
+
+        [[nodiscard]] inline TSEndpointSchema peered_tsb_children_endpoint(const TSValueTypeMetaData &schema)
+        {
+            if (schema.kind != TSTypeKind::TSB)
+            {
+                throw std::logic_error("to_tsb requires a TSB output schema");
+            }
+
+            std::vector<TSEndpointSchema> children;
+            children.reserve(schema.field_count());
+            for (std::size_t index = 0; index < schema.field_count(); ++index)
+            {
+                children.push_back(TSEndpointSchema::peered(schema.fields()[index].type));
+            }
+            return TSEndpointSchema::non_peered(&schema, std::move(children));
         }
 
         [[nodiscard]] inline NodeBuilder to_tsl_node_builder(const TSValueTypeMetaData &output_schema)
@@ -234,6 +322,35 @@ namespace hgraph::stdlib
             return builder;
         }
 
+        [[nodiscard]] inline NodeBuilder to_tsb_node_builder(const TSValueTypeMetaData &output_schema)
+        {
+            if (output_schema.kind != TSTypeKind::TSB || output_schema.field_count() == 0)
+            {
+                throw std::logic_error("to_tsb requires a TSB output schema");
+            }
+
+            auto       &registry     = TypeRegistry::instance();
+            const auto *input_schema = registry.un_named_tsb({{"ts", &output_schema}});
+
+            NodeTypeMetaData schema;
+            schema.display_name  = "to_tsb";
+            schema.input_schema  = input_schema;
+            schema.output_schema = &output_schema;
+            schema.node_kind     = NodeKind::Compute;
+            schema.active_inputs = {0};
+
+            NodeCallbacks callbacks;
+            callbacks.evaluate = &evaluate_to_tsb;
+
+            auto input_endpoint =
+                TSEndpointSchema::non_peered(input_schema, {peered_tsb_children_endpoint(output_schema)});
+
+            NodeBuilder builder = NodeBuilder::native(std::move(schema), std::move(callbacks),
+                                                       std::move(input_endpoint));
+            builder.label("to_tsb");
+            return builder;
+        }
+
         inline void validate_to_tsl_inputs(const TSValueTypeMetaData &element_schema,
                                            std::span<const WiringPortRef> refs)
         {
@@ -259,8 +376,41 @@ namespace hgraph::stdlib
             }
         }
 
+        inline void validate_to_tsb_inputs(const TSValueTypeMetaData &output_schema,
+                                           std::span<const WiringPortRef> refs)
+        {
+            if (output_schema.kind != TSTypeKind::TSB || output_schema.field_count() != refs.size())
+            {
+                throw std::logic_error("to_tsb input count must match the TSB field count");
+            }
+
+            for (std::size_t index = 0; index < refs.size(); ++index)
+            {
+                const TSValueTypeMetaData *expected = output_schema.fields()[index].type;
+                if (!graph_wiring_detail::input_accepts_output_schema(expected, refs[index].schema))
+                {
+                    throw std::logic_error("to_tsb input port schema does not match the TSB field schema");
+                }
+            }
+        }
+
         template <std::size_t Size>
         [[nodiscard]] std::vector<WiringInputRef> to_tsl_inputs(const std::array<WiringPortRef, Size> &refs)
+        {
+            std::vector<WiringInputRef> inputs;
+            inputs.reserve(Size);
+            for (std::size_t index = 0; index < Size; ++index)
+            {
+                inputs.push_back(WiringInputRef{
+                    .source      = refs[index],
+                    .target_path = {0, index},
+                });
+            }
+            return inputs;
+        }
+
+        template <std::size_t Size>
+        [[nodiscard]] std::vector<WiringInputRef> to_tsb_inputs(const std::array<WiringPortRef, Size> &refs)
         {
             std::vector<WiringInputRef> inputs;
             inputs.reserve(Size);
@@ -280,6 +430,14 @@ namespace hgraph::stdlib
         {
             NodeBuilder builder = to_tsl_node_builder(output_schema);
             return w.add_node(std::type_index(typeid(to_tsl_node_tag)), std::move(builder), inputs, Value{});
+        }
+
+        [[nodiscard]] inline WiringPortRef add_to_tsb_node(Wiring &w,
+                                                           const TSValueTypeMetaData &output_schema,
+                                                           std::vector<WiringInputRef> inputs)
+        {
+            NodeBuilder builder = to_tsb_node_builder(output_schema);
+            return w.add_node(std::type_index(typeid(to_tsb_node_tag)), std::move(builder), inputs, Value{});
         }
     }  // namespace collection_detail
 
@@ -355,6 +513,32 @@ namespace hgraph::stdlib
                 collection_detail::add_to_tsl_node(w, *output_schema, collection_detail::to_tsl_inputs(refs));
             return Port<Result>{out.node, out.path};
         }
+    }
+
+    /**
+     * Wire time-series ports into a non-peered ``TSB`` using the explicit TSB
+     * schema's field order. For example,
+     * ``to_tsb<TSB<"AB", Field<"a", TS<Int>>, Field<"b", TS<Str>>>>(w, a, b)``
+     * binds ``a`` to field ``a`` and ``b`` to field ``b``.
+     */
+    template <typename OutSchema, typename... Ports>
+    [[nodiscard]] auto to_tsb(Wiring &w, const Ports &...ports)
+    {
+        static_assert(collection_detail::is_tsb_schema_v<OutSchema>,
+                      "to_tsb requires an explicit TSB or UnNamedTSB output schema");
+        static_assert(sizeof...(Ports) == collection_detail::tsb_schema_traits<OutSchema>::field_count,
+                      "to_tsb input count must match the TSB field count");
+        static_assert((graph_wiring_detail::is_port<std::remove_cvref_t<Ports>>::value && ...),
+                      "to_tsb inputs must be time-series Ports");
+
+        constexpr std::size_t size = sizeof...(Ports);
+        std::array<WiringPortRef, size> refs{ports.erased()...};
+
+        const auto *output_schema = schema_descriptor<OutSchema>::ts_meta();
+        collection_detail::validate_to_tsb_inputs(*output_schema, refs);
+        WiringPortRef out =
+            collection_detail::add_to_tsb_node(w, *output_schema, collection_detail::to_tsb_inputs(refs));
+        return Port<OutSchema>{out.node, out.path};
     }
 }  // namespace hgraph::stdlib
 

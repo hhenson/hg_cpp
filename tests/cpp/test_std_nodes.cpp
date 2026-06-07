@@ -30,6 +30,10 @@ namespace
                              Field<"left", TS<Int>>,
                              Field<"right", TS<Int>>>;
     using ConstPairValue = UnNamedBundle<Field<"left", Int>, Field<"right", Int>>;
+    using StrPairTSB = TSB<"StrPair",
+                           Field<"left", TS<Str>>,
+                           Field<"right", TS<Str>>>;
+    using StrPairUnNamedTSB = UnNamedTSB<Field<"a", TS<Str>>, Field<"b", TS<Str>>>;
 
     Value make_const_pair_value(Int left, Int right)
     {
@@ -128,6 +132,30 @@ namespace
             auto b = wire<testing::replay, TS<Str>>(w, "b"_str);
             auto c = stdlib::to_tsl(w, a, b);
             wire<testing::record>(w, c, "out"_str);
+        }
+    };
+
+    struct ToTsbConstRecordGraph
+    {
+        static constexpr auto name = "to_tsb_const_record_graph";
+        static void           compose(Wiring &w)
+        {
+            auto left  = wire<stdlib::const_>(w, "a"_str);
+            auto right = wire<stdlib::const_>(w, "b"_str);
+            auto out   = stdlib::to_tsb<StrPairTSB>(w, left, right);
+            wire<testing::record>(w, out, "out"_str);
+        }
+    };
+
+    struct ToTsbReplayRecordGraph
+    {
+        static constexpr auto name = "to_tsb_replay_record_graph";
+        static void           compose(Wiring &w)
+        {
+            auto a   = wire<testing::replay, TS<Str>>(w, "a"_str);
+            auto b   = wire<testing::replay, TS<Str>>(w, "b"_str);
+            auto out = stdlib::to_tsb<StrPairUnNamedTSB>(w, a, b);
+            wire<testing::record>(w, out, "out"_str);
         }
     };
 
@@ -336,6 +364,50 @@ TEST_CASE("stdlib::to_tsl materializes earlier current values when the last chil
     });
     CHECK(out[1]->equals(initial));
     CHECK(out[2]->equals(update));
+}
+
+TEST_CASE("stdlib::to_tsb wires const outputs into a non-peered TSB")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphExecutorValue executor = run_once(build_graph<ToTsbConstRecordGraph>());
+    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 1);
+    REQUIRE(out[0].has_value());
+
+    Value expected = tsb_delta<StrPairTSB>(Str{"a"}, Str{"b"});
+    CHECK(out[0]->equals(expected));
+}
+
+TEST_CASE("stdlib::to_tsb emits partial field deltas as inputs become valid")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphBuilder gb = build_graph<ToTsbReplayRecordGraph>();
+    testing::set_replay_values<Str>(gb.global_state(), "a",
+                                    {std::optional<Str>{Str{"a"}},
+                                     std::nullopt,
+                                     std::optional<Str>{Str{"aa"}}});
+    testing::set_replay_values<Str>(gb.global_state(), "b",
+                                    {std::nullopt,
+                                     std::optional<Str>{Str{"b"}},
+                                     std::nullopt});
+
+    GraphExecutorValue executor = run_once(std::move(gb));
+    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
+    REQUIRE(out.size() == 3);
+    REQUIRE(out[0].has_value());
+    REQUIRE(out[1].has_value());
+    REQUIRE(out[2].has_value());
+
+    Value first  = tsb_delta<StrPairUnNamedTSB>(Str{"a"}, std::nullopt);
+    Value second = tsb_delta<StrPairUnNamedTSB>(std::nullopt, Str{"b"});
+    Value third  = tsb_delta<StrPairUnNamedTSB>(Str{"aa"}, std::nullopt);
+    CHECK(out[0]->equals(first));
+    CHECK(out[1]->equals(second));
+    CHECK(out[2]->equals(third));
 }
 
 TEST_CASE("stdlib::const_ rejects explicit output resolution when the value schema differs")
