@@ -9,20 +9,26 @@ same runtime graph the same way.
 
 .. note::
 
-   **Status.** Slices 1–3b are **implemented**: the ``Wiring`` core (interning +
-   topo-sort/rank), the typed ``Port<Schema>`` + ``wire<T>`` facade for nodes,
-   ``build_graph<G>(…)`` for a top-level graph, **sub-graph composition**
-   (``wire<G>`` inlines a graph, with the same compile-time argument checking and
-   scalar-literal auto-wrapping as ``wire<T>``), **scalar inputs** (``Scalar<>``
-   arguments folded into the intern key and recorded on the node builder), and
-   ``StaticGraphSignature<G>`` with **graph-level scalar parameters** (a top-level
-   graph's ``compose`` may take ``Scalar<>`` parameters, supplied through
-   ``build_graph<G>(values…)``) — in ``include/hgraph/types/graph_wiring.h`` +
-   ``src/hgraph/types/graph_wiring.cpp``, with ``tests/cpp/test_graph_wiring.cpp``.
-   Still **not yet implemented**: standalone sub-graph building / time-series
-   boundary binding (deferred until there is a consumer — the non-flattening nested
-   graphs), generics and higher-order operators; those parts of this page are the
-   design record. The user-facing view is *User Guide > Wiring Graphs in C++*.
+   **Status.** Implemented: the ``Wiring`` core (interning + topo-sort/rank), the
+   typed ``Port<Schema>`` + ``wire<T>`` facade for nodes, ``build_graph<G>(…)`` for
+   a top-level graph, **sub-graph composition** (``wire<G>`` inlines a graph, with
+   the same compile-time argument checking and scalar-literal auto-wrapping as
+   ``wire<T>``), **scalar inputs** (``Scalar<>`` arguments folded into the intern
+   key and recorded on the node builder), ``StaticGraphSignature<G>`` with
+   **graph-level scalar parameters**, **structural (non-peered) sources** — brace
+   initializers ``wire<T>(w, {a, b})`` (positional and by-name) and the ``to_tsl``
+   / ``to_tsb`` collection builders, including adapting a structural source onto a
+   ``REF`` input — **generic (type-variable) nodes and operator-overload dispatch**
+   (see *Operators*), and a first **non-flattening nested-graph node**
+   (``single_nested_graph_node``; see *Nested graphs*). Code in
+   ``include/hgraph/types/graph_wiring.h`` + ``src/hgraph/types/graph_wiring.cpp``
+   (and ``include/hgraph/runtime/nested_graph_node.h`` + its ``.cpp``), with
+   ``tests/cpp/test_graph_wiring.cpp``. Still **not yet implemented**: the
+   ``wire``-level higher-order operators (``map_`` / ``reduce`` / ``switch_``) that
+   build nested-graph nodes from a sub-graph, standalone sub-graph building with
+   supplied time-series boundary ports, and feedback edges; those parts of this
+   page are the design record. The user-facing view is *User Guide > Wiring Graphs
+   in C++*.
 
 
 Two tiers
@@ -108,18 +114,32 @@ The shared core
    // Implemented shapes. The typed facade Port<Schema> is below.
    struct WiringInstance;
 
-   struct WiringPortRef {                     // erased handle to a wiring instance's output
-       const WiringInstance      *node;       // the producing (interned) instance
-       std::vector<std::size_t>   path;       // output path within that node
+   // Erased handle to a time-series source. A *peered* source names a producing
+   // (interned) instance and an output path within it. A *structural* source has
+   // no producer of its own — its children are the sources for each fixed child
+   // slot (to_tsl / to_tsb and brace initializers build these). A *null* source is
+   // an unbound fixed slot carrying only its schema. Target info lives on
+   // WiringInputRef, never here.
+   struct WiringPortRef {
+       struct PeeredSource     { const WiringInstance *node; std::vector<std::size_t> path; };
+       struct StructuralSource { std::vector<WiringPortRef> children; };
+       enum class SourceKind { Unbound, Null, Peered, Structural };
+
        const TSValueTypeMetaData *schema;
+       // factories peered_source / structural_source / null_source, plus
+       // source_kind() and the typed accessors.
    };
+
+   // Consumer-side input edge: a source port plus the (optional) target path on the
+   // consuming node it binds into.
+   struct WiringInputRef { WiringPortRef source; std::vector<std::size_t> target_path; };
 
    // The interned wiring identity (stable address, so WiringInstance* IS the
    // identity). The NodeBuilder carries any per-instance scalar configuration
    // (set by add_node). Edges are derived from `inputs` at finish.
    struct WiringInstance {
-       NodeBuilder                builder;    // build artifact (carries scalars)
-       std::vector<WiringPortRef> inputs;     // time-series input ports
+       NodeBuilder                 builder;   // build artifact (carries scalars)
+       std::vector<WiringInputRef> inputs;    // time-series input edges
    };
 
    class Wiring {
@@ -127,24 +147,34 @@ The shared core
        // `def` is the node definition's identity (typeid(T) for a C++ static node):
        // two calls with the same def + equal inputs + equal scalars dedup. `builder`
        // is stored for finish; the `scalars` value is recorded on it (empty if none).
+       // Output-less (sink) nodes are never deduped — each must run for its own side
+       // effect — so only value-producing nodes are interned.
        WiringPortRef add_node(std::type_index def, NodeBuilder builder,
+                              std::span<const WiringInputRef> inputs, Value scalars);
+       WiringPortRef add_node(std::type_index def, NodeBuilder builder,   // positional overload
                               std::span<const WiringPortRef> inputs, Value scalars);
-       // Topo-sort + rank → a rank-ordered GraphBuilder (edges from each instance's ports).
+       // Topo-sort + rank → a rank-ordered GraphBuilder (edges from each instance's inputs).
        GraphBuilder  finish() &&;
    };
 
-- ``add_node`` keys the instance on ``(def, input ports, scalars)`` — ``def`` is
-  the node type's identity (``typeid(T)``) and ``scalars`` is the compound scalar
+- ``add_node`` keys the instance on ``(def, resolved schemas, input edges,
+  scalars)`` — ``def`` is the node type's identity (``typeid(T)``), the resolved
+  input/output/scalar/state schema pointers distinguish different generic
+  resolutions of one definition, and ``scalars`` is the compound scalar
   configuration value (empty when the node has no scalar inputs) — and looks it up
-  in the wiring intern table. On a hit it returns the existing instance's port; on
-  a miss it records the ``scalars`` on the ``NodeBuilder``, interns the new
-  instance (storing that builder), and returns a ``WiringPortRef`` to its output.
-  No edges are recorded yet — the input ports carry the dependencies.
+  in the wiring intern table. **Output-less (sink) nodes skip interning**: two
+  identical sinks must stay distinct so each performs its side effect (matching
+  Python, which never CSE's node calls). On a hit it returns the existing
+  instance's port; on a miss it records the ``scalars`` on the ``NodeBuilder``,
+  interns the new instance, and returns a ``WiringPortRef`` to its output. No edges
+  are recorded yet — the input edges carry the dependencies.
 - ``finish`` runs the rank pass, then walks the instances in rank order, adding
-  each instance's ``NodeBuilder`` to a ``GraphBuilder`` and emitting an **edge per
-  input port** (port ``i`` → this node's input field ``i``), remapping
-  ``WiringInstance*`` endpoints to final indices. The ``NodeBuilder`` has no
-  knowledge of ports; edges are applied by the graph builder.
+  each instance's ``NodeBuilder`` to a ``GraphBuilder`` and emitting the edges for
+  each input: a **peered** input is one edge (source node/path → this node's input
+  path); a **structural** input expands to **one edge per peered leaf**, each into
+  the matching child slot of the input (a null leaf emits no edge). Endpoints are
+  remapped from ``WiringInstance*`` to final indices. The ``NodeBuilder`` has no
+  knowledge of edges; they are applied by the graph builder.
 - The core is language-agnostic, so the Python wiring bridge reuses the interning
   and rank pass — including the scalar values in the key.
 
@@ -214,9 +244,46 @@ current ``Wiring``; only nodes become runtime objects. This matches Python, wher
 ``@graph`` functions are wiring-time only and disappear into nodes.
 
 Nested graphs that must **not** flatten — ``map_`` / ``reduce`` / ``switch_`` and
-other higher-order operators — need boundary binding (the child-graph template /
-boundary substrate) rather than inlining. That is the extension point for those
-operators and is out of scope for the first cut.
+other higher-order operators — own a child graph at runtime rather than inlining.
+The runtime substrate for that now exists (see *Nested graphs*); the ``wire``-level
+operators that build on it are the next step.
+
+
+Nested graphs
+-------------
+
+A **nested-graph node** owns and drives one child graph instead of flattening it.
+It is built outside the ``Wiring`` flatten path, via
+``single_nested_graph_node(meta, spec)``
+(``include/hgraph/runtime/nested_graph_node.h``), and plugs into the generic node
+through the node extension points: a ``NodeStorageField`` for the child
+``GraphValue``, a custom ``NodeOps`` for ``evaluate`` (plus ``start`` / ``stop``
+callbacks), and a ``NodeView::as<SingleNestedGraphNodeView>()`` extension view.
+
+- **Boundaries are reference-bound, not copied.** ``spec.input_bindings`` map a
+  path in the outer node's input to a child node's input endpoint; each cycle the
+  child input is bound to the *same upstream output* the outer input is bound to
+  (``bind_output``). ``spec.output_binding`` forwards a child node's output through
+  the outer node's **forwarding output** (its ``output_endpoint_schema`` is
+  ``peered``), so the outer output shares identity with the child's rather than
+  copying values. Re-binding each cycle is cheap — skipped when the endpoint
+  already references the same output — and absorbs an upstream ``REF`` that
+  re-points.
+- **Lifecycle.** The child graph is instantiated lazily, started/stopped with the
+  node (configurable via ``SingleNestedGraphNodeOptions``), and the child's next
+  scheduled time is propagated up so the parent re-evaluates when the child has
+  pending work. The forwarding link is left intact on stop — the child output lives
+  in the node's storage and is torn down with the parent output, so the forwarded
+  value stays observable after a run; ``switch_``-style wrappers that swap the
+  active child use ``single_nested_graph_clear_output_binding``.
+- ``SingleNestedGraphNodeView`` is reusable scaffolding: policy wrappers
+  (``try_`` / ``switch_`` / delayed component) can supply their own callbacks while
+  reusing the same storage and binding model.
+
+Implemented today: a single child, output forwarding at the output root only, and
+graphs built by hand (``GraphBuilder``). The multiplexing operators (``map_`` /
+``reduce`` / ``switch_``) and the ``wire``-level entry points that construct these
+nodes from a sub-graph are the next step.
 
 
 Extending to Python
@@ -292,10 +359,19 @@ Slices:
    ``NodeBuilder::implementation<Impl>(map)``) and is specified on its own page,
    *Operators*. It is the multi-candidate generalisation of the single-implementation
    resolution above.
-6. **Next.** Standalone sub-graph building / time-series **boundary binding**
-   (supplying ``Port`` inputs to ``build_graph`` / ``wire<G>``) — **deferred until
-   it has a consumer**, the non-flattening nested graphs (``map_`` / ``reduce`` /
-   ``switch_``), which is where the boundary substrate is actually needed.
+6. **Structural (non-peered) sources — done.** Brace initializers
+   ``wire<T>(w, {a, b})`` (positional → fixed TSL/TSB) and ``{{"f", a}, …}``
+   (by-name → TSB fields, missing fields filled with null sources), plus the
+   ``to_tsl`` / ``to_tsb`` collection builders, produce a structural
+   ``WiringPortRef`` whose peered leaves expand to one edge each at ``finish``. A
+   structural source bound to a ``REF`` input is adapted through a synthetic
+   reference node. Tests: ``tests/cpp/test_graph_wiring.cpp``.
+7. **Nested-graph node — first cut done.** ``single_nested_graph_node`` owns one
+   child graph and reference-binds its boundaries (see *Nested graphs*). Tests:
+   ``tests/cpp/test_graph_wiring.cpp``.
+8. **Next.** The ``wire``-level higher-order operators (``map_`` / ``reduce`` /
+   ``switch_``) that construct nested-graph nodes from a sub-graph, standalone
+   sub-graph building with supplied time-series boundary ports, and feedback edges.
 
 Deferred: **by-name graph/node scalar arguments and parameter defaults** (today
 arguments are positional and all required — a compile-time ``arg<"name">(value)``
