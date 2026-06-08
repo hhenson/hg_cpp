@@ -389,6 +389,85 @@ namespace
                                    Field<"a", TS<Int>>,
                                    Field<"b", TS<Int>>>;
 
+    struct BraceListInputSum
+    {
+        static constexpr auto name = "brace_list_input_sum";
+
+        static void eval(In<"tsl", TSL<TS<Int>, 2>> tsl, Out<TS<Int>> out)
+        {
+            if (tsl[0].valid() && tsl[1].valid()) { out.set(tsl[0].value() + tsl[1].value()); }
+        }
+    };
+
+    struct BraceListInputGraph
+    {
+        static constexpr auto name = "brace_list_input_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            wire<BraceListInputSum>(w, {source, source});
+        }
+    };
+
+    struct BraceBundleInputSum
+    {
+        static constexpr auto name = "brace_bundle_input_sum";
+
+        static void eval(In<"tsb", RefRoundTripBundle> tsb, Out<TS<Int>> out)
+        {
+            auto a = tsb.field<"a">();
+            auto b = tsb.field<"b">();
+            if (a.valid() && b.valid()) { out.set(a.value() + b.value()); }
+        }
+    };
+
+    struct BraceBundleInputGraph
+    {
+        static constexpr auto name = "brace_bundle_input_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            wire<BraceBundleInputSum>(w, {source, source});
+        }
+    };
+
+    struct BraceBundleNamedInputGraph
+    {
+        static constexpr auto name = "brace_bundle_named_input_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto a = wire<ScaledSource>(w, Int{3});
+            auto b = wire<ScaledSource>(w, Int{40});
+            wire<BraceBundleInputSum>(w, {{"b", b}, {"a", a}});
+        }
+    };
+
+    struct BraceBundlePartialInputProbe
+    {
+        static constexpr auto name = "brace_bundle_partial_input_probe";
+
+        static void eval(In<"tsb", RefRoundTripBundle> tsb, Out<TS<Int>> out)
+        {
+            auto a = tsb.field<"a">();
+            auto b = tsb.field<"b">();
+            if (a.valid() && !b.valid()) { out.set(a.value()); }
+        }
+    };
+
+    struct BraceBundlePartialInputGraph
+    {
+        static constexpr auto name = "brace_bundle_partial_input_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            wire<BraceBundlePartialInputProbe>(w, {{"a", source}});
+        }
+    };
+
     struct StructuralBundleRefProbe
     {
         static constexpr auto name              = "structural_bundle_ref_probe";
@@ -615,6 +694,54 @@ TEST_CASE("graph wiring: structural TSB source can bind to a REF input as non-pe
     REQUIRE(graph.node_count() == 3);
     REQUIRE(graph.node_at(2).output(MIN_ST).valid());
     CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Bool>());
+}
+
+TEST_CASE("graph wiring: brace initializer wires fixed TSL input as non-peered structure")
+{
+    using namespace hgraph;
+
+    GraphExecutorValue executor = run_start(build_graph<BraceListInputGraph>());
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 2);
+    REQUIRE(graph.node_at(1).output(MIN_ST).valid());
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{82});
+}
+
+TEST_CASE("graph wiring: brace initializer wires TSB input as non-peered structure")
+{
+    using namespace hgraph;
+
+    GraphExecutorValue executor = run_start(build_graph<BraceBundleInputGraph>());
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 2);
+    REQUIRE(graph.node_at(1).output(MIN_ST).valid());
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{82});
+}
+
+TEST_CASE("graph wiring: named brace initializer wires TSB fields by name")
+{
+    using namespace hgraph;
+
+    GraphExecutorValue executor = run_start(build_graph<BraceBundleNamedInputGraph>());
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 3);
+    REQUIRE(graph.node_at(2).output(MIN_ST).valid());
+    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Int>() == Int{43});
+}
+
+TEST_CASE("graph wiring: partial named TSB initializer fills missing fields with null sources")
+{
+    using namespace hgraph;
+
+    GraphExecutorValue executor = run_start(build_graph<BraceBundlePartialInputGraph>());
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 2);
+    REQUIRE(graph.node_at(1).output(MIN_ST).valid());
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{41});
 }
 
 TEST_CASE("graph wiring: REF output can bind back to a dereferenced TS input")

@@ -210,6 +210,7 @@ namespace hgraph
                 producers.push_back(source.peered_node());
                 return;
             }
+            if (source.is_null_source()) { return; }
             if (source.is_unbound_source())
             {
                 throw std::logic_error("Wiring::finish encountered an unbound wiring source");
@@ -233,6 +234,7 @@ namespace hgraph
                 });
                 return;
             }
+            if (source.is_null_source()) { return; }
             if (source.is_unbound_source())
             {
                 throw std::logic_error("Wiring::finish encountered an unbound wiring source");

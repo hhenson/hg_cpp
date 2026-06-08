@@ -12,10 +12,12 @@
 
 #include <array>
 #include <cstddef>
+#include <initializer_list>
 #include <memory>
 #include <stdexcept>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <typeindex>
@@ -66,6 +68,7 @@ namespace hgraph
         enum class SourceKind
         {
             Unbound,
+            Null,
             Peered,
             Structural,
         };
@@ -92,15 +95,24 @@ namespace hgraph
             return ref;
         }
 
+        [[nodiscard]] static WiringPortRef null_source(const TSValueTypeMetaData *schema)
+        {
+            if (schema == nullptr) { throw std::logic_error("WiringPortRef::null_source requires a schema"); }
+            WiringPortRef ref;
+            ref.schema = schema;
+            return ref;
+        }
+
         [[nodiscard]] SourceKind source_kind() const noexcept
         {
             if (std::holds_alternative<PeeredSource>(source_)) { return SourceKind::Peered; }
             if (std::holds_alternative<StructuralSource>(source_)) { return SourceKind::Structural; }
-            return SourceKind::Unbound;
+            return schema != nullptr ? SourceKind::Null : SourceKind::Unbound;
         }
 
         [[nodiscard]] bool is_peered_source() const noexcept { return source_kind() == SourceKind::Peered; }
         [[nodiscard]] bool is_structural_source() const noexcept { return source_kind() == SourceKind::Structural; }
+        [[nodiscard]] bool is_null_source() const noexcept { return source_kind() == SourceKind::Null; }
         [[nodiscard]] bool is_unbound_source() const noexcept { return source_kind() == SourceKind::Unbound; }
 
         [[nodiscard]] const WiringInstance *peered_node() const
@@ -147,6 +159,41 @@ namespace hgraph
     {
         WiringPortRef             source{};
         std::vector<std::size_t>  target_path{};
+    };
+
+    /**
+     * Erased structural wiring argument captured from brace syntax such as
+     * ``wire<Node>(w, {a, b})``. The consuming ``In<>`` schema decides whether the
+     * children form a TSL or TSB and provides the structural source schema.
+     */
+    struct WiringStructuralSourceArg
+    {
+        std::vector<WiringPortRef> children{};
+
+        WiringStructuralSourceArg() = default;
+        WiringStructuralSourceArg(std::initializer_list<WiringPortRef> refs) : children(refs) {}
+        explicit WiringStructuralSourceArg(std::vector<WiringPortRef> refs) : children(std::move(refs)) {}
+    };
+
+    struct WiringNamedPortRef
+    {
+        std::string   name{};
+        WiringPortRef source{};
+
+        WiringNamedPortRef(std::string_view field_name, WiringPortRef field_source)
+            : name(field_name),
+              source(std::move(field_source))
+        {
+        }
+    };
+
+    struct WiringNamedStructuralSourceArg
+    {
+        std::vector<WiringNamedPortRef> fields{};
+
+        WiringNamedStructuralSourceArg() = default;
+        WiringNamedStructuralSourceArg(std::initializer_list<WiringNamedPortRef> refs) : fields(refs) {}
+        explicit WiringNamedStructuralSourceArg(std::vector<WiringNamedPortRef> refs) : fields(std::move(refs)) {}
     };
 
     /**
@@ -232,6 +279,7 @@ namespace hgraph
 
         /** Erase to the runtime port form (the runtime schema comes from ``Schema``). */
         [[nodiscard]] WiringPortRef erased() const { return ref_; }
+        [[nodiscard]] operator WiringPortRef() const { return erased(); }
 
       private:
         WiringPortRef ref_{};
@@ -266,6 +314,7 @@ namespace hgraph
         [[nodiscard]] const TSValueTypeMetaData      *runtime_schema() const noexcept { return ref_.schema; }
 
         [[nodiscard]] WiringPortRef erased() const { return ref_; }
+        [[nodiscard]] operator WiringPortRef() const { return erased(); }
 
       private:
         WiringPortRef ref_{};
@@ -313,6 +362,10 @@ namespace hgraph
         // Recognise the typed port handle and recover an ``In<Name, S>``'s schema S.
         template <typename T> struct is_port : std::false_type {};
         template <typename S> struct is_port<Port<S>> : std::true_type {};
+
+        template <typename T> struct is_structural_source_arg : std::false_type {};
+        template <> struct is_structural_source_arg<WiringStructuralSourceArg> : std::true_type {};
+        template <> struct is_structural_source_arg<WiringNamedStructuralSourceArg> : std::true_type {};
 
         // The erased port (``Port<void>``): carries only a runtime schema.
         template <typename T> struct is_erased_port : std::false_type {};
@@ -399,6 +452,248 @@ namespace hgraph
             return time_series_schema_equivalent(registry.dereference(input_schema),
                                                  registry.dereference(output_schema));
         }
+
+        [[nodiscard]] inline const TSValueTypeMetaData *structural_target_schema_for_input(
+            const TSValueTypeMetaData *input_schema)
+        {
+            if (input_schema == nullptr)
+            {
+                throw std::logic_error("wire<T>: structural initializer requires an input schema");
+            }
+            return input_schema->kind == TSTypeKind::REF ? input_schema->referenced_ts() : input_schema;
+        }
+
+        [[nodiscard]] inline WiringPortRef structural_source_for_input_schema(
+            const TSValueTypeMetaData *input_schema, const WiringStructuralSourceArg &arg)
+        {
+            const TSValueTypeMetaData *source_schema = structural_target_schema_for_input(input_schema);
+            if (source_schema == nullptr)
+            {
+                throw std::logic_error("wire<T>: structural initializer target schema is unresolved");
+            }
+
+            switch (source_schema->kind)
+            {
+                case TSTypeKind::TSL:
+                {
+                    if (source_schema->fixed_size() == 0)
+                    {
+                        throw std::logic_error("wire<T>: structural initializer requires a fixed-size TSL input");
+                    }
+                    if (arg.children.size() != source_schema->fixed_size())
+                    {
+                        throw std::logic_error(
+                            "wire<T>: structural initializer child count does not match the TSL input schema");
+                    }
+                    const auto *element_schema = source_schema->element_ts();
+                    for (const WiringPortRef &child : arg.children)
+                    {
+                        if (!input_accepts_output_schema(element_schema, child.schema))
+                        {
+                            throw std::logic_error(
+                                "wire<T>: structural initializer child schema does not match the TSL element schema");
+                        }
+                    }
+                    break;
+                }
+
+                case TSTypeKind::TSB:
+                {
+                    if (arg.children.size() != source_schema->field_count())
+                    {
+                        throw std::logic_error(
+                            "wire<T>: structural initializer child count does not match the TSB input schema");
+                    }
+                    for (std::size_t index = 0; index < arg.children.size(); ++index)
+                    {
+                        const auto *field_schema = source_schema->fields()[index].type;
+                        if (!input_accepts_output_schema(field_schema, arg.children[index].schema))
+                        {
+                            throw std::logic_error(
+                                "wire<T>: structural initializer child schema does not match the TSB field schema");
+                        }
+                    }
+                    break;
+                }
+
+                default:
+                    throw std::logic_error("wire<T>: structural initializer requires a TSL or TSB input schema");
+            }
+
+            return WiringPortRef::structural_source(source_schema, arg.children);
+        }
+
+        [[nodiscard]] inline std::size_t tsb_field_index_for_name(const TSValueTypeMetaData &schema,
+                                                                  std::string_view           name)
+        {
+            for (std::size_t index = 0; index < schema.field_count(); ++index)
+            {
+                const auto &field      = schema.fields()[index];
+                const auto  field_name = field.name != nullptr ? std::string_view{field.name} : std::string_view{};
+                if (field_name == name) { return index; }
+            }
+            throw std::logic_error("wire<T>: named structural initializer field does not exist on the TSB schema");
+        }
+
+        [[nodiscard]] inline WiringPortRef structural_source_for_input_schema(
+            const TSValueTypeMetaData *input_schema, const WiringNamedStructuralSourceArg &arg)
+        {
+            const TSValueTypeMetaData *source_schema = structural_target_schema_for_input(input_schema);
+            if (source_schema == nullptr)
+            {
+                throw std::logic_error("wire<T>: named structural initializer target schema is unresolved");
+            }
+            if (source_schema->kind != TSTypeKind::TSB)
+            {
+                throw std::logic_error("wire<T>: named structural initializer requires a TSB input schema");
+            }
+
+            std::vector<WiringPortRef> children(source_schema->field_count());
+            std::vector<bool>          seen(source_schema->field_count(), false);
+            for (const WiringNamedPortRef &field_ref : arg.fields)
+            {
+                const std::size_t index = tsb_field_index_for_name(*source_schema, field_ref.name);
+                if (seen[index])
+                {
+                    throw std::logic_error("wire<T>: named structural initializer contains a duplicate TSB field");
+                }
+
+                const auto *field_schema = source_schema->fields()[index].type;
+                if (!input_accepts_output_schema(field_schema, field_ref.source.schema))
+                {
+                    throw std::logic_error(
+                        "wire<T>: named structural initializer child schema does not match the TSB field schema");
+                }
+
+                children[index] = field_ref.source;
+                seen[index]     = true;
+            }
+
+            for (std::size_t index = 0; index < children.size(); ++index)
+            {
+                if (!seen[index]) { children[index] = WiringPortRef::null_source(source_schema->fields()[index].type); }
+            }
+            return WiringPortRef::structural_source(source_schema, std::move(children));
+        }
+
+        template <typename Pattern>
+        struct structural_arg_schema_infer
+        {
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringStructuralSourceArg &) noexcept
+            {
+                return nullptr;
+            }
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringNamedStructuralSourceArg &) noexcept
+            {
+                return nullptr;
+            }
+        };
+
+        template <typename ElementSchema, std::size_t FixedSize>
+        struct structural_arg_schema_infer<TSL<ElementSchema, FixedSize>>
+        {
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringStructuralSourceArg &arg)
+            {
+                if constexpr (FixedSize != 0)
+                {
+                    if (arg.children.size() != FixedSize) { return nullptr; }
+                }
+                if (arg.children.empty() || arg.children.front().schema == nullptr) { return nullptr; }
+
+                const TSValueTypeMetaData *element = arg.children.front().schema;
+                for (const WiringPortRef &child : arg.children)
+                {
+                    if (!time_series_schema_equivalent(element, child.schema)) { return nullptr; }
+                }
+                return TypeRegistry::instance().tsl(element, FixedSize != 0 ? FixedSize : arg.children.size());
+            }
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringNamedStructuralSourceArg &) noexcept
+            {
+                return nullptr;
+            }
+        };
+
+        namespace structural_arg_detail
+        {
+            template <typename Field>
+            [[nodiscard]] std::pair<std::string, const TSValueTypeMetaData *>
+            inferred_tsb_field(const WiringStructuralSourceArg &arg, std::size_t index)
+            {
+                if (index >= arg.children.size() || arg.children[index].schema == nullptr)
+                {
+                    return {ts_field_descriptor<Field>::field_name(), nullptr};
+                }
+                return {ts_field_descriptor<Field>::field_name(), arg.children[index].schema};
+            }
+
+            template <typename... Fields, std::size_t... I>
+            [[nodiscard]] std::vector<std::pair<std::string, const TSValueTypeMetaData *>>
+            inferred_tsb_fields(const WiringStructuralSourceArg &arg, std::index_sequence<I...>)
+            {
+                return {inferred_tsb_field<Fields>(arg, I)...};
+            }
+
+            [[nodiscard]] inline std::vector<std::pair<std::string, const TSValueTypeMetaData *>>
+            inferred_named_tsb_fields(const WiringNamedStructuralSourceArg &arg)
+            {
+                std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+                fields.reserve(arg.fields.size());
+                for (const WiringNamedPortRef &field : arg.fields)
+                {
+                    if (field.source.schema != nullptr) { fields.emplace_back(field.name, field.source.schema); }
+                }
+                return fields;
+            }
+        }  // namespace structural_arg_detail
+
+        template <typename... Fields>
+        struct structural_arg_schema_infer<UnNamedTSB<Fields...>>
+        {
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringStructuralSourceArg &arg)
+            {
+                if (arg.children.size() != sizeof...(Fields)) { return nullptr; }
+                auto fields = structural_arg_detail::inferred_tsb_fields<Fields...>(
+                    arg, std::index_sequence_for<Fields...>{});
+                for (const auto &field : fields)
+                {
+                    if (field.second == nullptr) { return nullptr; }
+                }
+                return TypeRegistry::instance().un_named_tsb(fields);
+            }
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringNamedStructuralSourceArg &arg)
+            {
+                auto fields = structural_arg_detail::inferred_named_tsb_fields(arg);
+                if (fields.empty()) { return nullptr; }
+                return TypeRegistry::instance().un_named_tsb(fields);
+            }
+        };
+
+        template <fixed_string Name, typename... Fields>
+        struct structural_arg_schema_infer<TSB<Name, Fields...>>
+        {
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringStructuralSourceArg &arg)
+            {
+                if (arg.children.size() != sizeof...(Fields)) { return nullptr; }
+                auto fields = structural_arg_detail::inferred_tsb_fields<Fields...>(
+                    arg, std::index_sequence_for<Fields...>{});
+                for (const auto &field : fields)
+                {
+                    if (field.second == nullptr) { return nullptr; }
+                }
+                return TypeRegistry::instance().tsb(Name.sv(), fields);
+            }
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringNamedStructuralSourceArg &arg)
+            {
+                auto fields = structural_arg_detail::inferred_named_tsb_fields(arg);
+                if (fields.empty()) { return nullptr; }
+                return TypeRegistry::instance().tsb(Name.sv(), fields);
+            }
+        };
+
+        template <typename Schema>
+        struct structural_arg_schema_infer<REF<Schema>> : structural_arg_schema_infer<Schema>
+        {
+        };
 
         [[nodiscard]] WiringPortRef adapt_source_for_input(Wiring &w,
                                                            const TSValueTypeMetaData *input_schema,
@@ -575,13 +870,23 @@ namespace hgraph
         // into the ``Scalar<>`` parameter — the sub-graph mirror of how ``wire<T>``
         // handles a node's In ports and Scalar arguments.
         template <typename P, typename Arg>
-        [[nodiscard]] auto make_compose_arg(Arg &&arg)
+        [[nodiscard]] auto make_compose_arg(Wiring &w, Arg &&arg)
         {
+            static_cast<void>(w);
             if constexpr (is_port<P>::value)
             {
                 using A = std::remove_cvref_t<Arg>;
-                static_assert(is_port<A>::value, "wire<G>: a time-series input expects a Port argument");
-                if constexpr (is_erased_port<P>::value)
+                static_assert(is_port<A>::value || is_structural_source_arg<A>::value,
+                              "wire<G>: a time-series input expects a Port argument or structural initializer");
+                if constexpr (is_structural_source_arg<A>::value)
+                {
+                    static_assert(!is_erased_port<P>::value,
+                                  "wire<G>: structural initializer requires a typed sub-graph Port parameter");
+                    const auto *expected = schema_descriptor<typename P::schema>::ts_meta();
+                    WiringPortRef ref = structural_source_for_input_schema(expected, arg);
+                    return P{adapt_source_for_input(w, expected, std::move(ref))};
+                }
+                else if constexpr (is_erased_port<P>::value)
                 {
                     return P{arg.erased()};
                 }
@@ -637,7 +942,7 @@ namespace hgraph
             auto arg_tuple = std::forward_as_tuple(args...);
             return [&]<std::size_t... I>(std::index_sequence<I...>) {
                 return X::compose(w, graph_wiring_detail::make_compose_arg<
-                                         std::tuple_element_t<I, typename sig::param_types>>(std::get<I>(arg_tuple))...);
+                                         std::tuple_element_t<I, typename sig::param_types>>(w, std::get<I>(arg_tuple))...);
             }(std::make_index_sequence<sizeof...(Args)>{});
         }
         else if constexpr (std::is_base_of_v<operator_tag, X>)
@@ -704,10 +1009,22 @@ namespace hgraph
                             using A = std::remove_cvref_t<std::tuple_element_t<I, std::tuple<Args...>>>;
                             if constexpr (static_node_detail::is_input_selector<P>::value)
                             {
-                                static_assert(graph_wiring_detail::is_port<A>::value,
-                                              "wire<T>: a time-series input expects a Port argument");
-                                ts_unifier<typename graph_wiring_detail::in_param_schema<P>::type>::unify(
-                                    std::get<I>(arg_tuple).erased().schema, map);
+                                static_assert(graph_wiring_detail::is_port<A>::value ||
+                                                  graph_wiring_detail::is_structural_source_arg<A>::value,
+                                              "wire<T>: a time-series input expects a Port argument or structural initializer");
+                                if constexpr (graph_wiring_detail::is_structural_source_arg<A>::value)
+                                {
+                                    using Expected = typename graph_wiring_detail::in_param_schema<P>::type;
+                                    const auto *inferred =
+                                        graph_wiring_detail::structural_arg_schema_infer<Expected>::infer(
+                                            std::get<I>(arg_tuple));
+                                    if (inferred != nullptr) { ts_unifier<Expected>::unify(inferred, map); }
+                                }
+                                else
+                                {
+                                    ts_unifier<typename graph_wiring_detail::in_param_schema<P>::type>::unify(
+                                        std::get<I>(arg_tuple).erased().schema, map);
+                                }
                             }
                             else if constexpr (static_node_detail::is_scalar_selector<P>::value)
                             {
@@ -733,15 +1050,27 @@ namespace hgraph
                             using P = std::tuple_element_t<I, wire_params>;
                             if constexpr (static_node_detail::is_input_selector<P>::value)
                             {
-                                WiringPortRef       ref = std::get<I>(arg_tuple).erased();
-                                const auto         *expected =
+                                using A = std::remove_cvref_t<std::tuple_element_t<I, std::tuple<Args...>>>;
+                                const auto *expected =
                                     ts_resolver<typename graph_wiring_detail::in_param_schema<P>::type>::resolve(map);
-                                if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
+                                if constexpr (graph_wiring_detail::is_structural_source_arg<A>::value)
                                 {
-                                    throw std::logic_error(
-                                        "wire<T>: input port schema does not match the node's time-series input");
+                                    WiringPortRef ref = graph_wiring_detail::structural_source_for_input_schema(
+                                        expected, std::get<I>(arg_tuple));
+                                    inputs.push_back(
+                                        graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
                                 }
-                                inputs.push_back(graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
+                                else
+                                {
+                                    WiringPortRef ref = std::get<I>(arg_tuple).erased();
+                                    if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
+                                    {
+                                        throw std::logic_error(
+                                            "wire<T>: input port schema does not match the node's time-series input");
+                                    }
+                                    inputs.push_back(
+                                        graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
+                                }
                             }
                         }(),
                         ...);
@@ -806,13 +1135,21 @@ namespace hgraph
                             using A = std::remove_cvref_t<std::tuple_element_t<I, std::tuple<Args...>>>;
                             if constexpr (static_node_detail::is_input_selector<P>::value)
                             {
-                                static_assert(graph_wiring_detail::is_port<A>::value,
-                                              "wire<T>: a time-series input expects a Port argument");
-                                if constexpr (graph_wiring_detail::is_erased_port<A>::value)
+                                static_assert(graph_wiring_detail::is_port<A>::value ||
+                                                  graph_wiring_detail::is_structural_source_arg<A>::value,
+                                              "wire<T>: a time-series input expects a Port argument or structural initializer");
+                                const auto *expected = schema_descriptor<
+                                    typename graph_wiring_detail::in_param_schema<P>::type>::ts_meta();
+                                if constexpr (graph_wiring_detail::is_structural_source_arg<A>::value)
                                 {
-                                    WiringPortRef ref      = std::get<I>(arg_tuple).erased();
-                                    const auto   *expected = schema_descriptor<
-                                        typename graph_wiring_detail::in_param_schema<P>::type>::ts_meta();
+                                    WiringPortRef ref = graph_wiring_detail::structural_source_for_input_schema(
+                                        expected, std::get<I>(arg_tuple));
+                                    inputs.push_back(
+                                        graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
+                                }
+                                else if constexpr (graph_wiring_detail::is_erased_port<A>::value)
+                                {
+                                    WiringPortRef ref = std::get<I>(arg_tuple).erased();
                                     if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
                                     {
                                         throw std::logic_error(
@@ -823,8 +1160,6 @@ namespace hgraph
                                 }
                                 else
                                 {
-                                    const auto *expected = schema_descriptor<
-                                        typename graph_wiring_detail::in_param_schema<P>::type>::ts_meta();
                                     static_assert(graph_wiring_detail::statically_accepts_output_v<
                                                       typename graph_wiring_detail::in_param_schema<P>::type,
                                                       typename A::schema>,
@@ -871,6 +1206,44 @@ namespace hgraph
                 }
             }
         }
+    }
+
+    template <typename X, typename OutSchema = void, typename... Rest>
+    auto wire(Wiring &w, std::initializer_list<WiringPortRef> first, const Rest &...rest)
+    {
+        return wire<X, OutSchema>(w, WiringStructuralSourceArg{first}, rest...);
+    }
+
+    template <typename X, typename OutSchema = void, typename... Rest>
+    auto wire(Wiring &w, std::initializer_list<WiringNamedPortRef> first, const Rest &...rest)
+    {
+        return wire<X, OutSchema>(w, WiringNamedStructuralSourceArg{first}, rest...);
+    }
+
+    template <typename X, typename OutSchema = void, typename A0, typename... Rest>
+    auto wire(Wiring &w, const A0 &a0, std::initializer_list<WiringPortRef> second, const Rest &...rest)
+    {
+        return wire<X, OutSchema>(w, a0, WiringStructuralSourceArg{second}, rest...);
+    }
+
+    template <typename X, typename OutSchema = void, typename A0, typename... Rest>
+    auto wire(Wiring &w, const A0 &a0, std::initializer_list<WiringNamedPortRef> second, const Rest &...rest)
+    {
+        return wire<X, OutSchema>(w, a0, WiringNamedStructuralSourceArg{second}, rest...);
+    }
+
+    template <typename X, typename OutSchema = void, typename A0, typename A1, typename... Rest>
+    auto wire(Wiring &w, const A0 &a0, const A1 &a1, std::initializer_list<WiringPortRef> third,
+              const Rest &...rest)
+    {
+        return wire<X, OutSchema>(w, a0, a1, WiringStructuralSourceArg{third}, rest...);
+    }
+
+    template <typename X, typename OutSchema = void, typename A0, typename A1, typename... Rest>
+    auto wire(Wiring &w, const A0 &a0, const A1 &a1, std::initializer_list<WiringNamedPortRef> third,
+              const Rest &...rest)
+    {
+        return wire<X, OutSchema>(w, a0, a1, WiringNamedStructuralSourceArg{third}, rest...);
     }
 
     /**
