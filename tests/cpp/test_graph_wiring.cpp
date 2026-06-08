@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <memory>
 #include <type_traits>
 #include <utility>
 
@@ -585,6 +586,75 @@ namespace
         spec.output_binding = NestedGraphOutputBinding{.source = NestedGraphEndpoint{.node = 0}};
         return single_nested_graph_node(std::move(meta), std::move(spec));
     }
+
+    void write_int(const NodeView &view, engine_time_t evaluation_time, Int value)
+    {
+        Value wrapped{value};
+        auto  mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
+        REQUIRE(mutation.copy_value_from(wrapped.view()));
+    }
+
+    // A self-rescheduling source emitting 0, 1, ..., count-1 over successive cycles
+    // (the callback-based analogue of TickingSource in test_simulation_execution).
+    NodeBuilder ticking_int_source(const TSValueTypeMetaData *ts_int, int count)
+    {
+        NodeTypeMetaData meta;
+        meta.display_name      = "ticking_source";
+        meta.output_schema     = ts_int;
+        meta.node_kind         = NodeKind::PullSource;
+        meta.schedule_on_start = true;
+
+        auto          emitted = std::make_shared<int>(0);
+        NodeCallbacks callbacks;
+        callbacks.evaluate = [emitted, count](const NodeView &view, engine_time_t evaluation_time) {
+            const int n = *emitted;
+            write_int(view, evaluation_time, Int{n});
+            *emitted = n + 1;
+            if (n + 1 < count && view.graph_value() != nullptr)
+            {
+                view.graph_value()->schedule_node(view.node_index(), evaluation_time + MIN_TD);
+            }
+        };
+        return NodeBuilder::native(std::move(meta), std::move(callbacks));
+    }
+
+    // A pass-through compute node that records how many times it is evaluated.
+    NodeBuilder counting_passthrough(const TSValueTypeMetaData *ts_int, std::shared_ptr<int> evals)
+    {
+        NodeTypeMetaData meta;
+        meta.display_name  = "counting_passthrough";
+        meta.input_schema  = TypeRegistry::instance().un_named_tsb({{"in", ts_int}});
+        meta.output_schema = ts_int;
+        meta.node_kind     = NodeKind::Compute;
+
+        NodeCallbacks callbacks;
+        callbacks.evaluate = [evals](const NodeView &view, engine_time_t evaluation_time) {
+            ++*evals;
+            auto root   = view.input(evaluation_time);
+            auto bundle = root.as_bundle();
+            auto in     = bundle[0];
+            write_int(view, evaluation_time, in.value().checked_as<Int>());
+        };
+        return NodeBuilder::native(std::move(meta), std::move(callbacks));
+    }
+
+    // A sink (no output) used to exercise that identical sinks are not interned.
+    struct DropInt
+    {
+        static constexpr auto name = "drop_int";
+        static void           eval(In<"in", TS<Int>> in) { static_cast<void>(in); }
+    };
+
+    struct TwoSinksGraph
+    {
+        static constexpr auto name = "two_sinks_graph";
+        static void           compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            wire<DropInt>(w, source);
+            wire<DropInt>(w, source);   // identical sink: must stay a distinct node
+        }
+    };
 }  // namespace
 
 TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulation")
@@ -848,6 +918,50 @@ TEST_CASE("graph wiring: nested node propagates child graph schedule")
     REQUIRE(graph.node_count() == 1);
     REQUIRE(graph.node_at(0).output(MIN_ST).valid());
     CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<Int>() == Int{41});
+}
+
+TEST_CASE("graph wiring: nested node re-evaluates its child across multiple cycles")
+{
+    using namespace hgraph;
+
+    const auto *ts_int           = ts_type<TS<Int>>();
+    auto        downstream_evals = std::make_shared<int>(0);
+
+    GraphBuilder graph_builder;
+    graph_builder.label("multi_cycle_nested")
+        .add_node(ticking_int_source(ts_int, 3))   // emits 0, 1, 2 over three cycles
+        .add_node(nested_add_one_builder())         // child forwards add_one(n)
+        .add_node(counting_passthrough(ts_int, downstream_evals))
+        .add_edge(GraphEdge{.source_node = 0, .target_node = 1, .target_path = {0}})
+        .add_edge(GraphEdge{.source_node = 1, .target_node = 2, .target_path = {0}});
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{10});
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    executor.view().run();
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 3);
+    // The nested child re-evaluated on every source tick and forwarded a fresh
+    // value, so the downstream node ran once per cycle...
+    CHECK(*downstream_evals == 3);
+    // ...and the last forwarded value is add_one(2) = 3.
+    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Int>() == Int{3});
+}
+
+TEST_CASE("graph wiring: identical sink nodes are not interned")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<TwoSinksGraph>();
+    GraphValue   graph         = graph_builder.make_graph();
+
+    // The source is deduped to one node, but the two identical sinks stay distinct:
+    // a sink runs for its side effect, so each must remain its own runtime node.
+    CHECK(graph.view().node_count() == 3);
 }
 
 TEST_CASE("graph wiring: REF output can bind back to a dereferenced TS input")
