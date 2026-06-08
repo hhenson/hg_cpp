@@ -14,7 +14,8 @@
 
 #include <cstddef>
 #include <functional>
-#include <memory>
+#include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -119,6 +120,9 @@ namespace hgraph
                                                              engine_time_t evaluation_time) = nullptr;
         [[nodiscard]] TSOutputView (*recordable_state_view_impl)(const void *context, void *memory,
                                                                  engine_time_t evaluation_time) = nullptr;
+
+        const void *extended_view_type_id{nullptr};
+        const void *extended_view_context{nullptr};
     };
 
     using NodeTypeBinding = TypeBinding<NodeTypeMetaData, NodeOps>;
@@ -130,6 +134,24 @@ namespace hgraph
         std::function<void(const NodeView &, engine_time_t)> start{};
         std::function<void(const NodeView &, engine_time_t)> evaluate{};
         std::function<void(const NodeView &, engine_time_t)> stop{};
+    };
+
+    struct HGRAPH_EXPORT NodeStorageField
+    {
+        std::string_view                name{};
+        const MemoryUtils::StoragePlan *plan{nullptr};
+    };
+
+    [[nodiscard]] HGRAPH_EXPORT const MemoryUtils::StoragePlan &node_storage_plan_for(
+        const NodeTypeMetaData &schema,
+        std::span<const NodeStorageField> extra_fields = {});
+
+    struct HGRAPH_EXPORT NodeTypeDescriptor
+    {
+        NodeTypeMetaData                  schema{};
+        const MemoryUtils::StoragePlan   *storage_plan{nullptr};
+        NodeCallbacks                     callbacks{};
+        NodeOps                           ops{};
     };
 
     /**
@@ -178,6 +200,18 @@ namespace hgraph
         [[nodiscard]] NodeSchedulerState &scheduler_state() const;
         [[nodiscard]] TSOutputView error_output(engine_time_t evaluation_time) const;
         [[nodiscard]] TSOutputView recordable_state(engine_time_t evaluation_time) const;
+
+        template <typename T>
+        [[nodiscard]] T as() const
+        {
+            if (!valid()) { throw std::logic_error("NodeView::as<T> requires a live node"); }
+            const NodeOps &node_ops = ops();
+            if (node_ops.extended_view_type_id != T::node_view_type_id())
+            {
+                throw std::invalid_argument("NodeView::as<T> requested an unsupported node extension view");
+            }
+            return T::from_node(NodeView{binding(), data()}, node_ops.extended_view_context);
+        }
 
         void start(engine_time_t evaluation_time) const;
         void stop(engine_time_t evaluation_time) const;
@@ -240,6 +274,9 @@ namespace hgraph
         [[nodiscard]] static NodeBuilder native(NodeTypeMetaData schema,
                                                 NodeCallbacks callbacks = {},
                                                 TSEndpointSchema input_endpoint = {});
+
+        [[nodiscard]] static NodeBuilder from_descriptor(NodeTypeDescriptor descriptor,
+                                                         TSEndpointSchema input_endpoint = {});
 
         /**
          * Typed front-end over ``native``: build this node from a static node

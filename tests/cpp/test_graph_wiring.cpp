@@ -10,7 +10,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstdint>
+#include <memory>
+#include <optional>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 
@@ -532,6 +536,306 @@ namespace
         executor.view().run();
         return executor;
     }
+
+    NodeBuilder boundary_source_builder(const TSValueTypeMetaData *schema)
+    {
+        NodeTypeMetaData meta;
+        meta.display_name  = "boundary_source";
+        meta.output_schema = schema;
+        meta.node_kind     = NodeKind::PullSource;
+        return NodeBuilder::native(std::move(meta));
+    }
+
+    NodeBuilder static_node_builder_for_add_one()
+    {
+        NodeBuilder builder;
+        builder.implementation<AddOne>();
+        return builder;
+    }
+
+    NodeBuilder static_node_builder_for_constant_source()
+    {
+        NodeBuilder builder;
+        builder.implementation<ConstantSource>();
+        return builder;
+    }
+
+    [[nodiscard]] TSOutputView nested_output_at_path(TSOutputView view, const std::vector<std::size_t> &path)
+    {
+        for (const std::size_t component : path)
+        {
+            switch (view.schema()->kind)
+            {
+                case TSTypeKind::TSB:
+                {
+                    auto bundle = view.as_bundle();
+                    view = bundle[component];
+                    break;
+                }
+                case TSTypeKind::TSL:
+                {
+                    auto list = view.as_list();
+                    view = list[component];
+                    break;
+                }
+                default: throw std::invalid_argument("nested output path requires an indexed time-series shape");
+            }
+        }
+        return view;
+    }
+
+    [[nodiscard]] std::size_t nested_input_index(const TSValueTypeMetaData &schema, std::string_view name)
+    {
+        for (std::size_t index = 0; index < schema.field_count(); ++index)
+        {
+            const auto &field = schema.fields()[index];
+            if (field.name != nullptr && std::string_view{field.name} == name) { return index; }
+        }
+        throw std::invalid_argument("nested input binding references an unknown field");
+    }
+
+    struct SingleNestedGraphContext
+    {
+        struct InputBinding
+        {
+            std::string              input_name{};
+            std::size_t              boundary_node{0};
+            std::vector<std::size_t> boundary_path{};
+        };
+
+        struct OutputBinding
+        {
+            std::size_t              node{0};
+            std::vector<std::size_t> path{};
+        };
+
+        GraphBuilder                        graph_builder{};
+        std::vector<InputBinding>           input_bindings{};
+        std::optional<OutputBinding>        output_binding{};
+    };
+
+    struct SingleNestedGraphStorage
+    {
+        GraphValue                                      graph{};
+    };
+
+    struct SingleNestedGraphNodeViewContext
+    {
+        const SingleNestedGraphContext *context{nullptr};
+        std::size_t                     storage_offset{0};
+    };
+
+    struct SingleNestedGraphNodeTypeContext
+    {
+        SingleNestedGraphContext         graph_context{};
+        SingleNestedGraphNodeViewContext view_context{};
+    };
+
+    [[nodiscard]] std::vector<std::unique_ptr<SingleNestedGraphNodeTypeContext>> &
+    single_nested_graph_type_contexts() noexcept
+    {
+        static auto *contexts = new std::vector<std::unique_ptr<SingleNestedGraphNodeTypeContext>>;
+        return *contexts;
+    }
+
+    [[nodiscard]] const SingleNestedGraphNodeViewContext &
+    single_nested_graph_type_context(GraphBuilder child,
+                                     std::vector<SingleNestedGraphContext::InputBinding> input_bindings,
+                                     std::optional<SingleNestedGraphContext::OutputBinding> output_binding,
+                                     std::size_t storage_offset)
+    {
+        auto entry = std::make_unique<SingleNestedGraphNodeTypeContext>();
+        entry->graph_context = SingleNestedGraphContext{
+            .graph_builder = std::move(child),
+            .input_bindings = std::move(input_bindings),
+            .output_binding = std::move(output_binding),
+        };
+        entry->view_context = SingleNestedGraphNodeViewContext{
+            .context = &entry->graph_context,
+            .storage_offset = storage_offset,
+        };
+
+        const auto *result = &entry->view_context;
+        single_nested_graph_type_contexts().push_back(std::move(entry));
+        return *result;
+    }
+
+    class SingleNestedGraphNodeView
+    {
+      public:
+        [[nodiscard]] static const void *node_view_type_id() noexcept
+        {
+            static const char token{};
+            return &token;
+        }
+
+        [[nodiscard]] static SingleNestedGraphNodeView from_node(NodeView view, const void *context)
+        {
+            if (context == nullptr) { throw std::logic_error("SingleNestedGraphNodeView requires a typed view context"); }
+            return SingleNestedGraphNodeView{
+                std::move(view),
+                *static_cast<const SingleNestedGraphNodeViewContext *>(context)};
+        }
+
+        [[nodiscard]] const NodeView &node() const noexcept { return view_; }
+        [[nodiscard]] SingleNestedGraphStorage &storage() const noexcept { return *storage_; }
+        [[nodiscard]] const SingleNestedGraphContext &context() const noexcept { return *context_->context; }
+        [[nodiscard]] GraphView child_graph() const { return storage_->graph.view(); }
+        void ensure_child_graph() const
+        {
+            if (!storage_->graph.has_value()) { storage_->graph = GraphValue{context().graph_builder}; }
+        }
+
+      private:
+        explicit SingleNestedGraphNodeView(NodeView view, const SingleNestedGraphNodeViewContext &context)
+            : view_(std::move(view)),
+              context_(&context),
+              storage_(MemoryUtils::cast<SingleNestedGraphStorage>(
+                  MemoryUtils::advance(view_.data(), context.storage_offset)))
+        {
+        }
+
+        NodeView                                view_{};
+        const SingleNestedGraphNodeViewContext *context_{nullptr};
+        SingleNestedGraphStorage               *storage_{nullptr};
+    };
+
+    void propagate_single_nested_schedule(const NodeView &view, const SingleNestedGraphStorage &storage)
+    {
+        const engine_time_t next = storage.graph.view().next_scheduled_time();
+        if (next != MAX_DT && view.graph_value() != nullptr)
+        {
+            view.graph_value()->schedule_node(view.node_index(), next, true);
+        }
+    }
+
+    void copy_single_nested_inputs(const NodeView &view,
+                                   SingleNestedGraphStorage &storage,
+                                   const SingleNestedGraphContext &context,
+                                   engine_time_t evaluation_time)
+    {
+        if (context.input_bindings.empty()) { return; }
+
+        auto root_input  = view.input(evaluation_time);
+        auto input_bundle = root_input.as_bundle();
+        auto child_graph = storage.graph.view();
+
+        for (const SingleNestedGraphContext::InputBinding &binding : context.input_bindings)
+        {
+            const std::size_t input_index = nested_input_index(*view.schema()->input_schema, binding.input_name);
+            auto              source      = input_bundle[input_index];
+            if (!source.valid()) { continue; }
+
+            auto target = nested_output_at_path(child_graph.node_at(binding.boundary_node).output(evaluation_time),
+                                                binding.boundary_path);
+            if (!target.valid()) { apply_current_value(target, source.value()); }
+            else if (source.modified()) { apply_delta(target, source.delta_value()); }
+        }
+    }
+
+    void copy_single_nested_output(const NodeView &view,
+                                   SingleNestedGraphStorage &storage,
+                                   const SingleNestedGraphContext &context,
+                                   engine_time_t evaluation_time)
+    {
+        if (!context.output_binding.has_value()) { return; }
+
+        const auto &binding = *context.output_binding;
+        auto source = nested_output_at_path(storage.graph.view().node_at(binding.node).output(evaluation_time), binding.path);
+        if (!source.valid() || !source.modified()) { return; }
+
+        apply_current_value(view.output(evaluation_time), source.value());
+    }
+
+    void single_nested_evaluate_impl(const void *, const NodeView &view, engine_time_t evaluation_time, bool)
+    {
+        if (!view.started()) { return; }
+
+        auto  nested  = view.as<SingleNestedGraphNodeView>();
+        nested.ensure_child_graph();
+        auto &storage = nested.storage();
+        copy_single_nested_inputs(nested.node(), storage, nested.context(), evaluation_time);
+        nested.child_graph().evaluate(evaluation_time);
+        copy_single_nested_output(nested.node(), storage, nested.context(), evaluation_time);
+        propagate_single_nested_schedule(nested.node(), storage);
+    }
+
+    NodeBuilder single_nested_graph_builder(NodeTypeMetaData meta,
+                                            GraphBuilder child,
+                                            std::vector<SingleNestedGraphContext::InputBinding> input_bindings,
+                                            std::optional<SingleNestedGraphContext::OutputBinding> output_binding)
+    {
+        meta.node_kind = NodeKind::Nested;
+
+        NodeTypeDescriptor descriptor;
+        descriptor.schema = std::move(meta);
+        const std::array fields{NodeStorageField{
+            .name = "single_nested_graph",
+            .plan = &MemoryUtils::plan_for<SingleNestedGraphStorage>(),
+        }};
+        descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
+        const auto &view_context = single_nested_graph_type_context(
+            std::move(child),
+            std::move(input_bindings),
+            std::move(output_binding),
+            descriptor.storage_plan->component("single_nested_graph").offset);
+        descriptor.callbacks.start = [](const NodeView &view, engine_time_t evaluation_time) {
+            auto  nested  = view.as<SingleNestedGraphNodeView>();
+            nested.ensure_child_graph();
+            auto &storage = nested.storage();
+            nested.child_graph().start(evaluation_time);
+            propagate_single_nested_schedule(nested.node(), storage);
+        };
+        descriptor.callbacks.stop = [](const NodeView &view, engine_time_t) {
+            auto nested = view.as<SingleNestedGraphNodeView>();
+            if (nested.storage().graph.has_value()) { nested.child_graph().stop(); }
+        };
+        descriptor.ops.evaluate_impl = &single_nested_evaluate_impl;
+        descriptor.ops.extended_view_type_id = SingleNestedGraphNodeView::node_view_type_id();
+        descriptor.ops.extended_view_context = &view_context;
+
+        return NodeBuilder::from_descriptor(std::move(descriptor));
+    }
+
+    NodeBuilder nested_add_one_builder()
+    {
+        const auto *ts_int = ts_type<TS<Int>>();
+
+        GraphBuilder child;
+        child.label("nested_add_one_child")
+            .add_node(boundary_source_builder(ts_int))
+            .add_node(static_node_builder_for_add_one())
+            .add_edge(GraphEdge{.source_node = 0, .target_node = 1, .target_path = {0}});
+
+        NodeTypeMetaData meta;
+        meta.display_name = "nested_add_one";
+        meta.input_schema = TypeRegistry::instance().un_named_tsb({{"in", ts_int}});
+        meta.output_schema = ts_int;
+
+        return single_nested_graph_builder(
+            std::move(meta),
+            std::move(child),
+            {SingleNestedGraphContext::InputBinding{.input_name = "in", .boundary_node = 0}},
+            SingleNestedGraphContext::OutputBinding{.node = 1});
+    }
+
+    NodeBuilder nested_constant_builder()
+    {
+        const auto *ts_int = ts_type<TS<Int>>();
+
+        GraphBuilder child;
+        child.label("nested_constant_child").add_node(static_node_builder_for_constant_source());
+
+        NodeTypeMetaData meta;
+        meta.display_name  = "nested_constant";
+        meta.output_schema = ts_int;
+
+        return single_nested_graph_builder(
+            std::move(meta),
+            std::move(child),
+            {},
+            SingleNestedGraphContext::OutputBinding{.node = 0});
+    }
 }  // namespace
 
 TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulation")
@@ -742,6 +1046,39 @@ TEST_CASE("graph wiring: partial named TSB initializer fills missing fields with
     REQUIRE(graph.node_count() == 2);
     REQUIRE(graph.node_at(1).output(MIN_ST).valid());
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{41});
+}
+
+TEST_CASE("graph wiring: nested node maps outer input into child graph boundary output")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder;
+    graph_builder.label("outer_nested_add_one")
+        .add_node(static_node_builder_for_constant_source())
+        .add_node(nested_add_one_builder())
+        .add_edge(GraphEdge{.source_node = 0, .target_node = 1, .target_path = {0}});
+
+    GraphExecutorValue executor = run_start(std::move(graph_builder));
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 2);
+    REQUIRE(graph.node_at(1).output(MIN_ST).valid());
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{42});
+}
+
+TEST_CASE("graph wiring: nested node propagates child graph schedule")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder;
+    graph_builder.label("outer_nested_constant").add_node(nested_constant_builder());
+
+    GraphExecutorValue executor = run_start(std::move(graph_builder));
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 1);
+    REQUIRE(graph.node_at(0).output(MIN_ST).valid());
+    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<Int>() == Int{41});
 }
 
 TEST_CASE("graph wiring: REF output can bind back to a dereferenced TS input")

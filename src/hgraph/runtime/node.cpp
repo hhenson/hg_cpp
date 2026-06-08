@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cassert>
 #include <deque>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 
@@ -70,9 +71,9 @@ namespace hgraph
 
         struct NodeRuntimeContext
         {
-            NodeCallbacks                   callbacks{};
-            NodeRuntimeLayout               layout{};
-            const MemoryUtils::StoragePlan *plan{nullptr};
+            NodeCallbacks                    callbacks{};
+            NodeRuntimeLayout                layout{};
+            const MemoryUtils::StoragePlan  *plan{nullptr};
         };
 
         [[nodiscard]] const NodeRuntimeContext &runtime_context(const void *context)
@@ -179,12 +180,13 @@ namespace hgraph
             return *binding;
         }
 
-        void destroy_constructed_prefix(const MemoryUtils::StoragePlan &plan, void *memory, std::size_t constructed) noexcept
+        void destroy_constructed_components(
+            const std::vector<const MemoryUtils::CompositeComponent *> &constructed,
+            void *memory) noexcept
         {
-            const auto components = plan.components();
-            for (std::size_t index = constructed; index > 0; --index)
+            for (std::size_t index = constructed.size(); index > 0; --index)
             {
-                const auto &component = components[index - 1];
+                const auto &component = *constructed[index - 1];
                 component.plan->destroy(MemoryUtils::advance(memory, component.offset));
             }
         }
@@ -197,75 +199,108 @@ namespace hgraph
                                     void                     *memory)
         {
             if (context.plan == nullptr) { throw std::logic_error("Node runtime context has no storage plan"); }
+            const MemoryUtils::StoragePlan &plan = *context.plan;
 
-            std::size_t constructed = 0;
+            std::vector<const MemoryUtils::CompositeComponent *> constructed;
+            constructed.reserve(8);
             auto rollback = make_scope_exit([&]() noexcept {
-                destroy_constructed_prefix(*context.plan, memory, constructed);
+                destroy_constructed_components(constructed, memory);
             });
 
+            const auto *runtime_storage_component = plan.find_component("runtime_storage");
+            if (runtime_storage_component == nullptr)
+            {
+                throw std::logic_error("Node storage plan is missing runtime_storage");
+            }
             std::construct_at(MemoryUtils::cast<NodeRuntimeStorage>(
-                                  MemoryUtils::advance(memory, context.layout.storage_offset)),
+                                  MemoryUtils::advance(memory, runtime_storage_component->offset)),
                               schema, std::move(runtime_label));
-            ++constructed;
+            constructed.push_back(runtime_storage_component);
 
             if (context.layout.has_input())
             {
-                const auto &builder = input_builder_for(*schema.input_schema, std::move(input_endpoint));
+                const auto *component = plan.find_component("input");
+                if (component == nullptr) { throw std::logic_error("Node storage plan is missing input"); }
+                const auto &input_builder = input_builder_for(*schema.input_schema, std::move(input_endpoint));
                 std::construct_at(MemoryUtils::cast<TSInput>(
-                                      MemoryUtils::advance(memory, context.layout.input_offset)),
-                                  builder);
-                ++constructed;
+                                      MemoryUtils::advance(memory, component->offset)),
+                                  input_builder);
+                constructed.push_back(component);
             }
 
             if (context.layout.has_output())
             {
+                const auto *component = plan.find_component("output");
+                if (component == nullptr) { throw std::logic_error("Node storage plan is missing output"); }
                 std::construct_at(MemoryUtils::cast<TSOutput>(
-                                      MemoryUtils::advance(memory, context.layout.output_offset)),
+                                      MemoryUtils::advance(memory, component->offset)),
                                   *schema.output_schema);
-                ++constructed;
+                constructed.push_back(component);
             }
 
             if (context.layout.has_state())
             {
+                const auto *component = plan.find_component("state");
+                if (component == nullptr) { throw std::logic_error("Node storage plan is missing state"); }
                 std::construct_at(MemoryUtils::cast<Value>(
-                                      MemoryUtils::advance(memory, context.layout.state_offset)),
+                                      MemoryUtils::advance(memory, component->offset)),
                                   state_binding_for(schema.state_schema));
-                ++constructed;
+                constructed.push_back(component);
             }
 
             if (context.layout.has_scalars())
             {
+                const auto *component = plan.find_component("scalars");
+                if (component == nullptr) { throw std::logic_error("Node storage plan is missing scalars"); }
                 if (!scalars.has_value())
                 {
                     throw std::logic_error("Node has a scalar schema but no scalar configuration value was provided");
                 }
                 std::construct_at(MemoryUtils::cast<Value>(
-                                      MemoryUtils::advance(memory, context.layout.scalars_offset)),
+                                      MemoryUtils::advance(memory, component->offset)),
                                   scalars);   // copy the per-instance scalar configuration
-                ++constructed;
+                constructed.push_back(component);
             }
 
             if (context.layout.has_scheduler())
             {
+                const auto *component = plan.find_component("scheduler");
+                if (component == nullptr) { throw std::logic_error("Node storage plan is missing scheduler"); }
                 std::construct_at(MemoryUtils::cast<NodeSchedulerState>(
-                                      MemoryUtils::advance(memory, context.layout.scheduler_offset)));
-                ++constructed;
+                                      MemoryUtils::advance(memory, component->offset)));
+                constructed.push_back(component);
             }
 
             if (context.layout.has_error_output())
             {
+                const auto *component = plan.find_component("error_output");
+                if (component == nullptr) { throw std::logic_error("Node storage plan is missing error_output"); }
                 std::construct_at(MemoryUtils::cast<TSOutput>(
-                                      MemoryUtils::advance(memory, context.layout.error_output_offset)),
+                                      MemoryUtils::advance(memory, component->offset)),
                                   *schema.error_output_schema);
-                ++constructed;
+                constructed.push_back(component);
             }
 
             if (context.layout.has_recordable_state())
             {
+                const auto *component = plan.find_component("recordable_state");
+                if (component == nullptr) { throw std::logic_error("Node storage plan is missing recordable_state"); }
                 std::construct_at(MemoryUtils::cast<TSOutput>(
-                                      MemoryUtils::advance(memory, context.layout.recordable_state_offset)),
+                                      MemoryUtils::advance(memory, component->offset)),
                                   *schema.recordable_state_schema);
-                ++constructed;
+                constructed.push_back(component);
+            }
+
+            for (const MemoryUtils::CompositeComponent &component : plan.components())
+            {
+                const auto constructed_it = std::find(constructed.begin(), constructed.end(), &component);
+                if (constructed_it != constructed.end()) { continue; }
+                if (component.plan == nullptr)
+                {
+                    throw std::logic_error("Node storage plan component is missing a child plan");
+                }
+                component.plan->default_construct(MemoryUtils::advance(memory, component.offset));
+                constructed.push_back(&component);
             }
 
             rollback.release();
@@ -306,31 +341,7 @@ namespace hgraph
             {
                 layout.recordable_state_offset = component->offset;
             }
-
             return layout;
-        }
-
-        [[nodiscard]] const MemoryUtils::StoragePlan &node_storage_plan_for(const NodeTypeMetaData &schema)
-        {
-            auto builder = MemoryUtils::named_tuple();
-            builder.add_field("runtime_storage", MemoryUtils::plan_for<NodeRuntimeStorage>());
-            if (schema.input_schema != nullptr) { builder.add_field("input", MemoryUtils::plan_for<TSInput>()); }
-            if (schema.output_schema != nullptr) { builder.add_field("output", MemoryUtils::plan_for<TSOutput>()); }
-            if (schema.state_schema != nullptr) { builder.add_field("state", MemoryUtils::plan_for<Value>()); }
-            if (schema.scalar_schema != nullptr) { builder.add_field("scalars", MemoryUtils::plan_for<Value>()); }
-            if (schema.uses_scheduler)
-            {
-                builder.add_field("scheduler", MemoryUtils::plan_for<NodeSchedulerState>());
-            }
-            if (schema.error_output_schema != nullptr)
-            {
-                builder.add_field("error_output", MemoryUtils::plan_for<TSOutput>());
-            }
-            if (schema.recordable_state_schema != nullptr)
-            {
-                builder.add_field("recordable_state", MemoryUtils::plan_for<TSOutput>());
-            }
-            return builder.build();
         }
 
         void activate_input_slots(const NodeView &view, engine_time_t evaluation_time)
@@ -571,7 +582,8 @@ namespace hgraph
 
         void start_impl(const void *context, const NodeView &view, engine_time_t evaluation_time)
         {
-            auto &state = node_storage(runtime_context(context), view.data());
+            const auto &runtime = runtime_context(context);
+            auto &state = node_storage(runtime, view.data());
             if (state.started) { return; }
 
             std::size_t activated = 0;
@@ -601,7 +613,8 @@ namespace hgraph
 
         void stop_impl(const void *context, const NodeView &view, engine_time_t evaluation_time)
         {
-            auto &state = node_storage(runtime_context(context), view.data());
+            const auto &runtime = runtime_context(context);
+            auto &state = node_storage(runtime, view.data());
             if (!state.started) { return; }
 
             auto mark_stopped = make_scope_exit([&] noexcept { state.started = false; });
@@ -634,7 +647,10 @@ namespace hgraph
                 else { do_eval = modified; }
             }
 
-            if (do_eval && callbacks(context).evaluate) { callbacks(context).evaluate(view, evaluation_time); }
+            if (do_eval)
+            {
+                if (callbacks(context).evaluate) { callbacks(context).evaluate(view, evaluation_time); }
+            }
 
             if (has_scheduler)
             {
@@ -661,46 +677,59 @@ namespace hgraph
 
         struct NodeRuntimeRegistry
         {
-            const NodeTypeBinding &make_binding(NodeTypeMetaData schema, NodeCallbacks callbacks)
+            const NodeTypeBinding &make_binding(
+                NodeTypeMetaData schema,
+                NodeCallbacks callbacks,
+                const MemoryUtils::StoragePlan &plan,
+                NodeOps ops)
             {
                 names.push_back(std::make_unique<std::string>(
                     schema.display_name != nullptr ? std::string{schema.display_name} : std::string{}));
                 if (!names.back()->empty()) { schema.display_name = names.back()->c_str(); }
 
-                const auto &plan = node_storage_plan_for(schema);
                 contexts.push_back(NodeRuntimeContext{
                     .callbacks = std::move(callbacks),
                     .layout = layout_for(plan),
                     .plan = &plan,
                 });
                 schemas.push_back(std::move(schema));
-                ops_storage.push_back(NodeOps{
-                    .context = &contexts.back(),
-                    .attach_graph_impl = &attach_graph_impl,
-                    .graph_impl = &graph_impl,
-                    .node_index_impl = &node_index_impl,
-                    .started_impl = &started_impl,
-                    .start_impl = &start_impl,
-                    .stop_impl = &stop_impl,
-                    .evaluate_impl = &evaluate_impl,
-                    .cleanup_delta_impl = &cleanup_delta_impl,
-                    .has_input_impl = &has_input_impl,
-                    .has_output_impl = &has_output_impl,
-                    .has_state_impl = &has_state_impl,
-                    .has_scalars_impl = &has_scalars_impl,
-                    .has_scheduler_impl = &has_scheduler_impl,
-                    .has_error_output_impl = &has_error_output_impl,
-                    .has_recordable_state_impl = &has_recordable_state_impl,
-                    .input_view_impl = &input_view_impl,
-                    .output_view_impl = &output_view_impl,
-                    .state_view_impl = &state_view_impl,
-                    .scalars_view_impl = &scalars_view_impl,
-                    .scheduler_state_impl = &scheduler_state_impl,
-                    .error_output_view_impl = &error_output_view_impl,
-                    .recordable_state_view_impl = &recordable_state_view_impl,
-                });
+                fill_default_ops(ops);
+                ops.context = &contexts.back();
+                ops_storage.push_back(ops);
 
                 return NodeTypeBinding::intern(schemas.back(), plan, ops_storage.back());
+            }
+
+            static void fill_default_ops(NodeOps &ops)
+            {
+                if (ops.attach_graph_impl == nullptr) { ops.attach_graph_impl = &attach_graph_impl; }
+                if (ops.graph_impl == nullptr) { ops.graph_impl = &graph_impl; }
+                if (ops.node_index_impl == nullptr) { ops.node_index_impl = &node_index_impl; }
+                if (ops.started_impl == nullptr) { ops.started_impl = &started_impl; }
+                if (ops.start_impl == nullptr) { ops.start_impl = &start_impl; }
+                if (ops.stop_impl == nullptr) { ops.stop_impl = &stop_impl; }
+                if (ops.evaluate_impl == nullptr) { ops.evaluate_impl = &evaluate_impl; }
+                if (ops.cleanup_delta_impl == nullptr) { ops.cleanup_delta_impl = &cleanup_delta_impl; }
+                if (ops.has_input_impl == nullptr) { ops.has_input_impl = &has_input_impl; }
+                if (ops.has_output_impl == nullptr) { ops.has_output_impl = &has_output_impl; }
+                if (ops.has_state_impl == nullptr) { ops.has_state_impl = &has_state_impl; }
+                if (ops.has_scalars_impl == nullptr) { ops.has_scalars_impl = &has_scalars_impl; }
+                if (ops.has_scheduler_impl == nullptr) { ops.has_scheduler_impl = &has_scheduler_impl; }
+                if (ops.has_error_output_impl == nullptr) { ops.has_error_output_impl = &has_error_output_impl; }
+                if (ops.has_recordable_state_impl == nullptr)
+                {
+                    ops.has_recordable_state_impl = &has_recordable_state_impl;
+                }
+                if (ops.input_view_impl == nullptr) { ops.input_view_impl = &input_view_impl; }
+                if (ops.output_view_impl == nullptr) { ops.output_view_impl = &output_view_impl; }
+                if (ops.state_view_impl == nullptr) { ops.state_view_impl = &state_view_impl; }
+                if (ops.scalars_view_impl == nullptr) { ops.scalars_view_impl = &scalars_view_impl; }
+                if (ops.scheduler_state_impl == nullptr) { ops.scheduler_state_impl = &scheduler_state_impl; }
+                if (ops.error_output_view_impl == nullptr) { ops.error_output_view_impl = &error_output_view_impl; }
+                if (ops.recordable_state_view_impl == nullptr)
+                {
+                    ops.recordable_state_view_impl = &recordable_state_view_impl;
+                }
             }
 
             std::deque<NodeTypeMetaData>                 schemas{};
@@ -715,6 +744,36 @@ namespace hgraph
             return registry;
         }
     }  // namespace
+
+    const MemoryUtils::StoragePlan &node_storage_plan_for(
+        const NodeTypeMetaData &schema,
+        std::span<const NodeStorageField> extra_fields)
+    {
+        auto builder = MemoryUtils::named_tuple();
+        builder.add_field("runtime_storage", MemoryUtils::plan_for<NodeRuntimeStorage>());
+        if (schema.input_schema != nullptr) { builder.add_field("input", MemoryUtils::plan_for<TSInput>()); }
+        if (schema.output_schema != nullptr) { builder.add_field("output", MemoryUtils::plan_for<TSOutput>()); }
+        if (schema.state_schema != nullptr) { builder.add_field("state", MemoryUtils::plan_for<Value>()); }
+        if (schema.scalar_schema != nullptr) { builder.add_field("scalars", MemoryUtils::plan_for<Value>()); }
+        if (schema.uses_scheduler)
+        {
+            builder.add_field("scheduler", MemoryUtils::plan_for<NodeSchedulerState>());
+        }
+        if (schema.error_output_schema != nullptr)
+        {
+            builder.add_field("error_output", MemoryUtils::plan_for<TSOutput>());
+        }
+        if (schema.recordable_state_schema != nullptr)
+        {
+            builder.add_field("recordable_state", MemoryUtils::plan_for<TSOutput>());
+        }
+        for (const NodeStorageField &field : extra_fields)
+        {
+            if (field.plan == nullptr) { throw std::logic_error("Node storage field requires a storage plan"); }
+            builder.add_field(field.name, *field.plan);
+        }
+        return builder.build();
+    }
 
     std::string_view NodeTypeMetaData::name() const noexcept
     {
@@ -917,12 +976,29 @@ namespace hgraph
                                     NodeCallbacks callbacks,
                                     TSEndpointSchema input_endpoint)
     {
-        if (schema.input_schema != nullptr && !input_endpoint.empty() &&
-            !time_series_schema_equivalent(schema.input_schema, input_endpoint.schema()))
+        NodeTypeDescriptor descriptor;
+        descriptor.schema = std::move(schema);
+        descriptor.callbacks = std::move(callbacks);
+        return from_descriptor(std::move(descriptor), std::move(input_endpoint));
+    }
+
+    NodeBuilder NodeBuilder::from_descriptor(NodeTypeDescriptor descriptor,
+                                             TSEndpointSchema input_endpoint)
+    {
+        if (descriptor.schema.input_schema != nullptr && !input_endpoint.empty() &&
+            !time_series_schema_equivalent(descriptor.schema.input_schema, input_endpoint.schema()))
         {
             throw std::invalid_argument("NodeBuilder input endpoint schema does not match node input schema");
         }
-        const auto &binding = node_runtime_registry().make_binding(std::move(schema), std::move(callbacks));
+
+        const auto &plan = descriptor.storage_plan != nullptr
+                               ? *descriptor.storage_plan
+                               : node_storage_plan_for(descriptor.schema);
+        const auto &binding = node_runtime_registry().make_binding(
+            std::move(descriptor.schema),
+            std::move(descriptor.callbacks),
+            plan,
+            descriptor.ops);
         return NodeBuilder{binding, std::move(input_endpoint)};
     }
 
