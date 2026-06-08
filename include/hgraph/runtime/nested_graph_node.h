@@ -1,0 +1,132 @@
+#ifndef HGRAPH_RUNTIME_NESTED_GRAPH_NODE_H
+#define HGRAPH_RUNTIME_NESTED_GRAPH_NODE_H
+
+#include <hgraph/hgraph_export.h>
+#include <hgraph/runtime/graph.h>
+
+#include <cstddef>
+#include <optional>
+#include <vector>
+
+namespace hgraph
+{
+    /**
+     * A path to a time-series endpoint inside a node output.
+     *
+     * ``node`` selects a node in the child graph. ``path`` then walks through
+     * indexed structural output children (TSB field index or TSL index).
+     */
+    struct HGRAPH_EXPORT NestedGraphEndpoint
+    {
+        std::size_t              node{0};
+        std::vector<std::size_t> path{};
+    };
+
+    /**
+     * Copy one outer node input position into a child graph boundary output.
+     *
+     * ``source_path`` walks from the outer node input root. The target endpoint
+     * is usually a child graph stub/source node output.
+     */
+    struct HGRAPH_EXPORT NestedGraphInputBinding
+    {
+        std::vector<std::size_t> source_path{};
+        NestedGraphEndpoint      target{};
+    };
+
+    /**
+     * Copy one child graph output position into an outer node output position.
+     */
+    struct HGRAPH_EXPORT NestedGraphOutputBinding
+    {
+        NestedGraphEndpoint      source{};
+        std::vector<std::size_t> target_path{};
+    };
+
+    struct HGRAPH_EXPORT SingleNestedGraphNodeSpec
+    {
+        GraphBuilder                            graph_builder{};
+        std::vector<NestedGraphInputBinding>    input_bindings{};
+        std::optional<NestedGraphOutputBinding> output_binding{};
+    };
+
+    struct HGRAPH_EXPORT SingleNestedGraphNodeOptions
+    {
+        bool start_child_on_start{true};
+        bool stop_child_on_stop{true};
+        bool copy_inputs_on_evaluate{true};
+        bool copy_output_on_evaluate{true};
+        bool propagate_child_schedule{true};
+    };
+
+    struct HGRAPH_EXPORT SingleNestedGraphNodeContext
+    {
+        SingleNestedGraphNodeSpec    spec{};
+        SingleNestedGraphNodeOptions options{};
+        std::size_t                  graph_storage_offset{0};
+    };
+
+    /**
+     * Typed extension view exposed by ``single_nested_graph_node``.
+     *
+     * Policy wrappers such as try/catch or delayed component/context nodes can
+     * build on this view and supply their own callbacks while reusing the same
+     * storage and child graph binding model.
+     */
+    class HGRAPH_EXPORT SingleNestedGraphNodeView
+    {
+      public:
+        [[nodiscard]] static const void *node_view_type_id() noexcept;
+        [[nodiscard]] static SingleNestedGraphNodeView from_node(NodeView view, const void *context);
+
+        [[nodiscard]] const NodeView &node() const noexcept;
+        [[nodiscard]] const SingleNestedGraphNodeContext &context() const noexcept;
+        [[nodiscard]] GraphValue &child_graph_value() const noexcept;
+        [[nodiscard]] GraphView child_graph() const;
+
+        void ensure_child_graph() const;
+
+      private:
+        SingleNestedGraphNodeView(NodeView view,
+                                  const SingleNestedGraphNodeContext &context,
+                                  GraphValue &child_graph) noexcept;
+
+        NodeView                            view_{};
+        const SingleNestedGraphNodeContext *context_{nullptr};
+        GraphValue                         *child_graph_{nullptr};
+    };
+
+    /**
+     * Child-graph boundary source: an output-only node whose value is supplied
+     * by a parent ``single_nested_graph_node`` input binding.
+     */
+    [[nodiscard]] HGRAPH_EXPORT NodeBuilder nested_graph_boundary_source(
+        const TSValueTypeMetaData *schema,
+        const char *label = "nested_graph_boundary_source");
+
+    /**
+     * Build the generic single-child-graph node descriptor. Callers can adjust
+     * callbacks or ops before passing it to ``NodeBuilder::from_descriptor``.
+     */
+    [[nodiscard]] HGRAPH_EXPORT NodeTypeDescriptor single_nested_graph_node_descriptor(
+        NodeTypeMetaData meta,
+        SingleNestedGraphNodeSpec spec,
+        SingleNestedGraphNodeOptions options = {});
+
+    /** Build a node that owns and evaluates exactly one child graph. */
+    [[nodiscard]] HGRAPH_EXPORT NodeBuilder single_nested_graph_node(
+        NodeTypeMetaData meta,
+        SingleNestedGraphNodeSpec spec,
+        SingleNestedGraphNodeOptions options = {});
+
+    HGRAPH_EXPORT void single_nested_graph_start(const NodeView &view, engine_time_t evaluation_time);
+    HGRAPH_EXPORT void single_nested_graph_stop(const NodeView &view, engine_time_t evaluation_time);
+    HGRAPH_EXPORT void single_nested_graph_evaluate(const NodeView &view, engine_time_t evaluation_time);
+    HGRAPH_EXPORT void single_nested_graph_copy_inputs(const SingleNestedGraphNodeView &nested,
+                                                       engine_time_t evaluation_time);
+    HGRAPH_EXPORT void single_nested_graph_copy_output(const SingleNestedGraphNodeView &nested,
+                                                       engine_time_t evaluation_time);
+    HGRAPH_EXPORT void single_nested_graph_propagate_schedule(const SingleNestedGraphNodeView &nested);
+}  // namespace hgraph
+
+#endif  // HGRAPH_RUNTIME_NESTED_GRAPH_NODE_H

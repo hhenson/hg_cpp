@@ -2,6 +2,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/version.cpp
     hgraph/runtime/executor.cpp
     hgraph/runtime/graph.cpp
+    hgraph/runtime/nested_graph_node.cpp
     hgraph/runtime/node.cpp
     hgraph/types/metadata/type_registry.cpp
     hgraph/types/metadata/ts_data_atomic_ops.cpp
@@ -60,6 +61,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/hgraph_export.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/executor.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/graph.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/nested_graph_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/runtime.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/python/chrono.h
