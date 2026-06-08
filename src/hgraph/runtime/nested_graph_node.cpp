@@ -1,7 +1,5 @@
 #include <hgraph/runtime/nested_graph_node.h>
 
-#include <hgraph/types/time_series/ts_delta.h>
-
 #include <array>
 #include <memory>
 #include <stdexcept>
@@ -108,6 +106,34 @@ namespace hgraph
         {
             single_nested_graph_evaluate(view, evaluation_time);
         }
+
+        void bind_input_to_source(TSInputView target, const TSOutputView &source)
+        {
+            if (!target.is_bindable())
+            {
+                throw std::logic_error("Nested graph input binding target must be a peered child input endpoint");
+            }
+
+            if (!source.bound())
+            {
+                if (target.bound()) { target.unbind_output(); }
+                return;
+            }
+
+            auto current = target.bound_output();
+            if (!current.handle().same_as(source.handle())) { target.bind_output(source); }
+        }
+
+        void bind_forwarding_output_to_source(const TSOutputView &target, const TSOutputView &source)
+        {
+            if (!target.forwarding())
+            {
+                throw std::logic_error("Nested graph output binding target must be a forwarding output endpoint");
+            }
+
+            const auto current = target.forwarding_target();
+            if (!current.same_as(source.handle())) { target.bind_forwarding_target(source); }
+        }
     }  // namespace
 
     const void *SingleNestedGraphNodeView::node_view_type_id() noexcept
@@ -159,22 +185,24 @@ namespace hgraph
     {
     }
 
-    NodeBuilder nested_graph_boundary_source(const TSValueTypeMetaData *schema, const char *label)
-    {
-        if (schema == nullptr) { throw std::invalid_argument("nested_graph_boundary_source requires an output schema"); }
-
-        NodeTypeMetaData meta;
-        meta.display_name  = (label != nullptr && label[0] != '\0') ? label : "nested_graph_boundary_source";
-        meta.output_schema = schema;
-        meta.node_kind     = NodeKind::PullSource;
-        return NodeBuilder::native(std::move(meta));
-    }
-
     NodeTypeDescriptor single_nested_graph_node_descriptor(
         NodeTypeMetaData meta,
         SingleNestedGraphNodeSpec spec,
         SingleNestedGraphNodeOptions options)
     {
+        if (spec.output_binding.has_value())
+        {
+            if (meta.output_schema == nullptr)
+            {
+                throw std::invalid_argument("single_nested_graph_node output binding requires an output schema");
+            }
+            if (!spec.output_binding->target_path.empty())
+            {
+                throw std::invalid_argument(
+                    "single_nested_graph_node currently supports forwarding only at the output root");
+            }
+            meta.output_endpoint_schema = TSEndpointSchema::peered(meta.output_schema);
+        }
         meta.node_kind = NodeKind::Nested;
 
         NodeTypeDescriptor descriptor;
@@ -213,6 +241,8 @@ namespace hgraph
     {
         auto nested = checked_nested_view(view);
         nested.ensure_child_graph();
+        single_nested_graph_bind_inputs(nested, evaluation_time);
+        single_nested_graph_bind_output(nested, evaluation_time);
         if (nested.context().options.start_child_on_start)
         {
             nested.child_graph().start(evaluation_time);
@@ -235,20 +265,13 @@ namespace hgraph
 
         auto nested = checked_nested_view(view);
         nested.ensure_child_graph();
-
-        if (nested.context().options.copy_inputs_on_evaluate)
-        {
-            single_nested_graph_copy_inputs(nested, evaluation_time);
-        }
+        single_nested_graph_bind_inputs(nested, evaluation_time);
+        single_nested_graph_bind_output(nested, evaluation_time);
         nested.child_graph().evaluate(evaluation_time);
-        if (nested.context().options.copy_output_on_evaluate)
-        {
-            single_nested_graph_copy_output(nested, evaluation_time);
-        }
         single_nested_graph_propagate_schedule(nested);
     }
 
-    void single_nested_graph_copy_inputs(const SingleNestedGraphNodeView &nested,
+    void single_nested_graph_bind_inputs(const SingleNestedGraphNodeView &nested,
                                          engine_time_t evaluation_time)
     {
         const auto &bindings = nested.context().spec.input_bindings;
@@ -260,17 +283,16 @@ namespace hgraph
         for (const NestedGraphInputBinding &binding : bindings)
         {
             auto source = input_at_path(root_input.borrowed_ref(), binding.source_path);
-            if (!source.valid()) { continue; }
+            auto source_output = source.bound_output();
 
-            auto target = output_at_path(
-                child_graph.node_at(binding.target.node).output(evaluation_time),
+            auto target = input_at_path(
+                child_graph.node_at(binding.target.node).input(evaluation_time),
                 binding.target.path);
-            if (!target.valid()) { apply_current_value(target, source.value()); }
-            else if (source.modified()) { apply_delta(target, source.delta_value()); }
+            bind_input_to_source(std::move(target), source_output);
         }
     }
 
-    void single_nested_graph_copy_output(const SingleNestedGraphNodeView &nested,
+    void single_nested_graph_bind_output(const SingleNestedGraphNodeView &nested,
                                          engine_time_t evaluation_time)
     {
         const auto &binding = nested.context().spec.output_binding;
@@ -279,10 +301,18 @@ namespace hgraph
         auto source = output_at_path(
             nested.child_graph().node_at(binding->source.node).output(evaluation_time),
             binding->source.path);
-        if (!source.valid() || !source.modified()) { return; }
+        auto target = output_at_path(nested.node().output(evaluation_time), binding->target_path);
+        bind_forwarding_output_to_source(target, source);
+    }
+
+    void single_nested_graph_clear_output_binding(const SingleNestedGraphNodeView &nested,
+                                                  engine_time_t evaluation_time)
+    {
+        const auto &binding = nested.context().spec.output_binding;
+        if (!binding.has_value()) { return; }
 
         auto target = output_at_path(nested.node().output(evaluation_time), binding->target_path);
-        apply_current_value(target, source.value());
+        if (target.forwarding_bound()) { target.clear_forwarding_target(); }
     }
 
     void single_nested_graph_propagate_schedule(const SingleNestedGraphNodeView &nested)

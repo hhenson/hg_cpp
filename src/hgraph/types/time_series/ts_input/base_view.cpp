@@ -229,6 +229,16 @@ namespace hgraph
         return is_target_position();
     }
 
+    TSOutputView TSInputView::bound_output() const
+    {
+        if (!is_target_position()) { return {}; }
+
+        const auto *schema = detail::target_link_schema(data_.raw_data);
+        const auto *link = detail::target_link_storage(data_.raw_data);
+        if (schema == nullptr || link == nullptr) { return {}; }
+        return link->target_output_at_path(*schema, data_.target_node).view(evaluation_time_);
+    }
+
     bool TSInputView::valid() const
     {
         const auto &data = data_view();

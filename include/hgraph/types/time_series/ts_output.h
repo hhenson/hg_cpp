@@ -19,6 +19,8 @@ namespace hgraph
         class TSOutputAlternativeStore;
     }
 
+    class TSEndpointSchema;
+
     /**
      * Owning output-side time-series endpoint.
      *
@@ -34,6 +36,7 @@ namespace hgraph
         explicit TSOutput(const TSDataBinding &binding);
         explicit TSOutput(const TSValueTypeMetaData &schema);
         explicit TSOutput(const TSValueTypeMetaData *schema);
+        explicit TSOutput(const TSEndpointSchema &endpoint_schema);
         ~TSOutput() noexcept;
 
         TSOutput(const TSOutput &other);
@@ -86,6 +89,7 @@ namespace hgraph
         friend class TSOutputMutationView;
 
         static const TSDataBinding &checked_binding_for(const TSValueTypeMetaData *schema);
+        static const TSDataBinding &checked_binding_for(const TSEndpointSchema &endpoint_schema);
         static const TSData &copyable_data(const TSOutput &other);
 
         void attach_root_parent();

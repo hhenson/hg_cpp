@@ -552,10 +552,7 @@ namespace
         const auto *ts_int = ts_type<TS<Int>>();
 
         GraphBuilder child;
-        child.label("nested_add_one_child")
-            .add_node(nested_graph_boundary_source(ts_int))
-            .add_node(static_node_builder_for_add_one())
-            .add_edge(GraphEdge{.source_node = 0, .target_node = 1, .target_path = {0}});
+        child.label("nested_add_one_child").add_node(static_node_builder_for_add_one());
 
         NodeTypeMetaData meta;
         meta.display_name = "nested_add_one";
@@ -566,9 +563,9 @@ namespace
         spec.graph_builder = std::move(child);
         spec.input_bindings.push_back(NestedGraphInputBinding{
             .source_path = {0},
-            .target = NestedGraphEndpoint{.node = 0},
+            .target = NestedGraphEndpoint{.node = 0, .path = {0}},
         });
-        spec.output_binding = NestedGraphOutputBinding{.source = NestedGraphEndpoint{.node = 1}};
+        spec.output_binding = NestedGraphOutputBinding{.source = NestedGraphEndpoint{.node = 0}};
         return single_nested_graph_node(std::move(meta), std::move(spec));
     }
 
@@ -800,7 +797,7 @@ TEST_CASE("graph wiring: partial named TSB initializer fills missing fields with
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{41});
 }
 
-TEST_CASE("graph wiring: nested node maps outer input into child graph boundary output")
+TEST_CASE("graph wiring: nested node binds outer input into child graph input")
 {
     using namespace hgraph;
 
@@ -816,6 +813,26 @@ TEST_CASE("graph wiring: nested node maps outer input into child graph boundary 
     REQUIRE(graph.node_count() == 2);
     REQUIRE(graph.node_at(1).output(MIN_ST).valid());
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{42});
+}
+
+TEST_CASE("graph wiring: nested node forwards child output to downstream input")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder;
+    graph_builder.label("outer_nested_add_two")
+        .add_node(static_node_builder_for_constant_source())
+        .add_node(nested_add_one_builder())
+        .add_node(static_node_builder_for_add_one())
+        .add_edge(GraphEdge{.source_node = 0, .target_node = 1, .target_path = {0}})
+        .add_edge(GraphEdge{.source_node = 1, .target_node = 2, .target_path = {0}});
+
+    GraphExecutorValue executor = run_start(std::move(graph_builder));
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 3);
+    REQUIRE(graph.node_at(2).output(MIN_ST).valid());
+    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Int>() == Int{43});
 }
 
 TEST_CASE("graph wiring: nested node propagates child graph schedule")

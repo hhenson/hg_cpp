@@ -23,10 +23,11 @@ namespace hgraph
     };
 
     /**
-     * Copy one outer node input position into a child graph boundary output.
+     * Bind one outer node input position into a child graph input position.
      *
-     * ``source_path`` walks from the outer node input root. The target endpoint
-     * is usually a child graph stub/source node output.
+     * ``source_path`` walks from the outer node input root to a peered input
+     * endpoint. ``target`` selects the child node input endpoint that should
+     * receive the same upstream output binding.
      */
     struct HGRAPH_EXPORT NestedGraphInputBinding
     {
@@ -35,7 +36,7 @@ namespace hgraph
     };
 
     /**
-     * Copy one child graph output position into an outer node output position.
+     * Forward one child graph output position through an outer node output position.
      */
     struct HGRAPH_EXPORT NestedGraphOutputBinding
     {
@@ -54,8 +55,6 @@ namespace hgraph
     {
         bool start_child_on_start{true};
         bool stop_child_on_stop{true};
-        bool copy_inputs_on_evaluate{true};
-        bool copy_output_on_evaluate{true};
         bool propagate_child_schedule{true};
     };
 
@@ -97,14 +96,6 @@ namespace hgraph
     };
 
     /**
-     * Child-graph boundary source: an output-only node whose value is supplied
-     * by a parent ``single_nested_graph_node`` input binding.
-     */
-    [[nodiscard]] HGRAPH_EXPORT NodeBuilder nested_graph_boundary_source(
-        const TSValueTypeMetaData *schema,
-        const char *label = "nested_graph_boundary_source");
-
-    /**
      * Build the generic single-child-graph node descriptor. Callers can adjust
      * callbacks or ops before passing it to ``NodeBuilder::from_descriptor``.
      */
@@ -122,10 +113,12 @@ namespace hgraph
     HGRAPH_EXPORT void single_nested_graph_start(const NodeView &view, engine_time_t evaluation_time);
     HGRAPH_EXPORT void single_nested_graph_stop(const NodeView &view, engine_time_t evaluation_time);
     HGRAPH_EXPORT void single_nested_graph_evaluate(const NodeView &view, engine_time_t evaluation_time);
-    HGRAPH_EXPORT void single_nested_graph_copy_inputs(const SingleNestedGraphNodeView &nested,
+    HGRAPH_EXPORT void single_nested_graph_bind_inputs(const SingleNestedGraphNodeView &nested,
                                                        engine_time_t evaluation_time);
-    HGRAPH_EXPORT void single_nested_graph_copy_output(const SingleNestedGraphNodeView &nested,
+    HGRAPH_EXPORT void single_nested_graph_bind_output(const SingleNestedGraphNodeView &nested,
                                                        engine_time_t evaluation_time);
+    HGRAPH_EXPORT void single_nested_graph_clear_output_binding(const SingleNestedGraphNodeView &nested,
+                                                                engine_time_t evaluation_time);
     HGRAPH_EXPORT void single_nested_graph_propagate_schedule(const SingleNestedGraphNodeView &nested);
 }  // namespace hgraph
 

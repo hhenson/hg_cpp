@@ -1,5 +1,6 @@
 #include <hgraph/types/time_series/ts_output/base_view.h>
 
+#include <hgraph/types/time_series/ts_input/target_link.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/time_series/ts_output/view_common.h>
 
@@ -153,6 +154,40 @@ namespace hgraph
     bool TSOutputView::all_valid() const
     {
         return data_.valid() && data_.all_valid();
+    }
+
+    bool TSOutputView::forwarding() const noexcept
+    {
+        return detail::is_target_link_view(data_);
+    }
+
+    bool TSOutputView::forwarding_bound() const noexcept
+    {
+        return detail::target_link_bound(data_);
+    }
+
+    TSOutputHandle TSOutputView::forwarding_target() const noexcept
+    {
+        const auto *link = detail::target_link_storage(data_);
+        return link != nullptr ? link->target_output() : TSOutputHandle{};
+    }
+
+    void TSOutputView::bind_forwarding_target(const TSOutputView &source) const
+    {
+        if (!forwarding())
+        {
+            throw std::logic_error("TSOutputView::bind_forwarding_target requires a forwarding output view");
+        }
+        detail::bind_target_link(data_, source);
+    }
+
+    void TSOutputView::clear_forwarding_target() const
+    {
+        if (!forwarding())
+        {
+            throw std::logic_error("TSOutputView::clear_forwarding_target requires a forwarding output view");
+        }
+        detail::unbind_target_link(data_);
     }
 
     void TSOutputView::subscribe(Notifiable *observer) const

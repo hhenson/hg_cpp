@@ -85,6 +85,9 @@ namespace hgraph
         /** True when this view is backed by TargetLink storage whose output target can be rebound. */
         [[nodiscard]] bool is_bindable() const noexcept;
 
+        /** Bound output reached by this target-link view, or an empty handle when unbound. */
+        [[nodiscard]] TSOutputView bound_output() const;
+
         void bind_output(const TSOutputView &output);
         void unbind_output();
 

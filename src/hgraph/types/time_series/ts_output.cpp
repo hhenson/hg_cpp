@@ -3,6 +3,7 @@
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/time_series/endpoint_schema.h>
+#include <hgraph/types/time_series/ts_input/detail.h>
 #include <hgraph/types/time_series/ts_output/alternative.h>
 
 #include <stdexcept>
@@ -25,6 +26,11 @@ namespace hgraph
 
     TSOutput::TSOutput(const TSValueTypeMetaData *schema)
         : TSOutput(checked_binding_for(schema))
+    {
+    }
+
+    TSOutput::TSOutput(const TSEndpointSchema &endpoint_schema)
+        : TSOutput(checked_binding_for(endpoint_schema))
     {
     }
 
@@ -167,6 +173,17 @@ namespace hgraph
         if (schema == nullptr) { throw std::invalid_argument("TSOutput requires a time-series schema"); }
         const auto *binding = TSDataPlanFactory::instance().binding_for(schema);
         if (binding == nullptr) { throw std::logic_error("TSOutput could not resolve a TSData binding"); }
+        return *binding;
+    }
+
+    const TSDataBinding &TSOutput::checked_binding_for(const TSEndpointSchema &endpoint_schema)
+    {
+        if (endpoint_schema.empty() || endpoint_schema.schema() == nullptr)
+        {
+            throw std::invalid_argument("TSOutput requires a non-empty output endpoint schema");
+        }
+        const auto *binding = detail::input_data_binding_for(endpoint_schema);
+        if (binding == nullptr) { throw std::logic_error("TSOutput could not resolve an output endpoint binding"); }
         return *binding;
     }
 

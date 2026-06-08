@@ -53,6 +53,7 @@ namespace hgraph
 
         const TSValueTypeMetaData *input_schema{nullptr};
         const TSValueTypeMetaData *output_schema{nullptr};
+        TSEndpointSchema           output_endpoint_schema{};
         const TSValueTypeMetaData *error_output_schema{nullptr};
         const TSValueTypeMetaData *recordable_state_schema{nullptr};
         const ValueTypeMetaData   *state_schema{nullptr};

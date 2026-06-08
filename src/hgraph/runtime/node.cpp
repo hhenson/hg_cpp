@@ -232,9 +232,18 @@ namespace hgraph
             {
                 const auto *component = plan.find_component("output");
                 if (component == nullptr) { throw std::logic_error("Node storage plan is missing output"); }
-                std::construct_at(MemoryUtils::cast<TSOutput>(
-                                      MemoryUtils::advance(memory, component->offset)),
-                                  *schema.output_schema);
+                if (schema.output_endpoint_schema.empty())
+                {
+                    std::construct_at(MemoryUtils::cast<TSOutput>(
+                                          MemoryUtils::advance(memory, component->offset)),
+                                      *schema.output_schema);
+                }
+                else
+                {
+                    std::construct_at(MemoryUtils::cast<TSOutput>(
+                                          MemoryUtils::advance(memory, component->offset)),
+                                      schema.output_endpoint_schema);
+                }
                 constructed.push_back(component);
             }
 
@@ -752,6 +761,11 @@ namespace hgraph
         auto builder = MemoryUtils::named_tuple();
         builder.add_field("runtime_storage", MemoryUtils::plan_for<NodeRuntimeStorage>());
         if (schema.input_schema != nullptr) { builder.add_field("input", MemoryUtils::plan_for<TSInput>()); }
+        for (const NodeStorageField &field : extra_fields)
+        {
+            if (field.plan == nullptr) { throw std::logic_error("Node storage field requires a storage plan"); }
+            builder.add_field(field.name, *field.plan);
+        }
         if (schema.output_schema != nullptr) { builder.add_field("output", MemoryUtils::plan_for<TSOutput>()); }
         if (schema.state_schema != nullptr) { builder.add_field("state", MemoryUtils::plan_for<Value>()); }
         if (schema.scalar_schema != nullptr) { builder.add_field("scalars", MemoryUtils::plan_for<Value>()); }
@@ -766,11 +780,6 @@ namespace hgraph
         if (schema.recordable_state_schema != nullptr)
         {
             builder.add_field("recordable_state", MemoryUtils::plan_for<TSOutput>());
-        }
-        for (const NodeStorageField &field : extra_fields)
-        {
-            if (field.plan == nullptr) { throw std::logic_error("Node storage field requires a storage plan"); }
-            builder.add_field(field.name, *field.plan);
         }
         return builder.build();
     }
@@ -989,6 +998,16 @@ namespace hgraph
             !time_series_schema_equivalent(descriptor.schema.input_schema, input_endpoint.schema()))
         {
             throw std::invalid_argument("NodeBuilder input endpoint schema does not match node input schema");
+        }
+        if (descriptor.schema.output_schema != nullptr && !descriptor.schema.output_endpoint_schema.empty() &&
+            !time_series_schema_equivalent(descriptor.schema.output_schema,
+                                           descriptor.schema.output_endpoint_schema.schema()))
+        {
+            throw std::invalid_argument("NodeBuilder output endpoint schema does not match node output schema");
+        }
+        if (descriptor.schema.output_schema == nullptr && !descriptor.schema.output_endpoint_schema.empty())
+        {
+            throw std::invalid_argument("NodeBuilder output endpoint requires a node output schema");
         }
 
         const auto &plan = descriptor.storage_plan != nullptr
