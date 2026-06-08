@@ -263,6 +263,9 @@ namespace hgraph
         NodeBuilder &label(std::string label);
         [[nodiscard]] std::string_view label() const noexcept;
 
+        /** Override the input endpoint annotation for this node instance. */
+        NodeBuilder &input_endpoint(TSEndpointSchema endpoint);
+
         /** Per-instance immutable scalar configuration (its shape is the schema's ``scalar_schema``). */
         NodeBuilder &scalars(Value scalars);
         [[nodiscard]] const Value &scalars() const noexcept;

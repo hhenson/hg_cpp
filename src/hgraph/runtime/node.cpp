@@ -943,6 +943,28 @@ namespace hgraph
         return label_;
     }
 
+    NodeBuilder &NodeBuilder::input_endpoint(TSEndpointSchema endpoint)
+    {
+        if (binding_ == nullptr)
+        {
+            if (!endpoint.empty()) { throw std::logic_error("NodeBuilder has no binding"); }
+        }
+        else
+        {
+            const auto *schema = binding_->type_meta != nullptr ? binding_->type_meta->input_schema : nullptr;
+            if (schema != nullptr && !endpoint.empty() && !time_series_schema_equivalent(schema, endpoint.schema()))
+            {
+                throw std::invalid_argument("NodeBuilder input endpoint schema does not match node input schema");
+            }
+            if (schema == nullptr && !endpoint.empty())
+            {
+                throw std::invalid_argument("NodeBuilder input endpoint requires a node input schema");
+            }
+        }
+        input_endpoint_ = std::move(endpoint);
+        return *this;
+    }
+
     NodeBuilder &NodeBuilder::scalars(Value scalars)
     {
         scalars_ = std::move(scalars);

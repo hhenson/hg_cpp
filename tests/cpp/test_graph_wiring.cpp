@@ -238,6 +238,22 @@ namespace
         }
     };
 
+    struct StructuralListRefProbe
+    {
+        static constexpr auto name              = "structural_list_ref_probe";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(In<"ref", REF<TSL<TS<Int>, 2>>> ref, Out<TS<Bool>> out)
+        {
+            const TimeSeriesReference value = ref.value();
+            out.set(value.is_non_peered() &&
+                    time_series_schema_equivalent(value.target_schema(), ts_type<TSL<TS<Int>, 2>>()) &&
+                    value.items().size() == 2 &&
+                    value[0].is_peered() &&
+                    value[1].is_peered());
+        }
+    };
+
     struct RefCopy
     {
         static constexpr auto name              = "ref_copy";
@@ -268,6 +284,18 @@ namespace
         {
             auto source = wire<ConstantSource>(w);
             wire<RefProbe>(w, source);
+        }
+    };
+
+    struct StructuralListRefProbeGraph
+    {
+        static constexpr auto name = "structural_list_ref_probe_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            auto list   = stdlib::to_tsl<TSL<TS<Int>, 2>>(w, source, source);
+            wire<StructuralListRefProbe>(w, list);
         }
     };
 
@@ -361,6 +389,22 @@ namespace
                                    Field<"a", TS<Int>>,
                                    Field<"b", TS<Int>>>;
 
+    struct StructuralBundleRefProbe
+    {
+        static constexpr auto name              = "structural_bundle_ref_probe";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(In<"ref", REF<RefRoundTripBundle>> ref, Out<TS<Bool>> out)
+        {
+            const TimeSeriesReference value = ref.value();
+            out.set(value.is_non_peered() &&
+                    time_series_schema_equivalent(value.target_schema(), ts_type<RefRoundTripBundle>()) &&
+                    value.items().size() == 2 &&
+                    value[0].is_peered() &&
+                    value[1].is_peered());
+        }
+    };
+
     struct BundleSource
     {
         static constexpr auto name              = "bundle_source";
@@ -370,6 +414,18 @@ namespace
         {
             out.field<"a">().set(Int{11});
             out.field<"b">().set(Int{12});
+        }
+    };
+
+    struct StructuralBundleRefProbeGraph
+    {
+        static constexpr auto name = "structural_bundle_ref_probe_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            auto bundle = stdlib::to_tsb<RefRoundTripBundle>(w, source, source);
+            wire<StructuralBundleRefProbe>(w, bundle);
         }
     };
 
@@ -515,6 +571,50 @@ TEST_CASE("graph wiring: TS output can bind to a REF input")
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 2);
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Bool>());
+}
+
+TEST_CASE("graph wiring: structural TSL source can bind to a REF input as non-peered")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphBuilder graph_builder = build_graph<StructuralListRefProbeGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 3);
+    REQUIRE(graph.node_at(2).output(MIN_ST).valid());
+    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Bool>());
+}
+
+TEST_CASE("graph wiring: structural TSB source can bind to a REF input as non-peered")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphBuilder graph_builder = build_graph<StructuralBundleRefProbeGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + engine_time_delta_t{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 3);
+    REQUIRE(graph.node_at(2).output(MIN_ST).valid());
+    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Bool>());
 }
 
 TEST_CASE("graph wiring: REF output can bind back to a dereferenced TS input")

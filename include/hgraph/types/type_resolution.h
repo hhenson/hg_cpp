@@ -266,6 +266,16 @@ namespace hgraph
         }
     };
 
+    template <typename S>
+    struct ts_unifier<REF<S>>
+    {
+        static void unify(const TSValueTypeMetaData *c, ResolutionMap &m)
+        {
+            if (c != nullptr && c->kind == TSTypeKind::REF) { c = c->referenced_ts(); }
+            ts_unifier<S>::unify(c, m);
+        }
+    };
+
     template <typename V, std::size_t Period, std::size_t MinPeriod>
     struct ts_unifier<TSW<V, Period, MinPeriod>>
     {

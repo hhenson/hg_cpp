@@ -333,7 +333,7 @@ TEST_CASE("stdlib::to_tsl wires const outputs into a fixed non-peered TSL")
     CHECK(out[0]->equals(expected));
 }
 
-TEST_CASE("stdlib::to_tsl materializes earlier current values when the last child becomes valid")
+TEST_CASE("stdlib::to_tsl forwards sparse child deltas as inputs become valid")
 {
     using namespace hgraph;
     stdlib::register_standard_operators();
@@ -351,18 +351,21 @@ TEST_CASE("stdlib::to_tsl materializes earlier current values when the last chil
     GraphExecutorValue executor = run_once(std::move(gb));
     const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
     REQUIRE(out.size() == 3);
-    CHECK_FALSE(out[0].has_value());
+    REQUIRE(out[0].has_value());
     REQUIRE(out[1].has_value());
     REQUIRE(out[2].has_value());
 
-    Value initial = list_delta<TS<Str>>({
+    Value first = list_delta<TS<Str>>({
         std::pair<std::size_t, Str>{0, Str{"a"}},
+    });
+    Value second = list_delta<TS<Str>>({
         std::pair<std::size_t, Str>{1, Str{"b"}},
     });
     Value update = list_delta<TS<Str>>({
         std::pair<std::size_t, Str>{0, Str{"aa"}},
     });
-    CHECK(out[1]->equals(initial));
+    CHECK(out[0]->equals(first));
+    CHECK(out[1]->equals(second));
     CHECK(out[2]->equals(update));
 }
 

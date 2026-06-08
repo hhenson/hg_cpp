@@ -435,7 +435,7 @@ namespace hgraph
                 {
                     throw std::logic_error("operator selected overload input schema does not match");
                 }
-                return arg.port;
+                return graph_wiring_detail::adapt_source_for_input(w, expected, arg.port);
             }
             return wire_scalar_const(w, arg, expected);
         }
@@ -499,12 +499,12 @@ namespace hgraph
                 {
                     throw std::logic_error("operator graph erased port parameter cannot be auto-const");
                 }
-                return PortParam{arg.port.node, arg.port.path, arg.port.schema};
+                return PortParam{arg.port};
             }
             else
             {
                 WiringPortRef ref = wiring_input_ref<S>(w, map, arg);
-                return PortParam{ref.node, ref.path};
+                return PortParam{std::move(ref)};
             }
         }
 
@@ -685,8 +685,11 @@ namespace hgraph
             builder.template implementation<Impl>(map);
             Value scalars = operator_dispatch_detail::assemble_scalars<Impl>(map, args);
             std::vector<WiringPortRef> inputs = operator_dispatch_detail::collect_node_inputs<Impl>(w, map, args);
+            builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                builder.binding().type_meta != nullptr ? builder.binding().type_meta->input_schema : nullptr,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
             WiringPortRef out = w.add_node(std::type_index(typeid(Impl)), std::move(builder), inputs, std::move(scalars));
-            if constexpr (sig::has_output()) { return OperatorWireResult{true, Port<void>{out.node, out.path, out.schema}}; }
+            if constexpr (sig::has_output()) { return OperatorWireResult{true, Port<void>{std::move(out)}}; }
             else { return OperatorWireResult{}; }
         };
         return impl;
@@ -752,7 +755,7 @@ namespace hgraph
                 {
                     auto out = Impl::compose(w, operator_dispatch_detail::make_graph_arg<std::tuple_element_t<I, params_tuple>>(
                                                     w, map, args[I])...);
-                    return OperatorWireResult{true, Port<void>{out.node(), out.path(), out.erased().schema}};
+                    return OperatorWireResult{true, Port<void>{out.erased()}};
                 }
             }(std::make_index_sequence<std::tuple_size_v<params_tuple>>{});
         };

@@ -21,6 +21,7 @@
 #include <typeindex>
 #include <typeinfo>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace hgraph
@@ -41,12 +42,104 @@ namespace hgraph
 
     struct WiringInstance;
 
-    /** Erased wiring-time handle to a node output: producing instance + path. */
+    /**
+     * Erased wiring-time handle to a time-series source.
+     *
+     * A peered source references a producing node and optional ``path`` within
+     * that node's output. A structural source has no producing node of its own;
+     * its children describe the peered or structural sources for each fixed child
+     * slot. Target information belongs on ``WiringInputRef`` only.
+     */
     struct WiringPortRef
     {
-        const WiringInstance      *node{nullptr};
-        std::vector<std::size_t>   path{};
+        struct PeeredSource
+        {
+            const WiringInstance    *node{nullptr};
+            std::vector<std::size_t> path{};
+        };
+
+        struct StructuralSource
+        {
+            std::vector<WiringPortRef> children{};
+        };
+
+        enum class SourceKind
+        {
+            Unbound,
+            Peered,
+            Structural,
+        };
+
         const TSValueTypeMetaData *schema{nullptr};
+
+        [[nodiscard]] static WiringPortRef peered_source(const WiringInstance *node,
+                                                         std::vector<std::size_t> path,
+                                                         const TSValueTypeMetaData *schema)
+        {
+            if (node == nullptr) { throw std::logic_error("WiringPortRef::peered_source requires a node"); }
+            WiringPortRef ref;
+            ref.schema  = schema;
+            ref.source_ = PeeredSource{node, std::move(path)};
+            return ref;
+        }
+
+        [[nodiscard]] static WiringPortRef structural_source(const TSValueTypeMetaData *schema,
+                                                             std::vector<WiringPortRef> children)
+        {
+            WiringPortRef ref;
+            ref.schema  = schema;
+            ref.source_ = StructuralSource{std::move(children)};
+            return ref;
+        }
+
+        [[nodiscard]] SourceKind source_kind() const noexcept
+        {
+            if (std::holds_alternative<PeeredSource>(source_)) { return SourceKind::Peered; }
+            if (std::holds_alternative<StructuralSource>(source_)) { return SourceKind::Structural; }
+            return SourceKind::Unbound;
+        }
+
+        [[nodiscard]] bool is_peered_source() const noexcept { return source_kind() == SourceKind::Peered; }
+        [[nodiscard]] bool is_structural_source() const noexcept { return source_kind() == SourceKind::Structural; }
+        [[nodiscard]] bool is_unbound_source() const noexcept { return source_kind() == SourceKind::Unbound; }
+
+        [[nodiscard]] const WiringInstance *peered_node() const
+        {
+            const auto *source = std::get_if<PeeredSource>(&source_);
+            if (source == nullptr) { throw std::logic_error("WiringPortRef source is not peered"); }
+            return source->node;
+        }
+
+        [[nodiscard]] const std::vector<std::size_t> &peered_path() const
+        {
+            const auto *source = std::get_if<PeeredSource>(&source_);
+            if (source == nullptr) { throw std::logic_error("WiringPortRef source is not peered"); }
+            return source->path;
+        }
+
+        [[nodiscard]] const std::vector<WiringPortRef> &structural_children() const
+        {
+            const auto *source = std::get_if<StructuralSource>(&source_);
+            if (source == nullptr) { throw std::logic_error("WiringPortRef source is not structural"); }
+            return source->children;
+        }
+
+        [[nodiscard]] const WiringInstance *peered_node_or_null() const noexcept
+        {
+            const auto *source = std::get_if<PeeredSource>(&source_);
+            return source != nullptr ? source->node : nullptr;
+        }
+
+        [[nodiscard]] const std::vector<std::size_t> &peered_path_or_empty() const noexcept
+        {
+            const auto *source = std::get_if<PeeredSource>(&source_);
+            if (source != nullptr) { return source->path; }
+            static const std::vector<std::size_t> empty_path;
+            return empty_path;
+        }
+
+      private:
+        std::variant<std::monostate, PeeredSource, StructuralSource> source_{};
     };
 
     /** Consumer-side wiring input: source port plus optional target path on the consuming node. */
@@ -124,23 +217,24 @@ namespace hgraph
         using schema = Schema;
 
         Port() noexcept = default;
-        Port(const WiringInstance *node, std::vector<std::size_t> path) noexcept
-            : node_(node), path_(std::move(path))
+        Port(const WiringInstance *node, std::vector<std::size_t> path)
+            : ref_{WiringPortRef::peered_source(node, std::move(path), schema_descriptor<Schema>::ts_meta())}
         {
         }
+        explicit Port(WiringPortRef ref) noexcept
+            : ref_(std::move(ref))
+        {
+            ref_.schema = schema_descriptor<Schema>::ts_meta();
+        }
 
-        [[nodiscard]] const WiringInstance              *node() const noexcept { return node_; }
-        [[nodiscard]] const std::vector<std::size_t>    &path() const noexcept { return path_; }
+        [[nodiscard]] const WiringInstance           *node() const noexcept { return ref_.peered_node_or_null(); }
+        [[nodiscard]] const std::vector<std::size_t> &path() const noexcept { return ref_.peered_path_or_empty(); }
 
         /** Erase to the runtime port form (the runtime schema comes from ``Schema``). */
-        [[nodiscard]] WiringPortRef erased() const
-        {
-            return WiringPortRef{.node = node_, .path = path_, .schema = schema_descriptor<Schema>::ts_meta()};
-        }
+        [[nodiscard]] WiringPortRef erased() const { return ref_; }
 
       private:
-        const WiringInstance    *node_{nullptr};
-        std::vector<std::size_t> path_{};
+        WiringPortRef ref_{};
     };
 
     /**
@@ -158,21 +252,23 @@ namespace hgraph
         using schema = void;
 
         Port() noexcept = default;
-        Port(const WiringInstance *node, std::vector<std::size_t> path, const TSValueTypeMetaData *schema) noexcept
-            : node_(node), path_(std::move(path)), schema_(schema)
+        Port(const WiringInstance *node, std::vector<std::size_t> path, const TSValueTypeMetaData *schema)
+            : ref_{WiringPortRef::peered_source(node, std::move(path), schema)}
+        {
+        }
+        explicit Port(WiringPortRef ref) noexcept
+            : ref_(std::move(ref))
         {
         }
 
-        [[nodiscard]] const WiringInstance           *node() const noexcept { return node_; }
-        [[nodiscard]] const std::vector<std::size_t> &path() const noexcept { return path_; }
-        [[nodiscard]] const TSValueTypeMetaData      *runtime_schema() const noexcept { return schema_; }
+        [[nodiscard]] const WiringInstance           *node() const noexcept { return ref_.peered_node_or_null(); }
+        [[nodiscard]] const std::vector<std::size_t> &path() const noexcept { return ref_.peered_path_or_empty(); }
+        [[nodiscard]] const TSValueTypeMetaData      *runtime_schema() const noexcept { return ref_.schema; }
 
-        [[nodiscard]] WiringPortRef erased() const { return WiringPortRef{.node = node_, .path = path_, .schema = schema_}; }
+        [[nodiscard]] WiringPortRef erased() const { return ref_; }
 
       private:
-        const WiringInstance      *node_{nullptr};
-        std::vector<std::size_t>   path_{};
-        const TSValueTypeMetaData *schema_{nullptr};
+        WiringPortRef ref_{};
     };
 
     /** Result of type-erased operator wiring before the public ``wire<>`` return is shaped by the operator marker. */
@@ -304,6 +400,88 @@ namespace hgraph
                                                  registry.dereference(output_schema));
         }
 
+        [[nodiscard]] WiringPortRef adapt_source_for_input(Wiring &w,
+                                                           const TSValueTypeMetaData *input_schema,
+                                                           WiringPortRef source);
+
+        [[nodiscard]] inline TSEndpointSchema endpoint_for_source(const TSValueTypeMetaData *schema,
+                                                                  const WiringPortRef       &source)
+        {
+            if (schema == nullptr) { throw std::logic_error("wire<T>: input endpoint source has no schema"); }
+            if (!source.is_structural_source()) { return TSEndpointSchema::peered(schema); }
+
+            switch (schema->kind)
+            {
+                case TSTypeKind::TSB:
+                {
+                    const auto &source_children = source.structural_children();
+                    if (source_children.size() != schema->field_count())
+                    {
+                        throw std::logic_error(
+                            "wire<T>: structural TSB source child count does not match the input schema");
+                    }
+                    std::vector<TSEndpointSchema> children;
+                    children.reserve(schema->field_count());
+                    for (std::size_t index = 0; index < schema->field_count(); ++index)
+                    {
+                        const auto *field_schema = schema->fields()[index].type;
+                        children.push_back(endpoint_for_source(field_schema, source_children[index]));
+                    }
+                    return TSEndpointSchema::non_peered(schema, std::move(children));
+                }
+
+                case TSTypeKind::TSL:
+                {
+                    if (schema->fixed_size() == 0)
+                    {
+                        throw std::logic_error("wire<T>: structural TSL input endpoint requires a fixed-size TSL");
+                    }
+                    const auto &source_children = source.structural_children();
+                    if (source_children.size() != schema->fixed_size())
+                    {
+                        throw std::logic_error(
+                            "wire<T>: structural TSL source child count does not match the input schema");
+                    }
+                    std::vector<TSEndpointSchema> children;
+                    children.reserve(schema->fixed_size());
+                    for (std::size_t index = 0; index < schema->fixed_size(); ++index)
+                    {
+                        children.push_back(endpoint_for_source(schema->element_ts(), source_children[index]));
+                    }
+                    return TSEndpointSchema::non_peered(schema, std::move(children));
+                }
+
+                default:
+                    throw std::logic_error("wire<T>: structural source requires a fixed structural input schema");
+            }
+        }
+
+        [[nodiscard]] inline TSEndpointSchema input_endpoint_for_sources(const TSValueTypeMetaData       *input_schema,
+                                                                         std::span<const WiringPortRef>  sources)
+        {
+            if (input_schema == nullptr)
+            {
+                if (!sources.empty()) { throw std::logic_error("wire<T>: sources supplied for a node with no inputs"); }
+                return TSEndpointSchema{};
+            }
+            if (input_schema->kind != TSTypeKind::TSB)
+            {
+                throw std::logic_error("wire<T>: node input schema must be a TSB");
+            }
+            if (input_schema->field_count() != sources.size())
+            {
+                throw std::logic_error("wire<T>: source count does not match the node input schema");
+            }
+
+            std::vector<TSEndpointSchema> children;
+            children.reserve(sources.size());
+            for (std::size_t index = 0; index < sources.size(); ++index)
+            {
+                children.push_back(endpoint_for_source(input_schema->fields()[index].type, sources[index]));
+            }
+            return TSEndpointSchema::non_peered(input_schema, std::move(children));
+        }
+
         // Drop the leading ``Wiring &`` from a ``compose`` parameter tuple.
         template <typename Tuple> struct drop_first;
         template <typename A0, typename... As> struct drop_first<std::tuple<A0, As...>> { using type = std::tuple<As...>; };
@@ -405,7 +583,7 @@ namespace hgraph
                 static_assert(is_port<A>::value, "wire<G>: a time-series input expects a Port argument");
                 if constexpr (is_erased_port<P>::value)
                 {
-                    return P{arg.node(), arg.path(), arg.erased().schema};
+                    return P{arg.erased()};
                 }
                 else if constexpr (is_erased_port<A>::value)
                 {
@@ -415,13 +593,13 @@ namespace hgraph
                         throw std::logic_error(
                             "wire<G>: erased input port schema does not match the sub-graph's time-series input");
                     }
-                    return P{arg.node(), arg.path()};
+                    return P{arg.erased()};
                 }
                 else
                 {
                     static_assert(statically_accepts_output_v<typename P::schema, typename A::schema>,
                                   "wire<G>: input port schema does not match the sub-graph's time-series input");
-                    return P{arg.node(), arg.path()};
+                    return P{arg.erased()};
                 }
             }
             else
@@ -480,7 +658,7 @@ namespace hgraph
                     {
                         throw std::logic_error("wire<Operator, OutSchema>: selected overload output schema does not match");
                     }
-                    return Port<OutSchema>{result.output.node(), result.output.path()};
+                    return Port<OutSchema>{result.output.erased()};
                 }
                 else
                 {
@@ -555,7 +733,7 @@ namespace hgraph
                             using P = std::tuple_element_t<I, wire_params>;
                             if constexpr (static_node_detail::is_input_selector<P>::value)
                             {
-                                const WiringPortRef ref = std::get<I>(arg_tuple).erased();
+                                WiringPortRef       ref = std::get<I>(arg_tuple).erased();
                                 const auto         *expected =
                                     ts_resolver<typename graph_wiring_detail::in_param_schema<P>::type>::resolve(map);
                                 if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
@@ -563,7 +741,7 @@ namespace hgraph
                                     throw std::logic_error(
                                         "wire<T>: input port schema does not match the node's time-series input");
                                 }
-                                inputs.push_back(ref);
+                                inputs.push_back(graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
                             }
                         }(),
                         ...);
@@ -593,6 +771,9 @@ namespace hgraph
 
                 NodeBuilder nb;
                 nb.implementation<X>(map);
+                nb.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                    nb.binding().type_meta != nullptr ? nb.binding().type_meta->input_schema : nullptr,
+                    std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
                 WiringPortRef out =
                     w.add_node(std::type_index(typeid(X)), std::move(nb), inputs, std::move(scalars));
 
@@ -600,11 +781,11 @@ namespace hgraph
                 {
                     if constexpr (!std::is_void_v<OutSchema>)
                     {
-                        return Port<OutSchema>{out.node, out.path};       // typed: explicit output schema
+                        return Port<OutSchema>{std::move(out)};            // typed: explicit output schema
                     }
                     else
                     {
-                        return Port<void>{out.node, out.path, out.schema};  // erased: runtime-resolved
+                        return Port<void>{std::move(out)};                 // erased: runtime-resolved
                     }
                 }
             }
@@ -629,23 +810,27 @@ namespace hgraph
                                               "wire<T>: a time-series input expects a Port argument");
                                 if constexpr (graph_wiring_detail::is_erased_port<A>::value)
                                 {
-                                    const WiringPortRef ref      = std::get<I>(arg_tuple).erased();
-                                    const auto         *expected = schema_descriptor<
+                                    WiringPortRef ref      = std::get<I>(arg_tuple).erased();
+                                    const auto   *expected = schema_descriptor<
                                         typename graph_wiring_detail::in_param_schema<P>::type>::ts_meta();
                                     if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
                                     {
                                         throw std::logic_error(
                                             "wire<T>: erased port schema does not match the node's time-series input");
                                     }
-                                    inputs.push_back(ref);
+                                    inputs.push_back(
+                                        graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
                                 }
                                 else
                                 {
+                                    const auto *expected = schema_descriptor<
+                                        typename graph_wiring_detail::in_param_schema<P>::type>::ts_meta();
                                     static_assert(graph_wiring_detail::statically_accepts_output_v<
                                                       typename graph_wiring_detail::in_param_schema<P>::type,
                                                       typename A::schema>,
                                                   "wire<T>: input port schema does not match the node's time-series input");
-                                    inputs.push_back(std::get<I>(arg_tuple).erased());
+                                    inputs.push_back(graph_wiring_detail::adapt_source_for_input(
+                                        w, expected, std::get<I>(arg_tuple).erased()));
                                 }
                             }
                         }(),
@@ -674,12 +859,15 @@ namespace hgraph
                     }(std::make_index_sequence<sizeof...(Args)>{});
                 }
 
-                WiringPortRef out = w.add_node(std::type_index(typeid(X)),
-                                               graph_wiring_detail::build_node_builder<X>(), inputs, std::move(scalars));
+                NodeBuilder builder = graph_wiring_detail::build_node_builder<X>();
+                builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                    builder.binding().type_meta != nullptr ? builder.binding().type_meta->input_schema : nullptr,
+                    std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                WiringPortRef out = w.add_node(std::type_index(typeid(X)), std::move(builder), inputs, std::move(scalars));
 
                 if constexpr (signature::has_output())
                 {
-                    return Port<typename signature::output_schema_type>{out.node, out.path};
+                    return Port<typename signature::output_schema_type>{std::move(out)};
                 }
             }
         }

@@ -1,5 +1,6 @@
 #include <hgraph/types/graph_wiring.h>
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <stdexcept>
@@ -39,10 +40,20 @@ namespace hgraph
             return ResolvedSchema{tm->input_schema, tm->output_schema, tm->scalar_schema, tm->state_schema};
         }
 
+        struct SourceKey
+        {
+            WiringPortRef::SourceKind kind{WiringPortRef::SourceKind::Unbound};
+            const WiringInstance      *peered_node{nullptr};
+            std::vector<std::size_t>   peered_path{};
+            const TSValueTypeMetaData *schema{nullptr};
+            std::vector<SourceKey>     structural_children{};
+
+            bool operator==(const SourceKey &) const noexcept = default;
+        };
+
         struct InputKey
         {
-            const WiringInstance    *node{nullptr};
-            std::vector<std::size_t> source_path{};
+            SourceKey               source{};
             std::vector<std::size_t> target_path{};
 
             bool operator==(const InputKey &) const noexcept = default;
@@ -78,16 +89,48 @@ namespace hgraph
                 combine(std::hash<const void *>{}(key.schema.state));
                 for (const auto &input : key.inputs)
                 {
-                    combine(std::hash<const void *>{}(input.node));
-                    for (std::size_t p : input.source_path) { combine(std::hash<std::size_t>{}(p)); }
-                    combine(0xF1F1F1F1ULL);  // path separator
+                    hash_source(input.source, h);
                     for (std::size_t p : input.target_path) { combine(std::hash<std::size_t>{}(p)); }
                     combine(0xA7A7A7A7ULL);  // target-path separator
                 }
                 combine(key.scalars.has_value() ? key.scalars.hash() : std::size_t{0});
                 return h;
             }
+
+          private:
+            static void combine(std::size_t &h, std::size_t v) noexcept
+            {
+                h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            }
+
+            static void hash_source(const SourceKey &source, std::size_t &h) noexcept
+            {
+                combine(h, std::hash<int>{}(static_cast<int>(source.kind)));
+                combine(h, std::hash<const void *>{}(source.peered_node));
+                combine(h, std::hash<const void *>{}(source.schema));
+                for (std::size_t p : source.peered_path) { combine(h, std::hash<std::size_t>{}(p)); }
+                combine(h, 0xF1F1F1F1ULL);  // path separator
+                for (const SourceKey &child : source.structural_children) { hash_source(child, h); }
+                combine(h, 0xC8C8C8C8ULL);  // children separator
+            }
         };
+
+        [[nodiscard]] SourceKey source_key_for(const WiringPortRef &source)
+        {
+            SourceKey key{.kind = source.source_kind(), .schema = source.schema};
+            if (source.is_peered_source())
+            {
+                key.peered_node = source.peered_node();
+                key.peered_path = source.peered_path();
+            }
+            else if (source.is_structural_source())
+            {
+                const auto &children = source.structural_children();
+                key.structural_children.reserve(children.size());
+                for (const WiringPortRef &child : children) { key.structural_children.push_back(source_key_for(child)); }
+            }
+            return key;
+        }
 
         [[nodiscard]] InstanceKey make_key(std::type_index def, ResolvedSchema schema,
                                            std::span<const WiringInputRef> inputs, const Value &scalars)
@@ -98,8 +141,7 @@ namespace hgraph
             {
                 const WiringInputRef &input = inputs[index];
                 key.inputs.push_back(InputKey{
-                    .node        = input.source.node,
-                    .source_path = input.source.path,
+                    .source      = source_key_for(input.source),
                     .target_path = input.target_path.empty() ? std::vector<std::size_t>{index} : input.target_path,
                 });
             }
@@ -111,7 +153,119 @@ namespace hgraph
             const auto *meta = instance.builder.binding().type_meta;
             return meta != nullptr ? meta->output_schema : nullptr;
         }
+
+        struct StructuralRefNodeTag
+        {
+        };
+
+        void evaluate_structural_ref_node(const NodeView &view, engine_time_t evaluation_time)
+        {
+            auto root   = view.input(evaluation_time);
+            auto bundle = root.as_bundle();
+            auto ts     = bundle.field("ts");
+
+            Value reference{ts.reference()};
+            auto  output   = view.output(evaluation_time);
+            auto  mutation = output.begin_mutation(evaluation_time);
+            if (!mutation.copy_value_from(reference.view()))
+            {
+                throw std::logic_error("structural REF node failed to copy the reference value");
+            }
+        }
+
+        [[nodiscard]] NodeBuilder structural_ref_node_builder(const TSValueTypeMetaData *target_schema,
+                                                              const WiringPortRef       &source)
+        {
+            if (target_schema == nullptr)
+            {
+                throw std::logic_error("structural REF node requires a target schema");
+            }
+
+            auto       &registry      = TypeRegistry::instance();
+            const auto *input_schema  = registry.un_named_tsb({{"ts", target_schema}});
+            const auto *output_schema = registry.ref(target_schema);
+
+            NodeTypeMetaData schema;
+            schema.display_name      = "structural_ref";
+            schema.input_schema      = input_schema;
+            schema.output_schema     = output_schema;
+            schema.node_kind         = NodeKind::Compute;
+            schema.valid_inputs      = {0};
+
+            NodeCallbacks callbacks;
+            callbacks.evaluate = &evaluate_structural_ref_node;
+
+            std::array<WiringPortRef, 1> inputs{source};
+            NodeBuilder builder = NodeBuilder::native(std::move(schema), std::move(callbacks));
+            builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+            builder.label("structural_ref");
+            return builder;
+        }
+
+        void collect_producers(const WiringPortRef &source, std::vector<const WiringInstance *> &producers)
+        {
+            if (source.is_peered_source())
+            {
+                producers.push_back(source.peered_node());
+                return;
+            }
+            if (source.is_unbound_source())
+            {
+                throw std::logic_error("Wiring::finish encountered an unbound wiring source");
+            }
+            for (const WiringPortRef &child : source.structural_children()) { collect_producers(child, producers); }
+        }
+
+        void emit_edges(const WiringPortRef                                             &source,
+                        const std::vector<std::size_t>                                 &target_path,
+                        const std::unordered_map<const WiringInstance *, std::size_t>   &index_of,
+                        GraphBuilder                                                   &graph_builder,
+                        std::size_t                                                     target_node)
+        {
+            if (source.is_peered_source())
+            {
+                graph_builder.add_edge(GraphEdge{
+                    .source_node = index_of.at(source.peered_node()),
+                    .source_path = source.peered_path(),
+                    .target_node = target_node,
+                    .target_path = target_path,
+                });
+                return;
+            }
+            if (source.is_unbound_source())
+            {
+                throw std::logic_error("Wiring::finish encountered an unbound wiring source");
+            }
+            const auto &children = source.structural_children();
+            for (std::size_t index = 0; index < children.size(); ++index)
+            {
+                std::vector<std::size_t> child_target_path = target_path;
+                child_target_path.push_back(index);
+                emit_edges(children[index], child_target_path, index_of, graph_builder, target_node);
+            }
+        }
     }  // namespace
+
+    WiringPortRef graph_wiring_detail::adapt_source_for_input(Wiring &w,
+                                                              const TSValueTypeMetaData *input_schema,
+                                                              WiringPortRef source)
+    {
+        if (input_schema != nullptr && input_schema->kind == TSTypeKind::REF && source.is_structural_source())
+        {
+            const TSValueTypeMetaData *target_schema = input_schema->referenced_ts();
+            if (!input_accepts_output_schema(input_schema, source.schema))
+            {
+                throw std::logic_error("wire<T>: structural source schema does not match REF input target");
+            }
+
+            std::array<WiringPortRef, 1> inputs{std::move(source)};
+            NodeBuilder builder = structural_ref_node_builder(target_schema, inputs[0]);
+            return w.add_node(std::type_index(typeid(StructuralRefNodeTag)), std::move(builder),
+                              std::span<const WiringPortRef>{inputs.data(), inputs.size()}, Value{});
+        }
+        return source;
+    }
 
     struct Wiring::Impl
     {
@@ -133,7 +287,7 @@ namespace hgraph
         if (auto it = impl_->interned.find(key); it != impl_->interned.end())
         {
             const WiringInstance *existing = it->second;
-            return WiringPortRef{.node = existing, .path = {}, .schema = output_schema_of(*existing)};
+            return WiringPortRef::peered_source(existing, {}, output_schema_of(*existing));
         }
 
         builder.scalars(std::move(scalars));   // record the scalar configuration on the build artifact
@@ -143,7 +297,7 @@ namespace hgraph
         instance.inputs.assign(inputs.begin(), inputs.end());
         impl_->interned.emplace(std::move(key), &instance);
 
-        return WiringPortRef{.node = &instance, .path = {}, .schema = output_schema_of(instance)};
+        return WiringPortRef::peered_source(&instance, {}, output_schema_of(instance));
     }
 
     WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder, std::span<const WiringPortRef> inputs,
@@ -173,8 +327,13 @@ namespace hgraph
         {
             for (const auto &input : instance->inputs)
             {
-                ++indegree[instance];
-                consumers[input.source.node].push_back(instance);
+                std::vector<const WiringInstance *> producers;
+                collect_producers(input.source, producers);
+                for (const WiringInstance *producer : producers)
+                {
+                    ++indegree[instance];
+                    consumers[producer].push_back(instance);
+                }
             }
         }
 
@@ -214,15 +373,9 @@ namespace hgraph
             for (std::size_t input_index = 0; input_index < instance->inputs.size(); ++input_index)
             {
                 const WiringInputRef &input = instance->inputs[input_index];
-                const WiringPortRef  &port  = input.source;
                 std::vector<std::size_t> target_path =
                     input.target_path.empty() ? std::vector<std::size_t>{input_index} : input.target_path;
-                graph_builder.add_edge(GraphEdge{
-                    .source_node = index_of.at(port.node),
-                    .source_path = port.path,
-                    .target_node = i,
-                    .target_path = std::move(target_path),
-                });
+                emit_edges(input.source, target_path, index_of, graph_builder, i);
             }
         }
         graph_builder.global_state(std::move(impl_->global_state));  // carry wiring-time entries onto the graph
