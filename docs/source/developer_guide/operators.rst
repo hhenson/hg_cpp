@@ -31,10 +31,10 @@ chosen implementation is baked into the graph.
    scalar-argument matching, scalar-to-time-series auto-const promotion,
    scalar-aware ``requires_`` / ``resolve_default_types`` hooks, graph overloads,
    sink operators, explicit output schema resolution, and a ``lib/std`` operator family
-   (``add_`` / ``sub_`` / ``div_`` / ``eq_`` / ``zero_``
-   in ``include/hgraph/lib/std/std_operators.h``) — covering homogeneous, mixed,
-   heterogeneous-temporal, result-differs and optional-scalar (``div_``'s
-   ``DivideByZero`` policy) overloads — proven by
+   in ``include/hgraph/lib/std/std_operators.h`` — covering scalar arithmetic,
+   comparison, logical / bitwise, const / zero, and simple IO sink overloads, including
+   homogeneous, mixed, heterogeneous-temporal, result-differs and optional-scalar
+   (``DivideByZero`` policy) overloads — proven by
    ``tests/cpp/test_std_operators.cpp`` and the scalar / auto-const / ``requires`` /
    nested-collection / sink / graph-overload / alignment cases in
    ``tests/cpp/test_operators.cpp``. Still to come (see *Roadmap*): Phase 4 —
@@ -490,10 +490,11 @@ family (it needs scalar value types the value layer does not model yet).
 **Implementations** are a parallel tree under ``include/hgraph/lib/std/operators/impl/``:
 each definition file ``<family>.h`` has a matching ``impl/<family>_impl.h`` holding the
 concrete overloads and a ``register_<family>_operators()`` function, and
-``impl/operators_impl.h`` aggregates them into ``register_standard_operators()``. Only a
-small set is implemented so far — ``add_`` / ``sub_`` / ``div_`` (``impl/arithmetic_impl.h``),
-``eq_`` (``impl/comparison_impl.h``), ``const_`` / ``zero_`` (``impl/conversion_impl.h``)
-and ``debug_print`` / ``null_sink`` (``impl/io_impl.h``); further families gain their
+``impl/operators_impl.h`` aggregates them into ``register_standard_operators()``. The
+implemented subset currently covers scalar arithmetic (``impl/arithmetic_impl.h``),
+scalar comparison (``impl/comparison_impl.h``), scalar logical / bitwise operators
+(``impl/logical_impl.h``), ``const_`` / ``zero_`` (``impl/conversion_impl.h``) and
+``debug_print`` / ``null_sink`` (``impl/io_impl.h``). Further families gain their
 ``impl/<family>_impl.h`` (and a registration call) as they land. The
 ``<hgraph/lib/std/std_operators.h>`` umbrella pulls in both the definitions and the
 implementations.
@@ -513,21 +514,20 @@ Roadmap
    context-aware ``requires_`` / ``resolve_default_types`` hooks, explicit output
    schema filtering, sink return shaping, graph overload registration, constrained
    variables, repeated-variable ranking, and ``TSW`` / ``TSB`` pattern support.
-3. **Phase 3 — ``lib/std`` operator family — done.** ``add_`` / ``sub_`` / ``div_``
-   / ``eq_`` / ``zero_`` in ``include/hgraph/lib/std/std_operators.h``, with homogeneous,
-   mixed-numeric (``int + float -> float``), heterogeneous-temporal
-   (``datetime + timedelta -> datetime``, ``date + timedelta -> date``) and
-   result-differs (``div_: int / int -> float``, ``sub_: datetime - datetime ->
-   timedelta``) overloads, selected by the supplied operand types, with an explicit
-   ``register_standard_operators()``. ``div_`` also carries an **optional wiring-time
-   ``Scalar`` argument** — a ``DivideByZero`` policy (``Error`` / ``Nan`` / ``Inf`` /
-   ``NoTick`` / ``Zero`` / ``One``, mirroring ``ext/2603``) that controls the result
-   on a zero divisor; ``DivideByZero`` is a registered *enum scalar*. Because
-   parameter defaults are not yet a framework feature, the *optional* scalar is
-   modelled as two overloads selected by **arity** — ``div_(a, b)`` (defaults to
-   ``Error``) and ``div_(a, b, policy)`` — which the registry's arity filter resolves.
-   ``zero_`` currently covers the additive scalar zeros mirrored from Python's
-   ``zero`` helper for ``int`` / ``float`` / ``str``.
+3. **Phase 3 — ``lib/std`` operator family — done.** ``include/hgraph/lib/std/std_operators.h``
+   registers scalar arithmetic, comparison, logical / bitwise, const / zero and simple IO
+   sink overloads through an explicit ``register_standard_operators()`` call. Arithmetic
+   includes homogeneous and mixed numeric cases, heterogeneous-temporal cases
+   (``datetime + timedelta -> datetime``, ``date + timedelta -> date``), result-differs
+   cases (``div_: int / int -> float``, ``sub_: datetime - datetime -> timedelta``),
+   Python-style floor semantics for integer ``floordiv_`` / ``mod_``, and optional
+   wiring-time ``DivideByZero`` policy overloads (``Error`` / ``Nan`` / ``Inf`` /
+   ``NoTick`` / ``Zero`` / ``One``, mirroring ``ext/2603`` where applicable).
+   ``DivideByZero`` is a registered *enum scalar*. Because parameter defaults are not yet
+   a framework feature, optional scalar policies are modelled as two overloads selected by
+   **arity** — e.g. ``div_(a, b)`` defaults to ``Error`` and ``div_(a, b, policy)`` uses
+   the supplied policy. ``zero_`` currently covers the additive scalar zeros mirrored from
+   Python's ``zero`` helper for ``int`` / ``float`` / ``str``.
 4. **Phase 4 — Python implementation path.** Runtime-data ``OperatorImpl`` from a
    Python signature; ``NodeCallbacks`` hosting a Python callable; cross-boundary
    identity asserted. Behind ``HGRAPH_ENABLE_PYTHON_USER_NODES``.

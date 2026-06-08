@@ -1,4 +1,4 @@
-// Phase 3: a real lib/std operator family (`add_`, `sub_`, `div_`, `eq_`). One name
+// Phase 3: real lib/std operator families. One name
 // collects several per-type implementations; the most specific is selected at wiring.
 //
 // These exercise the "operator signature is a suggestion" principle: the operators
@@ -30,6 +30,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <vector>
@@ -84,6 +85,13 @@ TEST_CASE("std operators: add_ supports mixed numeric operands (int + float -> f
                  values<Float>(1.5, 3.5, 5.5));
 }
 
+TEST_CASE("std operators: add_ supports string concatenation")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<stdlib::add_>(values<Str>(Str{"a"}, Str{"h"}), values<Str>(Str{"b"}, Str{"g"})),
+                 values<Str>(Str{"ab"}, Str{"hg"}));
+}
+
 TEST_CASE("std operators: add_ supports datetime + timedelta -> datetime")
 {
     stdlib::register_standard_operators();
@@ -117,11 +125,38 @@ TEST_CASE("std operators: sub_ of two datetimes yields a timedelta (result diffe
                  values<engine_time_delta_t>(microseconds{2'000'000}, microseconds{3'000'000}));
 }
 
+TEST_CASE("std operators: sub_ supports mixed numeric operands")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<stdlib::sub_>(values<Int>(5, 7), values<Float>(0.5, 2.25)),
+                 values<Float>(4.5, 4.75));
+}
+
+TEST_CASE("std operators: mul_ supports numeric operands and string repetition")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<stdlib::mul_>(values<Int>(2, 3), values<Int>(4, 5)), values<Int>(8, 15));
+    CHECK_OUTPUT(eval_node<stdlib::mul_>(values<Int>(2, 3), values<Float>(0.5, 1.5)), values<Float>(1.0, 4.5));
+    CHECK_OUTPUT(eval_node<stdlib::mul_>(values<Str>(Str{"a"}, Str{"bc"}), values<Int>(3, 2)),
+                 values<Str>(Str{"aaa"}, Str{"bcbc"}));
+}
+
 TEST_CASE("std operators: eq_ resolves its TS<Bool> output independently of the operand type")
 {
     stdlib::register_standard_operators();
     CHECK_OUTPUT(eval_node<stdlib::eq_>(values<Int>(1, 2, 3), values<Int>(1, 5, 3)),
                  values<Bool>(true, false, true));
+}
+
+TEST_CASE("std operators: comparison operators support ordering and cmp_")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<stdlib::ne_>(values<Int>(1, 2), values<Int>(1, 3)), values<Bool>(false, true));
+    CHECK_OUTPUT(eval_node<stdlib::lt_>(values<Int>(1, 5), values<Float>(2.0, 4.0)), values<Bool>(true, false));
+    CHECK_OUTPUT(eval_node<stdlib::ge_>(values<Str>(Str{"b"}, Str{"a"}), values<Str>(Str{"a"}, Str{"a"})),
+                 values<Bool>(true, true));
+    CHECK_OUTPUT(eval_node<stdlib::cmp_>(values<Int>(1, 2, 3), values<Int>(2, 2, 1)),
+                 values<stdlib::CmpResult>(stdlib::CmpResult::LT, stdlib::CmpResult::EQ, stdlib::CmpResult::GT));
 }
 
 TEST_CASE("std operators: eq_ works for strings")
@@ -149,10 +184,50 @@ TEST_CASE("std operators: zero_ emits the additive zero for standard scalar outp
     }
 }
 
+TEST_CASE("std operators: floordiv_ and mod_ use floor semantics")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<stdlib::floordiv_>(values<Int>(7, -7), values<Int>(3, 3)), values<Int>(2, -3));
+    CHECK_OUTPUT(eval_node<stdlib::mod_>(values<Int>(7, -7), values<Int>(3, 3)), values<Int>(1, 2));
+    CHECK_OUTPUT(eval_node<stdlib::floordiv_>(values<Float>(7.5, -7.5), values<Int>(2, 2)), values<Float>(3.0, -4.0));
+}
+
+TEST_CASE("std operators: pow_ is Float-valued for numeric operands")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<stdlib::pow_>(values<Int>(2, 9), values<Int>(3, 2)), values<Float>(8.0, 81.0));
+    CHECK_OUTPUT(eval_node<stdlib::pow_>(values<Float>(4.0, 9.0), values<Float>(0.5, 0.5)), values<Float>(2.0, 3.0));
+}
+
+TEST_CASE("std operators: unary numeric operators support neg pos abs sign and ln")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<stdlib::neg_>(values<Int>(1, -2)), values<Int>(-1, 2));
+    CHECK_OUTPUT(eval_node<stdlib::pos_>(values<Float>(-1.5, 2.5)), values<Float>(-1.5, 2.5));
+    CHECK_OUTPUT(eval_node<stdlib::abs_>(values<Int>(-3, 4)), values<Int>(3, 4));
+    CHECK_OUTPUT(eval_node<stdlib::sign>(values<Int>(-3, 0, 4)), values<Int>(-1, 0, 1));
+    CHECK_OUTPUT(eval_node<stdlib::ln>(values<Float>(1.0, std::numbers::e)), values<Float>(0.0, 1.0));
+}
+
+TEST_CASE("std operators: logical and bitwise operators support standard scalars")
+{
+    stdlib::register_standard_operators();
+    CHECK_OUTPUT(eval_node<stdlib::not_>(values<Bool>(true, false)), values<Bool>(false, true));
+    CHECK_OUTPUT(eval_node<stdlib::and_>(values<Int>(1, 0), values<Int>(2, 3)), values<Bool>(true, false));
+    CHECK_OUTPUT(eval_node<stdlib::or_>(values<Str>(Str{}, Str{"x"}), values<Str>(Str{}, Str{})),
+                 values<Bool>(false, true));
+    CHECK_OUTPUT(eval_node<stdlib::bit_and>(values<Int>(6, 5), values<Int>(3, 1)), values<Int>(2, 1));
+    CHECK_OUTPUT(eval_node<stdlib::bit_or>(values<Bool>(true, false), values<Bool>(false, false)),
+                 values<Bool>(true, false));
+    CHECK_OUTPUT(eval_node<stdlib::invert_>(values<Int>(0, 1)), values<Int>(~Int{0}, ~Int{1}));
+    CHECK_OUTPUT(eval_node<stdlib::lshift_>(values<Int>(1, 2), values<Int>(3, 2)), values<Int>(8, 8));
+    CHECK_OUTPUT(eval_node<stdlib::rshift_>(values<Int>(8, 9), values<Int>(1, 2)), values<Int>(4, 2));
+}
+
 TEST_CASE("std operators: an operand combination with no registered implementation raises")
 {
-    stdlib::register_standard_operators();   // add_ has no str overload
-    REQUIRE_THROWS_AS(eval_node<stdlib::add_>(values<Str>(Str{"x"}), values<Str>(Str{"y"})), OperatorResolutionError);
+    stdlib::register_standard_operators();   // bool arithmetic is deliberately not registered
+    REQUIRE_THROWS_AS(eval_node<stdlib::add_>(values<Bool>(true), values<Bool>(false)), OperatorResolutionError);
 }
 
 TEST_CASE("std operators: div_ takes an optional divide-by-zero policy scalar")
@@ -173,6 +248,11 @@ TEST_CASE("std operators: div_ takes an optional divide-by-zero policy scalar")
     // NoTick produces a gap (no tick) on the zero-divisor cycle.
     CHECK_OUTPUT(eval_node<stdlib::div_>(values<Int>(1, 1, 1), values<Int>(2, 0, 4), DBZ::NoTick),
                  values<Float>(0.5, none, 0.25));
+
+    CHECK_OUTPUT(eval_node<stdlib::floordiv_>(values<Int>(5, 5, 5), values<Int>(2, 0, 4), DBZ::NoTick),
+                 values<Int>(2, none, 1));
+    CHECK_OUTPUT(eval_node<stdlib::mod_>(values<Int>(5, 5, 5), values<Int>(2, 0, 4), DBZ::NoTick),
+                 values<Int>(1, none, 1));
 }
 
 TEST_CASE("std operators: div_ NaN policy emits NaN on a zero divisor")

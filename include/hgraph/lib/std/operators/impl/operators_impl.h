@@ -8,7 +8,7 @@
  * provides the concrete overloads and a ``register_<family>_operators()`` function; this
  * header aggregates them into ``register_standard_operators``.
  *
- * Only a small set is implemented so far (``add_`` / ``sub_`` / ``div_`` / ``eq_`` /
+ * Only a small set is implemented so far (scalar arithmetic / comparison / logical,
  * ``const_`` / ``zero_`` / ``debug_print`` / ``null_sink``); further families gain an
  * ``impl/<family>_impl.h`` and a call below as their implementations land. See
  * ``docs/source/developer_guide/operators.rst``.
@@ -18,6 +18,7 @@
 #include <hgraph/lib/std/operators/impl/comparison_impl.h>
 #include <hgraph/lib/std/operators/impl/conversion_impl.h>
 #include <hgraph/lib/std/operators/impl/io_impl.h>
+#include <hgraph/lib/std/operators/impl/logical_impl.h>
 
 namespace hgraph::stdlib
 {
@@ -30,6 +31,7 @@ namespace hgraph::stdlib
     {
         register_arithmetic_operators();
         register_comparison_operators();
+        register_logical_operators();
         register_conversion_operators();
         register_io_operators();
     }
