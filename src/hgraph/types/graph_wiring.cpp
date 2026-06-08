@@ -80,20 +80,17 @@ namespace hgraph
             std::size_t operator()(const InstanceKey &key) const noexcept
             {
                 std::size_t h = std::hash<std::type_index>{}(key.def);
-                auto combine = [&h](std::size_t v) noexcept {
-                    h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-                };
-                combine(std::hash<const void *>{}(key.schema.input));
-                combine(std::hash<const void *>{}(key.schema.output));
-                combine(std::hash<const void *>{}(key.schema.scalar));
-                combine(std::hash<const void *>{}(key.schema.state));
+                combine(h, std::hash<const void *>{}(key.schema.input));
+                combine(h, std::hash<const void *>{}(key.schema.output));
+                combine(h, std::hash<const void *>{}(key.schema.scalar));
+                combine(h, std::hash<const void *>{}(key.schema.state));
                 for (const auto &input : key.inputs)
                 {
                     hash_source(input.source, h);
-                    for (std::size_t p : input.target_path) { combine(std::hash<std::size_t>{}(p)); }
-                    combine(0xA7A7A7A7ULL);  // target-path separator
+                    for (std::size_t p : input.target_path) { combine(h, std::hash<std::size_t>{}(p)); }
+                    combine(h, 0xA7A7A7A7ULL);  // target-path separator
                 }
-                combine(key.scalars.has_value() ? key.scalars.hash() : std::size_t{0});
+                combine(h, key.scalars.has_value() ? key.scalars.hash() : std::size_t{0});
                 return h;
             }
 
@@ -284,12 +281,23 @@ namespace hgraph
     WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder, std::span<const WiringInputRef> inputs,
                                    Value scalars)
     {
-        InstanceKey key = make_key(def, resolved_schema_of(builder), inputs, scalars);
+        const ResolvedSchema schema = resolved_schema_of(builder);
 
-        if (auto it = impl_->interned.find(key); it != impl_->interned.end())
+        // Output-less (sink / side-effecting) nodes are never deduped: two identical
+        // sinks must stay distinct runtime nodes so each performs its side effect,
+        // matching Python where node calls are not common-subexpression-eliminated.
+        // Only value-producing nodes are interned, where an identical
+        // (def, schema, inputs, scalars) genuinely is one shared subexpression.
+        const bool interns = schema.output != nullptr;
+
+        InstanceKey key = make_key(def, schema, inputs, scalars);
+        if (interns)
         {
-            const WiringInstance *existing = it->second;
-            return WiringPortRef::peered_source(existing, {}, output_schema_of(*existing));
+            if (auto it = impl_->interned.find(key); it != impl_->interned.end())
+            {
+                const WiringInstance *existing = it->second;
+                return WiringPortRef::peered_source(existing, {}, output_schema_of(*existing));
+            }
         }
 
         builder.scalars(std::move(scalars));   // record the scalar configuration on the build artifact
@@ -297,7 +305,7 @@ namespace hgraph
         WiringInstance &instance = impl_->instances.emplace_back();
         instance.builder         = std::move(builder);
         instance.inputs.assign(inputs.begin(), inputs.end());
-        impl_->interned.emplace(std::move(key), &instance);
+        if (interns) { impl_->interned.emplace(std::move(key), &instance); }
 
         return WiringPortRef::peered_source(&instance, {}, output_schema_of(instance));
     }

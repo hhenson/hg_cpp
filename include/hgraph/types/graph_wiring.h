@@ -1208,6 +1208,16 @@ namespace hgraph
         }
     }
 
+    /**
+     * Brace-initializer entry points for ``wire<X>(w, {a, b}, …)``.
+     *
+     * A braced-init-list cannot be deduced through a forwarding ``Args...`` pack,
+     * so each leading argument position that may take a ``{…}`` structural input
+     * needs its own overload (unnamed ``{a, b}`` → TSL/TSB by position; named
+     * ``{{"f", a}}`` → TSB by field name). Only the first three positions are
+     * covered today; a ``{…}`` in a later position must be wrapped explicitly as a
+     * ``WiringStructuralSourceArg`` / ``WiringNamedStructuralSourceArg``.
+     */
     template <typename X, typename OutSchema = void, typename... Rest>
     auto wire(Wiring &w, std::initializer_list<WiringPortRef> first, const Rest &...rest)
     {

@@ -18,12 +18,18 @@ namespace hgraph
             GraphValue graph{};
         };
 
-        [[nodiscard]] TSInputView input_at_path(TSInputView view, const std::vector<std::size_t> &path)
+        // Walk an indexed time-series view (TSB field index or TSL index) along a
+        // path. Inputs and outputs traverse identically, so one template serves both.
+        template <typename View>
+        [[nodiscard]] View walk_path(View view, const std::vector<std::size_t> &path)
         {
             for (const std::size_t component : path)
             {
                 const auto *schema = view.schema();
-                if (schema == nullptr) { throw std::logic_error("Nested graph input path requires a typed input view"); }
+                if (schema == nullptr)
+                {
+                    throw std::logic_error("Nested graph path requires a typed time-series view");
+                }
                 switch (schema->kind)
                 {
                     case TSTypeKind::TSB:
@@ -40,43 +46,21 @@ namespace hgraph
                     }
                     default:
                         throw std::invalid_argument(
-                            "Nested graph input path can only traverse indexed time-series structures");
+                            "Nested graph path can only traverse indexed time-series structures");
                 }
             }
             return view;
         }
 
-        [[nodiscard]] TSOutputView output_at_path(TSOutputView view, const std::vector<std::size_t> &path)
-        {
-            for (const std::size_t component : path)
-            {
-                const auto *schema = view.schema();
-                if (schema == nullptr) { throw std::logic_error("Nested graph output path requires a typed output view"); }
-                switch (schema->kind)
-                {
-                    case TSTypeKind::TSB:
-                    {
-                        auto bundle = view.as_bundle();
-                        view = bundle[component];
-                        break;
-                    }
-                    case TSTypeKind::TSL:
-                    {
-                        auto list = view.as_list();
-                        view = list[component];
-                        break;
-                    }
-                    default:
-                        throw std::invalid_argument(
-                            "Nested graph output path can only traverse indexed time-series structures");
-                }
-            }
-            return view;
-        }
-
+        // Program-lifetime, intentionally-leaked storage for node contexts. A
+        // context is type-level metadata referenced by interned ops tables, and it
+        // owns a GraphBuilder that references other interned registries (types,
+        // plans). Leaking avoids a static-destruction-order crash at exit: a
+        // function-local static would be torn down relative to those registries in
+        // an order we do not control, destroying the GraphBuilder after the
+        // artifacts it references. Do NOT "simplify" this to a static container.
         [[nodiscard]] std::vector<std::unique_ptr<SingleNestedGraphNodeContext>> &single_nested_graph_contexts() noexcept
         {
-            // Node contexts are type-level metadata referenced by interned ops tables.
             static auto *contexts = new std::vector<std::unique_ptr<SingleNestedGraphNodeContext>>;
             return *contexts;
         }
@@ -86,12 +70,11 @@ namespace hgraph
             SingleNestedGraphNodeOptions options,
             std::size_t graph_storage_offset)
         {
-            auto context = std::make_unique<SingleNestedGraphNodeContext>(
-                SingleNestedGraphNodeContext{
-                    .spec = std::move(spec),
-                    .options = options,
-                    .graph_storage_offset = graph_storage_offset,
-                });
+            auto context = std::make_unique<SingleNestedGraphNodeContext>(SingleNestedGraphNodeContext{
+                .spec = std::move(spec),
+                .options = options,
+                .graph_storage_offset = graph_storage_offset,
+            });
             const auto *result = context.get();
             single_nested_graph_contexts().push_back(std::move(context));
             return *result;
@@ -253,6 +236,11 @@ namespace hgraph
     void single_nested_graph_stop(const NodeView &view, engine_time_t)
     {
         auto nested = checked_nested_view(view);
+        // The forwarding link is intentionally left intact: stop() only halts
+        // evaluation; the child GraphValue (and thus the forwarded output) lives in
+        // this node's storage and is torn down together with the parent output, so
+        // the forwarded value stays observable after a run. ``switch_``-style
+        // wrappers that swap the active child use single_nested_graph_clear_output_binding.
         if (nested.context().options.stop_child_on_stop && nested.child_graph_value().has_value())
         {
             nested.child_graph().stop();
@@ -265,6 +253,10 @@ namespace hgraph
 
         auto nested = checked_nested_view(view);
         nested.ensure_child_graph();
+        // Re-bind boundaries each cycle: an upstream REF/forwarding output may have
+        // re-pointed since the last evaluation. The bind_* helpers skip the rebind
+        // when the endpoint already references the same output, so this is cheap when
+        // the wiring is stable.
         single_nested_graph_bind_inputs(nested, evaluation_time);
         single_nested_graph_bind_output(nested, evaluation_time);
         nested.child_graph().evaluate(evaluation_time);
@@ -282,10 +274,10 @@ namespace hgraph
 
         for (const NestedGraphInputBinding &binding : bindings)
         {
-            auto source = input_at_path(root_input.borrowed_ref(), binding.source_path);
+            auto source = walk_path(root_input.borrowed_ref(), binding.source_path);
             auto source_output = source.bound_output();
 
-            auto target = input_at_path(
+            auto target = walk_path(
                 child_graph.node_at(binding.target.node).input(evaluation_time),
                 binding.target.path);
             bind_input_to_source(std::move(target), source_output);
@@ -298,10 +290,10 @@ namespace hgraph
         const auto &binding = nested.context().spec.output_binding;
         if (!binding.has_value()) { return; }
 
-        auto source = output_at_path(
+        auto source = walk_path(
             nested.child_graph().node_at(binding->source.node).output(evaluation_time),
             binding->source.path);
-        auto target = output_at_path(nested.node().output(evaluation_time), binding->target_path);
+        auto target = walk_path(nested.node().output(evaluation_time), binding->target_path);
         bind_forwarding_output_to_source(target, source);
     }
 
@@ -311,7 +303,7 @@ namespace hgraph
         const auto &binding = nested.context().spec.output_binding;
         if (!binding.has_value()) { return; }
 
-        auto target = output_at_path(nested.node().output(evaluation_time), binding->target_path);
+        auto target = walk_path(nested.node().output(evaluation_time), binding->target_path);
         if (target.forwarding_bound()) { target.clear_forwarding_target(); }
     }
 

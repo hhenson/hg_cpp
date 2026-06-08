@@ -318,37 +318,24 @@ namespace hgraph
         [[nodiscard]] NodeRuntimeLayout layout_for(const MemoryUtils::StoragePlan &plan)
         {
             NodeRuntimeLayout layout;
+            layout.storage_offset = plan.component("runtime_storage").offset;
 
-            const auto &storage_component = plan.component("runtime_storage");
-            layout.storage_offset = storage_component.offset;
-
-            if (const auto *component = plan.find_component("input"); component != nullptr)
+            // Optional components: recorded only when the schema declares them.
+            const std::pair<const char *, std::size_t NodeRuntimeLayout::*> optional_components[]{
+                {"input", &NodeRuntimeLayout::input_offset},
+                {"output", &NodeRuntimeLayout::output_offset},
+                {"state", &NodeRuntimeLayout::state_offset},
+                {"scalars", &NodeRuntimeLayout::scalars_offset},
+                {"scheduler", &NodeRuntimeLayout::scheduler_offset},
+                {"error_output", &NodeRuntimeLayout::error_output_offset},
+                {"recordable_state", &NodeRuntimeLayout::recordable_state_offset},
+            };
+            for (const auto &[name, member] : optional_components)
             {
-                layout.input_offset = component->offset;
-            }
-            if (const auto *component = plan.find_component("output"); component != nullptr)
-            {
-                layout.output_offset = component->offset;
-            }
-            if (const auto *component = plan.find_component("state"); component != nullptr)
-            {
-                layout.state_offset = component->offset;
-            }
-            if (const auto *component = plan.find_component("scalars"); component != nullptr)
-            {
-                layout.scalars_offset = component->offset;
-            }
-            if (const auto *component = plan.find_component("scheduler"); component != nullptr)
-            {
-                layout.scheduler_offset = component->offset;
-            }
-            if (const auto *component = plan.find_component("error_output"); component != nullptr)
-            {
-                layout.error_output_offset = component->offset;
-            }
-            if (const auto *component = plan.find_component("recordable_state"); component != nullptr)
-            {
-                layout.recordable_state_offset = component->offset;
+                if (const auto *component = plan.find_component(name); component != nullptr)
+                {
+                    layout.*member = component->offset;
+                }
             }
             return layout;
         }

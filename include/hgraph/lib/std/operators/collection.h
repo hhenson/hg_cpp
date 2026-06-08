@@ -248,10 +248,8 @@ namespace hgraph::stdlib
         [[nodiscard]] WiringPortRef structural_collection_port(const TSValueTypeMetaData             *output_schema,
                                                                const std::array<WiringPortRef, Size> &refs)
         {
-            std::vector<WiringPortRef> children;
-            children.reserve(Size);
-            for (const WiringPortRef &ref : refs) { children.push_back(ref); }
-            return WiringPortRef::structural_source(output_schema, std::move(children));
+            return WiringPortRef::structural_source(output_schema,
+                                                    std::vector<WiringPortRef>(refs.begin(), refs.end()));
         }
     }  // namespace collection_detail
 
