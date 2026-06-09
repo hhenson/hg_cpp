@@ -123,18 +123,28 @@ schema stays free of runtime addresses:
 
 .. code-block:: cpp
 
+   enum class GraphEdgeSourceKind {
+       Output,
+       ErrorOutput,
+       RecordableState,
+   };
+
    struct GraphEdge {
-       std::size_t          source_node;
-       std::vector<size_t>  source_path;  // empty = single output
+       std::size_t          source_node;  // node index plus packed source kind
+       std::vector<size_t>  source_path;  // empty = source root
        std::size_t          target_node;
        std::vector<size_t>  target_path;  // index into the input bundle
    };
 
-The graph builder turns each entry into the matching link state at
-construction time, threading the pointers through ``BoundaryBindings``
-and node input/output positions. The path representation matches the
-slot/index addressing scheme described in
-:ref:`ts-path-construction`.
+``source_node`` is normally the producing node index. For the uncommon special
+source roots, ``make_graph_edge_source(node, kind)`` packs ``GraphEdgeSourceKind``
+into the high bits of that same word; ``graph_edge_source_node`` and
+``graph_edge_source_kind`` decode it. This keeps the default edge footprint at the
+ordinary output-edge size while preserving a typed endpoint model. ``source_path``
+then walks below the selected root. The graph builder turns each entry into the
+matching link state at construction time, threading the pointers through
+``BoundaryBindings`` and node input/output positions. The path representation
+matches the slot/index addressing scheme described in :ref:`ts-path-construction`.
 
 The Graph Boundary
 ------------------

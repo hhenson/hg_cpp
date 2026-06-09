@@ -119,9 +119,12 @@ Assembling a graph
 ------------------
 
 Nodes are assembled with ``GraphBuilder`` and connected with ``GraphEdge``
-(``source_node`` / ``source_path`` → ``target_node`` / ``target_path``). Paths
-index into ``TSB`` / ``TSL`` structure; an input ``target_path`` of ``{0}``
-selects the first field of the node's input bundle.
+(``source_node`` / ``source_path`` → ``target_node`` / ``target_path``).
+``source_node`` is a plain node index for ordinary output edges. Special source
+roots use ``make_graph_edge_source(node, kind)`` to pack ``GraphEdgeSourceKind``
+into the high bits of the same word. Paths index into ``TSB`` / ``TSL`` structure
+below the selected source root. An input ``target_path`` of ``{0}`` selects the
+first field of the node's input bundle.
 
 .. code-block:: cpp
 
@@ -160,7 +163,7 @@ Deferred (land with the relevant runtime layer):
 - container-shaped selectors over ``TSB`` / ``TSL`` / ``TSS`` / ``TSD`` /
   ``TSW`` inputs and outputs (non-peered prefixes, nested endpoint
   annotations);
-- automatic recordable-state port exposure / recording, ``EvaluationClock`` injection;
+- automatic recordable-state recording, ``EvaluationClock`` injection;
 - push-source nodes — a required ``start(Sender<T>)`` plus an
   ``apply_message(Scalar<"name", T>, …)`` hook — and ``Scalar<"name", T>``
   arguments;

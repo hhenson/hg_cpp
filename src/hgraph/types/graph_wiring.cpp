@@ -27,6 +27,8 @@ namespace hgraph
         {
             const void *input;
             const void *output;
+            const void *error_output;
+            const void *recordable_state;
             const void *scalar;
             const void *state;
 
@@ -36,13 +38,19 @@ namespace hgraph
         [[nodiscard]] ResolvedSchema resolved_schema_of(const NodeBuilder &builder)
         {
             const auto *tm = builder.binding().type_meta;
-            if (tm == nullptr) { return ResolvedSchema{nullptr, nullptr, nullptr, nullptr}; }
-            return ResolvedSchema{tm->input_schema, tm->output_schema, tm->scalar_schema, tm->state_schema};
+            if (tm == nullptr) { return ResolvedSchema{nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}; }
+            return ResolvedSchema{tm->input_schema,
+                                  tm->output_schema,
+                                  tm->error_output_schema,
+                                  tm->recordable_state_schema,
+                                  tm->scalar_schema,
+                                  tm->state_schema};
         }
 
         struct SourceKey
         {
             WiringPortRef::SourceKind kind{WiringPortRef::SourceKind::Unbound};
+            GraphEdgeSourceKind       peered_output_kind{GraphEdgeSourceKind::Output};
             const WiringInstance      *peered_node{nullptr};
             std::vector<std::size_t>   peered_path{};
             const TSValueTypeMetaData *schema{nullptr};
@@ -82,6 +90,8 @@ namespace hgraph
                 std::size_t h = std::hash<std::type_index>{}(key.def);
                 combine(h, std::hash<const void *>{}(key.schema.input));
                 combine(h, std::hash<const void *>{}(key.schema.output));
+                combine(h, std::hash<const void *>{}(key.schema.error_output));
+                combine(h, std::hash<const void *>{}(key.schema.recordable_state));
                 combine(h, std::hash<const void *>{}(key.schema.scalar));
                 combine(h, std::hash<const void *>{}(key.schema.state));
                 for (const auto &input : key.inputs)
@@ -103,6 +113,7 @@ namespace hgraph
             static void hash_source(const SourceKey &source, std::size_t &h) noexcept
             {
                 combine(h, std::hash<int>{}(static_cast<int>(source.kind)));
+                combine(h, std::hash<int>{}(static_cast<int>(source.peered_output_kind)));
                 combine(h, std::hash<const void *>{}(source.peered_node));
                 combine(h, std::hash<const void *>{}(source.schema));
                 for (std::size_t p : source.peered_path) { combine(h, std::hash<std::size_t>{}(p)); }
@@ -117,8 +128,9 @@ namespace hgraph
             SourceKey key{.kind = source.source_kind(), .schema = source.schema};
             if (source.is_peered_source())
             {
-                key.peered_node = source.peered_node();
-                key.peered_path = source.peered_path();
+                key.peered_node        = source.peered_node();
+                key.peered_path        = source.peered_path();
+                key.peered_output_kind = source.peered_output_kind();
             }
             else if (source.is_structural_source())
             {
@@ -224,7 +236,8 @@ namespace hgraph
             if (source.is_peered_source())
             {
                 graph_builder.add_edge(GraphEdge{
-                    .source_node = index_of.at(source.peered_node()),
+                    .source_node = make_graph_edge_source(index_of.at(source.peered_node()),
+                                                          source.peered_output_kind()),
                     .source_path = source.peered_path(),
                     .target_node = target_node,
                     .target_path = target_path,

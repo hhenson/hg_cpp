@@ -48,6 +48,22 @@ namespace hgraph
             return view;
         }
 
+        [[nodiscard]] TSOutputView edge_source_root(NodeView view,
+                                                    DateTime evaluation_time,
+                                                    GraphEdgeSourceKind source_kind)
+        {
+            switch (source_kind)
+            {
+                case GraphEdgeSourceKind::Output:
+                    return view.output(evaluation_time);
+                case GraphEdgeSourceKind::ErrorOutput:
+                    return view.error_output(evaluation_time);
+                case GraphEdgeSourceKind::RecordableState:
+                    return view.recordable_state(evaluation_time);
+            }
+            throw std::logic_error("Graph edge source kind is invalid");
+        }
+
         [[nodiscard]] TSInputView input_at_path(TSInputView view, const std::vector<std::size_t> &path)
         {
             for (const std::size_t component : path)
@@ -99,12 +115,16 @@ namespace hgraph
             {
                 for (const auto &edge : edges)
                 {
-                    if (edge.source_node >= nodes.size() || edge.target_node >= nodes.size())
+                    const std::size_t source_node = graph_edge_source_node(edge.source_node);
+                    if (source_node >= nodes.size() || edge.target_node >= nodes.size())
                     {
                         throw std::out_of_range("Graph edge references a missing node");
                     }
 
-                    auto source = output_at_path(nodes[edge.source_node].view().output(evaluation_time), edge.source_path);
+                    auto source_root = edge_source_root(nodes[source_node].view(),
+                                                        evaluation_time,
+                                                        graph_edge_source_kind(edge.source_node));
+                    auto source = output_at_path(std::move(source_root), edge.source_path);
                     auto target = input_at_path(nodes[edge.target_node].view().input(evaluation_time), edge.target_path);
                     target.bind_output(source);
                 }

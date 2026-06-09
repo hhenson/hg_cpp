@@ -47,17 +47,19 @@ namespace hgraph
     /**
      * Erased wiring-time handle to a time-series source.
      *
-     * A peered source references a producing node and optional ``path`` within
-     * that node's output. A structural source has no producing node of its own;
-     * its children describe the peered or structural sources for each fixed child
+     * A peered source references a producing node, a source root (ordinary
+     * output, error output, or recordable-state output), and optional ``path``
+     * within that root. A structural source has no producing node of its own; its
+     * children describe the peered or structural sources for each fixed child
      * slot. Target information belongs on ``WiringInputRef`` only.
      */
     struct WiringPortRef
     {
         struct PeeredSource
         {
-            const WiringInstance    *node{nullptr};
-            std::vector<std::size_t> path{};
+            const WiringInstance     *node{nullptr};
+            std::vector<std::size_t>  path{};
+            GraphEdgeSourceKind       output_kind{GraphEdgeSourceKind::Output};
         };
 
         struct StructuralSource
@@ -77,12 +79,13 @@ namespace hgraph
 
         [[nodiscard]] static WiringPortRef peered_source(const WiringInstance *node,
                                                          std::vector<std::size_t> path,
-                                                         const TSValueTypeMetaData *schema)
+                                                         const TSValueTypeMetaData *schema,
+                                                         GraphEdgeSourceKind output_kind = GraphEdgeSourceKind::Output)
         {
             if (node == nullptr) { throw std::logic_error("WiringPortRef::peered_source requires a node"); }
             WiringPortRef ref;
             ref.schema  = schema;
-            ref.source_ = PeeredSource{node, std::move(path)};
+            ref.source_ = PeeredSource{node, std::move(path), output_kind};
             return ref;
         }
 
@@ -129,6 +132,13 @@ namespace hgraph
             return source->path;
         }
 
+        [[nodiscard]] GraphEdgeSourceKind peered_output_kind() const
+        {
+            const auto *source = std::get_if<PeeredSource>(&source_);
+            if (source == nullptr) { throw std::logic_error("WiringPortRef source is not peered"); }
+            return source->output_kind;
+        }
+
         [[nodiscard]] const std::vector<WiringPortRef> &structural_children() const
         {
             const auto *source = std::get_if<StructuralSource>(&source_);
@@ -148,6 +158,12 @@ namespace hgraph
             if (source != nullptr) { return source->path; }
             static const std::vector<std::size_t> empty_path;
             return empty_path;
+        }
+
+        [[nodiscard]] GraphEdgeSourceKind peered_output_kind_or_default() const noexcept
+        {
+            const auto *source = std::get_if<PeeredSource>(&source_);
+            return source != nullptr ? source->output_kind : GraphEdgeSourceKind::Output;
         }
 
       private:
@@ -298,6 +314,10 @@ namespace hgraph
 
         [[nodiscard]] const WiringInstance           *node() const noexcept { return ref_.peered_node_or_null(); }
         [[nodiscard]] const std::vector<std::size_t> &path() const noexcept { return ref_.peered_path_or_empty(); }
+        [[nodiscard]] GraphEdgeSourceKind             output_kind() const noexcept
+        {
+            return ref_.peered_output_kind_or_default();
+        }
         [[nodiscard]] Wiring                         *wiring() const noexcept { return wiring_; }
         [[nodiscard]] Wiring                         &checked_wiring() const
         {
@@ -362,6 +382,10 @@ namespace hgraph
 
         [[nodiscard]] const WiringInstance           *node() const noexcept { return ref_.peered_node_or_null(); }
         [[nodiscard]] const std::vector<std::size_t> &path() const noexcept { return ref_.peered_path_or_empty(); }
+        [[nodiscard]] GraphEdgeSourceKind             output_kind() const noexcept
+        {
+            return ref_.peered_output_kind_or_default();
+        }
         [[nodiscard]] const TSValueTypeMetaData      *runtime_schema() const noexcept { return ref_.schema; }
         [[nodiscard]] Wiring                         *wiring() const noexcept { return wiring_; }
         [[nodiscard]] Wiring                         &checked_wiring() const
@@ -379,6 +403,85 @@ namespace hgraph
         Wiring        *wiring_{nullptr};
         WiringPortRef ref_{};
     };
+
+    namespace graph_wiring_detail
+    {
+        [[nodiscard]] inline std::logic_error special_output_error(std::string_view function_name,
+                                                                   std::string_view detail)
+        {
+            std::string message{function_name};
+            message += ": ";
+            message += detail;
+            return std::logic_error(message);
+        }
+
+        [[nodiscard]] inline const TSValueTypeMetaData *special_output_schema(
+            const WiringPortRef &source,
+            GraphEdgeSourceKind  output_kind,
+            std::string_view     function_name)
+        {
+            if (!source.is_peered_source())
+            {
+                throw special_output_error(function_name, "requires a peered node output port");
+            }
+            if (!source.peered_path().empty())
+            {
+                throw special_output_error(function_name, "is only available from the node's root output port");
+            }
+            if (source.peered_output_kind() != GraphEdgeSourceKind::Output)
+            {
+                throw special_output_error(function_name, "requires the node's ordinary output port");
+            }
+
+            const WiringInstance       *node = source.peered_node();
+            const NodeTypeMetaData     *meta = node->builder.binding().type_meta;
+            const TSValueTypeMetaData  *schema = nullptr;
+            switch (output_kind)
+            {
+                case GraphEdgeSourceKind::ErrorOutput:
+                    schema = meta != nullptr ? meta->error_output_schema : nullptr;
+                    if (schema == nullptr)
+                    {
+                        throw special_output_error(function_name, "source node has no error output");
+                    }
+                    return schema;
+                case GraphEdgeSourceKind::RecordableState:
+                    schema = meta != nullptr ? meta->recordable_state_schema : nullptr;
+                    if (schema == nullptr)
+                    {
+                        throw special_output_error(function_name, "source node has no recordable state output");
+                    }
+                    return schema;
+                case GraphEdgeSourceKind::Output:
+                    break;
+            }
+            throw special_output_error(function_name, "unsupported special output endpoint");
+        }
+
+        [[nodiscard]] inline WiringPortRef special_output_source(const WiringPortRef &source,
+                                                                 GraphEdgeSourceKind  output_kind,
+                                                                 std::string_view     function_name)
+        {
+            const TSValueTypeMetaData *schema = special_output_schema(source, output_kind, function_name);
+            return WiringPortRef::peered_source(source.peered_node(), {}, schema, output_kind);
+        }
+    }  // namespace graph_wiring_detail
+
+    /** C++-only access to a node's hidden recordable-state output for system wiring. */
+    template <typename Schema>
+    [[nodiscard]] Port<void> recordable_state(const Port<Schema> &port)
+    {
+        return Port<void>{port.wiring(), graph_wiring_detail::special_output_source(
+                                             port.erased(), GraphEdgeSourceKind::RecordableState, "recordable_state")};
+    }
+
+    /** C++-only access to a node's hidden error output for system wiring. */
+    template <typename Schema>
+    [[nodiscard]] Port<void> error_output(const Port<Schema> &port)
+    {
+        return Port<void>{port.wiring(), graph_wiring_detail::special_output_source(
+                                             port.erased(), GraphEdgeSourceKind::ErrorOutput, "error_output")};
+    }
 
     /** Result of type-erased operator wiring before the public ``wire<>`` return is shaped by the operator marker. */
     struct OperatorWireResult

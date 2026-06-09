@@ -845,18 +845,20 @@ Recordable state
 ``RecordableState<TSchema>`` is available as node-local state backed by a hidden
 time-series output. It is feedback-like state that wraps the node: the node may
 read and update it during evaluation, while system-level record/replay code can
-observe and restore it. It cannot be wired as an external time-series and it does
-not participate in scheduling or input readiness. A node uses either ``State<T>``
-or ``RecordableState<TSchema>``, not both; recordable state is the node's state
-when record/replay visibility is required.
+observe and restore it. It is not part of the normal output contract and it does
+not participate in scheduling or input readiness for the owning node. A node uses
+either ``State<T>`` or ``RecordableState<TSchema>``, not both; recordable state is
+the node's state when record/replay visibility is required.
 
 The selector uses typed field access for structured state. For a bundle-shaped
 state, access fields with ``field<"...">()`` and update scalar fields with
 ``set(...)``.
 
-Automatic Python-style recording of the hidden state output is not wired yet.
-That future slice will expose the hidden state output as a wiring port and attach
-it to record/replay using the node's recordable id.
+C++ system wiring can deliberately extract the hidden output with
+``recordable_state(port)``. The related ``error_output(port)`` helper exposes a
+node's hidden error output. Both helpers create special edge source roots; they
+do not treat hidden outputs as ordinary child paths. Automatic Python-style
+record/replay attachment using the node's recordable id is still planned.
 
 .. code-block:: cpp
 
@@ -1157,7 +1159,10 @@ Feature status
    * - ``RecordableState`` selector
      - available
      - available
-   * - Automatic recordable-state port exposure / recording
+   * - Explicit ``recordable_state(port)`` / ``error_output(port)`` C++ helpers
+     - available
+     - Python uses ``__state__`` / ``__error__``
+   * - Automatic recordable-state recording
      - planned
      - available
    * - Activity / validity policy flags

@@ -88,12 +88,15 @@ A ``NodeTypeMetaData`` carries:
     set only for node families that expose an error stream. The default
     callback-backed ops do not install a separate error-handling hook; specialised
     ``NodeOps`` implementations can use ``captures_errors`` and this output
-    endpoint together.
+    endpoint together. C++ wiring can select this endpoint explicitly with
+    ``error_output(port)``.
 
 ``recordable_state_schema``
     Optional. The time-series schema for the node's recordable state — state
     that participates in graph evaluation as a TS rather than as plain scalar
-    storage. Used by replay-aware operators.
+    storage. Used by replay-aware operators. C++ wiring can select this endpoint
+    explicitly with ``recordable_state(port)``; it is not the node's ordinary
+    output.
 
 ``state_schema``
     Optional. The scalar (value-layer) schema for the node's local

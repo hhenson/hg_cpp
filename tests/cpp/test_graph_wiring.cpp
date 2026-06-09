@@ -14,10 +14,19 @@
 #include <memory>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace
 {
     using namespace hgraph;
+
+    struct OutputOnlyGraphEdgeLayout
+    {
+        std::size_t source_node{0};
+        std::vector<std::size_t> source_path{};
+        std::size_t target_node{0};
+        std::vector<std::size_t> target_path{};
+    };
 
     template <typename TSchema>
     [[nodiscard]] const TSOutputView &erased_output(const Out<TSchema> &out)
@@ -469,6 +478,46 @@ namespace
         }
     };
 
+    using RecordedStateBundle = TSB<"RecordedStateBundle", Field<"last", TS<Int>>>;
+
+    struct RecordablePreviousValue
+    {
+        static constexpr auto name = "recordable_previous_value";
+
+        static void eval(In<"in", TS<Int>> in,
+                         RecordableState<RecordedStateBundle> state,
+                         Out<TS<Int>> out)
+        {
+            auto      last     = state.field<"last">();
+            const Int previous = last.valid() ? last.value().checked_as<Int>() : Int{-1};
+            out.set(previous);
+            last.set(in.value());
+        }
+    };
+
+    struct RecordedStateLast
+    {
+        static constexpr auto name = "recorded_state_last";
+
+        static void eval(In<"state", RecordedStateBundle> state, Out<TS<Int>> out)
+        {
+            auto last = state.field<"last">();
+            if (last.valid()) { out.set(last.value()); }
+        }
+    };
+
+    struct RecordableStatePortGraph
+    {
+        static constexpr auto name = "recordable_state_port_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto source   = wire<ConstantSource>(w);
+            auto previous = wire<RecordablePreviousValue>(w, source);
+            wire<RecordedStateLast>(w, recordable_state(previous));
+        }
+    };
+
     struct StructuralBundleRefProbe
     {
         static constexpr auto name              = "structural_bundle_ref_probe";
@@ -594,6 +643,47 @@ namespace
         REQUIRE(mutation.copy_value_from(wrapped.view()));
     }
 
+    struct ErrorOutputSourceTag
+    {
+    };
+
+    NodeBuilder error_output_source_builder()
+    {
+        const auto *ts_int = ts_type<TS<Int>>();
+
+        NodeTypeMetaData meta;
+        meta.display_name        = "error_output_source";
+        meta.output_schema       = ts_int;
+        meta.error_output_schema = ts_int;
+        meta.node_kind           = NodeKind::PullSource;
+        meta.schedule_on_start   = true;
+
+        NodeCallbacks callbacks;
+        callbacks.evaluate = [](const NodeView &view, DateTime evaluation_time) {
+            write_int(view, evaluation_time, Int{1});
+
+            Value error_value{Int{99}};
+            auto  mutation = view.error_output(evaluation_time).begin_mutation(evaluation_time);
+            REQUIRE(mutation.copy_value_from(error_value.view()));
+        };
+        return NodeBuilder::native(std::move(meta), std::move(callbacks));
+    }
+
+    struct ErrorOutputPortGraph
+    {
+        static constexpr auto name = "error_output_port_graph";
+
+        static void compose(Wiring &w)
+        {
+            WiringPortRef source_ref = w.add_node(std::type_index(typeid(ErrorOutputSourceTag)),
+                                                  error_output_source_builder(),
+                                                  std::span<const WiringPortRef>{},
+                                                  Value{});
+            Port<TS<Int>> source{w, std::move(source_ref)};
+            wire<AddOne>(w, error_output(source));
+        }
+    };
+
     // A self-rescheduling source emitting 0, 1, ..., count-1 over successive cycles
     // (the callback-based analogue of TickingSource in test_simulation_execution).
     NodeBuilder ticking_int_source(const TSValueTypeMetaData *ts_int, int count)
@@ -656,6 +746,21 @@ namespace
         }
     };
 }  // namespace
+
+TEST_CASE("graph wiring: GraphEdge source kind is packed into source_node")
+{
+    using namespace hgraph;
+
+    STATIC_REQUIRE(sizeof(GraphEdge) == sizeof(OutputOnlyGraphEdgeLayout));
+
+    const GraphEdge ordinary{.source_node = 5};
+    CHECK(graph_edge_source_node(ordinary.source_node) == 5);
+    CHECK(graph_edge_source_kind(ordinary.source_node) == GraphEdgeSourceKind::Output);
+
+    const std::size_t special = make_graph_edge_source(5, GraphEdgeSourceKind::RecordableState);
+    CHECK(graph_edge_source_node(special) == 5);
+    CHECK(graph_edge_source_kind(special) == GraphEdgeSourceKind::RecordableState);
+}
 
 TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulation")
 {
@@ -865,6 +970,51 @@ TEST_CASE("graph wiring: partial named TSB initializer fills missing fields with
     REQUIRE(graph.node_count() == 2);
     REQUIRE(graph.node_at(1).output(MIN_ST).valid());
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{41});
+}
+
+TEST_CASE("graph wiring: recordable_state exposes the hidden recordable-state port")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<RecordableStatePortGraph>();
+    REQUIRE(graph_builder.edges().size() == 2);
+    CHECK(graph_edge_source_node(graph_builder.edges()[1].source_node) == 1);
+    CHECK(graph_edge_source_kind(graph_builder.edges()[1].source_node) == GraphEdgeSourceKind::RecordableState);
+
+    GraphExecutorValue executor = run_start(std::move(graph_builder));
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 3);
+    REQUIRE(graph.node_at(2).output(MIN_ST).valid());
+    CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Int>() == Int{41});
+}
+
+TEST_CASE("graph wiring: error_output exposes the hidden error-output port")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<ErrorOutputPortGraph>();
+    REQUIRE(graph_builder.edges().size() == 1);
+    CHECK(graph_edge_source_node(graph_builder.edges()[0].source_node) == 0);
+    CHECK(graph_edge_source_kind(graph_builder.edges()[0].source_node) == GraphEdgeSourceKind::ErrorOutput);
+
+    GraphExecutorValue executor = run_start(std::move(graph_builder));
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 2);
+    REQUIRE(graph.node_at(1).output(MIN_ST).valid());
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{100});
+}
+
+TEST_CASE("graph wiring: special output helpers validate source capabilities")
+{
+    using namespace hgraph;
+
+    Wiring w;
+    auto   source = wire<ConstantSource>(w);
+
+    CHECK_THROWS_AS(recordable_state(source), std::logic_error);
+    CHECK_THROWS_AS(error_output(source), std::logic_error);
 }
 
 TEST_CASE("graph wiring: nested node binds outer input into child graph input")

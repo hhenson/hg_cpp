@@ -332,7 +332,7 @@ Planned, landing with their runtime layers:
   scalar whose expected Python type is named (as a string) for type-checking;
   omitting the type (``PythonScalar<"name">``) defaults to ``object`` (any
   Python object / generic);
-- automatic recordable-state port exposure / ``recordable_id`` wiring;
+- automatic recordable-state record/replay attachment / ``recordable_id`` wiring;
 - named state (``State<TSchema, Name>``).
 
 Status
@@ -352,8 +352,10 @@ deriving from their erased input/output views, plus ``RecordableState<TSchema>``
 ``RecordableState<TSchema>`` are mutually exclusive for a static node:
 recordable state replaces local state when the state must be exposed through a
 hidden time-series output. That hidden output is for system-level recording and
-replay only: it is not a normal output port, cannot be wired as an external
-time-series, and must not activate or schedule the owning node. ``TSL`` is
+replay only: it is not a normal output port and must not activate or schedule the
+owning node. C++ system wiring can deliberately extract it with
+``recordable_state(port)``; this creates a special edge source root rather than a
+normal output path. ``TSL`` is
 **recursive**:
 its child may be any supported non-``REF`` time-series schema, nested
 arbitrarily, and replayable canonical delta ``Value`` shapes are built/compared
@@ -370,8 +372,8 @@ the resolution-map schema overloads, and the wiring-time resolution in ``wire<>`
 (unify from input ports, infer from scalar values, or supply explicitly via
 ``ts_type<>()`` / an explicit output schema). See *Graph Wiring*.
 
-Deferred until the relevant runtime layer lands: automatic recordable-state port
-exposure / ``recordable_id`` wiring, ``EvaluationClock`` injection, push-source
+Deferred until the relevant runtime layer lands: automatic recordable-state
+record/replay attachment / ``recordable_id`` wiring, ``EvaluationClock`` injection, push-source
 ``apply_message``, named state, duration-based ``TSW``, the Python-export bridge,
 and **graph-level** generic resolution (aggregating node-level resolution across
 a sub-graph).

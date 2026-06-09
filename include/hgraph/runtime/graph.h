@@ -5,6 +5,8 @@
 #include <hgraph/runtime/node.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,7 +17,52 @@ namespace hgraph
     class GraphValue;
     class GraphView;
 
-    /** Directed edge from one output position to one input position. */
+    /** Root output endpoint for a graph edge source. */
+    enum class GraphEdgeSourceKind : std::uint8_t
+    {
+        Output,
+        ErrorOutput,
+        RecordableState,
+    };
+
+    inline constexpr std::size_t graph_edge_source_kind_bits = 2;
+    inline constexpr std::size_t graph_edge_source_kind_shift =
+        sizeof(std::size_t) * 8U - graph_edge_source_kind_bits;
+    inline constexpr std::size_t graph_edge_source_kind_value_mask =
+        (std::size_t{1} << graph_edge_source_kind_bits) - 1U;
+    inline constexpr std::size_t graph_edge_source_kind_mask =
+        graph_edge_source_kind_value_mask << graph_edge_source_kind_shift;
+    inline constexpr std::size_t graph_edge_source_node_mask = ~graph_edge_source_kind_mask;
+
+    [[nodiscard]] inline std::size_t make_graph_edge_source(
+        std::size_t source_node,
+        GraphEdgeSourceKind source_kind = GraphEdgeSourceKind::Output)
+    {
+        if ((source_node & graph_edge_source_kind_mask) != 0)
+        {
+            throw std::out_of_range("Graph edge source node index is too large to pack the source kind");
+        }
+
+        const auto source_kind_value = static_cast<std::size_t>(source_kind);
+        if (source_kind_value > graph_edge_source_kind_value_mask)
+        {
+            throw std::invalid_argument("Graph edge source kind is invalid");
+        }
+        return source_node | (source_kind_value << graph_edge_source_kind_shift);
+    }
+
+    [[nodiscard]] inline constexpr std::size_t graph_edge_source_node(std::size_t source) noexcept
+    {
+        return source & graph_edge_source_node_mask;
+    }
+
+    [[nodiscard]] inline constexpr GraphEdgeSourceKind graph_edge_source_kind(std::size_t source) noexcept
+    {
+        return static_cast<GraphEdgeSourceKind>((source & graph_edge_source_kind_mask) >>
+                                                graph_edge_source_kind_shift);
+    }
+
+    /** Directed edge from one output endpoint/path to one input position. */
     struct HGRAPH_EXPORT GraphEdge
     {
         std::size_t source_node{0};

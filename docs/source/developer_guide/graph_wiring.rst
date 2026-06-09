@@ -115,13 +115,18 @@ The shared core
    struct WiringInstance;
 
    // Erased handle to a time-series source. A *peered* source names a producing
-   // (interned) instance and an output path within it. A *structural* source has
-   // no producer of its own — its children are the sources for each fixed child
-   // slot (to_tsl / to_tsb and brace initializers build these). A *null* source is
-   // an unbound fixed slot carrying only its schema. Target info lives on
-   // WiringInputRef, never here.
+   // (interned) instance, a source root (ordinary output, error output, or
+   // recordable-state output), and an output path within that root. A *structural*
+   // source has no producer of its own — its children are the sources for each
+   // fixed child slot (to_tsl / to_tsb and brace initializers build these). A
+   // *null* source is an unbound fixed slot carrying only its schema. Target info
+   // lives on WiringInputRef, never here.
    struct WiringPortRef {
-       struct PeeredSource     { const WiringInstance *node; std::vector<std::size_t> path; };
+       struct PeeredSource {
+           const WiringInstance *node;
+           std::vector<std::size_t> path;
+           GraphEdgeSourceKind output_kind;
+       };
        struct StructuralSource { std::vector<WiringPortRef> children; };
        enum class SourceKind { Unbound, Null, Peered, Structural };
 
@@ -366,10 +371,17 @@ Slices:
    ``WiringPortRef`` whose peered leaves expand to one edge each at ``finish``. A
    structural source bound to a ``REF`` input is adapted through a synthetic
    reference node. Tests: ``tests/cpp/test_graph_wiring.cpp``.
-7. **Nested-graph node — first cut done.** ``single_nested_graph_node`` owns one
+7. **Special source roots — done.** ``recordable_state(port)`` and
+   ``error_output(port)`` expose a node's hidden recordable-state or error output
+   as explicit C++ wiring ports. They emit a packed ``GraphEdgeSourceKind`` in
+   ``GraphEdge::source_node`` rather than sentinel path entries, so ``source_path``
+   remains only a structural path below the selected root and ordinary output edges
+   keep the original edge footprint. These helpers are intentionally C++ wiring
+   APIs; they are not Python-exposed user syntax.
+8. **Nested-graph node — first cut done.** ``single_nested_graph_node`` owns one
    child graph and reference-binds its boundaries (see *Nested graphs*). Tests:
    ``tests/cpp/test_graph_wiring.cpp``.
-8. **Next.** The ``wire``-level higher-order operators (``map_`` / ``reduce`` /
+9. **Next.** The ``wire``-level higher-order operators (``map_`` / ``reduce`` /
    ``switch_``) that construct nested-graph nodes from a sub-graph, standalone
    sub-graph building with supplied time-series boundary ports, and feedback edges.
 
