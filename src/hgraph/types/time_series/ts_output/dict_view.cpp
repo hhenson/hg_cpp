@@ -175,7 +175,7 @@ namespace hgraph
                                                       .projector = &tsd_output_project_item};
     }
 
-    TSDDataMutationView TSDOutputView::begin_mutation(engine_time_t evaluation_time) const
+    TSDDataMutationView TSDOutputView::begin_mutation(DateTime evaluation_time) const
     {
         return data_view().begin_mutation(evaluation_time);
     }

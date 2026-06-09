@@ -190,7 +190,7 @@ explicitly or an exception unwinds the stack.
 
 .. note::
 
-   **Expected use: one outer mutation per engine cycle.** The runtime
+   **Expected use: one outer mutation per evaluation cycle.** The runtime
    contract assumes that a given collection enters at most one
    *outermost* ``begin_mutation()`` per evaluation cycle. Nested
    ``begin_mutation()`` calls within that outer scope are fine — they

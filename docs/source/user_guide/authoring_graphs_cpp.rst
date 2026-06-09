@@ -190,8 +190,8 @@ Notation:
 
 - ``Int`` is the standard hgraph integer scalar (``std::int64_t``), ``Float`` is
   ``double``, ``Str`` is ``std::string``.
-- ``Date`` aliases ``engine_date_t``, ``DateTime`` aliases ``engine_time_t``, and
-  ``TimeDelta`` aliases ``engine_time_delta_t``.
+- ``Date``, ``DateTime``, and ``TimeDelta`` are the standard hgraph date/time
+  scalar aliases.
 - Every operand and result below is a time-series unless stated otherwise:
   ``Int + Float -> Float`` means ``TS<Int> + TS<Float> -> TS<Float>``.
 - A plain scalar argument may be supplied where an operator expects ``TS<T>``; wiring

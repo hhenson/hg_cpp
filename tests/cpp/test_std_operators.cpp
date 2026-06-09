@@ -42,10 +42,10 @@ namespace
     using namespace hgraph::testing;
     using namespace std::chrono;
 
-    [[nodiscard]] engine_time_t dt(std::int64_t micros) { return engine_time_t{microseconds{micros}}; }
-    [[nodiscard]] engine_date_t ymd(int y, unsigned m, unsigned d)
+    [[nodiscard]] DateTime dt(std::int64_t micros) { return DateTime{microseconds{micros}}; }
+    [[nodiscard]] Date ymd(int y, unsigned m, unsigned d)
     {
-        return engine_date_t{year{y} / month{m} / day{d}};
+        return Date{year{y} / month{m} / day{d}};
     }
 
     // zero_ is a *source* operator (no time-series input), so it is outside eval_node's
@@ -121,7 +121,7 @@ namespace
     {
         GraphBuilder         gb = build_graph<Graph>();
         GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
         GraphExecutorValue ex = eb.make_executor();
         ex.view().run();
         return ex;
@@ -134,7 +134,7 @@ namespace
         seed(gb.global_state());
 
         GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
         GraphExecutorValue ex = eb.make_executor();
         ex.view().run();
         return ex;
@@ -164,20 +164,20 @@ TEST_CASE("std operators: add_ supports string concatenation")
 TEST_CASE("std operators: add_ supports datetime + timedelta -> datetime")
 {
     stdlib::register_standard_operators();
-    CHECK_OUTPUT(eval_node<stdlib::add_>(values<engine_time_t>(dt(1'000'000), dt(2'000'000)),
-                                         values<engine_time_delta_t>(microseconds{500'000}, microseconds{1'500'000})),
-                 values<engine_time_t>(dt(1'500'000), dt(3'500'000)));
+    CHECK_OUTPUT(eval_node<stdlib::add_>(values<DateTime>(dt(1'000'000), dt(2'000'000)),
+                                         values<TimeDelta>(microseconds{500'000}, microseconds{1'500'000})),
+                 values<DateTime>(dt(1'500'000), dt(3'500'000)));
 }
 
 TEST_CASE("std operators: add_ supports date + timedelta -> date (whole days)")
 {
     stdlib::register_standard_operators();
-    const engine_time_delta_t two_days  = duration_cast<engine_time_delta_t>(days{2});
-    const engine_time_delta_t five_days = duration_cast<engine_time_delta_t>(days{5});
+    const TimeDelta two_days  = duration_cast<TimeDelta>(days{2});
+    const TimeDelta five_days = duration_cast<TimeDelta>(days{5});
 
-    CHECK_OUTPUT(eval_node<stdlib::add_>(values<engine_date_t>(ymd(2020, 1, 1), ymd(2020, 1, 10)),
-                                         values<engine_time_delta_t>(two_days, five_days)),
-                 values<engine_date_t>(ymd(2020, 1, 3), ymd(2020, 1, 15)));
+    CHECK_OUTPUT(eval_node<stdlib::add_>(values<Date>(ymd(2020, 1, 1), ymd(2020, 1, 10)),
+                                         values<TimeDelta>(two_days, five_days)),
+                 values<Date>(ymd(2020, 1, 3), ymd(2020, 1, 15)));
 }
 
 TEST_CASE("std operators: div_ produces a different result type (int / int -> float)")
@@ -189,9 +189,9 @@ TEST_CASE("std operators: div_ produces a different result type (int / int -> fl
 TEST_CASE("std operators: sub_ of two datetimes yields a timedelta (result differs from both operands)")
 {
     stdlib::register_standard_operators();
-    CHECK_OUTPUT(eval_node<stdlib::sub_>(values<engine_time_t>(dt(3'000'000), dt(5'000'000)),
-                                         values<engine_time_t>(dt(1'000'000), dt(2'000'000))),
-                 values<engine_time_delta_t>(microseconds{2'000'000}, microseconds{3'000'000}));
+    CHECK_OUTPUT(eval_node<stdlib::sub_>(values<DateTime>(dt(3'000'000), dt(5'000'000)),
+                                         values<DateTime>(dt(1'000'000), dt(2'000'000))),
+                 values<TimeDelta>(microseconds{2'000'000}, microseconds{3'000'000}));
 }
 
 TEST_CASE("std operators: sub_ supports mixed numeric operands")

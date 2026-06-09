@@ -24,7 +24,7 @@ namespace
                            std::size_t           slot,
                            const hgraph::TSDataView &target,
                            const hgraph::TSDataView &source,
-                           hgraph::engine_time_t modified_time,
+                           hgraph::DateTime modified_time,
                            const void           *)
     {
         (void)source;
@@ -78,7 +78,7 @@ TEST_CASE("TSDProxy constructs builder-created values from source key slots")
     REQUIRE(initial.at(key_one.view()).value().checked_as<std::int32_t>() == 1);
     REQUIRE_THROWS_AS(proxy.view().begin_mutation(MIN_ST), std::logic_error);
 
-    const auto t2 = MIN_ST + engine_time_delta_t{1};
+    const auto t2 = MIN_ST + TimeDelta{1};
     {
         auto source_view = source.view();
         auto source_dict = source_view.as_dict();
@@ -97,7 +97,7 @@ TEST_CASE("TSDProxy constructs builder-created values from source key slots")
     REQUIRE(range_count(after_add.items()) == 2);
     REQUIRE(after_add.at(key_two.view()).value().checked_as<std::int32_t>() == 2);
 
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t3 = t2 + TimeDelta{1};
     {
         auto source_view = source.view();
         auto source_dict = source_view.as_dict();
@@ -116,7 +116,7 @@ TEST_CASE("TSDProxy constructs builder-created values from source key slots")
     REQUIRE(range_count(removed) == 1);
     REQUIRE((*removed.begin()).checked_as<std::int32_t>() == 1);
 
-    const auto t4 = t3 + engine_time_delta_t{1};
+    const auto t4 = t3 + TimeDelta{1};
     {
         auto source_view = source.view();
         auto source_dict = source_view.as_dict();

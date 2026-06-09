@@ -38,17 +38,17 @@ namespace hgraph
         return base().value();
     }
 
-    ValueView TSDDataView::delta_value(engine_time_t evaluation_time) const
+    ValueView TSDDataView::delta_value(DateTime evaluation_time) const
     {
         return base().delta_value(evaluation_time);
     }
 
-    engine_time_t TSDDataView::last_modified_time() const
+    DateTime TSDDataView::last_modified_time() const
     {
         return base().last_modified_time();
     }
 
-    bool TSDDataView::modified(engine_time_t evaluation_time) const
+    bool TSDDataView::modified(DateTime evaluation_time) const
     {
         return base().modified(evaluation_time);
     }
@@ -193,20 +193,20 @@ namespace hgraph
         return ts_data_items_range(&slot_valid_predicate);
     }
 
-    Range<ValueView> TSDDataView::modified_keys(engine_time_t evaluation_time) const
+    Range<ValueView> TSDDataView::modified_keys(DateTime evaluation_time) const
     {
         if (!modified(evaluation_time)) { return empty_value_range(); }
         const auto &ops = dict_ops();
         return ops.make_modified_keys_range_impl(ops.context, storage_.data());
     }
 
-    Range<TSDataView> TSDDataView::modified_values(engine_time_t evaluation_time) const
+    Range<TSDataView> TSDDataView::modified_values(DateTime evaluation_time) const
     {
         if (!modified(evaluation_time)) { return empty_ts_data_range(); }
         return ts_data_values_range(&slot_modified_predicate);
     }
 
-    KeyValueRange<ValueView, TSDataView> TSDDataView::modified_items(engine_time_t evaluation_time) const
+    KeyValueRange<ValueView, TSDataView> TSDDataView::modified_items(DateTime evaluation_time) const
     {
         if (!modified(evaluation_time)) { return empty_ts_data_kv_range(); }
         return ts_data_items_range(&slot_modified_predicate);
@@ -252,7 +252,7 @@ namespace hgraph
         return TSSDataView{TSDataView{key_set_binding, storage_.data()}};
     }
 
-    TSDDataMutationView TSDDataView::begin_mutation(engine_time_t evaluation_time) const
+    TSDDataMutationView TSDDataView::begin_mutation(DateTime evaluation_time) const
     {
         return TSDDataMutationView{base(), evaluation_time};
     }
@@ -344,7 +344,7 @@ namespace hgraph
         return storage_.ops();
     }
 
-    TSDDataMutationView::TSDDataMutationView(TSDataView view, engine_time_t evaluation_time)
+    TSDDataMutationView::TSDDataMutationView(TSDataView view, DateTime evaluation_time)
         : TSDDataView(TSDataView{view.storage_ref()}),
           mutation_(view.begin_mutation(evaluation_time))
     {
@@ -363,7 +363,7 @@ namespace hgraph
         return TSDDataView{base()};
     }
 
-    engine_time_t TSDDataMutationView::current_mutation_time() const
+    DateTime TSDDataMutationView::current_mutation_time() const
     {
         return mutation_.current_mutation_time();
     }

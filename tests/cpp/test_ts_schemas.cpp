@@ -150,8 +150,8 @@ TEST_CASE("ts_schemas: TSW<T>.value_schema is List<T, period>, delta is T")
     SECTION("duration-based window")
     {
         const auto *win = registry.tsw_duration(double_meta,
-                                                engine_time_delta_t{1'000'000},
-                                                engine_time_delta_t{100'000});
+                                                TimeDelta{1'000'000},
+                                                TimeDelta{100'000});
 
         // value_schema = List<double> (dynamic; duration-based has no fixed length)
         const auto *expected_value = registry.list(double_meta, 0);

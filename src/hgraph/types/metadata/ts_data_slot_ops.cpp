@@ -109,14 +109,14 @@ namespace hgraph::ts_data_plan_factory_detail
                 ensure_delta_capacity();
             }
 
-            [[nodiscard]] bool touch(engine_time_t modified_time)
+            [[nodiscard]] bool touch(DateTime modified_time)
             {
                 validate_mutation_time(modified_time);
                 prepare_delta(modified_time);
                 return tracking_.last_modified_time != modified_time;
             }
 
-            [[nodiscard]] SlotTSDataMutationResult insert_key(const ValueView &key, engine_time_t modified_time)
+            [[nodiscard]] SlotTSDataMutationResult insert_key(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_key(key, modified_time);
                 prepare_delta(modified_time);
@@ -130,7 +130,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return mutation_result(result.slot);
             }
 
-            [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, engine_time_t modified_time)
+            [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_key(key, modified_time);
                 prepare_delta(modified_time);
@@ -178,21 +178,21 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
             }
 
-            void validate_mutation_key(const ValueView &key, engine_time_t modified_time) const
+            void validate_mutation_key(const ValueView &key, DateTime modified_time) const
             {
                 validate_mutation_time(modified_time);
                 validate_key(key);
             }
 
-            void validate_mutation_time(engine_time_t modified_time) const
+            void validate_mutation_time(DateTime modified_time) const
             {
                 if (modified_time == MIN_DT)
                 {
-                    throw std::invalid_argument("slot TSData mutation requires a concrete engine time");
+                    throw std::invalid_argument("slot TSData mutation requires a concrete evaluation time");
                 }
             }
 
-            void prepare_delta(engine_time_t modified_time)
+            void prepare_delta(DateTime modified_time)
             {
                 if (delta_time_ == modified_time)
                 {
@@ -223,7 +223,7 @@ namespace hgraph::ts_data_plan_factory_detail
             KeySlotStore           keys_;
             sul::dynamic_bitset<>  added_{};
             sul::dynamic_bitset<>  removed_{};
-            engine_time_t          delta_time_{MIN_DT};
+            DateTime          delta_time_{MIN_DT};
         };
 
         class TSDSlotStorage
@@ -291,14 +291,14 @@ namespace hgraph::ts_data_plan_factory_detail
                 ensure_delta_capacity();
             }
 
-            [[nodiscard]] bool touch(engine_time_t modified_time)
+            [[nodiscard]] bool touch(DateTime modified_time)
             {
                 validate_mutation_time(modified_time);
                 prepare_delta(modified_time);
                 return tracking_.last_modified_time != modified_time;
             }
 
-            [[nodiscard]] SlotTSDataMutationResult insert_key(const ValueView &key, engine_time_t modified_time)
+            [[nodiscard]] SlotTSDataMutationResult insert_key(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_key(key, modified_time);
                 prepare_delta(modified_time);
@@ -312,7 +312,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return mutation_result(result.slot);
             }
 
-            [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, engine_time_t modified_time)
+            [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_key(key, modified_time);
                 prepare_delta(modified_time);
@@ -328,11 +328,11 @@ namespace hgraph::ts_data_plan_factory_detail
                 return mutation_result(slot);
             }
 
-            void record_child_modified(std::size_t slot, engine_time_t modified_time)
+            void record_child_modified(std::size_t slot, DateTime modified_time)
             {
                 if (modified_time == MIN_DT)
                 {
-                    throw std::invalid_argument("TSD child modification requires a concrete engine time");
+                    throw std::invalid_argument("TSD child modification requires a concrete evaluation time");
                 }
                 if (!slot_live(slot)) { return; }
                 prepare_delta(modified_time);
@@ -347,7 +347,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 delta_time_ = MIN_DT;
             }
 
-            void cleanup_delta(engine_time_t modified_time)
+            void cleanup_delta(DateTime modified_time)
             {
                 const auto &child_ops = element_binding().checked_ops();
                 for (std::size_t slot = 0; slot < slot_capacity(); ++slot)
@@ -385,21 +385,21 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
             }
 
-            void validate_mutation_key(const ValueView &key, engine_time_t modified_time) const
+            void validate_mutation_key(const ValueView &key, DateTime modified_time) const
             {
                 validate_mutation_time(modified_time);
                 validate_key(key);
             }
 
-            void validate_mutation_time(engine_time_t modified_time) const
+            void validate_mutation_time(DateTime modified_time) const
             {
                 if (modified_time == MIN_DT)
                 {
-                    throw std::invalid_argument("TSD TSData mutation requires a concrete engine time");
+                    throw std::invalid_argument("TSD TSData mutation requires a concrete evaluation time");
                 }
             }
 
-            void prepare_delta(engine_time_t modified_time)
+            void prepare_delta(DateTime modified_time)
             {
                 if (delta_time_ == modified_time)
                 {
@@ -434,7 +434,7 @@ namespace hgraph::ts_data_plan_factory_detail
             sul::dynamic_bitset<>       added_{};
             sul::dynamic_bitset<>       removed_{};
             sul::dynamic_bitset<>       modified_{};
-            engine_time_t               delta_time_{MIN_DT};
+            DateTime               delta_time_{MIN_DT};
         };
 
         struct TSSStoragePlanContext
@@ -919,7 +919,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 storage<Storage>(memory).reset_delta();
             }
 
-            static void tss_cleanup_delta(const void *, void *memory, engine_time_t modified_time)
+            static void tss_cleanup_delta(const void *, void *memory, DateTime modified_time)
             {
                 if constexpr (requires(Storage &target) { target.cleanup_delta(modified_time); })
                 {
@@ -932,7 +932,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             [[nodiscard]] static bool tss_copy_value_from(const void *context, void *memory, const ValueView &source,
-                                                          engine_time_t modified_time)
+                                                          DateTime modified_time)
             {
                 if (!source.has_value()) { throw std::invalid_argument("TSS copy requires a live source value"); }
                 if (source.schema() != ctx(context)->schema->value_schema)
@@ -969,7 +969,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] static nb::object tss_delta_to_python(const void *context,
                                                                 const void *memory,
-                                                                engine_time_t evaluation_time)
+                                                                DateTime evaluation_time)
             {
                 const auto *state = ctx(context);
                 if (storage<Storage>(memory).tracking().last_modified_time != evaluation_time) { return nb::none(); }
@@ -979,13 +979,13 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static bool tss_from_python(const void *context,
                                                       void       *memory,
                                                       nb::handle  source,
-                                                      engine_time_t modified_time)
+                                                      DateTime modified_time)
             {
                 if (memory == nullptr) { throw std::logic_error("TSS from_python requires live storage"); }
                 if (source.is_none()) { throw std::invalid_argument("TSS from_python requires a non-None source"); }
                 if (modified_time == MIN_DT)
                 {
-                    throw std::invalid_argument("TSS from_python requires a concrete engine time");
+                    throw std::invalid_argument("TSS from_python requires a concrete evaluation time");
                 }
 
                 auto       &target = storage<Storage>(memory);
@@ -1101,19 +1101,19 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] static SlotTSDataMutationResult tss_insert_key(const void *, void *memory,
                                                                          const ValueView &key,
-                                                                         engine_time_t modified_time)
+                                                                         DateTime modified_time)
             {
                 return storage<Storage>(memory).insert_key(key, modified_time);
             }
 
             [[nodiscard]] static SlotTSDataMutationResult tss_remove_key(const void *, void *memory,
                                                                          const ValueView &key,
-                                                                         engine_time_t modified_time)
+                                                                         DateTime modified_time)
             {
                 return storage<Storage>(memory).remove_key(key, modified_time);
             }
 
-            [[nodiscard]] static bool tss_touch(const void *, void *memory, engine_time_t modified_time)
+            [[nodiscard]] static bool tss_touch(const void *, void *memory, DateTime modified_time)
             {
                 return storage<Storage>(memory).touch(modified_time);
             }
@@ -1769,19 +1769,19 @@ namespace hgraph::ts_data_plan_factory_detail
                 storage<TSDSlotStorage>(memory).reset_delta();
             }
 
-            static void tsd_cleanup_delta(const void *, void *memory, engine_time_t modified_time)
+            static void tsd_cleanup_delta(const void *, void *memory, DateTime modified_time)
             {
                 storage<TSDSlotStorage>(memory).cleanup_delta(modified_time);
             }
 
             static void tsd_record_child_modified(const void *, void *memory, std::size_t child_id,
-                                                  engine_time_t modified_time)
+                                                  DateTime modified_time)
             {
                 storage<TSDSlotStorage>(memory).record_child_modified(child_id, modified_time);
             }
 
             [[nodiscard]] static bool tsd_copy_value_from(const void *context, void *memory, const ValueView &source,
-                                                          engine_time_t modified_time)
+                                                          DateTime modified_time)
             {
                 (void)context;
                 (void)memory;
@@ -1800,7 +1800,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] static nb::object tsd_delta_to_python(const void *context,
                                                                 const void *memory,
-                                                                engine_time_t evaluation_time)
+                                                                DateTime evaluation_time)
             {
                 const auto *state = ctxd(context);
                 if (storage<TSDSlotStorage>(memory).tracking().last_modified_time != evaluation_time)
@@ -1813,13 +1813,13 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static bool tsd_from_python(const void *context,
                                                       void       *memory,
                                                       nb::handle  source,
-                                                      engine_time_t modified_time)
+                                                      DateTime modified_time)
             {
                 if (memory == nullptr) { throw std::logic_error("TSD from_python requires live storage"); }
                 if (source.is_none()) { throw std::invalid_argument("TSD from_python requires a non-None source"); }
                 if (modified_time == MIN_DT)
                 {
-                    throw std::invalid_argument("TSD from_python requires a concrete engine time");
+                    throw std::invalid_argument("TSD from_python requires a concrete evaluation time");
                 }
                 if (!python_has_items(source))
                 {

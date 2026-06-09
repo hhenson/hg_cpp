@@ -101,7 +101,7 @@ namespace hgraph::detail
             return target.valid() ? target.delta_value(link->tracking.last_modified_time).data() : nullptr;
         }
 
-        void target_link_cleanup_delta(const void *, void *, engine_time_t) {}
+        void target_link_cleanup_delta(const void *, void *, DateTime) {}
 
         [[nodiscard]] TSDataView target_link_target_view(const void *context, const void *memory)
         {
@@ -402,18 +402,18 @@ namespace hgraph::detail
         }
 
         [[nodiscard]] SlotTSDataMutationResult target_link_insert_key(const void *, void *, const ValueView &,
-                                                                      engine_time_t)
+                                                                      DateTime)
         {
             throw std::logic_error("TSInput target-link set mutation is not supported");
         }
 
         [[nodiscard]] SlotTSDataMutationResult target_link_remove_key(const void *, void *, const ValueView &,
-                                                                      engine_time_t)
+                                                                      DateTime)
         {
             throw std::logic_error("TSInput target-link set mutation is not supported");
         }
 
-        [[nodiscard]] bool target_link_touch_slots(const void *, void *, engine_time_t)
+        [[nodiscard]] bool target_link_touch_slots(const void *, void *, DateTime)
         {
             throw std::logic_error("TSInput target-link set mutation is not supported");
         }
@@ -631,7 +631,7 @@ namespace hgraph::detail
             return target_link_window_view(context, memory).at(index).data();
         }
 
-        [[nodiscard]] engine_time_t target_link_window_time_at(const void *context,
+        [[nodiscard]] DateTime target_link_window_time_at(const void *context,
                                                                const void *memory,
                                                                std::size_t index)
         {
@@ -659,7 +659,7 @@ namespace hgraph::detail
             return target.valid() && target.as_window().full();
         }
 
-        void target_link_window_push(const void *, void *, const ValueView &, engine_time_t)
+        void target_link_window_push(const void *, void *, const ValueView &, DateTime)
         {
             throw std::logic_error("TSInput target-link window mutation is not supported");
         }
@@ -674,7 +674,7 @@ namespace hgraph::detail
 
         [[nodiscard]] nb::object target_link_delta_to_python(const void *context,
                                                              const void *memory,
-                                                             engine_time_t evaluation_time)
+                                                             DateTime evaluation_time)
         {
             const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
             const auto  target = link != nullptr ? link->target_view() : TSDataView{};

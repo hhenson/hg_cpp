@@ -161,8 +161,8 @@ namespace hgraph
         const TSValueTypeMetaData *tsw(const ValueTypeMetaData *value_type, size_t period, size_t min_period = 0);
         /** Intern a duration-based ``TSW`` (sliding window). */
         const TSValueTypeMetaData *tsw_duration(const ValueTypeMetaData *value_type,
-                                                engine_time_delta_t time_range,
-                                                engine_time_delta_t min_time_range = engine_time_delta_t{0});
+                                                TimeDelta time_range,
+                                                TimeDelta min_time_range = TimeDelta{0});
         /**
          * Intern a *structural* (un-named) ``TSB``. Two ``un_named_tsb`` calls
          * with the same field list always return the same canonical pointer;

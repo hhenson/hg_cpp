@@ -28,7 +28,7 @@ namespace hgraph
         void on_remove(std::size_t slot) override;
         void on_erase(std::size_t slot) override;
         void on_clear() override;
-        void notify(engine_time_t modified_time) override;
+        void notify(DateTime modified_time) override;
 
       private:
         TSDProxy *owner_{nullptr};
@@ -41,7 +41,7 @@ namespace hgraph
      * but owns its value slots. A caller-provided value builder constructs each
      * proxy value from the source child at the same slot. Structural slot
      * callbacks construct and destroy the parallel value slots; source TSData
-     * modification notification supplies the engine time used to materialise
+     * modification notification supplies the evaluation time used to materialise
      * added/removed proxy children.
      */
     class TSDProxy final
@@ -51,7 +51,7 @@ namespace hgraph
                                       std::size_t     slot,
                                       const TSDataView &target,
                                       const TSDataView &source,
-                                      engine_time_t   modified_time,
+                                      DateTime   modified_time,
                                       const void     *context);
 
         TSDProxy() noexcept;
@@ -74,10 +74,10 @@ namespace hgraph
                   const TSDDataView   &source,
                   ValueBuilder         builder,
                   const void          *builder_context,
-                  engine_time_t        modified_time);
+                  DateTime        modified_time);
 
         /** Clear transient delta state on constructed proxy values. */
-        void cleanup_delta(engine_time_t modified_time);
+        void cleanup_delta(DateTime modified_time);
 
         [[nodiscard]] TSDataView source_view() const noexcept;
         [[nodiscard]] TSDDataView source_dict() const;
@@ -91,7 +91,7 @@ namespace hgraph
         [[nodiscard]] void *child_at_slot(std::size_t slot);
 
         /** Ops hooks used by the proxy TSData binding. */
-        void record_child_modified(std::size_t slot, engine_time_t modified_time);
+        void record_child_modified(std::size_t slot, DateTime modified_time);
         void subscribe_slot_observer(SlotObserver *observer);
         void unsubscribe_slot_observer(SlotObserver *observer);
 
@@ -104,15 +104,15 @@ namespace hgraph
         void on_slot_removed(std::size_t slot);
         void on_slot_erased(std::size_t slot);
         void on_slots_cleared();
-        void on_source_modified(engine_time_t modified_time);
+        void on_source_modified(DateTime modified_time);
 
         void subscribe_source();
         void unsubscribe_source() noexcept;
-        void sync_from_source(engine_time_t modified_time, bool force_modified);
+        void sync_from_source(DateTime modified_time, bool force_modified);
         void construct_child_at_slot(std::size_t slot);
-        void ensure_child_at_slot(std::size_t slot, engine_time_t modified_time);
-        void refresh_child_at_slot(std::size_t slot, engine_time_t modified_time);
-        void mark_modified(engine_time_t modified_time);
+        void ensure_child_at_slot(std::size_t slot, DateTime modified_time);
+        void refresh_child_at_slot(std::size_t slot, DateTime modified_time);
+        void mark_modified(DateTime modified_time);
 
         const TSDataBinding          *self_binding_{nullptr};
         const TSDataBinding          *element_binding_{nullptr};
@@ -138,7 +138,7 @@ namespace hgraph
                         const TSDDataView      &source,
                         TSDProxy::ValueBuilder  builder,
                         const void             *builder_context,
-                        engine_time_t           modified_time);
+                        DateTime           modified_time);
 }  // namespace hgraph
 
 #endif  // HGRAPH_CPP_TS_DATA_PROXY_H

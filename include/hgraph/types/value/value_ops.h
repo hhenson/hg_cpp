@@ -350,8 +350,8 @@ namespace hgraph
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         template <typename T>
         constexpr bool python_scalar_castable =
-            std::is_arithmetic_v<T> || std::is_same_v<T, std::string> || std::is_same_v<T, engine_date_t> ||
-            std::is_same_v<T, engine_time_t> || std::is_same_v<T, engine_time_delta_t>;
+            std::is_arithmetic_v<T> || std::is_same_v<T, std::string> || std::is_same_v<T, Date> ||
+            std::is_same_v<T, DateTime> || std::is_same_v<T, TimeDelta>;
 
         template <typename T>
         nb::object to_python_thunk(const void *, const void *memory)
@@ -393,40 +393,40 @@ namespace hgraph
         };
 
         template <>
-        struct python_buffer_traits<engine_time_t>
+        struct python_buffer_traits<DateTime>
         {
             using storage_type = std::int64_t;
 
             static storage_type convert(const void *memory)
             {
                 return static_cast<storage_type>(
-                    static_cast<const engine_time_t *>(memory)->time_since_epoch().count());
+                    static_cast<const DateTime *>(memory)->time_since_epoch().count());
             }
 
             [[nodiscard]] static constexpr const char *numpy_view_dtype() noexcept { return "datetime64[us]"; }
         };
 
         template <>
-        struct python_buffer_traits<engine_time_delta_t>
+        struct python_buffer_traits<TimeDelta>
         {
             using storage_type = std::int64_t;
 
             static storage_type convert(const void *memory)
             {
-                return static_cast<storage_type>(static_cast<const engine_time_delta_t *>(memory)->count());
+                return static_cast<storage_type>(static_cast<const TimeDelta *>(memory)->count());
             }
 
             [[nodiscard]] static constexpr const char *numpy_view_dtype() noexcept { return "timedelta64[us]"; }
         };
 
         template <>
-        struct python_buffer_traits<engine_date_t>
+        struct python_buffer_traits<Date>
         {
             using storage_type = std::int64_t;
 
             static storage_type convert(const void *memory)
             {
-                const auto days = std::chrono::sys_days{*static_cast<const engine_date_t *>(memory)}
+                const auto days = std::chrono::sys_days{*static_cast<const Date *>(memory)}
                                       .time_since_epoch()
                                       .count();
                 return static_cast<storage_type>(days);

@@ -12,7 +12,7 @@
 
 namespace
 {
-    void write_int_output(const hgraph::NodeView &view, hgraph::engine_time_t evaluation_time, std::int32_t value)
+    void write_int_output(const hgraph::NodeView &view, hgraph::DateTime evaluation_time, std::int32_t value)
     {
         hgraph::Value wrapped{value};
         auto mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
@@ -28,7 +28,7 @@ namespace
         schema.schedule_on_start = true;  // a source initiates itself at the start cycle
 
         hgraph::NodeCallbacks callbacks;
-        callbacks.evaluate = [value](const hgraph::NodeView &view, hgraph::engine_time_t evaluation_time) {
+        callbacks.evaluate = [value](const hgraph::NodeView &view, hgraph::DateTime evaluation_time) {
             write_int_output(view, evaluation_time, value);
         };
         return hgraph::NodeBuilder::native(std::move(schema), std::move(callbacks));
@@ -44,7 +44,7 @@ namespace
         schema.node_kind = hgraph::NodeKind::Compute;
 
         hgraph::NodeCallbacks callbacks;
-        callbacks.evaluate = [](const hgraph::NodeView &view, hgraph::engine_time_t evaluation_time) {
+        callbacks.evaluate = [](const hgraph::NodeView &view, hgraph::DateTime evaluation_time) {
             auto root = view.input(evaluation_time);
             auto bundle = root.as_bundle();
             auto input = bundle[0];
@@ -69,7 +69,7 @@ namespace
         schema.state_schema = int_meta;
 
         hgraph::NodeCallbacks callbacks;
-        callbacks.evaluate = [](const hgraph::NodeView &view, hgraph::engine_time_t evaluation_time) {
+        callbacks.evaluate = [](const hgraph::NodeView &view, hgraph::DateTime evaluation_time) {
             const std::int32_t next = view.state().checked_as<std::int32_t>() + 1;
             auto state = view.state().begin_mutation();
             state.set_scalar(next);
@@ -91,7 +91,7 @@ namespace
         schema.node_kind = hgraph::NodeKind::PullSource;
 
         hgraph::NodeCallbacks callbacks;
-        callbacks.evaluate = [](const hgraph::NodeView &view, hgraph::engine_time_t evaluation_time) {
+        callbacks.evaluate = [](const hgraph::NodeView &view, hgraph::DateTime evaluation_time) {
             write_int_output(view, evaluation_time, view.scalars().checked_as<std::int32_t>());
         };
 
@@ -147,7 +147,7 @@ TEST_CASE("NodeValue state is read-write value storage")
 
     NodeValue node = stateful_counter_node(int_meta, ts_int).make_node();
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
 
     auto view = node.view();
     REQUIRE(view.valid());
@@ -245,7 +245,7 @@ TEST_CASE("GraphValue wires node views and evaluates scheduled notifications")
     REQUIRE_FALSE(graph_view.node_at(0).output(t1).output()->dirty());
     REQUIRE_FALSE(graph_view.node_at(1).output(t1).output()->dirty());
 
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
     graph_view.evaluate(t2);
     REQUIRE(graph_view.evaluation_time() == t2);
 
@@ -278,7 +278,7 @@ TEST_CASE("GraphExecutorValue runs the graph through the type-erased executor vi
         .label("executor")
         .graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{3});
+        .end_time(MIN_ST + TimeDelta{3});
 
     GraphExecutorValue executor = executor_builder.make_executor();
     auto executor_view = executor.view();

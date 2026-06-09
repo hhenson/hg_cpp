@@ -163,7 +163,7 @@ namespace hgraph::detail
         return target_;
     }
 
-    void TSInputTargetLinkState::SchedulingNotifier::notify(engine_time_t modified_time)
+    void TSInputTargetLinkState::SchedulingNotifier::notify(DateTime modified_time)
     {
         if (target_ != nullptr) { target_->notify(modified_time); }
     }
@@ -204,7 +204,7 @@ namespace hgraph::detail
         }
     }
 
-    void TSInputTargetLinkState::notify(engine_time_t modified_time)
+    void TSInputTargetLinkState::notify(DateTime modified_time)
     {
         if (owner != nullptr) { owner->record_target_modified(modified_time); }
     }
@@ -326,7 +326,7 @@ namespace hgraph::detail
         [[maybe_unused]] auto cleanup = make_scope_exit<true>([this] { unbind(); });
     }
 
-    void TSInputTargetLinkStorage::record_target_modified(engine_time_t modified_time)
+    void TSInputTargetLinkStorage::record_target_modified(DateTime modified_time)
     {
         if (!tracking.record_modified(modified_time)) { return; }
         tracking.parent.notify_child_modified(modified_time);

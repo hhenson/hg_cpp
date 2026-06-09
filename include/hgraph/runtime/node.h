@@ -97,9 +97,9 @@ namespace hgraph
         [[nodiscard]] std::size_t (*node_index_impl)(const void *context, const void *memory) noexcept = nullptr;
 
         [[nodiscard]] bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
-        void (*start_impl)(const void *context, const NodeView &view, engine_time_t evaluation_time) = nullptr;
-        void (*stop_impl)(const void *context, const NodeView &view, engine_time_t evaluation_time) = nullptr;
-        void (*evaluate_impl)(const void *context, const NodeView &view, engine_time_t evaluation_time, bool force) = nullptr;
+        void (*start_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
+        void (*stop_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
+        void (*evaluate_impl)(const void *context, const NodeView &view, DateTime evaluation_time, bool force) = nullptr;
         void (*cleanup_delta_impl)(const void *context, const NodeView &view) = nullptr;
 
         [[nodiscard]] bool (*has_input_impl)(const void *context, const void *memory) noexcept = nullptr;
@@ -111,16 +111,16 @@ namespace hgraph
         [[nodiscard]] bool (*has_recordable_state_impl)(const void *context, const void *memory) noexcept = nullptr;
 
         [[nodiscard]] TSInputView (*input_view_impl)(const void *context, void *memory,
-                                                     engine_time_t evaluation_time) = nullptr;
+                                                     DateTime evaluation_time) = nullptr;
         [[nodiscard]] TSOutputView (*output_view_impl)(const void *context, void *memory,
-                                                       engine_time_t evaluation_time) = nullptr;
+                                                       DateTime evaluation_time) = nullptr;
         [[nodiscard]] ValueView (*state_view_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] ValueView (*scalars_view_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] NodeSchedulerState *(*scheduler_state_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] TSOutputView (*error_output_view_impl)(const void *context, void *memory,
-                                                             engine_time_t evaluation_time) = nullptr;
+                                                             DateTime evaluation_time) = nullptr;
         [[nodiscard]] TSOutputView (*recordable_state_view_impl)(const void *context, void *memory,
-                                                                 engine_time_t evaluation_time) = nullptr;
+                                                                 DateTime evaluation_time) = nullptr;
 
         const void *extended_view_type_id{nullptr};
         const void *extended_view_context{nullptr};
@@ -132,9 +132,9 @@ namespace hgraph
     /** User callbacks used by the first-pass native node builder. */
     struct HGRAPH_EXPORT NodeCallbacks
     {
-        std::function<void(const NodeView &, engine_time_t)> start{};
-        std::function<void(const NodeView &, engine_time_t)> evaluate{};
-        std::function<void(const NodeView &, engine_time_t)> stop{};
+        std::function<void(const NodeView &, DateTime)> start{};
+        std::function<void(const NodeView &, DateTime)> evaluate{};
+        std::function<void(const NodeView &, DateTime)> stop{};
     };
 
     struct HGRAPH_EXPORT NodeStorageField
@@ -193,14 +193,14 @@ namespace hgraph
         [[nodiscard]] bool has_error_output() const noexcept;
         [[nodiscard]] bool has_recordable_state() const noexcept;
 
-        [[nodiscard]] TSInputView input(engine_time_t evaluation_time) const;
-        [[nodiscard]] TSOutputView output(engine_time_t evaluation_time) const;
+        [[nodiscard]] TSInputView input(DateTime evaluation_time) const;
+        [[nodiscard]] TSOutputView output(DateTime evaluation_time) const;
         [[nodiscard]] ValueView state() const;
         [[nodiscard]] ValueView scalars() const;
         /** Borrow this node's persistent scheduler state (only valid when ``has_scheduler``). */
         [[nodiscard]] NodeSchedulerState &scheduler_state() const;
-        [[nodiscard]] TSOutputView error_output(engine_time_t evaluation_time) const;
-        [[nodiscard]] TSOutputView recordable_state(engine_time_t evaluation_time) const;
+        [[nodiscard]] TSOutputView error_output(DateTime evaluation_time) const;
+        [[nodiscard]] TSOutputView recordable_state(DateTime evaluation_time) const;
 
         template <typename T>
         [[nodiscard]] T as() const
@@ -214,9 +214,9 @@ namespace hgraph
             return T::from_node(NodeView{binding(), data()}, node_ops.extended_view_context);
         }
 
-        void start(engine_time_t evaluation_time) const;
-        void stop(engine_time_t evaluation_time) const;
-        void evaluate(engine_time_t evaluation_time, bool force = false) const;
+        void start(DateTime evaluation_time) const;
+        void stop(DateTime evaluation_time) const;
+        void evaluate(DateTime evaluation_time, bool force = false) const;
         void cleanup_delta() const;
 
       private:

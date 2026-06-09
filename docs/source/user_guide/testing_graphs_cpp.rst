@@ -29,10 +29,10 @@ returns its per-cycle outputs — the one call most node tests need:
        static void           eval(In<"in", TS<Int>> in, Out<TS<Int>> out) { out.set(in.value() + 1); }
    };
 
-   // One engine cycle per element; `none` (= std::nullopt) means no tick that cycle.
+   // One evaluation cycle per element; `none` (= std::nullopt) means no tick that cycle.
    CHECK_OUTPUT(testing::eval_node<AddOne>({Int{1}, none, Int{3}}), {Int{2}, none, Int{4}});
 
-Each input element is fed at successive engine cycles from ``MIN_ST`` and the graph
+Each input element is fed at successive evaluation cycles from ``MIN_ST`` and the graph
 runs until it is **quiescent**; the result is the recorded output, cycle-aligned
 (``output[i]`` is the node's tick at cycle ``i``, or ``none`` if it did not tick).
 It is padded to **at least** the input length, but is **not truncated** — a node
@@ -171,7 +171,7 @@ The cycle-aligned buffer
 A replay/record buffer is a value-layer **mutable** ``List<Any>`` stored in the
 ``GlobalState`` under a string key. The list is **cycle-aligned**:
 
-* index ``i`` corresponds to engine time ``MIN_ST + i * MIN_TD`` (the simulation
+* index ``i`` corresponds to evaluation time ``MIN_ST + i * MIN_TD`` (the simulation
   starts at ``MIN_ST`` and steps one tick at a time, matching the Python
   ``SimpleArrayReplaySource``);
 * element ``i`` is an ``Any``: an **empty** ``Any`` means *no tick* on that cycle,

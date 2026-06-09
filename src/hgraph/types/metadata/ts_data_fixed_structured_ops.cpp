@@ -409,7 +409,7 @@ namespace hgraph::ts_data_plan_factory_detail
             return true;
         }
 
-        static void fixed_cleanup_delta(const void *context, void *memory, engine_time_t modified_time)
+        static void fixed_cleanup_delta(const void *context, void *memory, DateTime modified_time)
         {
             const auto *state = ctx(context);
             for (std::size_t index = 0; index < state->element_count(); ++index)
@@ -1335,7 +1335,7 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         [[nodiscard]] static bool fixed_copy_value_from(const void *context, void *memory, const ValueView &source,
-                                                        engine_time_t modified_time)
+                                                        DateTime modified_time)
         {
             if (memory == nullptr)
             {
@@ -1347,7 +1347,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
             if (modified_time == MIN_DT)
             {
-                throw std::invalid_argument("fixed TSData copy requires a concrete engine time");
+                throw std::invalid_argument("fixed TSData copy requires a concrete evaluation time");
             }
 
             const auto *state = ctx(context);
@@ -1390,7 +1390,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
         [[nodiscard]] static nb::object fixed_delta_to_python(const void *context,
                                                               const void *memory,
-                                                              engine_time_t evaluation_time)
+                                                              DateTime evaluation_time)
         {
             const auto *state = ctx(context);
             if (fixed_tracking(state, memory)->last_modified_time != evaluation_time) { return nb::none(); }
@@ -1447,7 +1447,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                  void                     *memory,
                                                                  std::size_t               index,
                                                                  nb::handle                source,
-                                                                 engine_time_t             modified_time)
+                                                                 DateTime             modified_time)
         {
             if (source.is_none()) { return false; }
 
@@ -1468,7 +1468,7 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static bool fixed_from_python_sequence(const FixedTSDataContext *state,
                                                              void                     *memory,
                                                              nb::handle                source,
-                                                             engine_time_t             modified_time,
+                                                             DateTime             modified_time,
                                                              const char                *what)
         {
             if (!is_python_sequence(source))
@@ -1496,7 +1496,7 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static bool fixed_from_python_bundle(const FixedTSDataContext *state,
                                                            void                     *memory,
                                                            nb::handle                source,
-                                                           engine_time_t             modified_time)
+                                                           DateTime             modified_time)
         {
             nb::object object = nb::borrow<nb::object>(source);
             if (is_python_mapping(source))
@@ -1542,7 +1542,7 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static bool fixed_from_python_list_mapping(const FixedTSDataContext *state,
                                                                  void                     *memory,
                                                                  nb::handle                source,
-                                                                 engine_time_t             modified_time)
+                                                                 DateTime             modified_time)
         {
             for_each_python_mapping_item(source, "fixed TSL from_python", [&](nb::handle key, nb::handle value) {
                 const auto index = nb::cast<std::size_t>(key);
@@ -1558,7 +1558,7 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static bool fixed_from_python(const void *context,
                                                     void       *memory,
                                                     nb::handle  source,
-                                                    engine_time_t modified_time)
+                                                    DateTime modified_time)
         {
             if (memory == nullptr)
             {
@@ -1570,7 +1570,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
             if (modified_time == MIN_DT)
             {
-                throw std::invalid_argument("fixed TSData from_python requires a concrete engine time");
+                throw std::invalid_argument("fixed TSData from_python requires a concrete evaluation time");
             }
 
             const auto *state = ctx(context);

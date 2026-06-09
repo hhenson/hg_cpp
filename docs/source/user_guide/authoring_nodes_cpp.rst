@@ -651,7 +651,7 @@ affect node-kind inference; the node simply receives them at evaluation.
      - ``SingleShotScheduler`` *(available, C++ only)*
      - —
    * - current time
-     - ``engine_time_t`` *(available)*
+     - ``DateTime`` *(available)*
      - ``_clock.evaluation_time``
    * - evaluation clock
      - ``EvaluationClock`` *(planned)*
@@ -746,9 +746,9 @@ The full interface:
    * - ``now()``
      - the current evaluation time.
    * - ``schedule(when[, tag][, on_wall_clock])``
-     - schedule at an absolute ``engine_time_t`` ``when`` (must be in the future).
+     - schedule at an absolute ``DateTime`` ``when`` (must be in the future).
    * - ``schedule(delta[, tag][, on_wall_clock])``
-     - schedule ``delta`` (``engine_time_delta_t``) after ``now()``.
+     - schedule ``delta`` (``TimeDelta``) after ``now()``.
    * - ``is_scheduled()`` / ``is_scheduled_now()``
      - whether anything is pending / the earliest event is *exactly* this cycle.
    * - ``next_scheduled_time()``
@@ -1027,7 +1027,7 @@ node's input). The graph runs under a ``GraphExecutor`` in simulation mode.
    GraphExecutorBuilder executor;
    executor.graph_builder(std::move(builder))
            .start_time(MIN_ST)
-           .end_time(MIN_ST + engine_time_delta_t{10});
+           .end_time(MIN_ST + TimeDelta{10});
 
    executor.make_executor().view().run();
 

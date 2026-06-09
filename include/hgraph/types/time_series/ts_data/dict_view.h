@@ -28,9 +28,9 @@ namespace hgraph
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
         [[nodiscard]] const TSDDataLayout &layout() const;
         [[nodiscard]] ValueView value() const;
-        [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const;
-        [[nodiscard]] engine_time_t last_modified_time() const;
-        [[nodiscard]] bool modified(engine_time_t evaluation_time) const;
+        [[nodiscard]] ValueView delta_value(DateTime evaluation_time) const;
+        [[nodiscard]] DateTime last_modified_time() const;
+        [[nodiscard]] bool modified(DateTime evaluation_time) const;
         void subscribe(Notifiable *observer) const;
         void unsubscribe(Notifiable *observer) const;
         [[nodiscard]] bool has_observers() const;
@@ -69,9 +69,9 @@ namespace hgraph
         [[nodiscard]] KeyValueRange<ValueView, TSDataView> valid_items() const;
 
         /** Entries modified at ``evaluation_time``. */
-        [[nodiscard]] Range<ValueView> modified_keys(engine_time_t evaluation_time) const;
-        [[nodiscard]] Range<TSDataView> modified_values(engine_time_t evaluation_time) const;
-        [[nodiscard]] KeyValueRange<ValueView, TSDataView> modified_items(engine_time_t evaluation_time) const;
+        [[nodiscard]] Range<ValueView> modified_keys(DateTime evaluation_time) const;
+        [[nodiscard]] Range<TSDataView> modified_values(DateTime evaluation_time) const;
+        [[nodiscard]] KeyValueRange<ValueView, TSDataView> modified_items(DateTime evaluation_time) const;
 
         /** Added and removed key/value delta ranges for the current delta surface. */
         [[nodiscard]] Range<ValueView> added_keys() const;
@@ -85,7 +85,7 @@ namespace hgraph
         [[nodiscard]] TSSDataView key_set() const;
 
         /** Begin a mutation view over this dictionary. */
-        [[nodiscard]] TSDDataMutationView begin_mutation(engine_time_t evaluation_time) const;
+        [[nodiscard]] TSDDataMutationView begin_mutation(DateTime evaluation_time) const;
 
       protected:
         [[nodiscard]] const TSDDataOps &dict_ops() const;
@@ -114,7 +114,7 @@ namespace hgraph
     class TSDDataMutationView : public TSDDataView
     {
       public:
-        TSDDataMutationView(TSDataView view, engine_time_t evaluation_time);
+        TSDDataMutationView(TSDataView view, DateTime evaluation_time);
 
         TSDDataMutationView(const TSDDataMutationView &) = delete;
         TSDDataMutationView &operator=(const TSDDataMutationView &) = delete;
@@ -126,7 +126,7 @@ namespace hgraph
         [[nodiscard]] TSDDataView view();
 
         /** Engine time associated with this mutation scope. */
-        [[nodiscard]] engine_time_t current_mutation_time() const;
+        [[nodiscard]] DateTime current_mutation_time() const;
 
         /** Reserve storage for at least ``capacity`` slots. */
         void reserve(std::size_t capacity);

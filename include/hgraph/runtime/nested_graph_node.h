@@ -110,15 +110,15 @@ namespace hgraph
         SingleNestedGraphNodeSpec spec,
         SingleNestedGraphNodeOptions options = {});
 
-    HGRAPH_EXPORT void single_nested_graph_start(const NodeView &view, engine_time_t evaluation_time);
-    HGRAPH_EXPORT void single_nested_graph_stop(const NodeView &view, engine_time_t evaluation_time);
-    HGRAPH_EXPORT void single_nested_graph_evaluate(const NodeView &view, engine_time_t evaluation_time);
+    HGRAPH_EXPORT void single_nested_graph_start(const NodeView &view, DateTime evaluation_time);
+    HGRAPH_EXPORT void single_nested_graph_stop(const NodeView &view, DateTime evaluation_time);
+    HGRAPH_EXPORT void single_nested_graph_evaluate(const NodeView &view, DateTime evaluation_time);
     HGRAPH_EXPORT void single_nested_graph_bind_inputs(const SingleNestedGraphNodeView &nested,
-                                                       engine_time_t evaluation_time);
+                                                       DateTime evaluation_time);
     HGRAPH_EXPORT void single_nested_graph_bind_output(const SingleNestedGraphNodeView &nested,
-                                                       engine_time_t evaluation_time);
+                                                       DateTime evaluation_time);
     HGRAPH_EXPORT void single_nested_graph_clear_output_binding(const SingleNestedGraphNodeView &nested,
-                                                                engine_time_t evaluation_time);
+                                                                DateTime evaluation_time);
     HGRAPH_EXPORT void single_nested_graph_propagate_schedule(const SingleNestedGraphNodeView &nested);
 }  // namespace hgraph
 

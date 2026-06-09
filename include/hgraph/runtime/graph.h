@@ -48,16 +48,16 @@ namespace hgraph
         const void *context{nullptr};
 
         void (*attach_nodes_impl)(const void *context, void *memory, GraphValue *graph) = nullptr;
-        void (*start_impl)(const void *context, const GraphView &graph, engine_time_t start_time) = nullptr;
+        void (*start_impl)(const void *context, const GraphView &graph, DateTime start_time) = nullptr;
         void (*stop_impl)(const void *context, const GraphView &graph) = nullptr;
-        void (*evaluate_impl)(const void *context, const GraphView &graph, engine_time_t evaluation_time) = nullptr;
+        void (*evaluate_impl)(const void *context, const GraphView &graph, DateTime evaluation_time) = nullptr;
         void (*schedule_node_impl)(const void *context, const GraphView &graph, std::size_t node_index,
-                                   engine_time_t when, bool force) = nullptr;
+                                   DateTime when, bool force) = nullptr;
 
         [[nodiscard]] bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*evaluating_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] engine_time_t (*evaluation_time_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] engine_time_t (*next_scheduled_time_impl)(const void *context, const void *memory) noexcept = nullptr;
+        [[nodiscard]] DateTime (*evaluation_time_impl)(const void *context, const void *memory) noexcept = nullptr;
+        [[nodiscard]] DateTime (*next_scheduled_time_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] std::size_t (*node_count_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] NodeView (*node_at_impl)(const void *context, void *memory, std::size_t index) = nullptr;
         [[nodiscard]] GlobalState *(*global_state_impl)(const void *context, void *memory) noexcept = nullptr;
@@ -84,8 +84,8 @@ namespace hgraph
 
         [[nodiscard]] bool started() const noexcept;
         [[nodiscard]] bool evaluating() const noexcept;
-        [[nodiscard]] engine_time_t evaluation_time() const noexcept;
-        [[nodiscard]] engine_time_t next_scheduled_time() const noexcept;
+        [[nodiscard]] DateTime evaluation_time() const noexcept;
+        [[nodiscard]] DateTime next_scheduled_time() const noexcept;
         [[nodiscard]] std::size_t node_count() const noexcept;
         [[nodiscard]] NodeView node_at(std::size_t index) const;
 
@@ -98,10 +98,10 @@ namespace hgraph
         [[nodiscard]] GlobalStateView global_state() const;
         [[nodiscard]] GraphView root() const;
 
-        void start(engine_time_t start_time = MIN_ST) const;
+        void start(DateTime start_time = MIN_ST) const;
         void stop() const;
-        void evaluate(engine_time_t evaluation_time) const;
-        void schedule_node(std::size_t node_index, engine_time_t when, bool force = false) const;
+        void evaluate(DateTime evaluation_time) const;
+        void schedule_node(std::size_t node_index, DateTime when, bool force = false) const;
 
       private:
         [[nodiscard]] const GraphOps &ops() const;
@@ -131,7 +131,7 @@ namespace hgraph
         [[nodiscard]] GraphView view();
         [[nodiscard]] GraphView view() const;
 
-        void schedule_node(std::size_t node_index, engine_time_t when, bool force = false);
+        void schedule_node(std::size_t node_index, DateTime when, bool force = false);
 
       private:
         void attach_nodes();

@@ -88,7 +88,7 @@ TEST_CASE("tss: Out<TSS> accumulates and In<TSS> reads the growing set")
     testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -110,7 +110,7 @@ TEST_CASE("tss: replay<TSS> -> record<TSS> round-trips set deltas (added/removed
     testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -132,7 +132,7 @@ TEST_CASE("tss: In<TSS> typed added() exposes this cycle's added elements")
     testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 

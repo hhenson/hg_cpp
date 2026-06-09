@@ -182,7 +182,7 @@ TSData implementation families
     ``SizeTSWindowStorage`` and ``TimeTSWindowStorage`` share only the
     low-level timestamp/payload buffer management; push, pruning, and
     capacity policy are selected by the concrete storage type. Both
-    models store two aligned value-element buffers: an ``engine_time_t``
+    models store two aligned value-element buffers: a ``DateTime``
     timestamp buffer and a payload ``T`` buffer. The current-value
     surface is list-shaped over the payload buffer, but the bound value
     ops project directly over the window storage instead of
@@ -483,7 +483,7 @@ the delta view points directly at the current ``value`` region:
       Check -->|yes| Current
       Check -->|no| Null
 
-During mutation, the first write for an engine time copies the source
+During mutation, the first write in an evaluation cycle copies the source
 payload into the current value region, then updates
 ``last_modified_time``. A same-time overwrite writes the value region again
 but does not advance ``last_modified_time`` and does not produce a
@@ -492,7 +492,7 @@ second parent notification:
 .. mermaid::
 
    flowchart TD
-      Write["write source at engine time t"]
+      Write["write source at evaluation time t"]
       Check{"already modified at t?"}
       FirstCopy["copy source into<br/>current value"]
       FirstMark["last_modified_time = t<br/>parent notification may bubble"]
@@ -657,9 +657,9 @@ fixed ``TSL`` it exposes the documented map-shaped delta
 Projecting a child stores a ``TSDataParentLink`` in the child node's
 tracking region. The link records the immediate parent binding/data
 identity and the parent-local field/index id. It does not point at the
-parent view object. When a child modification is first recorded for an
-engine time, the child bubbles that id to the parent; the parent then
-records its own ``last_modified_time`` for the same engine time and
+parent view object. When a child modification is first recorded in an
+evaluation cycle, the child bubbles that id to the parent; the parent then
+records its own ``last_modified_time`` for the same evaluation time and
 continues through its own tracking link if it has one. The root
 ``TSData`` link terminates at the owning endpoint, for example
 ``TSOutput``, which records endpoint-local dirty state instead of
@@ -689,7 +689,7 @@ it returns a typed-null scalar view.
    | SizeTSWindowStorage or TimeTSWindowStorage                   |
    | - fixed tick: cyclic timestamp/value buffers                 |
    | - duration: timestamp/value queue buffers                    |
-   | - timestamps are engine_time_t value elements                |
+   | - timestamps are DateTime value elements                     |
    | - payload values are T value elements                        |
    +--------------------------------------------------------------+
    | tracking region                                              |
@@ -700,7 +700,7 @@ Both models share ``TSWDataView``. The view reports elements in logical
 oldest-to-newest order and exposes the same operations for size, indexed
 value access, timestamps, timestamp value access, first/last element,
 readiness, and mutation. ``time_at(index)`` returns the raw
-``engine_time_t`` and ``time_value_at(index)`` returns the same stored
+``DateTime`` and ``time_value_at(index)`` returns the same stored
 timestamp as a ``ValueView`` backed by the timestamp element buffer.
 The layout and ops behind the view differ by schema:
 
@@ -801,7 +801,7 @@ walk stops at the endpoint link. The same walk produces the
 root-to-child navigation path as integer field/index/slot ids.
 
 ``TSDataMutationView`` is the mutation-only handle. It carries a view
-copy plus the current engine time and validates that the bound
+copy plus the current evaluation time and validates that the bound
 ``TSDataOps::allows_mutation`` property is true. Endpoint lifecycle
 state, such as whether cleanup is needed after evaluation, is tracked by
 the owning root ``TSOutput`` / ``TSInput`` endpoint, not by each TSData
@@ -812,16 +812,16 @@ element:
    flowchart TD
       Mutation["TSDataMutationView<br/>view_<br/>mutation_time_"]
       Tracking["view_.tracking()<br/>TSDataTracking"]
-      EngineTime["active engine time"]
+      EvaluationTime["active evaluation time"]
       Root["root endpoint state<br/>dirty cleanup coordination"]
 
       Mutation -->|references through view_| Tracking
-      Mutation -->|carries| EngineTime
+      Mutation -->|carries| EvaluationTime
       Root -.coordinates mutation lifetime.-> Mutation
 
 The active mutation time is deliberately not stored in
 ``TSDataTracking``. The tracking state records what happened to the
-data; the mutation view records the engine time for the in-flight
+data; the mutation view records the evaluation time for the in-flight
 operation.
 
 Modification handling is deliberately split into three responsibilities.
@@ -833,7 +833,7 @@ hides the parent-specific details by invoking the parent's
 ``record_child_modified(parent_data, child_id)`` hook before marking the
 parent modified. Marking a TSData level modified updates
 ``last_modified_time`` and notifies that level's observers only on the
-first modification for a given engine time. If the link terminates at an
+first modification for a given evaluation time. If the link terminates at an
 endpoint parent, the endpoint records its local dirty state and the
 bubble-up stops. TSData owns observer fan-out at the level being
 observed, but scheduling policy and cleanup lifecycle remain the
@@ -845,11 +845,11 @@ uses the window layout above. ``TSS`` and ``TSD`` use the
 slot-oriented layout below: ``TSS`` tracks membership deltas with
 per-slot bitsets for ``added`` and ``removed``, while ``TSD`` reuses
 the same key side and adds a per-slot ``modified`` bitset for child
-values that changed in the current engine time. The collection owns
+values that changed in the current evaluation time. The collection owns
 only its collection-level ``last_modified_time``; keyed value
 modification times are read from the child time-series values. The
 bitset delta surface is reset at the first collection mutation for a
-new engine time. That owner-level reset explicitly calls
+new evaluation time. That owner-level reset explicitly calls
 ``erase_pending()`` on the key store before clearing the per-slot delta
 masks, so pending erases from the previous tick are released without
 making the slot utility track mutation epochs. The implementation keeps
@@ -857,12 +857,12 @@ a small internal ``delta_time`` marker for that reset decision; the
 public modification answer still comes only from
 ``last_modified_time == evaluation_time``.
 
-Within a single engine time, structural collection changes are
+Within a single evaluation cycle, structural collection changes are
 netted in the slot delta masks. Adding and then removing the same key,
 or removing and then re-adding the same key, clears the corresponding
 ``added`` / ``removed`` bit. Empty copy/apply operations also reset the
-delta surface for the current engine time. Even when this leaves no
-delta bits, the collection remains modified at that engine time:
+delta surface for the current evaluation time. Even when this leaves no
+delta bits, the collection remains modified at that evaluation time:
 touching a collection is enough to publish validity, including valid
 empty ``TSS`` / ``TSD`` values.
 
@@ -951,7 +951,7 @@ independent value-side constructed state in the TSData layout:
    +--------------------------------------------------------------+
 
 The ``modified`` bitset records which child slots reported a
-modification during the current engine time. The child's own
+modification during the current evaluation time. The child's own
 ``last_modified_time`` still lives with the child time-series value;
 the parent bitset is the parent's delta surface, not a duplicate
 timestamp store.
@@ -967,7 +967,7 @@ The bubble-up path uses the slot id carried by the child's
       ParentLink["child tracking<br/>TSDataParentLink(parent, s)"]
       ParentHook["parent ops<br/>record_child_modified(parent_data, s)"]
       ModifiedBit["parent modified bitset[s] = 1"]
-      ParentTime["parent last_modified_time<br/>= current engine time"]
+      ParentTime["parent last_modified_time<br/>= current evaluation time"]
       Bubble["repeat with parent's parent"]
       Endpoint["terminal endpoint<br/>mark output dirty"]
 
@@ -1094,7 +1094,7 @@ do not use the slot stores.
 
     A slot in ``constructed && !live`` is *pending erase*: still
     addressable and inspectable until the owner explicitly calls
-    ``erase_pending()``. TSData calls this when a new engine-time delta
+    ``erase_pending()``. TSData calls this when a new evaluation-time delta
     epoch begins, before resetting its per-slot delta masks. This is
     what lets a consumer that bound on the previous tick inspect the
     slot's last value during the tick of its removal without making the
@@ -1126,7 +1126,7 @@ The TS layer uses this for two purposes: a ``MapValueObserver``
 mirrors a key store's slot lifecycle onto a paired value store
 (``TSD`` keys → values); and delta-recording observers capture
 ``TSS`` ``added`` / ``removed`` slot ids plus ``TSD`` ``modified``
-slot ids for the current engine time so the layer can publish
+slot ids for the current evaluation time so the layer can publish
 ``delta_value``.
 
 These structural slot observers are internal synchronisation hooks, not
@@ -1200,7 +1200,7 @@ TSD is the time-series wrapper around a delta-tracking Map. It owns:
 - collection-level tracking, including ``last_modified_time``;
 - the TSS-shaped per-slot ``added`` and ``removed`` key bitsets;
 - a per-slot ``modified`` bitset for keys whose child time-series
-  value modified in the current engine time.
+  value modified in the current evaluation time.
 
 The value side is itself a recursive time-series layer: each value-
 slot holds a complete time-series value (most often a ``TS``, but
@@ -1245,7 +1245,7 @@ The C++ TSData API uses the standard dictionary-view names:
 ``clear()``, and ``reserve()``. Child mutation bubbles through the
 child view's parent link and records the parent's ``modified`` bit for
 the child slot. The explicit ``evaluation_time`` on modified ranges is
-the TSData-layer form of the runtime API's current-engine-time query.
+the TSData-layer form of querying the current evaluation time.
 
 Buffer Exposure
 ~~~~~~~~~~~~~~~

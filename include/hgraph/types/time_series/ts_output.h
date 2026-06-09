@@ -75,15 +75,15 @@ namespace hgraph
         void unsubscribe(Notifiable *observer);
 
         /** Read view at ``evaluation_time``. */
-        [[nodiscard]] TSOutputView view(engine_time_t evaluation_time = MIN_DT);
-        [[nodiscard]] TSOutputView view(engine_time_t evaluation_time = MIN_DT) const;
+        [[nodiscard]] TSOutputView view(DateTime evaluation_time = MIN_DT);
+        [[nodiscard]] TSOutputView view(DateTime evaluation_time = MIN_DT) const;
 
         /** Binding data for a canonical or alternative representation of ``source``. */
         [[nodiscard]] TSOutputHandle binding_for(const TSOutputView &source,
                                                  const TSValueTypeMetaData &requested_schema) const;
 
         /** Begin a root mutation scope. */
-        [[nodiscard]] TSOutputMutationView begin_mutation(engine_time_t evaluation_time);
+        [[nodiscard]] TSOutputMutationView begin_mutation(DateTime evaluation_time);
 
       private:
         friend class TSOutputMutationView;
@@ -93,7 +93,7 @@ namespace hgraph
         static const TSData &copyable_data(const TSOutput &other);
 
         void attach_root_parent();
-        void record_child_modified(std::size_t child_id, engine_time_t mutation_time) override;
+        void record_child_modified(std::size_t child_id, DateTime mutation_time) override;
 
         TSData                                      data_{};
         bool                                        dirty_{false};

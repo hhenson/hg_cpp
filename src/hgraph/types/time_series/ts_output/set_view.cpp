@@ -34,7 +34,7 @@ namespace hgraph
     Range<ValueView> TSSOutputView::removed_values() const { return data_view().removed_values(); }
     Range<ValueView>::iterator TSSOutputView::begin() const { return data_view().begin(); }
     Range<ValueView>::iterator TSSOutputView::end() const { return data_view().end(); }
-    TSSDataMutationView TSSOutputView::begin_mutation(engine_time_t evaluation_time) const
+    TSSDataMutationView TSSOutputView::begin_mutation(DateTime evaluation_time) const
     {
         return data_view().begin_mutation(evaluation_time);
     }

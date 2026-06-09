@@ -19,8 +19,8 @@ namespace hgraph
             }
 
             GraphValue    graph{};
-            engine_time_t start_time{MIN_ST};
-            engine_time_t end_time{MAX_ET};
+            DateTime start_time{MIN_ST};
+            DateTime end_time{MAX_ET};
             bool          stop_requested{false};
         };
 
@@ -45,7 +45,7 @@ namespace hgraph
             {
                 while (!executor.stop_requested())
                 {
-                    const engine_time_t next = graph.next_scheduled_time();
+                    const DateTime next = graph.next_scheduled_time();
                     if (next == MAX_DT || next >= executor.end_time()) { break; }
                     graph.evaluate(next);
                 }
@@ -69,12 +69,12 @@ namespace hgraph
             return memory != nullptr && storage(memory).stop_requested;
         }
 
-        engine_time_t start_time_impl(const void *, const void *memory) noexcept
+        DateTime start_time_impl(const void *, const void *memory) noexcept
         {
             return memory != nullptr ? storage(memory).start_time : MIN_ST;
         }
 
-        engine_time_t end_time_impl(const void *, const void *memory) noexcept
+        DateTime end_time_impl(const void *, const void *memory) noexcept
         {
             return memory != nullptr ? storage(memory).end_time : MAX_ET;
         }
@@ -143,12 +143,12 @@ namespace hgraph
     }
     void *GraphExecutorView::data() const noexcept { return storage_.data(); }
 
-    engine_time_t GraphExecutorView::start_time() const noexcept
+    DateTime GraphExecutorView::start_time() const noexcept
     {
         return valid() ? ops().start_time_impl(ops().context, data()) : MIN_ST;
     }
 
-    engine_time_t GraphExecutorView::end_time() const noexcept
+    DateTime GraphExecutorView::end_time() const noexcept
     {
         return valid() ? ops().end_time_impl(ops().context, data()) : MAX_ET;
     }
@@ -223,13 +223,13 @@ namespace hgraph
         return *this;
     }
 
-    GraphExecutorBuilder &GraphExecutorBuilder::start_time(engine_time_t start_time) noexcept
+    GraphExecutorBuilder &GraphExecutorBuilder::start_time(DateTime start_time) noexcept
     {
         start_time_ = start_time;
         return *this;
     }
 
-    GraphExecutorBuilder &GraphExecutorBuilder::end_time(engine_time_t end_time) noexcept
+    GraphExecutorBuilder &GraphExecutorBuilder::end_time(DateTime end_time) noexcept
     {
         end_time_ = end_time;
         return *this;
@@ -250,12 +250,12 @@ namespace hgraph
         return mode_;
     }
 
-    engine_time_t GraphExecutorBuilder::start_time() const noexcept
+    DateTime GraphExecutorBuilder::start_time() const noexcept
     {
         return start_time_;
     }
 
-    engine_time_t GraphExecutorBuilder::end_time() const noexcept
+    DateTime GraphExecutorBuilder::end_time() const noexcept
     {
         return end_time_;
     }

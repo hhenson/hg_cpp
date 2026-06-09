@@ -62,7 +62,7 @@ and nodes:
     ``schedule_node``, ``node_at``, and schedule inspection by delegating to
     ``GraphOps``. The graph runtime owns the current evaluation-time cache
     for scheduling and graph-level inspection. Node views remain timeless;
-    the graph passes the current ``engine_time_t`` into node lifecycle calls
+    the graph passes the current ``DateTime`` into node lifecycle calls
     and callers pass time explicitly when projecting node input/output views.
 
 ``GraphExecutorValue`` / ``GraphExecutorView``

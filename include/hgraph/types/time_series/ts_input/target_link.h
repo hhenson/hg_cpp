@@ -35,7 +35,7 @@ namespace hgraph::detail
             SchedulingNotifier() noexcept = default;
             void set_target(Notifiable *target_) noexcept;
             [[nodiscard]] Notifiable *target() const noexcept;
-            void notify(engine_time_t modified_time) override;
+            void notify(DateTime modified_time) override;
 
           private:
             Notifiable             *target_{nullptr};
@@ -47,7 +47,7 @@ namespace hgraph::detail
         ~TSInputTargetLinkState() noexcept;
 
         void move_from(TSInputTargetLinkState &other) noexcept;
-        void notify(engine_time_t modified_time) override;
+        void notify(DateTime modified_time) override;
         [[nodiscard]] TSInputTargetActiveNode *active_root() const noexcept;
         [[nodiscard]] TSInputTargetActiveNode &ensure_active_root();
         void try_prune_active_root();
@@ -73,7 +73,7 @@ namespace hgraph::detail
         void bind(const TSValueTypeMetaData &schema, const TSOutputView &output);
         void unbind();
         void unbind_noexcept() noexcept;
-        void record_target_modified(engine_time_t modified_time);
+        void record_target_modified(DateTime modified_time);
         [[nodiscard]] TSInputTargetActiveNode &root_node();
         [[nodiscard]] TSInputTargetActiveNode &child_node(TSInputTargetActiveNode *parent, std::size_t slot);
         void make_active(TSInputTargetActiveNode *node, const TSDataView &observed, Notifiable *target_notifier);

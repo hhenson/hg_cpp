@@ -48,7 +48,7 @@ namespace
     {
         static constexpr auto name = "ts_delta_probe_record";
         static void           start(Scalar<"key", Str> key, GlobalStateView gs) { gs.set(key.value(), make_buffer()); }
-        static void           eval(In<"ts", S> ts, Scalar<"key", Str> key, GlobalStateView gs, engine_time_t now)
+        static void           eval(In<"ts", S> ts, Scalar<"key", Str> key, GlobalStateView gs, DateTime now)
         {
             const std::size_t offset   = cycle_offset(now);
             const ValueView   buffer   = gs.get(key.value());
@@ -133,7 +133,7 @@ namespace
         GraphBuilder gb = build_graph<Graph>();
         seed(gb.global_state());
         GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
         GraphExecutorValue ex = eb.make_executor();
         ex.view().run();
         return ex;

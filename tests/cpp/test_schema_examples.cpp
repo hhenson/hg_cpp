@@ -276,13 +276,13 @@ TEST_CASE("schema example: TSW — duration window")
     // 1-second rolling window with 100ms warm-up.
     const auto *win = registry.tsw_duration(
         double_meta,
-        engine_time_delta_t{1'000'000},  // 1s in microseconds
-        engine_time_delta_t{100'000});   // 100ms warm-up
+        TimeDelta{1'000'000},  // 1s in microseconds
+        TimeDelta{100'000});   // 100ms warm-up
 
     REQUIRE(win->kind == TSTypeKind::TSW);
     REQUIRE(win->is_duration_based());
-    REQUIRE(win->time_range() == engine_time_delta_t{1'000'000});
-    REQUIRE(win->min_time_range() == engine_time_delta_t{100'000});
+    REQUIRE(win->time_range() == TimeDelta{1'000'000});
+    REQUIRE(win->min_time_range() == TimeDelta{100'000});
 }
 
 TEST_CASE("schema example: TSB — time-series bundle")

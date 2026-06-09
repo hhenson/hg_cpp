@@ -23,7 +23,7 @@ namespace hgraph
 
         void subscribe(Notifiable *observer) const { this->view_.subscribe(observer); }
         void unsubscribe(Notifiable *observer) const { this->view_.unsubscribe(observer); }
-        [[nodiscard]] TSDataMutationView begin_mutation(engine_time_t evaluation_time) const
+        [[nodiscard]] TSDataMutationView begin_mutation(DateTime evaluation_time) const
         {
             return this->view_.begin_mutation(evaluation_time);
         }

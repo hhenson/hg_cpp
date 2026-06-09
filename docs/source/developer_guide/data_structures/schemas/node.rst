@@ -160,7 +160,7 @@ shape as the lower layers:
     evaluation independent of concrete node implementation classes. The
     state view is writable-capable when the node declares ``state_schema``;
     callers still open mutation explicitly with ``ValueView::begin_mutation``.
-    ``NodeView`` itself is timeless: callers pass ``engine_time_t`` to
+    ``NodeView`` itself is timeless: callers pass ``DateTime`` to
     lifecycle operations and to time-series endpoint projections such as
     ``input(evaluation_time)`` and ``output(evaluation_time)``.
 

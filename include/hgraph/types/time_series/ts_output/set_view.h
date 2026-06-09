@@ -37,7 +37,7 @@ namespace hgraph
         [[nodiscard]] Range<ValueView> removed_values() const;
         [[nodiscard]] Range<ValueView>::iterator begin() const;
         [[nodiscard]] Range<ValueView>::iterator end() const;
-        [[nodiscard]] TSSDataMutationView begin_mutation(engine_time_t evaluation_time) const;
+        [[nodiscard]] TSSDataMutationView begin_mutation(DateTime evaluation_time) const;
     };
 }  // namespace hgraph
 

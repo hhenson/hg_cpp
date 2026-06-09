@@ -54,7 +54,7 @@ namespace hgraph
                data_.data() == other.data_.data();
     }
 
-    TSOutputView TSOutputHandle::view(engine_time_t evaluation_time) const noexcept
+    TSOutputView TSOutputHandle::view(DateTime evaluation_time) const noexcept
     {
         return TSOutputView{*this, evaluation_time};
     }
@@ -67,14 +67,14 @@ namespace hgraph
 
     TSOutputView::TSOutputView() noexcept = default;
 
-    TSOutputView::TSOutputView(const TSOutput *output, const TSDataView &data, engine_time_t evaluation_time) noexcept
+    TSOutputView::TSOutputView(const TSOutput *output, const TSDataView &data, DateTime evaluation_time) noexcept
         : output_(output),
           data_(data.borrowed_ref()),
           evaluation_time_(evaluation_time)
     {
     }
 
-    TSOutputView::TSOutputView(TSOutputHandle handle, engine_time_t evaluation_time) noexcept
+    TSOutputView::TSOutputView(TSOutputHandle handle, DateTime evaluation_time) noexcept
         : output_(handle.output()),
           data_(handle.data_view()),
           evaluation_time_(evaluation_time)
@@ -106,7 +106,7 @@ namespace hgraph
         return data_;
     }
 
-    engine_time_t TSOutputView::evaluation_time() const noexcept
+    DateTime TSOutputView::evaluation_time() const noexcept
     {
         return evaluation_time_;
     }
@@ -136,7 +136,7 @@ namespace hgraph
         return data_.valid() ? data_.delta_value(evaluation_time_) : ValueView{};
     }
 
-    engine_time_t TSOutputView::last_modified_time() const
+    DateTime TSOutputView::last_modified_time() const
     {
         return data_.valid() ? data_.last_modified_time() : MIN_DT;
     }
@@ -211,7 +211,7 @@ namespace hgraph
         return output_->binding_for(*this, requested_schema);
     }
 
-    TSDataMutationView TSOutputView::begin_mutation(engine_time_t evaluation_time) const
+    TSDataMutationView TSOutputView::begin_mutation(DateTime evaluation_time) const
     {
         if (!data_.valid()) { throw std::logic_error("TSOutputView::begin_mutation requires a bound view"); }
         return data_.begin_mutation(evaluation_time);

@@ -186,7 +186,7 @@ TEST_CASE("tsl: Out<TSL> sets children and In<TSL> reads the values back")
     testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -202,7 +202,7 @@ TEST_CASE("tsl: dynamic TSL output grows and target-bound input reads the live s
     testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -224,7 +224,7 @@ TEST_CASE("tsl: replay<TSL> -> record<TSL> round-trips list deltas (modified chi
     testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -246,7 +246,7 @@ TEST_CASE("tsl: dynamic replay<TSL> -> record<TSL> round-trips grow-only list de
     testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -324,7 +324,7 @@ TEST_CASE("tsl: a TSL<TSS> executes end-to-end (replay -> record round-trips lis
     testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 

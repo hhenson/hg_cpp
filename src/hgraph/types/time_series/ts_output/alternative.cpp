@@ -35,7 +35,7 @@ namespace hgraph::detail
             return static_cast<std::size_t>(role);
         }
 
-        [[nodiscard]] engine_time_t concrete_reference_time(engine_time_t time) noexcept
+        [[nodiscard]] DateTime concrete_reference_time(DateTime time) noexcept
         {
             return time != MIN_DT ? time : MIN_ST;
         }
@@ -242,7 +242,7 @@ namespace hgraph::detail
             return {};
         }
 
-        void unbind_target_link_at(const TSDataView &target, engine_time_t modified_time)
+        void unbind_target_link_at(const TSDataView &target, DateTime modified_time)
         {
             auto *link = mutable_target_link_storage(target);
             if (link == nullptr)
@@ -253,7 +253,7 @@ namespace hgraph::detail
             link->record_target_modified(modified_time);
         }
 
-        void bind_target_link_at(const TSDataView &target, const TSOutputView &output, engine_time_t modified_time)
+        void bind_target_link_at(const TSDataView &target, const TSOutputView &output, DateTime modified_time)
         {
             bind_target_link(target, output);
             auto *link = mutable_target_link_storage(target);
@@ -280,29 +280,29 @@ namespace hgraph::detail
 
         void unbind_from_ref_data(const TSDataView &target,
                                   const TSEndpointSchema &endpoint_schema,
-                                  engine_time_t modified_time);
+                                  DateTime modified_time);
 
         void apply_output_to_from_ref_data(const TSDataView &target,
                                            const TSEndpointSchema &endpoint_schema,
                                            const TSOutputView &output,
-                                           engine_time_t modified_time);
+                                           DateTime modified_time);
 
         void apply_reference_to_from_ref_data(const TSDataView &target,
                                               const TSEndpointSchema &endpoint_schema,
                                               const TimeSeriesReference &reference,
-                                              engine_time_t modified_time);
+                                              DateTime modified_time);
 
-        using FromRefUnbindFn = void (*)(const TSDataView &, const TSEndpointSchema &, engine_time_t);
+        using FromRefUnbindFn = void (*)(const TSDataView &, const TSEndpointSchema &, DateTime);
         using FromRefOutputApplyFn = void (*)(
             const TSDataView &,
             const TSEndpointSchema &,
             const TSOutputView &,
-            engine_time_t);
+            DateTime);
         using FromRefNonPeeredReferenceApplyFn = void (*)(
             const TSDataView &,
             const TSEndpointSchema &,
             const TimeSeriesReference &,
-            engine_time_t);
+            DateTime);
 
         struct FromRefRoleOps
         {
@@ -313,14 +313,14 @@ namespace hgraph::detail
 
         void unbind_from_ref_peered(const TSDataView &target,
                                     const TSEndpointSchema &,
-                                    engine_time_t modified_time)
+                                    DateTime modified_time)
         {
             unbind_target_link_at(target, modified_time);
         }
 
         void unbind_from_ref_non_peered(const TSDataView &target,
                                         const TSEndpointSchema &endpoint_schema,
-                                        engine_time_t modified_time)
+                                        DateTime modified_time)
         {
             for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
             {
@@ -332,7 +332,7 @@ namespace hgraph::detail
         void apply_output_to_from_ref_peered(const TSDataView &target,
                                              const TSEndpointSchema &,
                                              const TSOutputView &output,
-                                             engine_time_t modified_time)
+                                             DateTime modified_time)
         {
             bind_target_link_at(target, output, modified_time);
         }
@@ -340,7 +340,7 @@ namespace hgraph::detail
         void apply_output_to_from_ref_non_peered(const TSDataView &target,
                                                  const TSEndpointSchema &endpoint_schema,
                                                  const TSOutputView &output,
-                                                 engine_time_t modified_time)
+                                                 DateTime modified_time)
         {
             for (std::size_t index = 0; index < endpoint_schema.child_count(); ++index)
             {
@@ -353,7 +353,7 @@ namespace hgraph::detail
         void apply_non_peered_reference_to_peered_from_ref_data(const TSDataView &,
                                                                const TSEndpointSchema &,
                                                                const TimeSeriesReference &,
-                                                               engine_time_t)
+                                                               DateTime)
         {
             throw std::invalid_argument("TSOutput from-REF cannot apply a non-peered reference to a peered leaf");
         }
@@ -362,7 +362,7 @@ namespace hgraph::detail
             const TSDataView &target,
             const TSEndpointSchema &endpoint_schema,
             const TimeSeriesReference &reference,
-            engine_time_t modified_time)
+            DateTime modified_time)
         {
             if (reference.items().size() != endpoint_schema.child_count())
             {
@@ -397,7 +397,7 @@ namespace hgraph::detail
 
         void unbind_from_ref_data(const TSDataView &target,
                                   const TSEndpointSchema &endpoint_schema,
-                                  engine_time_t modified_time)
+                                  DateTime modified_time)
         {
             from_ref_role_ops_for(endpoint_schema.role()).unbind(target, endpoint_schema, modified_time);
         }
@@ -405,7 +405,7 @@ namespace hgraph::detail
         void apply_output_to_from_ref_data(const TSDataView &target,
                                            const TSEndpointSchema &endpoint_schema,
                                            const TSOutputView &output,
-                                           engine_time_t modified_time)
+                                           DateTime modified_time)
         {
             from_ref_role_ops_for(endpoint_schema.role()).apply_output(target, endpoint_schema, output, modified_time);
         }
@@ -413,7 +413,7 @@ namespace hgraph::detail
         void apply_reference_to_from_ref_data(const TSDataView &target,
                                               const TSEndpointSchema &endpoint_schema,
                                               const TimeSeriesReference &reference,
-                                              engine_time_t modified_time)
+                                              DateTime modified_time)
         {
             if (reference.is_empty())
             {
@@ -436,14 +436,14 @@ namespace hgraph::detail
         void populate_to_ref_data(const TSDataView           &target,
                                   const TSOutputView         &source_view,
                                   const TSValueTypeMetaData  &target_schema,
-                                  engine_time_t               modified_time,
+                                  DateTime               modified_time,
                                   const ToRefBuildContext    &build_context);
 
         void build_to_ref_proxy_value(TSDProxy      &,
                                       std::size_t,
                                       const TSDataView &target,
                                       const TSDataView &source,
-                                      engine_time_t  modified_time,
+                                      DateTime  modified_time,
                                       const void    *context)
         {
             const auto *build_context = static_cast<const ToRefBuildContext *>(context);
@@ -503,7 +503,7 @@ namespace hgraph::detail
         void populate_to_ref_unsupported(const TSDataView &,
                                          const TSOutputView &,
                                          const TSValueTypeMetaData &,
-                                         engine_time_t,
+                                         DateTime,
                                          const ToRefBuildContext &)
         {
             throw std::logic_error("TSOutput to-REF alternative encountered unsupported requested schema");
@@ -512,7 +512,7 @@ namespace hgraph::detail
         void populate_to_ref_dict(const TSDataView           &target,
                                   const TSOutputView         &source_view,
                                   const TSValueTypeMetaData  &,
-                                  engine_time_t               modified_time,
+                                  DateTime               modified_time,
                                   const ToRefBuildContext    &build_context)
         {
             bind_tsd_proxy(target.borrowed_ref(),
@@ -525,7 +525,7 @@ namespace hgraph::detail
         void populate_to_ref_ref(const TSDataView           &target,
                                  const TSOutputView         &source_view,
                                  const TSValueTypeMetaData  &target_schema,
-                                 engine_time_t               modified_time,
+                                 DateTime               modified_time,
                                  const ToRefBuildContext    &)
         {
             auto reference = Value{TSOutputAlternativeStore::peered_reference_as(target_schema.referenced_ts(),
@@ -540,7 +540,7 @@ namespace hgraph::detail
         void populate_to_ref_bundle(const TSDataView           &target,
                                     const TSOutputView         &source_view,
                                     const TSValueTypeMetaData  &target_schema,
-                                    engine_time_t               modified_time,
+                                    DateTime               modified_time,
                                     const ToRefBuildContext    &build_context)
         {
             auto target_bundle = target.as_bundle();
@@ -558,7 +558,7 @@ namespace hgraph::detail
         void populate_to_ref_list(const TSDataView           &target,
                                   const TSOutputView         &source_view,
                                   const TSValueTypeMetaData  &target_schema,
-                                  engine_time_t               modified_time,
+                                  DateTime               modified_time,
                                   const ToRefBuildContext    &build_context)
         {
             auto target_list = target.as_list();
@@ -577,7 +577,7 @@ namespace hgraph::detail
             const TSDataView &,
             const TSOutputView &,
             const TSValueTypeMetaData &,
-            engine_time_t,
+            DateTime,
             const ToRefBuildContext &);
 
         [[nodiscard]] ToRefPopulateFn to_ref_populator_for(TSTypeKind kind) noexcept
@@ -601,7 +601,7 @@ namespace hgraph::detail
         void populate_to_ref_data(const TSDataView           &target,
                                   const TSOutputView         &source_view,
                                   const TSValueTypeMetaData  &target_schema,
-                                  engine_time_t               modified_time,
+                                  DateTime               modified_time,
                                   const ToRefBuildContext    &build_context)
         {
             to_ref_populator_for(target_schema.kind)(target, source_view, target_schema, modified_time, build_context);
@@ -639,7 +639,7 @@ namespace hgraph::detail
         }
 
       private:
-        void refresh(engine_time_t modified_time)
+        void refresh(DateTime modified_time)
         {
             if (requested_schema == nullptr || !source.bound()) { return; }
             modified_time = concrete_reference_time(modified_time);
@@ -657,7 +657,7 @@ namespace hgraph::detail
             {
             }
 
-            void notify(engine_time_t modified_time) override
+            void notify(DateTime modified_time) override
             {
                 if (owner != nullptr) { owner->refresh(modified_time); }
             }
@@ -720,7 +720,7 @@ namespace hgraph::detail
             }));
         }
 
-        void refresh(engine_time_t modified_time)
+        void refresh(DateTime modified_time)
         {
             if (modified_time == MIN_DT || requested_schema == nullptr || !source.bound()) { return; }
 

@@ -181,7 +181,7 @@ namespace hgraph::testing
      * (``T`` for scalar-delta leaves, ``bool`` for ``SIGNAL``, and the canonical
      * delta ``Value`` for collection kinds such as ``TSS`` / ``TSD`` / fixed or
      * dynamic ``TSL`` — see :cpp:class:`ts_harness`),
-     * one element per engine cycle from ``MIN_ST`` (``none`` = no tick), and a
+     * one element per evaluation cycle from ``MIN_ST`` (``none`` = no tick), and a
      * **scalar input** is the value itself. The harness wires the matching ``replay``
      * per time-series input, the node, then the matching ``record`` on the output,
      * seeds the inputs, runs to quiescence, and returns the recorded output

@@ -31,14 +31,14 @@ namespace hgraph
     }
     std::size_t TSWOutputView::period() const { return data_view().period(); }
     std::size_t TSWOutputView::min_period() const { return data_view().min_period(); }
-    engine_time_delta_t TSWOutputView::time_range() const { return data_view().time_range(); }
-    engine_time_delta_t TSWOutputView::min_time_range() const { return data_view().min_time_range(); }
+    TimeDelta TSWOutputView::time_range() const { return data_view().time_range(); }
+    TimeDelta TSWOutputView::min_time_range() const { return data_view().min_time_range(); }
     std::size_t TSWOutputView::capacity() const { return data_view().capacity(); }
     std::size_t TSWOutputView::size() const { return data_view().size(); }
     bool TSWOutputView::empty() const { return data_view().empty(); }
     bool TSWOutputView::full() const { return data_view().full(); }
-    engine_time_t TSWOutputView::first_modified_time() const { return data_view().first_modified_time(); }
-    engine_time_t TSWOutputView::time_at(std::size_t index) const { return data_view().time_at(index); }
+    DateTime TSWOutputView::first_modified_time() const { return data_view().first_modified_time(); }
+    DateTime TSWOutputView::time_at(std::size_t index) const { return data_view().time_at(index); }
     ValueView TSWOutputView::time_value_at(std::size_t index) const { return data_view().time_value_at(index); }
     ValueView TSWOutputView::at(std::size_t index) const { return data_view().at(index); }
     ValueView TSWOutputView::operator[](std::size_t index) const { return data_view()[index]; }
@@ -46,10 +46,10 @@ namespace hgraph
     ValueView TSWOutputView::back() const { return data_view().back(); }
     Range<ValueView> TSWOutputView::values() const { return data_view().values(); }
     Range<ValueView> TSWOutputView::time_values() const { return data_view().time_values(); }
-    Range<engine_time_t> TSWOutputView::value_times() const { return data_view().value_times(); }
+    Range<DateTime> TSWOutputView::value_times() const { return data_view().value_times(); }
     Range<ValueView>::iterator TSWOutputView::begin() const { return data_view().begin(); }
     Range<ValueView>::iterator TSWOutputView::end() const { return data_view().end(); }
-    TSWDataMutationView TSWOutputView::begin_mutation(engine_time_t evaluation_time) const
+    TSWDataMutationView TSWOutputView::begin_mutation(DateTime evaluation_time) const
     {
         return data_view().begin_mutation(evaluation_time);
     }

@@ -294,7 +294,7 @@ TEST_CASE("collections: TSD typed output creates keys and typed input iterates c
     testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -316,7 +316,7 @@ TEST_CASE("collections: TSD replay and record round-trip removed and modified de
     testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -334,7 +334,7 @@ TEST_CASE("collections: TSW typed output pushes values and typed input reads the
     testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3, 4});
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -351,7 +351,7 @@ TEST_CASE("collections: TSW replay and record round-trip scalar push deltas")
     testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -374,7 +374,7 @@ TEST_CASE("collections: TSB typed field selectors work through node wiring")
     testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -395,7 +395,7 @@ TEST_CASE("collections: TSB replay and record round-trip sparse field deltas")
     testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -419,7 +419,7 @@ TEST_CASE("collections: TSL and TSD replay and record recurse through TSB childr
         testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
         GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
         GraphExecutorValue ex = eb.make_executor();
         ex.view().run();
 
@@ -440,7 +440,7 @@ TEST_CASE("collections: TSL and TSD replay and record recurse through TSB childr
         testing::set_replay_deltas(gb.global_state(), "in", deltas);
 
         GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
         GraphExecutorValue ex = eb.make_executor();
         ex.view().run();
 
@@ -460,7 +460,7 @@ TEST_CASE("collections: SIGNAL typed output ticks and typed input observes the t
     testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -475,7 +475,7 @@ TEST_CASE("collections: SIGNAL input binds directly to a scalar TS output")
     testing::set_replay_values<Int>(gb.global_state(), "in", {1, none, 3});
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 
@@ -492,7 +492,7 @@ TEST_CASE("collections: SIGNAL input binds directly to collection and window out
         testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
         GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
         GraphExecutorValue ex = eb.make_executor();
         ex.view().run();
 
@@ -504,7 +504,7 @@ TEST_CASE("collections: SIGNAL input binds directly to collection and window out
         testing::set_replay_values<Int>(gb.global_state(), "in", {1, 2, 3});
 
         GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
         GraphExecutorValue ex = eb.make_executor();
         ex.view().run();
 
@@ -521,7 +521,7 @@ TEST_CASE("collections: SIGNAL input bound to TS captures a bool tick delta")
     testing::set_replay_values<Int>(gb.global_state(), "in", {1, none, 3});
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue ex = eb.make_executor();
     ex.view().run();
 

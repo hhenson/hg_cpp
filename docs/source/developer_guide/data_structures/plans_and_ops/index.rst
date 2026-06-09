@@ -48,7 +48,7 @@ This chapter is organised as:
   surface is shared by both scalar and time-series implementations.
 - *Scalar Plans and Ops* — concrete layout strategies for scalar values
   that do not change over time.
-- *Time-Series Plans and Ops* — layout strategies for runtime time-
+- *Time-Series Plans and Ops* — runtime layout strategies for time-
   series, including the slot store family used by TSS and TSD.
 
 Objectives

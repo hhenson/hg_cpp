@@ -20,8 +20,8 @@ namespace
 {
     using namespace hgraph;
 
-    const engine_time_t           base = MIN_ST;  // MIN_ST is runtime-initialised
-    constexpr engine_time_delta_t one  = engine_time_delta_t{1};
+    const DateTime           base = MIN_ST;  // MIN_ST is runtime-initialised
+    constexpr TimeDelta one  = TimeDelta{1};
 }  // namespace
 
 TEST_CASE("node scheduler: a default (state-less) view is empty and refuses mutation")
@@ -47,19 +47,19 @@ TEST_CASE("node scheduler: absolute and delta schedules track the earliest pendi
     NodeSchedulerState state;
     NodeScheduler      sched{state, nullptr, 0, base};
 
-    sched.schedule(base + engine_time_delta_t{5});
+    sched.schedule(base + TimeDelta{5});
     CHECK(sched.is_scheduled());
-    CHECK(sched.next_scheduled_time() == base + engine_time_delta_t{5});
+    CHECK(sched.next_scheduled_time() == base + TimeDelta{5});
     CHECK_FALSE(sched.is_scheduled_now());  // 5 ticks in the future
 
     // A delta is measured from the current evaluation time; the earlier event wins.
-    sched.schedule(engine_time_delta_t{3});
-    CHECK(sched.next_scheduled_time() == base + engine_time_delta_t{3});
+    sched.schedule(TimeDelta{3});
+    CHECK(sched.next_scheduled_time() == base + TimeDelta{3});
 
     // Scheduling in the past / current cycle is ignored.
     sched.schedule(base);
     sched.schedule(base - one);
-    CHECK(sched.next_scheduled_time() == base + engine_time_delta_t{3});
+    CHECK(sched.next_scheduled_time() == base + TimeDelta{3});
 }
 
 TEST_CASE("node scheduler: a tag replaces its prior event and can be queried and popped")
@@ -67,17 +67,17 @@ TEST_CASE("node scheduler: a tag replaces its prior event and can be queried and
     NodeSchedulerState state;
     NodeScheduler      sched{state, nullptr, 0, base};
 
-    sched.schedule(base + engine_time_delta_t{10}, "alarm");
+    sched.schedule(base + TimeDelta{10}, "alarm");
     CHECK(sched.has_tag("alarm"));
-    CHECK(sched.tag_time("alarm") == base + engine_time_delta_t{10});
+    CHECK(sched.tag_time("alarm") == base + TimeDelta{10});
 
     // Re-scheduling the same tag moves it (does not add a second event).
-    sched.schedule(base + engine_time_delta_t{20}, "alarm");
-    CHECK(sched.tag_time("alarm") == base + engine_time_delta_t{20});
-    CHECK(sched.next_scheduled_time() == base + engine_time_delta_t{20});
+    sched.schedule(base + TimeDelta{20}, "alarm");
+    CHECK(sched.tag_time("alarm") == base + TimeDelta{20});
+    CHECK(sched.next_scheduled_time() == base + TimeDelta{20});
 
     // pop_tag returns the time and removes both the event and the tag.
-    CHECK(sched.pop_tag("alarm") == base + engine_time_delta_t{20});
+    CHECK(sched.pop_tag("alarm") == base + TimeDelta{20});
     CHECK_FALSE(sched.has_tag("alarm"));
     CHECK_FALSE(sched.is_scheduled());
 
@@ -90,17 +90,17 @@ TEST_CASE("node scheduler: invalid tagged replacement leaves the previous event 
     NodeSchedulerState state;
     NodeScheduler      sched{state, nullptr, 0, base};
 
-    sched.schedule(base + engine_time_delta_t{10}, "alarm");
+    sched.schedule(base + TimeDelta{10}, "alarm");
 
     sched.schedule(base, "alarm");
     CHECK(sched.has_tag("alarm"));
-    CHECK(sched.tag_time("alarm") == base + engine_time_delta_t{10});
-    CHECK(sched.next_scheduled_time() == base + engine_time_delta_t{10});
+    CHECK(sched.tag_time("alarm") == base + TimeDelta{10});
+    CHECK(sched.next_scheduled_time() == base + TimeDelta{10});
 
     sched.schedule(base - one, "alarm");
     CHECK(sched.has_tag("alarm"));
-    CHECK(sched.tag_time("alarm") == base + engine_time_delta_t{10});
-    CHECK(sched.pop_tag("alarm") == base + engine_time_delta_t{10});
+    CHECK(sched.tag_time("alarm") == base + TimeDelta{10});
+    CHECK(sched.pop_tag("alarm") == base + TimeDelta{10});
 }
 
 TEST_CASE("node scheduler: start-time view can schedule the current cycle but not earlier")
@@ -124,7 +124,7 @@ TEST_CASE("node scheduler: is_scheduled_now is true only when the earliest event
     NodeSchedulerState state;
     {
         NodeScheduler sched{state, nullptr, 0, base};
-        sched.schedule(base + engine_time_delta_t{3}, "tick");
+        sched.schedule(base + TimeDelta{3}, "tick");
     }
 
     // A view before the event: pending but not due this cycle.
@@ -135,7 +135,7 @@ TEST_CASE("node scheduler: is_scheduled_now is true only when the earliest event
 
     // A view positioned exactly at the event time (as the engine would be when it
     // fires the node): scheduled for this cycle. Matches Python's `== now`.
-    NodeScheduler at_event{state, nullptr, 0, base + engine_time_delta_t{3}};
+    NodeScheduler at_event{state, nullptr, 0, base + TimeDelta{3}};
     CHECK(at_event.is_scheduled_now());
     CHECK(at_event.tag_is_scheduled_now("tick"));
 }
@@ -145,17 +145,17 @@ TEST_CASE("node scheduler: un_schedule cancels a tag or the earliest event; rese
     NodeSchedulerState state;
     NodeScheduler      sched{state, nullptr, 0, base};
 
-    sched.schedule(base + engine_time_delta_t{5}, "a");
-    sched.schedule(base + engine_time_delta_t{8}, "b");
+    sched.schedule(base + TimeDelta{5}, "a");
+    sched.schedule(base + TimeDelta{8}, "b");
 
     sched.un_schedule("a");  // cancel by tag
     CHECK_FALSE(sched.has_tag("a"));
-    CHECK(sched.next_scheduled_time() == base + engine_time_delta_t{8});
+    CHECK(sched.next_scheduled_time() == base + TimeDelta{8});
 
-    sched.schedule(base + engine_time_delta_t{3}, "c");
+    sched.schedule(base + TimeDelta{3}, "c");
     sched.un_schedule();  // cancel the earliest (c at +3)
     CHECK_FALSE(sched.has_tag("c"));
-    CHECK(sched.next_scheduled_time() == base + engine_time_delta_t{8});
+    CHECK(sched.next_scheduled_time() == base + TimeDelta{8});
 
     sched.reset();
     CHECK_FALSE(sched.is_scheduled());
@@ -167,19 +167,19 @@ TEST_CASE("node scheduler: advance consumes fired events up to the current time"
     NodeSchedulerState state;
     {
         NodeScheduler sched{state, nullptr, 0, base};
-        sched.schedule(base + engine_time_delta_t{2}, "early");
-        sched.schedule(base + engine_time_delta_t{5}, "late");
+        sched.schedule(base + TimeDelta{2}, "early");
+        sched.schedule(base + TimeDelta{5}, "late");
     }
 
     // A later view (now = base+2) consumes the fired "early" event and leaves "late".
-    NodeScheduler at_two{state, nullptr, 0, base + engine_time_delta_t{2}};
+    NodeScheduler at_two{state, nullptr, 0, base + TimeDelta{2}};
     at_two.advance();
     CHECK_FALSE(at_two.has_tag("early"));
     CHECK(at_two.has_tag("late"));
-    CHECK(at_two.next_scheduled_time() == base + engine_time_delta_t{5});
+    CHECK(at_two.next_scheduled_time() == base + TimeDelta{5});
 
     // A view past all events consumes everything.
-    NodeScheduler at_ten{state, nullptr, 0, base + engine_time_delta_t{10}};
+    NodeScheduler at_ten{state, nullptr, 0, base + TimeDelta{10}};
     at_ten.advance();
     CHECK_FALSE(at_ten.is_scheduled());
 }
@@ -189,27 +189,27 @@ TEST_CASE("node scheduler: multiple untagged events accumulate and advance in ti
     NodeSchedulerState state;
     {
         NodeScheduler sched{state, nullptr, 0, base};
-        sched.schedule(base + engine_time_delta_t{4});  // untagged
-        sched.schedule(base + engine_time_delta_t{2});  // untagged, earlier
+        sched.schedule(base + TimeDelta{4});  // untagged
+        sched.schedule(base + TimeDelta{2});  // untagged, earlier
         // Untagged schedules accumulate (they are not indexed by tag, so they do
         // not overwrite each other); the earliest wins.
-        CHECK(sched.next_scheduled_time() == base + engine_time_delta_t{2});
+        CHECK(sched.next_scheduled_time() == base + TimeDelta{2});
     }
 
     // Consume the first untagged event; the later one survives intact.
-    NodeScheduler at_two{state, nullptr, 0, base + engine_time_delta_t{2}};
+    NodeScheduler at_two{state, nullptr, 0, base + TimeDelta{2}};
     at_two.advance();
     CHECK(at_two.is_scheduled());
-    CHECK(at_two.next_scheduled_time() == base + engine_time_delta_t{4});
+    CHECK(at_two.next_scheduled_time() == base + TimeDelta{4});
 
     // A tagged event coexisting with untagged ones is still queryable by tag.
-    at_two.schedule(base + engine_time_delta_t{6}, "named");
+    at_two.schedule(base + TimeDelta{6}, "named");
     CHECK(at_two.has_tag("named"));
-    CHECK(at_two.tag_time("named") == base + engine_time_delta_t{6});
-    NodeScheduler at_five{state, nullptr, 0, base + engine_time_delta_t{5}};
+    CHECK(at_two.tag_time("named") == base + TimeDelta{6});
+    NodeScheduler at_five{state, nullptr, 0, base + TimeDelta{5}};
     at_five.advance();  // consumes the +4 untagged, leaves the +6 tag
     CHECK(at_five.has_tag("named"));
-    CHECK(at_five.next_scheduled_time() == base + engine_time_delta_t{6});
+    CHECK(at_five.next_scheduled_time() == base + TimeDelta{6});
 }
 
 TEST_CASE("node scheduler: wall-clock alarms are rejected (not supported yet)")

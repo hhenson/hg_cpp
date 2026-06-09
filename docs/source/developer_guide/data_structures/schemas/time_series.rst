@@ -92,7 +92,7 @@ top of this base, but the base is always present.
 
 ``delta_value``
     What changed in the current tick. ``delta_value`` is ``None`` when
-    the time-series did not tick in the current engine cycle. When it
+    the time-series did not tick in the current evaluation cycle. When it
     did tick, the shape depends on the kind:
 
     - ``TS`` — ticks are atomic value replacements with no diffing,
@@ -109,14 +109,14 @@ top of this base, but the base is always present.
       output TSD.
     - ``TSW`` — the element added in the current tick (if any).
 
-    ``delta_value`` is logically present only for the engine cycle of
+    ``delta_value`` is logically present only for the evaluation cycle of
     the change. The runtime is not required to physically reset it at
     the end of the cycle, and in fact prefers lazy cleanup: removed
     ``TSS`` and ``TSD`` slot entries live past their logical destruction
     so the current cycle's delta can be read, and physical erase happens
-    later at the next outermost ``begin_mutation()``. A subsequent
-    engine cycle querying ``delta_value`` returns ``None`` if no new
-    change has occurred, or the new change if one has.
+    later at the next outermost ``begin_mutation()``. In a subsequent
+    evaluation cycle, querying ``delta_value`` returns ``None`` if no
+    new change has occurred, or the new change if one has.
 
     The expectation of a delta value is that repeated applications of a delta value
     on an output should cause the output to exactly represent the input state over time.
@@ -137,7 +137,7 @@ top of this base, but the base is always present.
     with no members is valid but empty. Also an O(1) query.
 
 ``last_modified_time``
-    The engine time at which the time-series was last modified. Stored
+    The evaluation time at which the time-series was last modified. Stored
     once per time-series instance in the per-TS runtime state tree.
     Defaults to ``MIN_DT`` until the first tick.
 
@@ -397,7 +397,7 @@ nested ``TSD`` encountered on that path owns its own proxy.
 ``TSDProxy`` does not support external mutation. Its values are
 materialised by a value-builder function supplied by the caller. The
 builder receives the proxy, source slot id, target child TSData view,
-source child TSData view, and engine time. The to-``REF`` alternative
+source child TSData view, and evaluation time. The to-``REF`` alternative
 uses that hook either to construct the appropriate
 ``TimeSeriesReference`` leaf or to construct the requested structural
 child that contains such a leaf, but the proxy itself is not
@@ -405,7 +405,7 @@ reference-specific.
 
 The proxy registers with the source key-set ``SlotObserver`` protocol
 for structural slot alignment and with normal TSData modification
-notification to learn the engine time. Source key insert/remove/erase
+notification to learn the evaluation time. Source key insert/remove/erase
 events construct, retain, and destroy proxy value slots. When source
 modification notification arrives, the proxy reads the source
 added/removed slot surfaces and materialises the affected values.

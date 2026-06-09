@@ -46,7 +46,7 @@ namespace hgraph
         [[nodiscard]] TSInputView borrowed_ref() const noexcept;
 
         /** Evaluation time associated with delta/modified checks. */
-        [[nodiscard]] engine_time_t evaluation_time() const noexcept;
+        [[nodiscard]] DateTime evaluation_time() const noexcept;
 
         /** Binding and schema for the input-side TSData projection. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;
@@ -61,7 +61,7 @@ namespace hgraph
         [[nodiscard]] bool all_valid() const;
 
         /** Latest modification time observed at this view, including structural children. */
-        [[nodiscard]] engine_time_t last_modified_time() const;
+        [[nodiscard]] DateTime last_modified_time() const;
 
         /** True when this view or a structural child was modified at the view's evaluation time. */
         [[nodiscard]] bool modified() const;
@@ -147,8 +147,8 @@ namespace hgraph
             [[nodiscard]] const TSValueTypeMetaData *target_path_schema() const noexcept;
             [[nodiscard]] const TSDataView &resolved_value_data() const noexcept;
             [[nodiscard]] bool value_live() const noexcept;
-            [[nodiscard]] engine_time_t last_modified_time() const;
-            [[nodiscard]] bool modified(engine_time_t evaluation_time) const;
+            [[nodiscard]] DateTime last_modified_time() const;
+            [[nodiscard]] bool modified(DateTime evaluation_time) const;
             [[nodiscard]] TSDataView &checked_value_data(const char *what) const;
             [[nodiscard]] InputDataCursor target_child(TSDataView child, std::size_t index) const;
             void bind_target(const TSOutputView &output);
@@ -167,7 +167,7 @@ namespace hgraph
                     TSDataView                      raw_data,
                     detail::TSInputTargetActiveNode *target_node,
                     Notifiable                     *scheduling_notifier,
-                    engine_time_t                   evaluation_time) noexcept;
+                    DateTime                   evaluation_time) noexcept;
 
         [[nodiscard]] bool is_target_position() const noexcept;
         [[nodiscard]] const TSValueTypeMetaData *target_path_schema() const noexcept;
@@ -182,7 +182,7 @@ namespace hgraph
         TSInput                  *input_{nullptr};
         InputDataCursor           data_{};
         Notifiable               *scheduling_notifier_{nullptr};
-        engine_time_t             evaluation_time_{MIN_DT};
+        DateTime             evaluation_time_{MIN_DT};
     };
 
 }  // namespace hgraph

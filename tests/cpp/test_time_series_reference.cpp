@@ -25,11 +25,11 @@
 namespace
 {
     template <std::size_t Count>
-    [[nodiscard]] std::array<hgraph::engine_time_t, Count> sequential_times(
-        hgraph::engine_time_t start = hgraph::MIN_ST,
-        hgraph::engine_time_delta_t step = hgraph::engine_time_delta_t{1})
+    [[nodiscard]] std::array<hgraph::DateTime, Count> sequential_times(
+        hgraph::DateTime start = hgraph::MIN_ST,
+        hgraph::TimeDelta step = hgraph::TimeDelta{1})
     {
-        std::array<hgraph::engine_time_t, Count> result{};
+        std::array<hgraph::DateTime, Count> result{};
         auto                                     next = start;
         for (auto &time : result)
         {
@@ -56,7 +56,7 @@ namespace
         return result;
     }
 
-    void set_output_value(hgraph::TSOutput &output, int value, hgraph::engine_time_t time)
+    void set_output_value(hgraph::TSOutput &output, int value, hgraph::DateTime time)
     {
         hgraph::Value stored{value};
         auto          mutation = output.begin_mutation(time);
@@ -65,7 +65,7 @@ namespace
 
     void set_output_reference(hgraph::TSOutput &output,
                               hgraph::TimeSeriesReference reference,
-                              hgraph::engine_time_t time)
+                              hgraph::DateTime time)
     {
         hgraph::Value stored{std::move(reference)};
         auto          mutation = output.begin_mutation(time);
@@ -74,7 +74,7 @@ namespace
 
     void add_set_values(hgraph::TSOutput &output,
                         std::initializer_list<std::int32_t> values,
-                        hgraph::engine_time_t time)
+                        hgraph::DateTime time)
     {
         auto data     = output.data_view();
         auto set      = data.as_set();
@@ -89,7 +89,7 @@ namespace
     void set_dict_value(hgraph::TSOutput &output,
                         std::int32_t key,
                         std::int32_t value,
-                        hgraph::engine_time_t time)
+                        hgraph::DateTime time)
     {
         hgraph::Value key_value{key};
         hgraph::Value stored{value};
@@ -326,7 +326,7 @@ TEST_CASE("TimeSeriesReference: target link negotiates output as REF alternative
     REQUIRE(reference == TimeSeriesReference{target.view(t1)});
 
     Value next_value{18};
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
     {
         auto mutation = target.begin_mutation(t2);
         REQUIRE(mutation.copy_value_from(next_value.view()));
@@ -364,7 +364,7 @@ TEST_CASE("TimeSeriesReference: to-REF alternative samples at bind time and igno
     }
 
     TSInput input{TSInputBuilderFactory::checked_builder_for(*root, endpoint_schema)};
-    const auto bind_time = MIN_ST + engine_time_delta_t{1};
+    const auto bind_time = MIN_ST + TimeDelta{1};
     auto       root_view = input.view(nullptr, bind_time);
     auto       root_bundle = root_view.as_bundle();
     auto       ref_input = root_bundle.field("ref");
@@ -377,7 +377,7 @@ TEST_CASE("TimeSeriesReference: to-REF alternative samples at bind time and igno
     auto reference_value = ref_input.value().clone();
     REQUIRE(reference_value.as<TimeSeriesReference>() == TimeSeriesReference{target.view(bind_time)});
 
-    const auto source_tick_time = bind_time + engine_time_delta_t{1};
+    const auto source_tick_time = bind_time + TimeDelta{1};
     {
         Value value{18};
         auto  mutation = target.begin_mutation(source_tick_time);
@@ -503,7 +503,7 @@ TEST_CASE("TimeSeriesReference: to-REF TSD alternative keeps keys synchronized")
     REQUIRE(initial_dict.contains(key_one.view()));
     REQUIRE(range_count(initial_dict.items()) == 1);
 
-    const auto t2 = MIN_ST + engine_time_delta_t{1};
+    const auto t2 = MIN_ST + TimeDelta{1};
     {
         Value value{22};
         auto  data = target.data_view();
@@ -534,7 +534,7 @@ TEST_CASE("TimeSeriesReference: to-REF TSD alternative keeps keys synchronized")
     REQUIRE(value_map.at(key_two.view()).checked_as<TimeSeriesReference>() ==
             TimeSeriesReference{source_after_add_dict.at(key_two.view())});
 
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t3 = t2 + TimeDelta{1};
     {
         auto data = target.data_view();
         auto dict = data.as_dict();
@@ -612,7 +612,7 @@ TEST_CASE("TimeSeriesReference: to-REF TSD path constructs normal child structur
     REQUIRE(projected_items.at(1).value().checked_as<TimeSeriesReference>() ==
             TimeSeriesReference{source_items.at(1)});
 
-    const auto t2 = MIN_ST + engine_time_delta_t{1};
+    const auto t2 = MIN_ST + TimeDelta{1};
     {
         auto data = target.data_view();
         auto dict = data.as_dict();
@@ -689,7 +689,7 @@ TEST_CASE("TimeSeriesReference: to-REF nested TSD alternative keeps each proxy s
     auto projected_inner = projected_inner_child.as_dict();
     REQUIRE(projected_inner.contains(inner_key_one.view()));
     REQUIRE(range_count(projected_inner.items()) == 1);
-    const auto t2 = MIN_ST + engine_time_delta_t{1};
+    const auto t2 = MIN_ST + TimeDelta{1};
     {
         Value value{22};
         auto  target_data = target.data_view();

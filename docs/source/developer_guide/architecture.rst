@@ -47,7 +47,7 @@ Scheduling Semantics
 
 Scheduling is time based. All events scheduled for the same time are evaluated at the same ``evaluation_time``.
 
-``evaluation_time`` is monotonic non-decreasing across evaluation cycles. Runtime time must not move backwards.
+``evaluation_time`` is monotonic non-decreasing across evaluation cycles. Evaluation time must not move backwards.
 
 Events are normally introduced through source nodes, but any node may schedule itself for future evaluation. Self-scheduling is a performance optimization that avoids creating stub source nodes only to represent timers.
 

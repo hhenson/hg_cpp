@@ -43,22 +43,25 @@ namespace hgraph {
     using engine_clock = std::chrono::system_clock;
 
     /**
-     * Engine time point with microsecond resolution.
+     * Hgraph datetime scalar with microsecond resolution.
      *
      * Microseconds are used (rather than the platform default for
      * ``system_clock``) so the representable range exceeds 2262 — the limit
      * that nanosecond precision would impose with a 64-bit count.
      */
-    using engine_time_t = std::chrono::time_point<engine_clock, std::chrono::microseconds>;
+    using DateTime = std::chrono::time_point<engine_clock, std::chrono::microseconds>;
 
-    /** Engine time-delta with the same microsecond resolution as ``engine_time_t``. */
-    using engine_time_delta_t = std::chrono::microseconds;
+    /** Hgraph time-delta scalar with the same microsecond resolution as ``DateTime``. */
+    using TimeDelta = std::chrono::microseconds;
 
-    /** The earliest representable engine time. Used as the never-modified sentinel. */
-    constexpr engine_time_t min_time() noexcept { return engine_time_t{}; }
+    /** Calendar date alias used by the runtime. */
+    using Date = std::chrono::year_month_day;
+
+    /** The earliest representable hgraph time. Used as the never-modified sentinel. */
+    constexpr DateTime min_time() noexcept { return DateTime{}; }
 
     /**
-     * The latest representable engine time, clamped to the smaller of:
+     * The latest representable hgraph time, clamped to the smaller of:
      *
      * - the desired logical cap (2300-01-01 00:00:00), and
      * - the largest whole-day time point representable by ``engine_clock``.
@@ -68,40 +71,37 @@ namespace hgraph {
      * timestamps to roughly 2262-04-11. The clamp keeps behaviour consistent
      * across platforms and avoids overflow into a negative timestamp.
      */
-    inline engine_time_t max_time() noexcept {
+    inline DateTime max_time() noexcept {
         using namespace std::chrono;
         // Desired logical cap
         const sys_days desired_cap = year(2300) / January / day(1);
         // Compute the largest whole-day that can be represented without overflow
-        const auto max_whole_day = floor<days>(engine_time_t::max());
+        const auto max_whole_day = floor<days>(DateTime::max());
         // Pick the earlier of the two
         const sys_days chosen_day = (desired_cap <= max_whole_day) ? desired_cap : max_whole_day;
-        // Convert back to the engine_time_t representation at midnight of the chosen day
-        return engine_time_t{chosen_day.time_since_epoch()};
+        // Convert back to the DateTime representation at midnight of the chosen day
+        return DateTime{chosen_day.time_since_epoch()};
     }
 
-    /** Smallest representable time-delta in engine time (1 microsecond). */
-    constexpr engine_time_delta_t smallest_time_increment() noexcept { return engine_time_delta_t(1); }
+    /** Smallest representable time-delta (1 microsecond). */
+    constexpr TimeDelta smallest_time_increment() noexcept { return TimeDelta(1); }
 
     /** Earliest start time accepted by the runtime (``min_time()`` plus one tick). */
-    constexpr engine_time_t min_start_time() noexcept { return min_time() + smallest_time_increment(); }
+    constexpr DateTime min_start_time() noexcept { return min_time() + smallest_time_increment(); }
 
     /** Latest end time accepted by the runtime (``max_time()`` minus one tick). */
-    constexpr engine_time_t max_end_time() noexcept { return max_time() - smallest_time_increment(); }
+    constexpr DateTime max_end_time() noexcept { return max_time() - smallest_time_increment(); }
 
-    /** Sentinel for the never-modified engine time; equal to ``min_time()``. */
+    /** Sentinel for the never-modified time; equal to ``min_time()``. */
     inline auto static MIN_DT = min_time();
-    /** Latest representable engine time; equal to ``max_time()``. */
+    /** Latest representable time; equal to ``max_time()``. */
     inline auto static MAX_DT = max_time();
     /** Earliest valid start time; equal to ``min_start_time()``. */
     inline auto static MIN_ST = min_start_time();
     /** Latest valid end time; equal to ``max_end_time()``. */
     inline auto static MAX_ET = max_end_time();
 
-    /** Smallest engine-time delta; equal to ``smallest_time_increment()``. */
+    /** Smallest time delta; equal to ``smallest_time_increment()``. */
     inline auto static MIN_TD = smallest_time_increment();
-
-    /** Calendar date alias used by the runtime. */
-    using engine_date_t = std::chrono::year_month_day;
 } // namespace hgraph
 #endif  // HGRAPH_DATE_TIME_H

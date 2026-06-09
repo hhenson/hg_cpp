@@ -126,9 +126,9 @@ namespace hgraph
          * it as the final notification target.
          */
         [[nodiscard]] TSInputView view(Notifiable *scheduling_notifier = nullptr,
-                                       engine_time_t evaluation_time = MIN_DT);
+                                       DateTime evaluation_time = MIN_DT);
         [[nodiscard]] TSInputView view(Notifiable *scheduling_notifier = nullptr,
-                                       engine_time_t evaluation_time = MIN_DT) const;
+                                       DateTime evaluation_time = MIN_DT) const;
 
       private:
         friend class TSInputView;

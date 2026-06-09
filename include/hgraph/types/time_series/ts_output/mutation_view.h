@@ -19,7 +19,7 @@ namespace hgraph
     class TSOutputMutationView
     {
       public:
-        TSOutputMutationView(TSOutput &output, engine_time_t evaluation_time);
+        TSOutputMutationView(TSOutput &output, DateTime evaluation_time);
 
         TSOutputMutationView(const TSOutputMutationView &) = delete;
         TSOutputMutationView &operator=(const TSOutputMutationView &) = delete;
@@ -36,7 +36,7 @@ namespace hgraph
         [[nodiscard]] ValueView delta_value() const;
 
         /** Mutation time and modification status. */
-        [[nodiscard]] engine_time_t current_mutation_time() const;
+        [[nodiscard]] DateTime current_mutation_time() const;
         [[nodiscard]] bool modified() const;
 
         /** Mark the root output as modified. */
@@ -46,7 +46,7 @@ namespace hgraph
         [[nodiscard]] bool copy_value_from(const ValueView &source);
 
       private:
-        static TSDataMutationView begin_root_mutation(TSOutput &output, engine_time_t evaluation_time);
+        static TSDataMutationView begin_root_mutation(TSOutput &output, DateTime evaluation_time);
 
         TSDataMutationView mutation_;
     };

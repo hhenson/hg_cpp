@@ -487,13 +487,13 @@ namespace hgraph
                 return memory;
             }
 
-            static void cleanup_delta(const void *, void *memory, engine_time_t modified_time)
+            static void cleanup_delta(const void *, void *memory, DateTime modified_time)
             {
                 proxy_storage(memory).cleanup_delta(modified_time);
             }
 
             static void record_child_modified(const void *, void *memory, std::size_t child_id,
-                                              engine_time_t modified_time)
+                                              DateTime modified_time)
             {
                 proxy_storage(memory).record_child_modified(child_id, modified_time);
             }
@@ -925,7 +925,7 @@ namespace hgraph
         owner_->on_slots_cleared();
     }
 
-    void TSDProxySlotSync::notify(engine_time_t modified_time)
+    void TSDProxySlotSync::notify(DateTime modified_time)
     {
         owner_->on_source_modified(modified_time);
     }
@@ -945,7 +945,7 @@ namespace hgraph
                         const TSDDataView   &source,
                         ValueBuilder         builder,
                         const void          *builder_context,
-                        engine_time_t        modified_time)
+                        DateTime        modified_time)
     {
         if (source.schema() == nullptr || source.schema()->kind != TSTypeKind::TSD)
         {
@@ -1015,7 +1015,7 @@ namespace hgraph
         slot_observers_.notify_clear();
     }
 
-    void TSDProxy::on_source_modified(engine_time_t modified_time)
+    void TSDProxy::on_source_modified(DateTime modified_time)
     {
         if (modified_time == MIN_DT || !source_storage_.valid() || value_builder_ == nullptr) { return; }
 
@@ -1033,7 +1033,7 @@ namespace hgraph
         if (touched) { mark_modified(modified_time); }
     }
 
-    void TSDProxy::cleanup_delta(engine_time_t modified_time)
+    void TSDProxy::cleanup_delta(DateTime modified_time)
     {
         if (element_binding_ == nullptr) { return; }
 
@@ -1131,7 +1131,7 @@ namespace hgraph
         subscribed_ = false;
     }
 
-    void TSDProxy::sync_from_source(engine_time_t modified_time, bool force_modified)
+    void TSDProxy::sync_from_source(DateTime modified_time, bool force_modified)
     {
         if (element_binding_ == nullptr || !source_storage_.valid() || value_builder_ == nullptr)
         {
@@ -1176,7 +1176,7 @@ namespace hgraph
         target.mutable_tracking().parent = TSDataParentLink{self_binding_, this, slot};
     }
 
-    void TSDProxy::ensure_child_at_slot(std::size_t slot, engine_time_t modified_time)
+    void TSDProxy::ensure_child_at_slot(std::size_t slot, DateTime modified_time)
     {
         if (value_builder_ == nullptr)
         {
@@ -1188,7 +1188,7 @@ namespace hgraph
         value_builder_(*this, slot, target, source_child_at_slot(slot), modified_time, value_builder_context_);
     }
 
-    void TSDProxy::refresh_child_at_slot(std::size_t slot, engine_time_t modified_time)
+    void TSDProxy::refresh_child_at_slot(std::size_t slot, DateTime modified_time)
     {
         if (element_binding_ == nullptr || value_builder_ == nullptr)
         {
@@ -1198,12 +1198,12 @@ namespace hgraph
         value_builder_(*this, slot, target, source_child_at_slot(slot), modified_time, value_builder_context_);
     }
 
-    void TSDProxy::mark_modified(engine_time_t modified_time)
+    void TSDProxy::mark_modified(DateTime modified_time)
     {
         if (tracking_.record_modified(modified_time)) { tracking_.parent.notify_child_modified(modified_time); }
     }
 
-    void TSDProxy::record_child_modified(std::size_t slot, engine_time_t modified_time)
+    void TSDProxy::record_child_modified(std::size_t slot, DateTime modified_time)
     {
         (void)modified_time;
         if (!has_child(slot)) { return; }
@@ -1232,7 +1232,7 @@ namespace hgraph
                         const TSDDataView      &source,
                         TSDProxy::ValueBuilder  builder,
                         const void             *builder_context,
-                        engine_time_t           modified_time)
+                        DateTime           modified_time)
     {
         if (!proxy.valid()) { throw std::invalid_argument("bind_tsd_proxy requires a live proxy view"); }
         if (proxy.schema() == nullptr || proxy.schema()->kind != TSTypeKind::TSD)

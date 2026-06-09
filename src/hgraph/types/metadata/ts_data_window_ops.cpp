@@ -126,7 +126,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return time_slot(physical_index(index));
             }
 
-            [[nodiscard]] engine_time_t time_at(std::size_t index) const
+            [[nodiscard]] DateTime time_at(std::size_t index) const
             {
                 if (index >= size_) { throw std::out_of_range("TSW window storage time index out of range"); }
                 return time_at_physical(physical_index(index));
@@ -141,7 +141,7 @@ namespace hgraph::ts_data_plan_factory_detail
           protected:
             [[nodiscard]] std::size_t storage_capacity() const noexcept { return capacity_; }
 
-            void append(const ValueView &source, engine_time_t modified_time)
+            void append(const ValueView &source, DateTime modified_time)
             {
                 validate_source(source);
                 if (capacity_ == 0) { throw std::logic_error("TSW storage has no capacity"); }
@@ -155,7 +155,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 ++size_;
             }
 
-            void overwrite_oldest(const ValueView &source, engine_time_t modified_time)
+            void overwrite_oldest(const ValueView &source, DateTime modified_time)
             {
                 validate_source(source);
                 if (capacity_ == 0) { throw std::logic_error("TSW storage has no capacity"); }
@@ -218,9 +218,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 return value_bytes_ + physical * value_stride();
             }
 
-            [[nodiscard]] engine_time_t time_at_physical(std::size_t physical) const noexcept
+            [[nodiscard]] DateTime time_at_physical(std::size_t physical) const noexcept
             {
-                return *MemoryUtils::cast<engine_time_t>(time_slot(physical));
+                return *MemoryUtils::cast<DateTime>(time_slot(physical));
             }
 
             [[nodiscard]] std::size_t physical_index(std::size_t logical) const noexcept
@@ -241,7 +241,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
             }
 
-            void copy_construct_slot(std::size_t physical, const void *source, engine_time_t modified_time)
+            void copy_construct_slot(std::size_t physical, const void *source, DateTime modified_time)
             {
                 copy_construct_slot(physical, source, &modified_time);
             }
@@ -266,7 +266,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 plan.copy_assign(value_slot(physical), source);
             }
 
-            void copy_assign_time_slot(std::size_t physical, engine_time_t modified_time)
+            void copy_assign_time_slot(std::size_t physical, DateTime modified_time)
             {
                 const auto &plan = time_plan();
                 if (!plan.can_copy_assign())
@@ -299,7 +299,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 head_ = 0;
             }
 
-            void prune_before(engine_time_t cutoff) noexcept
+            void prune_before(DateTime cutoff) noexcept
             {
                 while (size_ > 0 && time_at_physical(head_) < cutoff)
                 {
@@ -423,13 +423,13 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] std::size_t capacity() const noexcept { return period_; }
 
-            void push(const ValueView &source, engine_time_t modified_time)
+            void push(const ValueView &source, DateTime modified_time)
             {
                 if (size() < period_) { append(source, modified_time); }
                 else { overwrite_oldest(source, modified_time); }
             }
 
-            void copy_from_value(const ValueView &source, engine_time_t modified_time)
+            void copy_from_value(const ValueView &source, DateTime modified_time)
             {
                 const IndexedValueView source_values = checked_source_values(source);
                 if (source_values.size() > period_)
@@ -445,7 +445,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
-            void copy_from_python(nb::handle source, engine_time_t modified_time)
+            void copy_from_python(nb::handle source, DateTime modified_time)
             {
                 nb::object object = nb::borrow<nb::object>(source);
                 if (!nb::isinstance<nb::list>(object) && !nb::isinstance<nb::tuple>(object))
@@ -481,19 +481,19 @@ namespace hgraph::ts_data_plan_factory_detail
           public:
             TimeTSWindowStorage(const ValueTypeBinding &time_binding,
                                 const ValueTypeBinding &element_binding,
-                                engine_time_delta_t time_range)
+                                TimeDelta time_range)
                 : TSWindowStorageCore(time_binding, element_binding),
                   time_range_(time_range)
             {}
 
-            void push(const ValueView &source, engine_time_t modified_time)
+            void push(const ValueView &source, DateTime modified_time)
             {
                 prune_before(modified_time - time_range_);
                 ensure_capacity(size() + 1);
                 append(source, modified_time);
             }
 
-            void copy_from_value(const ValueView &source, engine_time_t modified_time)
+            void copy_from_value(const ValueView &source, DateTime modified_time)
             {
                 const IndexedValueView source_values = checked_source_values(source);
 
@@ -505,7 +505,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
-            void copy_from_python(nb::handle source, engine_time_t modified_time)
+            void copy_from_python(nb::handle source, DateTime modified_time)
             {
                 nb::object object = nb::borrow<nb::object>(source);
                 if (!nb::isinstance<nb::list>(object) && !nb::isinstance<nb::tuple>(object))
@@ -529,7 +529,7 @@ namespace hgraph::ts_data_plan_factory_detail
 #endif
 
           private:
-            engine_time_delta_t time_range_{};
+            TimeDelta time_range_{};
         };
 
         struct SizeWindowStoragePlanContext
@@ -543,7 +543,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             const ValueTypeBinding *time_binding{nullptr};
             const ValueTypeBinding *element_binding{nullptr};
-            engine_time_delta_t     time_range{};
+            TimeDelta     time_range{};
         };
 
         using WindowStoragePlanContext = std::variant<SizeWindowStoragePlanContext, TimeWindowStoragePlanContext>;
@@ -638,7 +638,7 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] const ValueTypeBinding &window_time_binding()
         {
             auto       &registry  = TypeRegistry::instance();
-            const auto *time_meta = registry.register_scalar<engine_time_t>("engine_time");
+            const auto *time_meta = registry.register_scalar<DateTime>("datetime");
             const auto *binding   = ValuePlanFactory::instance().binding_for(time_meta);
             if (binding == nullptr)
             {
@@ -840,7 +840,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return storage<Storage>(window_value_memory(context, memory)).element_at(index);
             }
 
-            [[nodiscard]] static engine_time_t window_time_at(const void *context, const void *memory,
+            [[nodiscard]] static DateTime window_time_at(const void *context, const void *memory,
                                                               std::size_t index)
             {
                 return storage<Storage>(window_value_memory(context, memory)).time_at(index);
@@ -853,14 +853,14 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             static void window_push(const void *context, void *memory, const ValueView &source,
-                                    engine_time_t modified_time)
+                                    DateTime modified_time)
             {
                 storage<Storage>(window_mutable_value_memory(context, memory)).push(source, modified_time);
             }
 
             [[nodiscard]] static bool window_copy_value_from(const void *context, void *memory,
                                                              const ValueView &source,
-                                                             engine_time_t modified_time)
+                                                             DateTime modified_time)
             {
                 const bool newly_modified =
                     window_tracking(context, memory)->last_modified_time != modified_time;
@@ -882,7 +882,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] static nb::object window_delta_to_python(const void *context,
                                                                    const void *memory,
-                                                                   engine_time_t evaluation_time)
+                                                                   DateTime evaluation_time)
             {
                 if (window_tracking(context, memory)->last_modified_time != evaluation_time) { return nb::none(); }
                 const auto *delta = window_delta_memory(context, memory);
@@ -893,13 +893,13 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static bool window_from_python(const void *context,
                                                          void       *memory,
                                                          nb::handle  source,
-                                                         engine_time_t modified_time)
+                                                         DateTime modified_time)
             {
                 if (memory == nullptr) { throw std::logic_error("TSW from_python requires live storage"); }
                 if (source.is_none()) { throw std::invalid_argument("TSW from_python requires a non-None source"); }
                 if (modified_time == MIN_DT)
                 {
-                    throw std::invalid_argument("TSW from_python requires a concrete engine time");
+                    throw std::invalid_argument("TSW from_python requires a concrete evaluation time");
                 }
 
                 const bool newly_modified =
@@ -913,7 +913,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 if (!newly_modified)
                 {
-                    throw std::logic_error("TSW from_python allows only one window tick per engine time");
+                    throw std::logic_error("TSW from_python allows only one window tick per evaluation time");
                 }
 
                 const auto *state = ctx(context);
@@ -1248,7 +1248,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (window.empty()) { return false; }
 
                 const auto &layout = layout_for(context);
-                if (layout.min_time_range <= engine_time_delta_t{0}) { return true; }
+                if (layout.min_time_range <= TimeDelta{0}) { return true; }
                 return window.time_at(window.size() - 1) - window.time_at(0) >= layout.min_time_range;
             }
         };

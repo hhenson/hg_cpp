@@ -88,7 +88,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
             }
 
-            void cleanup_delta(engine_time_t modified_time)
+            void cleanup_delta(DateTime modified_time)
             {
                 const auto &child_ops = element_binding().checked_ops();
                 for (std::size_t index = 0; index < elements_.size(); ++index)
@@ -391,7 +391,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return memory;
             }
 
-            static void dynamic_cleanup_delta(const void *, void *memory, engine_time_t modified_time)
+            static void dynamic_cleanup_delta(const void *, void *memory, DateTime modified_time)
             {
                 storage(memory).cleanup_delta(modified_time);
             }
@@ -1036,7 +1036,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static bool dynamic_copy_value_from(const void *context,
                                                               void *memory,
                                                               const ValueView &source,
-                                                              engine_time_t modified_time)
+                                                              DateTime modified_time)
             {
                 if (memory == nullptr)
                 {
@@ -1048,7 +1048,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
                 if (modified_time == MIN_DT)
                 {
-                    throw std::invalid_argument("dynamic TSL copy requires a concrete engine time");
+                    throw std::invalid_argument("dynamic TSL copy requires a concrete evaluation time");
                 }
 
                 const auto *state = ctx(context);

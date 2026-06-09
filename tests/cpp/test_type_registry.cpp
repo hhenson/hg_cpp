@@ -249,11 +249,11 @@ TEST_CASE("TypeRegistry::ts / tss / tsd / tsl / tsw intern correctly")
     REQUIRE(tsw_tick->min_period() == 5);
 
     const auto *tsw_dur = registry.tsw_duration(
-        int_meta, engine_time_delta_t{1000}, engine_time_delta_t{500});
+        int_meta, TimeDelta{1000}, TimeDelta{500});
     REQUIRE(tsw_dur->kind == TSTypeKind::TSW);
     REQUIRE(tsw_dur->is_duration_based());
-    REQUIRE(tsw_dur->time_range() == engine_time_delta_t{1000});
-    REQUIRE(tsw_dur->min_time_range() == engine_time_delta_t{500});
+    REQUIRE(tsw_dur->time_range() == TimeDelta{1000});
+    REQUIRE(tsw_dur->min_time_range() == TimeDelta{500});
     REQUIRE(tsw_tick != tsw_dur);
 }
 

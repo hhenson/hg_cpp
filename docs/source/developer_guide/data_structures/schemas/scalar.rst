@@ -27,7 +27,7 @@ A scalar schema has one of nine kinds, recorded on its
 
 ``Atomic``
     A single scalar: integer, floating-point, boolean, string, or one of the
-    engine time/date scalars.
+    date/time scalars.
 
 ``Tuple``
     Fixed-arity ordered fields, accessed by index. Field types may differ.

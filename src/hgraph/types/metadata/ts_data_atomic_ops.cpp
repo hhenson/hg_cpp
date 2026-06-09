@@ -129,7 +129,7 @@ namespace hgraph::ts_data_plan_factory_detail
         }
 
         [[nodiscard]] static bool atomic_copy_value_from(const void *context, void *memory, const ValueView &source,
-                                                         engine_time_t modified_time)
+                                                         DateTime modified_time)
         {
             if (memory == nullptr)
             {
@@ -141,7 +141,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
             if (modified_time == MIN_DT)
             {
-                throw std::invalid_argument("TSData atomic copy requires a concrete engine time");
+                throw std::invalid_argument("TSData atomic copy requires a concrete evaluation time");
             }
 
             const auto *layout = atomic_layout(context);
@@ -162,7 +162,7 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static bool atomic_from_python(const void *context,
                                                      void       *memory,
                                                      nb::handle  source,
-                                                     engine_time_t modified_time)
+                                                     DateTime modified_time)
         {
             if (memory == nullptr)
             {
@@ -174,7 +174,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
             if (modified_time == MIN_DT)
             {
-                throw std::invalid_argument("TSData atomic from_python requires a concrete engine time");
+                throw std::invalid_argument("TSData atomic from_python requires a concrete evaluation time");
             }
 
             const auto *layout = atomic_layout(context);
@@ -195,7 +195,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
         [[nodiscard]] static nb::object atomic_delta_to_python(const void *context,
                                                                const void *memory,
-                                                               engine_time_t evaluation_time)
+                                                               DateTime evaluation_time)
         {
             if (atomic_tracking(context, memory)->last_modified_time != evaluation_time) { return nb::none(); }
             const auto *layout = atomic_layout(context);

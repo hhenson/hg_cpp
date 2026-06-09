@@ -73,14 +73,14 @@ namespace hgraph
         return resolved_value_data().valid();
     }
 
-    engine_time_t TSInputView::InputDataCursor::last_modified_time() const
+    DateTime TSInputView::InputDataCursor::last_modified_time() const
     {
         const auto &data = resolved_value_data();
         if (is_target_position() && !data.valid()) { return raw_data.last_modified_time(); }
         return data.valid() ? data.last_modified_time() : MIN_DT;
     }
 
-    bool TSInputView::InputDataCursor::modified(engine_time_t evaluation_time) const
+    bool TSInputView::InputDataCursor::modified(DateTime evaluation_time) const
     {
         if (evaluation_time == MIN_DT) { return false; }
         const auto &data = resolved_value_data();
@@ -150,7 +150,7 @@ namespace hgraph
                              TSDataView               raw_data,
                              detail::TSInputTargetActiveNode *target_node,
                              Notifiable              *scheduling_notifier,
-                             engine_time_t            evaluation_time) noexcept
+                             DateTime            evaluation_time) noexcept
         : input_(input),
           data_(std::move(value_data), std::move(raw_data), target_node),
           scheduling_notifier_(scheduling_notifier),
@@ -197,7 +197,7 @@ namespace hgraph
         }
     }  // namespace detail
 
-    engine_time_t TSInputView::evaluation_time() const noexcept
+    DateTime TSInputView::evaluation_time() const noexcept
     {
         return evaluation_time_;
     }
@@ -251,7 +251,7 @@ namespace hgraph
         return data.valid() && data.all_valid();
     }
 
-    engine_time_t TSInputView::last_modified_time() const
+    DateTime TSInputView::last_modified_time() const
     {
         return data_.last_modified_time();
     }

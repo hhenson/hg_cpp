@@ -776,7 +776,7 @@ namespace hgraph
         using schema     = TS<TValue>;
         using value_type = TValue;
 
-        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
 
         /** Write ``value`` into the output and tick it at the current evaluation time. */
         template <typename U>
@@ -808,7 +808,7 @@ namespace hgraph
       public:
         using schema = SIGNAL;
 
-        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
 
         void tick() const
         {
@@ -838,7 +838,7 @@ namespace hgraph
         using target_schema = TSchema;
         using value_type    = TimeSeriesReference;
 
-        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
 
         void set(const TimeSeriesReference &reference) const
         {
@@ -897,7 +897,7 @@ namespace hgraph
         using schema     = TSS<TValue>;
         using value_type = TValue;
 
-        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSSOutputView(std::move(view)) {}
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSSOutputView(std::move(view)) {}
 
         /** Add ``key`` to the set; returns whether the set delta changed. */
         bool add(const TValue &key) const { return TSSOutputView::begin_mutation(evaluation_time()).add(Value{key}.view()); }
@@ -926,7 +926,7 @@ namespace hgraph
         using element_schema                    = TElementSchema;
         static constexpr std::size_t fixed_size = N;
 
-        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSLOutputView(std::move(view)) {}
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSLOutputView(std::move(view)) {}
 
         /** Per-child output selector: ``out[i]`` is an ``Out<C>`` (recursive). */
         [[nodiscard]] Out<TElementSchema> operator[](std::size_t index) const
@@ -959,7 +959,7 @@ namespace hgraph
         using key_type     = TKey;
         using value_schema = TValueSchema;
 
-        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSDOutputView(std::move(view)) {}
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSDOutputView(std::move(view)) {}
 
         [[nodiscard]] bool contains(const TKey &key) const { return TSDOutputView::contains(Value{key}.view()); }
         [[nodiscard]] std::size_t find_slot(const TKey &key) const { return TSDOutputView::find_slot(Value{key}.view()); }
@@ -1075,7 +1075,7 @@ namespace hgraph
       public:
         using schema = UnNamedTSB<TFields...>;
 
-        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSBOutputView(std::move(view)) {}
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSBOutputView(std::move(view)) {}
 
         template <fixed_string FieldName>
         [[nodiscard]] auto field() const
@@ -1094,7 +1094,7 @@ namespace hgraph
       public:
         using schema = TSB<Name, TFields...>;
 
-        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSBOutputView(std::move(view)) {}
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSBOutputView(std::move(view)) {}
 
         template <fixed_string FieldName>
         [[nodiscard]] auto field() const
@@ -1118,7 +1118,7 @@ namespace hgraph
         using schema     = TSW<TValue, Period, MinPeriod>;
         using value_type = TValue;
 
-        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSWOutputView(std::move(view)) {}
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSWOutputView(std::move(view)) {}
 
         template <typename U>
         void push(U &&value) const
@@ -1142,7 +1142,7 @@ namespace hgraph
       public:
         using schema = TsVar<VarName, TConstraints...>;
 
-        Out(TSOutputView view, engine_time_t /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
+        Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSOutputView(std::move(view)) {}
 
         /** Type-erased set: copy a value (matching the resolved output schema) and tick it. */
         void apply(const ValueView &value) const
@@ -1429,7 +1429,7 @@ namespace hgraph
         template <fixed_string N, typename V>
         struct arg_provider<In<N, V>>
         {
-            static In<N, V> get(const NodeView &view, engine_time_t evaluation_time)
+            static In<N, V> get(const NodeView &view, DateTime evaluation_time)
             {
                 TSInputView root   = view.input(evaluation_time);
                 auto        bundle = root.as_bundle();
@@ -1440,7 +1440,7 @@ namespace hgraph
         template <typename V>
         struct arg_provider<Out<V>>
         {
-            static Out<V> get(const NodeView &view, engine_time_t evaluation_time)
+            static Out<V> get(const NodeView &view, DateTime evaluation_time)
             {
                 return Out<V>{view.output(evaluation_time), evaluation_time};
             }
@@ -1449,13 +1449,13 @@ namespace hgraph
         template <typename V>
         struct arg_provider<State<V>>
         {
-            static State<V> get(const NodeView &view, engine_time_t) { return State<V>{view.state()}; }
+            static State<V> get(const NodeView &view, DateTime) { return State<V>{view.state()}; }
         };
 
         template <fixed_string N, typename V>
         struct arg_provider<Scalar<N, V>>
         {
-            static Scalar<N, V> get(const NodeView &view, engine_time_t)
+            static Scalar<N, V> get(const NodeView &view, DateTime)
             {
                 return Scalar<N, V>{view.scalars().as_bundle().field(N.sv())};
             }
@@ -1464,7 +1464,7 @@ namespace hgraph
         template <>
         struct arg_provider<GlobalStateView>
         {
-            static GlobalStateView get(const NodeView &view, engine_time_t)
+            static GlobalStateView get(const NodeView &view, DateTime)
             {
                 return view.graph().root().global_state();
             }
@@ -1475,7 +1475,7 @@ namespace hgraph
         template <>
         struct arg_provider<SingleShotScheduler>
         {
-            static SingleShotScheduler get(const NodeView &view, engine_time_t evaluation_time)
+            static SingleShotScheduler get(const NodeView &view, DateTime evaluation_time)
             {
                 return SingleShotScheduler{view.graph_value(), view.node_index(), evaluation_time};
             }
@@ -1484,7 +1484,7 @@ namespace hgraph
         template <>
         struct arg_provider<NodeScheduler>
         {
-            static NodeScheduler get(const NodeView &view, engine_time_t evaluation_time)
+            static NodeScheduler get(const NodeView &view, DateTime evaluation_time)
             {
                 // ``started()`` is false while the node's ``start`` hook runs, which
                 // is what lets a source schedule its first evaluation at the start
@@ -1495,9 +1495,9 @@ namespace hgraph
         };
 
         template <>
-        struct arg_provider<engine_time_t>
+        struct arg_provider<DateTime>
         {
-            static engine_time_t get(const NodeView &, engine_time_t evaluation_time) noexcept
+            static DateTime get(const NodeView &, DateTime evaluation_time) noexcept
             {
                 return evaluation_time;
             }
@@ -1505,14 +1505,14 @@ namespace hgraph
 
         // ---- invoke a static hook by injecting each parameter by type ----
         template <auto Fn, std::size_t... I>
-        void invoke_impl(const NodeView &view, engine_time_t evaluation_time, std::index_sequence<I...>)
+        void invoke_impl(const NodeView &view, DateTime evaluation_time, std::index_sequence<I...>)
         {
             using args = typename fn_traits<decltype(Fn)>::args_tuple;
             Fn(arg_provider<selector_of<std::tuple_element_t<I, args>>>::get(view, evaluation_time)...);
         }
 
         template <auto Fn>
-        void invoke(const NodeView &view, engine_time_t evaluation_time)
+        void invoke(const NodeView &view, DateTime evaluation_time)
         {
             using traits = fn_traits<decltype(Fn)>;
             static_assert(std::is_same_v<typename traits::return_type, void>,
@@ -1922,18 +1922,18 @@ namespace hgraph
         schema.schedule_on_start = signature::schedule_on_start();
 
         NodeCallbacks callbacks;
-        callbacks.evaluate = [](const NodeView &view, engine_time_t evaluation_time) {
+        callbacks.evaluate = [](const NodeView &view, DateTime evaluation_time) {
             static_node_detail::invoke<&TImplementation::eval>(view, evaluation_time);
         };
         if constexpr (static_node_detail::has_start<TImplementation>)
         {
-            callbacks.start = [](const NodeView &view, engine_time_t evaluation_time) {
+            callbacks.start = [](const NodeView &view, DateTime evaluation_time) {
                 static_node_detail::invoke<&TImplementation::start>(view, evaluation_time);
             };
         }
         if constexpr (static_node_detail::has_stop<TImplementation>)
         {
-            callbacks.stop = [](const NodeView &view, engine_time_t evaluation_time) {
+            callbacks.stop = [](const NodeView &view, DateTime evaluation_time) {
                 static_node_detail::invoke<&TImplementation::stop>(view, evaluation_time);
             };
         }
@@ -1973,18 +1973,18 @@ namespace hgraph
         schema.schedule_on_start = signature::schedule_on_start();
 
         NodeCallbacks callbacks;
-        callbacks.evaluate = [](const NodeView &view, engine_time_t evaluation_time) {
+        callbacks.evaluate = [](const NodeView &view, DateTime evaluation_time) {
             static_node_detail::invoke<&TImplementation::eval>(view, evaluation_time);
         };
         if constexpr (static_node_detail::has_start<TImplementation>)
         {
-            callbacks.start = [](const NodeView &view, engine_time_t evaluation_time) {
+            callbacks.start = [](const NodeView &view, DateTime evaluation_time) {
                 static_node_detail::invoke<&TImplementation::start>(view, evaluation_time);
             };
         }
         if constexpr (static_node_detail::has_stop<TImplementation>)
         {
-            callbacks.stop = [](const NodeView &view, engine_time_t evaluation_time) {
+            callbacks.stop = [](const NodeView &view, DateTime evaluation_time) {
                 static_node_detail::invoke<&TImplementation::stop>(view, evaluation_time);
             };
         }

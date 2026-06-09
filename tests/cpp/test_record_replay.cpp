@@ -44,7 +44,7 @@ namespace
     struct DelayedSource
     {
         static constexpr auto name = "delayed_source";
-        static void           start(SingleShotScheduler sched) { sched.schedule(engine_time_delta_t{3}); }
+        static void           start(SingleShotScheduler sched) { sched.schedule(TimeDelta{3}); }
         static void           eval(Out<TS<Int>> out) { out.set(Int{99}); }
     };
 
@@ -83,7 +83,7 @@ TEST_CASE("testing: replay -> add_one -> record captures the per-cycle output")
     testing::set_replay_values<Int>(gb.global_state(), "in", {1, std::nullopt, 3});
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
 
     GraphExecutorValue executor = eb.make_executor();
     auto               view     = executor.view();
@@ -104,7 +104,7 @@ TEST_CASE("testing: SingleShotScheduler schedules a delayed first tick with no s
     GraphBuilder gb = build_graph<DelayedGraph>();
 
     GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
     GraphExecutorValue executor = eb.make_executor();
     auto               view     = executor.view();
     view.run();

@@ -132,12 +132,12 @@ namespace hgraph
         data_view().unsubscribe(observer);
     }
 
-    TSOutputView TSOutput::view(engine_time_t evaluation_time)
+    TSOutputView TSOutput::view(DateTime evaluation_time)
     {
         return TSOutputView{this, data_view(), evaluation_time};
     }
 
-    TSOutputView TSOutput::view(engine_time_t evaluation_time) const
+    TSOutputView TSOutput::view(DateTime evaluation_time) const
     {
         return TSOutputView{this, data_view(), evaluation_time};
     }
@@ -197,12 +197,12 @@ namespace hgraph
         if (has_value()) { data_view().bind_parent(*this, TS_DATA_NO_CHILD_ID); }
     }
 
-    void TSOutput::record_child_modified(std::size_t, engine_time_t)
+    void TSOutput::record_child_modified(std::size_t, DateTime)
     {
         dirty_ = true;
     }
 
-    TSOutputMutationView TSOutput::begin_mutation(engine_time_t evaluation_time)
+    TSOutputMutationView TSOutput::begin_mutation(DateTime evaluation_time)
     {
         return TSOutputMutationView{*this, evaluation_time};
     }

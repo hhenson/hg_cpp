@@ -33,8 +33,8 @@ namespace hgraph
         void (*run_impl)(const void *context, const GraphExecutorView &executor) = nullptr;
         void (*request_stop_impl)(const void *context, void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*stop_requested_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] engine_time_t (*start_time_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] engine_time_t (*end_time_impl)(const void *context, const void *memory) noexcept = nullptr;
+        [[nodiscard]] DateTime (*start_time_impl)(const void *context, const void *memory) noexcept = nullptr;
+        [[nodiscard]] DateTime (*end_time_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] GraphView (*graph_impl)(const void *context, void *memory) = nullptr;
     };
 
@@ -57,8 +57,8 @@ namespace hgraph
         [[nodiscard]] const GraphExecutorTypeMetaData *schema() const noexcept;
         [[nodiscard]] void *data() const noexcept;
 
-        [[nodiscard]] engine_time_t start_time() const noexcept;
-        [[nodiscard]] engine_time_t end_time() const noexcept;
+        [[nodiscard]] DateTime start_time() const noexcept;
+        [[nodiscard]] DateTime end_time() const noexcept;
         [[nodiscard]] bool stop_requested() const noexcept;
         [[nodiscard]] GraphView graph() const;
 
@@ -103,14 +103,14 @@ namespace hgraph
         GraphExecutorBuilder &label(std::string label);
         GraphExecutorBuilder &graph_builder(GraphBuilder graph_builder);
         GraphExecutorBuilder &mode(GraphExecutorMode mode) noexcept;
-        GraphExecutorBuilder &start_time(engine_time_t start_time) noexcept;
-        GraphExecutorBuilder &end_time(engine_time_t end_time) noexcept;
+        GraphExecutorBuilder &start_time(DateTime start_time) noexcept;
+        GraphExecutorBuilder &end_time(DateTime end_time) noexcept;
 
         [[nodiscard]] std::string_view label() const noexcept;
         [[nodiscard]] const GraphBuilder &graph_builder() const noexcept;
         [[nodiscard]] GraphExecutorMode mode() const noexcept;
-        [[nodiscard]] engine_time_t start_time() const noexcept;
-        [[nodiscard]] engine_time_t end_time() const noexcept;
+        [[nodiscard]] DateTime start_time() const noexcept;
+        [[nodiscard]] DateTime end_time() const noexcept;
         [[nodiscard]] const GraphTypeBinding &graph_binding() const;
         [[nodiscard]] const GraphExecutorTypeBinding &binding() const;
         [[nodiscard]] GraphExecutorValue make_executor() const;
@@ -121,8 +121,8 @@ namespace hgraph
         std::string       label_{};
         GraphBuilder      graph_builder_{};
         GraphExecutorMode mode_{GraphExecutorMode::Simulation};
-        engine_time_t     start_time_{MIN_ST};
-        engine_time_t     end_time_{MAX_ET};
+        DateTime     start_time_{MIN_ST};
+        DateTime     end_time_{MAX_ET};
     };
 
 }  // namespace hgraph

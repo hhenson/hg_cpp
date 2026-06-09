@@ -49,7 +49,7 @@ namespace hgraph
         [[nodiscard]] Range<ValueView> removed_keys() const;
         [[nodiscard]] Range<TSOutputView> removed_values() const;
         [[nodiscard]] KeyValueRange<ValueView, TSOutputView> removed_items() const;
-        [[nodiscard]] TSDDataMutationView begin_mutation(engine_time_t evaluation_time) const;
+        [[nodiscard]] TSDDataMutationView begin_mutation(DateTime evaluation_time) const;
     };
 }  // namespace hgraph
 

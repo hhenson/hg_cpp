@@ -12,7 +12,7 @@ namespace hgraph
      * Time-series data does not own observers. A subscriber registers a
      * ``Notifiable`` pointer at the level it wants to observe and remains
      * responsible for unregistering before either side is destroyed.
-     * ``notify`` is called once per observed level and engine time when the
+     * ``notify`` is called once per observed level and evaluation time when the
      * level first records a modification.
      */
     struct HGRAPH_EXPORT Notifiable
@@ -20,7 +20,7 @@ namespace hgraph
         virtual ~Notifiable() = default;
 
         /** Receive a time-series modification notification. */
-        virtual void notify(engine_time_t modified_time) = 0;
+        virtual void notify(DateTime modified_time) = 0;
     };
 }  // namespace hgraph
 

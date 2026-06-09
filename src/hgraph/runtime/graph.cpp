@@ -17,7 +17,7 @@ namespace hgraph
 
         struct GraphScheduleEntry
         {
-            engine_time_t scheduled{MAX_DT};
+            DateTime scheduled{MAX_DT};
             bool          force{false};
         };
 
@@ -113,7 +113,7 @@ namespace hgraph
             std::vector<NodeValue>          nodes{};
             std::vector<GraphScheduleEntry> schedule{};
             GlobalState                     global_state{};
-            engine_time_t                   evaluation_time{MIN_DT};
+            DateTime                   evaluation_time{MIN_DT};
             bool                            started{false};
             bool                            evaluating{false};
             std::size_t                     evaluation_cursor{invalid_cursor};
@@ -150,16 +150,16 @@ namespace hgraph
             return memory != nullptr && storage(memory).evaluating;
         }
 
-        engine_time_t evaluation_time_impl(const void *, const void *memory) noexcept
+        DateTime evaluation_time_impl(const void *, const void *memory) noexcept
         {
             return memory != nullptr ? storage(memory).evaluation_time : MIN_DT;
         }
 
-        engine_time_t next_scheduled_time_impl(const void *, const void *memory) noexcept
+        DateTime next_scheduled_time_impl(const void *, const void *memory) noexcept
         {
             if (memory == nullptr) { return MAX_DT; }
             const auto &state = storage(memory);
-            engine_time_t next = MAX_DT;
+            DateTime next = MAX_DT;
             for (const auto &entry : state.schedule) { next = std::min(next, entry.scheduled); }
             return next;
         }
@@ -181,18 +181,18 @@ namespace hgraph
             return memory != nullptr ? &storage(memory).global_state : nullptr;
         }
 
-        void schedule_node_impl(const void *, const GraphView &graph, std::size_t node_index, engine_time_t when, bool force)
+        void schedule_node_impl(const void *, const GraphView &graph, std::size_t node_index, DateTime when, bool force)
         {
             auto &state = storage(graph.data());
             if (node_index >= state.schedule.size()) { throw std::out_of_range("Graph schedule node index is out of range"); }
 
-            const engine_time_t current = state.evaluation_time;
+            const DateTime current = state.evaluation_time;
             if (current != MIN_DT && when < current)
             {
                 throw std::runtime_error("Graph cannot schedule a node in the past");
             }
 
-            engine_time_t effective_when = when;
+            DateTime effective_when = when;
             if (state.evaluating && current != MIN_DT && when == current &&
                 state.evaluation_cursor != invalid_cursor && node_index <= state.evaluation_cursor)
             {
@@ -207,7 +207,7 @@ namespace hgraph
             }
         }
 
-        void start_impl(const void *, const GraphView &graph, engine_time_t start_time)
+        void start_impl(const void *, const GraphView &graph, DateTime start_time)
         {
             auto &state = storage(graph.data());
             if (state.started) { return; }
@@ -251,7 +251,7 @@ namespace hgraph
             exceptions.rethrow_if_any();
         }
 
-        void evaluate_impl(const void *, const GraphView &graph, engine_time_t evaluation_time)
+        void evaluate_impl(const void *, const GraphView &graph, DateTime evaluation_time)
         {
             auto &state = storage(graph.data());
             if (!state.started) { throw std::logic_error("Graph must be started before evaluation"); }
@@ -353,11 +353,11 @@ namespace hgraph
 
     bool GraphView::started() const noexcept { return valid() && ops().started_impl(ops().context, data()); }
     bool GraphView::evaluating() const noexcept { return valid() && ops().evaluating_impl(ops().context, data()); }
-    engine_time_t GraphView::evaluation_time() const noexcept
+    DateTime GraphView::evaluation_time() const noexcept
     {
         return valid() ? ops().evaluation_time_impl(ops().context, data()) : MIN_DT;
     }
-    engine_time_t GraphView::next_scheduled_time() const noexcept
+    DateTime GraphView::next_scheduled_time() const noexcept
     {
         return valid() ? ops().next_scheduled_time_impl(ops().context, data()) : MAX_DT;
     }
@@ -385,10 +385,10 @@ namespace hgraph
         return GraphView{binding(), data()};
     }
 
-    void GraphView::start(engine_time_t start_time) const { ops().start_impl(ops().context, *this, start_time); }
+    void GraphView::start(DateTime start_time) const { ops().start_impl(ops().context, *this, start_time); }
     void GraphView::stop() const { ops().stop_impl(ops().context, *this); }
-    void GraphView::evaluate(engine_time_t evaluation_time) const { ops().evaluate_impl(ops().context, *this, evaluation_time); }
-    void GraphView::schedule_node(std::size_t node_index, engine_time_t when, bool force) const
+    void GraphView::evaluate(DateTime evaluation_time) const { ops().evaluate_impl(ops().context, *this, evaluation_time); }
+    void GraphView::schedule_node(std::size_t node_index, DateTime when, bool force) const
     {
         ops().schedule_node_impl(ops().context, *this, node_index, when, force);
     }
@@ -447,7 +447,7 @@ namespace hgraph
         return GraphView{binding(), const_cast<void *>(storage_.data())};
     }
 
-    void GraphValue::schedule_node(std::size_t node_index, engine_time_t when, bool force)
+    void GraphValue::schedule_node(std::size_t node_index, DateTime when, bool force)
     {
         view().schedule_node(node_index, when, force);
     }

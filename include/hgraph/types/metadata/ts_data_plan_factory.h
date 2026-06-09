@@ -15,7 +15,7 @@ namespace hgraph
      * canonical ``MemoryUtils::StoragePlan`` and default ``TSDataBinding``
      * for the TS data component.
      *
-     * ``TSOutput`` and ``TSInput`` are the top-level runtime time-series
+     * ``TSOutput`` and ``TSInput`` are the top-level runtime containers for time-series
      * holders. They combine endpoint state (modification scope, validity,
      * subscribers, binding, and scheduling) with a payload/delta component
      * named ``TSData``. This factory resolves only the ``TSData`` memory plan.

@@ -653,8 +653,8 @@ namespace hgraph
     }
 
     const TSValueTypeMetaData *TypeRegistry::tsw_duration(const ValueTypeMetaData *value_type,
-                                                          engine_time_delta_t time_range,
-                                                          engine_time_delta_t min_time_range)
+                                                          TimeDelta time_range,
+                                                          TimeDelta min_time_range)
     {
         const TSWindowKey key{value_type, true, time_range.count(), min_time_range.count()};
         const TSValueTypeMetaData &meta = tsw_cache_.intern(key, [&]() {

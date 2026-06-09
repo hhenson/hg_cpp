@@ -50,7 +50,7 @@ namespace hgraph::stdlib
     {
     };
 
-    /** ``last_modified_time`` — the engine time ``ts`` was last modified. */
+    /** ``last_modified_time`` — the evaluation time ``ts`` was last modified. */
     struct last_modified_time : Operator<"last_modified_time", In<"ts", SIGNAL>, Out<TS<DateTime>>>
     {
     };

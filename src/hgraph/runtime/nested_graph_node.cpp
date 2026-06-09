@@ -85,7 +85,7 @@ namespace hgraph
             return view.as<SingleNestedGraphNodeView>();
         }
 
-        void single_nested_graph_evaluate_impl(const void *, const NodeView &view, engine_time_t evaluation_time, bool)
+        void single_nested_graph_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time, bool)
         {
             single_nested_graph_evaluate(view, evaluation_time);
         }
@@ -220,7 +220,7 @@ namespace hgraph
             single_nested_graph_node_descriptor(std::move(meta), std::move(spec), options));
     }
 
-    void single_nested_graph_start(const NodeView &view, engine_time_t evaluation_time)
+    void single_nested_graph_start(const NodeView &view, DateTime evaluation_time)
     {
         auto nested = checked_nested_view(view);
         nested.ensure_child_graph();
@@ -233,7 +233,7 @@ namespace hgraph
         single_nested_graph_propagate_schedule(nested);
     }
 
-    void single_nested_graph_stop(const NodeView &view, engine_time_t)
+    void single_nested_graph_stop(const NodeView &view, DateTime)
     {
         auto nested = checked_nested_view(view);
         // The forwarding link is intentionally left intact: stop() only halts
@@ -247,7 +247,7 @@ namespace hgraph
         }
     }
 
-    void single_nested_graph_evaluate(const NodeView &view, engine_time_t evaluation_time)
+    void single_nested_graph_evaluate(const NodeView &view, DateTime evaluation_time)
     {
         if (!view.started()) { return; }
 
@@ -264,7 +264,7 @@ namespace hgraph
     }
 
     void single_nested_graph_bind_inputs(const SingleNestedGraphNodeView &nested,
-                                         engine_time_t evaluation_time)
+                                         DateTime evaluation_time)
     {
         const auto &bindings = nested.context().spec.input_bindings;
         if (bindings.empty()) { return; }
@@ -285,7 +285,7 @@ namespace hgraph
     }
 
     void single_nested_graph_bind_output(const SingleNestedGraphNodeView &nested,
-                                         engine_time_t evaluation_time)
+                                         DateTime evaluation_time)
     {
         const auto &binding = nested.context().spec.output_binding;
         if (!binding.has_value()) { return; }
@@ -298,7 +298,7 @@ namespace hgraph
     }
 
     void single_nested_graph_clear_output_binding(const SingleNestedGraphNodeView &nested,
-                                                  engine_time_t evaluation_time)
+                                                  DateTime evaluation_time)
     {
         const auto &binding = nested.context().spec.output_binding;
         if (!binding.has_value()) { return; }
@@ -311,7 +311,7 @@ namespace hgraph
     {
         if (!nested.context().options.propagate_child_schedule || !nested.child_graph_value().has_value()) { return; }
 
-        const engine_time_t next = nested.child_graph().next_scheduled_time();
+        const DateTime next = nested.child_graph().next_scheduled_time();
         if (next != MAX_DT && nested.node().graph_value() != nullptr)
         {
             nested.node().graph_value()->schedule_node(nested.node().node_index(), next, true);

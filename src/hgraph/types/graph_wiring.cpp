@@ -155,7 +155,7 @@ namespace hgraph
         {
         };
 
-        void evaluate_structural_ref_node(const NodeView &view, engine_time_t evaluation_time)
+        void evaluate_structural_ref_node(const NodeView &view, DateTime evaluation_time)
         {
             auto root   = view.input(evaluation_time);
             auto bundle = root.as_bundle();

@@ -120,7 +120,7 @@ namespace hgraph
         return ValueView{layout().value_binding, table.value_memory_impl(table.context, data())};
     }
 
-    ValueView TSDataView::delta_value(engine_time_t evaluation_time) const
+    ValueView TSDataView::delta_value(DateTime evaluation_time) const
     {
         require_live("TSDataView::delta_value");
         const auto &data_layout = layout();
@@ -140,7 +140,7 @@ namespace hgraph
         return table.to_python_impl(table.context, data());
     }
 
-    nb::object TSDataView::delta_value_to_python(engine_time_t evaluation_time) const
+    nb::object TSDataView::delta_value_to_python(DateTime evaluation_time) const
     {
         require_live("TSDataView::delta_value_to_python");
         if (!modified(evaluation_time)) { return nb::none(); }
@@ -150,12 +150,12 @@ namespace hgraph
     }
 #endif
 
-    engine_time_t TSDataView::last_modified_time() const
+    DateTime TSDataView::last_modified_time() const
     {
         return tracking().last_modified_time;
     }
 
-    bool TSDataView::modified(engine_time_t evaluation_time) const
+    bool TSDataView::modified(DateTime evaluation_time) const
     {
         return tracking().last_modified_time == evaluation_time;
     }
@@ -203,7 +203,7 @@ namespace hgraph
         return table.all_valid_impl(table.context, data());
     }
 
-    void TSDataView::cleanup_delta(engine_time_t modified_time) const
+    void TSDataView::cleanup_delta(DateTime modified_time) const
     {
         require_live("TSDataView::cleanup_delta");
         if (modified_time == MIN_DT || tracking().last_modified_time != modified_time) { return; }
@@ -262,7 +262,7 @@ namespace hgraph
         return TSWDataView{borrowed_ref()};
     }
 
-    TSDataMutationView TSDataView::begin_mutation(engine_time_t evaluation_time) const
+    TSDataMutationView TSDataView::begin_mutation(DateTime evaluation_time) const
     {
         return TSDataMutationView{borrowed_ref(), evaluation_time};
     }
@@ -308,7 +308,7 @@ namespace hgraph
         mutable_tracking().parent = TSDataParentLink{parent, child_id};
     }
 
-    TSDataMutationView::TSDataMutationView(TSDataView view, engine_time_t evaluation_time)
+    TSDataMutationView::TSDataMutationView(TSDataView view, DateTime evaluation_time)
         : storage_(view.storage_ref()),
           mutation_time_(evaluation_time)
     {
@@ -344,17 +344,17 @@ namespace hgraph
         return view().value();
     }
 
-    ValueView TSDataMutationView::delta_value(engine_time_t evaluation_time) const
+    ValueView TSDataMutationView::delta_value(DateTime evaluation_time) const
     {
         return view().delta_value(evaluation_time);
     }
 
-    engine_time_t TSDataMutationView::current_mutation_time() const
+    DateTime TSDataMutationView::current_mutation_time() const
     {
         return mutation_time_;
     }
 
-    bool TSDataMutationView::modified(engine_time_t evaluation_time) const
+    bool TSDataMutationView::modified(DateTime evaluation_time) const
     {
         return view().modified(evaluation_time);
     }
@@ -421,7 +421,7 @@ namespace hgraph
     {
         if (mutation_time_ == MIN_DT)
         {
-            throw std::invalid_argument("TSDataMutationView requires a concrete engine time");
+            throw std::invalid_argument("TSDataMutationView requires a concrete evaluation time");
         }
         (void)view().mutable_data();
     }

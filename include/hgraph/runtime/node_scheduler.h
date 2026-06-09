@@ -28,8 +28,8 @@ namespace hgraph
      */
     struct HGRAPH_EXPORT NodeSchedulerState
     {
-        std::set<std::pair<engine_time_t, std::string>> events{};
-        std::map<std::string, engine_time_t>            tags{};
+        std::set<std::pair<DateTime, std::string>> events{};
+        std::map<std::string, DateTime>            tags{};
     };
 
     /**
@@ -50,13 +50,13 @@ namespace hgraph
     {
       public:
         SingleShotScheduler() noexcept = default;
-        SingleShotScheduler(GraphValue *graph, std::size_t node_index, engine_time_t now) noexcept
+        SingleShotScheduler(GraphValue *graph, std::size_t node_index, DateTime now) noexcept
             : graph_(graph), node_index_(node_index), now_(now)
         {
         }
 
         /** The current evaluation time (the start time when injected on ``start``). */
-        [[nodiscard]] engine_time_t now() const noexcept { return now_; }
+        [[nodiscard]] DateTime now() const noexcept { return now_; }
 
         /** Mark the node to evaluate in the current cycle. */
         void schedule_now() const { schedule(now_); }
@@ -66,18 +66,18 @@ namespace hgraph
          * no live graph; never cancels and never moves an existing earlier
          * schedule later (graph ``schedule_node`` keeps the earliest time).
          */
-        void schedule(engine_time_t when) const
+        void schedule(DateTime when) const
         {
             if (graph_ != nullptr) { graph_->schedule_node(node_index_, when); }
         }
 
         /** Mark the node to evaluate ``delta`` after the current time. */
-        void schedule(engine_time_delta_t delta) const { schedule(now_ + delta); }
+        void schedule(TimeDelta delta) const { schedule(now_ + delta); }
 
       private:
         GraphValue   *graph_{nullptr};
         std::size_t   node_index_{0};
-        engine_time_t now_{MIN_DT};
+        DateTime now_{MIN_DT};
     };
 
     /**
@@ -96,17 +96,17 @@ namespace hgraph
     {
       public:
         NodeScheduler() noexcept = default;
-        NodeScheduler(NodeSchedulerState &state, GraphValue *graph, std::size_t node_index, engine_time_t now,
+        NodeScheduler(NodeSchedulerState &state, GraphValue *graph, std::size_t node_index, DateTime now,
                       bool started = true) noexcept
             : state_(&state), graph_(graph), node_index_(node_index), now_(now), started_(started)
         {
         }
 
         /** The current evaluation time. */
-        [[nodiscard]] engine_time_t now() const noexcept { return now_; }
+        [[nodiscard]] DateTime now() const noexcept { return now_; }
 
         /** Earliest pending time, or ``MIN_DT`` when nothing is scheduled. */
-        [[nodiscard]] engine_time_t next_scheduled_time() const noexcept
+        [[nodiscard]] DateTime next_scheduled_time() const noexcept
         {
             return (state_ != nullptr && !state_->events.empty()) ? state_->events.begin()->first : MIN_DT;
         }
@@ -118,7 +118,7 @@ namespace hgraph
         }
 
         /**
-         * Whether the node is scheduled for the current engine cycle — i.e. the
+         * Whether the node is scheduled for the current evaluation cycle — i.e. the
          * earliest pending event is *exactly* now. Mirrors the authoritative
          * Python ``is_scheduled_now`` (``events[0][0] == evaluation_time``);
          * fired events never linger below ``now`` because :cpp:func:`advance`
@@ -136,7 +136,7 @@ namespace hgraph
         }
 
         /** Time registered under ``tag``, or ``default_time`` when absent. */
-        [[nodiscard]] engine_time_t tag_time(std::string_view tag, engine_time_t default_time = MIN_DT) const
+        [[nodiscard]] DateTime tag_time(std::string_view tag, DateTime default_time = MIN_DT) const
         {
             if (state_ == nullptr) { return default_time; }
             const auto it = state_->tags.find(std::string{tag});
@@ -147,12 +147,12 @@ namespace hgraph
         [[nodiscard]] bool tag_is_scheduled_now(std::string_view tag) const { return has_tag(tag) && tag_time(tag) == now_; }
 
         /** Remove ``tag``'s event and return its time, or ``default_time`` when absent. */
-        engine_time_t pop_tag(std::string_view tag, engine_time_t default_time = MIN_DT) const
+        DateTime pop_tag(std::string_view tag, DateTime default_time = MIN_DT) const
         {
             require_state("pop_tag");
             const auto it = state_->tags.find(std::string{tag});
             if (it == state_->tags.end()) { return default_time; }
-            const engine_time_t when = it->second;
+            const DateTime when = it->second;
             state_->events.erase({when, it->first});
             state_->tags.erase(it);
             return when;
@@ -168,7 +168,7 @@ namespace hgraph
          * Python guard for started nodes, while preserving the start-cycle
          * ``schedule(now())`` source pattern before the node has started.
          */
-        void schedule(engine_time_t when, std::optional<std::string> tag = std::nullopt,
+        void schedule(DateTime when, std::optional<std::string> tag = std::nullopt,
                       bool on_wall_clock = false) const
         {
             require_state("schedule");
@@ -197,15 +197,15 @@ namespace hgraph
                 }
             }
 
-            const engine_time_t prev_first = state_->events.empty() ? MAX_DT : state_->events.begin()->first;
+            const DateTime prev_first = state_->events.empty() ? MAX_DT : state_->events.begin()->first;
             if (tagged) { state_->tags[tag_value] = when; }  // only tagged events are indexed
             state_->events.insert({when, tag_value});
-            const engine_time_t next = state_->events.begin()->first;
+            const DateTime next = state_->events.begin()->first;
             if (graph_ != nullptr && next < prev_first) { graph_->schedule_node(node_index_, next); }
         }
 
         /** Schedule the node ``delta`` after the current evaluation time. */
-        void schedule(engine_time_delta_t delta, std::optional<std::string> tag = std::nullopt,
+        void schedule(TimeDelta delta, std::optional<std::string> tag = std::nullopt,
                       bool on_wall_clock = false) const
         {
             schedule(now_ + delta, std::move(tag), on_wall_clock);
@@ -275,7 +275,7 @@ namespace hgraph
         NodeSchedulerState *state_{nullptr};
         GraphValue         *graph_{nullptr};
         std::size_t         node_index_{0};
-        engine_time_t       now_{MIN_DT};
+        DateTime       now_{MIN_DT};
         bool                started_{true};
     };
 }  // namespace hgraph

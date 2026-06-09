@@ -245,10 +245,10 @@ namespace hgraph
         [[nodiscard]] nb::object input_tsl_to_python(const void *context, const void *memory);
         [[nodiscard]] nb::object input_tsb_delta_to_python(const void *context,
                                                            const void *memory,
-                                                           engine_time_t evaluation_time);
+                                                           DateTime evaluation_time);
         [[nodiscard]] nb::object input_tsl_delta_to_python(const void *context,
                                                            const void *memory,
-                                                           engine_time_t evaluation_time);
+                                                           DateTime evaluation_time);
 #endif
 
         const detail::TSInputEndpointOps endpoint_ts_ops{
@@ -728,7 +728,7 @@ namespace hgraph
         [[nodiscard]] const void *input_delta_memory(const void *, const void *memory) noexcept { return memory; }
         [[nodiscard]] void *input_mutable_delta_memory(const void *, void *memory) noexcept { return memory; }
 
-        void input_cleanup_delta(const void *context, void *memory, engine_time_t modified_time)
+        void input_cleanup_delta(const void *context, void *memory, DateTime modified_time)
         {
             const auto *state = static_cast<const InputBindingContext *>(context);
             for (std::size_t index = 0; index < state->children.size(); ++index)
@@ -1358,7 +1358,7 @@ namespace hgraph
 
         [[nodiscard]] nb::object child_delta_to_python(const TSDataBinding *binding,
                                                        const void          *memory,
-                                                       engine_time_t        evaluation_time)
+                                                       DateTime        evaluation_time)
         {
             if (binding == nullptr || memory == nullptr) { return nb::none(); }
             const auto &ops = binding->checked_ops();
@@ -1407,7 +1407,7 @@ namespace hgraph
 
         [[nodiscard]] nb::object input_tsb_delta_to_python(const void *context,
                                                            const void *memory,
-                                                           engine_time_t evaluation_time)
+                                                           DateTime evaluation_time)
         {
             const auto *state = static_cast<const InputBindingContext *>(context);
             nb::dict result;
@@ -1425,7 +1425,7 @@ namespace hgraph
 
         [[nodiscard]] nb::object input_tsl_delta_to_python(const void *context,
                                                            const void *memory,
-                                                           engine_time_t evaluation_time)
+                                                           DateTime evaluation_time)
         {
             const auto *state = static_cast<const InputBindingContext *>(context);
             nb::dict result;
@@ -1441,7 +1441,7 @@ namespace hgraph
 
         [[nodiscard]] nb::object input_delta_to_python(const void *context,
                                                        const void *memory,
-                                                       engine_time_t evaluation_time)
+                                                       DateTime evaluation_time)
         {
             const auto *state = static_cast<const InputBindingContext *>(context);
             const auto &endpoint_ops = *state->endpoint_ops;
@@ -1769,7 +1769,7 @@ namespace hgraph
             return TSInputChildProjection{TSDataView{child.input_binding, parent.data()}, {}};
         }
 
-        void TSInputSchedulingNotifier::notify(engine_time_t modified_time)
+        void TSInputSchedulingNotifier::notify(DateTime modified_time)
         {
             if (target != nullptr) { target->notify(modified_time); }
         }
@@ -1989,12 +1989,12 @@ namespace hgraph
         return schema_;
     }
 
-    TSInputView TSInput::view(Notifiable *scheduling_notifier, engine_time_t evaluation_time)
+    TSInputView TSInput::view(Notifiable *scheduling_notifier, DateTime evaluation_time)
     {
         return TSInputView{this, data_.view(), {}, nullptr, scheduling_notifier, evaluation_time};
     }
 
-    TSInputView TSInput::view(Notifiable *scheduling_notifier, engine_time_t evaluation_time) const
+    TSInputView TSInput::view(Notifiable *scheduling_notifier, DateTime evaluation_time) const
     {
         return TSInputView{const_cast<TSInput *>(this), data_.view(), {}, nullptr, scheduling_notifier, evaluation_time};
     }

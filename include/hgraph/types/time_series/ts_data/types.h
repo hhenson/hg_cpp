@@ -45,7 +45,7 @@ namespace hgraph
         virtual ~TSDataParent() = default;
 
         /** Record that ``child_id`` modified at ``mutation_time``. */
-        virtual void record_child_modified(std::size_t child_id, engine_time_t mutation_time) = 0;
+        virtual void record_child_modified(std::size_t child_id, DateTime mutation_time) = 0;
     };
 
     enum class TSDataParentLinkKind : std::uintptr_t
@@ -127,7 +127,7 @@ namespace hgraph
          * Record a child modification against the parent and bubble that
          * modification towards the root. No-op for a root link.
          */
-        void notify_child_modified(engine_time_t mutation_time) const;
+        void notify_child_modified(DateTime mutation_time) const;
 
         /**
          * Return parent-relative navigation ids from the root to this child.
@@ -183,7 +183,7 @@ namespace hgraph
         void replace(Notifiable *observer, Notifiable *replacement) noexcept;
 
         /** Notify all registered observers for ``modified_time``. */
-        void notify(engine_time_t modified_time) const;
+        void notify(DateTime modified_time) const;
 
         /** Clear all observer registrations without notifying them. */
         void clear() noexcept;
@@ -231,11 +231,11 @@ namespace hgraph
         /**
          * Record the first modification for ``modified_time`` and notify local
          * observers once. Returns false when this level was already marked for
-         * the same engine time.
+         * the same evaluation time.
          */
-        [[nodiscard]] bool record_modified(engine_time_t modified_time);
+        [[nodiscard]] bool record_modified(DateTime modified_time);
 
-        engine_time_t last_modified_time{MIN_DT};
+        DateTime last_modified_time{MIN_DT};
         TSDataParentLink parent{};
         TSDataObserverSet observers{};
     };
@@ -354,8 +354,8 @@ namespace hgraph
 
     struct TimeTSWDataLayout : TSWDataLayout
     {
-        engine_time_delta_t     time_range{};
-        engine_time_delta_t     min_time_range{};
+        TimeDelta     time_range{};
+        TimeDelta     min_time_range{};
     };
 }  // namespace hgraph
 

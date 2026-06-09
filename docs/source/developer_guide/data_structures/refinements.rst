@@ -11,7 +11,7 @@ Memory Layout Refinement Topics
 The next refinement pass should decide the physical layout for each structure:
 
 - whether graph nodes live in one arena allocation or separate stable vectors,
-- whether ``GraphScheduleTable`` is a plain ``std::vector<engine_time_t>`` or packed with node metadata,
+- whether ``GraphScheduleTable`` is a plain ``std::vector<DateTime>`` or packed with node metadata,
 - whether optional node schedulers are colocated with nodes or held in a side table,
 - how input and output arrays are laid out for fast readiness checks,
 - how subscriber lists avoid invalidation during graph construction and dynamic graph changes,

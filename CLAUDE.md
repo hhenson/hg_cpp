@@ -74,7 +74,7 @@ over an `InternTable`.
 
 | Path (`include/hgraph/`, mirrored in `src/`) | Layer |
 |---|---|
-| `util/` | `date_time.h` (`engine_time_t`, `MIN_ST`, `MAX_ET`), `scope.h`, `tagged_ptr.h` |
+| `util/` | `date_time.h` (`DateTime`, `MIN_ST`, `MAX_ET`), `scope.h`, `tagged_ptr.h` |
 | `types/utils/` | foundation: `intern_table`, `memory_utils` (StoragePlan/StorageHandle/LifecycleOps), slot stores, `slot_observer` |
 | `types/value/` | **Value layer**: `value`, `value_view`, `value_ops`, `value_builder`, compact/container storage, `specialized_views` |
 | `types/metadata/` | **Schemas + bindings + registries**: `*_type_meta_data`, `type_binding`, `type_registry`, `value_plan_factory`, `ts_data_plan_factory` |

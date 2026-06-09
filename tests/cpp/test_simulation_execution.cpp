@@ -34,7 +34,7 @@ namespace
 {
     using namespace hgraph;
 
-    void write_int_output(const NodeView &view, engine_time_t evaluation_time, std::int32_t value)
+    void write_int_output(const NodeView &view, DateTime evaluation_time, std::int32_t value)
     {
         Value wrapped{value};
         auto  mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
@@ -51,7 +51,7 @@ namespace
         schema.schedule_on_start = true;  // a source initiates itself at the start cycle
 
         NodeCallbacks callbacks;
-        callbacks.evaluate = [value, eval_count](const NodeView &view, engine_time_t evaluation_time) {
+        callbacks.evaluate = [value, eval_count](const NodeView &view, DateTime evaluation_time) {
             ++*eval_count;
             write_int_output(view, evaluation_time, value);
         };
@@ -69,7 +69,7 @@ namespace
         schema.node_kind = NodeKind::Compute;
 
         NodeCallbacks callbacks;
-        callbacks.evaluate = [eval_count](const NodeView &view, engine_time_t evaluation_time) {
+        callbacks.evaluate = [eval_count](const NodeView &view, DateTime evaluation_time) {
             ++*eval_count;
             auto      root  = view.input(evaluation_time);
             auto      bundle = root.as_bundle();
@@ -142,7 +142,7 @@ TEST_CASE("simulation: a constant source drives exactly one cycle (no tick injec
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{3});
+        .end_time(MIN_ST + TimeDelta{3});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -174,7 +174,7 @@ TEST_CASE("simulation: a node that does not schedule itself in start is never ev
     schema.output_schema = ts_int;
     schema.node_kind     = NodeKind::PullSource;
     NodeCallbacks callbacks;
-    callbacks.evaluate = [&evals](const NodeView &view, engine_time_t evaluation_time) {
+    callbacks.evaluate = [&evals](const NodeView &view, DateTime evaluation_time) {
         ++evals;
         write_int_output(view, evaluation_time, 1);
     };
@@ -185,7 +185,7 @@ TEST_CASE("simulation: a node that does not schedule itself in start is never ev
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{5});
+        .end_time(MIN_ST + TimeDelta{5});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -217,8 +217,8 @@ TEST_CASE("simulation: re-ticking a source reschedules its downstream via notifi
     auto       view  = graph.view();
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
 
     view.start(t1);
     view.evaluate(t1);
@@ -264,7 +264,7 @@ TEST_CASE("simulation: a self-rescheduling source drives multiple cycles over ti
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{10});
+        .end_time(MIN_ST + TimeDelta{10});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();

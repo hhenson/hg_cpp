@@ -207,7 +207,7 @@ namespace
     GraphExecutorValue run_once(GraphBuilder gb)
     {
         GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{3});
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{3});
         GraphExecutorValue executor = eb.make_executor();
         executor.view().run();
         return executor;

@@ -28,9 +28,9 @@ namespace hgraph
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
         [[nodiscard]] const TSSDataLayout &layout() const;
         [[nodiscard]] ValueView value() const;
-        [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const;
-        [[nodiscard]] engine_time_t last_modified_time() const;
-        [[nodiscard]] bool modified(engine_time_t evaluation_time) const;
+        [[nodiscard]] ValueView delta_value(DateTime evaluation_time) const;
+        [[nodiscard]] DateTime last_modified_time() const;
+        [[nodiscard]] bool modified(DateTime evaluation_time) const;
         void subscribe(Notifiable *observer) const;
         void unsubscribe(Notifiable *observer) const;
         [[nodiscard]] bool has_observers() const;
@@ -68,7 +68,7 @@ namespace hgraph
         [[nodiscard]] Range<ValueView>::iterator end() const;
 
         /** Begin a mutation view over this set. */
-        [[nodiscard]] TSSDataMutationView begin_mutation(engine_time_t evaluation_time) const;
+        [[nodiscard]] TSSDataMutationView begin_mutation(DateTime evaluation_time) const;
 
       protected:
         [[nodiscard]] const TSSDataOps &set_ops() const;
@@ -80,7 +80,7 @@ namespace hgraph
     class TSSDataMutationView : public TSSDataView
     {
       public:
-        TSSDataMutationView(TSDataView view, engine_time_t evaluation_time);
+        TSSDataMutationView(TSDataView view, DateTime evaluation_time);
 
         TSSDataMutationView(const TSSDataMutationView &) = delete;
         TSSDataMutationView &operator=(const TSSDataMutationView &) = delete;
@@ -92,7 +92,7 @@ namespace hgraph
         [[nodiscard]] TSSDataView view();
 
         /** Engine time associated with this mutation scope. */
-        [[nodiscard]] engine_time_t current_mutation_time() const;
+        [[nodiscard]] DateTime current_mutation_time() const;
 
         /** Reserve storage for at least ``capacity`` slots. */
         void reserve(std::size_t capacity);

@@ -59,11 +59,11 @@ namespace hgraph::ts_data_detail
 
     void noop_reset_delta(const void *, void *) {}
 
-    void noop_cleanup_delta(const void *, void *, engine_time_t) {}
+    void noop_cleanup_delta(const void *, void *, DateTime) {}
 
-    void noop_record_child_modified(const void *, void *, std::size_t, engine_time_t) {}
+    void noop_record_child_modified(const void *, void *, std::size_t, DateTime) {}
 
-    bool missing_copy_value_from(const void *, void *, const ValueView &, engine_time_t)
+    bool missing_copy_value_from(const void *, void *, const ValueView &, DateTime)
     {
         missing_ts_data_op("copy value");
     }
@@ -89,7 +89,7 @@ namespace hgraph::ts_data_detail
     }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
-    bool missing_from_python(const void *, void *, nb::handle, engine_time_t)
+    bool missing_from_python(const void *, void *, nb::handle, DateTime)
     {
         missing_ts_data_op("from Python");
     }
@@ -99,7 +99,7 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("to Python");
     }
 
-    nb::object missing_delta_to_python(const void *, const void *, engine_time_t)
+    nb::object missing_delta_to_python(const void *, const void *, DateTime)
     {
         missing_ts_data_op("delta to Python");
     }
@@ -170,17 +170,17 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("TSData value range");
     }
 
-    SlotTSDataMutationResult missing_insert_key(const void *, void *, const ValueView &, engine_time_t)
+    SlotTSDataMutationResult missing_insert_key(const void *, void *, const ValueView &, DateTime)
     {
         missing_ts_data_op("key insertion");
     }
 
-    SlotTSDataMutationResult missing_remove_key(const void *, void *, const ValueView &, engine_time_t)
+    SlotTSDataMutationResult missing_remove_key(const void *, void *, const ValueView &, DateTime)
     {
         missing_ts_data_op("key removal");
     }
 
-    bool missing_touch_slots(const void *, void *, engine_time_t)
+    bool missing_touch_slots(const void *, void *, DateTime)
     {
         missing_ts_data_op("slot collection touch");
     }

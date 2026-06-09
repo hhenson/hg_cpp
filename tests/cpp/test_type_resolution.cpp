@@ -109,7 +109,7 @@ namespace
         GraphBuilder gb = build_graph<Graph>();
         seed(gb.global_state());
         GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + engine_time_delta_t{10});
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
         GraphExecutorValue ex = eb.make_executor();
         ex.view().run();
         return ex;

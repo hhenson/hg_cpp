@@ -47,9 +47,10 @@ TEST_CASE("stdlib::register_standard_types registers scalar aliases")
     STATIC_REQUIRE(std::is_same_v<Bool, bool>);
     STATIC_REQUIRE(std::is_same_v<Int, std::int64_t>);
     STATIC_REQUIRE(std::is_same_v<Float, double>);
-    STATIC_REQUIRE(std::is_same_v<Date, engine_date_t>);
-    STATIC_REQUIRE(std::is_same_v<DateTime, engine_time_t>);
-    STATIC_REQUIRE(std::is_same_v<TimeDelta, engine_time_delta_t>);
+    STATIC_REQUIRE(std::is_same_v<Date, std::chrono::year_month_day>);
+    STATIC_REQUIRE(std::is_same_v<DateTime,
+                                  std::chrono::time_point<engine_clock, std::chrono::microseconds>>);
+    STATIC_REQUIRE(std::is_same_v<TimeDelta, std::chrono::microseconds>);
     STATIC_REQUIRE(std::is_same_v<Str, std::string>);
 
     const auto *bool_type      = registry.scalar_binding<Bool>()->type_meta;
@@ -214,13 +215,10 @@ TEST_CASE("date-time aliases and constants match the 2603 runtime definitions")
     using namespace hgraph;
 
     STATIC_REQUIRE(std::is_same_v<engine_clock, std::chrono::system_clock>);
-    STATIC_REQUIRE(std::is_same_v<engine_time_t,
+    STATIC_REQUIRE(std::is_same_v<DateTime,
                                   std::chrono::time_point<engine_clock, std::chrono::microseconds>>);
-    STATIC_REQUIRE(std::is_same_v<engine_time_delta_t, std::chrono::microseconds>);
-    STATIC_REQUIRE(std::is_same_v<engine_date_t, std::chrono::year_month_day>);
-    STATIC_REQUIRE(std::is_same_v<Date, engine_date_t>);
-    STATIC_REQUIRE(std::is_same_v<DateTime, engine_time_t>);
-    STATIC_REQUIRE(std::is_same_v<TimeDelta, engine_time_delta_t>);
+    STATIC_REQUIRE(std::is_same_v<TimeDelta, std::chrono::microseconds>);
+    STATIC_REQUIRE(std::is_same_v<Date, std::chrono::year_month_day>);
 
     CHECK(MIN_DT == min_time());
     CHECK(MAX_DT == max_time());

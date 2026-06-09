@@ -29,9 +29,9 @@ namespace
 
     struct RecordingNotifiable : hgraph::Notifiable
     {
-        std::vector<hgraph::engine_time_t> notified{};
+        std::vector<hgraph::DateTime> notified{};
 
-        void notify(hgraph::engine_time_t modified_time) override
+        void notify(hgraph::DateTime modified_time) override
         {
             notified.push_back(modified_time);
         }
@@ -41,7 +41,7 @@ namespace
     {
         hgraph::TSDataView observed{};
 
-        void notify(hgraph::engine_time_t modified_time) override
+        void notify(hgraph::DateTime modified_time) override
         {
             RecordingNotifiable::notify(modified_time);
             observed.unsubscribe(this);
@@ -53,7 +53,7 @@ namespace
         hgraph::TSDataView observed{};
         hgraph::Notifiable *target{nullptr};
 
-        void notify(hgraph::engine_time_t modified_time) override
+        void notify(hgraph::DateTime modified_time) override
         {
             RecordingNotifiable::notify(modified_time);
             observed.unsubscribe(target);
@@ -66,7 +66,7 @@ namespace
         hgraph::Notifiable *target{nullptr};
         bool added{false};
 
-        void notify(hgraph::engine_time_t modified_time) override
+        void notify(hgraph::DateTime modified_time) override
         {
             RecordingNotifiable::notify(modified_time);
             if (!added)
@@ -83,7 +83,7 @@ namespace
         hgraph::Notifiable *removed{nullptr};
         hgraph::Notifiable *replacement{nullptr};
 
-        void notify(hgraph::engine_time_t modified_time) override
+        void notify(hgraph::DateTime modified_time) override
         {
             RecordingNotifiable::notify(modified_time);
             observed.unsubscribe(removed);
@@ -125,7 +125,7 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     REQUIRE_FALSE(output.dirty());
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
 
     auto initial = output.view(t1);
     REQUIRE(initial.binding() != nullptr);
@@ -171,7 +171,7 @@ TEST_CASE("TSOutputHandle stores output identity without evaluation time")
 
     TSOutput output{*ts_int};
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
 
     Value value{7};
     {
@@ -214,7 +214,7 @@ TEST_CASE("TSOutput REF stores TimeSeriesReference as value and delta")
     TSOutput target{*ts_int};
     TSOutput ref_output{*ref_int};
 
-    const auto t1 = MIN_ST + engine_time_delta_t{1};
+    const auto t1 = MIN_ST + TimeDelta{1};
     const TimeSeriesReference reference{target.view(t1)};
     Value                     wrapped{reference};
 
@@ -250,7 +250,7 @@ TEST_CASE("TSOutput dirty cleanup finalizes slot deltas")
     auto     set = root.as_set();
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
     Value      one{1};
 
     {
@@ -277,7 +277,7 @@ TEST_CASE("TSOutput dirty cleanup finalizes slot deltas")
     REQUIRE(range_count(set.removed()) == 0);
     REQUIRE_FALSE(set.contains(one.view()));
 
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t3 = t2 + TimeDelta{1};
     {
         auto mutation = set.begin_mutation(t3);
         REQUIRE(mutation.add(one.view()));
@@ -303,8 +303,8 @@ TEST_CASE("TSOutput root parent is reattached after copy and move")
     const auto *ts_int   = registry.ts(int_meta);
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
 
     Value one{1};
     Value two{2};
@@ -408,8 +408,8 @@ TEST_CASE("TSData observers notify at the modified level and bubble to parents")
     b.subscribe(&b_observer);
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
 
     Value one{1};
     Value two{2};
@@ -421,9 +421,9 @@ TEST_CASE("TSData observers notify at the modified level and bubble to parents")
     }
 
     REQUIRE(output.dirty());
-    CHECK(root_observer.notified == std::vector<engine_time_t>{t1});
-    CHECK(a_observer.notified == std::vector<engine_time_t>{t1});
-    CHECK(a_second_observer.notified == std::vector<engine_time_t>{t1});
+    CHECK(root_observer.notified == std::vector<DateTime>{t1});
+    CHECK(a_observer.notified == std::vector<DateTime>{t1});
+    CHECK(a_second_observer.notified == std::vector<DateTime>{t1});
     CHECK(b_observer.notified.empty());
 
     {
@@ -431,17 +431,17 @@ TEST_CASE("TSData observers notify at the modified level and bubble to parents")
         REQUIRE_FALSE(mutation.copy_value_from(two.view()));
     }
 
-    CHECK(root_observer.notified == std::vector<engine_time_t>{t1});
-    CHECK(a_observer.notified == std::vector<engine_time_t>{t1});
-    CHECK(a_second_observer.notified == std::vector<engine_time_t>{t1});
+    CHECK(root_observer.notified == std::vector<DateTime>{t1});
+    CHECK(a_observer.notified == std::vector<DateTime>{t1});
+    CHECK(a_second_observer.notified == std::vector<DateTime>{t1});
 
     {
         auto mutation = b.begin_mutation(t1);
         REQUIRE(mutation.copy_value_from(three.view()));
     }
 
-    CHECK(root_observer.notified == std::vector<engine_time_t>{t1});
-    CHECK(b_observer.notified == std::vector<engine_time_t>{t1});
+    CHECK(root_observer.notified == std::vector<DateTime>{t1});
+    CHECK(b_observer.notified == std::vector<DateTime>{t1});
 
     a.unsubscribe(&a_observer);
     {
@@ -449,9 +449,9 @@ TEST_CASE("TSData observers notify at the modified level and bubble to parents")
         REQUIRE(mutation.copy_value_from(two.view()));
     }
 
-    CHECK(root_observer.notified == std::vector<engine_time_t>{t1, t2});
-    CHECK(a_observer.notified == std::vector<engine_time_t>{t1});
-    CHECK(a_second_observer.notified == std::vector<engine_time_t>{t1, t2});
+    CHECK(root_observer.notified == std::vector<DateTime>{t1, t2});
+    CHECK(a_observer.notified == std::vector<DateTime>{t1});
+    CHECK(a_second_observer.notified == std::vector<DateTime>{t1, t2});
 
     a.unsubscribe(&a_second_observer);
     {
@@ -459,8 +459,8 @@ TEST_CASE("TSData observers notify at the modified level and bubble to parents")
         REQUIRE(mutation.copy_value_from(three.view()));
     }
 
-    CHECK(root_observer.notified == std::vector<engine_time_t>{t1, t2, t3});
-    CHECK(a_second_observer.notified == std::vector<engine_time_t>{t1, t2});
+    CHECK(root_observer.notified == std::vector<DateTime>{t1, t2, t3});
+    CHECK(a_second_observer.notified == std::vector<DateTime>{t1, t2});
 
     output.unsubscribe(&root_observer);
     b.unsubscribe(&b_observer);
@@ -478,8 +478,8 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
     auto     observed = output.data_view();
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
     Value      one{1};
     Value      two{2};
     Value      three{3};
@@ -496,8 +496,8 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
         REQUIRE(mutation.copy_value_from(one.view()));
     }
 
-    CHECK(self_unsubscribing.notified == std::vector<engine_time_t>{t1});
-    CHECK(survivor.notified == std::vector<engine_time_t>{t1});
+    CHECK(self_unsubscribing.notified == std::vector<DateTime>{t1});
+    CHECK(survivor.notified == std::vector<DateTime>{t1});
     CHECK(observed.observer_count() == 1);
 
     {
@@ -505,8 +505,8 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
         REQUIRE(mutation.copy_value_from(two.view()));
     }
 
-    CHECK(self_unsubscribing.notified == std::vector<engine_time_t>{t1});
-    CHECK(survivor.notified == std::vector<engine_time_t>{t1, t2});
+    CHECK(self_unsubscribing.notified == std::vector<DateTime>{t1});
+    CHECK(survivor.notified == std::vector<DateTime>{t1, t2});
     observed.unsubscribe(&survivor);
     REQUIRE_FALSE(observed.has_observers());
 
@@ -524,17 +524,17 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
         REQUIRE(mutation.copy_value_from(three.view()));
     }
 
-    CHECK(remover.notified == std::vector<engine_time_t>{t3});
+    CHECK(remover.notified == std::vector<DateTime>{t3});
     CHECK(removed_before_notify.notified.empty());
-    CHECK(after_removed.notified == std::vector<engine_time_t>{t3});
+    CHECK(after_removed.notified == std::vector<DateTime>{t3});
     CHECK(observed.observer_count() == 2);
 
     observed.unsubscribe(&remover);
     observed.unsubscribe(&after_removed);
     REQUIRE_FALSE(observed.has_observers());
 
-    const auto t4 = t3 + engine_time_delta_t{1};
-    const auto t5 = t4 + engine_time_delta_t{1};
+    const auto t4 = t3 + TimeDelta{1};
+    const auto t5 = t4 + TimeDelta{1};
     Value      four{4};
     Value      five{5};
     AddingNotifiable adding;
@@ -548,7 +548,7 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
         REQUIRE(mutation.copy_value_from(four.view()));
     }
 
-    CHECK(adding.notified == std::vector<engine_time_t>{t4});
+    CHECK(adding.notified == std::vector<DateTime>{t4});
     CHECK(added_later.notified.empty());
     CHECK(observed.observer_count() == 2);
 
@@ -557,14 +557,14 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
         REQUIRE(mutation.copy_value_from(five.view()));
     }
 
-    CHECK(adding.notified == std::vector<engine_time_t>{t4, t5});
-    CHECK(added_later.notified == std::vector<engine_time_t>{t5});
+    CHECK(adding.notified == std::vector<DateTime>{t4, t5});
+    CHECK(added_later.notified == std::vector<DateTime>{t5});
 
     observed.unsubscribe(&adding);
     observed.unsubscribe(&added_later);
 
-    const auto t6 = t5 + engine_time_delta_t{1};
-    const auto t7 = t6 + engine_time_delta_t{1};
+    const auto t6 = t5 + TimeDelta{1};
+    const auto t7 = t6 + TimeDelta{1};
     Value      six{6};
     Value      seven{7};
     ReplacingNotifiable replacing;
@@ -581,7 +581,7 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
         REQUIRE(mutation.copy_value_from(six.view()));
     }
 
-    CHECK(replacing.notified == std::vector<engine_time_t>{t6});
+    CHECK(replacing.notified == std::vector<DateTime>{t6});
     CHECK(replaced.notified.empty());
     CHECK(replacement.notified.empty());
     CHECK(observed.observer_count() == 1);
@@ -591,7 +591,7 @@ TEST_CASE("TSData observers support reentrant subscribe and unsubscribe")
         REQUIRE(mutation.copy_value_from(seven.view()));
     }
 
-    CHECK(replacement.notified == std::vector<engine_time_t>{t7});
+    CHECK(replacement.notified == std::vector<DateTime>{t7});
     observed.unsubscribe(&replacement);
 }
 
@@ -704,7 +704,7 @@ TEST_CASE("TSOutputView delegates window all_valid through TSData ops")
     const auto *tsw      = registry.tsw(int_meta, 2, 2);
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
     Value      one{1};
     Value      two{2};
 

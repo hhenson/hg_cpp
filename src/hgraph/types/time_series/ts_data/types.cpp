@@ -157,7 +157,7 @@ namespace hgraph
         if (duplicate == entries->entries.end()) { *it = replacement; }
     }
 
-    void TSDataObserverSet::notify(engine_time_t modified_time) const
+    void TSDataObserverSet::notify(DateTime modified_time) const
     {
         if (auto *entry = single(); entry != nullptr)
         {
@@ -253,9 +253,9 @@ namespace hgraph
         }
     }
 
-    bool TSDataTracking::record_modified(engine_time_t modified_time)
+    bool TSDataTracking::record_modified(DateTime modified_time)
     {
-        if (modified_time == MIN_DT) { throw std::invalid_argument("TSDataTracking requires a concrete engine time"); }
+        if (modified_time == MIN_DT) { throw std::invalid_argument("TSDataTracking requires a concrete evaluation time"); }
         if (last_modified_time == modified_time) { return false; }
 
         last_modified_time = modified_time;
@@ -315,7 +315,7 @@ namespace hgraph
         return *table.mutable_tracking_impl(table.context, memory);
     }
 
-    void TSDataParentLink::notify_child_modified(engine_time_t mutation_time) const
+    void TSDataParentLink::notify_child_modified(DateTime mutation_time) const
     {
         if (!has_ts_data_parent())
         {

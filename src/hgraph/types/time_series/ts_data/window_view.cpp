@@ -46,17 +46,17 @@ namespace hgraph
         return base().value();
     }
 
-    ValueView TSWDataView::delta_value(engine_time_t evaluation_time) const
+    ValueView TSWDataView::delta_value(DateTime evaluation_time) const
     {
         return base().delta_value(evaluation_time);
     }
 
-    engine_time_t TSWDataView::last_modified_time() const
+    DateTime TSWDataView::last_modified_time() const
     {
         return base().last_modified_time();
     }
 
-    bool TSWDataView::modified(engine_time_t evaluation_time) const
+    bool TSWDataView::modified(DateTime evaluation_time) const
     {
         return base().modified(evaluation_time);
     }
@@ -106,12 +106,12 @@ namespace hgraph
         return size_layout().min_period;
     }
 
-    engine_time_delta_t TSWDataView::time_range() const
+    TimeDelta TSWDataView::time_range() const
     {
         return time_layout().time_range;
     }
 
-    engine_time_delta_t TSWDataView::min_time_range() const
+    TimeDelta TSWDataView::min_time_range() const
     {
         return time_layout().min_time_range;
     }
@@ -144,12 +144,12 @@ namespace hgraph
         return base().all_valid();
     }
 
-    engine_time_t TSWDataView::first_modified_time() const
+    DateTime TSWDataView::first_modified_time() const
     {
         return empty() ? MIN_DT : time_at(0);
     }
 
-    engine_time_t TSWDataView::time_at(std::size_t index) const
+    DateTime TSWDataView::time_at(std::size_t index) const
     {
         const auto &ops = window_ops();
         if (index >= size()) { throw std::out_of_range("TSWDataView::time_at: index out of range"); }
@@ -209,9 +209,9 @@ namespace hgraph
         };
     }
 
-    Range<engine_time_t> TSWDataView::value_times() const
+    Range<DateTime> TSWDataView::value_times() const
     {
-        return Range<engine_time_t>{
+        return Range<DateTime>{
             .context   = this,
             .memory    = nullptr,
             .limit     = size(),
@@ -230,7 +230,7 @@ namespace hgraph
         return values().end();
     }
 
-    TSWDataMutationView TSWDataView::begin_mutation(engine_time_t evaluation_time) const
+    TSWDataMutationView TSWDataView::begin_mutation(DateTime evaluation_time) const
     {
         return TSWDataMutationView{base(), evaluation_time};
     }
@@ -250,12 +250,12 @@ namespace hgraph
         return static_cast<const TSWDataView *>(context)->time_value_at(index);
     }
 
-    engine_time_t TSWDataView::project_time(const void *context, const void *, std::size_t index)
+    DateTime TSWDataView::project_time(const void *context, const void *, std::size_t index)
     {
         return static_cast<const TSWDataView *>(context)->time_at(index);
     }
 
-    TSWDataMutationView::TSWDataMutationView(TSDataView view, engine_time_t evaluation_time)
+    TSWDataMutationView::TSWDataMutationView(TSDataView view, DateTime evaluation_time)
         : TSWDataView(TSDataView{view.storage_ref()}),
           mutation_(view.begin_mutation(evaluation_time))
     {
@@ -274,7 +274,7 @@ namespace hgraph
         return TSWDataView{base()};
     }
 
-    engine_time_t TSWDataMutationView::current_mutation_time() const
+    DateTime TSWDataMutationView::current_mutation_time() const
     {
         return mutation_.current_mutation_time();
     }
@@ -283,7 +283,7 @@ namespace hgraph
     {
         if (mutation_.modified(current_mutation_time()))
         {
-            throw std::logic_error("TSWDataMutationView::push allows only one window tick per engine time");
+            throw std::logic_error("TSWDataMutationView::push allows only one window tick per evaluation time");
         }
         const auto &ops = window_ops();
         if (ops.push_impl == nullptr)

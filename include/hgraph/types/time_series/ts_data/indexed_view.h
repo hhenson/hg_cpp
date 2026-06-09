@@ -34,9 +34,9 @@ namespace hgraph
         /** Common layout and value projections for this TSData node. */
         [[nodiscard]] const TSDataLayout &layout() const;
         [[nodiscard]] ValueView value() const;
-        [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const;
-        [[nodiscard]] engine_time_t last_modified_time() const;
-        [[nodiscard]] bool modified(engine_time_t evaluation_time) const;
+        [[nodiscard]] ValueView delta_value(DateTime evaluation_time) const;
+        [[nodiscard]] DateTime last_modified_time() const;
+        [[nodiscard]] bool modified(DateTime evaluation_time) const;
         void subscribe(Notifiable *observer) const;
         void unsubscribe(Notifiable *observer) const;
         [[nodiscard]] bool has_observers() const;
@@ -61,12 +61,12 @@ namespace hgraph
         [[nodiscard]] Range<TSDataView> valid_values() const;
 
         /** Children modified at the parent view's current modification time. */
-        [[nodiscard]] Range<TSDataView> modified_values(engine_time_t evaluation_time) const;
+        [[nodiscard]] Range<TSDataView> modified_values(DateTime evaluation_time) const;
 
         /** ``index -> child`` pairs in natural index order. */
         [[nodiscard]] KeyValueRange<std::size_t, TSDataView> items() const;
         [[nodiscard]] KeyValueRange<std::size_t, TSDataView> valid_items() const;
-        [[nodiscard]] KeyValueRange<std::size_t, TSDataView> modified_items(engine_time_t evaluation_time) const;
+        [[nodiscard]] KeyValueRange<std::size_t, TSDataView> modified_items(DateTime evaluation_time) const;
 
       protected:
         IndexedTSDataView(TSDataView view, TSTypeKind expected_kind);
@@ -83,7 +83,7 @@ namespace hgraph
             KeyValueRange<std::size_t, TSDataView>::predicate_fn predicate) const;
 
       private:
-        [[nodiscard]] engine_time_t child_last_modified_time(std::size_t index) const;
+        [[nodiscard]] DateTime child_last_modified_time(std::size_t index) const;
         [[nodiscard]] TSDataView at_impl(std::size_t index);
         [[nodiscard]] static Range<TSDataView> empty_values_range() noexcept;
         [[nodiscard]] static KeyValueRange<std::size_t, TSDataView> empty_items_range() noexcept;
@@ -125,7 +125,7 @@ namespace hgraph
         /** Named child ranges in schema order. */
         [[nodiscard]] KeyValueRange<std::string_view, TSDataView> items() const;
         [[nodiscard]] KeyValueRange<std::string_view, TSDataView> valid_items() const;
-        [[nodiscard]] KeyValueRange<std::string_view, TSDataView> modified_items(engine_time_t evaluation_time) const;
+        [[nodiscard]] KeyValueRange<std::string_view, TSDataView> modified_items(DateTime evaluation_time) const;
 
       private:
         static constexpr std::size_t npos = static_cast<std::size_t>(-1);

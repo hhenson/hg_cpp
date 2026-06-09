@@ -83,11 +83,11 @@ namespace hgraph
                 size_t period;
                 size_t min_period;
             } tick;
-            /** Duration window: ``time_range`` engine-time delta with ``min_time_range`` warm-up. */
+            /** Duration window: ``time_range`` evaluation-time delta with ``min_time_range`` warm-up. */
             struct
             {
-                engine_time_delta_t time_range;
-                engine_time_delta_t min_time_range;
+                TimeDelta time_range;
+                TimeDelta min_time_range;
             } duration;
 
             constexpr WindowParams()
@@ -253,8 +253,8 @@ namespace hgraph
         }
 
         /** Populate ``data.tsw`` for a duration-based ``TSW``. */
-        constexpr void set_tsw_duration(engine_time_delta_t time_range,
-                                           engine_time_delta_t min_time_range) noexcept
+        constexpr void set_tsw_duration(TimeDelta time_range,
+                                           TimeDelta min_time_range) noexcept
         {
             data.tsw = TswData{true, WindowParams{}};
             data.tsw.window.duration.time_range = time_range;
@@ -321,19 +321,19 @@ namespace hgraph
         }
 
         /** Duration-window time range; zero for tick-based or non-window kinds. */
-        [[nodiscard]] constexpr engine_time_delta_t time_range() const noexcept
+        [[nodiscard]] constexpr TimeDelta time_range() const noexcept
         {
             return kind == TSTypeKind::TSW && data.tsw.is_duration_based
                        ? data.tsw.window.duration.time_range
-                       : engine_time_delta_t{0};
+                       : TimeDelta{0};
         }
 
         /** Duration-window warm-up; zero for tick-based or non-window kinds. */
-        [[nodiscard]] constexpr engine_time_delta_t min_time_range() const noexcept
+        [[nodiscard]] constexpr TimeDelta min_time_range() const noexcept
         {
             return kind == TSTypeKind::TSW && data.tsw.is_duration_based
                        ? data.tsw.window.duration.min_time_range
-                       : engine_time_delta_t{0};
+                       : TimeDelta{0};
         }
 
         /** Field array for ``TSB``; null for other kinds. */

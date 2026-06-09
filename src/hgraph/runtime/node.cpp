@@ -17,7 +17,7 @@ namespace hgraph
 {
     namespace
     {
-        void schedule_node_from_storage(GraphValue *graph, std::size_t node_index, engine_time_t modified_time);
+        void schedule_node_from_storage(GraphValue *graph, std::size_t node_index, DateTime modified_time);
 
         struct NodeRuntimeStorage final : Notifiable
         {
@@ -27,7 +27,7 @@ namespace hgraph
                 if (label.empty() && schema.display_name != nullptr) { label = schema.display_name; }
             }
 
-            void notify(engine_time_t modified_time) override
+            void notify(DateTime modified_time) override
             {
                 schedule_node_from_storage(graph, node_index, modified_time);
             }
@@ -39,10 +39,10 @@ namespace hgraph
             std::string   label{};
         };
 
-        void schedule_node_from_storage(GraphValue *graph, std::size_t node_index, engine_time_t modified_time)
+        void schedule_node_from_storage(GraphValue *graph, std::size_t node_index, DateTime modified_time)
         {
             if (graph == nullptr) { return; }
-            const engine_time_t when =
+            const DateTime when =
                 modified_time != MIN_DT ? std::max(modified_time, graph->view().evaluation_time()) : graph->view().evaluation_time();
             graph->schedule_node(node_index, when);
         }
@@ -340,7 +340,7 @@ namespace hgraph
             return layout;
         }
 
-        void activate_input_slots(const NodeView &view, engine_time_t evaluation_time)
+        void activate_input_slots(const NodeView &view, DateTime evaluation_time)
         {
             if (!view.has_input()) { return; }
 
@@ -367,7 +367,7 @@ namespace hgraph
             }
         }
 
-        void deactivate_input_slots(const NodeView &view, engine_time_t evaluation_time)
+        void deactivate_input_slots(const NodeView &view, DateTime evaluation_time)
         {
             if (!view.has_input()) { return; }
 
@@ -394,7 +394,7 @@ namespace hgraph
             }
         }
 
-        [[nodiscard]] TSInputView input_slot(const NodeView &view, std::size_t slot, engine_time_t evaluation_time)
+        [[nodiscard]] TSInputView input_slot(const NodeView &view, std::size_t slot, DateTime evaluation_time)
         {
             const auto *schema = view.schema()->input_schema;
             if (schema == nullptr || schema->kind != TSTypeKind::TSB)
@@ -407,7 +407,7 @@ namespace hgraph
             return input[slot];
         }
 
-        [[nodiscard]] bool ready_to_evaluate(const NodeView &view, engine_time_t evaluation_time)
+        [[nodiscard]] bool ready_to_evaluate(const NodeView &view, DateTime evaluation_time)
         {
             if (!view.has_input()) { return true; }
 
@@ -440,7 +440,7 @@ namespace hgraph
             return true;
         }
 
-        [[nodiscard]] bool active_input_modified(const NodeView &view, engine_time_t evaluation_time)
+        [[nodiscard]] bool active_input_modified(const NodeView &view, DateTime evaluation_time)
         {
             if (!view.has_input()) { return false; }
 
@@ -527,14 +527,14 @@ namespace hgraph
             return memory != nullptr && runtime_context(context).layout.has_recordable_state();
         }
 
-        TSInputView input_view_impl(const void *context, void *memory, engine_time_t evaluation_time)
+        TSInputView input_view_impl(const void *context, void *memory, DateTime evaluation_time)
         {
             const auto &runtime = runtime_context(context);
             if (!runtime.layout.has_input()) { throw std::logic_error("Node has no input"); }
             return node_input(runtime, memory).view(&node_storage(runtime, memory), evaluation_time);
         }
 
-        TSOutputView output_view_impl(const void *context, void *memory, engine_time_t evaluation_time)
+        TSOutputView output_view_impl(const void *context, void *memory, DateTime evaluation_time)
         {
             const auto &runtime = runtime_context(context);
             if (!runtime.layout.has_output()) { throw std::logic_error("Node has no output"); }
@@ -562,21 +562,21 @@ namespace hgraph
             return &node_scheduler_state(runtime, memory);
         }
 
-        TSOutputView error_output_view_impl(const void *context, void *memory, engine_time_t evaluation_time)
+        TSOutputView error_output_view_impl(const void *context, void *memory, DateTime evaluation_time)
         {
             const auto &runtime = runtime_context(context);
             if (!runtime.layout.has_error_output()) { throw std::logic_error("Node has no error output"); }
             return node_error_output(runtime, memory).view(evaluation_time);
         }
 
-        TSOutputView recordable_state_view_impl(const void *context, void *memory, engine_time_t evaluation_time)
+        TSOutputView recordable_state_view_impl(const void *context, void *memory, DateTime evaluation_time)
         {
             const auto &runtime = runtime_context(context);
             if (!runtime.layout.has_recordable_state()) { throw std::logic_error("Node has no recordable state output"); }
             return node_recordable_state(runtime, memory).view(evaluation_time);
         }
 
-        void start_impl(const void *context, const NodeView &view, engine_time_t evaluation_time)
+        void start_impl(const void *context, const NodeView &view, DateTime evaluation_time)
         {
             const auto &runtime = runtime_context(context);
             auto &state = node_storage(runtime, view.data());
@@ -607,7 +607,7 @@ namespace hgraph
             }
         }
 
-        void stop_impl(const void *context, const NodeView &view, engine_time_t evaluation_time)
+        void stop_impl(const void *context, const NodeView &view, DateTime evaluation_time)
         {
             const auto &runtime = runtime_context(context);
             auto &state = node_storage(runtime, view.data());
@@ -619,7 +619,7 @@ namespace hgraph
             deactivate.complete();
         }
 
-        void evaluate_impl(const void *context, const NodeView &view, engine_time_t evaluation_time, bool force)
+        void evaluate_impl(const void *context, const NodeView &view, DateTime evaluation_time, bool force)
         {
             if (!view.started()) { return; }
 
@@ -867,12 +867,12 @@ namespace hgraph
         return valid() && ops().has_recordable_state_impl(ops().context, data());
     }
 
-    TSInputView NodeView::input(engine_time_t evaluation_time) const
+    TSInputView NodeView::input(DateTime evaluation_time) const
     {
         return ops().input_view_impl(ops().context, data(), evaluation_time);
     }
 
-    TSOutputView NodeView::output(engine_time_t evaluation_time) const
+    TSOutputView NodeView::output(DateTime evaluation_time) const
     {
         return ops().output_view_impl(ops().context, data(), evaluation_time);
     }
@@ -892,19 +892,19 @@ namespace hgraph
         return *ops().scheduler_state_impl(ops().context, data());
     }
 
-    TSOutputView NodeView::error_output(engine_time_t evaluation_time) const
+    TSOutputView NodeView::error_output(DateTime evaluation_time) const
     {
         return ops().error_output_view_impl(ops().context, data(), evaluation_time);
     }
 
-    TSOutputView NodeView::recordable_state(engine_time_t evaluation_time) const
+    TSOutputView NodeView::recordable_state(DateTime evaluation_time) const
     {
         return ops().recordable_state_view_impl(ops().context, data(), evaluation_time);
     }
 
-    void NodeView::start(engine_time_t evaluation_time) const { ops().start_impl(ops().context, *this, evaluation_time); }
-    void NodeView::stop(engine_time_t evaluation_time) const { ops().stop_impl(ops().context, *this, evaluation_time); }
-    void NodeView::evaluate(engine_time_t evaluation_time, bool force) const
+    void NodeView::start(DateTime evaluation_time) const { ops().start_impl(ops().context, *this, evaluation_time); }
+    void NodeView::stop(DateTime evaluation_time) const { ops().stop_impl(ops().context, *this, evaluation_time); }
+    void NodeView::evaluate(DateTime evaluation_time, bool force) const
     {
         ops().evaluate_impl(ops().context, *this, evaluation_time, force);
     }

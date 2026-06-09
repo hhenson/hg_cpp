@@ -79,7 +79,7 @@ Main Participants
     registered with the source key-set slot ops and source TSData
     notification set. It forwards structural slot callbacks to the
     owning proxy storage and forwards source modification notifications
-    so the proxy can process added/removed slots once an engine time is
+    so the proxy can process added/removed slots once an evaluation time is
     available.
 
 ``ValueBuilder``
@@ -199,7 +199,7 @@ need to mirror a source ``TSD`` but own transformed values.
                           std::size_t   slot,
                           TSDataView    target,
                           TSDataView    source,
-                          engine_time_t modified_time,
+                          DateTime modified_time,
                           const void   *context)
    {
        (void) source;
@@ -241,7 +241,7 @@ Implementing a Slot Observer
 
 Slot observers are for storage-level coordination between slot-shaped
 TSData implementations. They are not user-facing graph observers. They
-carry structural slot ids only; they do not carry engine time or delta
+carry structural slot ids only; they do not carry evaluation time or delta
 classification. A consumer implements the structural callbacks and
 registers through the ``TSS`` view returned by
 ``TSDDataView::key_set()``.
@@ -281,7 +281,7 @@ registers through the ``TSS`` view returned by
 key-set, then forwards source slot events to the proxy storage, which
 updates its inline value slots and emits downstream proxy slot events.
 The proxy separately subscribes to source TSData modification
-notification to process added/removed slot surfaces once the engine
+notification to process added/removed slot surfaces once the evaluation
 time is known.
 
 Creation Flow
@@ -445,7 +445,7 @@ Key Add Flow
 When a source key is inserted, the source ``KeySlotStore`` emits a
 structural insert event. The proxy consumes that event immediately to
 construct the aligned child slot. Once the source TSData modification
-notification fires with an engine time, the proxy navigates the source
+notification fires carrying an evaluation time, the proxy navigates the source
 added slots and materialises the child value.
 
 .. mermaid::
@@ -606,7 +606,7 @@ Design Constraints
 - The proxy must not use generic ``Notifiable`` subscriptions to keep
   its structural slots aligned. Structural alignment comes from
   ``SlotObserver``. Normal TSData notification may be used only to learn
-  the engine time and then read the source added/removed slot surfaces.
+  the evaluation time and then read the source added/removed slot surfaces.
 - The source key store is authoritative. Proxy keys are read from the
   source through ops; the proxy does not copy keys into an associative
   side map.

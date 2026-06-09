@@ -30,17 +30,17 @@ namespace hgraph
         [[nodiscard]] const void *missing_delta_memory(const void *, const void *);
         [[nodiscard]] void *missing_mutable_delta_memory(const void *, void *);
         void noop_reset_delta(const void *, void *);
-        void noop_cleanup_delta(const void *, void *, engine_time_t);
-        void noop_record_child_modified(const void *, void *, std::size_t, engine_time_t);
-        [[nodiscard]] bool missing_copy_value_from(const void *, void *, const ValueView &, engine_time_t);
+        void noop_cleanup_delta(const void *, void *, DateTime);
+        void noop_record_child_modified(const void *, void *, std::size_t, DateTime);
+        [[nodiscard]] bool missing_copy_value_from(const void *, void *, const ValueView &, DateTime);
         [[nodiscard]] Value missing_empty_delta(const TSDataBinding &);
         [[nodiscard]] Value missing_capture_delta(const TSInputView &);
         [[nodiscard]] bool missing_delta_has_effect(const TSOutputView &, const ValueView &);
         void missing_apply_delta(const TSOutputView &, const ValueView &);
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
-        [[nodiscard]] bool missing_from_python(const void *, void *, nb::handle, engine_time_t);
+        [[nodiscard]] bool missing_from_python(const void *, void *, nb::handle, DateTime);
         [[nodiscard]] nb::object missing_to_python(const void *, const void *);
-        [[nodiscard]] nb::object missing_delta_to_python(const void *, const void *, engine_time_t);
+        [[nodiscard]] nb::object missing_delta_to_python(const void *, const void *, DateTime);
 #endif
         [[nodiscard]] std::size_t missing_indexed_size(const void *, const void *);
         [[nodiscard]] const TSDataBinding *missing_indexed_element_binding(const void *, const void *, std::size_t);
@@ -56,10 +56,10 @@ namespace hgraph
         [[nodiscard]] KeyValueRange<ValueView, TSDataView> missing_ts_data_kv_range(const void *, const void *);
         [[nodiscard]] Range<TSDataView> missing_ts_data_range(const void *, const void *);
         [[nodiscard]] SlotTSDataMutationResult missing_insert_key(const void *, void *, const ValueView &,
-                                                                  engine_time_t);
+                                                                  DateTime);
         [[nodiscard]] SlotTSDataMutationResult missing_remove_key(const void *, void *, const ValueView &,
-                                                                  engine_time_t);
-        [[nodiscard]] bool missing_touch_slots(const void *, void *, engine_time_t);
+                                                                  DateTime);
+        [[nodiscard]] bool missing_touch_slots(const void *, void *, DateTime);
         void missing_reserve_slots(const void *, void *, std::size_t);
         void missing_subscribe_slot_observer(const void *, void *, SlotObserver *);
         void missing_unsubscribe_slot_observer(const void *, void *, SlotObserver *);
@@ -125,13 +125,13 @@ namespace hgraph
                                            void *memory) = &ts_data_detail::missing_mutable_delta_memory;
         void (*reset_delta_impl)(const void *context, void *memory) = &ts_data_detail::noop_reset_delta;
         void (*cleanup_delta_impl)(const void *context, void *memory,
-                                   engine_time_t modified_time) = &ts_data_detail::noop_cleanup_delta;
+                                   DateTime modified_time) = &ts_data_detail::noop_cleanup_delta;
         void (*record_child_modified_impl)(const void *context,
                                            void *memory,
                                            std::size_t child_id,
-                                           engine_time_t modified_time) = &ts_data_detail::noop_record_child_modified;
+                                           DateTime modified_time) = &ts_data_detail::noop_record_child_modified;
         bool (*copy_value_from_impl)(const void *context, void *memory, const ValueView &source,
-                                     engine_time_t modified_time) = &ts_data_detail::missing_copy_value_from;
+                                     DateTime modified_time) = &ts_data_detail::missing_copy_value_from;
         Value (*empty_delta_impl)(const TSDataBinding &binding) = &ts_data_detail::missing_empty_delta;
         Value (*capture_delta_impl)(const TSInputView &in) = &ts_data_detail::missing_capture_delta;
         bool (*delta_has_effect_impl)(const TSOutputView &out,
@@ -140,12 +140,12 @@ namespace hgraph
             &ts_data_detail::missing_apply_delta;
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         bool (*from_python_impl)(const void *context, void *memory, nb::handle source,
-                                 engine_time_t modified_time) = &ts_data_detail::missing_from_python;
+                                 DateTime modified_time) = &ts_data_detail::missing_from_python;
         nb::object (*to_python_impl)(const void *context,
                                      const void *memory) = &ts_data_detail::missing_to_python;
         nb::object (*delta_to_python_impl)(const void *context,
                                            const void *memory,
-                                           engine_time_t evaluation_time) = &ts_data_detail::missing_delta_to_python;
+                                           DateTime evaluation_time) = &ts_data_detail::missing_delta_to_python;
 #endif
     };
 
@@ -175,11 +175,11 @@ namespace hgraph
         Range<ValueView> (*make_removed_values_range_impl)(const void *context,
                                                            const void *memory) = &ts_data_detail::missing_value_range;
         SlotTSDataMutationResult (*insert_key_impl)(const void *context, void *memory, const ValueView &key,
-                                                    engine_time_t modified_time) = &ts_data_detail::missing_insert_key;
+                                                    DateTime modified_time) = &ts_data_detail::missing_insert_key;
         SlotTSDataMutationResult (*remove_key_impl)(const void *context, void *memory, const ValueView &key,
-                                                    engine_time_t modified_time) = &ts_data_detail::missing_remove_key;
+                                                    DateTime modified_time) = &ts_data_detail::missing_remove_key;
         bool (*touch_impl)(const void *context, void *memory,
-                           engine_time_t modified_time) = &ts_data_detail::missing_touch_slots;
+                           DateTime modified_time) = &ts_data_detail::missing_touch_slots;
         void (*reserve_impl)(const void *context, void *memory,
                              std::size_t capacity) = &ts_data_detail::missing_reserve_slots;
         void (*subscribe_slot_observer_impl)(const void *context,
@@ -260,12 +260,12 @@ namespace hgraph
     {
         std::size_t (*size_impl)(const void *context, const void *memory) = nullptr;
         const void *(*element_at_impl)(const void *context, const void *memory, std::size_t index) = nullptr;
-        engine_time_t (*time_at_impl)(const void *context, const void *memory, std::size_t index) = nullptr;
+        DateTime (*time_at_impl)(const void *context, const void *memory, std::size_t index) = nullptr;
         const void *(*time_element_at_impl)(const void *context, const void *memory, std::size_t index) = nullptr;
         std::size_t (*capacity_impl)(const void *context, const void *memory) = nullptr;
         bool (*full_impl)(const void *context, const void *memory) = nullptr;
         void (*push_impl)(const void *context, void *memory, const ValueView &source,
-                          engine_time_t modified_time) = nullptr;
+                          DateTime modified_time) = nullptr;
     };
 }  // namespace hgraph
 

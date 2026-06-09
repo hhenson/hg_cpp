@@ -181,21 +181,21 @@ namespace hgraph
         [[nodiscard]] ValueView value() const;
 
         /** Delta value for ``evaluation_time``, or a typed null view when unchanged. */
-        [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const;
+        [[nodiscard]] ValueView delta_value(DateTime evaluation_time) const;
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         /** Current value converted by the TSData binding's type-erased Python export op. */
         [[nodiscard]] nb::object value_to_python() const;
 
         /** Delta value for ``evaluation_time`` converted by the TSData binding's type-erased Python export op. */
-        [[nodiscard]] nb::object delta_value_to_python(engine_time_t evaluation_time) const;
+        [[nodiscard]] nb::object delta_value_to_python(DateTime evaluation_time) const;
 #endif
 
-        /** Last engine time that modified this TSData node, or ``MIN_DT`` if never valid. */
-        [[nodiscard]] engine_time_t last_modified_time() const;
+        /** Last evaluation time that modified this TSData node, or ``MIN_DT`` if never valid. */
+        [[nodiscard]] DateTime last_modified_time() const;
 
         /** True when this node was modified at ``evaluation_time``. */
-        [[nodiscard]] bool modified(engine_time_t evaluation_time) const;
+        [[nodiscard]] bool modified(DateTime evaluation_time) const;
 
         /** Register / remove a per-level modification observer. */
         void subscribe(Notifiable *observer) const;
@@ -220,7 +220,7 @@ namespace hgraph
          * ``modified_time`` is normally the root node's last modified time.
          * Branches whose tracking timestamp differs are skipped.
          */
-        void cleanup_delta(engine_time_t modified_time) const;
+        void cleanup_delta(DateTime modified_time) const;
         [[nodiscard]] TSSDataView as_set() &;
         [[nodiscard]] TSSDataView as_set() const &;
         void as_set() && = delete;
@@ -242,7 +242,7 @@ namespace hgraph
         void as_window() && = delete;
         void as_window() const && = delete;
 
-        [[nodiscard]] TSDataMutationView begin_mutation(engine_time_t evaluation_time) const;
+        [[nodiscard]] TSDataMutationView begin_mutation(DateTime evaluation_time) const;
 
       private:
         friend class TSDataMutationView;
@@ -269,7 +269,7 @@ namespace hgraph
     {
       public:
         /** Begin a mutation-capable projection of a live TSData view. */
-        TSDataMutationView(TSDataView view, engine_time_t evaluation_time);
+        TSDataMutationView(TSDataView view, DateTime evaluation_time);
 
         TSDataMutationView(const TSDataMutationView &) = delete;
         TSDataMutationView &operator=(const TSDataMutationView &) = delete;
@@ -293,18 +293,18 @@ namespace hgraph
         [[nodiscard]] ValueView value() const;
 
         /** Delta value for ``evaluation_time`` using the underlying TSData semantics. */
-        [[nodiscard]] ValueView delta_value(engine_time_t evaluation_time) const;
+        [[nodiscard]] ValueView delta_value(DateTime evaluation_time) const;
 
-        /** Engine time associated with this mutation scope. */
-        [[nodiscard]] engine_time_t current_mutation_time() const;
+        /** Runtime time associated with this mutation scope. */
+        [[nodiscard]] DateTime current_mutation_time() const;
 
         /** True when the underlying TSData was modified at ``evaluation_time``. */
-        [[nodiscard]] bool modified(engine_time_t evaluation_time) const;
+        [[nodiscard]] bool modified(DateTime evaluation_time) const;
 
         /**
          * Mark this TSData node as modified and notify its parent once.
          *
-         * Repeated calls in the same engine time are coalesced by
+         * Repeated calls in the same evaluation time are coalesced by
          * ``last_modified_time`` and therefore do not re-notify ancestors.
          */
         void mark_modified();
@@ -324,7 +324,7 @@ namespace hgraph
         void notify_parent_modified() const;
 
         TSDataStorageRef<> storage_{};
-        engine_time_t      mutation_time_{MIN_DT};
+        DateTime      mutation_time_{MIN_DT};
     };
 
     /** Apply a slot mutation result to the owning mutation view's timestamp state. */

@@ -177,7 +177,7 @@ TEST_CASE("static node: source -> compute graph runs in simulation mode")
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -201,7 +201,7 @@ TEST_CASE("static node: two sources feed a two-input compute node")
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -246,7 +246,7 @@ TEST_CASE("static node: Scalar<> coexists with a time-series input")
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -264,7 +264,7 @@ TEST_CASE("static node: State<Int> is constructed and mutated across evaluations
 
     auto       node = NodeBuilder{}.label("counter").implementation<Counter>().make_node();
     const auto t1   = MIN_ST;
-    const auto t2   = t1 + engine_time_delta_t{1};
+    const auto t2   = t1 + TimeDelta{1};
 
     auto view = node.view();
     REQUIRE(view.has_state());

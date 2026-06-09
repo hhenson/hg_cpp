@@ -44,7 +44,7 @@ namespace hgraph
         [[nodiscard]] bool same_as(const TSOutputHandle &other) const noexcept;
 
         /** Recreate a read-only output view for ``evaluation_time``. */
-        [[nodiscard]] TSOutputView view(engine_time_t evaluation_time) const noexcept;
+        [[nodiscard]] TSOutputView view(DateTime evaluation_time) const noexcept;
         void reset() noexcept;
 
       private:
@@ -62,8 +62,8 @@ namespace hgraph
     {
       public:
         TSOutputView() noexcept;
-        TSOutputView(const TSOutput *output, const TSDataView &data, engine_time_t evaluation_time) noexcept;
-        TSOutputView(TSOutputHandle handle, engine_time_t evaluation_time) noexcept;
+        TSOutputView(const TSOutput *output, const TSDataView &data, DateTime evaluation_time) noexcept;
+        TSOutputView(TSOutputHandle handle, DateTime evaluation_time) noexcept;
 
         TSOutputView(const TSOutputView &) = delete;
         TSOutputView &operator=(const TSOutputView &) = delete;
@@ -80,7 +80,7 @@ namespace hgraph
         [[nodiscard]] TSDataView &data_view() noexcept;
 
         /** Evaluation time associated with delta/modified checks. */
-        [[nodiscard]] engine_time_t evaluation_time() const noexcept;
+        [[nodiscard]] DateTime evaluation_time() const noexcept;
 
         /** Binding and schema for the borrowed TSData. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;
@@ -92,7 +92,7 @@ namespace hgraph
 
         /** Modification and validity status. */
         [[nodiscard]] bool bound() const noexcept;
-        [[nodiscard]] engine_time_t last_modified_time() const;
+        [[nodiscard]] DateTime last_modified_time() const;
         [[nodiscard]] bool modified() const;
         [[nodiscard]] bool valid() const;
         [[nodiscard]] bool all_valid() const;
@@ -118,7 +118,7 @@ namespace hgraph
         [[nodiscard]] TSOutputHandle binding_for(const TSValueTypeMetaData &requested_schema) const;
 
         /** Begin a mutation through this output endpoint view. */
-        [[nodiscard]] TSDataMutationView begin_mutation(engine_time_t evaluation_time) const;
+        [[nodiscard]] TSDataMutationView begin_mutation(DateTime evaluation_time) const;
 
         /** Shape-specific projections for root TSData. */
         [[nodiscard]] TSSOutputView as_set() &;
@@ -147,7 +147,7 @@ namespace hgraph
 
         const TSOutput *output_{nullptr};
         TSDataView      data_{};
-        engine_time_t   evaluation_time_{MIN_DT};
+        DateTime   evaluation_time_{MIN_DT};
     };
 
 }  // namespace hgraph

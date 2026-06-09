@@ -196,7 +196,7 @@ TEST_CASE("global state: reachable from an evaluated executor")
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -220,7 +220,7 @@ TEST_CASE("global state: set in a compose block, then modified in an eval block"
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();

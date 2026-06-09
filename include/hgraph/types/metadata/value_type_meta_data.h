@@ -26,7 +26,7 @@ namespace hgraph
      */
     enum class ValueTypeKind : uint8_t
     {
-        /** Single scalar (integer, floating-point, bool, string, engine time/date). */
+        /** Single scalar (integer, floating-point, bool, string, date/time). */
         Atomic,
         /** Fixed-arity ordered fields, addressed by index. */
         Tuple,
@@ -253,8 +253,8 @@ namespace hgraph
 
         template <typename T>
         constexpr bool buffer_compatible_type =
-            std::is_arithmetic_v<T> || std::is_same_v<T, engine_date_t> || std::is_same_v<T, engine_time_t> ||
-            std::is_same_v<T, engine_time_delta_t>;
+            std::is_arithmetic_v<T> || std::is_same_v<T, Date> || std::is_same_v<T, DateTime> ||
+            std::is_same_v<T, TimeDelta>;
     }  // namespace detail
 
     /**
@@ -262,7 +262,7 @@ namespace hgraph
      *
      * Combines trivially-* type traits with concept checks for
      * hashability, equatability, and comparability, plus the
-     * ``BufferCompatible`` test for arithmetic / engine-time types.
+     * ``BufferCompatible`` test for arithmetic / date/time types.
      * Used by ``TypeRegistry::register_scalar<T>`` to derive the flags
      * for an atomic schema.
      */

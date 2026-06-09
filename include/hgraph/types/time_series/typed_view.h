@@ -14,13 +14,13 @@ namespace hgraph
         [[nodiscard]] const EndpointView &base() const noexcept { return view_; }
         [[nodiscard]] EndpointView &base() noexcept { return view_; }
 
-        [[nodiscard]] engine_time_t evaluation_time() const noexcept { return view_.evaluation_time(); }
+        [[nodiscard]] DateTime evaluation_time() const noexcept { return view_.evaluation_time(); }
         [[nodiscard]] const TSDataBinding *binding() const noexcept { return view_.binding(); }
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept { return view_.schema(); }
         [[nodiscard]] bool bound() const noexcept { return view_.bound(); }
         [[nodiscard]] bool valid() const { return view_.valid(); }
         [[nodiscard]] bool all_valid() const { return view_.all_valid(); }
-        [[nodiscard]] engine_time_t last_modified_time() const { return view_.last_modified_time(); }
+        [[nodiscard]] DateTime last_modified_time() const { return view_.last_modified_time(); }
         [[nodiscard]] bool modified() const { return view_.modified(); }
         [[nodiscard]] ValueView value() const { return view_.value(); }
         [[nodiscard]] ValueView delta_value() const { return view_.delta_value(); }

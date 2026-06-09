@@ -149,9 +149,9 @@ def test_specialized_views_are_exposed_from_nanobind():
     assert queue_view.values() == [4, 5]
 
 
-def test_engine_time_containers_export_numpy_time_dtypes():
+def test_datetime_containers_export_numpy_time_dtypes():
     assert_numpy_time_array(
-        hgraph.engine_time_list(
+        hgraph.datetime_list(
             [
                 EPOCH + timedelta(microseconds=123),
                 EPOCH + timedelta(microseconds=456),
@@ -161,7 +161,7 @@ def test_engine_time_containers_export_numpy_time_dtypes():
         "datetime64[us]",
     )
     assert_numpy_time_array(
-        hgraph.engine_delta_cyclic_buffer(
+        hgraph.timedelta_cyclic_buffer(
             [
                 timedelta(microseconds=10),
                 timedelta(microseconds=20),
@@ -173,22 +173,22 @@ def test_engine_time_containers_export_numpy_time_dtypes():
         "timedelta64[us]",
     )
     assert_numpy_time_array(
-        hgraph.engine_date_queue([date(1970, 1, 2), date(1970, 1, 3)]).to_python(),
+        hgraph.date_queue([date(1970, 1, 2), date(1970, 1, 3)]).to_python(),
         [1, 2],
         "datetime64[D]",
     )
 
 
-def test_engine_chrono_scalars_round_trip_as_python_datetime_types():
+def test_date_time_scalars_round_trip_as_python_datetime_types():
     registry = hgraph.TypeRegistry.instance()
 
     timestamp = EPOCH + timedelta(days=2, seconds=3, microseconds=4)
     duration = timedelta(seconds=5, microseconds=6)
     day = date(2024, 2, 29)
 
-    assert hgraph.value_from_python(registry.engine_time(), timestamp).to_python() == timestamp
-    assert hgraph.value_from_python(registry.engine_time_delta(), duration).to_python() == duration
-    assert hgraph.value_from_python(registry.engine_date(), day).to_python() == day
+    assert hgraph.value_from_python(registry.datetime(), timestamp).to_python() == timestamp
+    assert hgraph.value_from_python(registry.timedelta(), duration).to_python() == duration
+    assert hgraph.value_from_python(registry.date(), day).to_python() == day
 
 
 def test_unsupported_scalar_conversion_raises():

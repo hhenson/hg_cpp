@@ -28,7 +28,7 @@ namespace hgraph::testing
      *
      * The buffer is a value-layer **mutable** ``List<Any>`` stored in the
      * ``GlobalState`` under a string key and **cycle-aligned**: index ``i`` is
-     * engine time ``MIN_ST + i * MIN_TD``; an empty ``Any`` means "no tick that
+     * evaluation time ``MIN_ST + i * MIN_TD``; an empty ``Any`` means "no tick that
      * cycle", a non-empty ``Any`` means "tick with that value". See
      * ``docs/source/user_guide/testing_graphs_cpp.rst``.
      */
@@ -66,7 +66,7 @@ namespace hgraph::testing
     }
 
     /** The cycle index for ``now`` (offset from ``MIN_ST`` in ``MIN_TD`` steps). */
-    [[nodiscard]] inline std::size_t cycle_offset(engine_time_t now) noexcept
+    [[nodiscard]] inline std::size_t cycle_offset(DateTime now) noexcept
     {
         return static_cast<std::size_t>((now - MIN_ST) / MIN_TD);
     }
@@ -188,14 +188,14 @@ namespace hgraph::testing
             gs.set(key.value(), make_buffer());  // fresh, empty cycle-aligned buffer
         }
 
-        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, GlobalStateView gs, engine_time_t now)
+        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, GlobalStateView gs, DateTime now)
         {
             const std::size_t offset   = cycle_offset(now);
             const ValueView   buffer   = gs.get(key.value());
             auto              list     = buffer.as_list();
             std::size_t       size     = list.size();
             auto              mutation = list.begin_mutation();
-            while (size < offset)  // pad skipped cycles so the buffer index matches the engine cycle
+            while (size < offset)  // pad skipped cycles so the buffer index matches the evaluation cycle
             {
                 mutation.push_back(empty_any().view());
                 ++size;

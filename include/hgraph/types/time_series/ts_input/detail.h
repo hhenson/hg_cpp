@@ -55,7 +55,7 @@ namespace hgraph::detail
         using to_python_fn = nb::object (*)(const void *context, const void *memory);
         using delta_to_python_fn = nb::object (*)(const void *context,
                                                   const void *memory,
-                                                  engine_time_t evaluation_time);
+                                                  DateTime evaluation_time);
 #endif
 
         const char      *name{nullptr};
@@ -79,7 +79,7 @@ namespace hgraph::detail
     {
         Notifiable *target{nullptr};
 
-        void notify(engine_time_t modified_time) override;
+        void notify(DateTime modified_time) override;
     };
 
     struct TSInputActiveTarget

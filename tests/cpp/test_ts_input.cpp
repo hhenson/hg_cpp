@@ -16,9 +16,9 @@ namespace
 {
     struct RecordingNotifiable : hgraph::Notifiable
     {
-        std::vector<hgraph::engine_time_t> notified{};
+        std::vector<hgraph::DateTime> notified{};
 
-        void notify(hgraph::engine_time_t modified_time) override
+        void notify(hgraph::DateTime modified_time) override
         {
             notified.push_back(modified_time);
         }
@@ -40,14 +40,14 @@ namespace
             });
     }
 
-    void set_output(hgraph::TSOutput &output, int value, hgraph::engine_time_t time)
+    void set_output(hgraph::TSOutput &output, int value, hgraph::DateTime time)
     {
         hgraph::Value wrapped{value};
         auto mutation = output.begin_mutation(time);
         REQUIRE(mutation.copy_value_from(wrapped.view()));
     }
 
-    void set_list_output(hgraph::TSOutput &output, std::size_t index, int value, hgraph::engine_time_t time)
+    void set_list_output(hgraph::TSOutput &output, std::size_t index, int value, hgraph::DateTime time)
     {
         hgraph::Value wrapped{value};
         auto          view = output.view(time);
@@ -59,7 +59,7 @@ namespace
     void set_bundle_output(hgraph::TSOutput &output,
                            std::string_view field,
                            int value,
-                           hgraph::engine_time_t time)
+                           hgraph::DateTime time)
     {
         hgraph::Value wrapped{value};
         auto          view = output.view(time);
@@ -239,19 +239,19 @@ TEST_CASE("TSInput active non-peered prefixes schedule through peered terminal n
     active_list.make_active();
     REQUIRE(active_list.active());
 
-    const auto t1 = MIN_ST + engine_time_delta_t{1};
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t1 = MIN_ST + TimeDelta{1};
+    const auto t2 = t1 + TimeDelta{1};
     set_output(lhs, 1, t1);
     set_output(rhs, 2, t2);
 
-    REQUIRE(recorder.notified == std::vector<engine_time_t>{t1, t2});
+    REQUIRE(recorder.notified == std::vector<DateTime>{t1, t2});
 
     active_list.make_passive();
     REQUIRE_FALSE(active_list.active());
 
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t3 = t2 + TimeDelta{1};
     set_output(lhs, 3, t3);
-    REQUIRE(recorder.notified == std::vector<engine_time_t>{t1, t2});
+    REQUIRE(recorder.notified == std::vector<DateTime>{t1, t2});
 }
 
 TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
@@ -275,8 +275,8 @@ TEST_CASE("TSInput target binding updates non-peered bundle and list prefixes")
     TSOutput root_output{*root};
     TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
 
-    const auto t1 = MIN_ST + engine_time_delta_t{20};
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t1 = MIN_ST + TimeDelta{20};
+    const auto t2 = t1 + TimeDelta{1};
 
     set_output(first_output, 10, t1);
 
@@ -381,7 +381,7 @@ TEST_CASE("TSInput data views project non-peered prefixes")
     TSOutput first_output{*ts_int};
     TSInput  input{TSInputBuilderFactory::checked_builder_for(*root_schema, input_schema)};
 
-    const auto t1 = MIN_ST + engine_time_delta_t{40};
+    const auto t1 = MIN_ST + TimeDelta{40};
     set_output(first_output, 11, t1);
 
     auto root_view = input.view(nullptr, t1);
@@ -440,8 +440,8 @@ TEST_CASE("TSInput data views step through target links and rebinds")
     TSOutput second_output{*list};
     TSInput  input{TSInputBuilderFactory::checked_builder_for(*root_schema, input_schema)};
 
-    const auto t1 = MIN_ST + engine_time_delta_t{50};
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t1 = MIN_ST + TimeDelta{50};
+    const auto t2 = t1 + TimeDelta{1};
     set_list_output(first_output, 0, 10, t1);
     set_list_output(first_output, 1, 20, t1);
     set_list_output(second_output, 0, 100, t2);
@@ -519,7 +519,7 @@ TEST_CASE("TSInput output binding levels expose values and data views from root 
     TSOutput second_element_output{*ts_int};
     TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
 
-    const auto t1 = MIN_ST + engine_time_delta_t{60};
+    const auto t1 = MIN_ST + TimeDelta{60};
     set_output(leaf_output, 7, t1);
     set_bundle_output(bundle_output, "x", 10, t1);
     set_bundle_output(bundle_output, "y", 20, t1);
@@ -721,12 +721,12 @@ TEST_CASE("TSInput active root bubbles output modifications through non-peered p
     active_root.make_active();
     REQUIRE(active_root.active());
 
-    const auto t1 = MIN_ST + engine_time_delta_t{30};
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t1 = MIN_ST + TimeDelta{30};
+    const auto t2 = t1 + TimeDelta{1};
     set_output(first_output, 1, t1);
     set_output(second_output, 2, t2);
 
-    REQUIRE(recorder.notified == std::vector<engine_time_t>{t1, t2});
+    REQUIRE(recorder.notified == std::vector<DateTime>{t1, t2});
 
     auto t2_root = input.view(nullptr, t2);
     REQUIRE(t2_root.modified());
@@ -745,9 +745,9 @@ TEST_CASE("TSInput active root bubbles output modifications through non-peered p
     active_root.make_passive();
     REQUIRE_FALSE(active_root.active());
 
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t3 = t2 + TimeDelta{1};
     set_output(first_output, 3, t3);
-    REQUIRE(recorder.notified == std::vector<engine_time_t>{t1, t2});
+    REQUIRE(recorder.notified == std::vector<DateTime>{t1, t2});
 }
 
 TEST_CASE("TSInput peered collection descendants can be activated independently")
@@ -806,8 +806,8 @@ TEST_CASE("TSInput peered collection descendants can be activated independently"
     second.make_active();
     REQUIRE(second.active());
 
-    const auto t1 = MIN_ST + engine_time_delta_t{10};
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t1 = MIN_ST + TimeDelta{10};
+    const auto t2 = t1 + TimeDelta{1};
     {
         auto view = output.view();
         auto list_view = view.as_list();
@@ -824,7 +824,7 @@ TEST_CASE("TSInput peered collection descendants can be activated independently"
         hgraph::Value value{20};
         REQUIRE(second_mutation.copy_value_from(value.view()));
     }
-    REQUIRE(recorder.notified == std::vector<engine_time_t>{t2});
+    REQUIRE(recorder.notified == std::vector<DateTime>{t2});
 
     second.make_passive();
 }
@@ -852,7 +852,7 @@ TEST_CASE("TSInput shape casts return endpoint views for slot collections")
     TSInput  input{TSInputBuilderFactory::checked_builder_for(*root, input_schema)};
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
     Value      one{1};
     Value      two{2};
     Value      key{7};
@@ -920,7 +920,7 @@ TEST_CASE("TSInput shape casts return endpoint views for slot collections")
         REQUIRE(mutation.copy_value_from(replacement.view()));
     }
 
-    REQUIRE(recorder.notified == std::vector<engine_time_t>{t2, t2});
+    REQUIRE(recorder.notified == std::vector<DateTime>{t2, t2});
 
     active_set.make_passive();
     active_dict_child.make_passive();

@@ -30,17 +30,17 @@ namespace hgraph
         return base().value();
     }
 
-    ValueView IndexedTSDataView::delta_value(engine_time_t evaluation_time) const
+    ValueView IndexedTSDataView::delta_value(DateTime evaluation_time) const
     {
         return base().delta_value(evaluation_time);
     }
 
-    engine_time_t IndexedTSDataView::last_modified_time() const
+    DateTime IndexedTSDataView::last_modified_time() const
     {
         return base().last_modified_time();
     }
 
-    bool IndexedTSDataView::modified(engine_time_t evaluation_time) const
+    bool IndexedTSDataView::modified(DateTime evaluation_time) const
     {
         return base().modified(evaluation_time);
     }
@@ -106,7 +106,7 @@ namespace hgraph
         return values_range(&child_valid_predicate);
     }
 
-    Range<TSDataView> IndexedTSDataView::modified_values(engine_time_t evaluation_time) const
+    Range<TSDataView> IndexedTSDataView::modified_values(DateTime evaluation_time) const
     {
         if (!modified(evaluation_time)) { return empty_values_range(); }
         return values_range(&child_modified_predicate);
@@ -122,7 +122,7 @@ namespace hgraph
         return items_range(&child_valid_predicate);
     }
 
-    KeyValueRange<std::size_t, TSDataView> IndexedTSDataView::modified_items(engine_time_t evaluation_time) const
+    KeyValueRange<std::size_t, TSDataView> IndexedTSDataView::modified_items(DateTime evaluation_time) const
     {
         if (!modified(evaluation_time)) { return empty_items_range(); }
         return items_range(&child_modified_predicate);
@@ -171,7 +171,7 @@ namespace hgraph
         };
     }
 
-    engine_time_t IndexedTSDataView::child_last_modified_time(std::size_t index) const
+    DateTime IndexedTSDataView::child_last_modified_time(std::size_t index) const
     {
         const auto &ops = indexed_ops();
         if (index >= ops.size_impl(ops.context, storage_.data())) { return MIN_DT; }
@@ -298,7 +298,7 @@ namespace hgraph
         return named_items_range(&named_child_valid_predicate);
     }
 
-    KeyValueRange<std::string_view, TSDataView> TSBDataView::modified_items(engine_time_t evaluation_time) const
+    KeyValueRange<std::string_view, TSDataView> TSBDataView::modified_items(DateTime evaluation_time) const
     {
         if (!modified(evaluation_time)) { return empty_named_items_range(); }
         return named_items_range(&named_child_modified_predicate);

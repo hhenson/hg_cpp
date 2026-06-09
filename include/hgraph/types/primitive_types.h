@@ -15,10 +15,6 @@ namespace hgraph
     using Float = double;
     using Str   = std::string;
 
-    using Date      = engine_date_t;
-    using DateTime  = engine_time_t;
-    using TimeDelta = engine_time_delta_t;
-
     [[nodiscard]] constexpr Bool bool_(bool value) noexcept { return value; }
 
     template <typename T>

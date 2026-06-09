@@ -6,14 +6,14 @@
 
 namespace hgraph
 {
-    TSDataMutationView TSOutputMutationView::begin_root_mutation(TSOutput &output, engine_time_t evaluation_time)
+    TSDataMutationView TSOutputMutationView::begin_root_mutation(TSOutput &output, DateTime evaluation_time)
     {
         if (evaluation_time == MIN_DT) { throw std::invalid_argument("TSOutput mutation requires a concrete time"); }
         if (!output.has_value()) { throw std::logic_error("TSOutput mutation requires a bound output"); }
         return output.data_view().begin_mutation(evaluation_time);
     }
 
-    TSOutputMutationView::TSOutputMutationView(TSOutput &output, engine_time_t evaluation_time)
+    TSOutputMutationView::TSOutputMutationView(TSOutput &output, DateTime evaluation_time)
         : mutation_(begin_root_mutation(output, evaluation_time))
     {
     }
@@ -42,7 +42,7 @@ namespace hgraph
         return mutation_.delta_value(current_mutation_time());
     }
 
-    engine_time_t TSOutputMutationView::current_mutation_time() const
+    DateTime TSOutputMutationView::current_mutation_time() const
     {
         return mutation_.current_mutation_time();
     }

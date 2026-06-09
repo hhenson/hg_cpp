@@ -36,13 +36,14 @@ namespace hgraph
         {
             auto &registry = TypeRegistry::instance();
             (void)registry.register_scalar<bool>("bool");
-            (void)registry.register_scalar<int>("int");
+            (void)registry.register_scalar<Int>("int");
+            (void)registry.register_scalar<std::int32_t>("int32");
             (void)registry.register_scalar<std::int64_t>("int64");
             (void)registry.register_scalar<double>("double");
             (void)registry.register_scalar<std::string>("string");
-            (void)registry.register_scalar<engine_time_t>("engine_time");
-            (void)registry.register_scalar<engine_time_delta_t>("engine_time_delta");
-            (void)registry.register_scalar<engine_date_t>("engine_date");
+            (void)registry.register_scalar<DateTime>("datetime");
+            (void)registry.register_scalar<TimeDelta>("timedelta");
+            (void)registry.register_scalar<Date>("date");
         }
 
         [[nodiscard]] const ValueTypeBinding &binding_for(const ValueTypeMetaData *schema, const char *what)
@@ -149,19 +150,19 @@ namespace hgraph
             return TypeRegistry::instance().register_scalar<std::string>("string");
         }
 
-        [[nodiscard]] const ValueTypeMetaData *engine_time_schema()
+        [[nodiscard]] const ValueTypeMetaData *datetime_schema()
         {
-            return TypeRegistry::instance().register_scalar<engine_time_t>("engine_time");
+            return TypeRegistry::instance().register_scalar<DateTime>("datetime");
         }
 
-        [[nodiscard]] const ValueTypeMetaData *engine_delta_schema()
+        [[nodiscard]] const ValueTypeMetaData *timedelta_schema()
         {
-            return TypeRegistry::instance().register_scalar<engine_time_delta_t>("engine_time_delta");
+            return TypeRegistry::instance().register_scalar<TimeDelta>("timedelta");
         }
 
-        [[nodiscard]] const ValueTypeMetaData *engine_date_schema()
+        [[nodiscard]] const ValueTypeMetaData *date_schema()
         {
-            return TypeRegistry::instance().register_scalar<engine_date_t>("engine_date");
+            return TypeRegistry::instance().register_scalar<Date>("date");
         }
 
         [[nodiscard]] Value typed_value_from_python(const ValueTypeMetaData *schema, nb::handle source, const char *what)
@@ -229,42 +230,42 @@ namespace hgraph
             return typed_value_from_python(schema, source, "map_value");
         }
 
-        [[nodiscard]] Value engine_time_list(nb::handle times)
+        [[nodiscard]] Value datetime_list(nb::handle times)
         {
-            const auto        &binding = binding_for(engine_time_schema(), "engine_time_list");
+            const auto        &binding = binding_for(datetime_schema(), "datetime_list");
             ListBuilder        builder{binding};
             nb::iterator       it = nb::iter(times);
             while (it != nb::iterator::sentinel())
             {
-                const auto value = nb::cast<engine_time_t>(*it);
+                const auto value = nb::cast<DateTime>(*it);
                 builder.push_back(value);
                 ++it;
             }
             return builder.build();
         }
 
-        [[nodiscard]] Value engine_delta_cyclic_buffer(nb::handle durations, std::size_t capacity)
+        [[nodiscard]] Value timedelta_cyclic_buffer(nb::handle durations, std::size_t capacity)
         {
-            const auto          &binding = binding_for(engine_delta_schema(), "engine_delta_cyclic_buffer");
+            const auto          &binding = binding_for(timedelta_schema(), "timedelta_cyclic_buffer");
             CyclicBufferBuilder  builder{binding, capacity};
             nb::iterator         it = nb::iter(durations);
             while (it != nb::iterator::sentinel())
             {
-                const auto value = nb::cast<engine_time_delta_t>(*it);
+                const auto value = nb::cast<TimeDelta>(*it);
                 builder.push_back(value);
                 ++it;
             }
             return builder.build();
         }
 
-        [[nodiscard]] Value engine_date_queue(nb::handle dates)
+        [[nodiscard]] Value date_queue(nb::handle dates)
         {
-            const auto  &binding = binding_for(engine_date_schema(), "engine_date_queue");
+            const auto  &binding = binding_for(date_schema(), "date_queue");
             QueueBuilder builder{binding};
             nb::iterator it = nb::iter(dates);
             while (it != nb::iterator::sentinel())
             {
-                const auto value = nb::cast<engine_date_t>(*it);
+                const auto value = nb::cast<Date>(*it);
                 builder.push(value);
                 ++it;
             }
@@ -312,22 +313,23 @@ namespace hgraph
             return result;
         }
 
-        void apply_python_value_to_output_view(TSOutputView view,
+        void apply_python_value_to_output_view(TSOutputView &view,
                                                nb::object   source,
-                                               engine_time_t evaluation_time)
+                                               DateTime evaluation_time)
         {
             if (source.is_none()) { return; }
             auto  mutation = view.begin_mutation(evaluation_time);
             static_cast<void>(mutation.from_python(source));
         }
 
-        TSOutput &apply_output_value(TSOutput &output, nb::object source, engine_time_t evaluation_time)
+        TSOutput &apply_output_value(TSOutput &output, nb::object source, DateTime evaluation_time)
         {
-            apply_python_value_to_output_view(output.view(evaluation_time), source, evaluation_time);
+            auto view = output.view(evaluation_time);
+            apply_python_value_to_output_view(view, source, evaluation_time);
             return output;
         }
 
-        TSOutputView apply_output_view_value(TSOutputView view, nb::object source)
+        TSOutputView &apply_output_view_value(TSOutputView &view, nb::object source)
         {
             apply_python_value_to_output_view(view, source, view.evaluation_time());
             return view;
@@ -532,7 +534,9 @@ namespace hgraph
                 .def("register_builtin_value_types", [](TypeRegistry &) { register_builtin_value_types(); })
                 .def("bool", [](TypeRegistry &self) { return self.register_scalar<bool>("bool"); },
                      nb::rv_policy::reference)
-                .def("int", [](TypeRegistry &self) { return self.register_scalar<int>("int"); },
+                .def("int", [](TypeRegistry &self) { return self.register_scalar<Int>("int"); },
+                     nb::rv_policy::reference)
+                .def("int32", [](TypeRegistry &self) { return self.register_scalar<std::int32_t>("int32"); },
                      nb::rv_policy::reference)
                 .def("int64", [](TypeRegistry &self) { return self.register_scalar<std::int64_t>("int64"); },
                      nb::rv_policy::reference)
@@ -540,12 +544,12 @@ namespace hgraph
                      nb::rv_policy::reference)
                 .def("string", [](TypeRegistry &self) { return self.register_scalar<std::string>("string"); },
                      nb::rv_policy::reference)
-                .def("engine_time", [](TypeRegistry &self) { return self.register_scalar<engine_time_t>("engine_time"); },
+                .def("datetime", [](TypeRegistry &self) { return self.register_scalar<DateTime>("datetime"); },
                      nb::rv_policy::reference)
-                .def("engine_time_delta",
-                     [](TypeRegistry &self) { return self.register_scalar<engine_time_delta_t>("engine_time_delta"); },
+                .def("timedelta",
+                     [](TypeRegistry &self) { return self.register_scalar<TimeDelta>("timedelta"); },
                      nb::rv_policy::reference)
-                .def("engine_date", [](TypeRegistry &self) { return self.register_scalar<engine_date_t>("engine_date"); },
+                .def("date", [](TypeRegistry &self) { return self.register_scalar<Date>("date"); },
                      nb::rv_policy::reference)
                 .def("value_type", &TypeRegistry::value_type, "name"_a, nb::rv_policy::reference)
                 .def("tuple", [](TypeRegistry &self, nb::handle schemas) {
@@ -595,10 +599,10 @@ namespace hgraph
                      }, "value_schema"_a, "period"_a, "min_period"_a = 0, nb::rv_policy::reference)
                 .def("tsw_duration", [](TypeRegistry &self,
                                          const ValueTypeMetaData &value_schema,
-                                         engine_time_delta_t time_range,
-                                         engine_time_delta_t min_time_range) {
+                                         TimeDelta time_range,
+                                         TimeDelta min_time_range) {
                          return self.tsw_duration(&value_schema, time_range, min_time_range);
-                     }, "value_schema"_a, "time_range"_a, "min_time_range"_a = engine_time_delta_t{0},
+                     }, "value_schema"_a, "time_range"_a, "min_time_range"_a = TimeDelta{0},
                      nb::rv_policy::reference)
                 .def("tsb", [](TypeRegistry &self, std::string name, nb::handle fields) {
                          return self.tsb(name, ts_bundle_fields(fields, "TypeRegistry.tsb"));
@@ -619,7 +623,8 @@ namespace hgraph
                              nb::rv_policy::reference)
                 .def_prop_ro("value", &ts_output_value_to_python)
                 .def_prop_ro("delta_value", &ts_output_delta_value_to_python)
-                .def("apply_value", &apply_output_view_value, nb::arg("value").none())
+                .def("apply_value", &apply_output_view_value, nb::arg("value").none(),
+                     nb::rv_policy::reference_internal)
                 .def("as_bundle", [](TSOutputView &self) { return self.as_bundle(); }, nb::keep_alive<0, 1>())
                 .def("as_list", [](TSOutputView &self) { return self.as_list(); }, nb::keep_alive<0, 1>());
 
@@ -656,7 +661,7 @@ namespace hgraph
                 .def("cleanup_delta", &TSOutput::cleanup_delta)
                 .def("clear_dirty", &TSOutput::clear_dirty)
                 .def_prop_ro("schema", [](const TSOutput &self) { return self.schema(); }, nb::rv_policy::reference)
-                .def("view", [](TSOutput &self, engine_time_t evaluation_time) {
+                .def("view", [](TSOutput &self, DateTime evaluation_time) {
                          return self.view(evaluation_time);
                      }, "evaluation_time"_a = MIN_DT, nb::keep_alive<0, 1>())
                 .def("apply_value", &apply_output_value, nb::arg("value").none(), "evaluation_time"_a,
@@ -732,7 +737,7 @@ namespace hgraph
                 .def_static("create", &make_input, "schema"_a, "endpoint_schema"_a)
                 .def("has_value", &TSInput::has_value)
                 .def_prop_ro("schema", [](const TSInput &self) { return self.schema(); }, nb::rv_policy::reference)
-                .def("view", [](TSInput &self, engine_time_t evaluation_time) {
+                .def("view", [](TSInput &self, DateTime evaluation_time) {
                          return self.view(nullptr, evaluation_time);
                      }, "evaluation_time"_a = MIN_DT, nb::keep_alive<0, 1>());
 
@@ -887,9 +892,9 @@ namespace hgraph
             value_mod.def("tuple_value", &tuple_value, "schemas"_a, "source"_a);
             value_mod.def("bundle_value", &bundle_value, "name"_a, "fields"_a, "source"_a);
             value_mod.def("map_value", &map_value, "key_schema"_a, "value_schema"_a, "source"_a);
-            value_mod.def("engine_time_list", &engine_time_list, "times"_a);
-            value_mod.def("engine_delta_cyclic_buffer", &engine_delta_cyclic_buffer, "durations"_a, "capacity"_a);
-            value_mod.def("engine_date_queue", &engine_date_queue, "dates"_a);
+            value_mod.def("datetime_list", &datetime_list, "times"_a);
+            value_mod.def("timedelta_cyclic_buffer", &timedelta_cyclic_buffer, "durations"_a, "capacity"_a);
+            value_mod.def("date_queue", &date_queue, "dates"_a);
             value_mod.def("unsupported_scalar_to_python", &unsupported_scalar_to_python);
 
             m.attr("ValueTypeKind")    = value_mod.attr("ValueTypeKind");
@@ -930,9 +935,9 @@ namespace hgraph
             m.def("tuple_value", &tuple_value, "schemas"_a, "source"_a);
             m.def("bundle_value", &bundle_value, "name"_a, "fields"_a, "source"_a);
             m.def("map_value", &map_value, "key_schema"_a, "value_schema"_a, "source"_a);
-            m.def("engine_time_list", &engine_time_list, "times"_a);
-            m.def("engine_delta_cyclic_buffer", &engine_delta_cyclic_buffer, "durations"_a, "capacity"_a);
-            m.def("engine_date_queue", &engine_date_queue, "dates"_a);
+            m.def("datetime_list", &datetime_list, "times"_a);
+            m.def("timedelta_cyclic_buffer", &timedelta_cyclic_buffer, "durations"_a, "capacity"_a);
+            m.def("date_queue", &date_queue, "dates"_a);
             m.def("unsupported_scalar_to_python", &unsupported_scalar_to_python);
 
             ts_mod.def("make_input", &make_input, "schema"_a, "endpoint_schema"_a);

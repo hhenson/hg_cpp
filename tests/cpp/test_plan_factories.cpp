@@ -40,7 +40,7 @@ namespace
         [[nodiscard]] auto operator<=>(const MoveAssignableOnlyScalar &) const = default;
     };
 
-    void mutate_supported_ts_child(hgraph::TSDataView child, hgraph::engine_time_t modified_time, std::int32_t seed)
+    void mutate_supported_ts_child(hgraph::TSDataView child, hgraph::DateTime modified_time, std::int32_t seed)
     {
         using namespace hgraph;
 
@@ -130,7 +130,7 @@ namespace
         }
     }
 
-    void require_canonical_snapshots(const hgraph::TSDataView &root, hgraph::engine_time_t modified_time)
+    void require_canonical_snapshots(const hgraph::TSDataView &root, hgraph::DateTime modified_time)
     {
         using namespace hgraph;
 
@@ -464,7 +464,7 @@ TEST_CASE("TSDataPlanFactory: compact atomic TSData tracks deltas by modified ti
     REQUIRE(view.last_modified_time() == MIN_DT);
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
     REQUIRE_FALSE(view.modified(t1));
     REQUIRE_FALSE(view.delta_value(t1).has_value());
 
@@ -525,8 +525,8 @@ TEST_CASE("TSDataView: child modifications propagate through parent view")
     REQUIRE(sibling.child_id() == 1);
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
     Value      first{1};
     Value      second{2};
     Value      third{3};
@@ -608,7 +608,7 @@ TEST_CASE("TSDataView: child parent link is stored in TSData tracking")
     Value  initial{1};
     Value  updated{12};
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
 
     {
         auto view = data.view();
@@ -1029,7 +1029,7 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     REQUIRE(layout.period == 3);
     REQUIRE(layout.min_period == 2);
     REQUIRE(layout.element_binding == registry.scalar_binding<std::int32_t>());
-    REQUIRE(layout.time_binding == registry.scalar_binding<engine_time_t>());
+    REQUIRE(layout.time_binding == registry.scalar_binding<DateTime>());
     REQUIRE_THROWS_AS(window.time_layout(), std::logic_error);
     REQUIRE(window.value().binding()->plan() == window_component->plan);
     REQUIRE(window.value().is_list());
@@ -1041,9 +1041,9 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     REQUIRE_FALSE(window.delta_value(MIN_ST).has_value());
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
-    const auto t3 = t2 + engine_time_delta_t{1};
-    const auto t4 = t3 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
+    const auto t4 = t3 + TimeDelta{1};
 
     Value one{1};
     {
@@ -1057,7 +1057,7 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     REQUIRE(window.front().checked_as<std::int32_t>() == 1);
     REQUIRE(window.back().checked_as<std::int32_t>() == 1);
     REQUIRE(window.time_at(0) == t1);
-    REQUIRE(window.time_value_at(0).checked_as<engine_time_t>() == t1);
+    REQUIRE(window.time_value_at(0).checked_as<DateTime>() == t1);
     REQUIRE(window.delta_value(t1).checked_as<std::int32_t>() == 1);
 
     Value two{2};
@@ -1091,8 +1091,8 @@ TEST_CASE("TSDataPlanFactory: tick TSW stores a fixed cyclic current window")
     REQUIRE(window.time_at(1) == t3);
     REQUIRE(window.time_at(2) == t4);
     REQUIRE(window.time_value_at(0).binding() == layout.time_binding);
-    REQUIRE(window.time_value_at(0).checked_as<engine_time_t>() == t2);
-    REQUIRE(window.time_value_at(2).checked_as<engine_time_t>() == t4);
+    REQUIRE(window.time_value_at(0).checked_as<DateTime>() == t2);
+    REQUIRE(window.time_value_at(2).checked_as<DateTime>() == t4);
     auto times = window.value_times();
     auto time_it = times.begin();
     REQUIRE(*time_it == t2);
@@ -1143,7 +1143,7 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     auto       &registry = TypeRegistry::instance();
     auto       &factory  = TSDataPlanFactory::instance();
     const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
-    const auto *tsw      = registry.tsw_duration(int_meta, engine_time_delta_t{10}, engine_time_delta_t{5});
+    const auto *tsw      = registry.tsw_duration(int_meta, TimeDelta{10}, TimeDelta{5});
 
     const auto *binding = factory.binding_for(tsw);
     REQUIRE(binding != nullptr);
@@ -1155,10 +1155,10 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     auto   window = view.as_window();
     REQUIRE(window.time_based());
     const auto &layout = window.time_layout();
-    REQUIRE(layout.time_range == engine_time_delta_t{10});
-    REQUIRE(layout.min_time_range == engine_time_delta_t{5});
+    REQUIRE(layout.time_range == TimeDelta{10});
+    REQUIRE(layout.min_time_range == TimeDelta{5});
     REQUIRE(layout.element_binding == registry.scalar_binding<std::int32_t>());
-    REQUIRE(layout.time_binding == registry.scalar_binding<engine_time_t>());
+    REQUIRE(layout.time_binding == registry.scalar_binding<DateTime>());
     REQUIRE_THROWS_AS(window.size_layout(), std::logic_error);
     REQUIRE(window.value().binding()->plan() == window_component->plan);
     REQUIRE(window.value().is_list());
@@ -1167,8 +1167,8 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     REQUIRE(window.capacity() == 0);
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{5};
-    const auto t3 = t1 + engine_time_delta_t{15};
+    const auto t2 = t1 + TimeDelta{5};
+    const auto t3 = t1 + TimeDelta{15};
 
     Value one{1};
     {
@@ -1180,7 +1180,7 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     REQUIRE(window.size() == 1);
     REQUIRE_FALSE(window.all_valid());
     REQUIRE(window.time_at(0) == t1);
-    REQUIRE(window.time_value_at(0).checked_as<engine_time_t>() == t1);
+    REQUIRE(window.time_value_at(0).checked_as<DateTime>() == t1);
     REQUIRE(window.delta_value(t1).checked_as<std::int32_t>() == 1);
 
     Value two{2};
@@ -1203,8 +1203,8 @@ TEST_CASE("TSDataPlanFactory: duration TSW stores a timestamped queue current wi
     REQUIRE(window.time_at(0) == t2);
     REQUIRE(window.time_at(1) == t3);
     REQUIRE(window.time_value_at(0).binding() == layout.time_binding);
-    REQUIRE(window.time_value_at(0).checked_as<engine_time_t>() == t2);
-    REQUIRE(window.time_value_at(1).checked_as<engine_time_t>() == t3);
+    REQUIRE(window.time_value_at(0).checked_as<DateTime>() == t2);
+    REQUIRE(window.time_value_at(1).checked_as<DateTime>() == t3);
     REQUIRE(window.at(0).checked_as<std::int32_t>() == 2);
     REQUIRE(window.at(1).checked_as<std::int32_t>() == 3);
     REQUIRE(window.value().as_list().size() == 2);
@@ -1305,7 +1305,7 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     REQUIRE(set.added_values().begin() != set.added_values().end());
     REQUIRE(set.removed_values().begin() == set.removed_values().end());
 
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
     {
         auto mutation = set.begin_mutation(t2);
         REQUIRE(mutation.remove(one.view()));
@@ -1320,7 +1320,7 @@ TEST_CASE("TSDataPlanFactory: TSS uses slot storage with added and removed delta
     REQUIRE(set.removed_values().begin() != set.removed_values().end());
     REQUIRE(view.last_modified_time() == t2);
 
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t3 = t2 + TimeDelta{1};
     Value      three{3};
     {
         auto mutation = set.begin_mutation(t3);
@@ -1402,7 +1402,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     REQUIRE(delta.at("modified").as_map().contains(key.view()));
     REQUIRE(delta.at("modified").as_map().at(key.view()).checked_as<std::int32_t>() == 42);
 
-    const auto t2 = t1 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
     Value      updated{84};
     {
         auto values = dict.values();
@@ -1425,7 +1425,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     REQUIRE(modified_delta.at("modified").as_map().contains(key.view()));
     REQUIRE(modified_delta.at("modified").as_map().at(key.view()).checked_as<std::int32_t>() == 84);
 
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t3 = t2 + TimeDelta{1};
     {
         auto mutation = dict.begin_mutation(t3);
         REQUIRE(mutation.erase(key.view()));
@@ -1440,7 +1440,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     REQUIRE_FALSE(next_delta.at("modified").as_map().contains(key.view()));
     REQUIRE(view.last_modified_time() == t3);
 
-    const auto t4 = t3 + engine_time_delta_t{1};
+    const auto t4 = t3 + TimeDelta{1};
     Value      other_key{8};
     Value      other_value{11};
     {
@@ -1521,8 +1521,8 @@ TEST_CASE("TSDataPlanFactory: dynamic TSL stores grow-only child TSData")
     REQUIRE_FALSE(view.has_current_value());
 
     const auto t1 = MIN_ST;
-    const auto t2 = t1 + engine_time_delta_t{1};
-    const auto t3 = t2 + engine_time_delta_t{1};
+    const auto t2 = t1 + TimeDelta{1};
+    const auto t3 = t2 + TimeDelta{1};
     {
         auto source = stdlib::make_list<std::int32_t>({11, 22});
         auto mutation = view.begin_mutation(t1);

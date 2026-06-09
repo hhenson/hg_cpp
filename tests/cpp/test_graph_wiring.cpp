@@ -527,7 +527,7 @@ namespace
         GraphExecutorBuilder executor_builder;
         executor_builder.graph_builder(std::move(graph_builder))
             .start_time(MIN_ST)
-            .end_time(MIN_ST + engine_time_delta_t{2});
+            .end_time(MIN_ST + TimeDelta{2});
 
         GraphExecutorValue executor = executor_builder.make_executor();
         executor.view().run();
@@ -587,7 +587,7 @@ namespace
         return single_nested_graph_node(std::move(meta), std::move(spec));
     }
 
-    void write_int(const NodeView &view, engine_time_t evaluation_time, Int value)
+    void write_int(const NodeView &view, DateTime evaluation_time, Int value)
     {
         Value wrapped{value};
         auto  mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
@@ -606,7 +606,7 @@ namespace
 
         auto          emitted = std::make_shared<int>(0);
         NodeCallbacks callbacks;
-        callbacks.evaluate = [emitted, count](const NodeView &view, engine_time_t evaluation_time) {
+        callbacks.evaluate = [emitted, count](const NodeView &view, DateTime evaluation_time) {
             const int n = *emitted;
             write_int(view, evaluation_time, Int{n});
             *emitted = n + 1;
@@ -628,7 +628,7 @@ namespace
         meta.node_kind     = NodeKind::Compute;
 
         NodeCallbacks callbacks;
-        callbacks.evaluate = [evals](const NodeView &view, engine_time_t evaluation_time) {
+        callbacks.evaluate = [evals](const NodeView &view, DateTime evaluation_time) {
             ++*evals;
             auto root   = view.input(evaluation_time);
             auto bundle = root.as_bundle();
@@ -666,7 +666,7 @@ TEST_CASE("graph wiring: build_graph wires source -> add_one and runs in simulat
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -703,7 +703,7 @@ TEST_CASE("graph wiring: sub-graph composition inlines (flattens) into the paren
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -724,7 +724,7 @@ TEST_CASE("graph wiring: sub-graph typed input accepts an erased generic source 
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor = executor_builder.make_executor();
     auto               view     = executor.view();
@@ -744,7 +744,7 @@ TEST_CASE("graph wiring: sub-graph SIGNAL input accepts any time-series port")
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor = executor_builder.make_executor();
     auto               view     = executor.view();
@@ -764,7 +764,7 @@ TEST_CASE("graph wiring: TS output can bind to a REF input")
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -785,7 +785,7 @@ TEST_CASE("graph wiring: structural TSL source can bind to a REF input as non-pe
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -807,7 +807,7 @@ TEST_CASE("graph wiring: structural TSB source can bind to a REF input as non-pe
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -938,7 +938,7 @@ TEST_CASE("graph wiring: nested node re-evaluates its child across multiple cycl
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{10});
+        .end_time(MIN_ST + TimeDelta{10});
 
     GraphExecutorValue executor = executor_builder.make_executor();
     executor.view().run();
@@ -973,7 +973,7 @@ TEST_CASE("graph wiring: REF output can bind back to a dereferenced TS input")
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -1087,7 +1087,7 @@ TEST_CASE("graph wiring: multi-input node wires and type-checks its ports")
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -1107,7 +1107,7 @@ TEST_CASE("graph wiring: a scalar argument configures a wired node")
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -1127,7 +1127,7 @@ TEST_CASE("graph wiring: a scalar argument coexists with a time-series input por
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -1179,7 +1179,7 @@ TEST_CASE("graph wiring: a top-level graph takes a scalar parameter via build_gr
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -1199,7 +1199,7 @@ TEST_CASE("graph wiring: a graph scalar parameter threads into a node's scalar")
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
@@ -1219,7 +1219,7 @@ TEST_CASE("graph wiring: wire<G> auto-wraps a scalar literal for a sub-graph par
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
         .start_time(MIN_ST)
-        .end_time(MIN_ST + engine_time_delta_t{2});
+        .end_time(MIN_ST + TimeDelta{2});
 
     GraphExecutorValue executor      = executor_builder.make_executor();
     auto               executor_view = executor.view();
