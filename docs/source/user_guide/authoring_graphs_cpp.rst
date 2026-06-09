@@ -160,6 +160,215 @@ when the graph is wired at run time.)
 sub-graph input declared as ``SIGNAL``. The input observes the upstream tick rather
 than the upstream value.
 
+For standard operators, a compose body may opt into expression syntax:
+
+.. code-block:: cpp
+
+   using namespace hgraph::stdlib::syntax;
+
+   auto a = wire<testing::replay, TS<Int>>(w, "a");
+   auto b = wire<testing::replay, TS<Int>>(w, "b");
+   auto c = (a + b * Int{2}).as<TS<Int>>();
+
+The C++ operators are only syntax for the standard operator registry
+(``+`` -> ``stdlib::add_``, ``*`` -> ``stdlib::mul_``, comparisons -> ``TS<Bool>``, and so on).
+They return an erased ``Port<void>`` because overload resolution can change the result
+type, such as ``int / int -> float``. Use ``.as<Schema>()`` when a graph return or
+downstream API needs a typed ``Port<Schema>``.
+
+
+Supported standard operator overloads
+-------------------------------------
+
+Include ``<hgraph/lib/std/std_operators.h>`` and call
+``stdlib::register_standard_operators()`` before wiring graphs that use these operators.
+The tables below list the overloads currently registered by that call. Operator markers
+outside this table may be declared for catalogue completeness, but they are not wired
+until a concrete implementation is registered.
+
+Notation:
+
+- ``Int`` is the standard hgraph integer scalar (``std::int64_t``), ``Float`` is
+  ``double``, ``Str`` is ``std::string``.
+- ``Date`` means ``engine_date_t``, ``DateTime`` means ``engine_time_t``, and
+  ``TimeDelta`` means ``engine_time_delta_t``.
+- Every operand and result below is a time-series unless stated otherwise:
+  ``Int + Float -> Float`` means ``TS<Int> + TS<Float> -> TS<Float>``.
+- A plain scalar argument may be supplied where an operator expects ``TS<T>``; wiring
+  promotes it through an internal const source, so ``a + Int{2}`` is valid.
+
+Arithmetic
+~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - Operator
+     - Registered overloads
+     - Result
+     - Notes
+   * - ``add_`` / ``+``
+     - ``Int + Int``; ``Float + Float``; ``Int + Float``; ``Float + Int``;
+       ``Str + Str``; ``TimeDelta + TimeDelta``; ``DateTime + TimeDelta``;
+       ``TimeDelta + DateTime``; ``Date + TimeDelta``
+     - same as operands for homogeneous cases; ``Float`` for mixed numeric;
+       ``DateTime`` for ``DateTime``/``TimeDelta``; ``Date`` for ``Date``/``TimeDelta``
+     - ``Date + TimeDelta`` advances by whole days.
+   * - ``sub_`` / ``-``
+     - ``Int - Int``; ``Float - Float``; ``Int - Float``; ``Float - Int``;
+       ``TimeDelta - TimeDelta``; ``DateTime - TimeDelta``;
+       ``DateTime - DateTime``; ``Date - Date``
+     - same as operands for homogeneous numeric/``TimeDelta``; ``Float`` for mixed numeric;
+       ``DateTime`` for ``DateTime`` minus ``TimeDelta``; ``TimeDelta`` for ``DateTime``/``Date``
+       differences
+     - ``Date - Date`` returns a whole-day ``TimeDelta``.
+   * - ``mul_`` / ``*``
+     - ``Int * Int``; ``Float * Float``; ``Int * Float``; ``Float * Int``;
+       ``Str * Int``; ``Int * Str``
+     - ``Int``; ``Float`` for mixed/float numeric; ``Str`` for string repetition
+     - Repeating a string zero or fewer times returns an empty string.
+   * - ``div_`` / ``/``
+     - ``Int / Int``; ``Float / Float``; ``Int / Float``; ``Float / Int``;
+       ``TimeDelta / TimeDelta``
+     - ``Float``
+     - Numeric overloads have an optional ``DivideByZero`` scalar policy. Duration
+       division does not currently take that policy.
+   * - ``floordiv_`` / ``floordiv(lhs, rhs)``
+     - ``Int // Int``; ``Float // Float``; ``Int // Float``; ``Float // Int``
+     - ``Int`` for ``Int // Int``; otherwise ``Float``
+     - Uses Python-style floor semantics, not C++ truncation. Optional
+       ``DivideByZero`` policy.
+   * - ``mod_`` / ``%``
+     - ``Int % Int``; ``Float % Float``; ``Int % Float``; ``Float % Int``
+     - ``Int`` for ``Int % Int``; otherwise ``Float``
+     - Uses Python-style modulo semantics. Optional ``DivideByZero`` policy.
+   * - ``pow_`` / ``pow(lhs, rhs)``
+     - ``Int ** Int``; ``Float ** Float``; ``Int ** Float``; ``Float ** Int``
+     - ``Float``
+     - Numeric power is explicitly float-valued in C++. Optional ``DivideByZero``
+       policy for ``0 ** negative``.
+   * - ``neg_`` / unary ``-``
+     - ``Int``; ``Float``; ``TimeDelta``
+     - same type
+     -
+   * - ``pos_`` / unary ``+``
+     - ``Int``; ``Float``; ``TimeDelta``
+     - same type
+     -
+   * - ``abs_`` / ``abs(ts)``
+     - ``Int``; ``Float``; ``TimeDelta``
+     - same type
+     -
+   * - ``sign`` / ``sign(ts)``
+     - ``Int``; ``Float``
+     - same type
+     - Returns ``-1``, ``0`` or ``1``.
+   * - ``ln`` / ``ln(ts)``
+     - ``Float``
+     - ``Float``
+     -
+
+``DivideByZero`` policies are wiring-time scalar arguments. The two-argument form of
+``div_`` / ``floordiv_`` / ``mod_`` / ``pow_`` defaults to ``DivideByZero::Error``; the
+three-argument form accepts a policy value. Numeric ``div_`` accepts all policies
+(``Error``, ``Nan``, ``Inf``, ``NoTick``, ``Zero``, ``One``). ``floordiv_`` accepts the
+same policies for float/mixed numeric overloads; ``Int // Int`` accepts ``Error``,
+``NoTick``, ``Zero`` and ``One``. ``mod_`` accepts ``Nan`` / ``Inf`` / ``NoTick`` for
+float/mixed numeric overloads, while ``Int % Int`` only treats ``NoTick`` specially;
+the other zero-divisor cases throw. ``pow_`` applies the policy only for
+``0 ** negative``.
+
+Comparison
+~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - Operator
+     - Registered overloads
+     - Result
+     - Notes
+   * - ``eq_`` / ``==``
+     - same-type ``Bool``, ``Int``, ``Float``, ``Str``, ``Date``, ``DateTime``,
+       ``TimeDelta``; mixed ``Int``/``Float``
+     - ``Bool``
+     -
+   * - ``ne_`` / ``!=``
+     - same-type ``Bool``, ``Int``, ``Float``, ``Str``, ``Date``, ``DateTime``,
+       ``TimeDelta``; mixed ``Int``/``Float``
+     - ``Bool``
+     -
+   * - ``lt_`` / ``<``; ``le_`` / ``<=``; ``gt_`` / ``>``; ``ge_`` / ``>=``
+     - same-type ``Int``, ``Float``, ``Str``, ``Date``, ``DateTime``, ``TimeDelta``;
+       mixed ``Int``/``Float``
+     - ``Bool``
+     - ``Bool`` ordering is not registered.
+   * - ``cmp_`` / ``cmp(lhs, rhs)``
+     - same-type ``Int``, ``Float``, ``Str``, ``Date``, ``DateTime``, ``TimeDelta``;
+       mixed ``Int``/``Float``
+     - ``CmpResult``
+     - Returns ``CmpResult::LT``, ``CmpResult::EQ`` or ``CmpResult::GT``.
+
+Logical and bitwise
+~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - Operator
+     - Registered overloads
+     - Result
+     - Notes
+   * - ``not_`` / ``!``
+     - ``Bool``; ``Int``; ``Float``; ``Str``
+     - ``Bool``
+     - Empty string is false; non-empty string is true.
+   * - ``and_`` / ``&&``; ``or_`` / ``||``
+     - ``Bool``/``Bool``; ``Int``/``Int``; ``Float``/``Float``; ``Str``/``Str``;
+       mixed ``Int``/``Float``
+     - ``Bool``
+     - These are graph operators, so C++ ``&&`` / ``||`` syntax does not short-circuit.
+   * - ``invert_`` / ``~``
+     - ``Int``
+     - ``Int``
+     -
+   * - ``bit_and`` / ``&``; ``bit_or`` / ``|``; ``bit_xor`` / ``^``
+     - ``Int``/``Int``; ``Bool``/``Bool``
+     - same type
+     - ``Bool`` bitwise overloads use logical bool semantics.
+   * - ``lshift_`` / ``<<``; ``rshift_`` / ``>>``
+     - ``Int`` shifted by ``Int``
+     - ``Int``
+     - Shift counts must be non-negative and smaller than the number of value bits.
+
+Sources, conversions and sinks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - Operator
+     - Registered overloads
+     - Result
+     - Notes
+   * - ``const_``
+     - ``const_(value)``; ``const_(value, delay)``
+     - Defaults to ``TS<T>`` for scalar value type ``T``; may be explicitly resolved to
+       any output whose current-value schema matches the supplied value.
+     - Emits one tick at graph start, or at ``start + delay`` for the delayed overload.
+   * - ``zero_``
+     - explicit output ``TS<Int>``; ``TS<Float>``; ``TS<Str>``
+     - selected output schema
+     - Emits ``0``, ``0.0`` or empty string once at graph start.
+   * - ``debug_print``
+     - ``debug_print(label: Str, ts: any time-series)``
+     - sink
+     - Prints ``label: value`` on each tick.
+   * - ``null_sink``
+     - ``null_sink(ts: any time-series)``
+     - sink
+     - Consumes the input and does nothing.
+
 
 Configuring a node with scalars
 -------------------------------

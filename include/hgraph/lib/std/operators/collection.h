@@ -266,7 +266,6 @@ namespace hgraph::stdlib
     template <typename OutOrElementSchema = void, typename... Ports>
     [[nodiscard]] auto to_tsl(Wiring &w, const Ports &...ports)
     {
-        static_cast<void>(w);
         static_assert(sizeof...(Ports) > 0, "to_tsl requires at least one input");
         static_assert((graph_wiring_detail::is_port<std::remove_cvref_t<Ports>>::value && ...),
                       "to_tsl inputs must be time-series Ports");
@@ -285,7 +284,7 @@ namespace hgraph::stdlib
                 const auto *output_schema = schema_descriptor<Result>::ts_meta();
                 collection_detail::validate_to_tsl_inputs(*output_schema->element_ts(), refs);
                 WiringPortRef out = collection_detail::structural_collection_port(output_schema, refs);
-                return Port<Result>{std::move(out)};
+                return Port<Result>{w, std::move(out)};
             }
             else
             {
@@ -297,7 +296,7 @@ namespace hgraph::stdlib
                 collection_detail::validate_inferred_to_tsl_inputs(*element_schema, refs);
                 const auto *output_schema = TypeRegistry::instance().tsl(element_schema, size);
                 WiringPortRef out = collection_detail::structural_collection_port(output_schema, refs);
-                return Port<void>{std::move(out)};
+                return Port<void>{w, std::move(out)};
             }
         }
         else if constexpr (collection_detail::is_tsl_schema_v<OutOrElementSchema>)
@@ -311,7 +310,7 @@ namespace hgraph::stdlib
             const auto *output_schema = schema_descriptor<Result>::ts_meta();
             collection_detail::validate_to_tsl_inputs(*output_schema->element_ts(), refs);
             WiringPortRef out = collection_detail::structural_collection_port(output_schema, refs);
-            return Port<Result>{std::move(out)};
+            return Port<Result>{w, std::move(out)};
         }
         else
         {
@@ -320,7 +319,7 @@ namespace hgraph::stdlib
             const auto *output_schema = schema_descriptor<Result>::ts_meta();
             collection_detail::validate_to_tsl_inputs(*output_schema->element_ts(), refs);
             WiringPortRef out = collection_detail::structural_collection_port(output_schema, refs);
-            return Port<Result>{std::move(out)};
+            return Port<Result>{w, std::move(out)};
         }
     }
 
@@ -333,7 +332,6 @@ namespace hgraph::stdlib
     template <typename OutSchema, typename... Ports>
     [[nodiscard]] auto to_tsb(Wiring &w, const Ports &...ports)
     {
-        static_cast<void>(w);
         static_assert(collection_detail::is_tsb_schema_v<OutSchema>,
                       "to_tsb requires an explicit TSB or UnNamedTSB output schema");
         static_assert(sizeof...(Ports) == collection_detail::tsb_schema_traits<OutSchema>::field_count,
@@ -347,7 +345,7 @@ namespace hgraph::stdlib
         const auto *output_schema = schema_descriptor<OutSchema>::ts_meta();
         collection_detail::validate_to_tsb_inputs(*output_schema, refs);
         WiringPortRef out = collection_detail::structural_collection_port(output_schema, refs);
-        return Port<OutSchema>{std::move(out)};
+        return Port<OutSchema>{w, std::move(out)};
     }
 }  // namespace hgraph::stdlib
 

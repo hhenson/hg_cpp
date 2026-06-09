@@ -67,7 +67,8 @@ namespace hgraph
 
         [[nodiscard]] bool scalar_value_matches_ts_pattern(const TypePattern &pattern,
                                                            const Value &value,
-                                                           ResolutionMap &map)
+                                                           ResolutionMap &map,
+                                                           int &rank_adjustment)
         {
             if (pattern.kind == TypePattern::Kind::Var)
             {
@@ -78,7 +79,10 @@ namespace hgraph
                     {
                         return true;
                     }
-                    return operator_dispatch_detail::coerce_scalar_value_to_meta(value, bound->value_schema).has_value();
+                    const bool coerced =
+                        operator_dispatch_detail::coerce_scalar_value_to_meta(value, bound->value_schema).has_value();
+                    if (coerced) { ++rank_adjustment; }
+                    return coerced;
                 }
             }
             if (pattern.kind == TypePattern::Kind::Concrete)
@@ -89,12 +93,19 @@ namespace hgraph
                 {
                     return true;
                 }
-                return operator_dispatch_detail::coerce_scalar_value_to_meta(value, pattern.meta->value_schema).has_value();
+                const bool coerced =
+                    operator_dispatch_detail::coerce_scalar_value_to_meta(value, pattern.meta->value_schema).has_value();
+                if (coerced) { ++rank_adjustment; }
+                return coerced;
             }
             if (pattern.kind == TypePattern::Kind::TS &&
                 pattern.scalar.kind == ScalarPattern::Kind::Concrete)
             {
-                return operator_dispatch_detail::coerce_scalar_value_to_meta(value, pattern.scalar.meta).has_value();
+                if (value.schema() == pattern.scalar.meta) { return true; }
+                const bool coerced =
+                    operator_dispatch_detail::coerce_scalar_value_to_meta(value, pattern.scalar.meta).has_value();
+                if (coerced) { ++rank_adjustment; }
+                return coerced;
             }
             return value_schema_matches_ts_pattern(pattern, value.schema(), map);
         }
@@ -108,6 +119,7 @@ namespace hgraph
                        std::optional<bool> output_required,
                        const TSValueTypeMetaData *expected_output,
                        ResolutionMap &map,
+                       int &rank_adjustment,
                        std::string &why)
         {
             if (output_required.has_value() && impl.has_output != *output_required)
@@ -150,7 +162,7 @@ namespace hgraph
                             return false;
                         }
                     }
-                    else if (!scalar_value_matches_ts_pattern(param.ts, arg.scalar_value, map))
+                    else if (!scalar_value_matches_ts_pattern(param.ts, arg.scalar_value, map, rank_adjustment))
                     {
                         why = fmt::format("scalar argument {} cannot be promoted to {}", i, ts_pattern_to_string(param.ts));
                         return false;
@@ -166,9 +178,14 @@ namespace hgraph
                     bool scalar_matches = false;
                     if (param.scalar.kind == ScalarPattern::Kind::Concrete)
                     {
-                        scalar_matches =
-                            operator_dispatch_detail::coerce_scalar_value_to_meta(arg.scalar_value, param.scalar.meta)
-                                .has_value();
+                        scalar_matches = arg.scalar_meta == param.scalar.meta;
+                        if (!scalar_matches)
+                        {
+                            scalar_matches =
+                                operator_dispatch_detail::coerce_scalar_value_to_meta(arg.scalar_value, param.scalar.meta)
+                                    .has_value();
+                            if (scalar_matches) { ++rank_adjustment; }
+                        }
                     }
                     else
                     {
@@ -254,6 +271,7 @@ namespace hgraph
         {
             const OperatorImpl *impl;
             ResolutionMap       map;
+            int                 rank{0};
         };
 
         std::vector<Survivor>    survivors;
@@ -261,10 +279,11 @@ namespace hgraph
         for (const OperatorImpl &impl : it->second)
         {
             ResolutionMap map;
+            int           rank_adjustment = 0;
             std::string   why;
-            if (try_match(impl, args, output_required, expected_output, map, why))
+            if (try_match(impl, args, output_required, expected_output, map, rank_adjustment, why))
             {
-                survivors.push_back({&impl, std::move(map)});
+                survivors.push_back({&impl, std::move(map), impl.rank + rank_adjustment});
             }
             else { rejected.push_back(fmt::format("  {} [rank {}]: {}", impl.label, impl.rank, why)); }
         }
@@ -278,16 +297,16 @@ namespace hgraph
 
         // Lowest rank wins; a stable sort preserves registration order on ties.
         std::stable_sort(survivors.begin(), survivors.end(),
-                         [](const Survivor &a, const Survivor &b) { return a.impl->rank < b.impl->rank; });
+                         [](const Survivor &a, const Survivor &b) { return a.rank < b.rank; });
 
-        if (survivors.size() > 1 && survivors[0].impl->rank == survivors[1].impl->rank)
+        if (survivors.size() > 1 && survivors[0].rank == survivors[1].rank)
         {
             std::vector<std::string> tied;
             for (const Survivor &s : survivors)
             {
-                if (s.impl->rank == survivors[0].impl->rank)
+                if (s.rank == survivors[0].rank)
                 {
-                    tied.push_back(fmt::format("  {} [rank {}]", s.impl->label, s.impl->rank));
+                    tied.push_back(fmt::format("  {} [rank {}]", s.impl->label, s.rank));
                 }
             }
             throw OperatorResolutionError(

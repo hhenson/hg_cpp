@@ -499,12 +499,12 @@ namespace hgraph
                 {
                     throw std::logic_error("operator graph erased port parameter cannot be auto-const");
                 }
-                return PortParam{arg.port};
+                return PortParam{w, arg.port};
             }
             else
             {
                 WiringPortRef ref = wiring_input_ref<S>(w, map, arg);
-                return PortParam{std::move(ref)};
+                return PortParam{w, std::move(ref)};
             }
         }
 
@@ -689,7 +689,7 @@ namespace hgraph
                 builder.binding().type_meta != nullptr ? builder.binding().type_meta->input_schema : nullptr,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
             WiringPortRef out = w.add_node(std::type_index(typeid(Impl)), std::move(builder), inputs, std::move(scalars));
-            if constexpr (sig::has_output()) { return OperatorWireResult{true, Port<void>{std::move(out)}}; }
+            if constexpr (sig::has_output()) { return OperatorWireResult{true, Port<void>{w, std::move(out)}}; }
             else { return OperatorWireResult{}; }
         };
         return impl;
@@ -755,7 +755,7 @@ namespace hgraph
                 {
                     auto out = Impl::compose(w, operator_dispatch_detail::make_graph_arg<std::tuple_element_t<I, params_tuple>>(
                                                     w, map, args[I])...);
-                    return OperatorWireResult{true, Port<void>{out.erased()}};
+                    return OperatorWireResult{true, Port<void>{w, out.erased()}};
                 }
             }(std::make_index_sequence<std::tuple_size_v<params_tuple>>{});
         };

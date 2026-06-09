@@ -268,20 +268,51 @@ namespace hgraph
             : ref_{WiringPortRef::peered_source(node, std::move(path), schema_descriptor<Schema>::ts_meta())}
         {
         }
+        Port(Wiring &wiring, const WiringInstance *node, std::vector<std::size_t> path)
+            : wiring_(&wiring),
+              ref_{WiringPortRef::peered_source(node, std::move(path), schema_descriptor<Schema>::ts_meta())}
+        {
+        }
+        Port(Wiring *wiring, const WiringInstance *node, std::vector<std::size_t> path)
+            : wiring_(wiring),
+              ref_{WiringPortRef::peered_source(node, std::move(path), schema_descriptor<Schema>::ts_meta())}
+        {
+        }
         explicit Port(WiringPortRef ref) noexcept
             : ref_(std::move(ref))
+        {
+            ref_.schema = schema_descriptor<Schema>::ts_meta();
+        }
+        Port(Wiring &wiring, WiringPortRef ref) noexcept
+            : wiring_(&wiring),
+              ref_(std::move(ref))
+        {
+            ref_.schema = schema_descriptor<Schema>::ts_meta();
+        }
+        Port(Wiring *wiring, WiringPortRef ref) noexcept
+            : wiring_(wiring),
+              ref_(std::move(ref))
         {
             ref_.schema = schema_descriptor<Schema>::ts_meta();
         }
 
         [[nodiscard]] const WiringInstance           *node() const noexcept { return ref_.peered_node_or_null(); }
         [[nodiscard]] const std::vector<std::size_t> &path() const noexcept { return ref_.peered_path_or_empty(); }
+        [[nodiscard]] Wiring                         *wiring() const noexcept { return wiring_; }
+        [[nodiscard]] Wiring                         &checked_wiring() const
+        {
+            if (wiring_ == nullptr) { throw std::logic_error("Port does not carry a wiring context"); }
+            return *wiring_;
+        }
+        template <typename OutSchema>
+        [[nodiscard]] Port<OutSchema> as() const;
 
         /** Erase to the runtime port form (the runtime schema comes from ``Schema``). */
         [[nodiscard]] WiringPortRef erased() const { return ref_; }
         [[nodiscard]] operator WiringPortRef() const { return erased(); }
 
       private:
+        Wiring        *wiring_{nullptr};
         WiringPortRef ref_{};
     };
 
@@ -304,19 +335,48 @@ namespace hgraph
             : ref_{WiringPortRef::peered_source(node, std::move(path), schema)}
         {
         }
+        Port(Wiring &wiring, const WiringInstance *node, std::vector<std::size_t> path, const TSValueTypeMetaData *schema)
+            : wiring_(&wiring),
+              ref_{WiringPortRef::peered_source(node, std::move(path), schema)}
+        {
+        }
+        Port(Wiring *wiring, const WiringInstance *node, std::vector<std::size_t> path, const TSValueTypeMetaData *schema)
+            : wiring_(wiring),
+              ref_{WiringPortRef::peered_source(node, std::move(path), schema)}
+        {
+        }
         explicit Port(WiringPortRef ref) noexcept
             : ref_(std::move(ref))
+        {
+        }
+        Port(Wiring &wiring, WiringPortRef ref) noexcept
+            : wiring_(&wiring),
+              ref_(std::move(ref))
+        {
+        }
+        Port(Wiring *wiring, WiringPortRef ref) noexcept
+            : wiring_(wiring),
+              ref_(std::move(ref))
         {
         }
 
         [[nodiscard]] const WiringInstance           *node() const noexcept { return ref_.peered_node_or_null(); }
         [[nodiscard]] const std::vector<std::size_t> &path() const noexcept { return ref_.peered_path_or_empty(); }
         [[nodiscard]] const TSValueTypeMetaData      *runtime_schema() const noexcept { return ref_.schema; }
+        [[nodiscard]] Wiring                         *wiring() const noexcept { return wiring_; }
+        [[nodiscard]] Wiring                         &checked_wiring() const
+        {
+            if (wiring_ == nullptr) { throw std::logic_error("Port does not carry a wiring context"); }
+            return *wiring_;
+        }
+        template <typename OutSchema>
+        [[nodiscard]] Port<OutSchema> as() const;
 
         [[nodiscard]] WiringPortRef erased() const { return ref_; }
         [[nodiscard]] operator WiringPortRef() const { return erased(); }
 
       private:
+        Wiring        *wiring_{nullptr};
         WiringPortRef ref_{};
     };
 
@@ -451,6 +511,17 @@ namespace hgraph
             auto &registry = TypeRegistry::instance();
             return time_series_schema_equivalent(registry.dereference(input_schema),
                                                  registry.dereference(output_schema));
+        }
+
+        template <typename OutSchema>
+        void validate_port_cast_schema(const TSValueTypeMetaData *source_schema)
+        {
+            static_assert(!std::is_void_v<OutSchema>, "Port::as<Schema>() requires a concrete output schema");
+            const auto *target_schema = schema_descriptor<OutSchema>::ts_meta();
+            if (!input_accepts_output_schema(target_schema, source_schema))
+            {
+                throw std::logic_error("Port::as<Schema>: runtime port schema does not match the requested schema");
+            }
         }
 
         [[nodiscard]] inline const TSValueTypeMetaData *structural_target_schema_for_input(
@@ -872,7 +943,6 @@ namespace hgraph
         template <typename P, typename Arg>
         [[nodiscard]] auto make_compose_arg(Wiring &w, Arg &&arg)
         {
-            static_cast<void>(w);
             if constexpr (is_port<P>::value)
             {
                 using A = std::remove_cvref_t<Arg>;
@@ -884,11 +954,11 @@ namespace hgraph
                                   "wire<G>: structural initializer requires a typed sub-graph Port parameter");
                     const auto *expected = schema_descriptor<typename P::schema>::ts_meta();
                     WiringPortRef ref = structural_source_for_input_schema(expected, arg);
-                    return P{adapt_source_for_input(w, expected, std::move(ref))};
+                    return P{w, adapt_source_for_input(w, expected, std::move(ref))};
                 }
                 else if constexpr (is_erased_port<P>::value)
                 {
-                    return P{arg.erased()};
+                    return P{w, arg.erased()};
                 }
                 else if constexpr (is_erased_port<A>::value)
                 {
@@ -898,13 +968,13 @@ namespace hgraph
                         throw std::logic_error(
                             "wire<G>: erased input port schema does not match the sub-graph's time-series input");
                     }
-                    return P{arg.erased()};
+                    return P{w, arg.erased()};
                 }
                 else
                 {
                     static_assert(statically_accepts_output_v<typename P::schema, typename A::schema>,
                                   "wire<G>: input port schema does not match the sub-graph's time-series input");
-                    return P{arg.erased()};
+                    return P{w, arg.erased()};
                 }
             }
             else
@@ -913,6 +983,21 @@ namespace hgraph
             }
         }
     }  // namespace graph_wiring_detail
+
+    template <typename Schema>
+    template <typename OutSchema>
+    [[nodiscard]] Port<OutSchema> Port<Schema>::as() const
+    {
+        graph_wiring_detail::validate_port_cast_schema<OutSchema>(ref_.schema);
+        return Port<OutSchema>{wiring_, ref_};
+    }
+
+    template <typename OutSchema>
+    [[nodiscard]] Port<OutSchema> Port<void>::as() const
+    {
+        graph_wiring_detail::validate_port_cast_schema<OutSchema>(ref_.schema);
+        return Port<OutSchema>{wiring_, ref_};
+    }
 
     /**
      * Wire ``X`` into ``w``.
@@ -963,7 +1048,7 @@ namespace hgraph
                     {
                         throw std::logic_error("wire<Operator, OutSchema>: selected overload output schema does not match");
                     }
-                    return Port<OutSchema>{result.output.erased()};
+                    return Port<OutSchema>{w, result.output.erased()};
                 }
                 else
                 {
@@ -1110,11 +1195,11 @@ namespace hgraph
                 {
                     if constexpr (!std::is_void_v<OutSchema>)
                     {
-                        return Port<OutSchema>{std::move(out)};            // typed: explicit output schema
+                        return Port<OutSchema>{w, std::move(out)};         // typed: explicit output schema
                     }
                     else
                     {
-                        return Port<void>{std::move(out)};                 // erased: runtime-resolved
+                        return Port<void>{w, std::move(out)};              // erased: runtime-resolved
                     }
                 }
             }
@@ -1202,7 +1287,7 @@ namespace hgraph
 
                 if constexpr (signature::has_output())
                 {
-                    return Port<typename signature::output_schema_type>{std::move(out)};
+                    return Port<typename signature::output_schema_type>{w, std::move(out)};
                 }
             }
         }

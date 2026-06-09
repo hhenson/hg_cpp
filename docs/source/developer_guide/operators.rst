@@ -325,7 +325,7 @@ that operator:
    void register_standard_operators() {
        register_overload<add_, add_same<Int>>();                                    // int + int -> int
        register_overload<add_, add_binary<Int, Float, Float>>();                    // int + float -> float
-       register_overload<add_, add_binary<engine_time_t, engine_time_delta_t, engine_time_t>>();  // datetime + timedelta
+       register_overload<add_, add_binary<DateTime, TimeDelta, DateTime>>();      // datetime + timedelta
    }
 
 **The operator signature is a suggestion, not a rule.** An implementation is **not**
@@ -351,7 +351,7 @@ gated by a ``requires`` predicate (e.g. ``add_scalars(TS[SCALAR], TS[SCALAR])`` 
 ``requires=lambda m: hasattr(m[SCALAR].py_type, "__add__")``), because Python's ``+``
 dispatches at runtime. A C++ ``eval`` is concrete, so the homogeneous case is a
 *template* instantiated per addable type (``add_same<Int>``, ``add_same<Float>``,
-``add_same<engine_time_delta_t>``, …) — the registration list plays the role of the
+``add_same<TimeDelta>``, …) — the registration list plays the role of the
 ``requires`` capability gate.
 
 **Registration is explicit, never static-init.** The test harness wipes every
@@ -392,6 +392,26 @@ erased ``Port<void>`` by default, or a typed ``Port<OutSchema>`` when the caller
 supplies an explicit output schema such as ``wire<zero_, TS<Int>>(w)``. A sink
 operator, whose marker has no ``Out<>`` selector, returns ``void`` and rejects an
 explicit output schema.
+
+The standard library also provides opt-in compose-time expression syntax in
+``<hgraph/lib/std/std_operators.h>`` under ``hgraph::stdlib::syntax``. A compose body can
+write:
+
+.. code-block:: cpp
+
+   using namespace hgraph::stdlib::syntax;
+
+   auto a = wire<testing::replay, TS<Int>>(w, "a");
+   auto b = wire<testing::replay, TS<Int>>(w, "b");
+   auto c = (a + b * Int{2}).as<TS<Int>>();
+
+The overloaded C++ operators are only sugar for ``wire<stdlib::add_>`` /
+``wire<stdlib::mul_>`` / etc.; overload selection still goes through the same
+``OperatorRegistry``. Expression results are erased ``Port<void>`` values because the
+selected overload may change the result schema (for example ``int / int -> float``).
+Use ``port.as<Schema>()`` when a typed C++ return is required; it validates the runtime
+schema before producing ``Port<Schema>``. Binary expression overloads verify that two
+port operands belong to the same ``Wiring`` instance before adding nodes.
 
 **Testing.** An operator (≥1 time-series input, one output) is evaluated through the
 ``eval_node<Op>(...)`` harness: it wires the operator, lets dispatch resolve the
@@ -497,7 +517,7 @@ scalar comparison (``impl/comparison_impl.h``), scalar logical / bitwise operato
 ``debug_print`` / ``null_sink`` (``impl/io_impl.h``). Further families gain their
 ``impl/<family>_impl.h`` (and a registration call) as they land. The
 ``<hgraph/lib/std/std_operators.h>`` umbrella pulls in both the definitions and the
-implementations.
+implementations, plus opt-in expression sugar in ``operators/syntax.h``.
 
 
 Roadmap

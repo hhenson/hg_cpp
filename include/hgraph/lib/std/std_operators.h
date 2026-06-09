@@ -12,10 +12,12 @@
  *   matching ``impl/<family>_impl.h`` — and are aggregated (with
  *   ``register_standard_operators``) by ``operators/impl/operators_impl.h``.
  *
- * Including this header pulls in both. See ``docs/source/developer_guide/operators.rst``.
+ * Including this header pulls in both, plus the opt-in wiring expression syntax under
+ * ``hgraph::stdlib::syntax``. See ``docs/source/developer_guide/operators.rst``.
  */
 
 #include <hgraph/lib/std/operators/impl/operators_impl.h>
 #include <hgraph/lib/std/operators/operators.h>
+#include <hgraph/lib/std/operators/syntax.h>
 
 #endif  // HGRAPH_LIB_STD_STD_OPERATORS_H
