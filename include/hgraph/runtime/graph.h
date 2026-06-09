@@ -15,8 +15,14 @@
 namespace hgraph
 {
     class GraphBuilder;
+    class GraphExecutorView;
     class GraphValue;
     class GraphView;
+    struct GraphExecutorOps;
+    struct GraphExecutorTypeMetaData;
+
+    using GraphExecutorTypeBinding = TypeBinding<GraphExecutorTypeMetaData, GraphExecutorOps>;
+    using GraphExecutorStorageRef  = MemoryUtils::StorageRef<GraphExecutorTypeBinding>;
 
     /** Root output endpoint for a graph edge source. */
     enum class GraphEdgeSourceKind : std::uint8_t
@@ -101,8 +107,8 @@ namespace hgraph
         void (*evaluate_impl)(const void *context, const GraphView &graph, DateTime evaluation_time) = nullptr;
         void (*schedule_node_impl)(const void *context, const GraphView &graph, std::size_t node_index,
                                    DateTime when, bool force) = nullptr;
-        void (*attach_evaluation_clock_impl)(const void *context, const GraphView &graph,
-                                             EvaluationClockStorageRef clock) noexcept = nullptr;
+        void (*attach_graph_executor_impl)(const void *context, const GraphView &graph,
+                                           GraphExecutorStorageRef executor) = nullptr;
 
         [[nodiscard]] bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*evaluating_impl)(const void *context, const void *memory) noexcept = nullptr;
@@ -111,8 +117,7 @@ namespace hgraph
         [[nodiscard]] std::size_t (*node_count_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] NodeView (*node_at_impl)(const void *context, void *memory, std::size_t index) = nullptr;
         [[nodiscard]] GlobalStateView (*global_state_impl)(const void *context, void *memory) = nullptr;
-        [[nodiscard]] EvaluationClockView (*evaluation_clock_impl)(const void *context,
-                                                                   const void *memory) noexcept = nullptr;
+        [[nodiscard]] GraphExecutorView (*graph_executor_impl)(const void *context, void *memory) noexcept = nullptr;
     };
 
     using GraphTypeBinding = TypeBinding<GraphTypeMetaData, GraphOps>;
@@ -148,6 +153,8 @@ namespace hgraph
          * point once non-flattening nested graphs exist).
          */
         [[nodiscard]] GlobalStateView global_state() const;
+        [[nodiscard]] GraphExecutorView graph_executor() const noexcept;
+        [[nodiscard]] EvaluationClockStorageRef evaluation_clock_ref() const noexcept;
         [[nodiscard]] EvaluationClockView evaluation_clock() const noexcept;
         [[nodiscard]] GraphView root() const;
 
@@ -155,7 +162,7 @@ namespace hgraph
         void stop() const;
         void evaluate(DateTime evaluation_time) const;
         void schedule_node(std::size_t node_index, DateTime when, bool force = false) const;
-        void attach_evaluation_clock(EvaluationClockStorageRef clock) const noexcept;
+        void attach_graph_executor(GraphExecutorStorageRef executor) const;
 
       private:
         [[nodiscard]] const GraphOps &ops() const;

@@ -57,6 +57,7 @@ namespace hgraph
             std::size_t state_offset{npos};
             std::size_t scalars_offset{npos};
             std::size_t scheduler_offset{npos};
+            std::size_t evaluation_clock_offset{npos};
             std::size_t error_output_offset{npos};
             std::size_t recordable_state_offset{npos};
 
@@ -65,6 +66,7 @@ namespace hgraph
             [[nodiscard]] bool has_state() const noexcept { return state_offset != npos; }
             [[nodiscard]] bool has_scalars() const noexcept { return scalars_offset != npos; }
             [[nodiscard]] bool has_scheduler() const noexcept { return scheduler_offset != npos; }
+            [[nodiscard]] bool has_evaluation_clock() const noexcept { return evaluation_clock_offset != npos; }
             [[nodiscard]] bool has_error_output() const noexcept { return error_output_offset != npos; }
             [[nodiscard]] bool has_recordable_state() const noexcept { return recordable_state_offset != npos; }
         };
@@ -129,6 +131,13 @@ namespace hgraph
         [[nodiscard]] NodeSchedulerState &node_scheduler_state(const NodeRuntimeContext &context, void *memory)
         {
             return *MemoryUtils::cast<NodeSchedulerState>(node_component(memory, context.layout.scheduler_offset));
+        }
+
+        [[nodiscard]] EvaluationClockStorageRef &node_evaluation_clock_ref(const NodeRuntimeContext &context,
+                                                                           void *memory)
+        {
+            return *MemoryUtils::cast<EvaluationClockStorageRef>(
+                node_component(memory, context.layout.evaluation_clock_offset));
         }
 
         [[nodiscard]] TSOutput &node_error_output(const NodeRuntimeContext &context, void *memory)
@@ -280,6 +289,15 @@ namespace hgraph
                 constructed.push_back(component);
             }
 
+            if (context.layout.has_evaluation_clock())
+            {
+                const auto *component = plan.find_component("evaluation_clock");
+                if (component == nullptr) { throw std::logic_error("Node storage plan is missing evaluation_clock"); }
+                std::construct_at(MemoryUtils::cast<EvaluationClockStorageRef>(
+                                      MemoryUtils::advance(memory, component->offset)));
+                constructed.push_back(component);
+            }
+
             if (context.layout.has_error_output())
             {
                 const auto *component = plan.find_component("error_output");
@@ -327,6 +345,7 @@ namespace hgraph
                 {"state", &NodeRuntimeLayout::state_offset},
                 {"scalars", &NodeRuntimeLayout::scalars_offset},
                 {"scheduler", &NodeRuntimeLayout::scheduler_offset},
+                {"evaluation_clock", &NodeRuntimeLayout::evaluation_clock_offset},
                 {"error_output", &NodeRuntimeLayout::error_output_offset},
                 {"recordable_state", &NodeRuntimeLayout::recordable_state_offset},
             };
@@ -574,6 +593,25 @@ namespace hgraph
             return &node_scheduler_state(runtime, memory);
         }
 
+        EvaluationClockStorageRef evaluation_clock_ref_impl(const void *context, void *memory) noexcept
+        {
+            const auto &runtime = runtime_context(context);
+            auto       &state   = node_storage(runtime, memory);
+            if (!runtime.layout.has_evaluation_clock())
+            {
+                return state.graph != nullptr
+                           ? state.graph->view().root().evaluation_clock_ref()
+                           : EvaluationClockStorageRef{};
+            }
+
+            auto &cached = node_evaluation_clock_ref(runtime, memory);
+            if (!cached.has_value() && state.graph != nullptr)
+            {
+                cached = state.graph->view().root().evaluation_clock_ref();
+            }
+            return cached;
+        }
+
         TSOutputView error_output_view_impl(const void *context, void *memory, DateTime evaluation_time)
         {
             const auto &runtime = runtime_context(context);
@@ -742,6 +780,11 @@ namespace hgraph
             throw std::logic_error("NodeView::scheduler_state requires a live node");
         }
 
+        EvaluationClockStorageRef default_evaluation_clock_ref_impl(const void *, void *) noexcept
+        {
+            return EvaluationClockStorageRef{};
+        }
+
         TSOutputView default_error_output_view_impl(const void *, void *, DateTime)
         {
             throw std::logic_error("NodeView::error_output requires a live node");
@@ -803,6 +846,10 @@ namespace hgraph
                 if (ops.state_view_impl == nullptr) { ops.state_view_impl = &state_view_impl; }
                 if (ops.scalars_view_impl == nullptr) { ops.scalars_view_impl = &scalars_view_impl; }
                 if (ops.scheduler_state_impl == nullptr) { ops.scheduler_state_impl = &scheduler_state_impl; }
+                if (ops.evaluation_clock_ref_impl == nullptr)
+                {
+                    ops.evaluation_clock_ref_impl = &evaluation_clock_ref_impl;
+                }
                 if (ops.error_output_view_impl == nullptr) { ops.error_output_view_impl = &error_output_view_impl; }
                 if (ops.recordable_state_view_impl == nullptr)
                 {
@@ -847,6 +894,7 @@ namespace hgraph
                 .state_view_impl = &default_state_view_impl,
                 .scalars_view_impl = &default_scalars_view_impl,
                 .scheduler_state_impl = &default_scheduler_state_impl,
+                .evaluation_clock_ref_impl = &default_evaluation_clock_ref_impl,
                 .error_output_view_impl = &default_error_output_view_impl,
                 .recordable_state_view_impl = &default_recordable_state_view_impl,
                 .extended_view_type_id = nullptr,
@@ -885,6 +933,10 @@ namespace hgraph
         if (schema.uses_scheduler)
         {
             builder.add_field("scheduler", MemoryUtils::plan_for<NodeSchedulerState>());
+        }
+        if (schema.uses_evaluation_clock)
+        {
+            builder.add_field("evaluation_clock", MemoryUtils::plan_for<EvaluationClockStorageRef>());
         }
         if (schema.error_output_schema != nullptr)
         {
@@ -1022,6 +1074,16 @@ namespace hgraph
         return *ops().scheduler_state_impl(ops().context, data());
     }
 
+    EvaluationClockStorageRef NodeView::evaluation_clock_ref() const noexcept
+    {
+        return ops().evaluation_clock_ref_impl(ops().context, data());
+    }
+
+    EvaluationClockView NodeView::evaluation_clock() const noexcept
+    {
+        return EvaluationClockView{evaluation_clock_ref()};
+    }
+
     TSOutputView NodeView::error_output(DateTime evaluation_time) const
     {
         return ops().error_output_view_impl(ops().context, data(), evaluation_time);
@@ -1039,7 +1101,6 @@ namespace hgraph
         ops().evaluate_impl(ops().context, *this, evaluation_time, force);
     }
     void NodeView::cleanup_delta() const { ops().cleanup_delta_impl(ops().context, *this); }
-
     const NodeOps &NodeView::ops() const
     {
         return storage_.binding()->ops_ref();

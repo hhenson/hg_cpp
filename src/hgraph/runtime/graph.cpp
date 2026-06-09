@@ -1,5 +1,6 @@
 #include <hgraph/runtime/graph.h>
 
+#include <hgraph/runtime/executor.h>
 #include <hgraph/util/scope.h>
 
 #include <algorithm>
@@ -111,7 +112,6 @@ namespace hgraph
                     nodes.push_back(builder.nodes()[index].make_node(index));
                 }
                 schedule.resize(nodes.size());
-                use_graph_clock();
                 bind_edges(builder.edges());
             }
 
@@ -140,21 +140,24 @@ namespace hgraph
                 }
             }
 
-            void use_graph_clock() noexcept
+            void attach_graph_executor(GraphExecutorStorageRef executor)
             {
-                clock_ref = EvaluationClockStorageRef{graph_evaluation_clock_binding(), this};
-                uses_external_clock = false;
+                if (!executor.has_value())
+                {
+                    throw std::invalid_argument("Graph executor assignment requires a live executor");
+                }
+                if (graph_executor_ref.has_value())
+                {
+                    throw std::logic_error("Graph executor can only be assigned once");
+                }
+                graph_executor_ref = executor;
             }
 
-            void use_external_clock(EvaluationClockStorageRef clock) noexcept
+            [[nodiscard]] GraphExecutorView graph_executor() noexcept
             {
-                if (!clock.has_value())
-                {
-                    use_graph_clock();
-                    return;
-                }
-                clock_ref = clock;
-                uses_external_clock = true;
+                return graph_executor_ref.has_value()
+                           ? GraphExecutorView{graph_executor_ref.binding(), graph_executor_ref.data()}
+                           : GraphExecutorView{};
             }
 
             std::vector<NodeValue>          nodes{};
@@ -162,9 +165,8 @@ namespace hgraph
             GlobalState                     global_state{};
             DateTime                        evaluation_time{MIN_DT};
             DateTime                        cycle_wall_start{current_wall_time()};
-            EvaluationClockStorageRef       clock_ref{};
+            GraphExecutorStorageRef         graph_executor_ref{};
             std::size_t                     evaluation_cursor{invalid_cursor};
-            bool                            uses_external_clock{false};
             bool                            started{false};
             bool                            evaluating{false};
         };
@@ -184,7 +186,6 @@ namespace hgraph
         void attach_nodes_impl(const void *, void *memory, GraphValue *graph)
         {
             auto &state = storage(memory);
-            if (!state.uses_external_clock) { state.use_graph_clock(); }
             for (std::size_t index = 0; index < state.nodes.size(); ++index)
             {
                 state.nodes[index].attach_graph(graph, index);
@@ -276,15 +277,14 @@ namespace hgraph
             return binding;
         }
 
-        EvaluationClockView evaluation_clock_impl(const void *, const void *memory) noexcept
+        GraphExecutorView graph_executor_impl(const void *, void *memory) noexcept
         {
-            const auto &state = storage(memory);
-            return EvaluationClockView{state.clock_ref};
+            return storage(memory).graph_executor();
         }
 
-        void attach_evaluation_clock_impl(const void *, const GraphView &graph, EvaluationClockStorageRef clock) noexcept
+        void attach_graph_executor_impl(const void *, const GraphView &graph, GraphExecutorStorageRef executor)
         {
-            storage(graph.data()).use_external_clock(clock);
+            storage(graph.data()).attach_graph_executor(executor);
         }
 
         void default_attach_nodes_impl(const void *, void *, GraphValue *) {}
@@ -309,9 +309,10 @@ namespace hgraph
             throw std::logic_error("GraphView::schedule_node requires a live graph");
         }
 
-        void default_attach_evaluation_clock_impl(const void *, const GraphView &,
-                                                  EvaluationClockStorageRef) noexcept
+        void default_attach_graph_executor_impl(const void *, const GraphView &,
+                                                GraphExecutorStorageRef)
         {
+            throw std::logic_error("GraphView::attach_graph_executor requires a live graph");
         }
 
         bool default_started_impl(const void *, const void *) noexcept { return false; }
@@ -330,9 +331,9 @@ namespace hgraph
             throw std::logic_error("GraphView::global_state requires a live graph");
         }
 
-        EvaluationClockView default_graph_evaluation_clock_impl(const void *, const void *) noexcept
+        GraphExecutorView default_graph_executor_impl(const void *, void *) noexcept
         {
-            return EvaluationClockView{};
+            return GraphExecutorView{};
         }
 
         void schedule_node_impl(const void *, const GraphView &graph, std::size_t node_index, DateTime when, bool force)
@@ -464,7 +465,7 @@ namespace hgraph
                     .stop_impl = &stop_impl,
                     .evaluate_impl = &evaluate_impl,
                     .schedule_node_impl = &schedule_node_impl,
-                    .attach_evaluation_clock_impl = &attach_evaluation_clock_impl,
+                    .attach_graph_executor_impl = &attach_graph_executor_impl,
                     .started_impl = &started_impl,
                     .evaluating_impl = &evaluating_impl,
                     .evaluation_time_impl = &evaluation_time_impl,
@@ -472,7 +473,7 @@ namespace hgraph
                     .node_count_impl = &node_count_impl,
                     .node_at_impl = &node_at_impl,
                     .global_state_impl = &global_state_impl,
-                    .evaluation_clock_impl = &evaluation_clock_impl,
+                    .graph_executor_impl = &graph_executor_impl,
                 };
                 return table;
             }
@@ -496,7 +497,7 @@ namespace hgraph
                 .stop_impl = &default_stop_impl,
                 .evaluate_impl = &default_evaluate_impl,
                 .schedule_node_impl = &default_schedule_node_impl,
-                .attach_evaluation_clock_impl = &default_attach_evaluation_clock_impl,
+                .attach_graph_executor_impl = &default_attach_graph_executor_impl,
                 .started_impl = &default_started_impl,
                 .evaluating_impl = &default_evaluating_impl,
                 .evaluation_time_impl = &default_evaluation_time_impl,
@@ -504,7 +505,7 @@ namespace hgraph
                 .node_count_impl = &default_node_count_impl,
                 .node_at_impl = &default_node_at_impl,
                 .global_state_impl = &default_global_state_impl,
-                .evaluation_clock_impl = &default_graph_evaluation_clock_impl,
+                .graph_executor_impl = &default_graph_executor_impl,
             };
             return table;
         }
@@ -573,9 +574,24 @@ namespace hgraph
         return ops().global_state_impl(ops().context, data());
     }
 
+    GraphExecutorView GraphView::graph_executor() const noexcept
+    {
+        return ops().graph_executor_impl(ops().context, data());
+    }
+
+    EvaluationClockStorageRef GraphView::evaluation_clock_ref() const noexcept
+    {
+        auto root_graph = root();
+        auto executor = root_graph.graph_executor();
+        if (executor.valid()) { return executor.evaluation_clock_ref(); }
+        return root_graph.valid()
+                   ? EvaluationClockStorageRef{graph_evaluation_clock_binding(), root_graph.data()}
+                   : EvaluationClockStorageRef{};
+    }
+
     EvaluationClockView GraphView::evaluation_clock() const noexcept
     {
-        return ops().evaluation_clock_impl(ops().context, data());
+        return EvaluationClockView{evaluation_clock_ref()};
     }
 
     GraphView GraphView::root() const
@@ -593,9 +609,9 @@ namespace hgraph
         ops().schedule_node_impl(ops().context, *this, node_index, when, force);
     }
 
-    void GraphView::attach_evaluation_clock(EvaluationClockStorageRef clock) const noexcept
+    void GraphView::attach_graph_executor(GraphExecutorStorageRef executor) const
     {
-        ops().attach_evaluation_clock_impl(ops().context, *this, clock);
+        ops().attach_graph_executor_impl(ops().context, *this, executor);
     }
 
     const GraphOps &GraphView::ops() const

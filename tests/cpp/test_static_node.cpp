@@ -512,6 +512,42 @@ TEST_CASE("static node: EvaluationClockView is injected as a read-only clock vie
     CHECK(cycle_time_us >= Int{0});
 }
 
+TEST_CASE("static node: EvaluationClockView cache storage is allocated only when injected")
+{
+    using namespace hgraph;
+
+    NodeBuilder clock_builder;
+    clock_builder.implementation<ClockProbe>();
+    CHECK(clock_builder.binding().type_meta->uses_evaluation_clock);
+    CHECK(clock_builder.binding().checked_plan().find_component("evaluation_clock") != nullptr);
+
+    NodeBuilder ordinary_builder;
+    ordinary_builder.implementation<Counter>();
+    CHECK_FALSE(ordinary_builder.binding().type_meta->uses_evaluation_clock);
+    CHECK(ordinary_builder.binding().checked_plan().find_component("evaluation_clock") == nullptr);
+}
+
+TEST_CASE("graph executor parent is assigned once")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder;
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder));
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    auto               graph = executor_view.graph();
+    auto               graph_executor = graph.graph_executor();
+
+    REQUIRE(graph_executor.valid());
+    CHECK(graph_executor.binding() == executor_view.binding());
+    CHECK(graph_executor.data() == executor_view.data());
+    CHECK_THROWS_AS(graph.attach_graph_executor(GraphExecutorStorageRef{executor_view.binding(), executor_view.data()}),
+                    std::logic_error);
+    CHECK_THROWS_AS(graph.attach_graph_executor(GraphExecutorStorageRef{}), std::invalid_argument);
+}
+
 TEST_CASE("static node: RecordableState<TSB> is hidden output-backed state")
 {
     using namespace hgraph;

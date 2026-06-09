@@ -1416,6 +1416,11 @@ namespace hgraph
         template <typename T> struct is_scheduler_selector : std::false_type {};
         template <> struct is_scheduler_selector<NodeScheduler> : std::true_type {};
 
+        // The evaluation clock is also an injectable. Static nodes that request it
+        // get a cached clock-ref slot; other nodes pay no storage cost.
+        template <typename T> struct is_evaluation_clock_selector : std::false_type {};
+        template <> struct is_evaluation_clock_selector<EvaluationClockView> : std::true_type {};
+
         // ---- per-selector runtime metadata ----
         // ``schema`` / ``value_schema`` expose the selector's compile-time schema type
         // so the generic-wiring path can resolve type variables (see type_resolution.h);
@@ -1633,7 +1638,7 @@ namespace hgraph
         {
             static EvaluationClockView get(const NodeView &view, DateTime)
             {
-                return view.graph().evaluation_clock();
+                return view.evaluation_clock();
             }
         };
 
@@ -1943,6 +1948,20 @@ namespace hgraph
             return tuple_has_scheduler<ArgsTuple>(std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
         }
 
+        template <typename ArgsTuple, std::size_t... I>
+        static constexpr bool tuple_has_evaluation_clock(std::index_sequence<I...>)
+        {
+            return (false || ... ||
+                    static_node_detail::is_evaluation_clock_selector<
+                        static_node_detail::selector_of<std::tuple_element_t<I, ArgsTuple>>>::value);
+        }
+
+        template <typename ArgsTuple>
+        static constexpr bool args_have_evaluation_clock()
+        {
+            return tuple_has_evaluation_clock<ArgsTuple>(std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
+        }
+
       public:
         /** The static output schema type (the ``Out<S>``'s ``S``), or ``void`` if no output. */
         using output_schema_type = typename static_node_detail::output_type_of_tuple<eval_args>::type;
@@ -2000,6 +2019,26 @@ namespace hgraph
             if constexpr (static_node_detail::has_stop<TImplementation>)
             {
                 result = result || args_have_scheduler<
+                                       typename static_node_detail::fn_traits<decltype(&TImplementation::stop)>::args_tuple>();
+            }
+            return result;
+        }
+
+        /**
+         * Whether any hook injects ``EvaluationClockView`` — so a cached clock-ref
+         * slot is allocated for this node only.
+         */
+        [[nodiscard]] static constexpr bool uses_evaluation_clock()
+        {
+            bool result = args_have_evaluation_clock<eval_args>();
+            if constexpr (static_node_detail::has_start<TImplementation>)
+            {
+                result = result || args_have_evaluation_clock<
+                                       typename static_node_detail::fn_traits<decltype(&TImplementation::start)>::args_tuple>();
+            }
+            if constexpr (static_node_detail::has_stop<TImplementation>)
+            {
+                result = result || args_have_evaluation_clock<
                                        typename static_node_detail::fn_traits<decltype(&TImplementation::stop)>::args_tuple>();
             }
             return result;
@@ -2259,6 +2298,7 @@ namespace hgraph
         schema.recordable_state_schema = signature::recordable_state_schema();
         schema.node_kind               = signature::node_kind();
         schema.uses_scheduler          = signature::uses_scheduler();
+        schema.uses_evaluation_clock   = signature::uses_evaluation_clock();
         schema.schedule_on_start = signature::schedule_on_start();
         schema.active_inputs     = signature::active_inputs();
         schema.valid_inputs      = signature::valid_inputs();
@@ -2318,6 +2358,7 @@ namespace hgraph
         schema.recordable_state_schema = signature::recordable_state_schema(resolution);
         schema.node_kind         = signature::node_kind();
         schema.uses_scheduler    = signature::uses_scheduler();
+        schema.uses_evaluation_clock = signature::uses_evaluation_clock();
         schema.schedule_on_start = signature::schedule_on_start();
         schema.active_inputs     = signature::active_inputs();
         schema.valid_inputs      = signature::valid_inputs();

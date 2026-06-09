@@ -36,10 +36,9 @@ namespace hgraph
         [[nodiscard]] DateTime (*start_time_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] DateTime (*end_time_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] GraphView (*graph_impl)(const void *context, void *memory) = nullptr;
+        [[nodiscard]] EvaluationClockStorageRef (*evaluation_clock_ref_impl)(const void *context,
+                                                                             void *memory) noexcept = nullptr;
     };
-
-    using GraphExecutorTypeBinding = TypeBinding<GraphExecutorTypeMetaData, GraphExecutorOps>;
-    using GraphExecutorStorageRef  = MemoryUtils::StorageRef<GraphExecutorTypeBinding>;
 
     /** Borrowed type-erased executor view. */
     class HGRAPH_EXPORT GraphExecutorView
@@ -61,6 +60,8 @@ namespace hgraph
         [[nodiscard]] DateTime end_time() const noexcept;
         [[nodiscard]] bool stop_requested() const noexcept;
         [[nodiscard]] GraphView graph() const;
+        [[nodiscard]] EvaluationClockStorageRef evaluation_clock_ref() const noexcept;
+        [[nodiscard]] EvaluationClockView evaluation_clock() const noexcept;
 
         void run() const;
         void request_stop() const noexcept;

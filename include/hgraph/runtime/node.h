@@ -2,6 +2,7 @@
 #define HGRAPH_RUNTIME_NODE_H
 
 #include <hgraph/hgraph_export.h>
+#include <hgraph/runtime/evaluation_clock.h>
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
@@ -62,6 +63,7 @@ namespace hgraph
 
         NodeKind node_kind{NodeKind::Compute};
         bool     uses_scheduler{false};
+        bool     uses_evaluation_clock{false};
         // When set, the framework schedules this node for the current cycle during
         // ``start`` (the declarative form of a source doing schedule_now() itself).
         bool     schedule_on_start{false};
@@ -121,6 +123,8 @@ namespace hgraph
         [[nodiscard]] ValueView (*state_view_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] ValueView (*scalars_view_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] NodeSchedulerState *(*scheduler_state_impl)(const void *context, void *memory) = nullptr;
+        [[nodiscard]] EvaluationClockStorageRef (*evaluation_clock_ref_impl)(const void *context,
+                                                                             void *memory) noexcept = nullptr;
         [[nodiscard]] TSOutputView (*error_output_view_impl)(const void *context, void *memory,
                                                              DateTime evaluation_time) = nullptr;
         [[nodiscard]] TSOutputView (*recordable_state_view_impl)(const void *context, void *memory,
@@ -203,6 +207,8 @@ namespace hgraph
         [[nodiscard]] ValueView scalars() const;
         /** Borrow this node's persistent scheduler state (only valid when ``has_scheduler``). */
         [[nodiscard]] NodeSchedulerState &scheduler_state() const;
+        [[nodiscard]] EvaluationClockStorageRef evaluation_clock_ref() const noexcept;
+        [[nodiscard]] EvaluationClockView evaluation_clock() const noexcept;
         [[nodiscard]] TSOutputView error_output(DateTime evaluation_time) const;
         [[nodiscard]] TSOutputView recordable_state(DateTime evaluation_time) const;
 

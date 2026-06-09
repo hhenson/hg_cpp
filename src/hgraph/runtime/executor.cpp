@@ -191,6 +191,16 @@ namespace hgraph
             return binding;
         }
 
+        [[nodiscard]] EvaluationClockStorageRef simulation_clock_ref_impl(const void *, void *memory) noexcept
+        {
+            return EvaluationClockStorageRef{simulation_clock_binding(), memory};
+        }
+
+        [[nodiscard]] EvaluationClockStorageRef realtime_clock_ref_impl(const void *, void *memory) noexcept
+        {
+            return EvaluationClockStorageRef{realtime_clock_binding(), memory};
+        }
+
         [[nodiscard]] DateTime advance_simulation(SimulationExecutorStorage &state, DateTime next_scheduled_time)
         {
             const DateTime next = std::min(next_scheduled_time, state.end_time);
@@ -240,18 +250,13 @@ namespace hgraph
         }
 
         template <typename Storage, typename Advance>
-        void run_storage(Storage &state, EvaluationClockStorageRef clock, Advance advance)
+        void run_storage(Storage &state, Advance advance)
         {
             validate_times(state.start_time, state.end_time);
             state.stop_requested.store(false, std::memory_order_release);
             state.set_evaluation_time(state.start_time);
 
             auto graph = state.graph.view();
-            graph.attach_evaluation_clock(clock);
-            auto detach_clock = make_scope_exit([&] noexcept {
-                graph.attach_evaluation_clock(EvaluationClockStorageRef{});
-            });
-
             graph.start(state.start_time);
             auto stop_graph = UnwindCleanupGuard([&] { graph.stop(); });
 
@@ -277,7 +282,6 @@ namespace hgraph
         {
             auto &state = simulation_storage(executor.data());
             run_storage(state,
-                        EvaluationClockStorageRef{simulation_clock_binding(), &state},
                         [](SimulationExecutorStorage &storage, DateTime next) {
                             return advance_simulation(storage, next);
                         });
@@ -287,7 +291,6 @@ namespace hgraph
         {
             auto &state = realtime_storage(executor.data());
             run_storage(state,
-                        EvaluationClockStorageRef{realtime_clock_binding(), &state},
                         [](RealTimeExecutorStorage &storage, DateTime next) {
                             return advance_realtime(storage, next);
                         });
@@ -356,6 +359,7 @@ namespace hgraph
                 .start_time_impl = &simulation_start_time_impl,
                 .end_time_impl = &simulation_end_time_impl,
                 .graph_impl = &simulation_graph_impl,
+                .evaluation_clock_ref_impl = &simulation_clock_ref_impl,
             };
             return table;
         }
@@ -370,6 +374,7 @@ namespace hgraph
                 .start_time_impl = &realtime_start_time_impl,
                 .end_time_impl = &realtime_end_time_impl,
                 .graph_impl = &realtime_graph_impl,
+                .evaluation_clock_ref_impl = &realtime_clock_ref_impl,
             };
             return table;
         }
@@ -424,6 +429,11 @@ namespace hgraph
             return GraphView{};
         }
 
+        EvaluationClockStorageRef default_evaluation_clock_ref_impl(const void *, void *) noexcept
+        {
+            return EvaluationClockStorageRef{};
+        }
+
         const GraphExecutorOps &default_executor_ops()
         {
             static const GraphExecutorOps table{
@@ -434,6 +444,7 @@ namespace hgraph
                 .start_time_impl = &default_start_time_impl,
                 .end_time_impl = &default_end_time_impl,
                 .graph_impl = &default_graph_impl,
+                .evaluation_clock_ref_impl = &default_evaluation_clock_ref_impl,
             };
             return table;
         }
@@ -497,6 +508,16 @@ namespace hgraph
         return ops().graph_impl(ops().context, data());
     }
 
+    EvaluationClockStorageRef GraphExecutorView::evaluation_clock_ref() const noexcept
+    {
+        return ops().evaluation_clock_ref_impl(ops().context, data());
+    }
+
+    EvaluationClockView GraphExecutorView::evaluation_clock() const noexcept
+    {
+        return EvaluationClockView{evaluation_clock_ref()};
+    }
+
     void GraphExecutorView::run() const
     {
         ops().run_impl(ops().context, *this);
@@ -529,6 +550,7 @@ namespace hgraph
             }
             throw std::logic_error("Unknown graph executor mode");
         });
+        view().graph().attach_graph_executor(GraphExecutorStorageRef{binding, storage_.data()});
     }
 
     GraphExecutorValue::~GraphExecutorValue() = default;
