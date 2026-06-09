@@ -432,7 +432,7 @@ namespace hgraph
         template <> struct is_erased_port<Port<void>> : std::true_type {};
 
         template <typename T> struct in_param_schema;
-        template <fixed_string N, typename S> struct in_param_schema<In<N, S>> { using type = S; };
+        template <fixed_string N, typename S, auto... P> struct in_param_schema<In<N, S, P...>> { using type = S; };
 
         // The schema type a Scalar<Name, V> wire-param carries (``V`` — a concrete
         // scalar type, or a ``ScalarVar`` for a generic node).

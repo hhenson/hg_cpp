@@ -56,8 +56,9 @@ namespace hgraph
      * The typed selector surface covers the supported time-series shapes (``TS`` /
      * ``SIGNAL`` / ``REF`` / ``TSS`` / ``TSD`` / ``TSL`` / ``TSB`` / tick-count
      * ``TSW``), scalar ``State<T>``, wiring-time ``Scalar<Name, T>`` values,
-     * graph-level ``GlobalState<T>``, and scheduler injection. Push-source selectors,
-     * policy flags, and recordable state are still being filled in.
+     * graph-level ``GlobalState<T>``, input activity/validity policy flags, and
+     * scheduler injection. Push-source selectors and recordable state are still
+     * being filled in.
      */
 
     // -----------------------------------------------------------------
@@ -115,6 +116,25 @@ namespace hgraph
             static constexpr bool found = matches || next::found;
             using type                  = std::conditional_t<matches, Schema, typename next::type>;
             static constexpr std::size_t index = matches ? 0 : 1 + next::index;
+        };
+
+        template <typename S> struct is_static_tsb_schema : std::false_type {};
+        template <typename... Fields> struct is_static_tsb_schema<UnNamedTSB<Fields...>> : std::true_type {};
+        template <fixed_string Name, typename... Fields>
+        struct is_static_tsb_schema<TSB<Name, Fields...>> : std::true_type {};
+
+        template <typename S> struct static_tsb_schema_traits;
+        template <typename... Fields>
+        struct static_tsb_schema_traits<UnNamedTSB<Fields...>>
+        {
+            template <fixed_string FieldName>
+            using lookup = tsb_field_lookup<FieldName, Fields...>;
+        };
+        template <fixed_string Name, typename... Fields>
+        struct static_tsb_schema_traits<TSB<Name, Fields...>>
+        {
+            template <fixed_string FieldName>
+            using lookup = tsb_field_lookup<FieldName, Fields...>;
         };
     }  // namespace static_node_detail
 
@@ -406,16 +426,84 @@ namespace hgraph
      * schema plus typed sugar. Constructed from a ``TSInputView`` (by ``arg_provider``
      * or, for a child, from ``TSLInputView::at(i)``).
      */
-    template <fixed_string Name, typename TSchema>
+    enum class InputActivity
+    {
+        Active,
+        Passive,
+    };
+
+    enum class InputValidity
+    {
+        Valid,
+        AllValid,
+        Unchecked,
+    };
+
+    namespace static_node_detail
+    {
+        template <auto TPolicy>
+        consteval bool is_input_policy_flag()
+        {
+            using policy_type = std::remove_cv_t<decltype(TPolicy)>;
+            return std::is_same_v<policy_type, InputActivity> || std::is_same_v<policy_type, InputValidity>;
+        }
+
+        template <auto... TPolicies>
+        consteval void validate_input_policy_flags()
+        {
+            static_assert((is_input_policy_flag<TPolicies>() && ...),
+                          "In<> only accepts InputActivity / InputValidity policy flags");
+            static_assert((0U + ... +
+                           static_cast<unsigned>(
+                               std::is_same_v<std::remove_cv_t<decltype(TPolicies)>, InputActivity>)) <= 1U,
+                          "In<> accepts at most one InputActivity policy flag");
+            static_assert((0U + ... +
+                           static_cast<unsigned>(
+                               std::is_same_v<std::remove_cv_t<decltype(TPolicies)>, InputValidity>)) <= 1U,
+                          "In<> accepts at most one InputValidity policy flag");
+        }
+
+        template <auto... TPolicies>
+        consteval InputActivity resolved_input_activity()
+        {
+            validate_input_policy_flags<TPolicies...>();
+            InputActivity result = InputActivity::Active;
+            (
+                [&] {
+                    using policy_type = std::remove_cv_t<decltype(TPolicies)>;
+                    if constexpr (std::is_same_v<policy_type, InputActivity>) { result = TPolicies; }
+                }(),
+                ...);
+            return result;
+        }
+
+        template <auto... TPolicies>
+        consteval InputValidity resolved_input_validity()
+        {
+            validate_input_policy_flags<TPolicies...>();
+            InputValidity result = InputValidity::Valid;
+            (
+                [&] {
+                    using policy_type = std::remove_cv_t<decltype(TPolicies)>;
+                    if constexpr (std::is_same_v<policy_type, InputValidity>) { result = TPolicies; }
+                }(),
+                ...);
+            return result;
+        }
+    }  // namespace static_node_detail
+
+    template <fixed_string Name, typename TSchema, auto... TPolicies>
     class In;
 
-    template <fixed_string Name, typename TValue>
-    class In<Name, TS<TValue>> : public TSInputView
+    template <fixed_string Name, typename TValue, auto... TPolicies>
+    class In<Name, TS<TValue>, TPolicies...> : public TSInputView
     {
       public:
         using schema                     = TS<TValue>;
         using value_type                 = TValue;
         static constexpr auto field_name = Name;
+        static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
 
         explicit In(TSInputView view) noexcept : TSInputView(std::move(view)) {}
 
@@ -426,12 +514,14 @@ namespace hgraph
         // modified() / valid() / delta_value() inherited from TSInputView.
     };
 
-    template <fixed_string Name>
-    class In<Name, SIGNAL> : public TSInputView
+    template <fixed_string Name, auto... TPolicies>
+    class In<Name, SIGNAL, TPolicies...> : public TSInputView
     {
       public:
         using schema                     = SIGNAL;
         static constexpr auto field_name = Name;
+        static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
 
         explicit In(TSInputView view) noexcept : TSInputView(std::move(view)) {}
 
@@ -444,14 +534,16 @@ namespace hgraph
      * The reference points at ``S``; ``base()`` remains the erased view over the REF
      * time-series itself.
      */
-    template <fixed_string Name, typename TSchema>
-    class In<Name, REF<TSchema>> : public TSInputView
+    template <fixed_string Name, typename TSchema, auto... TPolicies>
+    class In<Name, REF<TSchema>, TPolicies...> : public TSInputView
     {
       public:
         using schema                     = REF<TSchema>;
         using target_schema              = TSchema;
         using value_type                 = TimeSeriesReference;
         static constexpr auto field_name = Name;
+        static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
 
         explicit In(TSInputView view) noexcept : TSInputView(std::move(view)) {}
 
@@ -467,13 +559,15 @@ namespace hgraph
      * ``added`` / ``removed`` / ``values`` / ``contains``; ``delta()`` is the canonical
      * delta ``Value`` (the inherited ``delta_value()``).
      */
-    template <fixed_string Name, typename TValue>
-    class In<Name, TSS<TValue>> : public TSSInputView
+    template <fixed_string Name, typename TValue, auto... TPolicies>
+    class In<Name, TSS<TValue>, TPolicies...> : public TSSInputView
     {
       public:
         using schema                     = TSS<TValue>;
         using value_type                 = TValue;  // the set's element type
         static constexpr auto field_name = Name;
+        static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
 
         explicit In(TSInputView view) noexcept : TSSInputView(std::move(view)) {}
 
@@ -506,14 +600,16 @@ namespace hgraph
      * ``Map<int, delta(C)>`` value view; ``size()`` / ``modified_items()`` /
      * ``modified()`` / ``valid()`` are inherited.
      */
-    template <fixed_string Name, typename TElementSchema, std::size_t N>
-    class In<Name, TSL<TElementSchema, N>> : public TSLInputView
+    template <fixed_string Name, typename TElementSchema, std::size_t N, auto... TPolicies>
+    class In<Name, TSL<TElementSchema, N>, TPolicies...> : public TSLInputView
     {
       public:
         using schema                            = TSL<TElementSchema, N>;
         using element_schema                    = TElementSchema;
         static constexpr auto        field_name = Name;
         static constexpr std::size_t fixed_size = N;
+        static constexpr auto        activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto        validity   = static_node_detail::resolved_input_validity<TPolicies...>();
 
         explicit In(TSInputView view) noexcept : TSLInputView(std::move(view)) {}
 
@@ -535,14 +631,16 @@ namespace hgraph
      * Iteration helpers return typed child selectors while preserving ``ValueView``
      * keys.
      */
-    template <fixed_string Name, typename TKey, typename TValueSchema>
-    class In<Name, TSD<TKey, TValueSchema>> : public TSDInputView
+    template <fixed_string Name, typename TKey, typename TValueSchema, auto... TPolicies>
+    class In<Name, TSD<TKey, TValueSchema>, TPolicies...> : public TSDInputView
     {
       public:
         using schema                     = TSD<TKey, TValueSchema>;
         using key_type                   = TKey;
         using value_schema               = TValueSchema;
         static constexpr auto field_name = Name;
+        static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
 
         explicit In(TSInputView view) noexcept : TSDInputView(std::move(view)) {}
 
@@ -674,41 +772,22 @@ namespace hgraph
      * ``TSBInputView`` and adds compile-time field selection via
      * ``field<"name">()``.
      */
-    template <fixed_string Name, typename... TFields>
-    class In<Name, UnNamedTSB<TFields...>> : public TSBInputView
+    template <fixed_string Name, typename TSchema, auto... TPolicies>
+        requires static_node_detail::is_static_tsb_schema<TSchema>::value
+    class In<Name, TSchema, TPolicies...> : public TSBInputView
     {
       public:
-        using schema                     = UnNamedTSB<TFields...>;
+        using schema                     = TSchema;
         static constexpr auto field_name = Name;
+        static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
 
         explicit In(TSInputView view) noexcept : TSBInputView(std::move(view)) {}
 
         template <fixed_string FieldName>
         [[nodiscard]] auto field() const
         {
-            using lookup = static_node_detail::tsb_field_lookup<FieldName, TFields...>;
-            static_assert(lookup::found, "In<TSB>::field requested an unknown field");
-            return In<FieldName, typename lookup::type>{TSBInputView::at(lookup::index)};
-        }
-        template <fixed_string FieldName>
-        [[nodiscard]] auto get() const { return field<FieldName>(); }
-
-        [[nodiscard]] ValueView delta() const { return delta_value(); }
-    };
-
-    template <fixed_string Name, fixed_string BundleName, typename... TFields>
-    class In<Name, TSB<BundleName, TFields...>> : public TSBInputView
-    {
-      public:
-        using schema                     = TSB<BundleName, TFields...>;
-        static constexpr auto field_name = Name;
-
-        explicit In(TSInputView view) noexcept : TSBInputView(std::move(view)) {}
-
-        template <fixed_string FieldName>
-        [[nodiscard]] auto field() const
-        {
-            using lookup = static_node_detail::tsb_field_lookup<FieldName, TFields...>;
+            using lookup = typename static_node_detail::static_tsb_schema_traits<TSchema>::template lookup<FieldName>;
             static_assert(lookup::found, "In<TSB>::field requested an unknown field");
             return In<FieldName, typename lookup::type>{TSBInputView::at(lookup::index)};
         }
@@ -722,13 +801,15 @@ namespace hgraph
      * Window time-series input (``TSW<T>``): inherits ``TSWInputView`` and adds
      * typed accessors for the scalar window elements.
      */
-    template <fixed_string Name, typename TValue, std::size_t Period, std::size_t MinPeriod>
-    class In<Name, TSW<TValue, Period, MinPeriod>> : public TSWInputView
+    template <fixed_string Name, typename TValue, std::size_t Period, std::size_t MinPeriod, auto... TPolicies>
+    class In<Name, TSW<TValue, Period, MinPeriod>, TPolicies...> : public TSWInputView
     {
       public:
         using schema     = TSW<TValue, Period, MinPeriod>;
         using value_type = TValue;
         static constexpr auto field_name = Name;
+        static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
 
         explicit In(TSInputView view) noexcept : TSWInputView(std::move(view)) {}
 
@@ -746,12 +827,14 @@ namespace hgraph
      * through the erased API and the runtime ``capture_delta`` / ``apply_delta``.
      * ``base()`` returns the erased view uniformly (matching ``In<TS<T>>``).
      */
-    template <fixed_string Name, fixed_string VarName, typename... TConstraints>
-    class In<Name, TsVar<VarName, TConstraints...>> : public TSInputView
+    template <fixed_string Name, fixed_string VarName, typename... TConstraints, auto... TPolicies>
+    class In<Name, TsVar<VarName, TConstraints...>, TPolicies...> : public TSInputView
     {
       public:
         using schema                     = TsVar<VarName, TConstraints...>;
         static constexpr auto field_name = Name;
+        static constexpr auto activity   = static_node_detail::resolved_input_activity<TPolicies...>();
+        static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
 
         explicit In(TSInputView view) noexcept : TSInputView(std::move(view)) {}
 
@@ -1257,7 +1340,7 @@ namespace hgraph
 
         // ---- selector detection ----
         template <typename T> struct is_input_selector : std::false_type {};
-        template <fixed_string N, typename S> struct is_input_selector<In<N, S>> : std::true_type {};
+        template <fixed_string N, typename S, auto... P> struct is_input_selector<In<N, S, P...>> : std::true_type {};
 
         template <typename T> struct is_output_selector : std::false_type {};
         template <typename S> struct is_output_selector<Out<S>> : std::true_type {};
@@ -1269,8 +1352,8 @@ namespace hgraph
         template <fixed_string N, typename V> struct is_scalar_selector<Scalar<N, V>> : std::true_type {};
 
         template <typename A, typename B> struct same_input_name : std::false_type {};
-        template <fixed_string AName, typename ASchema, fixed_string BName, typename BSchema>
-        struct same_input_name<In<AName, ASchema>, In<BName, BSchema>>
+        template <fixed_string AName, typename ASchema, auto... AP, fixed_string BName, typename BSchema, auto... BP>
+        struct same_input_name<In<AName, ASchema, AP...>, In<BName, BSchema, BP...>>
             : std::bool_constant<AName.sv() == BName.sv()>
         {
         };
@@ -1314,8 +1397,8 @@ namespace hgraph
         // so the generic-wiring path can resolve type variables (see type_resolution.h);
         // the ``*_meta()`` accessors stay the concrete-path (var schemas return nullptr).
         template <typename T> struct input_selector_traits;
-        template <fixed_string N, typename S>
-        struct input_selector_traits<In<N, S>>
+        template <fixed_string N, typename S, auto... P>
+        struct input_selector_traits<In<N, S, P...>>
         {
             using schema = S;
             static std::string                name() { return std::string{N.sv()}; }
@@ -1349,8 +1432,8 @@ namespace hgraph
 
         // ---- per-selector genericity (a var-bearing schema is not concrete) ----
         template <typename E> struct selector_is_generic : std::false_type {};
-        template <fixed_string N, typename S>
-        struct selector_is_generic<In<N, S>> : std::bool_constant<!schema_descriptor<S>::is_concrete()> {};
+        template <fixed_string N, typename S, auto... P>
+        struct selector_is_generic<In<N, S, P...>> : std::bool_constant<!schema_descriptor<S>::is_concrete()> {};
         template <typename S>
         struct selector_is_generic<Out<S>> : std::bool_constant<!schema_descriptor<S>::is_concrete()> {};
         template <fixed_string N, typename V>
@@ -1386,7 +1469,11 @@ namespace hgraph
         // in_schema_tuple<E> is the empty tuple for non-input selectors and tuple<S>
         // for In<Name, S>, so tuple_cat over the args yields the input schema list.
         template <typename E> struct in_schema_tuple { using type = std::tuple<>; };
-        template <fixed_string N, typename S> struct in_schema_tuple<In<N, S>> { using type = std::tuple<S>; };
+        template <fixed_string N, typename S, auto... P>
+        struct in_schema_tuple<In<N, S, P...>>
+        {
+            using type = std::tuple<S>;
+        };
 
         template <typename Tuple> struct input_schemas_of_tuple;
         template <typename... Es>
@@ -1400,7 +1487,11 @@ namespace hgraph
         // (In) and the scalar inputs (Scalar). State / clock / scheduler parameters
         // are injected by the runtime and never appear at a wiring call site.
         template <typename E> struct wire_param_tuple { using type = std::tuple<>; };
-        template <fixed_string N, typename S> struct wire_param_tuple<In<N, S>> { using type = std::tuple<In<N, S>>; };
+        template <fixed_string N, typename S, auto... P>
+        struct wire_param_tuple<In<N, S, P...>>
+        {
+            using type = std::tuple<In<N, S, P...>>;
+        };
         template <fixed_string N, typename V> struct wire_param_tuple<Scalar<N, V>> { using type = std::tuple<Scalar<N, V>>; };
 
         template <typename Tuple> struct wire_params_of_tuple;
@@ -1426,14 +1517,14 @@ namespace hgraph
             static_assert(always_false_v<T>, "Unsupported static node hook parameter type");
         };
 
-        template <fixed_string N, typename V>
-        struct arg_provider<In<N, V>>
+        template <fixed_string N, typename V, auto... P>
+        struct arg_provider<In<N, V, P...>>
         {
-            static In<N, V> get(const NodeView &view, DateTime evaluation_time)
+            static In<N, V, P...> get(const NodeView &view, DateTime evaluation_time)
             {
                 TSInputView root   = view.input(evaluation_time);
                 auto        bundle = root.as_bundle();
-                return In<N, V>{bundle.field(N.sv())};
+                return In<N, V, P...>{bundle.field(N.sv())};
             }
         };
 
@@ -1652,6 +1743,114 @@ namespace hgraph
                          : std::size_t{0}));
         }
 
+        template <typename E>
+        static constexpr bool input_has_non_default_activity()
+        {
+            if constexpr (static_node_detail::is_input_selector<E>::value)
+            {
+                return E::activity != InputActivity::Active;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        template <typename E>
+        static constexpr bool input_has_non_default_validity()
+        {
+            if constexpr (static_node_detail::is_input_selector<E>::value)
+            {
+                return E::validity != InputValidity::Valid;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        template <std::size_t... I>
+        static constexpr bool has_explicit_activity_policy(std::index_sequence<I...>)
+        {
+            return (false || ... ||
+                    input_has_non_default_activity<
+                        static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>());
+        }
+
+        template <std::size_t... I>
+        static constexpr bool has_explicit_validity_policy(std::index_sequence<I...>)
+        {
+            return (false || ... ||
+                    input_has_non_default_validity<
+                        static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>());
+        }
+
+        template <typename E>
+        static void collect_active_input_slot(std::vector<std::size_t> &slots, std::size_t &input_index)
+        {
+            if constexpr (static_node_detail::is_input_selector<E>::value)
+            {
+                if constexpr (E::activity == InputActivity::Active) { slots.push_back(input_index); }
+                ++input_index;
+            }
+        }
+
+        template <std::size_t... I>
+        static std::vector<std::size_t> collect_active_input_slots(std::index_sequence<I...>)
+        {
+            std::vector<std::size_t> slots;
+            slots.reserve(input_count());
+            std::size_t input_index = 0;
+            (collect_active_input_slot<static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>(
+                 slots, input_index),
+             ...);
+            return slots;
+        }
+
+        template <typename E>
+        static void collect_valid_input_slot(std::vector<std::size_t> &slots, std::size_t &input_index)
+        {
+            if constexpr (static_node_detail::is_input_selector<E>::value)
+            {
+                if constexpr (E::validity == InputValidity::Valid) { slots.push_back(input_index); }
+                ++input_index;
+            }
+        }
+
+        template <std::size_t... I>
+        static std::vector<std::size_t> collect_valid_input_slots(std::index_sequence<I...>)
+        {
+            std::vector<std::size_t> slots;
+            slots.reserve(input_count());
+            std::size_t input_index = 0;
+            (collect_valid_input_slot<static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>(
+                 slots, input_index),
+             ...);
+            return slots;
+        }
+
+        template <typename E>
+        static void collect_all_valid_input_slot(std::vector<std::size_t> &slots, std::size_t &input_index)
+        {
+            if constexpr (static_node_detail::is_input_selector<E>::value)
+            {
+                if constexpr (E::validity == InputValidity::AllValid) { slots.push_back(input_index); }
+                ++input_index;
+            }
+        }
+
+        template <std::size_t... I>
+        static std::vector<std::size_t> collect_all_valid_input_slots(std::index_sequence<I...>)
+        {
+            std::vector<std::size_t> slots;
+            slots.reserve(input_count());
+            std::size_t input_index = 0;
+            (collect_all_valid_input_slot<static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>(
+                 slots, input_index),
+             ...);
+            return slots;
+        }
+
         template <typename ArgsTuple, std::size_t... I>
         static constexpr bool tuple_has_scheduler(std::index_sequence<I...>)
         {
@@ -1722,6 +1921,35 @@ namespace hgraph
                                        typename static_node_detail::fn_traits<decltype(&TImplementation::stop)>::args_tuple>();
             }
             return result;
+        }
+
+        [[nodiscard]] static std::optional<std::vector<std::size_t>> active_inputs()
+        {
+            if constexpr (has_explicit_activity_policy(indices{}))
+            {
+                return collect_active_input_slots(indices{});
+            }
+            else
+            {
+                return std::nullopt;
+            }
+        }
+
+        [[nodiscard]] static std::optional<std::vector<std::size_t>> valid_inputs()
+        {
+            if constexpr (has_explicit_validity_policy(indices{}))
+            {
+                return collect_valid_input_slots(indices{});
+            }
+            else
+            {
+                return std::nullopt;
+            }
+        }
+
+        [[nodiscard]] static std::vector<std::size_t> all_valid_inputs()
+        {
+            return collect_all_valid_input_slots(indices{});
         }
 
         // ---- resolved (generic) collectors: substitute type-var bindings ----
@@ -1920,6 +2148,9 @@ namespace hgraph
         schema.node_kind         = signature::node_kind();
         schema.uses_scheduler    = signature::uses_scheduler();
         schema.schedule_on_start = signature::schedule_on_start();
+        schema.active_inputs     = signature::active_inputs();
+        schema.valid_inputs      = signature::valid_inputs();
+        schema.all_valid_inputs  = signature::all_valid_inputs();
 
         NodeCallbacks callbacks;
         callbacks.evaluate = [](const NodeView &view, DateTime evaluation_time) {
@@ -1971,6 +2202,9 @@ namespace hgraph
         schema.node_kind         = signature::node_kind();
         schema.uses_scheduler    = signature::uses_scheduler();
         schema.schedule_on_start = signature::schedule_on_start();
+        schema.active_inputs     = signature::active_inputs();
+        schema.valid_inputs      = signature::valid_inputs();
+        schema.all_valid_inputs  = signature::all_valid_inputs();
 
         NodeCallbacks callbacks;
         callbacks.evaluate = [](const NodeView &view, DateTime evaluation_time) {

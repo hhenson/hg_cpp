@@ -868,19 +868,39 @@ names the recordable — the C++ counterpart of Python's optional
 Activity and validity policies
 ------------------------------
 
-**Planned (policy flags on ``In``).** By default a compute node evaluates when an
-*active* input ticks, and only once its *valid* inputs have values. These
+**Available (policy flags on ``In``).** By default a compute node evaluates when
+an *active* input ticks, and only once all top-level inputs are *valid*. These
 policies can be tuned per input — the C++ form attaches policy flags to ``In``,
-the Python form lists them on the decorator:
+the Python form lists them on the decorator.
+
+``InputActivity::Passive``
+   The input may be read by the node, but ticks on that input do not by
+   themselves schedule evaluation. Omitting an activity flag is
+   ``InputActivity::Active``.
+
+``InputValidity::Unchecked``
+   The input does not participate in the readiness check. The node body must
+   check ``valid()`` before reading its value.
+
+``InputValidity::AllValid``
+   The readiness check requires the input to be recursively valid, for example
+   every child of a collection or bundle must be valid. Omitting a validity flag
+   is ``InputValidity::Valid``.
+
+The flags are order-independent, and at most one activity flag and one validity
+flag may be supplied per input. Python ``active=()`` is expressed by marking
+every input ``InputActivity::Passive``. Python ``valid=()`` is expressed by
+marking every input ``InputValidity::Unchecked``.
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
    struct Sample
    {
        // 'signal' drives evaluation; 'value' is read but does not by itself trigger.
        static void eval(In<"signal", SIGNAL> signal,
-                        In<"value", TS<Int>, InputActivity::Passive> value,
+                        In<"value", TS<Int>,
+                           InputActivity::Passive,
+                           InputValidity::Unchecked> value,
                         Out<TS<Int>> out)
        {
            (void) signal;
@@ -1120,7 +1140,7 @@ Feature status
      - planned
      - available
    * - Activity / validity policy flags
-     - planned
+     - available
      - available
    * - Generic node resolution (``TsVar`` / ``ScalarVar`` in signatures)
      - available

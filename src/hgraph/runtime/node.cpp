@@ -354,13 +354,13 @@ namespace hgraph
 
             auto bundle = input.as_bundle();
             const auto &slots = view.schema()->active_inputs;
-            if (slots.empty())
+            if (!slots.has_value())
             {
                 for (std::size_t slot = 0; slot < schema->field_count(); ++slot) { bundle[slot].make_active(); }
                 return;
             }
 
-            for (const std::size_t slot : slots)
+            for (const std::size_t slot : *slots)
             {
                 if (slot >= schema->field_count()) { throw std::out_of_range("Node active input selector is out of range"); }
                 bundle[slot].make_active();
@@ -381,13 +381,13 @@ namespace hgraph
 
             auto bundle = input.as_bundle();
             const auto &slots = view.schema()->active_inputs;
-            if (slots.empty())
+            if (!slots.has_value())
             {
                 for (std::size_t slot = 0; slot < schema->field_count(); ++slot) { bundle[slot].make_passive(); }
                 return;
             }
 
-            for (const std::size_t slot : slots)
+            for (const std::size_t slot : *slots)
             {
                 if (slot >= schema->field_count()) { throw std::out_of_range("Node active input selector is out of range"); }
                 bundle[slot].make_passive();
@@ -413,9 +413,9 @@ namespace hgraph
 
             const auto *schema = view.schema()->input_schema;
             const auto &valid_slots = view.schema()->valid_inputs;
-            if (!valid_slots.empty())
+            if (valid_slots.has_value())
             {
-                for (const std::size_t slot : valid_slots)
+                for (const std::size_t slot : *valid_slots)
                 {
                     if (!input_slot(view, slot, evaluation_time).valid()) { return false; }
                 }
@@ -452,9 +452,9 @@ namespace hgraph
             }
 
             const auto &slots = view.schema()->active_inputs;
-            if (!slots.empty())
+            if (slots.has_value())
             {
-                for (const std::size_t slot : slots)
+                for (const std::size_t slot : *slots)
                 {
                     auto child = input_slot(view, slot, evaluation_time);
                     if (child.active() && child.modified()) { return true; }

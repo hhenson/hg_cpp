@@ -49,6 +49,63 @@ namespace
         }
     };
 
+    struct PolicyProbe
+    {
+        static constexpr auto name = "policy_probe";
+
+        static void eval(In<"lhs", TS<Int>> lhs,
+                         In<"rhs", TS<Int>, InputActivity::Passive, InputValidity::Unchecked> rhs,
+                         In<"strict", TSL<TS<Int>, 2>, InputValidity::AllValid> strict,
+                         Out<TS<Int>> out)
+        {
+            (void)rhs;
+            (void)strict;
+            out.set(lhs.value());
+        }
+    };
+
+    struct ActiveRelay
+    {
+        static constexpr auto name = "active_relay";
+
+        static void eval(In<"in", TS<Int>, InputValidity::Unchecked> in, Out<TS<Int>> out)
+        {
+            out.set(in.valid() ? in.value() : Int{-1});
+        }
+    };
+
+    struct PassiveRelay
+    {
+        static constexpr auto name = "passive_relay";
+
+        static void eval(In<"in", TS<Int>, InputActivity::Passive, InputValidity::Unchecked> in, Out<TS<Int>> out)
+        {
+            out.set(in.valid() ? in.value() : Int{-1});
+        }
+    };
+
+    struct DefaultMissingRhs
+    {
+        static constexpr auto name = "default_missing_rhs";
+
+        static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out)
+        {
+            out.set(lhs.value() + rhs.value());
+        }
+    };
+
+    struct UncheckedMissingRhs
+    {
+        static constexpr auto name = "unchecked_missing_rhs";
+
+        static void eval(In<"lhs", TS<Int>> lhs,
+                         In<"rhs", TS<Int>, InputValidity::Unchecked> rhs,
+                         Out<TS<Int>> out)
+        {
+            out.set(lhs.value() + (rhs.valid() ? rhs.value() : Int{100}));
+        }
+    };
+
     // Stateful source (Out only, no In -> PullSource) exercising State<Int>.
     struct Counter
     {
@@ -145,6 +202,29 @@ TEST_CASE("static node: signature detects ambiguous selector contracts")
     STATIC_REQUIRE(StaticNodeSignature<MultipleStateSlots>::state_count() == 2);
 }
 
+TEST_CASE("static node: input policy flags are reflected into node metadata")
+{
+    using namespace hgraph;
+
+    STATIC_REQUIRE(In<"x", TS<Int>, InputValidity::Unchecked, InputActivity::Passive>::activity ==
+                   InputActivity::Passive);
+    STATIC_REQUIRE(In<"x", TS<Int>, InputValidity::Unchecked, InputActivity::Passive>::validity ==
+                   InputValidity::Unchecked);
+    STATIC_REQUIRE(In<"x", TS<Int>, InputActivity::Passive, InputValidity::Unchecked>::activity ==
+                   InputActivity::Passive);
+    STATIC_REQUIRE(In<"x", TS<Int>, InputActivity::Passive, InputValidity::Unchecked>::validity ==
+                   InputValidity::Unchecked);
+
+    auto node = NodeBuilder{}.label("policy").implementation<PolicyProbe>().make_node();
+    auto view = node.view();
+
+    REQUIRE(view.schema()->active_inputs.has_value());
+    REQUIRE(view.schema()->valid_inputs.has_value());
+    CHECK(*view.schema()->active_inputs == std::vector<std::size_t>{0, 2});
+    CHECK(*view.schema()->valid_inputs == std::vector<std::size_t>{0});
+    CHECK(view.schema()->all_valid_inputs == std::vector<std::size_t>{2});
+}
+
 TEST_CASE("static node: set_delta construction survives value registry resets")
 {
     using namespace hgraph;
@@ -209,6 +289,76 @@ TEST_CASE("static node: two sources feed a two-input compute node")
 
     auto graph = executor_view.graph();
     CHECK(graph.node_at(2).output(MIN_ST).value().checked_as<Int>() == Int{82});
+}
+
+TEST_CASE("static node: passive inputs do not activate compute nodes")
+{
+    using namespace hgraph;
+
+    GraphBuilder active_builder;
+    active_builder.add_node(NodeBuilder{}.label("src").implementation<ConstantSource>())
+        .add_node(NodeBuilder{}.label("active").implementation<ActiveRelay>())
+        .add_edge(GraphEdge{.source_node = 0, .source_path = {}, .target_node = 1, .target_path = {0}});
+
+    GraphExecutorBuilder active_executor_builder;
+    active_executor_builder.graph_builder(std::move(active_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2});
+
+    GraphExecutorValue active_executor      = active_executor_builder.make_executor();
+    auto               active_executor_view = active_executor.view();
+    active_executor_view.run();
+    CHECK(active_executor_view.graph().node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{41});
+
+    GraphBuilder passive_builder;
+    passive_builder.add_node(NodeBuilder{}.label("src").implementation<ConstantSource>())
+        .add_node(NodeBuilder{}.label("passive").implementation<PassiveRelay>())
+        .add_edge(GraphEdge{.source_node = 0, .source_path = {}, .target_node = 1, .target_path = {0}});
+
+    GraphExecutorBuilder passive_executor_builder;
+    passive_executor_builder.graph_builder(std::move(passive_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2});
+
+    GraphExecutorValue passive_executor      = passive_executor_builder.make_executor();
+    auto               passive_executor_view = passive_executor.view();
+    passive_executor_view.run();
+    CHECK_FALSE(passive_executor_view.graph().node_at(1).output(MIN_ST).valid());
+}
+
+TEST_CASE("static node: unchecked inputs do not block readiness")
+{
+    using namespace hgraph;
+
+    GraphBuilder default_builder;
+    default_builder.add_node(NodeBuilder{}.label("src").implementation<ConstantSource>())
+        .add_node(NodeBuilder{}.label("default").implementation<DefaultMissingRhs>())
+        .add_edge(GraphEdge{.source_node = 0, .source_path = {}, .target_node = 1, .target_path = {0}});
+
+    GraphExecutorBuilder default_executor_builder;
+    default_executor_builder.graph_builder(std::move(default_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2});
+
+    GraphExecutorValue default_executor      = default_executor_builder.make_executor();
+    auto               default_executor_view = default_executor.view();
+    default_executor_view.run();
+    CHECK_FALSE(default_executor_view.graph().node_at(1).output(MIN_ST).valid());
+
+    GraphBuilder unchecked_builder;
+    unchecked_builder.add_node(NodeBuilder{}.label("src").implementation<ConstantSource>())
+        .add_node(NodeBuilder{}.label("unchecked").implementation<UncheckedMissingRhs>())
+        .add_edge(GraphEdge{.source_node = 0, .source_path = {}, .target_node = 1, .target_path = {0}});
+
+    GraphExecutorBuilder unchecked_executor_builder;
+    unchecked_executor_builder.graph_builder(std::move(unchecked_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2});
+
+    GraphExecutorValue unchecked_executor      = unchecked_executor_builder.make_executor();
+    auto               unchecked_executor_view = unchecked_executor.view();
+    unchecked_executor_view.run();
+    CHECK(unchecked_executor_view.graph().node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{141});
 }
 
 TEST_CASE("static node: Scalar<> configures a source from per-instance values")

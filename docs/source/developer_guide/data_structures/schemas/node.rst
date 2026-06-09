@@ -14,19 +14,21 @@ vocabulary, is the next layer up from a time-series:
 Concept role      Node-layer name
 ================  ==========================================================
 Schema            ``NodeTypeMetaData`` — kind, input/output/error/state
-                  schemas, lifecycle flags, injection requirements,
-                  generic-resolution metadata.
-Plan              ``NodePlan`` — memory layout for the node's runtime
-                  state: input slots, output slots, state buffer,
-                  optional scheduler, optional error output.
+                  schemas, scheduler/error flags, scalar configuration,
+                  and input readiness selectors.
+Plan              ``StoragePlan`` — memory layout for the node's runtime
+                  state as produced by ``node_storage_plan_for``: runtime
+                  header, input/output endpoints, state, scalars,
+                  optional scheduler, optional error output, optional
+                  recordable-state output, plus any extra fields supplied
+                  by a specialised node builder.
 Ops               ``NodeOps`` — the behaviour vtable: ``start``,
-                  ``eval``, ``stop``, plus an error-handling hook
-                  that is wired in only when the schema turns on
-                  exception capture (otherwise exceptions propagate
-                  out of ``eval`` normally). The first parameter of
-                  every op is a pointer to the node's runtime memory.
-                  Construction and destruction are handled by the
-                  plan's ``LifecycleOps``, not by ``NodeOps``.
+                  ``eval``, ``stop``, endpoint/state projections,
+                  scheduler access, graph attachment, and cleanup. Each
+                  op receives an erased context pointer plus the node's
+                  runtime memory/view. Construction and destruction are
+                  handled by the bound ``StoragePlan`` lifecycle hooks,
+                  not by ``NodeOps``.
 Binding           ``NodeTypeBinding`` — interned ``(schema, plan, ops)``
                   triple.
 Builder           ``NodeBuilder`` — reusable builder that wraps a
@@ -56,13 +58,15 @@ What a Node Schema Records
 
 A ``NodeTypeMetaData`` carries:
 
+``display_name``
+    Optional borrowed display label for diagnostics and graph inspection.
+
 ``input_schema``
-    Always a TSB. The top-level input of a node is invariably a
-    bundle whose fields are the named arguments. A single-argument
-    node carries a single-field TSB; a multi-argument node carries a
-    multi-field TSB; a source node records an empty bundle. There is
-    no non-TSB top-level input. The schema lives in the time-series
-    registry; the node schema only holds a borrowed pointer.
+    Optional. When present, the top-level input schema is a TSB whose fields are
+    the named time-series arguments. A single-argument node carries a
+    single-field TSB; a multi-argument node carries a multi-field TSB. A source
+    node records ``nullptr``. The schema lives in the time-series registry; the
+    node schema only holds a borrowed pointer.
 
 ``output_schema``
     The time-series schema for the node's primary output (named
@@ -73,15 +77,23 @@ A ``NodeTypeMetaData`` carries:
     recordable state) are recorded as separate properties below, not
     folded into ``output_schema``.
 
+``output_endpoint_schema``
+    Endpoint annotation for the primary output. This records whether the output
+    endpoint is peered or structural/non-peered and, for structural endpoints,
+    the child endpoint layout. It is kept beside ``output_schema`` because
+    identical value schemas can have different wiring endpoint topology.
+
 ``error_output_schema``
     Optional. The time-series schema for the node's ``error_output``,
-    set only when the schema turns on exception capture. With capture
-    off, this property is ``nullptr`` and exceptions thrown by
-    ``eval`` propagate normally; with capture on, the runtime catches
-    them and writes a ``NodeError`` value to ``error_output``. The
-    default schema is ``TS<NodeError>``; the ``NodeError`` shape is
-    itself an interned scalar schema, so node implementations are
-    free to use a richer error type when needed.
+    set only for node families that expose an error stream. The default
+    callback-backed ops do not install a separate error-handling hook; specialised
+    ``NodeOps`` implementations can use ``captures_errors`` and this output
+    endpoint together.
+
+``recordable_state_schema``
+    Optional. The time-series schema for the node's recordable state — state
+    that participates in graph evaluation as a TS rather than as plain scalar
+    storage. Used by replay-aware operators.
 
 ``state_schema``
     Optional. The scalar (value-layer) schema for the node's local
@@ -91,44 +103,47 @@ A ``NodeTypeMetaData`` carries:
     ``LifecycleOps``, and exposes it through ``NodeView::state``. State
     mutation uses the normal value-layer ``begin_mutation`` path.
 
-``recordable_state_schema``
-    Optional. The time-series schema for the node's recordable state —
-    state that participates in graph evaluation as a TS rather than as
-    plain scalar storage. Used by replay-aware operators.
-
-``injection_flags``
-    Bit set recording which injectable resources the node consumes:
-    ``CLOCK``, ``SCHEDULER``, ``STATE``, ``RECORDABLE_STATE``. The
-    runtime uses this to decide whether to allocate an evaluation clock
-    handle, a per-node scheduler, and so on. A stateless, scheduler-
-    less compute node carries an empty injection set and pays no
-    storage cost for the resources it does not need.
+``scalar_schema``
+    Optional. The scalar configuration bundle for ``Scalar<"name", T>``
+    arguments. Scalars are fixed per node instance and are not part of the
+    time-series input TSB.
 
 ``node_kind``
-    Enum: ``COMPUTE``, ``PUSH_SOURCE``, ``PULL_SOURCE``, ``SINK``,
-    ``NESTED``. Drives evaluation order (push sources occupy the
-    push-source partition described in *Graph Layer*) and which
-    boundary contract applies for nested graphs.
+    Enum: ``Compute``, ``PushSource``, ``PullSource``, ``Sink``, ``Nested``.
+    Drives graph execution behaviour and boundary treatment for nested graphs.
 
-``nested_graph_schema``
-    Optional. Set only when ``node_kind == NESTED``. Borrowed pointer
-    to the ``GraphTypeMetaData`` of the nested graph this node hosts.
-    Containment between graphs flows through the hosting node: the
-    parent graph schema sees a node entry; the node schema records
-    which graph schema lives inside it. The graph schema itself never
-    tracks its children.
+``uses_scheduler``
+    True when the node requests ``NodeScheduler`` injection. Runtime storage then
+    includes a per-node ``NodeSchedulerState`` component.
 
-``lifecycle_flags``
-    Records which of ``start`` / ``eval`` / ``stop`` the node's ops
-    table actually implements. Most compute nodes only need ``eval``;
-    nodes with internal resources (open files, network sockets,
-    accumulators) implement ``start`` and ``stop``.
+``schedule_on_start``
+    Declarative self-scheduling flag. When true, the default start op schedules
+    the node for the graph start cycle after the user ``start`` callback returns.
 
-``unresolved_args``
-    For generic node schemas, the input names whose schema contains
-    unresolved type variables. ``wire<>`` resolves these against the
-    connected input bindings (via ``ts_unifier``) before constructing the
-    node — see *Generic Resolution* below.
+``captures_errors``
+    Declarative error policy flag for node families that support captured
+    exceptions. Allocation of an error endpoint is still represented explicitly
+    by ``error_output_schema``.
+
+``active_inputs``
+    Optional list of top-level input selector slots that are active. ``nullopt``
+    means the runtime default: every top-level input is active. An engaged empty
+    vector is an explicit empty selector set: no input tick can activate the node,
+    so the node only evaluates when forced or scheduled by some other mechanism.
+    Static C++ nodes populate this from ``InputActivity`` flags on ``In``.
+
+``valid_inputs``
+    Optional list of top-level input selector slots that must be valid before
+    evaluation. ``nullopt`` means the runtime default: every top-level input must
+    be valid. An engaged empty vector is an explicit empty selector set: normal
+    validity readiness is disabled, and the node body must guard any value reads
+    itself. Static C++ nodes populate this from ``InputValidity`` flags on ``In``.
+
+``all_valid_inputs``
+    List of top-level input selector slots that must be recursively valid before
+    evaluation. This is separate from ``valid_inputs`` so a node can require
+    ``all_valid`` for selected structural inputs while other inputs use normal
+    validity or are unchecked.
 
 Runtime Value/View
 ------------------
@@ -137,7 +152,7 @@ The runtime node follows the same plan / ops / binding / value / view
 shape as the lower layers:
 
 ``NodeTypeBinding``
-    Interned ``(NodeTypeMetaData, NodePlan, NodeOps)`` identity. The
+    Interned ``(NodeTypeMetaData, StoragePlan, NodeOps)`` identity. The
     binding is the only object a generic node view needs in order to
     recover schema, storage lifecycle, and runtime behaviour.
 
@@ -196,23 +211,24 @@ The hooks are intentionally minimal:
     destruction. Symmetric counterpart to ``start``: releases anything
     ``start`` acquired. Most compute nodes do not need it.
 
-``handle_error(node*, error_value*)``
-    Optional, and **only present when the schema turns on exception
-    capture**. With capture off, an exception thrown by ``eval``
-    propagates out as a normal C++ exception and is handled by
-    whatever frame above the node catches it; the runtime does not
-    intercept it. With capture on, the runtime catches the exception,
-    constructs a ``NodeError``, and routes it through ``handle_error``
-    if the node implementation provides one (otherwise the default
-    behaviour is to write the ``NodeError`` to ``error_output``).
+``cleanup_delta(node*)``
+    Called after a cycle to clear output, error-output, and recordable-state
+    deltas. Input deltas are owned by the upstream time-series endpoints and are
+    cleaned through the graph's normal endpoint cleanup.
 
 The first parameter of every op is a pointer to the node's runtime
 memory — the same pattern the value-layer ops table uses. This keeps
 nodes type-erased: the runtime evaluation loop dispatches against the
 ops vtable without knowing the concrete C++ type behind it.
 
+Endpoint and storage projection ops (``input_view_impl``, ``output_view_impl``,
+``state_view_impl``, ``scalars_view_impl``, ``scheduler_state_impl``,
+``error_output_view_impl``, and ``recordable_state_view_impl``) are also part of
+``NodeOps``. They give ``NodeView`` a common interface over native static nodes,
+nested nodes, Python-backed nodes, and specialised node families.
+
 Construction and destruction of a node's runtime memory are not part
-of ``NodeOps``: they are the responsibility of the bound ``NodePlan``'s
+of ``NodeOps``: they are the responsibility of the bound ``StoragePlan``'s
 ``LifecycleOps`` (``construct`` / ``destroy``), invoked by the
 allocator that owns the node's storage. Keeping them on the plan
 preserves the plan/ops separation described in *Allocation, Plans
@@ -245,40 +261,36 @@ Resolution is **implemented at the wiring layer**
 
 The node's *callbacks* never see ``T`` — they read the resolved endpoints
 from the ``NodeView`` at eval time — so one closure over ``&eval`` serves
-every resolution. Two wirings of the same generic definition with the
-same resolved schemas and inputs intern to one node (the resolved
-input/output/scalar/state schema pointers are part of the wiring key, so
-distinct resolutions do **not** collide). This is the C++ counterpart of
-Python type-variable resolution and the seed for generic ``map_`` /
-``reduce`` / ``switch_``.
+every resolution. Different resolutions build distinct concrete
+``NodeTypeMetaData`` instances before binding; any sharing happens through the
+normal ``NodeTypeBinding`` pointer-triple interning described below, not through
+an unresolved generic schema stored on the node metadata. This is the C++
+counterpart of Python type-variable resolution and the seed for generic
+``map_`` / ``reduce`` / ``switch_``.
 
 Interning Key
 -------------
 
-The ``NodeRegistry`` interns node schemas by a structural key
-combining:
+Node bindings use the same ``TypeBinding`` mechanism as values and time-series
+data. The intern key is the pointer triple:
 
-- the input schema pointer,
-- the output schema pointer (or ``nullptr`` for sinks),
-- the error-output schema pointer (or ``nullptr``),
-- the state schema pointer (or ``nullptr``),
-- the recordable-state schema pointer (or ``nullptr``),
-- ``injection_flags``,
-- ``node_kind``,
-- ``lifecycle_flags``.
+- ``NodeTypeMetaData *``,
+- ``StoragePlan *``,
+- ``NodeOps *``.
 
-Two structurally identical nodes — same I/O shapes, same injection,
-same lifecycle, same kind — always resolve to the same interned
-``NodeTypeMetaData *``. This is what lets a graph schema reference its
-member nodes by pointer without worrying about identity drift.
+The default ``NodeRuntimeRegistry`` owns stable schema, context, and ops storage,
+fills missing default ops, builds the storage plan, and then interns the binding
+for that concrete triple. It does not currently deduplicate ``NodeTypeMetaData``
+structurally by field value; schema identity is the stable pointer owned by the
+registry.
 
 Status
 ------
 
-The node-schema vocabulary separates compile-time C++ descriptors from
-runtime schema metadata. The compile-time layer is a *generator* that
-produces ``NodeTypeMetaData`` entries in the registry, and the runtime
-evaluation path consults the registry directly. Several details —
-exact ``NodeError`` schema, exact representation of
-``unresolved_args``, error-handling hook signature — are still in
-flight and will be filled in alongside the implementation.
+The node-schema vocabulary separates compile-time C++ descriptors from runtime
+schema metadata. The compile-time layer is a *generator* that produces concrete
+``NodeTypeMetaData`` plus callbacks/ops; the runtime evaluation path consults the
+bound schema and ops directly. Generic resolution happens before node
+construction through ``ResolutionMap`` and the resolved schema overloads on
+``StaticNodeSignature``; unresolved type variables are not stored on
+``NodeTypeMetaData``.

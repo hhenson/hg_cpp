@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -66,9 +67,11 @@ namespace hgraph
         bool     schedule_on_start{false};
         bool     captures_errors{false};
 
-        std::vector<std::size_t> active_inputs{};
-        std::vector<std::size_t> valid_inputs{};
-        std::vector<std::size_t> all_valid_inputs{};
+        // nullopt means "use the runtime default"; an engaged empty vector is
+        // an explicit empty selector set.
+        std::optional<std::vector<std::size_t>> active_inputs{};
+        std::optional<std::vector<std::size_t>> valid_inputs{};
+        std::vector<std::size_t>                all_valid_inputs{};
 
         [[nodiscard]] std::string_view name() const noexcept;
         [[nodiscard]] bool has_input() const noexcept;
