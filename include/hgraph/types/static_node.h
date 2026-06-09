@@ -59,7 +59,9 @@ namespace hgraph
      * graph-level ``GlobalState<T>``, input activity/validity policy flags,
      * output-backed ``RecordableState<TSchema>``, evaluation-clock injection,
      * and scheduler injection.
-     * Push-source selectors are still being filled in.
+     * Push-source nodes are intentionally outside this generic static-node path:
+     * they use a specialized builder/node implementation that owns the message
+     * queue and sender.
      */
 
     // -----------------------------------------------------------------
@@ -2191,9 +2193,8 @@ namespace hgraph
         [[nodiscard]] static NodeKind node_kind()
         {
             // The kind is always determined from the node's shape; there is no
-            // override. A push source is distinguished by an apply_message hook
-            // (not yet implemented); everything else is classified by which of
-            // In / Out are present.
+            // override for ordinary static nodes. Push sources use a specialized
+            // builder/node implementation and do not add a generic hook here.
             const bool has_in  = input_count() > 0;
             const bool has_out = output_count() > 0;
             if (has_in && has_out) { return NodeKind::Compute; }

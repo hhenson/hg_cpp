@@ -58,8 +58,7 @@ The selectors used at this layer are:
   output at the current evaluation time.
 - ``State<T>`` — a typed handle into node-local (value-layer) state.
 - ``Scalar<"name", T>`` — a named scalar value used as wiring-time node or graph
-  configuration; the scalar analog of ``In``. The same selector shape will be
-  used for push-source messages when that runtime layer lands.
+  configuration; the scalar analog of ``In``.
 
 Each parameter's **selector type** identifies its role, so the ``In`` / ``Out``
 / ``State`` / service parameters may appear in **any position** — the runtime
@@ -91,8 +90,9 @@ node contract:
   record/replay wiring;
 - **node kind** — determined entirely from the node's shape: ``eval`` with
   ``In`` and ``Out`` → ``Compute``; ``Out`` only → ``PullSource``; ``In`` only
-  → ``Sink``; an ``apply_message`` hook → ``PushSource`` (planned). There is no
-  override — the kind has a single source of truth in the code;
+  → ``Sink``. ``PushSource`` is reserved for the specialized push-source
+  node/builder implementation, which owns its message queue and sender; ordinary
+  static nodes do not grow a generic ``apply_message`` operation;
 - **input endpoint** — a ``TSEndpointSchema`` of ``non_peered(input_tsb, {
   peered(field)… })``, one peered terminal per ordinary input, with structural
   annotations for non-peered collection prefixes and nested endpoints.
@@ -185,8 +185,9 @@ initialisers, special source roots (``recordable_state(port)`` /
 Deferred (land with the relevant runtime layer):
 
 - automatic recordable-state recording;
-- push-source nodes — a required ``start(Sender<T>)`` plus an
-  ``apply_message(Scalar<"name", T>, …)`` hook;
+- push-source nodes — a specialized node/builder plus real-time evaluator
+  support; the node owns its queue, hands out ``Sender<T>`` during ``start``,
+  and applies queued messages from its normal ``eval`` implementation;
 - named state (``State<TSchema, "name">``);
 - by-name graph/node scalar arguments and scalar defaults;
 - standalone sub-graph boundary binding, generic graphs, and higher-order

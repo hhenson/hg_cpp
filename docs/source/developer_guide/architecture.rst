@@ -87,15 +87,20 @@ The normal cycle shape is:
 
 1. run one-shot before-evaluation callbacks,
 2. notify lifecycle observers before graph evaluation,
-3. process push-source messages that are ready for this cycle,
-4. scan flattened nodes in rank order,
-5. evaluate nodes whose graph schedule equals ``evaluation_time``,
-6. fold future node schedules into the clock's next scheduled evaluation time,
-7. notify lifecycle observers after graph evaluation,
-8. run one-shot after-evaluation callbacks,
-9. advance the engine clock.
+3. scan flattened nodes in rank order,
+4. evaluate nodes whose graph schedule equals ``evaluation_time``,
+5. fold future node schedules into the clock's next scheduled evaluation time,
+6. notify lifecycle observers after graph evaluation,
+7. run one-shot after-evaluation callbacks,
+8. advance the engine clock.
 
-Push-source processing happens before the normal rank-order scan. If a push-source message cannot be applied, the message is returned to the front of the queue and push-source scheduling is requested again. The engine does not coalesce those messages; any collapsing behavior belongs to the source node implementation.
+Push-source nodes are specialized node implementations, but they are still
+evaluated through the normal node evaluation interface. A push-source node owns
+its queue, exposes a sender during ``start``, and drains/applies queued messages
+from its ``eval`` implementation. In real-time mode, the evaluation clock owns
+the condition-variable wake-up state used to notice queued push messages; in
+simulation mode, push-source nodes are not supported. The graph/evaluator must
+not call a generic ``apply_message`` node operation directly.
 
 Node Evaluation
 ~~~~~~~~~~~~~~~

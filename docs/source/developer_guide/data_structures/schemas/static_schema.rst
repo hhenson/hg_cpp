@@ -375,9 +375,9 @@ the resolution-map schema overloads, and the wiring-time resolution in ``wire<>`
 ``ts_type<>()`` / an explicit output schema). See *Graph Wiring*.
 
 Deferred until the relevant runtime layer lands: automatic recordable-state
-record/replay attachment / ``recordable_id`` wiring, push-source
-``apply_message``, named state, duration-based ``TSW``, the Python-export bridge,
-and **graph-level** generic resolution (aggregating node-level resolution across
-a sub-graph).
+record/replay attachment / ``recordable_id`` wiring, specialized push-source
+node/builder support, named state, duration-based ``TSW``, the Python-export
+bridge, and **graph-level** generic resolution (aggregating node-level
+resolution across a sub-graph).
 (``NodeScheduler`` / ``SingleShotScheduler`` injection is now implemented; see
 *Authoring Nodes in C++*.)

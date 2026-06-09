@@ -252,8 +252,8 @@ source of truth, the code.
      - ``eval(In<…>)``
      - ``@sink_node``
    * - **Push source** *(planned)*
-     - has an ``apply_message`` hook
-     - ``start(Sender<T>)`` + ``apply_message(Scalar<"msg", T>, Out<…>)``
+     - built by the push-source node builder
+     - specialized node owns queue + ``Sender<T>``
      - ``@push_queue``
 
 A sink node (side effect, no output):
@@ -272,24 +272,24 @@ A sink node (side effect, no output):
    def print_(in_: TS[int]) -> None:
        print(in_.value)
 
-A push source receives messages from outside the graph (**planned**). It is
-identified by its ``apply_message`` hook, and is **required** to define
-``start(Sender<T> sender)``: the runtime calls ``start`` once to hand the node
-the ``Sender`` it uses to enqueue messages (for example from another thread or
-an I/O callback). Each enqueued ``Scalar`` message is then turned into an
-output tick by ``apply_message``:
+A push source receives messages from outside the graph (**planned**). It will
+use a specialized node/builder rather than the ordinary static-node
+``implementation<T>()`` path. The specialized node owns the message queue,
+hands a ``Sender<T>`` to user code during ``start``, and evaluates through the
+normal node ``eval`` interface when the real-time engine is woken by queued
+messages. Its internal evaluation applies queued messages to the output:
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
+   // Planned — illustrative shape for the specialized push-source builder
    struct FromQueue
    {
        static constexpr auto name = "from_queue";
 
-       // Required for a push source: receive the Sender used to enqueue messages.
+       // Receive the Sender used to enqueue messages.
        static void start(Sender<Int> sender) { /* register sender with a producer */ }
 
-       // Convert each scalar message into an output tick.
+       // Convert each scalar message into an output tick from the node's eval path.
        static bool apply_message(Scalar<"message", Int> message, Out<TS<Int>> out)
        {
            out.set(message.value());
@@ -303,11 +303,10 @@ output tick by ``apply_message``:
    def from_queue(sender: Callable[[int], None]):
        ...  # register `sender`; call sender(value) from another thread to inject ticks
 
-The message is a named ``Scalar<"message", Int>``, not a bare ``int`` — like
-``In``, a ``Scalar`` carries a name and type, which makes explicit that a push
-source consumes *scalar messages* to produce a *time-series* response. (A
-lightweight implicit ``int`` → ``Scalar`` conversion may be offered as a
-shortcut, but the named wrapper is the canonical form.)
+The message/application surface is still provisional. The important runtime
+constraint is that push-source behavior belongs to the specialized node
+implementation and the real-time evaluator; it must not add a generic
+``apply_message`` operation to all nodes.
 
 
 Lifecycle: ``start`` / ``eval`` / ``stop``
@@ -806,11 +805,10 @@ parameter alongside ``In`` / ``Out`` / ``State``. Scalars are **read-only**
 per-instance configuration: they are fixed when the node is built and do not
 change during evaluation.
 
-It covers two roles with one marker: a scalar **argument** fixed at wiring time
-(the C++ counterpart of an ordinary, non-time-series Python function argument),
-and the scalar **message** a push source consumes (see `Node kinds`_). The
-argument role is implemented for ``eval``; the push-source message role is
-planned.
+It covers scalar **arguments** fixed at wiring time (the C++ counterpart of an
+ordinary, non-time-series Python function argument). Push-source message
+application is planned as part of the specialized push-source node/builder, not
+as a generic static-node scalar argument path.
 
 .. code-block:: cpp
 
@@ -1176,7 +1174,7 @@ Feature status
    * - Generic node resolution (``TsVar`` / ``ScalarVar`` in signatures)
      - available
      - available
-   * - Push-source ``apply_message`` (``Scalar<"name", T>``) + required ``start(Sender<T>)``
+   * - Push-source node/builder + ``Sender<T>`` + real-time evaluator
      - planned
      - available
    * - Named state ``State<S, "name">``
@@ -1216,7 +1214,7 @@ C++ ↔ Python cheat sheet
      - ``TIME_SERIES_TYPE`` / ``SCALAR``
    * - ``eval`` with ``Out`` and no ``In`` (kind inferred)
      - ``@generator``
-   * - ``Scalar<"msg", T>`` message + ``Sender<T>`` *(planned)*
+   * - push-source builder + ``Sender<T>`` *(planned)*
      - ``@push_queue`` message + ``sender`` callable
    * - ``NodeBuilder{}.implementation<N>()``
      - the decorator applied to the function
