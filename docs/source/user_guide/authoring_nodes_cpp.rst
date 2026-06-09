@@ -599,9 +599,18 @@ Wiring treats ``SIGNAL`` specially on the input side: any time-series output can
 be connected to an ``In<..., SIGNAL>``, and the input observes the upstream
 modified/ticked state without reading the upstream value.
 
-``REF<TSchema>`` selectors are planned. A reference passes a handle to a
-time-series rather than its value, used to rebind what an input points at without
-copying data. Mirrors Python ``REF[...]``.
+``REF<TSchema>`` selectors are available as an opaque reference-token surface. A
+reference passes a handle to a time-series rather than its value, used to rebind
+what an input points at without copying data. Node authoring code may read the
+``TimeSeriesReference`` token from ``In<..., REF<TSchema>>::value()`` and may write
+one with ``Out<REF<TSchema>>::set(...)``.
+
+Direct dereference of a ``REF`` output is intentionally not part of the public C++
+node-authoring API. For now, dereferencing is owned by the internal time-series
+alternative binding machinery: when an input expects ``TSchema`` and an output is
+``REF<TSchema>``, the output alternative code exposes the referenced shape and
+keeps the binding updated. This decision may be revisited if a valid user-code
+case appears that cannot be expressed through normal wiring.
 
 .. code-block:: cpp
 
@@ -1121,8 +1130,8 @@ Feature status
    * - ``SIGNAL`` selectors
      - available
      - available
-   * - ``REF`` selectors
-     - planned
+   * - ``REF`` selectors (opaque token; no public direct dereference)
+     - available
      - available
    * - ``GlobalStateView`` injectable (shared ``string -> value`` store)
      - available

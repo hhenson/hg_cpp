@@ -283,10 +283,17 @@ The value token is intentionally opaque to user code. A
 ``TimeSeriesReference`` can be empty, can name a single output through
 an internal output handle, or can hold a non-peered collection of child
 references. Public code may pass the token around and may request a
-reference token from an input view, but it should not dereference the
-token to obtain an output handle. Internal binding and output-
-alternative machinery may access the handle through a restricted
+reference token from an input view, but it must not dereference the
+token to obtain an output handle or output view. Internal binding and
+output-alternative machinery may access the handle through a restricted
 interface.
+
+This is a deliberate design boundary. The runtime currently supports
+dereferencing only inside the time-series alternative mapping logic,
+where a ``REF<T>`` output is exposed as ``T`` for a bound input. Public
+``REF`` output dereference should not be added unless a concrete use
+case appears that cannot be represented cleanly through normal graph
+wiring and output alternatives.
 
 Reference conversion is output-owned. ``RefLink`` is only created by
 output alternative infrastructure, not by user code and not by the
@@ -629,8 +636,10 @@ to a canonical output view of:
 asks the output to expose ``TS[int]`` as ``REF[TS[int]]`` and binds the
 target link to the returned alternative binding data. Conversely,
 binding an input expecting ``TS[int]`` to an output whose canonical
-schema is ``REF[TS[int]]`` asks the output for a dereferenced
-alternative and binds to that returned shape.
+schema is ``REF[TS[int]]`` asks the output for an internal dereferenced
+alternative and binds to that returned shape. This is the alternative
+store crossing the reference boundary; it is not a public operation for
+node code to dereference a ``REF`` output directly.
 
 This negotiation rule applies to all target-link binding, not just
 ``REF``. A bind operation on an input receives a canonical output view;

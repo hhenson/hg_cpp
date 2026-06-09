@@ -345,7 +345,7 @@ Today: ``fixed_string``, marker types (``TS``, ``TSS``, ``TSD``,
 un-named ``Bundle`` / ``TSB``, ``ScalarVar``, ``TsVar``), the
 ``scalar_descriptor`` / ``schema_descriptor`` / ``field_descriptor``
 traits, and the **derive-from-view node-authoring selectors** —
-``In<Name, TS<T>>`` / ``SIGNAL`` / ``TSS<T>`` / ``TSD<K,V>`` /
+``In<Name, TS<T>>`` / ``REF<T>`` / ``SIGNAL`` / ``TSS<T>`` / ``TSD<K,V>`` /
 ``TSL<C,N>`` / ``TSB`` / tick-count ``TSW<T,...>`` (and the ``Out<…>`` duals)
 deriving from their erased input/output views, plus ``State<T>`` and
 ``Scalar<Name, T>`` — together with ``StaticNodeSignature`` and
@@ -365,10 +365,9 @@ the resolution-map schema overloads, and the wiring-time resolution in ``wire<>`
 (unify from input ports, infer from scalar values, or supply explicitly via
 ``ts_type<>()`` / an explicit output schema). See *Graph Wiring*.
 
-Deferred until the relevant runtime layer lands: ``REF`` selectors,
-``RecordableState``, ``EvaluationClock`` injection, push-source ``apply_message``,
-named state, input activity/validity policy flags, duration-based ``TSW``, the
-Python-export bridge, and **graph-level** generic resolution (aggregating
-node-level resolution across a sub-graph).
+Deferred until the relevant runtime layer lands: ``RecordableState``,
+``EvaluationClock`` injection, push-source ``apply_message``, named state,
+duration-based ``TSW``, the Python-export bridge, and **graph-level** generic
+resolution (aggregating node-level resolution across a sub-graph).
 (``NodeScheduler`` / ``SingleShotScheduler`` injection is now implemented; see
 *Authoring Nodes in C++*.)
