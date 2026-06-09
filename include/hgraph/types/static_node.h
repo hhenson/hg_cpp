@@ -56,9 +56,9 @@ namespace hgraph
      * The typed selector surface covers the supported time-series shapes (``TS`` /
      * ``SIGNAL`` / ``REF`` / ``TSS`` / ``TSD`` / ``TSL`` / ``TSB`` / tick-count
      * ``TSW``), scalar ``State<T>``, wiring-time ``Scalar<Name, T>`` values,
-     * graph-level ``GlobalState<T>``, input activity/validity policy flags, and
-     * scheduler injection. Push-source selectors and recordable state are still
-     * being filled in.
+     * graph-level ``GlobalState<T>``, input activity/validity policy flags,
+     * output-backed ``RecordableState<TSchema>``, and scheduler injection.
+     * Push-source selectors are still being filled in.
      */
 
     // -----------------------------------------------------------------
@@ -970,6 +970,24 @@ namespace hgraph
     };
 
     /**
+     * Output-backed recordable node state. This is not the scalar ``State<T>``
+     * slot and it is not a normal node output selector: it is feedback-like
+     * node-local state stored as a hidden output so system-level record/replay
+     * code can observe and restore it without letting it activate the node.
+     */
+    template <typename TSchema>
+    class RecordableState : public Out<TSchema>
+    {
+      public:
+        using schema = TSchema;
+
+        RecordableState(TSOutputView view, DateTime evaluation_time) noexcept
+            : Out<TSchema>(std::move(view), evaluation_time)
+        {
+        }
+    };
+
+    /**
      * Set time-series output (``TSS<T>``): inherits ``TSSOutputView``. Mutate with
      * add / remove / clear; the delta accumulates across calls within the cycle.
      */
@@ -1348,6 +1366,9 @@ namespace hgraph
         template <typename T> struct is_state_selector : std::false_type {};
         template <typename V> struct is_state_selector<State<V>> : std::true_type {};
 
+        template <typename T> struct is_recordable_state_selector : std::false_type {};
+        template <typename S> struct is_recordable_state_selector<RecordableState<S>> : std::true_type {};
+
         template <typename T> struct is_scalar_selector : std::false_type {};
         template <fixed_string N, typename V> struct is_scalar_selector<Scalar<N, V>> : std::true_type {};
 
@@ -1421,6 +1442,14 @@ namespace hgraph
             static const ValueTypeMetaData *value_meta() { return scalar_descriptor<V>::value_meta(); }
         };
 
+        template <typename T> struct recordable_state_selector_traits;
+        template <typename S>
+        struct recordable_state_selector_traits<RecordableState<S>>
+        {
+            using schema = S;
+            static const TSValueTypeMetaData *ts_meta() { return schema_descriptor<S>::ts_meta(); }
+        };
+
         template <typename T> struct scalar_selector_traits;
         template <fixed_string N, typename V>
         struct scalar_selector_traits<Scalar<N, V>>
@@ -1440,6 +1469,8 @@ namespace hgraph
         struct selector_is_generic<Scalar<N, V>> : std::bool_constant<!scalar_descriptor<V>::is_concrete()> {};
         template <typename V>
         struct selector_is_generic<State<V>> : std::bool_constant<!scalar_descriptor<V>::is_concrete()> {};
+        template <typename S>
+        struct selector_is_generic<RecordableState<S>> : std::bool_constant<!schema_descriptor<S>::is_concrete()> {};
 
         // ---- compile-time output schema type extraction ----
         // output_schema_of<E> is void for any non-output selector and S for Out<S>,
@@ -1541,6 +1572,15 @@ namespace hgraph
         struct arg_provider<State<V>>
         {
             static State<V> get(const NodeView &view, DateTime) { return State<V>{view.state()}; }
+        };
+
+        template <typename S>
+        struct arg_provider<RecordableState<S>>
+        {
+            static RecordableState<S> get(const NodeView &view, DateTime evaluation_time)
+            {
+                return RecordableState<S>{view.recordable_state(evaluation_time), evaluation_time};
+            }
         };
 
         template <fixed_string N, typename V>
@@ -1688,6 +1728,22 @@ namespace hgraph
         }
 
         template <std::size_t... I>
+        static const TSValueTypeMetaData *find_recordable_state(std::index_sequence<I...>)
+        {
+            const TSValueTypeMetaData *state = nullptr;
+            (
+                [&] {
+                    using E = static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>;
+                    if constexpr (static_node_detail::is_recordable_state_selector<E>::value)
+                    {
+                        state = static_node_detail::recordable_state_selector_traits<E>::ts_meta();
+                    }
+                }(),
+                ...);
+            return state;
+        }
+
+        template <std::size_t... I>
         static void collect_scalars(std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields,
                                     std::index_sequence<I...>)
         {
@@ -1738,6 +1794,16 @@ namespace hgraph
         {
             return (std::size_t{0} + ... +
                     (static_node_detail::is_state_selector<
+                         static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>::value
+                         ? std::size_t{1}
+                         : std::size_t{0}));
+        }
+
+        template <std::size_t... I>
+        static constexpr std::size_t count_recordable_states(std::index_sequence<I...>)
+        {
+            return (std::size_t{0} + ... +
+                    (static_node_detail::is_recordable_state_selector<
                          static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>>::value
                          ? std::size_t{1}
                          : std::size_t{0}));
@@ -1879,6 +1945,10 @@ namespace hgraph
         [[nodiscard]] static constexpr std::size_t output_count() { return count_outputs(indices{}); }
         [[nodiscard]] static constexpr std::size_t scalar_count() { return count_scalars(indices{}); }
         [[nodiscard]] static constexpr std::size_t state_count() { return count_states(indices{}); }
+        [[nodiscard]] static constexpr std::size_t recordable_state_count()
+        {
+            return count_recordable_states(indices{});
+        }
         [[nodiscard]] static constexpr bool input_names_unique()
         {
             return !static_node_detail::has_duplicate_selector_names<static_node_detail::same_input_name,
@@ -2003,6 +2073,23 @@ namespace hgraph
         }
 
         template <std::size_t... I>
+        static const TSValueTypeMetaData *find_recordable_state_resolved(const ResolutionMap &m, std::index_sequence<I...>)
+        {
+            const TSValueTypeMetaData *state = nullptr;
+            (
+                [&] {
+                    using E = static_node_detail::selector_of<std::tuple_element_t<I, eval_args>>;
+                    if constexpr (static_node_detail::is_recordable_state_selector<E>::value)
+                    {
+                        state = ts_resolver<
+                            typename static_node_detail::recordable_state_selector_traits<E>::schema>::resolve(m);
+                    }
+                }(),
+                ...);
+            return state;
+        }
+
+        template <std::size_t... I>
         static void collect_scalars_resolved(std::vector<std::pair<std::string, const ValueTypeMetaData *>> &fields,
                                              const ResolutionMap &m, std::index_sequence<I...>)
         {
@@ -2039,6 +2126,10 @@ namespace hgraph
 
         [[nodiscard]] static const TSValueTypeMetaData *output_schema() { return find_output(indices{}); }
         [[nodiscard]] static const ValueTypeMetaData   *state_schema() { return find_state(indices{}); }
+        [[nodiscard]] static const TSValueTypeMetaData *recordable_state_schema()
+        {
+            return find_recordable_state(indices{});
+        }
 
         /** Resolved input TSB schema, substituting type-var bindings from ``m``. */
         [[nodiscard]] static const TSValueTypeMetaData *input_schema(const ResolutionMap &m)
@@ -2057,6 +2148,11 @@ namespace hgraph
         [[nodiscard]] static const ValueTypeMetaData *state_schema(const ResolutionMap &m)
         {
             return find_state_resolved(m, indices{});
+        }
+
+        [[nodiscard]] static const TSValueTypeMetaData *recordable_state_schema(const ResolutionMap &m)
+        {
+            return find_recordable_state_resolved(m, indices{});
         }
 
         /** Resolved scalar-configuration bundle schema (or nullptr when none). */
@@ -2136,17 +2232,22 @@ namespace hgraph
         using signature = StaticNodeSignature<TImplementation>;
         static_assert(signature::output_count() <= 1, "Static nodes support at most one Out<...> parameter");
         static_assert(signature::state_count() <= 1, "Static nodes support at most one State<...> parameter");
+        static_assert(signature::recordable_state_count() <= 1,
+                      "Static nodes support at most one RecordableState<...> parameter");
+        static_assert(signature::state_count() == 0 || signature::recordable_state_count() == 0,
+                      "Static nodes cannot mix State<...> and RecordableState<...>; recordable state replaces local state");
         static_assert(signature::input_names_unique(), "Static node In<> selector names must be unique");
         static_assert(signature::scalar_names_unique(), "Static node Scalar<> selector names must be unique");
 
         NodeTypeMetaData schema;
         if constexpr (static_node_detail::has_name<TImplementation>) { schema.display_name = TImplementation::name; }
-        schema.input_schema    = signature::input_schema();
-        schema.output_schema   = signature::output_schema();
-        schema.state_schema    = signature::state_schema();
-        schema.scalar_schema   = signature::scalar_schema();
-        schema.node_kind         = signature::node_kind();
-        schema.uses_scheduler    = signature::uses_scheduler();
+        schema.input_schema            = signature::input_schema();
+        schema.output_schema           = signature::output_schema();
+        schema.state_schema            = signature::state_schema();
+        schema.scalar_schema           = signature::scalar_schema();
+        schema.recordable_state_schema = signature::recordable_state_schema();
+        schema.node_kind               = signature::node_kind();
+        schema.uses_scheduler          = signature::uses_scheduler();
         schema.schedule_on_start = signature::schedule_on_start();
         schema.active_inputs     = signature::active_inputs();
         schema.valid_inputs      = signature::valid_inputs();
@@ -2186,6 +2287,10 @@ namespace hgraph
         using signature = StaticNodeSignature<TImplementation>;
         static_assert(signature::output_count() <= 1, "Static nodes support at most one Out<...> parameter");
         static_assert(signature::state_count() <= 1, "Static nodes support at most one State<...> parameter");
+        static_assert(signature::recordable_state_count() <= 1,
+                      "Static nodes support at most one RecordableState<...> parameter");
+        static_assert(signature::state_count() == 0 || signature::recordable_state_count() == 0,
+                      "Static nodes cannot mix State<...> and RecordableState<...>; recordable state replaces local state");
         static_assert(signature::input_names_unique(), "Static node In<> selector names must be unique");
         static_assert(signature::scalar_names_unique(), "Static node Scalar<> selector names must be unique");
 
@@ -2195,10 +2300,11 @@ namespace hgraph
         // the NodeView, so one closure over &eval serves every resolution.
         NodeTypeMetaData schema;
         if constexpr (static_node_detail::has_name<TImplementation>) { schema.display_name = TImplementation::name; }
-        schema.input_schema      = signature::input_schema(resolution);
-        schema.output_schema     = signature::output_schema(resolution);
-        schema.state_schema      = signature::state_schema(resolution);
-        schema.scalar_schema     = signature::scalar_schema(resolution);
+        schema.input_schema            = signature::input_schema(resolution);
+        schema.output_schema           = signature::output_schema(resolution);
+        schema.state_schema            = signature::state_schema(resolution);
+        schema.scalar_schema           = signature::scalar_schema(resolution);
+        schema.recordable_state_schema = signature::recordable_state_schema(resolution);
         schema.node_kind         = signature::node_kind();
         schema.uses_scheduler    = signature::uses_scheduler();
         schema.schedule_on_start = signature::schedule_on_start();

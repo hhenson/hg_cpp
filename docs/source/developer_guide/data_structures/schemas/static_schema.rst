@@ -328,13 +328,11 @@ the replayable kinds. ``REF`` is a separate binding surface.
 
 Planned, landing with their runtime layers:
 
-- ``RecordableState<TSchema, Id<"...">>`` — typed recordable-state output; the
-  optional ``Id<"...">`` names the recordable (Python's optional
-  ``recordable_id``);
 - ``PythonScalar<"name", Type<"my.module.type">>`` — a named Python-object
   scalar whose expected Python type is named (as a string) for type-checking;
   omitting the type (``PythonScalar<"name">``) defaults to ``object`` (any
   Python object / generic);
+- automatic recordable-state port exposure / ``recordable_id`` wiring;
 - named state (``State<TSchema, Name>``).
 
 Status
@@ -347,9 +345,16 @@ un-named ``Bundle`` / ``TSB``, ``ScalarVar``, ``TsVar``), the
 traits, and the **derive-from-view node-authoring selectors** —
 ``In<Name, TS<T>>`` / ``REF<T>`` / ``SIGNAL`` / ``TSS<T>`` / ``TSD<K,V>`` /
 ``TSL<C,N>`` / ``TSB`` / tick-count ``TSW<T,...>`` (and the ``Out<…>`` duals)
-deriving from their erased input/output views, plus ``State<T>`` and
+deriving from their erased input/output views, plus ``RecordableState<TSchema>``,
+``State<T>`` and
 ``Scalar<Name, T>`` — together with ``StaticNodeSignature`` and
-``NodeBuilder::implementation<T>()`` (see *Wiring*). ``TSL`` is **recursive**:
+``NodeBuilder::implementation<T>()`` (see *Wiring*). ``State<T>`` and
+``RecordableState<TSchema>`` are mutually exclusive for a static node:
+recordable state replaces local state when the state must be exposed through a
+hidden time-series output. That hidden output is for system-level recording and
+replay only: it is not a normal output port, cannot be wired as an external
+time-series, and must not activate or schedule the owning node. ``TSL`` is
+**recursive**:
 its child may be any supported non-``REF`` time-series schema, nested
 arbitrarily, and replayable canonical delta ``Value`` shapes are built/compared
 through the value layer. These build on the live
@@ -365,9 +370,10 @@ the resolution-map schema overloads, and the wiring-time resolution in ``wire<>`
 (unify from input ports, infer from scalar values, or supply explicitly via
 ``ts_type<>()`` / an explicit output schema). See *Graph Wiring*.
 
-Deferred until the relevant runtime layer lands: ``RecordableState``,
-``EvaluationClock`` injection, push-source ``apply_message``, named state,
-duration-based ``TSW``, the Python-export bridge, and **graph-level** generic
-resolution (aggregating node-level resolution across a sub-graph).
+Deferred until the relevant runtime layer lands: automatic recordable-state port
+exposure / ``recordable_id`` wiring, ``EvaluationClock`` injection, push-source
+``apply_message``, named state, duration-based ``TSW``, the Python-export bridge,
+and **graph-level** generic resolution (aggregating node-level resolution across
+a sub-graph).
 (``NodeScheduler`` / ``SingleShotScheduler`` injection is now implemented; see
 *Authoring Nodes in C++*.)

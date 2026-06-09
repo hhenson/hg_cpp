@@ -842,25 +842,34 @@ Python object, i.e. un-typed / generic.
 Recordable state
 ----------------
 
-**Planned (``RecordableState``).** Recordable state is node state that the
-runtime can record and replay (for deterministic record/replay runs). It is
-exposed as an output-backed handle. An optional ``Id<"...">`` template argument
-names the recordable — the C++ counterpart of Python's optional
-``recordable_id`` — and may be omitted:
+``RecordableState<TSchema>`` is available as node-local state backed by a hidden
+time-series output. It is feedback-like state that wraps the node: the node may
+read and update it during evaluation, while system-level record/replay code can
+observe and restore it. It cannot be wired as an external time-series and it does
+not participate in scheduling or input readiness. A node uses either ``State<T>``
+or ``RecordableState<TSchema>``, not both; recordable state is the node's state
+when record/replay visibility is required.
+
+The selector uses typed field access for structured state. For a bundle-shaped
+state, access fields with ``field<"...">()`` and update scalar fields with
+``set(...)``.
+
+Automatic Python-style recording of the hidden state output is not wired yet.
+That future slice will expose the hidden state output as a wiring port and attach
+it to record/replay using the node's recordable id.
 
 .. code-block:: cpp
 
-   // Planned — provisional syntax
    using LastSeen = TSB<"LastSeen", Field<"last", TS<Int>>>;
 
    struct PreviousValue
    {
        static void eval(In<"in", TS<Int>> in,
-                        RecordableState<LastSeen, Id<"previous_value">> state,   // Id<> optional
+                        RecordableState<LastSeen> state,
                         Out<TS<Int>> out)
        {
-           auto last = state.last();
-           out.set(last.valid() ? last.value() : -1);
+           auto last = state.field<"last">();
+           out.set(last.valid() ? last.value().checked_as<Int>() : Int{-1});
            last.set(in.value());
        }
    };
@@ -1145,7 +1154,10 @@ Feature status
    * - ``Scalar<"name", T>`` (named scalar arguments)
      - available
      - available
-   * - ``RecordableState``
+   * - ``RecordableState`` selector
+     - available
+     - available
+   * - Automatic recordable-state port exposure / recording
      - planned
      - available
    * - Activity / validity policy flags

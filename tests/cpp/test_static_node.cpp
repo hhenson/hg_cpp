@@ -121,6 +121,23 @@ namespace
         }
     };
 
+    using LastSeenState = TSB<"LastSeenState", Field<"last", TS<Int>>>;
+
+    struct RecordablePreviousValue
+    {
+        static constexpr auto name = "recordable_previous_value";
+
+        static void eval(In<"in", TS<Int>> in,
+                         RecordableState<LastSeenState> state,
+                         Out<TS<Int>> out)
+        {
+            auto last = state.field<"last">();
+            const Int previous = last.valid() ? last.value().checked_as<Int>() : Int{-1};
+            out.set(previous);
+            last.set(in.value());
+        }
+    };
+
     // Source configured by a scalar input (no time-series inputs -> PullSource).
     // Emits its configured value; the scalar is read-only wiring-time config.
     struct ScaledSource
@@ -155,6 +172,11 @@ namespace
     struct MultipleStateSlots
     {
         static void eval(State<Int>, State<Int>, Out<TS<Int>>);
+    };
+
+    struct MultipleRecordableStateSlots
+    {
+        static void eval(RecordableState<LastSeenState>, RecordableState<LastSeenState>, Out<TS<Int>>);
     };
 
     // Build a single-field compound scalar configuration {field: value}.
@@ -196,10 +218,13 @@ TEST_CASE("static node: signature detects ambiguous selector contracts")
     STATIC_REQUIRE(StaticNodeSignature<Sum>::input_names_unique());
     STATIC_REQUIRE(StaticNodeSignature<Shift>::scalar_names_unique());
     STATIC_REQUIRE(StaticNodeSignature<Counter>::state_count() == 1);
+    STATIC_REQUIRE(StaticNodeSignature<RecordablePreviousValue>::state_count() == 0);
+    STATIC_REQUIRE(StaticNodeSignature<RecordablePreviousValue>::recordable_state_count() == 1);
 
     STATIC_REQUIRE_FALSE(StaticNodeSignature<DuplicateInputNames>::input_names_unique());
     STATIC_REQUIRE_FALSE(StaticNodeSignature<DuplicateScalarNames>::scalar_names_unique());
     STATIC_REQUIRE(StaticNodeSignature<MultipleStateSlots>::state_count() == 2);
+    STATIC_REQUIRE(StaticNodeSignature<MultipleRecordableStateSlots>::recordable_state_count() == 2);
 }
 
 TEST_CASE("static node: input policy flags are reflected into node metadata")
@@ -427,4 +452,56 @@ TEST_CASE("static node: State<Int> is constructed and mutated across evaluations
     node.view().evaluate(t2, true);
     CHECK(node.view().state().checked_as<Int>() == 2);
     CHECK(node.view().output(t2).value().checked_as<Int>() == 2);
+}
+
+TEST_CASE("static node: RecordableState<TSB> is hidden output-backed state")
+{
+    using namespace hgraph;
+
+    auto       source = NodeBuilder{}.label("source").implementation<Counter>().make_node();
+    auto       node   = NodeBuilder{}.label("previous").implementation<RecordablePreviousValue>().make_node();
+    const auto t1   = MIN_ST;
+    const auto t2   = t1 + TimeDelta{1};
+
+    auto view = node.view();
+    REQUIRE(view.node_kind() == NodeKind::Compute);
+    REQUIRE(view.has_input());
+    REQUIRE(view.has_output());
+    REQUIRE_FALSE(view.has_state());
+    REQUIRE(view.has_recordable_state());
+    REQUIRE(view.schema()->recordable_state_schema == schema_descriptor<LastSeenState>::ts_meta());
+    REQUIRE(view.schema()->output_schema == schema_descriptor<TS<Int>>::ts_meta());
+    REQUIRE(view.binding()->checked_plan().find_component("recordable_state") != nullptr);
+
+    source.view().start(t1);
+    view.start(t1);
+
+    source.view().evaluate(t1, true);
+    {
+        auto root   = view.input(t1);
+        auto bundle = root.as_bundle();
+        auto input  = bundle.field("in");
+        input.bind_output(source.view().output(t1));
+    }
+    view.evaluate(t1, true);
+    CHECK(node.view().output(t1).value().checked_as<Int>() == Int{-1});
+    {
+        auto recordable = node.view().recordable_state(t1);
+        auto bundle     = recordable.as_bundle();
+        auto last       = bundle.field("last");
+        REQUIRE(last.valid());
+        CHECK(last.value().checked_as<Int>() == Int{1});
+    }
+
+    source.view().evaluate(t2, true);
+    node.view().evaluate(t2, true);
+    CHECK(node.view().output(t2).value().checked_as<Int>() == Int{1});
+    {
+        auto recordable = node.view().recordable_state(t2);
+        auto bundle     = recordable.as_bundle();
+        auto last       = bundle.field("last");
+        REQUIRE(last.valid());
+        CHECK(last.value().checked_as<Int>() == Int{2});
+        CHECK(last.modified());
+    }
 }
