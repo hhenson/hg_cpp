@@ -315,16 +315,17 @@ re-implements them.
 How these markers drive node construction — ``StaticNodeSignature`` and
 ``NodeBuilder::implementation<T>()`` — is described in *Wiring*.
 
-**Deferred (generic) selectors.** ``In<Name, TsVar<"S">>`` / ``Out<TsVar<"S">>`` /
-``Scalar<Name, ScalarVar<"T">>`` are the variable forms: ``In`` / ``Out`` *are* the
-bare erased view (no typed sugar — there is no concrete element type), and the
-``Scalar`` holds its configured value type-erased as an owned ``Value``. A node
-authored over them is *generic*; the variables resolve at wiring time (see
-*Generic schemas* above and *Graph Wiring*). The framework's own utility nodes
-(``replay`` / ``record`` / ``const_`` / ``debug_print`` / ``null_sink``) are
-authored this way — **one** implementation each, the schema flowing as data, driven
-by the runtime ``capture_delta`` / ``apply_delta`` rather than per-type code for
-the replayable kinds. ``REF`` is a separate binding surface.
+**Generic selectors.** ``In<Name, TsVar<"S">>`` / ``Out<TsVar<"S">>`` /
+``Scalar<Name, ScalarVar<"T">>`` are implemented variable forms: ``In`` /
+``Out`` are the bare erased view (no typed sugar — there is no concrete element
+type), and ``Scalar`` holds its configured value type-erased as an owned
+``Value``. A node authored over them is *generic*; the variables resolve at
+wiring time (see *Generic schemas* above and *Graph Wiring*). The framework's
+own utility nodes (``replay`` / ``record`` / ``const_`` / ``debug_print`` /
+``null_sink``) are authored this way — **one** implementation each, the schema
+flowing as data, driven by the runtime ``capture_delta`` / ``apply_delta``
+rather than per-type code for the replayable kinds. ``REF`` is a separate
+binding surface.
 
 Planned, landing with their runtime layers:
 

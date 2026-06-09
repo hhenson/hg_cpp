@@ -1094,10 +1094,10 @@ wiring layer that infers edges from call structure is planned.
 
 .. note::
 
-   **Source ticks over time.** Today a simple source writes a value once at
-   start. A source that injects ticks across simulated time (the C++ counterpart
-   of a Python ``@generator`` that yields a stream) is the current milestone and
-   is being added next.
+   **Source ticks over time.** A source that injects ticks across simulated time
+   declares a ``NodeScheduler`` (or ``SingleShotScheduler``) injectable and
+   schedules its next evaluation from ``start`` / ``eval``. The runtime consumes
+   the scheduled event and re-arms the node through the scheduler state.
 
 
 Feature status

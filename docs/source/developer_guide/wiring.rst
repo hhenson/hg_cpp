@@ -57,8 +57,9 @@ The selectors used at this layer are:
 - ``Out<TS<T>>`` — a typed output. ``set(v)`` writes the value and ticks the
   output at the current evaluation time.
 - ``State<T>`` — a typed handle into node-local (value-layer) state.
-- ``Scalar<"name", T>`` *(planned)* — a named scalar value (a wiring argument or
-  a push-source message); the scalar analog of ``In``.
+- ``Scalar<"name", T>`` — a named scalar value used as wiring-time node or graph
+  configuration; the scalar analog of ``In``. The same selector shape will be
+  used for push-source messages when that runtime layer lands.
 
 Each parameter's **selector type** identifies its role, so the ``In`` / ``Out``
 / ``State`` / service parameters may appear in **any position** — the runtime
@@ -78,15 +79,23 @@ Signature extraction
 node contract:
 
 - **input schema** — the ``In<>`` parameters become the fields of a non-peered
-  input ``TSB`` (in argument order, by their ``Name``);
-- **output schema** — the single ``Out<>`` parameter's schema (at most one);
+  input ``TSB`` (in argument order, by their ``Name``), including collection,
+  ``SIGNAL`` and ``REF`` selectors;
+- **output schema** — the single ``Out<>`` parameter's schema (at most one),
+  including collection, ``SIGNAL`` and ``REF`` selectors;
 - **state schema** — the ``State<T>`` parameter's value-layer schema;
+- **scalar schema** — ``Scalar<"name", T>`` parameters become a scalar
+  configuration bundle populated by ``wire<T>(...)`` / ``build_graph<G>(...)``;
+- **recordable-state schema** — ``RecordableState<TSchema>`` replaces ordinary
+  local state with a hidden output-backed state surface for system-level
+  record/replay wiring;
 - **node kind** — determined entirely from the node's shape: ``eval`` with
   ``In`` and ``Out`` → ``Compute``; ``Out`` only → ``PullSource``; ``In`` only
   → ``Sink``; an ``apply_message`` hook → ``PushSource`` (planned). There is no
   override — the kind has a single source of truth in the code;
 - **input endpoint** — a ``TSEndpointSchema`` of ``non_peered(input_tsb, {
-  peered(field)… })``, one peered terminal per input.
+  peered(field)… })``, one peered terminal per ordinary input, with structural
+  annotations for non-peered collection prefixes and nested endpoints.
 
 Mapping onto the runtime (no parallel mechanism)
 ------------------------------------------------
@@ -107,9 +116,16 @@ The ``NodeCallbacks`` thunks are stateless lambdas that call
 walks the hook's parameter types and, for each, asks an ``arg_provider`` to
 build the selector from the type-erased ``NodeView``:
 
-- ``In<Name, TS<T>>`` ← ``view.input(t).as_bundle().field(Name)``
-- ``Out<TS<T>>`` ← ``view.output(t)`` (carrying ``t`` for ``set``)
+- ``In<Name, S>`` ← ``view.input(t).as_bundle().field(Name)`` projected to the
+  matching typed input view (``TS`` / ``TSS`` / ``TSD`` / ``TSL`` / ``TSW`` /
+  ``TSB`` / ``REF`` / ``SIGNAL``)
+- ``Out<S>`` ← ``view.output(t)`` projected to the matching typed output view
+  (carrying ``t`` for mutation)
 - ``State<T>`` ← ``view.state()``
+- ``RecordableState<TSchema>`` ← ``view.recordable_state(t)``
+- ``Scalar<"name", T>`` ← the node's scalar configuration bundle
+- ``GlobalStateView`` / ``EvaluationClockView`` / ``NodeScheduler`` ← graph and
+  node runtime injectables
 
 Because the static layer produces the same ``native`` inputs the hand-written
 path uses, there is **one** runtime node model; static authoring is sugar over
@@ -151,22 +167,28 @@ safety, and trust the type-checking done at the wiring layer.
 Status
 ------
 
-Implemented (the scalar time-series slice): ``In<Name, TS<T>>`` /
-``Out<TS<T>>`` / ``State<T>`` selectors, ``StaticNodeSignature``,
-``NodeBuilder::implementation<T>()``, ``start`` / ``stop`` / ``eval`` hooks,
-node-kind inference (Compute / PullSource / Sink) from shape with no override,
-and ``GraphBuilder`` / ``GraphEdge`` assembly. A static source → compute graph
-builds and runs in simulation mode.
+Implemented: static C++ nodes support ``In`` / ``Out`` selectors over ``TS``,
+``TSS``, ``TSD``, fixed and dynamic ``TSL``, ``TSW``, ``TSB``, ``REF`` and
+``SIGNAL``; ``State<T>``; ``RecordableState<TSchema>``; wiring-time
+``Scalar<"name", T>`` arguments; ``GlobalStateView`` / ``EvaluationClockView`` /
+``NodeScheduler`` injectables; input ``InputActivity`` / ``InputValidity``
+policy flags; ``TsVar`` / ``ScalarVar`` generic node resolution; and
+``StaticNodeSignature`` / ``NodeBuilder::implementation<T>()`` over
+``start`` / ``stop`` / ``eval`` hooks. Node-kind inference covers Compute /
+PullSource / Sink from shape with no override. ``GraphBuilder`` /
+``GraphEdge`` and the higher-level ``Wiring`` / ``wire<T>`` / ``wire<G>`` /
+``build_graph<G>`` layer are implemented for flattened graphs, including
+node-level scalars, graph-level scalar parameters, structural TSL/TSB input
+initialisers, special source roots (``recordable_state(port)`` /
+``error_output(port)``), and ordinary simulation execution.
 
 Deferred (land with the relevant runtime layer):
 
-- container-shaped selectors over ``TSB`` / ``TSL`` / ``TSS`` / ``TSD`` /
-  ``TSW`` inputs and outputs (non-peered prefixes, nested endpoint
-  annotations);
 - automatic recordable-state recording;
 - push-source nodes — a required ``start(Sender<T>)`` plus an
-  ``apply_message(Scalar<"name", T>, …)`` hook — and ``Scalar<"name", T>``
-  arguments;
-- input ``InputActivity`` / ``InputValidity`` policy flags, named state;
-- the Python lowering, and **graph-level** generic resolution (node-level
-  ``TsVar`` / ``ScalarVar`` resolution is now implemented — see *Graph Wiring*).
+  ``apply_message(Scalar<"name", T>, …)`` hook;
+- named state (``State<TSchema, "name">``);
+- by-name graph/node scalar arguments and scalar defaults;
+- standalone sub-graph boundary binding, generic graphs, and higher-order
+  graph operators such as ``map_`` / ``reduce`` / ``switch_``;
+- the Python lowering.
