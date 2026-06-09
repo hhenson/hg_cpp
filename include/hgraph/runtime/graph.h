@@ -1,6 +1,7 @@
 #ifndef HGRAPH_RUNTIME_GRAPH_H
 #define HGRAPH_RUNTIME_GRAPH_H
 
+#include <hgraph/runtime/evaluation_clock.h>
 #include <hgraph/runtime/global_state.h>
 #include <hgraph/runtime/node.h>
 
@@ -108,6 +109,8 @@ namespace hgraph
         [[nodiscard]] std::size_t (*node_count_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] NodeView (*node_at_impl)(const void *context, void *memory, std::size_t index) = nullptr;
         [[nodiscard]] GlobalState *(*global_state_impl)(const void *context, void *memory) noexcept = nullptr;
+        [[nodiscard]] EvaluationClockView (*evaluation_clock_impl)(const void *context,
+                                                                   const void *memory) noexcept = nullptr;
     };
 
     using GraphTypeBinding = TypeBinding<GraphTypeMetaData, GraphOps>;
@@ -143,6 +146,7 @@ namespace hgraph
          * point once non-flattening nested graphs exist).
          */
         [[nodiscard]] GlobalStateView global_state() const;
+        [[nodiscard]] EvaluationClockView evaluation_clock() const noexcept;
         [[nodiscard]] GraphView root() const;
 
         void start(DateTime start_time = MIN_ST) const;

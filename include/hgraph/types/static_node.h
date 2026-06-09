@@ -57,7 +57,8 @@ namespace hgraph
      * ``SIGNAL`` / ``REF`` / ``TSS`` / ``TSD`` / ``TSL`` / ``TSB`` / tick-count
      * ``TSW``), scalar ``State<T>``, wiring-time ``Scalar<Name, T>`` values,
      * graph-level ``GlobalState<T>``, input activity/validity policy flags,
-     * output-backed ``RecordableState<TSchema>``, and scheduler injection.
+     * output-backed ``RecordableState<TSchema>``, evaluation-clock injection,
+     * and scheduler injection.
      * Push-source selectors are still being filled in.
      */
 
@@ -1622,6 +1623,15 @@ namespace hgraph
                 // time (schedule(now())); during ``eval`` it is true (future only).
                 return NodeScheduler{view.scheduler_state(), view.graph_value(), view.node_index(), evaluation_time,
                                      view.started()};
+            }
+        };
+
+        template <>
+        struct arg_provider<EvaluationClockView>
+        {
+            static EvaluationClockView get(const NodeView &view, DateTime)
+            {
+                return view.graph().evaluation_clock();
             }
         };
 

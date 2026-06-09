@@ -347,7 +347,8 @@ traits, and the **derive-from-view node-authoring selectors** —
 ``TSL<C,N>`` / ``TSB`` / tick-count ``TSW<T,...>`` (and the ``Out<…>`` duals)
 deriving from their erased input/output views, plus ``RecordableState<TSchema>``,
 ``State<T>`` and
-``Scalar<Name, T>`` — together with ``StaticNodeSignature`` and
+``Scalar<Name, T>``, plus transparent injectables such as ``GlobalStateView``,
+``EvaluationClockView`` and ``NodeScheduler`` — together with ``StaticNodeSignature`` and
 ``NodeBuilder::implementation<T>()`` (see *Wiring*). ``State<T>`` and
 ``RecordableState<TSchema>`` are mutually exclusive for a static node:
 recordable state replaces local state when the state must be exposed through a
@@ -373,7 +374,7 @@ the resolution-map schema overloads, and the wiring-time resolution in ``wire<>`
 ``ts_type<>()`` / an explicit output schema). See *Graph Wiring*.
 
 Deferred until the relevant runtime layer lands: automatic recordable-state
-record/replay attachment / ``recordable_id`` wiring, ``EvaluationClock`` injection, push-source
+record/replay attachment / ``recordable_id`` wiring, push-source
 ``apply_message``, named state, duration-based ``TSW``, the Python-export bridge,
 and **graph-level** generic resolution (aggregating node-level resolution across
 a sub-graph).

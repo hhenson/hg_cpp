@@ -13,6 +13,7 @@
 
 #include <cstdint>
 
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -122,6 +123,31 @@ namespace
     };
 
     using LastSeenState = TSB<"LastSeenState", Field<"last", TS<Int>>>;
+
+    using ClockSnapshot = TSB<"ClockSnapshot",
+                              Field<"evaluation_time", TS<DateTime>>,
+                              Field<"now", TS<DateTime>>,
+                              Field<"next_cycle", TS<DateTime>>,
+                              Field<"cycle_time_us", TS<Int>>>;
+
+    struct ClockProbe
+    {
+        static constexpr auto name              = "clock_probe";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(EvaluationClockView clock, DateTime evaluation_time, Out<ClockSnapshot> out)
+        {
+            out.field<"evaluation_time">().set(clock.evaluation_time());
+            out.field<"now">().set(clock.now());
+            out.field<"next_cycle">().set(clock.next_cycle_evaluation_time());
+            out.field<"cycle_time_us">().set(Int{clock.cycle_time().count()});
+
+            if (clock.evaluation_time() != evaluation_time)
+            {
+                throw std::logic_error("DateTime injection does not match EvaluationClockView");
+            }
+        }
+    };
 
     struct RecordablePreviousValue
     {
@@ -452,6 +478,38 @@ TEST_CASE("static node: State<Int> is constructed and mutated across evaluations
     node.view().evaluate(t2, true);
     CHECK(node.view().state().checked_as<Int>() == 2);
     CHECK(node.view().output(t2).value().checked_as<Int>() == 2);
+}
+
+TEST_CASE("static node: EvaluationClockView is injected as a read-only clock view")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder;
+    graph_builder.label("clock_probe_graph")
+        .add_node(NodeBuilder{}.label("clock").implementation<ClockProbe>());
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2});
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    executor.view().run();
+
+    auto graph = executor.view().graph();
+    REQUIRE(graph.node_count() == 1);
+    auto output_view = graph.node_at(0).output(MIN_ST);
+    auto output      = output_view.as_bundle();
+
+    const DateTime evaluation_time = output.field("evaluation_time").value().checked_as<DateTime>();
+    const DateTime now             = output.field("now").value().checked_as<DateTime>();
+    const DateTime next_cycle      = output.field("next_cycle").value().checked_as<DateTime>();
+    const Int      cycle_time_us   = output.field("cycle_time_us").value().checked_as<Int>();
+
+    CHECK(evaluation_time == MIN_ST);
+    CHECK(next_cycle == MIN_ST + MIN_TD);
+    CHECK(now >= evaluation_time);
+    CHECK(cycle_time_us >= Int{0});
 }
 
 TEST_CASE("static node: RecordableState<TSB> is hidden output-backed state")

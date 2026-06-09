@@ -163,7 +163,7 @@ Deferred (land with the relevant runtime layer):
 - container-shaped selectors over ``TSB`` / ``TSL`` / ``TSS`` / ``TSD`` /
   ``TSW`` inputs and outputs (non-peered prefixes, nested endpoint
   annotations);
-- automatic recordable-state recording, ``EvaluationClock`` injection;
+- automatic recordable-state recording;
 - push-source nodes — a required ``start(Sender<T>)`` plus an
   ``apply_message(Scalar<"name", T>, …)`` hook — and ``Scalar<"name", T>``
   arguments;

@@ -59,6 +59,7 @@ set(HGRAPH_CORE_SOURCES
 set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/hgraph.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/hgraph_export.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/evaluation_clock.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/executor.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/graph.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/nested_graph_node.h

@@ -31,6 +31,10 @@ The clock exposes three related time concepts:
 ``cycle_time``
     The elapsed time from the beginning of the current evaluation cycle to the current point in that cycle. This represents processing lag within the cycle.
 
+C++ user-authored nodes receive this through ``EvaluationClockView``, a borrowed
+read-only type-erased view. The engine/runtime owns and mutates the clock state;
+node code only observes it.
+
 Execution Modes
 ~~~~~~~~~~~~~~~
 

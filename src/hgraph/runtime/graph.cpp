@@ -3,6 +3,7 @@
 #include <hgraph/util/scope.h>
 
 #include <algorithm>
+#include <chrono>
 #include <deque>
 #include <limits>
 #include <memory>
@@ -20,6 +21,11 @@ namespace hgraph
             DateTime scheduled{MAX_DT};
             bool          force{false};
         };
+
+        [[nodiscard]] DateTime current_wall_time() noexcept
+        {
+            return std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now());
+        }
 
         [[nodiscard]] TSOutputView output_at_path(TSOutputView view, const std::vector<std::size_t> &path)
         {
@@ -133,7 +139,8 @@ namespace hgraph
             std::vector<NodeValue>          nodes{};
             std::vector<GraphScheduleEntry> schedule{};
             GlobalState                     global_state{};
-            DateTime                   evaluation_time{MIN_DT};
+            DateTime                        evaluation_time{MIN_DT};
+            DateTime                        cycle_wall_start{current_wall_time()};
             bool                            started{false};
             bool                            evaluating{false};
             std::size_t                     evaluation_cursor{invalid_cursor};
@@ -201,6 +208,47 @@ namespace hgraph
             return memory != nullptr ? &storage(memory).global_state : nullptr;
         }
 
+        DateTime clock_evaluation_time_impl(const void *, const void *memory) noexcept
+        {
+            return memory != nullptr ? storage(memory).evaluation_time : MIN_DT;
+        }
+
+        TimeDelta clock_cycle_time_impl(const void *, const void *memory) noexcept
+        {
+            if (memory == nullptr) { return TimeDelta{0}; }
+            const auto &state = storage(memory);
+            const TimeDelta elapsed = current_wall_time() - state.cycle_wall_start;
+            return elapsed >= TimeDelta{0} ? elapsed : TimeDelta{0};
+        }
+
+        DateTime clock_now_impl(const void *context, const void *memory) noexcept
+        {
+            if (memory == nullptr) { return MIN_DT; }
+            return clock_evaluation_time_impl(context, memory) + clock_cycle_time_impl(context, memory);
+        }
+
+        DateTime clock_next_cycle_evaluation_time_impl(const void *, const void *memory) noexcept
+        {
+            return memory != nullptr ? storage(memory).evaluation_time + MIN_TD : MIN_DT;
+        }
+
+        const EvaluationClockOps &evaluation_clock_ops() noexcept
+        {
+            static const EvaluationClockOps table{
+                .context = nullptr,
+                .evaluation_time_impl = &clock_evaluation_time_impl,
+                .now_impl = &clock_now_impl,
+                .cycle_time_impl = &clock_cycle_time_impl,
+                .next_cycle_evaluation_time_impl = &clock_next_cycle_evaluation_time_impl,
+            };
+            return table;
+        }
+
+        EvaluationClockView evaluation_clock_impl(const void *, const void *memory) noexcept
+        {
+            return EvaluationClockView{&evaluation_clock_ops(), memory};
+        }
+
         void schedule_node_impl(const void *, const GraphView &graph, std::size_t node_index, DateTime when, bool force)
         {
             auto &state = storage(graph.data());
@@ -233,6 +281,7 @@ namespace hgraph
             if (state.started) { return; }
 
             state.evaluation_time = start_time;
+            state.cycle_wall_start = current_wall_time();
             std::size_t started_nodes = 0;
             auto rollback = UnwindCleanupGuard([&] {
                 for (std::size_t index = started_nodes; index > 0; --index)
@@ -277,6 +326,7 @@ namespace hgraph
             if (!state.started) { throw std::logic_error("Graph must be started before evaluation"); }
 
             state.evaluation_time = evaluation_time;
+            state.cycle_wall_start = current_wall_time();
             state.evaluating = true;
             state.evaluation_cursor = invalid_cursor;
             auto reset = make_scope_exit([&] noexcept {
@@ -335,6 +385,7 @@ namespace hgraph
                     .node_count_impl = &node_count_impl,
                     .node_at_impl = &node_at_impl,
                     .global_state_impl = &global_state_impl,
+                    .evaluation_clock_impl = &evaluation_clock_impl,
                 };
                 return table;
             }
@@ -396,6 +447,11 @@ namespace hgraph
         GlobalState *state = valid() ? ops().global_state_impl(ops().context, data()) : nullptr;
         if (state == nullptr) { throw std::logic_error("GraphView::global_state requires a live graph"); }
         return state->view();
+    }
+
+    EvaluationClockView GraphView::evaluation_clock() const noexcept
+    {
+        return valid() ? ops().evaluation_clock_impl(ops().context, data()) : EvaluationClockView{};
     }
 
     GraphView GraphView::root() const

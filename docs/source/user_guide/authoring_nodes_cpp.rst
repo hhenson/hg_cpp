@@ -641,7 +641,7 @@ A node can ask for runtime services by listing them as parameters, exactly as
 Python injects ``_clock`` / ``_scheduler``. Injectables are **not** part of the
 node's data contract — they add no input, output, scalar or state, and do not
 affect node-kind inference; the node simply receives them at evaluation.
-``GlobalStateView`` and ``NodeScheduler`` are implemented:
+``GlobalStateView``, ``EvaluationClockView`` and ``NodeScheduler`` are implemented:
 
 .. list-table::
    :header-rows: 1
@@ -663,8 +663,13 @@ affect node-kind inference; the node simply receives them at evaluation.
      - ``DateTime`` *(available)*
      - ``_clock.evaluation_time``
    * - evaluation clock
-     - ``EvaluationClock`` *(planned)*
+     - ``EvaluationClockView`` *(available)*
      - ``_clock: EvaluationClock``
+
+``EvaluationClockView`` is a borrowed read-only view over the active evaluation
+clock. It exposes ``evaluation_time()``, ``now()``, ``cycle_time()`` and
+``next_cycle_evaluation_time()``. ``DateTime`` remains available as a shorthand
+injectable for ``clock.evaluation_time()``.
 
 ``GlobalStateView`` is a borrowing **view** over the graph's shared, mutable
 ``string -> value`` store — the owning ``GlobalState`` lives on the graph (created
@@ -1151,7 +1156,7 @@ Feature status
      - available
      - available
    * - ``EvaluationClock`` injection
-     - planned
+     - available as ``EvaluationClockView``
      - available
    * - ``Scalar<"name", T>`` (named scalar arguments)
      - available
@@ -1201,7 +1206,7 @@ C++ ↔ Python cheat sheet
      - ``-> TS[int]`` → ``return v``
    * - ``State<Int> s`` → ``s.get()`` / ``s.set(v)``
      - ``_state: STATE[...]`` → ``_state.field``
-   * - ``EvaluationClock`` *(planned)*
+   * - ``EvaluationClockView``
      - ``_clock: EvaluationClock``
    * - ``NodeScheduler sched`` → ``sched.schedule(...)``
      - ``_scheduler: SCHEDULER``
