@@ -4,6 +4,7 @@
 
 #include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/testing/mock_runtime.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/time_series/ts_delta.h>
@@ -794,9 +795,9 @@ TEST_CASE("graph wiring: identical nodes are interned to one")
     CHECK(a.node() != nullptr);
     CHECK(a.node() == b.node());   // same interned wiring instance
 
-    GraphBuilder graph_builder = std::move(w).finish();
-    GraphValue   graph         = graph_builder.make_graph();
-    CHECK(graph.view().node_count() == 1);   // deduped to a single runtime node
+    GraphBuilder            graph_builder = std::move(w).finish();
+    testing::MockRootGraph  graph{graph_builder};
+    CHECK(graph.graph().node_count() == 1);   // deduped to a single runtime node
 }
 
 TEST_CASE("graph wiring: sub-graph composition inlines (flattens) into the parent")
@@ -1033,6 +1034,25 @@ TEST_CASE("graph wiring: nested node binds outer input into child graph input")
     REQUIRE(graph.node_count() == 2);
     REQUIRE(graph.node_at(1).output(MIN_ST).valid());
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{42});
+
+    auto nested_node = graph.node_at(1);
+    auto nested_view = nested_node.as<SingleNestedGraphNodeView>();
+    auto child_graph = nested_view.child_graph();
+    CHECK(child_graph.parent_kind() == GraphParentKind::Nested);
+    CHECK(child_graph.is_nested());
+    CHECK_FALSE(child_graph.is_root());
+
+    auto parent_node = child_graph.as_nested().parent_node();
+    CHECK(parent_node.binding() == nested_node.binding());
+    CHECK(parent_node.data() == nested_node.data());
+
+    auto root_graph = child_graph.root();
+    CHECK(root_graph.binding() == graph.binding());
+    CHECK(root_graph.data() == graph.data());
+    CHECK(root_graph.executor().data() == executor.view().data());
+
+    child_graph.global_state().set("nested_state_is_root_state", Value{Int{99}});
+    CHECK(graph.global_state().get_as<Int>("nested_state_is_root_state") == Int{99});
 }
 
 TEST_CASE("graph wiring: nested node forwards child output to downstream input")
@@ -1106,12 +1126,12 @@ TEST_CASE("graph wiring: identical sink nodes are not interned")
 {
     using namespace hgraph;
 
-    GraphBuilder graph_builder = build_graph<TwoSinksGraph>();
-    GraphValue   graph         = graph_builder.make_graph();
+    GraphBuilder            graph_builder = build_graph<TwoSinksGraph>();
+    testing::MockRootGraph  graph{graph_builder};
 
     // The source is deduped to one node, but the two identical sinks stay distinct:
     // a sink runs for its side effect, so each must remain its own runtime node.
-    CHECK(graph.view().node_count() == 3);
+    CHECK(graph.graph().node_count() == 3);
 }
 
 TEST_CASE("graph wiring: REF output can bind back to a dereferenced TS input")
@@ -1300,9 +1320,9 @@ TEST_CASE("graph wiring: scalar values participate in node interning")
     CHECK(a.node() == b.node());
     CHECK(a.node() != c.node());
 
-    GraphBuilder graph_builder = std::move(w).finish();
-    GraphValue   graph         = graph_builder.make_graph();
-    CHECK(graph.view().node_count() == 2);   // {7} deduped, {8} distinct
+    GraphBuilder            graph_builder = std::move(w).finish();
+    testing::MockRootGraph  graph{graph_builder};
+    CHECK(graph.graph().node_count() == 2);   // {7} deduped, {8} distinct
 }
 
 TEST_CASE("graph wiring: StaticGraphSignature reflects a graph's compose parameters")

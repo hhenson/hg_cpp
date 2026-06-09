@@ -18,6 +18,7 @@
 // only checking the final value, which is what made the existing runtime tests
 // false-positive on the multi-cycle semantics.
 
+#include <hgraph/lib/testing/mock_runtime.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -213,8 +214,8 @@ TEST_CASE("simulation: re-ticking a source reschedules its downstream via notifi
         .add_node(counting_add_one(input_schema, ts_int, &add_one_evals))
         .add_edge(GraphEdge{.source_node = 0, .source_path = {}, .target_node = 1, .target_path = {0}});
 
-    GraphValue graph = builder.make_graph();
-    auto       view  = graph.view();
+    testing::MockRootGraph graph{builder};
+    auto       view  = graph.graph();
 
     const auto t1 = MIN_ST;
     const auto t2 = t1 + TimeDelta{1};

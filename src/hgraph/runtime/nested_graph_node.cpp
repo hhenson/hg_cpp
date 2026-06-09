@@ -156,7 +156,11 @@ namespace hgraph
 
     void SingleNestedGraphNodeView::ensure_child_graph() const
     {
-        if (!child_graph_->has_value()) { *child_graph_ = GraphValue{context_->spec.graph_builder}; }
+        if (!child_graph_->has_value())
+        {
+            *child_graph_ = context_->spec.graph_builder.make_nested_graph(
+                NodeStorageRef{view_.binding(), view_.data()});
+        }
     }
 
     SingleNestedGraphNodeView::SingleNestedGraphNodeView(NodeView view,

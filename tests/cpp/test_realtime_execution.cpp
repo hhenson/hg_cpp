@@ -51,7 +51,7 @@ namespace
                 const NodeView &view,
                 DateTime evaluation_time) {
                 ++(*eval_count);
-                const EvaluationClockView clock = view.graph().evaluation_clock();
+                const EvaluationClockView clock = view.graph().executor().evaluation_clock();
                 *observed_evaluation_time = evaluation_time;
                 *observed_clock_evaluation_time = clock.evaluation_time();
                 *observed_clock_now = clock.now();

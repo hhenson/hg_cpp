@@ -1,8 +1,9 @@
 #include <hgraph/runtime/node.h>
 
+#include <hgraph/runtime/executor.h>
+#include <hgraph/runtime/graph.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/notifiable.h>
-#include <hgraph/runtime/graph.h>
 #include <hgraph/runtime/node_scheduler.h>
 #include <hgraph/util/scope.h>
 
@@ -57,6 +58,7 @@ namespace hgraph
             std::size_t state_offset{npos};
             std::size_t scalars_offset{npos};
             std::size_t scheduler_offset{npos};
+            std::size_t global_state_offset{npos};
             std::size_t evaluation_clock_offset{npos};
             std::size_t error_output_offset{npos};
             std::size_t recordable_state_offset{npos};
@@ -66,6 +68,7 @@ namespace hgraph
             [[nodiscard]] bool has_state() const noexcept { return state_offset != npos; }
             [[nodiscard]] bool has_scalars() const noexcept { return scalars_offset != npos; }
             [[nodiscard]] bool has_scheduler() const noexcept { return scheduler_offset != npos; }
+            [[nodiscard]] bool has_global_state() const noexcept { return global_state_offset != npos; }
             [[nodiscard]] bool has_evaluation_clock() const noexcept { return evaluation_clock_offset != npos; }
             [[nodiscard]] bool has_error_output() const noexcept { return error_output_offset != npos; }
             [[nodiscard]] bool has_recordable_state() const noexcept { return recordable_state_offset != npos; }
@@ -131,6 +134,13 @@ namespace hgraph
         [[nodiscard]] NodeSchedulerState &node_scheduler_state(const NodeRuntimeContext &context, void *memory)
         {
             return *MemoryUtils::cast<NodeSchedulerState>(node_component(memory, context.layout.scheduler_offset));
+        }
+
+        [[nodiscard]] std::optional<GlobalStateView> &node_global_state_view(const NodeRuntimeContext &context,
+                                                                             void *memory)
+        {
+            return *MemoryUtils::cast<std::optional<GlobalStateView>>(
+                node_component(memory, context.layout.global_state_offset));
         }
 
         [[nodiscard]] EvaluationClockStorageRef &node_evaluation_clock_ref(const NodeRuntimeContext &context,
@@ -211,7 +221,7 @@ namespace hgraph
             const MemoryUtils::StoragePlan &plan = *context.plan;
 
             std::vector<const MemoryUtils::CompositeComponent *> constructed;
-            constructed.reserve(8);
+            constructed.reserve(9);
             auto rollback = make_scope_exit([&]() noexcept {
                 destroy_constructed_components(constructed, memory);
             });
@@ -289,6 +299,15 @@ namespace hgraph
                 constructed.push_back(component);
             }
 
+            if (context.layout.has_global_state())
+            {
+                const auto *component = plan.find_component("global_state");
+                if (component == nullptr) { throw std::logic_error("Node storage plan is missing global_state"); }
+                std::construct_at(MemoryUtils::cast<std::optional<GlobalStateView>>(
+                                      MemoryUtils::advance(memory, component->offset)));
+                constructed.push_back(component);
+            }
+
             if (context.layout.has_evaluation_clock())
             {
                 const auto *component = plan.find_component("evaluation_clock");
@@ -345,6 +364,7 @@ namespace hgraph
                 {"state", &NodeRuntimeLayout::state_offset},
                 {"scalars", &NodeRuntimeLayout::scalars_offset},
                 {"scheduler", &NodeRuntimeLayout::scheduler_offset},
+                {"global_state", &NodeRuntimeLayout::global_state_offset},
                 {"evaluation_clock", &NodeRuntimeLayout::evaluation_clock_offset},
                 {"error_output", &NodeRuntimeLayout::error_output_offset},
                 {"recordable_state", &NodeRuntimeLayout::recordable_state_offset},
@@ -593,21 +613,52 @@ namespace hgraph
             return &node_scheduler_state(runtime, memory);
         }
 
-        EvaluationClockStorageRef evaluation_clock_ref_impl(const void *context, void *memory) noexcept
+        GlobalStateView global_state_view_impl(const void *context, void *memory)
+        {
+            const auto &runtime = runtime_context(context);
+            auto       &state   = node_storage(runtime, memory);
+            if (!runtime.layout.has_global_state())
+            {
+                if (state.graph == nullptr)
+                {
+                    throw std::logic_error("Node global state requires an attached graph");
+                }
+                return state.graph->view().root().global_state();
+            }
+
+            auto &cached = node_global_state_view(runtime, memory);
+            if (!cached.has_value())
+            {
+                if (state.graph == nullptr)
+                {
+                    throw std::logic_error("Node global state cache requires an attached graph");
+                }
+                cached.emplace(state.graph->view().root().global_state());
+            }
+            return *cached;
+        }
+
+        EvaluationClockStorageRef evaluation_clock_ref_impl(const void *context, void *memory)
         {
             const auto &runtime = runtime_context(context);
             auto       &state   = node_storage(runtime, memory);
             if (!runtime.layout.has_evaluation_clock())
             {
-                return state.graph != nullptr
-                           ? state.graph->view().root().evaluation_clock_ref()
-                           : EvaluationClockStorageRef{};
+                if (state.graph == nullptr)
+                {
+                    throw std::logic_error("Node evaluation clock requires an attached graph");
+                }
+                return state.graph->view().executor().evaluation_clock_ref();
             }
 
             auto &cached = node_evaluation_clock_ref(runtime, memory);
-            if (!cached.has_value() && state.graph != nullptr)
+            if (!cached.has_value())
             {
-                cached = state.graph->view().root().evaluation_clock_ref();
+                if (state.graph == nullptr)
+                {
+                    throw std::logic_error("Node evaluation clock cache requires an attached graph");
+                }
+                cached = state.graph->view().executor().evaluation_clock_ref();
             }
             return cached;
         }
@@ -780,6 +831,11 @@ namespace hgraph
             throw std::logic_error("NodeView::scheduler_state requires a live node");
         }
 
+        GlobalStateView default_global_state_view_impl(const void *, void *)
+        {
+            throw std::logic_error("NodeView::global_state requires a live node");
+        }
+
         EvaluationClockStorageRef default_evaluation_clock_ref_impl(const void *, void *) noexcept
         {
             return EvaluationClockStorageRef{};
@@ -846,6 +902,7 @@ namespace hgraph
                 if (ops.state_view_impl == nullptr) { ops.state_view_impl = &state_view_impl; }
                 if (ops.scalars_view_impl == nullptr) { ops.scalars_view_impl = &scalars_view_impl; }
                 if (ops.scheduler_state_impl == nullptr) { ops.scheduler_state_impl = &scheduler_state_impl; }
+                if (ops.global_state_view_impl == nullptr) { ops.global_state_view_impl = &global_state_view_impl; }
                 if (ops.evaluation_clock_ref_impl == nullptr)
                 {
                     ops.evaluation_clock_ref_impl = &evaluation_clock_ref_impl;
@@ -894,6 +951,7 @@ namespace hgraph
                 .state_view_impl = &default_state_view_impl,
                 .scalars_view_impl = &default_scalars_view_impl,
                 .scheduler_state_impl = &default_scheduler_state_impl,
+                .global_state_view_impl = &default_global_state_view_impl,
                 .evaluation_clock_ref_impl = &default_evaluation_clock_ref_impl,
                 .error_output_view_impl = &default_error_output_view_impl,
                 .recordable_state_view_impl = &default_recordable_state_view_impl,
@@ -933,6 +991,10 @@ namespace hgraph
         if (schema.uses_scheduler)
         {
             builder.add_field("scheduler", MemoryUtils::plan_for<NodeSchedulerState>());
+        }
+        if (schema.uses_global_state)
+        {
+            builder.add_field("global_state", MemoryUtils::plan_for<std::optional<GlobalStateView>>());
         }
         if (schema.uses_evaluation_clock)
         {
@@ -1074,12 +1136,17 @@ namespace hgraph
         return *ops().scheduler_state_impl(ops().context, data());
     }
 
-    EvaluationClockStorageRef NodeView::evaluation_clock_ref() const noexcept
+    GlobalStateView NodeView::global_state() const
+    {
+        return ops().global_state_view_impl(ops().context, data());
+    }
+
+    EvaluationClockStorageRef NodeView::evaluation_clock_ref() const
     {
         return ops().evaluation_clock_ref_impl(ops().context, data());
     }
 
-    EvaluationClockView NodeView::evaluation_clock() const noexcept
+    EvaluationClockView NodeView::evaluation_clock() const
     {
         return EvaluationClockView{evaluation_clock_ref()};
     }

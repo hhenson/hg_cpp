@@ -1,3 +1,4 @@
+#include <hgraph/lib/testing/mock_runtime.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/value/value.h>
@@ -215,8 +216,8 @@ TEST_CASE("GraphValue wires node views and evaluates scheduled notifications")
             .target_path = {0},
         });
 
-    GraphValue graph = builder.make_graph();
-    auto graph_view = graph.view();
+    testing::MockRootGraph graph{builder};
+    auto graph_view = graph.graph();
     const auto t1 = MIN_ST;
 
     REQUIRE(graph_view.valid());

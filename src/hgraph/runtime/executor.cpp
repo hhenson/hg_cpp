@@ -22,8 +22,10 @@ namespace hgraph
 
         struct SimulationExecutorStorage
         {
-            explicit SimulationExecutorStorage(const GraphExecutorBuilder &builder)
-                : graph(builder.graph_builder().make_graph()),
+            SimulationExecutorStorage(const GraphExecutorBuilder &builder,
+                                      const GraphExecutorTypeBinding &binding,
+                                      void *executor_memory)
+                : graph(builder.graph_builder().make_root_graph(GraphExecutorStorageRef{binding, executor_memory})),
                   start_time(builder.start_time()),
                   end_time(builder.end_time()),
                   evaluation_time(builder.start_time()),
@@ -47,8 +49,10 @@ namespace hgraph
 
         struct RealTimeExecutorStorage
         {
-            explicit RealTimeExecutorStorage(const GraphExecutorBuilder &builder)
-                : graph(builder.graph_builder().make_graph()),
+            RealTimeExecutorStorage(const GraphExecutorBuilder &builder,
+                                    const GraphExecutorTypeBinding &binding,
+                                    void *executor_memory)
+                : graph(builder.graph_builder().make_root_graph(GraphExecutorStorageRef{binding, executor_memory})),
                   start_time(builder.start_time()),
                   end_time(builder.end_time()),
                   evaluation_time(builder.start_time())
@@ -542,15 +546,14 @@ namespace hgraph
             switch (builder.mode())
             {
                 case GraphExecutorMode::Simulation:
-                    std::construct_at(MemoryUtils::cast<SimulationExecutorStorage>(dst), builder);
+                    std::construct_at(MemoryUtils::cast<SimulationExecutorStorage>(dst), builder, binding, dst);
                     return;
                 case GraphExecutorMode::RealTime:
-                    std::construct_at(MemoryUtils::cast<RealTimeExecutorStorage>(dst), builder);
+                    std::construct_at(MemoryUtils::cast<RealTimeExecutorStorage>(dst), builder, binding, dst);
                     return;
             }
             throw std::logic_error("Unknown graph executor mode");
         });
-        view().graph().attach_graph_executor(GraphExecutorStorageRef{binding, storage_.data()});
     }
 
     GraphExecutorValue::~GraphExecutorValue() = default;

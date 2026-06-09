@@ -1418,6 +1418,9 @@ namespace hgraph
 
         // The evaluation clock is also an injectable. Static nodes that request it
         // get a cached clock-ref slot; other nodes pay no storage cost.
+        template <typename T> struct is_global_state_selector : std::false_type {};
+        template <> struct is_global_state_selector<GlobalStateView> : std::true_type {};
+
         template <typename T> struct is_evaluation_clock_selector : std::false_type {};
         template <> struct is_evaluation_clock_selector<EvaluationClockView> : std::true_type {};
 
@@ -1605,7 +1608,7 @@ namespace hgraph
         {
             static GlobalStateView get(const NodeView &view, DateTime)
             {
-                return view.graph().root().global_state();
+                return view.global_state();
             }
         };
 
@@ -1949,6 +1952,20 @@ namespace hgraph
         }
 
         template <typename ArgsTuple, std::size_t... I>
+        static constexpr bool tuple_has_global_state(std::index_sequence<I...>)
+        {
+            return (false || ... ||
+                    static_node_detail::is_global_state_selector<
+                        static_node_detail::selector_of<std::tuple_element_t<I, ArgsTuple>>>::value);
+        }
+
+        template <typename ArgsTuple>
+        static constexpr bool args_have_global_state()
+        {
+            return tuple_has_global_state<ArgsTuple>(std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
+        }
+
+        template <typename ArgsTuple, std::size_t... I>
         static constexpr bool tuple_has_evaluation_clock(std::index_sequence<I...>)
         {
             return (false || ... ||
@@ -2019,6 +2036,26 @@ namespace hgraph
             if constexpr (static_node_detail::has_stop<TImplementation>)
             {
                 result = result || args_have_scheduler<
+                                       typename static_node_detail::fn_traits<decltype(&TImplementation::stop)>::args_tuple>();
+            }
+            return result;
+        }
+
+        /**
+         * Whether any hook injects ``GlobalStateView`` — so a cached root-state
+         * view slot is allocated for this node only.
+         */
+        [[nodiscard]] static constexpr bool uses_global_state()
+        {
+            bool result = args_have_global_state<eval_args>();
+            if constexpr (static_node_detail::has_start<TImplementation>)
+            {
+                result = result || args_have_global_state<
+                                       typename static_node_detail::fn_traits<decltype(&TImplementation::start)>::args_tuple>();
+            }
+            if constexpr (static_node_detail::has_stop<TImplementation>)
+            {
+                result = result || args_have_global_state<
                                        typename static_node_detail::fn_traits<decltype(&TImplementation::stop)>::args_tuple>();
             }
             return result;
@@ -2298,6 +2335,7 @@ namespace hgraph
         schema.recordable_state_schema = signature::recordable_state_schema();
         schema.node_kind               = signature::node_kind();
         schema.uses_scheduler          = signature::uses_scheduler();
+        schema.uses_global_state       = signature::uses_global_state();
         schema.uses_evaluation_clock   = signature::uses_evaluation_clock();
         schema.schedule_on_start = signature::schedule_on_start();
         schema.active_inputs     = signature::active_inputs();
@@ -2358,6 +2396,7 @@ namespace hgraph
         schema.recordable_state_schema = signature::recordable_state_schema(resolution);
         schema.node_kind         = signature::node_kind();
         schema.uses_scheduler    = signature::uses_scheduler();
+        schema.uses_global_state = signature::uses_global_state();
         schema.uses_evaluation_clock = signature::uses_evaluation_clock();
         schema.schedule_on_start = signature::schedule_on_start();
         schema.active_inputs     = signature::active_inputs();

@@ -6,6 +6,7 @@
 
 #include <cstdint>
 
+#include <hgraph/lib/testing/mock_runtime.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -105,8 +106,8 @@ TEST_CASE("global state: seeded on the builder at wiring time, read back at run 
     GraphBuilder builder;
     builder.global_state().set("seed", Value{std::int32_t{7}});
 
-    GraphValue graph = builder.make_graph();
-    auto       view  = graph.view();
+    testing::MockRootGraph graph{builder};
+    auto       view  = graph.graph();
 
     // Wiring-time entry is visible at run time...
     CHECK(view.global_state().get_as<std::int32_t>("seed") == 7);
@@ -130,15 +131,15 @@ TEST_CASE("global state: the builder is reusable; each graph gets its own state"
     GraphBuilder builder;
     builder.global_state().set("seed", Value{std::int32_t{1}});
 
-    GraphValue a = builder.make_graph();
-    GraphValue b = builder.make_graph();
+    testing::MockRootGraph a{builder};
+    testing::MockRootGraph b{builder};
 
-    a.view().global_state().set("only_a", Value{std::int32_t{2}});
+    a.graph().global_state().set("only_a", Value{std::int32_t{2}});
 
-    CHECK(a.view().global_state().contains("seed"));
-    CHECK(b.view().global_state().contains("seed"));   // both seeded
-    CHECK(a.view().global_state().contains("only_a"));
-    CHECK_FALSE(b.view().global_state().contains("only_a"));  // independent runtime state
+    CHECK(a.graph().global_state().contains("seed"));
+    CHECK(b.graph().global_state().contains("seed"));   // both seeded
+    CHECK(a.graph().global_state().contains("only_a"));
+    CHECK_FALSE(b.graph().global_state().contains("only_a"));  // independent runtime state
 }
 
 TEST_CASE("global state: a node reads its graph's GlobalState via the injectable selector")
@@ -151,8 +152,8 @@ TEST_CASE("global state: a node reads its graph's GlobalState via the injectable
     builder.add_node(NodeBuilder{}.implementation<EmitSeed>());
     builder.global_state().set("seed", Value{std::int32_t{77}});
 
-    GraphValue graph = builder.make_graph();
-    auto       view  = graph.view();
+    testing::MockRootGraph graph{builder};
+    auto       view  = graph.graph();
     const auto t1    = MIN_ST;
 
     view.start(t1);
@@ -170,8 +171,8 @@ TEST_CASE("global state: a node writes into its graph's GlobalState during eval"
     GraphBuilder builder;
     builder.add_node(NodeBuilder{}.implementation<StashConst>());
 
-    GraphValue graph = builder.make_graph();
-    auto       view  = graph.view();
+    testing::MockRootGraph graph{builder};
+    auto       view  = graph.graph();
     const auto t1    = MIN_ST;
 
     CHECK_FALSE(view.global_state().contains("stashed"));

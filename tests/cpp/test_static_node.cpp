@@ -149,6 +149,16 @@ namespace
         }
     };
 
+    struct GlobalStateProbe
+    {
+        static constexpr auto name = "global_state_probe";
+
+        static void eval(GlobalStateView state, Out<TS<Int>> out)
+        {
+            out.set(state.get_as<Int>("seed"));
+        }
+    };
+
     struct RecordablePreviousValue
     {
         static constexpr auto name = "recordable_previous_value";
@@ -527,7 +537,22 @@ TEST_CASE("static node: EvaluationClockView cache storage is allocated only when
     CHECK(ordinary_builder.binding().checked_plan().find_component("evaluation_clock") == nullptr);
 }
 
-TEST_CASE("graph executor parent is assigned once")
+TEST_CASE("static node: GlobalStateView cache storage is allocated only when injected")
+{
+    using namespace hgraph;
+
+    NodeBuilder state_builder;
+    state_builder.implementation<GlobalStateProbe>();
+    CHECK(state_builder.binding().type_meta->uses_global_state);
+    CHECK(state_builder.binding().checked_plan().find_component("global_state") != nullptr);
+
+    NodeBuilder ordinary_builder;
+    ordinary_builder.implementation<Counter>();
+    CHECK_FALSE(ordinary_builder.binding().type_meta->uses_global_state);
+    CHECK(ordinary_builder.binding().checked_plan().find_component("global_state") == nullptr);
+}
+
+TEST_CASE("graph executor graph is constructed as a root graph")
 {
     using namespace hgraph;
 
@@ -538,14 +563,17 @@ TEST_CASE("graph executor parent is assigned once")
     GraphExecutorValue executor = executor_builder.make_executor();
     auto               executor_view = executor.view();
     auto               graph = executor_view.graph();
-    auto               graph_executor = graph.graph_executor();
+    auto               root = graph.as_root();
+    auto               graph_executor = root.executor();
 
+    CHECK(graph.parent_kind() == GraphParentKind::Root);
+    CHECK(graph.is_root());
+    CHECK_FALSE(graph.is_nested());
     REQUIRE(graph_executor.valid());
     CHECK(graph_executor.binding() == executor_view.binding());
     CHECK(graph_executor.data() == executor_view.data());
-    CHECK_THROWS_AS(graph.attach_graph_executor(GraphExecutorStorageRef{executor_view.binding(), executor_view.data()}),
-                    std::logic_error);
-    CHECK_THROWS_AS(graph.attach_graph_executor(GraphExecutorStorageRef{}), std::invalid_argument);
+    CHECK_THROWS_AS(graph.as_nested(), std::logic_error);
+    CHECK_THROWS_AS(GraphBuilder{}.make_root_graph(GraphExecutorStorageRef{}), std::invalid_argument);
 }
 
 TEST_CASE("static node: RecordableState<TSB> is hidden output-backed state")

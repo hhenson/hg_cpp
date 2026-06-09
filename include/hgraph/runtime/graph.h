@@ -17,12 +17,21 @@ namespace hgraph
     class GraphBuilder;
     class GraphExecutorView;
     class GraphValue;
+    class NestedGraphView;
+    class RootGraphView;
     class GraphView;
     struct GraphExecutorOps;
     struct GraphExecutorTypeMetaData;
 
     using GraphExecutorTypeBinding = TypeBinding<GraphExecutorTypeMetaData, GraphExecutorOps>;
     using GraphExecutorStorageRef  = MemoryUtils::StorageRef<GraphExecutorTypeBinding>;
+
+    /** Parent role for a graph runtime allocation. */
+    enum class GraphParentKind : std::uint8_t
+    {
+        Root,
+        Nested,
+    };
 
     /** Root output endpoint for a graph edge source. */
     enum class GraphEdgeSourceKind : std::uint8_t
@@ -100,6 +109,7 @@ namespace hgraph
     struct HGRAPH_EXPORT GraphOps
     {
         const void *context{nullptr};
+        GraphParentKind parent_kind{GraphParentKind::Root};
 
         void (*attach_nodes_impl)(const void *context, void *memory, GraphValue *graph) = nullptr;
         void (*start_impl)(const void *context, const GraphView &graph, DateTime start_time) = nullptr;
@@ -107,8 +117,6 @@ namespace hgraph
         void (*evaluate_impl)(const void *context, const GraphView &graph, DateTime evaluation_time) = nullptr;
         void (*schedule_node_impl)(const void *context, const GraphView &graph, std::size_t node_index,
                                    DateTime when, bool force) = nullptr;
-        void (*attach_graph_executor_impl)(const void *context, const GraphView &graph,
-                                           GraphExecutorStorageRef executor) = nullptr;
 
         [[nodiscard]] bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*evaluating_impl)(const void *context, const void *memory) noexcept = nullptr;
@@ -117,7 +125,9 @@ namespace hgraph
         [[nodiscard]] std::size_t (*node_count_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] NodeView (*node_at_impl)(const void *context, void *memory, std::size_t index) = nullptr;
         [[nodiscard]] GlobalStateView (*global_state_impl)(const void *context, void *memory) = nullptr;
-        [[nodiscard]] GraphExecutorView (*graph_executor_impl)(const void *context, void *memory) noexcept = nullptr;
+        [[nodiscard]] RootGraphView (*root_impl)(const void *context, const GraphView &graph) = nullptr;
+        [[nodiscard]] GraphExecutorView (*graph_executor_impl)(const void *context, void *memory) = nullptr;
+        [[nodiscard]] NodeView (*parent_node_impl)(const void *context, void *memory) = nullptr;
     };
 
     using GraphTypeBinding = TypeBinding<GraphTypeMetaData, GraphOps>;
@@ -146,28 +156,46 @@ namespace hgraph
         [[nodiscard]] std::size_t node_count() const noexcept;
         [[nodiscard]] NodeView node_at(std::size_t index) const;
 
-        /**
-         * A view over the graph's shared ``GlobalState`` (the owning value lives
-         * on the graph). With flattening there is a single graph, so this *is*
-         * the root state; ``root()`` returns this graph for now (the navigation
-         * point once non-flattening nested graphs exist).
-         */
+        /** A view over the graph's shared ``GlobalState`` (the owning value lives on the graph). */
         [[nodiscard]] GlobalStateView global_state() const;
-        [[nodiscard]] GraphExecutorView graph_executor() const noexcept;
-        [[nodiscard]] EvaluationClockStorageRef evaluation_clock_ref() const noexcept;
-        [[nodiscard]] EvaluationClockView evaluation_clock() const noexcept;
-        [[nodiscard]] GraphView root() const;
+        [[nodiscard]] GraphParentKind parent_kind() const;
+        [[nodiscard]] bool is_root() const;
+        [[nodiscard]] bool is_nested() const;
+        [[nodiscard]] RootGraphView as_root() const;
+        [[nodiscard]] NestedGraphView as_nested() const;
+        [[nodiscard]] GraphExecutorView executor() const;
+        [[nodiscard]] RootGraphView root() const;
 
         void start(DateTime start_time = MIN_ST) const;
         void stop() const;
         void evaluate(DateTime evaluation_time) const;
         void schedule_node(std::size_t node_index, DateTime when, bool force = false) const;
-        void attach_graph_executor(GraphExecutorStorageRef executor) const;
 
-      private:
+      protected:
         [[nodiscard]] const GraphOps &ops() const;
 
+      private:
         GraphStorageRef storage_{};
+    };
+
+    /** Root-specific graph view. A root graph has a graph executor parent. */
+    class HGRAPH_EXPORT RootGraphView : public GraphView
+    {
+      public:
+        RootGraphView() noexcept;
+        explicit RootGraphView(GraphView graph);
+
+        [[nodiscard]] GraphExecutorView executor() const;
+    };
+
+    /** Nested-specific graph view. A nested graph has a node parent. */
+    class HGRAPH_EXPORT NestedGraphView : public GraphView
+    {
+      public:
+        NestedGraphView() noexcept;
+        explicit NestedGraphView(GraphView graph);
+
+        [[nodiscard]] NodeView parent_node() const;
     };
 
     /** Owning graph value. */
@@ -177,7 +205,8 @@ namespace hgraph
         using storage_type = MemoryUtils::StorageHandle<MemoryUtils::InlineStoragePolicy<>, GraphTypeBinding>;
 
         GraphValue() noexcept;
-        explicit GraphValue(const GraphBuilder &builder);
+        GraphValue(const GraphBuilder &builder, GraphExecutorStorageRef root_executor);
+        GraphValue(const GraphBuilder &builder, NodeStorageRef parent_node);
         ~GraphValue();
 
         GraphValue(const GraphValue &) = delete;
@@ -213,8 +242,9 @@ namespace hgraph
         /**
          * A view over the graph's initial ``GlobalState``, populated at wiring
          * time. The owning state is copied onto each ``GraphValue`` produced by
-         * ``make_graph`` (so the builder stays reusable and each graph instance
-         * gets its own runtime state seeded with these wiring-time entries).
+         * ``make_root_graph`` / ``make_nested_graph`` (so the builder stays
+         * reusable and each graph instance gets its own runtime state seeded
+         * with these wiring-time entries).
          */
         [[nodiscard]] GlobalStateView global_state() noexcept;
         /** Replace the initial ``GlobalState`` (used by the wiring layer's ``finish``). */
@@ -225,10 +255,14 @@ namespace hgraph
         [[nodiscard]] const std::vector<NodeBuilder> &nodes() const noexcept;
         [[nodiscard]] const std::vector<GraphEdge> &edges() const noexcept;
         [[nodiscard]] const GraphTypeBinding &binding() const;
-        [[nodiscard]] GraphValue make_graph() const;
+        [[nodiscard]] GraphValue make_root_graph(GraphExecutorStorageRef root_executor) const;
+        [[nodiscard]] GraphValue make_nested_graph(NodeStorageRef parent_node) const;
 
       private:
         friend class GraphValue;
+
+        [[nodiscard]] const GraphTypeBinding &root_binding() const;
+        [[nodiscard]] const GraphTypeBinding &nested_binding() const;
 
         std::string                   label_{};
         std::vector<NodeBuilder>      nodes_{};

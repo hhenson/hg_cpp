@@ -17,9 +17,6 @@ namespace hgraph
     {
         constexpr std::size_t invalid_cursor = std::numeric_limits<std::size_t>::max();
 
-        [[nodiscard]] const EvaluationClockOps &evaluation_clock_ops() noexcept;
-        [[nodiscard]] const EvaluationClockTypeBinding &graph_evaluation_clock_binding() noexcept;
-
         struct GraphScheduleEntry
         {
             DateTime scheduled{MAX_DT};
@@ -101,10 +98,17 @@ namespace hgraph
             return view;
         }
 
-        struct GraphRuntimeStorage
+        struct GraphRuntimeBaseStorage
         {
-            GraphRuntimeStorage(const GraphBuilder &builder, const GlobalState &seed_state)
-                : global_state(seed_state)  // copy the wiring-time entries onto this graph
+            GraphRuntimeBaseStorage() = default;
+
+            GraphRuntimeBaseStorage(const GraphRuntimeBaseStorage &) = delete;
+            GraphRuntimeBaseStorage &operator=(const GraphRuntimeBaseStorage &) = delete;
+            GraphRuntimeBaseStorage(GraphRuntimeBaseStorage &&) noexcept = default;
+            GraphRuntimeBaseStorage &operator=(GraphRuntimeBaseStorage &&) noexcept = default;
+            ~GraphRuntimeBaseStorage() = default;
+
+            void build(const GraphBuilder &builder)
             {
                 nodes.reserve(builder.nodes().size());
                 for (std::size_t index = 0; index < builder.nodes().size(); ++index)
@@ -114,12 +118,6 @@ namespace hgraph
                 schedule.resize(nodes.size());
                 bind_edges(builder.edges());
             }
-
-            GraphRuntimeStorage(const GraphRuntimeStorage &) = delete;
-            GraphRuntimeStorage &operator=(const GraphRuntimeStorage &) = delete;
-            GraphRuntimeStorage(GraphRuntimeStorage &&) noexcept = default;
-            GraphRuntimeStorage &operator=(GraphRuntimeStorage &&) noexcept = default;
-            ~GraphRuntimeStorage() = default;
 
             void bind_edges(const std::vector<GraphEdge> &edges)
             {
@@ -140,151 +138,187 @@ namespace hgraph
                 }
             }
 
-            void attach_graph_executor(GraphExecutorStorageRef executor)
-            {
-                if (!executor.has_value())
-                {
-                    throw std::invalid_argument("Graph executor assignment requires a live executor");
-                }
-                if (graph_executor_ref.has_value())
-                {
-                    throw std::logic_error("Graph executor can only be assigned once");
-                }
-                graph_executor_ref = executor;
-            }
-
-            [[nodiscard]] GraphExecutorView graph_executor() noexcept
-            {
-                return graph_executor_ref.has_value()
-                           ? GraphExecutorView{graph_executor_ref.binding(), graph_executor_ref.data()}
-                           : GraphExecutorView{};
-            }
-
             std::vector<NodeValue>          nodes{};
             std::vector<GraphScheduleEntry> schedule{};
-            GlobalState                     global_state{};
             DateTime                        evaluation_time{MIN_DT};
             DateTime                        cycle_wall_start{current_wall_time()};
-            GraphExecutorStorageRef         graph_executor_ref{};
             std::size_t                     evaluation_cursor{invalid_cursor};
             bool                            started{false};
             bool                            evaluating{false};
         };
 
-        [[nodiscard]] GraphRuntimeStorage &storage(void *memory)
+        struct RootGraphRuntimeStorage : GraphRuntimeBaseStorage
+        {
+            RootGraphRuntimeStorage(const GraphBuilder &builder,
+                                    const GlobalState &seed_state,
+                                    GraphExecutorStorageRef root_executor)
+                : GraphRuntimeBaseStorage(),
+                  global_state(seed_state),
+                  root_executor_ref(root_executor)
+            {
+                if (!root_executor_ref.has_value())
+                {
+                    throw std::invalid_argument("Root graph construction requires a live executor parent");
+                }
+                build(builder);
+            }
+
+            [[nodiscard]] GraphExecutorView root_executor() noexcept
+            {
+                return GraphExecutorView{root_executor_ref.binding(), root_executor_ref.data()};
+            }
+
+            GlobalState             global_state{};
+            GraphExecutorStorageRef root_executor_ref{};
+        };
+
+        struct NestedGraphRuntimeStorage : GraphRuntimeBaseStorage
+        {
+            NestedGraphRuntimeStorage(const GraphBuilder &builder,
+                                      NodeStorageRef parent_node)
+                : GraphRuntimeBaseStorage(),
+                  parent_node_ref(parent_node)
+            {
+                if (!parent_node_ref.has_value())
+                {
+                    throw std::invalid_argument("Nested graph construction requires a live node parent");
+                }
+                build(builder);
+            }
+
+            [[nodiscard]] NodeView parent_node()
+            {
+                return NodeView{parent_node_ref.binding(), parent_node_ref.data()};
+            }
+
+            NodeStorageRef parent_node_ref{};
+        };
+
+        template <typename Storage>
+        [[nodiscard]] Storage &typed_storage(void *memory)
         {
             if (memory == nullptr) { throw std::logic_error("Graph storage is null"); }
-            return *MemoryUtils::cast<GraphRuntimeStorage>(memory);
+            return *MemoryUtils::cast<Storage>(memory);
         }
 
-        [[nodiscard]] const GraphRuntimeStorage &storage(const void *memory)
+        template <typename Storage>
+        [[nodiscard]] const Storage &typed_storage(const void *memory)
         {
             if (memory == nullptr) { throw std::logic_error("Graph storage is null"); }
-            return *MemoryUtils::cast<GraphRuntimeStorage>(memory);
+            return *MemoryUtils::cast<Storage>(memory);
         }
 
+        template <typename Storage>
+        [[nodiscard]] GraphRuntimeBaseStorage &storage(void *memory)
+        {
+            return typed_storage<Storage>(memory);
+        }
+
+        template <typename Storage>
+        [[nodiscard]] const GraphRuntimeBaseStorage &storage(const void *memory)
+        {
+            return typed_storage<Storage>(memory);
+        }
+
+        template <typename Storage>
         void attach_nodes_impl(const void *, void *memory, GraphValue *graph)
         {
-            auto &state = storage(memory);
+            auto &state = storage<Storage>(memory);
             for (std::size_t index = 0; index < state.nodes.size(); ++index)
             {
                 state.nodes[index].attach_graph(graph, index);
             }
         }
 
+        template <typename Storage>
         bool started_impl(const void *, const void *memory) noexcept
         {
-            return storage(memory).started;
+            return storage<Storage>(memory).started;
         }
 
+        template <typename Storage>
         bool evaluating_impl(const void *, const void *memory) noexcept
         {
-            return storage(memory).evaluating;
+            return storage<Storage>(memory).evaluating;
         }
 
+        template <typename Storage>
         DateTime evaluation_time_impl(const void *, const void *memory) noexcept
         {
-            return storage(memory).evaluation_time;
+            return storage<Storage>(memory).evaluation_time;
         }
 
+        template <typename Storage>
         DateTime next_scheduled_time_impl(const void *, const void *memory) noexcept
         {
-            const auto &state = storage(memory);
+            const auto &state = storage<Storage>(memory);
             DateTime next = MAX_DT;
             for (const auto &entry : state.schedule) { next = std::min(next, entry.scheduled); }
             return next;
         }
 
+        template <typename Storage>
         std::size_t node_count_impl(const void *, const void *memory) noexcept
         {
-            return storage(memory).nodes.size();
+            return storage<Storage>(memory).nodes.size();
         }
 
+        template <typename Storage>
         NodeView node_at_impl(const void *, void *memory, std::size_t index)
         {
-            auto &state = storage(memory);
+            auto &state = storage<Storage>(memory);
             if (index >= state.nodes.size()) { throw std::out_of_range("Graph node index is out of range"); }
             return state.nodes[index].view();
         }
 
-        GlobalStateView global_state_impl(const void *, void *memory)
+        GlobalStateView root_global_state_impl(const void *, void *memory)
         {
-            return storage(memory).global_state.view();
+            return typed_storage<RootGraphRuntimeStorage>(memory).global_state.view();
         }
 
-        DateTime clock_evaluation_time_impl(const void *, const void *memory) noexcept
+        GlobalStateView nested_global_state_impl(const void *, void *memory)
         {
-            return storage(memory).evaluation_time;
+            auto parent = typed_storage<NestedGraphRuntimeStorage>(memory).parent_node();
+            if (!parent.valid()) { throw std::logic_error("Nested graph is missing its parent node"); }
+            return parent.graph().root().global_state();
         }
 
-        TimeDelta clock_cycle_time_impl(const void *, const void *memory) noexcept
+        GraphExecutorView root_graph_executor_impl(const void *, void *memory)
         {
-            const auto &state = storage(memory);
-            const TimeDelta elapsed = current_wall_time() - state.cycle_wall_start;
-            return elapsed >= TimeDelta{0} ? elapsed : TimeDelta{0};
+            auto executor = typed_storage<RootGraphRuntimeStorage>(memory).root_executor();
+            if (!executor.valid()) { throw std::logic_error("Root graph is missing its graph executor"); }
+            return executor;
         }
 
-        DateTime clock_now_impl(const void *context, const void *memory) noexcept
+        GraphExecutorView nested_graph_executor_impl(const void *, void *memory)
         {
-            return clock_evaluation_time_impl(context, memory) + clock_cycle_time_impl(context, memory);
+            auto parent = typed_storage<NestedGraphRuntimeStorage>(memory).parent_node();
+            if (!parent.valid()) { throw std::logic_error("Nested graph is missing its parent node"); }
+            return parent.graph().executor();
         }
 
-        DateTime clock_next_cycle_evaluation_time_impl(const void *, const void *memory) noexcept
+        NodeView root_parent_node_impl(const void *, void *)
         {
-            return storage(memory).evaluation_time + MIN_TD;
+            throw std::logic_error("GraphView::as_nested requires a nested graph");
         }
 
-        const EvaluationClockOps &evaluation_clock_ops() noexcept
+        NodeView nested_parent_node_impl(const void *, void *memory)
         {
-            static const EvaluationClockOps table{
-                .context = nullptr,
-                .evaluation_time_impl = &clock_evaluation_time_impl,
-                .now_impl = &clock_now_impl,
-                .cycle_time_impl = &clock_cycle_time_impl,
-                .next_cycle_evaluation_time_impl = &clock_next_cycle_evaluation_time_impl,
-            };
-            return table;
+            auto parent = typed_storage<NestedGraphRuntimeStorage>(memory).parent_node();
+            if (!parent.valid()) { throw std::logic_error("Nested graph is missing its parent node"); }
+            return parent;
         }
 
-        const EvaluationClockTypeBinding &graph_evaluation_clock_binding() noexcept
+        RootGraphView root_graph_root_impl(const void *, const GraphView &graph)
         {
-            static const EvaluationClockTypeMetaData meta{.display_name = "graph_clock"};
-            static const EvaluationClockTypeBinding binding{
-                .type_meta = &meta,
-                .storage_plan = &MemoryUtils::plan_for<GraphRuntimeStorage>(),
-                .ops = &evaluation_clock_ops(),
-            };
-            return binding;
+            return RootGraphView{GraphView{graph.binding(), graph.data()}};
         }
 
-        GraphExecutorView graph_executor_impl(const void *, void *memory) noexcept
+        RootGraphView nested_graph_root_impl(const void *, const GraphView &graph)
         {
-            return storage(memory).graph_executor();
-        }
-
-        void attach_graph_executor_impl(const void *, const GraphView &graph, GraphExecutorStorageRef executor)
-        {
-            storage(graph.data()).attach_graph_executor(executor);
+            auto parent = typed_storage<NestedGraphRuntimeStorage>(graph.data()).parent_node();
+            if (!parent.valid()) { throw std::logic_error("Nested graph is missing its parent node"); }
+            return parent.graph().root();
         }
 
         void default_attach_nodes_impl(const void *, void *, GraphValue *) {}
@@ -309,12 +343,6 @@ namespace hgraph
             throw std::logic_error("GraphView::schedule_node requires a live graph");
         }
 
-        void default_attach_graph_executor_impl(const void *, const GraphView &,
-                                                GraphExecutorStorageRef)
-        {
-            throw std::logic_error("GraphView::attach_graph_executor requires a live graph");
-        }
-
         bool default_started_impl(const void *, const void *) noexcept { return false; }
         bool default_evaluating_impl(const void *, const void *) noexcept { return false; }
         DateTime default_evaluation_time_impl(const void *, const void *) noexcept { return MIN_DT; }
@@ -331,14 +359,25 @@ namespace hgraph
             throw std::logic_error("GraphView::global_state requires a live graph");
         }
 
-        GraphExecutorView default_graph_executor_impl(const void *, void *) noexcept
+        GraphExecutorView default_graph_executor_impl(const void *, void *)
         {
-            return GraphExecutorView{};
+            throw std::logic_error("GraphView::executor requires a live graph");
         }
 
+        RootGraphView default_root_impl(const void *, const GraphView &)
+        {
+            throw std::logic_error("GraphView::root requires a live graph");
+        }
+
+        NodeView default_parent_node_impl(const void *, void *)
+        {
+            throw std::logic_error("GraphView::as_nested requires a live nested graph");
+        }
+
+        template <typename Storage>
         void schedule_node_impl(const void *, const GraphView &graph, std::size_t node_index, DateTime when, bool force)
         {
-            auto &state = storage(graph.data());
+            auto &state = storage<Storage>(graph.data());
             if (node_index >= state.schedule.size()) { throw std::out_of_range("Graph schedule node index is out of range"); }
 
             const DateTime current = state.evaluation_time;
@@ -362,9 +401,10 @@ namespace hgraph
             }
         }
 
+        template <typename Storage>
         void start_impl(const void *, const GraphView &graph, DateTime start_time)
         {
-            auto &state = storage(graph.data());
+            auto &state = storage<Storage>(graph.data());
             if (state.started) { return; }
 
             state.evaluation_time = start_time;
@@ -393,9 +433,10 @@ namespace hgraph
             rollback.release();
         }
 
+        template <typename Storage>
         void stop_impl(const void *, const GraphView &graph)
         {
-            auto &state = storage(graph.data());
+            auto &state = storage<Storage>(graph.data());
             if (!state.started) { return; }
 
             FirstExceptionRecorder exceptions;
@@ -407,9 +448,10 @@ namespace hgraph
             exceptions.rethrow_if_any();
         }
 
+        template <typename Storage>
         void evaluate_impl(const void *, const GraphView &graph, DateTime evaluation_time)
         {
-            auto &state = storage(graph.data());
+            auto &state = storage<Storage>(graph.data());
             if (!state.started) { throw std::logic_error("Graph must be started before evaluation"); }
 
             state.evaluation_time = evaluation_time;
@@ -439,7 +481,7 @@ namespace hgraph
 
         struct GraphRuntimeRegistry
         {
-            const GraphTypeBinding &make_binding(const GraphBuilder &builder)
+            GraphTypeMetaData make_meta(const GraphBuilder &builder)
             {
                 GraphTypeMetaData meta;
                 names.push_back(std::make_unique<std::string>(std::string{builder.label()}));
@@ -452,28 +494,71 @@ namespace hgraph
                 }
                 meta.edges = builder.edges();
 
-                schemas.push_back(std::move(meta));
-                return GraphTypeBinding::intern(schemas.back(), MemoryUtils::plan_for<GraphRuntimeStorage>(), ops());
+                return meta;
             }
 
-            static const GraphOps &ops()
+            const GraphTypeBinding &make_root_binding(const GraphBuilder &builder)
+            {
+                schemas.push_back(make_meta(builder));
+                return GraphTypeBinding::intern(
+                    schemas.back(),
+                    MemoryUtils::plan_for<RootGraphRuntimeStorage>(),
+                    root_ops());
+            }
+
+            const GraphTypeBinding &make_nested_binding(const GraphBuilder &builder)
+            {
+                schemas.push_back(make_meta(builder));
+                return GraphTypeBinding::intern(
+                    schemas.back(),
+                    MemoryUtils::plan_for<NestedGraphRuntimeStorage>(),
+                    nested_ops());
+            }
+
+            static const GraphOps &root_ops()
             {
                 static const GraphOps table{
                     .context = nullptr,
-                    .attach_nodes_impl = &attach_nodes_impl,
-                    .start_impl = &start_impl,
-                    .stop_impl = &stop_impl,
-                    .evaluate_impl = &evaluate_impl,
-                    .schedule_node_impl = &schedule_node_impl,
-                    .attach_graph_executor_impl = &attach_graph_executor_impl,
-                    .started_impl = &started_impl,
-                    .evaluating_impl = &evaluating_impl,
-                    .evaluation_time_impl = &evaluation_time_impl,
-                    .next_scheduled_time_impl = &next_scheduled_time_impl,
-                    .node_count_impl = &node_count_impl,
-                    .node_at_impl = &node_at_impl,
-                    .global_state_impl = &global_state_impl,
-                    .graph_executor_impl = &graph_executor_impl,
+                    .parent_kind = GraphParentKind::Root,
+                    .attach_nodes_impl = &attach_nodes_impl<RootGraphRuntimeStorage>,
+                    .start_impl = &start_impl<RootGraphRuntimeStorage>,
+                    .stop_impl = &stop_impl<RootGraphRuntimeStorage>,
+                    .evaluate_impl = &evaluate_impl<RootGraphRuntimeStorage>,
+                    .schedule_node_impl = &schedule_node_impl<RootGraphRuntimeStorage>,
+                    .started_impl = &started_impl<RootGraphRuntimeStorage>,
+                    .evaluating_impl = &evaluating_impl<RootGraphRuntimeStorage>,
+                    .evaluation_time_impl = &evaluation_time_impl<RootGraphRuntimeStorage>,
+                    .next_scheduled_time_impl = &next_scheduled_time_impl<RootGraphRuntimeStorage>,
+                    .node_count_impl = &node_count_impl<RootGraphRuntimeStorage>,
+                    .node_at_impl = &node_at_impl<RootGraphRuntimeStorage>,
+                    .global_state_impl = &root_global_state_impl,
+                    .root_impl = &root_graph_root_impl,
+                    .graph_executor_impl = &root_graph_executor_impl,
+                    .parent_node_impl = &root_parent_node_impl,
+                };
+                return table;
+            }
+
+            static const GraphOps &nested_ops()
+            {
+                static const GraphOps table{
+                    .context = nullptr,
+                    .parent_kind = GraphParentKind::Nested,
+                    .attach_nodes_impl = &attach_nodes_impl<NestedGraphRuntimeStorage>,
+                    .start_impl = &start_impl<NestedGraphRuntimeStorage>,
+                    .stop_impl = &stop_impl<NestedGraphRuntimeStorage>,
+                    .evaluate_impl = &evaluate_impl<NestedGraphRuntimeStorage>,
+                    .schedule_node_impl = &schedule_node_impl<NestedGraphRuntimeStorage>,
+                    .started_impl = &started_impl<NestedGraphRuntimeStorage>,
+                    .evaluating_impl = &evaluating_impl<NestedGraphRuntimeStorage>,
+                    .evaluation_time_impl = &evaluation_time_impl<NestedGraphRuntimeStorage>,
+                    .next_scheduled_time_impl = &next_scheduled_time_impl<NestedGraphRuntimeStorage>,
+                    .node_count_impl = &node_count_impl<NestedGraphRuntimeStorage>,
+                    .node_at_impl = &node_at_impl<NestedGraphRuntimeStorage>,
+                    .global_state_impl = &nested_global_state_impl,
+                    .root_impl = &nested_graph_root_impl,
+                    .graph_executor_impl = &nested_graph_executor_impl,
+                    .parent_node_impl = &nested_parent_node_impl,
                 };
                 return table;
             }
@@ -492,12 +577,12 @@ namespace hgraph
         {
             static const GraphOps table{
                 .context = nullptr,
+                .parent_kind = GraphParentKind::Root,
                 .attach_nodes_impl = &default_attach_nodes_impl,
                 .start_impl = &default_start_impl,
                 .stop_impl = &default_stop_impl,
                 .evaluate_impl = &default_evaluate_impl,
                 .schedule_node_impl = &default_schedule_node_impl,
-                .attach_graph_executor_impl = &default_attach_graph_executor_impl,
                 .started_impl = &default_started_impl,
                 .evaluating_impl = &default_evaluating_impl,
                 .evaluation_time_impl = &default_evaluation_time_impl,
@@ -505,7 +590,9 @@ namespace hgraph
                 .node_count_impl = &default_node_count_impl,
                 .node_at_impl = &default_node_at_impl,
                 .global_state_impl = &default_global_state_impl,
+                .root_impl = &default_root_impl,
                 .graph_executor_impl = &default_graph_executor_impl,
+                .parent_node_impl = &default_parent_node_impl,
             };
             return table;
         }
@@ -574,31 +661,39 @@ namespace hgraph
         return ops().global_state_impl(ops().context, data());
     }
 
-    GraphExecutorView GraphView::graph_executor() const noexcept
+    GraphParentKind GraphView::parent_kind() const
+    {
+        return ops().parent_kind;
+    }
+
+    bool GraphView::is_root() const
+    {
+        return parent_kind() == GraphParentKind::Root;
+    }
+
+    bool GraphView::is_nested() const
+    {
+        return parent_kind() == GraphParentKind::Nested;
+    }
+
+    RootGraphView GraphView::as_root() const
+    {
+        return RootGraphView{GraphView{binding(), data()}};
+    }
+
+    NestedGraphView GraphView::as_nested() const
+    {
+        return NestedGraphView{GraphView{binding(), data()}};
+    }
+
+    GraphExecutorView GraphView::executor() const
     {
         return ops().graph_executor_impl(ops().context, data());
     }
 
-    EvaluationClockStorageRef GraphView::evaluation_clock_ref() const noexcept
+    RootGraphView GraphView::root() const
     {
-        auto root_graph = root();
-        auto executor = root_graph.graph_executor();
-        if (executor.valid()) { return executor.evaluation_clock_ref(); }
-        return root_graph.valid()
-                   ? EvaluationClockStorageRef{graph_evaluation_clock_binding(), root_graph.data()}
-                   : EvaluationClockStorageRef{};
-    }
-
-    EvaluationClockView GraphView::evaluation_clock() const noexcept
-    {
-        return EvaluationClockView{evaluation_clock_ref()};
-    }
-
-    GraphView GraphView::root() const
-    {
-        // Flattening: a single graph is its own root. The navigation point for
-        // non-flattening nested graphs (walk to the owning root) lands here.
-        return GraphView{binding(), data()};
+        return ops().root_impl(ops().context, *this);
     }
 
     void GraphView::start(DateTime start_time) const { ops().start_impl(ops().context, *this, start_time); }
@@ -609,25 +704,76 @@ namespace hgraph
         ops().schedule_node_impl(ops().context, *this, node_index, when, force);
     }
 
-    void GraphView::attach_graph_executor(GraphExecutorStorageRef executor) const
-    {
-        ops().attach_graph_executor_impl(ops().context, *this, executor);
-    }
-
     const GraphOps &GraphView::ops() const
     {
         return storage_.binding()->ops_ref();
     }
 
+    RootGraphView::RootGraphView() noexcept
+        : GraphView()
+    {
+    }
+
+    RootGraphView::RootGraphView(GraphView graph)
+        : GraphView(graph.binding(), graph.data())
+    {
+        if (!graph.valid()) { throw std::logic_error("GraphView::as_root requires a live graph"); }
+        if (graph.parent_kind() != GraphParentKind::Root)
+        {
+            throw std::logic_error("GraphView::as_root requires a root graph");
+        }
+    }
+
+    GraphExecutorView RootGraphView::executor() const
+    {
+        auto executor = GraphView::executor();
+        if (!executor.valid()) { throw std::logic_error("Root graph is missing its graph executor"); }
+        return executor;
+    }
+
+    NestedGraphView::NestedGraphView() noexcept
+        : GraphView()
+    {
+    }
+
+    NestedGraphView::NestedGraphView(GraphView graph)
+        : GraphView(graph.binding(), graph.data())
+    {
+        if (!graph.valid()) { throw std::logic_error("GraphView::as_nested requires a live graph"); }
+        if (graph.parent_kind() != GraphParentKind::Nested)
+        {
+            throw std::logic_error("GraphView::as_nested requires a nested graph");
+        }
+    }
+
+    NodeView NestedGraphView::parent_node() const
+    {
+        return ops().parent_node_impl(ops().context, data());
+    }
+
     GraphValue::GraphValue() noexcept = default;
 
-    GraphValue::GraphValue(const GraphBuilder &builder)
+    GraphValue::GraphValue(const GraphBuilder &builder, GraphExecutorStorageRef root_executor)
     {
-        const auto &binding = builder.binding();
+        const auto &binding = builder.root_binding();
         storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
             // GraphValue is a friend of GraphBuilder, so we read the owning
             // GlobalState directly to seed this graph's copy.
-            std::construct_at(MemoryUtils::cast<GraphRuntimeStorage>(dst), builder, builder.global_state_);
+            std::construct_at(MemoryUtils::cast<RootGraphRuntimeStorage>(dst),
+                              builder,
+                              builder.global_state_,
+                              root_executor);
+        });
+        attach_nodes();
+    }
+
+    GraphValue::GraphValue(const GraphBuilder &builder, NodeStorageRef parent_node)
+    {
+        const auto &binding = builder.nested_binding();
+        storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
+            std::construct_at(MemoryUtils::cast<NestedGraphRuntimeStorage>(dst),
+                              builder,
+                              parent_node);
         });
         attach_nodes();
     }
@@ -713,12 +859,27 @@ namespace hgraph
 
     const GraphTypeBinding &GraphBuilder::binding() const
     {
-        return graph_runtime_registry().make_binding(*this);
+        return root_binding();
     }
 
-    GraphValue GraphBuilder::make_graph() const
+    const GraphTypeBinding &GraphBuilder::root_binding() const
     {
-        return GraphValue{*this};
+        return graph_runtime_registry().make_root_binding(*this);
+    }
+
+    const GraphTypeBinding &GraphBuilder::nested_binding() const
+    {
+        return graph_runtime_registry().make_nested_binding(*this);
+    }
+
+    GraphValue GraphBuilder::make_root_graph(GraphExecutorStorageRef root_executor) const
+    {
+        return GraphValue{*this, root_executor};
+    }
+
+    GraphValue GraphBuilder::make_nested_graph(NodeStorageRef parent_node) const
+    {
+        return GraphValue{*this, parent_node};
     }
 
 }  // namespace hgraph
