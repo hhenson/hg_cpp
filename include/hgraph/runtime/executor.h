@@ -8,6 +8,7 @@ namespace hgraph
     class GraphExecutorBuilder;
     class GraphExecutorValue;
     class GraphExecutorView;
+    class PushQueueEngineView;
 
     /** Engine execution mode for the first-pass graph executor. */
     enum class GraphExecutorMode
@@ -38,6 +39,28 @@ namespace hgraph
         [[nodiscard]] GraphView (*graph_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] EvaluationClockStorageRef (*evaluation_clock_ref_impl)(const void *context,
                                                                              void *memory) noexcept = nullptr;
+        void (*mark_push_update_pending_impl)(const void *context, void *memory) = nullptr;
+        [[nodiscard]] bool (*is_push_update_pending_impl)(const void *context, void *memory) noexcept = nullptr;
+        [[nodiscard]] bool (*reset_push_update_pending_impl)(const void *context, void *memory) noexcept = nullptr;
+    };
+
+    /** Real-time push queue projection over the root graph executor. */
+    class HGRAPH_EXPORT PushQueueEngineView
+    {
+      public:
+        PushQueueEngineView() noexcept;
+        explicit PushQueueEngineView(GraphExecutorStorageRef storage) noexcept;
+
+        [[nodiscard]] bool valid() const noexcept;
+        [[nodiscard]] bool is_push_update_pending() const noexcept;
+
+        void mark_push_update_pending() const;
+        [[nodiscard]] bool reset_push_update_pending() const noexcept;
+
+      private:
+        [[nodiscard]] const GraphExecutorOps &ops() const;
+
+        GraphExecutorStorageRef storage_{};
     };
 
     /** Borrowed type-erased executor view. */
@@ -62,6 +85,7 @@ namespace hgraph
         [[nodiscard]] GraphView graph() const;
         [[nodiscard]] EvaluationClockStorageRef evaluation_clock_ref() const noexcept;
         [[nodiscard]] EvaluationClockView evaluation_clock() const noexcept;
+        [[nodiscard]] PushQueueEngineView push_queue_engine() const noexcept;
 
         void run() const;
         void request_stop() const noexcept;

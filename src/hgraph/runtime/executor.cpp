@@ -64,17 +64,17 @@ namespace hgraph
                 evaluation_time = value;
             }
 
-            GraphValue              graph{};
-            DateTime                start_time{MIN_ST};
-            DateTime                end_time{MAX_ET};
-            DateTime                evaluation_time{MIN_ST};
-            DateTime                last_time_allowed_push{MIN_DT};
+            GraphValue                   graph{};
+            DateTime                     start_time{MIN_ST};
+            DateTime                     end_time{MAX_ET};
+            DateTime                     evaluation_time{MIN_ST};
+            DateTime                     last_time_allowed_push{MIN_DT};
 
-            mutable std::mutex      mutex{};
-            std::condition_variable condition{};
-            std::atomic_bool        stop_requested{false};
-            bool                    push_node_requires_scheduling{false};
-            bool                    ready_to_push{false};
+            mutable std::mutex           mutex{};
+            std::condition_variable      condition{};
+            std::atomic_bool             stop_requested{false};
+            bool                         push_update_pending{false};
+            bool                         ready_to_push{false};
         };
 
         [[nodiscard]] SimulationExecutorStorage &simulation_storage(void *memory)
@@ -99,6 +99,15 @@ namespace hgraph
         {
             if (memory == nullptr) { throw std::logic_error("Real-time executor storage is null"); }
             return *MemoryUtils::cast<RealTimeExecutorStorage>(memory);
+        }
+
+        [[nodiscard]] bool graph_has_push_sources(const GraphBuilder &builder) noexcept
+        {
+            for (const NodeBuilder &node : builder.nodes())
+            {
+                if (node.binding().type_meta->node_kind == NodeKind::PushSource) { return true; }
+            }
+            return false;
         }
 
         [[nodiscard]] TimeDelta elapsed_since(DateTime start) noexcept
@@ -205,6 +214,51 @@ namespace hgraph
             return EvaluationClockStorageRef{realtime_clock_binding(), memory};
         }
 
+        void simulation_mark_push_update_pending_impl(const void *, void *)
+        {
+            throw std::logic_error("Push queues require a real-time graph executor");
+        }
+
+        bool simulation_is_push_update_pending_impl(const void *, void *) noexcept
+        {
+            return false;
+        }
+
+        bool simulation_reset_push_update_pending_impl(const void *, void *) noexcept
+        {
+            return false;
+        }
+
+        void realtime_mark_push_update_pending_impl(const void *, void *memory)
+        {
+            auto &state = realtime_storage(memory);
+            {
+                std::lock_guard lock{state.mutex};
+                if (state.stop_requested.load(std::memory_order_acquire))
+                {
+                    throw std::runtime_error("Cannot mark push update pending on a stopped real-time graph executor");
+                }
+                state.push_update_pending = true;
+            }
+            state.condition.notify_all();
+        }
+
+        bool realtime_is_push_update_pending_impl(const void *, void *memory) noexcept
+        {
+            auto &state = realtime_storage(memory);
+            std::lock_guard lock{state.mutex};
+            return state.push_update_pending;
+        }
+
+        bool realtime_reset_push_update_pending_impl(const void *, void *memory) noexcept
+        {
+            auto &state = realtime_storage(memory);
+            std::lock_guard lock{state.mutex};
+            const bool pending = state.push_update_pending;
+            state.push_update_pending = false;
+            return pending;
+        }
+
         [[nodiscard]] DateTime advance_simulation(SimulationExecutorStorage &state, DateTime next_scheduled_time)
         {
             const DateTime next = std::min(next_scheduled_time, state.end_time);
@@ -231,7 +285,7 @@ namespace hgraph
 
                 while (!state.stop_requested.load(std::memory_order_acquire) &&
                        wall_now < target &&
-                       !state.push_node_requires_scheduling)
+                       !state.push_update_pending)
                 {
                     const TimeDelta sleep_time = std::min(target - wall_now, TimeDelta{10'000'000});
                     state.condition.wait_for(lock, sleep_time);
@@ -253,6 +307,17 @@ namespace hgraph
             }
         }
 
+        [[nodiscard]] bool waits_for_push_sources(const SimulationExecutorStorage &, const GraphView &) noexcept
+        {
+            return false;
+        }
+
+        [[nodiscard]] bool waits_for_push_sources(const RealTimeExecutorStorage &, const GraphView &graph) noexcept
+        {
+            const auto *schema = graph.schema();
+            return schema != nullptr && schema->push_source_nodes_end > 0;
+        }
+
         template <typename Storage, typename Advance>
         void run_storage(Storage &state, Advance advance)
         {
@@ -266,8 +331,12 @@ namespace hgraph
 
             while (!state.stop_requested.load(std::memory_order_acquire))
             {
-                const DateTime next = graph.next_scheduled_time();
-                if (next == MAX_DT || next >= state.end_time) { break; }
+                DateTime next = graph.next_scheduled_time();
+                if (next == MAX_DT || next >= state.end_time)
+                {
+                    if (!waits_for_push_sources(state, graph)) { break; }
+                    next = state.end_time;
+                }
 
                 const DateTime evaluation_time = advance(state, next);
                 if (state.stop_requested.load(std::memory_order_acquire) ||
@@ -364,6 +433,9 @@ namespace hgraph
                 .end_time_impl = &simulation_end_time_impl,
                 .graph_impl = &simulation_graph_impl,
                 .evaluation_clock_ref_impl = &simulation_clock_ref_impl,
+                .mark_push_update_pending_impl = &simulation_mark_push_update_pending_impl,
+                .is_push_update_pending_impl = &simulation_is_push_update_pending_impl,
+                .reset_push_update_pending_impl = &simulation_reset_push_update_pending_impl,
             };
             return table;
         }
@@ -379,6 +451,9 @@ namespace hgraph
                 .end_time_impl = &realtime_end_time_impl,
                 .graph_impl = &realtime_graph_impl,
                 .evaluation_clock_ref_impl = &realtime_clock_ref_impl,
+                .mark_push_update_pending_impl = &realtime_mark_push_update_pending_impl,
+                .is_push_update_pending_impl = &realtime_is_push_update_pending_impl,
+                .reset_push_update_pending_impl = &realtime_reset_push_update_pending_impl,
             };
             return table;
         }
@@ -438,6 +513,21 @@ namespace hgraph
             return EvaluationClockStorageRef{};
         }
 
+        void default_mark_push_update_pending_impl(const void *, void *)
+        {
+            throw std::logic_error("PushQueueEngineView::mark_push_update_pending requires a live real-time graph executor");
+        }
+
+        bool default_is_push_update_pending_impl(const void *, void *) noexcept
+        {
+            return false;
+        }
+
+        bool default_reset_push_update_pending_impl(const void *, void *) noexcept
+        {
+            return false;
+        }
+
         const GraphExecutorOps &default_executor_ops()
         {
             static const GraphExecutorOps table{
@@ -449,6 +539,9 @@ namespace hgraph
                 .end_time_impl = &default_end_time_impl,
                 .graph_impl = &default_graph_impl,
                 .evaluation_clock_ref_impl = &default_evaluation_clock_ref_impl,
+                .mark_push_update_pending_impl = &default_mark_push_update_pending_impl,
+                .is_push_update_pending_impl = &default_is_push_update_pending_impl,
+                .reset_push_update_pending_impl = &default_reset_push_update_pending_impl,
             };
             return table;
         }
@@ -468,6 +561,41 @@ namespace hgraph
     std::string_view GraphExecutorTypeMetaData::name() const noexcept
     {
         return display_name != nullptr ? std::string_view{display_name} : std::string_view{};
+    }
+
+    PushQueueEngineView::PushQueueEngineView() noexcept
+        : storage_(GraphExecutorStorageRef::empty(default_executor_binding()))
+    {
+    }
+
+    PushQueueEngineView::PushQueueEngineView(GraphExecutorStorageRef storage) noexcept
+        : storage_(storage.bound() ? storage : GraphExecutorStorageRef::empty(default_executor_binding()))
+    {
+    }
+
+    bool PushQueueEngineView::valid() const noexcept
+    {
+        return storage_.has_value();
+    }
+
+    bool PushQueueEngineView::is_push_update_pending() const noexcept
+    {
+        return ops().is_push_update_pending_impl(ops().context, storage_.data());
+    }
+
+    void PushQueueEngineView::mark_push_update_pending() const
+    {
+        ops().mark_push_update_pending_impl(ops().context, storage_.data());
+    }
+
+    bool PushQueueEngineView::reset_push_update_pending() const noexcept
+    {
+        return ops().reset_push_update_pending_impl(ops().context, storage_.data());
+    }
+
+    const GraphExecutorOps &PushQueueEngineView::ops() const
+    {
+        return storage_.binding()->ops_ref();
     }
 
     GraphExecutorView::GraphExecutorView() noexcept
@@ -522,6 +650,11 @@ namespace hgraph
         return EvaluationClockView{evaluation_clock_ref()};
     }
 
+    PushQueueEngineView GraphExecutorView::push_queue_engine() const noexcept
+    {
+        return PushQueueEngineView{storage_};
+    }
+
     void GraphExecutorView::run() const
     {
         ops().run_impl(ops().context, *this);
@@ -541,6 +674,11 @@ namespace hgraph
 
     GraphExecutorValue::GraphExecutorValue(const GraphExecutorBuilder &builder)
     {
+        if (builder.mode() != GraphExecutorMode::RealTime && graph_has_push_sources(builder.graph_builder()))
+        {
+            throw std::invalid_argument("Push source nodes require a real-time graph executor");
+        }
+
         const auto &binding = builder.binding();
         storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
             switch (builder.mode())

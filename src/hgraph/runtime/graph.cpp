@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace hgraph
@@ -218,6 +219,31 @@ namespace hgraph
         [[nodiscard]] const GraphRuntimeBaseStorage &storage(const void *memory)
         {
             return typed_storage<Storage>(memory);
+        }
+
+        [[nodiscard]] std::size_t compute_push_source_nodes_end(const GraphBuilder &builder)
+        {
+            std::size_t prefix = 0;
+            bool        seen_non_push_source = false;
+
+            for (const NodeBuilder &node : builder.nodes())
+            {
+                const NodeKind kind = node.binding().type_meta->node_kind;
+                if (kind == NodeKind::PushSource)
+                {
+                    if (seen_non_push_source)
+                    {
+                        throw std::invalid_argument("Push source nodes must occupy the graph node prefix");
+                    }
+                    ++prefix;
+                }
+                else
+                {
+                    seen_non_push_source = true;
+                }
+            }
+
+            return prefix;
         }
 
         template <typename Storage>
@@ -463,7 +489,25 @@ namespace hgraph
                 state.evaluation_cursor = invalid_cursor;
             });
 
-            for (std::size_t index = 0; index < state.nodes.size(); ++index)
+            std::size_t first_normal_node = 0;
+            if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
+            {
+                first_normal_node = graph.schema()->push_source_nodes_end;
+                if (first_normal_node > 0)
+                {
+                    PushQueueEngineView push_queue = graph.root().executor().push_queue_engine();
+                    if (push_queue.reset_push_update_pending())
+                    {
+                        for (std::size_t index = 0; index < first_normal_node; ++index)
+                        {
+                            state.evaluation_cursor = index;
+                            state.nodes[index].view().evaluate(evaluation_time);
+                        }
+                    }
+                }
+            }
+
+            for (std::size_t index = first_normal_node; index < state.nodes.size(); ++index)
             {
                 auto &entry = state.schedule[index];
                 if (entry.scheduled == evaluation_time)
@@ -493,6 +537,7 @@ namespace hgraph
                     meta.nodes.push_back(GraphNodeEntry{builder.nodes()[index].binding().type_meta, index});
                 }
                 meta.edges = builder.edges();
+                meta.push_source_nodes_end = compute_push_source_nodes_end(builder);
 
                 return meta;
             }
@@ -509,6 +554,10 @@ namespace hgraph
             const GraphTypeBinding &make_nested_binding(const GraphBuilder &builder)
             {
                 schemas.push_back(make_meta(builder));
+                if (schemas.back().push_source_nodes_end > 0)
+                {
+                    throw std::invalid_argument("Nested graphs do not support push source nodes");
+                }
                 return GraphTypeBinding::intern(
                     schemas.back(),
                     MemoryUtils::plan_for<NestedGraphRuntimeStorage>(),
