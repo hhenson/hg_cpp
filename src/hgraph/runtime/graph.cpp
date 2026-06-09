@@ -16,6 +16,9 @@ namespace hgraph
     {
         constexpr std::size_t invalid_cursor = std::numeric_limits<std::size_t>::max();
 
+        [[nodiscard]] const EvaluationClockOps &evaluation_clock_ops() noexcept;
+        [[nodiscard]] const EvaluationClockTypeBinding &graph_evaluation_clock_binding() noexcept;
+
         struct GraphScheduleEntry
         {
             DateTime scheduled{MAX_DT};
@@ -108,6 +111,7 @@ namespace hgraph
                     nodes.push_back(builder.nodes()[index].make_node(index));
                 }
                 schedule.resize(nodes.size());
+                use_graph_clock();
                 bind_edges(builder.edges());
             }
 
@@ -136,14 +140,33 @@ namespace hgraph
                 }
             }
 
+            void use_graph_clock() noexcept
+            {
+                clock_ref = EvaluationClockStorageRef{graph_evaluation_clock_binding(), this};
+                uses_external_clock = false;
+            }
+
+            void use_external_clock(EvaluationClockStorageRef clock) noexcept
+            {
+                if (!clock.has_value())
+                {
+                    use_graph_clock();
+                    return;
+                }
+                clock_ref = clock;
+                uses_external_clock = true;
+            }
+
             std::vector<NodeValue>          nodes{};
             std::vector<GraphScheduleEntry> schedule{};
             GlobalState                     global_state{};
             DateTime                        evaluation_time{MIN_DT};
             DateTime                        cycle_wall_start{current_wall_time()};
+            EvaluationClockStorageRef       clock_ref{};
+            std::size_t                     evaluation_cursor{invalid_cursor};
+            bool                            uses_external_clock{false};
             bool                            started{false};
             bool                            evaluating{false};
-            std::size_t                     evaluation_cursor{invalid_cursor};
         };
 
         [[nodiscard]] GraphRuntimeStorage &storage(void *memory)
@@ -161,6 +184,7 @@ namespace hgraph
         void attach_nodes_impl(const void *, void *memory, GraphValue *graph)
         {
             auto &state = storage(memory);
+            if (!state.uses_external_clock) { state.use_graph_clock(); }
             for (std::size_t index = 0; index < state.nodes.size(); ++index)
             {
                 state.nodes[index].attach_graph(graph, index);
@@ -241,9 +265,26 @@ namespace hgraph
             return table;
         }
 
+        const EvaluationClockTypeBinding &graph_evaluation_clock_binding() noexcept
+        {
+            static const EvaluationClockTypeMetaData meta{.display_name = "graph_clock"};
+            static const EvaluationClockTypeBinding binding{
+                .type_meta = &meta,
+                .storage_plan = &MemoryUtils::plan_for<GraphRuntimeStorage>(),
+                .ops = &evaluation_clock_ops(),
+            };
+            return binding;
+        }
+
         EvaluationClockView evaluation_clock_impl(const void *, const void *memory) noexcept
         {
-            return EvaluationClockView{&evaluation_clock_ops(), memory};
+            const auto &state = storage(memory);
+            return EvaluationClockView{state.clock_ref};
+        }
+
+        void attach_evaluation_clock_impl(const void *, const GraphView &graph, EvaluationClockStorageRef clock) noexcept
+        {
+            storage(graph.data()).use_external_clock(clock);
         }
 
         void default_attach_nodes_impl(const void *, void *, GraphValue *) {}
@@ -266,6 +307,11 @@ namespace hgraph
         void default_schedule_node_impl(const void *, const GraphView &, std::size_t, DateTime, bool)
         {
             throw std::logic_error("GraphView::schedule_node requires a live graph");
+        }
+
+        void default_attach_evaluation_clock_impl(const void *, const GraphView &,
+                                                  EvaluationClockStorageRef) noexcept
+        {
         }
 
         bool default_started_impl(const void *, const void *) noexcept { return false; }
@@ -418,6 +464,7 @@ namespace hgraph
                     .stop_impl = &stop_impl,
                     .evaluate_impl = &evaluate_impl,
                     .schedule_node_impl = &schedule_node_impl,
+                    .attach_evaluation_clock_impl = &attach_evaluation_clock_impl,
                     .started_impl = &started_impl,
                     .evaluating_impl = &evaluating_impl,
                     .evaluation_time_impl = &evaluation_time_impl,
@@ -449,6 +496,7 @@ namespace hgraph
                 .stop_impl = &default_stop_impl,
                 .evaluate_impl = &default_evaluate_impl,
                 .schedule_node_impl = &default_schedule_node_impl,
+                .attach_evaluation_clock_impl = &default_attach_evaluation_clock_impl,
                 .started_impl = &default_started_impl,
                 .evaluating_impl = &default_evaluating_impl,
                 .evaluation_time_impl = &default_evaluation_time_impl,
@@ -543,6 +591,11 @@ namespace hgraph
     void GraphView::schedule_node(std::size_t node_index, DateTime when, bool force) const
     {
         ops().schedule_node_impl(ops().context, *this, node_index, when, force);
+    }
+
+    void GraphView::attach_evaluation_clock(EvaluationClockStorageRef clock) const noexcept
+    {
+        ops().attach_evaluation_clock_impl(ops().context, *this, clock);
     }
 
     const GraphOps &GraphView::ops() const

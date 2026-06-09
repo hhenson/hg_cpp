@@ -783,9 +783,9 @@ because its timer was due (``is_scheduled_now``), the runtime consumes the event
 that fired this cycle and re-arms the node at the next pending time; when it fires
 for another reason (an input ticked) it simply re-arms the next timer — so an
 ``eval`` only needs to (re)schedule future work. This matches the authoritative
-Python ``SCHEDULER`` semantics. Wall-clock alarms (``on_wall_clock = true``) need
-the real-time evaluation clock, which is not built yet, so that path throws for
-now; calling a mutating method on a node that did not declare a ``NodeScheduler``
+Python ``SCHEDULER`` semantics. Wall-clock alarms (``on_wall_clock = true``) are
+not yet wired into the C++ ``NodeScheduler`` path, so that path throws for now;
+calling a mutating method on a node that did not declare a ``NodeScheduler``
 likewise throws.
 
 The interface follows the Python ``SCHEDULER`` contract (the authoritative
@@ -1123,7 +1123,7 @@ Feature status
    * - Node-kind inference (from shape, no override)
      - available
      - available
-   * - ``GraphBuilder`` / ``GraphEdge`` / ``GraphExecutor`` (simulation)
+   * - ``GraphBuilder`` / ``GraphEdge`` / ``GraphExecutor`` (simulation + real-time)
      - available
      - available
    * - Schema markers (``TS``/``TSS``/``TSD``/``TSL``/``TSW``/``TSB``/``REF``/``SIGNAL``)
@@ -1174,7 +1174,7 @@ Feature status
    * - Generic node resolution (``TsVar`` / ``ScalarVar`` in signatures)
      - available
      - available
-   * - Push-source node/builder + ``Sender<T>`` + real-time evaluator
+   * - Push-source node/builder + ``Sender<T>``
      - planned
      - available
    * - Named state ``State<S, "name">``
@@ -1220,5 +1220,5 @@ C++ ↔ Python cheat sheet
      - the decorator applied to the function
    * - ``GraphEdge{...}`` / ``GraphBuilder::add_edge``
      - calling one node's output into another (implicit)
-   * - ``GraphExecutor`` + ``run()`` (simulation)
-     - ``run_graph(..., run_mode=EvaluationMode.SIMULATION)``
+   * - ``GraphExecutor`` + ``run()`` (simulation / real-time)
+     - ``run_graph(..., run_mode=EvaluationMode.SIMULATION|REAL_TIME)``

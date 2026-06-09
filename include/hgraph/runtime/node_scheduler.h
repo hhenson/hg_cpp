@@ -89,8 +89,8 @@ namespace hgraph
      * graph; ``advance`` (run after each evaluation) consumes fired events and
      * re-arms the next.
      *
-     * Wall-clock alarms (``on_wall_clock = true``) require the real-time
-     * evaluation clock, which is not built yet, so that path throws for now.
+     * Wall-clock alarms (``on_wall_clock = true``) are not yet wired into the
+     * C++ scheduler/runtime path, so that path throws for now.
      */
     class HGRAPH_EXPORT NodeScheduler
     {

@@ -61,8 +61,8 @@ namespace hgraph
     struct HGRAPH_EXPORT SingleNestedGraphNodeContext
     {
         SingleNestedGraphNodeSpec    spec{};
-        SingleNestedGraphNodeOptions options{};
         std::size_t                  graph_storage_offset{0};
+        SingleNestedGraphNodeOptions options{};
     };
 
     /**

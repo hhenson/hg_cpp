@@ -101,6 +101,8 @@ namespace hgraph
         void (*evaluate_impl)(const void *context, const GraphView &graph, DateTime evaluation_time) = nullptr;
         void (*schedule_node_impl)(const void *context, const GraphView &graph, std::size_t node_index,
                                    DateTime when, bool force) = nullptr;
+        void (*attach_evaluation_clock_impl)(const void *context, const GraphView &graph,
+                                             EvaluationClockStorageRef clock) noexcept = nullptr;
 
         [[nodiscard]] bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*evaluating_impl)(const void *context, const void *memory) noexcept = nullptr;
@@ -153,6 +155,7 @@ namespace hgraph
         void stop() const;
         void evaluate(DateTime evaluation_time) const;
         void schedule_node(std::size_t node_index, DateTime when, bool force = false) const;
+        void attach_evaluation_clock(EvaluationClockStorageRef clock) const noexcept;
 
       private:
         [[nodiscard]] const GraphOps &ops() const;

@@ -2,10 +2,26 @@
 #define HGRAPH_RUNTIME_EVALUATION_CLOCK_H
 
 #include <hgraph/hgraph_export.h>
+#include <hgraph/types/metadata/type_binding.h>
+#include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/util/date_time.h>
+
+#include <cstddef>
+#include <string_view>
 
 namespace hgraph
 {
+    /** Schema descriptor for a type-erased evaluation clock provider. */
+    struct HGRAPH_EXPORT EvaluationClockTypeMetaData
+    {
+        const char *display_name{nullptr};
+
+        [[nodiscard]] std::string_view name() const noexcept
+        {
+            return display_name != nullptr ? std::string_view{display_name} : std::string_view{};
+        }
+    };
+
     /** Type-erased read-only clock operations exposed to user-authored nodes. */
     struct HGRAPH_EXPORT EvaluationClockOps
     {
@@ -17,6 +33,9 @@ namespace hgraph
         [[nodiscard]] DateTime (*next_cycle_evaluation_time_impl)(const void *context,
                                                                   const void *memory) noexcept = nullptr;
     };
+
+    using EvaluationClockTypeBinding = TypeBinding<EvaluationClockTypeMetaData, EvaluationClockOps>;
+    using EvaluationClockStorageRef  = MemoryUtils::StorageRef<EvaluationClockTypeBinding>;
 
     namespace detail
     {
@@ -51,53 +70,74 @@ namespace hgraph
             };
             return table;
         }
+
+        [[nodiscard]] inline const EvaluationClockTypeBinding &default_evaluation_clock_binding() noexcept
+        {
+            static const EvaluationClockTypeMetaData meta{.display_name = "default_evaluation_clock"};
+            static const EvaluationClockTypeBinding binding{
+                .type_meta = &meta,
+                .storage_plan = &MemoryUtils::plan_for<std::byte>(),
+                .ops = &default_evaluation_clock_ops(),
+            };
+            return binding;
+        }
     }  // namespace detail
 
     /**
      * Borrowed view over the active evaluation clock.
      *
-     * The view owns no state. Runtime storage supplies the operation table and
-     * memory pointer; static nodes receive this as a transparent injectable.
+     * The view owns no state. Runtime storage supplies a borrowed storage ref
+     * whose binding carries the operation table; static nodes receive this as
+     * a transparent injectable.
      */
     class HGRAPH_EXPORT EvaluationClockView
     {
       public:
         EvaluationClockView() noexcept
-            : ops_(&detail::default_evaluation_clock_ops())
+            : storage_(EvaluationClockStorageRef::empty(detail::default_evaluation_clock_binding()))
         {
         }
 
-        EvaluationClockView(const EvaluationClockOps *ops, const void *memory) noexcept
-            : ops_(ops != nullptr && memory != nullptr ? ops : &detail::default_evaluation_clock_ops()),
-              memory_(ops != nullptr && memory != nullptr ? memory : nullptr)
+        explicit EvaluationClockView(EvaluationClockStorageRef storage) noexcept
+            : storage_(storage.has_value()
+                           ? storage
+                           : EvaluationClockStorageRef::empty(detail::default_evaluation_clock_binding()))
         {
         }
 
-        [[nodiscard]] bool valid() const noexcept { return memory_ != nullptr; }
+        [[nodiscard]] bool valid() const noexcept { return storage_.has_value(); }
 
         [[nodiscard]] DateTime evaluation_time() const noexcept
         {
-            return ops_->evaluation_time_impl(ops_->context, memory_);
+            const auto &table = ops();
+            return table.evaluation_time_impl(table.context, storage_.data());
         }
 
         [[nodiscard]] DateTime now() const noexcept
         {
-            return ops_->now_impl(ops_->context, memory_);
+            const auto &table = ops();
+            return table.now_impl(table.context, storage_.data());
         }
 
         [[nodiscard]] TimeDelta cycle_time() const noexcept
         {
-            return ops_->cycle_time_impl(ops_->context, memory_);
+            const auto &table = ops();
+            return table.cycle_time_impl(table.context, storage_.data());
         }
 
         [[nodiscard]] DateTime next_cycle_evaluation_time() const noexcept
         {
-            return ops_->next_cycle_evaluation_time_impl(ops_->context, memory_);
+            const auto &table = ops();
+            return table.next_cycle_evaluation_time_impl(table.context, storage_.data());
         }
 
       private:
-        const EvaluationClockOps *ops_{&detail::default_evaluation_clock_ops()};
-        const void               *memory_{nullptr};
+        [[nodiscard]] const EvaluationClockOps &ops() const noexcept
+        {
+            return storage_.binding()->ops_ref();
+        }
+
+        EvaluationClockStorageRef storage_{EvaluationClockStorageRef::empty(detail::default_evaluation_clock_binding())};
     };
 
 }  // namespace hgraph

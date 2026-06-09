@@ -43,6 +43,7 @@ add_executable(hgraph_unit_tests
     test_scope.cpp
     test_runtime_value_view.cpp
     test_simulation_execution.cpp
+    test_realtime_execution.cpp
     test_node_scheduler.cpp
     test_record_replay.cpp
     test_eval_node.cpp

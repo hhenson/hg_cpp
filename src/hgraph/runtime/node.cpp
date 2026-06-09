@@ -34,9 +34,9 @@ namespace hgraph
 
             GraphValue   *graph{nullptr};
             std::size_t   node_index{0};
+            std::string   label{};
             bool          started{false};
             bool          starting{false};
-            std::string   label{};
         };
 
         void schedule_node_from_storage(GraphValue *graph, std::size_t node_index, DateTime modified_time)

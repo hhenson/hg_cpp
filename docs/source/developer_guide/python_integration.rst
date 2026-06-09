@@ -21,6 +21,31 @@ Normal CMake builds should not require Python. Python-specific code should live 
    -DHGRAPH_BUILD_PYTHON_BINDINGS=ON
    -DHGRAPH_ENABLE_PYTHON_USER_NODES=ON
 
+GIL And Runtime Locks
+---------------------
+
+The C++ runtime must assume that it does **not** hold the Python GIL unless a
+local scope has explicitly acquired it. Any path that calls Python code or uses
+Python C API objects must acquire the GIL at that boundary. This includes Python
+node ``start`` / ``eval`` / ``stop`` callbacks, lifecycle observers implemented
+in Python, Python notification callbacks, Python-backed sender functions, and
+exception translation that inspects Python exception state.
+
+Conversely, the real-time engine must not hold the GIL while waiting on runtime
+condition variables or other blocking primitives. It also must not hold graph,
+node, sender, receiver, or clock mutexes while entering Python. The ordering
+rule is:
+
+1. release/acquire runtime locks only for C++ state,
+2. drop those locks before calling Python,
+3. acquire the GIL immediately around the Python call,
+4. release the GIL before a blocking wait.
+
+This is especially important for push-source nodes: external threads enqueue
+through a sender and wake the real-time evaluation clock, while the evaluator may
+be sleeping on a condition variable. The implementation must avoid GIL/runtime
+lock inversion in both directions.
+
 Topics To Specify
 -----------------
 

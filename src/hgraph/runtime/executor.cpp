@@ -1,7 +1,13 @@
 #include <hgraph/runtime/executor.h>
+#include <hgraph/util/scope.h>
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <deque>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -9,79 +15,363 @@ namespace hgraph
 {
     namespace
     {
-        struct GraphExecutorStorage
+        [[nodiscard]] DateTime current_wall_time() noexcept
         {
-            explicit GraphExecutorStorage(const GraphExecutorBuilder &builder)
+            return std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now());
+        }
+
+        struct SimulationExecutorStorage
+        {
+            explicit SimulationExecutorStorage(const GraphExecutorBuilder &builder)
                 : graph(builder.graph_builder().make_graph()),
                   start_time(builder.start_time()),
-                  end_time(builder.end_time())
+                  end_time(builder.end_time()),
+                  evaluation_time(builder.start_time()),
+                  cycle_wall_start(current_wall_time())
             {
             }
 
-            GraphValue    graph{};
-            DateTime start_time{MIN_ST};
-            DateTime end_time{MAX_ET};
-            bool          stop_requested{false};
+            void set_evaluation_time(DateTime value) noexcept
+            {
+                evaluation_time = value;
+                cycle_wall_start = current_wall_time();
+            }
+
+            GraphValue       graph{};
+            DateTime         start_time{MIN_ST};
+            DateTime         end_time{MAX_ET};
+            DateTime         evaluation_time{MIN_ST};
+            DateTime         cycle_wall_start{current_wall_time()};
+            std::atomic_bool stop_requested{false};
         };
 
-        [[nodiscard]] GraphExecutorStorage &storage(void *memory)
+        struct RealTimeExecutorStorage
         {
-            if (memory == nullptr) { throw std::logic_error("GraphExecutor storage is null"); }
-            return *MemoryUtils::cast<GraphExecutorStorage>(memory);
-        }
-
-        [[nodiscard]] const GraphExecutorStorage &storage(const void *memory)
-        {
-            if (memory == nullptr) { throw std::logic_error("GraphExecutor storage is null"); }
-            return *MemoryUtils::cast<GraphExecutorStorage>(memory);
-        }
-
-        void run_impl(const void *, const GraphExecutorView &executor)
-        {
-            auto graph = executor.graph();
-            graph.start(executor.start_time());
-
-            try
+            explicit RealTimeExecutorStorage(const GraphExecutorBuilder &builder)
+                : graph(builder.graph_builder().make_graph()),
+                  start_time(builder.start_time()),
+                  end_time(builder.end_time()),
+                  evaluation_time(builder.start_time())
             {
-                while (!executor.stop_requested())
+            }
+
+            void set_evaluation_time(DateTime value) noexcept
+            {
+                evaluation_time = value;
+            }
+
+            GraphValue              graph{};
+            DateTime                start_time{MIN_ST};
+            DateTime                end_time{MAX_ET};
+            DateTime                evaluation_time{MIN_ST};
+            DateTime                last_time_allowed_push{MIN_DT};
+
+            mutable std::mutex      mutex{};
+            std::condition_variable condition{};
+            std::atomic_bool        stop_requested{false};
+            bool                    push_node_requires_scheduling{false};
+            bool                    ready_to_push{false};
+        };
+
+        [[nodiscard]] SimulationExecutorStorage &simulation_storage(void *memory)
+        {
+            if (memory == nullptr) { throw std::logic_error("Simulation executor storage is null"); }
+            return *MemoryUtils::cast<SimulationExecutorStorage>(memory);
+        }
+
+        [[nodiscard]] const SimulationExecutorStorage &simulation_storage(const void *memory)
+        {
+            if (memory == nullptr) { throw std::logic_error("Simulation executor storage is null"); }
+            return *MemoryUtils::cast<SimulationExecutorStorage>(memory);
+        }
+
+        [[nodiscard]] RealTimeExecutorStorage &realtime_storage(void *memory)
+        {
+            if (memory == nullptr) { throw std::logic_error("Real-time executor storage is null"); }
+            return *MemoryUtils::cast<RealTimeExecutorStorage>(memory);
+        }
+
+        [[nodiscard]] const RealTimeExecutorStorage &realtime_storage(const void *memory)
+        {
+            if (memory == nullptr) { throw std::logic_error("Real-time executor storage is null"); }
+            return *MemoryUtils::cast<RealTimeExecutorStorage>(memory);
+        }
+
+        [[nodiscard]] TimeDelta elapsed_since(DateTime start) noexcept
+        {
+            const TimeDelta elapsed = current_wall_time() - start;
+            return elapsed >= TimeDelta{0} ? elapsed : TimeDelta{0};
+        }
+
+        [[nodiscard]] DateTime simulation_clock_evaluation_time_impl(const void *, const void *memory) noexcept
+        {
+            return simulation_storage(memory).evaluation_time;
+        }
+
+        [[nodiscard]] DateTime simulation_clock_now_impl(const void *, const void *memory) noexcept
+        {
+            const auto &state = simulation_storage(memory);
+            return state.evaluation_time + elapsed_since(state.cycle_wall_start);
+        }
+
+        [[nodiscard]] TimeDelta simulation_clock_cycle_time_impl(const void *, const void *memory) noexcept
+        {
+            return elapsed_since(simulation_storage(memory).cycle_wall_start);
+        }
+
+        [[nodiscard]] DateTime simulation_clock_next_cycle_evaluation_time_impl(const void *,
+                                                                                const void *memory) noexcept
+        {
+            return simulation_storage(memory).evaluation_time + MIN_TD;
+        }
+
+        [[nodiscard]] DateTime realtime_clock_evaluation_time_impl(const void *, const void *memory) noexcept
+        {
+            return realtime_storage(memory).evaluation_time;
+        }
+
+        [[nodiscard]] DateTime realtime_clock_now_impl(const void *, const void *) noexcept
+        {
+            return current_wall_time();
+        }
+
+        [[nodiscard]] TimeDelta realtime_clock_cycle_time_impl(const void *, const void *memory) noexcept
+        {
+            return elapsed_since(realtime_storage(memory).evaluation_time);
+        }
+
+        [[nodiscard]] DateTime realtime_clock_next_cycle_evaluation_time_impl(const void *, const void *memory) noexcept
+        {
+            return realtime_storage(memory).evaluation_time + MIN_TD;
+        }
+
+        [[nodiscard]] const EvaluationClockOps &simulation_clock_ops() noexcept
+        {
+            static const EvaluationClockOps table{
+                .context = nullptr,
+                .evaluation_time_impl = &simulation_clock_evaluation_time_impl,
+                .now_impl = &simulation_clock_now_impl,
+                .cycle_time_impl = &simulation_clock_cycle_time_impl,
+                .next_cycle_evaluation_time_impl = &simulation_clock_next_cycle_evaluation_time_impl,
+            };
+            return table;
+        }
+
+        [[nodiscard]] const EvaluationClockOps &realtime_clock_ops() noexcept
+        {
+            static const EvaluationClockOps table{
+                .context = nullptr,
+                .evaluation_time_impl = &realtime_clock_evaluation_time_impl,
+                .now_impl = &realtime_clock_now_impl,
+                .cycle_time_impl = &realtime_clock_cycle_time_impl,
+                .next_cycle_evaluation_time_impl = &realtime_clock_next_cycle_evaluation_time_impl,
+            };
+            return table;
+        }
+
+        [[nodiscard]] const EvaluationClockTypeBinding &simulation_clock_binding() noexcept
+        {
+            static const EvaluationClockTypeMetaData meta{.display_name = "simulation_clock"};
+            static const EvaluationClockTypeBinding binding{
+                .type_meta = &meta,
+                .storage_plan = &MemoryUtils::plan_for<SimulationExecutorStorage>(),
+                .ops = &simulation_clock_ops(),
+            };
+            return binding;
+        }
+
+        [[nodiscard]] const EvaluationClockTypeBinding &realtime_clock_binding() noexcept
+        {
+            static const EvaluationClockTypeMetaData meta{.display_name = "realtime_clock"};
+            static const EvaluationClockTypeBinding binding{
+                .type_meta = &meta,
+                .storage_plan = &MemoryUtils::plan_for<RealTimeExecutorStorage>(),
+                .ops = &realtime_clock_ops(),
+            };
+            return binding;
+        }
+
+        [[nodiscard]] DateTime advance_simulation(SimulationExecutorStorage &state, DateTime next_scheduled_time)
+        {
+            const DateTime next = std::min(next_scheduled_time, state.end_time);
+            state.set_evaluation_time(next);
+            return next;
+        }
+
+        [[nodiscard]] DateTime advance_realtime(RealTimeExecutorStorage &state, DateTime next_scheduled_time)
+        {
+            const DateTime target = std::min(next_scheduled_time, state.end_time);
+            DateTime       wall_now = current_wall_time();
+
+            {
+                std::lock_guard lock{state.mutex};
+                state.ready_to_push = false;
+            }
+
+            const DateTime next_cycle = state.evaluation_time + MIN_TD;
+            if (target > next_cycle || wall_now > state.last_time_allowed_push + TimeDelta{15'000'000})
+            {
+                std::unique_lock lock{state.mutex};
+                state.ready_to_push = true;
+                state.last_time_allowed_push = wall_now;
+
+                while (!state.stop_requested.load(std::memory_order_acquire) &&
+                       wall_now < target &&
+                       !state.push_node_requires_scheduling)
                 {
-                    const DateTime next = graph.next_scheduled_time();
-                    if (next == MAX_DT || next >= executor.end_time()) { break; }
-                    graph.evaluate(next);
+                    const TimeDelta sleep_time = std::min(target - wall_now, TimeDelta{10'000'000});
+                    state.condition.wait_for(lock, sleep_time);
+                    wall_now = current_wall_time();
                 }
-                graph.stop();
             }
-            catch (...)
+
+            wall_now = current_wall_time();
+            const DateTime next = std::min(target, std::max(next_cycle, wall_now));
+            state.set_evaluation_time(next);
+            return next;
+        }
+
+        void validate_times(DateTime start_time, DateTime end_time)
+        {
+            if (end_time <= start_time)
             {
-                try { graph.stop(); }
-                catch (...) {}
-                throw;
+                throw std::invalid_argument("GraphExecutor end_time must be after start_time");
             }
         }
 
-        void request_stop_impl(const void *, void *memory) noexcept
+        template <typename Storage, typename Advance>
+        void run_storage(Storage &state, EvaluationClockStorageRef clock, Advance advance)
         {
-            storage(memory).stop_requested = true;
+            validate_times(state.start_time, state.end_time);
+            state.stop_requested.store(false, std::memory_order_release);
+            state.set_evaluation_time(state.start_time);
+
+            auto graph = state.graph.view();
+            graph.attach_evaluation_clock(clock);
+            auto detach_clock = make_scope_exit([&] noexcept {
+                graph.attach_evaluation_clock(EvaluationClockStorageRef{});
+            });
+
+            graph.start(state.start_time);
+            auto stop_graph = UnwindCleanupGuard([&] { graph.stop(); });
+
+            while (!state.stop_requested.load(std::memory_order_acquire))
+            {
+                const DateTime next = graph.next_scheduled_time();
+                if (next == MAX_DT || next >= state.end_time) { break; }
+
+                const DateTime evaluation_time = advance(state, next);
+                if (state.stop_requested.load(std::memory_order_acquire) ||
+                    evaluation_time == MAX_DT ||
+                    evaluation_time >= state.end_time)
+                {
+                    break;
+                }
+                graph.evaluate(evaluation_time);
+            }
+
+            stop_graph.complete();
         }
 
-        bool stop_requested_impl(const void *, const void *memory) noexcept
+        void simulation_run_impl(const void *, const GraphExecutorView &executor)
         {
-            return storage(memory).stop_requested;
+            auto &state = simulation_storage(executor.data());
+            run_storage(state,
+                        EvaluationClockStorageRef{simulation_clock_binding(), &state},
+                        [](SimulationExecutorStorage &storage, DateTime next) {
+                            return advance_simulation(storage, next);
+                        });
         }
 
-        DateTime start_time_impl(const void *, const void *memory) noexcept
+        void realtime_run_impl(const void *, const GraphExecutorView &executor)
         {
-            return storage(memory).start_time;
+            auto &state = realtime_storage(executor.data());
+            run_storage(state,
+                        EvaluationClockStorageRef{realtime_clock_binding(), &state},
+                        [](RealTimeExecutorStorage &storage, DateTime next) {
+                            return advance_realtime(storage, next);
+                        });
         }
 
-        DateTime end_time_impl(const void *, const void *memory) noexcept
+        void simulation_request_stop_impl(const void *, void *memory) noexcept
         {
-            return storage(memory).end_time;
+            simulation_storage(memory).stop_requested.store(true, std::memory_order_release);
         }
 
-        GraphView graph_impl(const void *, void *memory)
+        void realtime_request_stop_impl(const void *, void *memory) noexcept
         {
-            return storage(memory).graph.view();
+            auto &state = realtime_storage(memory);
+            state.stop_requested.store(true, std::memory_order_release);
+            std::lock_guard lock{state.mutex};
+            state.condition.notify_all();
+        }
+
+        bool simulation_stop_requested_impl(const void *, const void *memory) noexcept
+        {
+            return simulation_storage(memory).stop_requested.load(std::memory_order_acquire);
+        }
+
+        bool realtime_stop_requested_impl(const void *, const void *memory) noexcept
+        {
+            return realtime_storage(memory).stop_requested.load(std::memory_order_acquire);
+        }
+
+        DateTime simulation_start_time_impl(const void *, const void *memory) noexcept
+        {
+            return simulation_storage(memory).start_time;
+        }
+
+        DateTime realtime_start_time_impl(const void *, const void *memory) noexcept
+        {
+            return realtime_storage(memory).start_time;
+        }
+
+        DateTime simulation_end_time_impl(const void *, const void *memory) noexcept
+        {
+            return simulation_storage(memory).end_time;
+        }
+
+        DateTime realtime_end_time_impl(const void *, const void *memory) noexcept
+        {
+            return realtime_storage(memory).end_time;
+        }
+
+        GraphView simulation_graph_impl(const void *, void *memory)
+        {
+            return simulation_storage(memory).graph.view();
+        }
+
+        GraphView realtime_graph_impl(const void *, void *memory)
+        {
+            return realtime_storage(memory).graph.view();
+        }
+
+        [[nodiscard]] const GraphExecutorOps &simulation_executor_ops()
+        {
+            static const GraphExecutorOps table{
+                .context = nullptr,
+                .run_impl = &simulation_run_impl,
+                .request_stop_impl = &simulation_request_stop_impl,
+                .stop_requested_impl = &simulation_stop_requested_impl,
+                .start_time_impl = &simulation_start_time_impl,
+                .end_time_impl = &simulation_end_time_impl,
+                .graph_impl = &simulation_graph_impl,
+            };
+            return table;
+        }
+
+        [[nodiscard]] const GraphExecutorOps &realtime_executor_ops()
+        {
+            static const GraphExecutorOps table{
+                .context = nullptr,
+                .run_impl = &realtime_run_impl,
+                .request_stop_impl = &realtime_request_stop_impl,
+                .stop_requested_impl = &realtime_stop_requested_impl,
+                .start_time_impl = &realtime_start_time_impl,
+                .end_time_impl = &realtime_end_time_impl,
+                .graph_impl = &realtime_graph_impl,
+            };
+            return table;
         }
 
         struct ExecutorRuntimeRegistry
@@ -94,25 +384,22 @@ namespace hgraph
                 meta.mode = builder.mode();
 
                 schemas.push_back(meta);
-                return GraphExecutorTypeBinding::intern(schemas.back(), MemoryUtils::plan_for<GraphExecutorStorage>(), ops());
+                switch (builder.mode())
+                {
+                    case GraphExecutorMode::Simulation:
+                        return GraphExecutorTypeBinding::intern(schemas.back(),
+                                                                MemoryUtils::plan_for<SimulationExecutorStorage>(),
+                                                                simulation_executor_ops());
+                    case GraphExecutorMode::RealTime:
+                        return GraphExecutorTypeBinding::intern(schemas.back(),
+                                                                MemoryUtils::plan_for<RealTimeExecutorStorage>(),
+                                                                realtime_executor_ops());
+                }
+                throw std::logic_error("Unknown graph executor mode");
             }
 
-            static const GraphExecutorOps &ops()
-            {
-                static const GraphExecutorOps table{
-                    .context = nullptr,
-                    .run_impl = &run_impl,
-                    .request_stop_impl = &request_stop_impl,
-                    .stop_requested_impl = &stop_requested_impl,
-                    .start_time_impl = &start_time_impl,
-                    .end_time_impl = &end_time_impl,
-                    .graph_impl = &graph_impl,
-                };
-                return table;
-            }
-
-            std::deque<GraphExecutorTypeMetaData>       schemas{};
-            std::vector<std::unique_ptr<std::string>>   names{};
+            std::deque<GraphExecutorTypeMetaData>      schemas{};
+            std::vector<std::unique_ptr<std::string>>  names{};
         };
 
         ExecutorRuntimeRegistry &executor_runtime_registry()
@@ -231,7 +518,16 @@ namespace hgraph
     {
         const auto &binding = builder.binding();
         storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
-            std::construct_at(MemoryUtils::cast<GraphExecutorStorage>(dst), builder);
+            switch (builder.mode())
+            {
+                case GraphExecutorMode::Simulation:
+                    std::construct_at(MemoryUtils::cast<SimulationExecutorStorage>(dst), builder);
+                    return;
+                case GraphExecutorMode::RealTime:
+                    std::construct_at(MemoryUtils::cast<RealTimeExecutorStorage>(dst), builder);
+                    return;
+            }
+            throw std::logic_error("Unknown graph executor mode");
         });
     }
 

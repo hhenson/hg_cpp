@@ -72,8 +72,8 @@ namespace hgraph
         {
             auto context = std::make_unique<SingleNestedGraphNodeContext>(SingleNestedGraphNodeContext{
                 .spec = std::move(spec),
-                .options = options,
                 .graph_storage_offset = graph_storage_offset,
+                .options = options,
             });
             const auto *result = context.get();
             single_nested_graph_contexts().push_back(std::move(context));

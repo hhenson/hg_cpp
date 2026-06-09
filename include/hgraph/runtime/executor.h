@@ -120,9 +120,9 @@ namespace hgraph
 
         std::string       label_{};
         GraphBuilder      graph_builder_{};
+        DateTime          start_time_{MIN_ST};
+        DateTime          end_time_{MAX_ET};
         GraphExecutorMode mode_{GraphExecutorMode::Simulation};
-        DateTime     start_time_{MIN_ST};
-        DateTime     end_time_{MAX_ET};
     };
 
 }  // namespace hgraph
