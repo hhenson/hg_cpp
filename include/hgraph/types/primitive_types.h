@@ -1,6 +1,8 @@
 #ifndef HGRAPH_TYPES_PRIMITIVE_TYPES_H
 #define HGRAPH_TYPES_PRIMITIVE_TYPES_H
 
+#include <hgraph/util/date_time.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -12,6 +14,10 @@ namespace hgraph
     using Int   = std::int64_t;
     using Float = double;
     using Str   = std::string;
+
+    using Date      = engine_date_t;
+    using DateTime  = engine_time_t;
+    using TimeDelta = engine_time_delta_t;
 
     [[nodiscard]] constexpr Bool bool_(bool value) noexcept { return value; }
 

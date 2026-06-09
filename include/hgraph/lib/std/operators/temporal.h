@@ -18,23 +18,23 @@ namespace hgraph::stdlib
 
     // ---- Date component extraction ----
 
-    /** ``day_of_month`` — the day-of-month of a ``TS<date>``. */
-    struct day_of_month : Operator<"day_of_month", In<"ts", TS<engine_date_t>>, Out<TS<Int>>>
+    /** ``day_of_month`` — the day-of-month of a ``TS<Date>``. */
+    struct day_of_month : Operator<"day_of_month", In<"ts", TS<Date>>, Out<TS<Int>>>
     {
     };
 
-    /** ``month_of_year`` — the month-of-year of a ``TS<date>``. */
-    struct month_of_year : Operator<"month_of_year", In<"ts", TS<engine_date_t>>, Out<TS<Int>>>
+    /** ``month_of_year`` — the month-of-year of a ``TS<Date>``. */
+    struct month_of_year : Operator<"month_of_year", In<"ts", TS<Date>>, Out<TS<Int>>>
     {
     };
 
-    /** ``year`` — the year of a ``TS<date>``. */
-    struct year : Operator<"year", In<"ts", TS<engine_date_t>>, Out<TS<Int>>>
+    /** ``year`` — the year of a ``TS<Date>``. */
+    struct year : Operator<"year", In<"ts", TS<Date>>, Out<TS<Int>>>
     {
     };
 
-    /** ``explode`` — the (year, month, day) of a ``TS<date>`` as a 3-element list. */
-    struct explode : Operator<"explode", In<"ts", TS<engine_date_t>>, Out<TsVar<"O">>>
+    /** ``explode`` — the (year, month, day) of a ``TS<Date>`` as a 3-element list. */
+    struct explode : Operator<"explode", In<"ts", TS<Date>>, Out<TsVar<"O">>>
     {
     };
 
@@ -51,18 +51,18 @@ namespace hgraph::stdlib
     };
 
     /** ``last_modified_time`` — the engine time ``ts`` was last modified. */
-    struct last_modified_time : Operator<"last_modified_time", In<"ts", SIGNAL>, Out<TS<engine_time_t>>>
+    struct last_modified_time : Operator<"last_modified_time", In<"ts", SIGNAL>, Out<TS<DateTime>>>
     {
     };
 
     /** ``last_modified_wall_clock_time`` — the wall-clock time ``ts`` was last modified. */
     struct last_modified_wall_clock_time
-        : Operator<"last_modified_wall_clock_time", In<"ts", SIGNAL>, Out<TS<engine_time_t>>>
+        : Operator<"last_modified_wall_clock_time", In<"ts", SIGNAL>, Out<TS<DateTime>>>
     {
     };
 
     /** ``last_modified_date`` — the date component of the last-modified time. */
-    struct last_modified_date : Operator<"last_modified_date", In<"ts", SIGNAL>, Out<TS<engine_date_t>>>
+    struct last_modified_date : Operator<"last_modified_date", In<"ts", SIGNAL>, Out<TS<Date>>>
     {
     };
 

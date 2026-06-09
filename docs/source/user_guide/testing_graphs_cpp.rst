@@ -325,10 +325,10 @@ registry reset:
    stdlib::register_standard_types();
 
 The standard vocabulary is ``bool`` (``Bool``), ``int`` (``Int`` /
-``std::int64_t``), ``float`` (``Float`` / ``double``), ``date``
-(``engine_date_t``), ``datetime`` (``engine_time_t``), ``timedelta``
-(``engine_time_delta_t``), and ``str`` (``Str`` / ``std::string``), plus
-explicit aliases such as ``int8``/``int16``/``int32``/``int64`` and
+``std::int64_t``), ``float`` (``Float`` / ``double``), ``date`` (``Date``),
+``datetime`` (``DateTime``), ``timedelta`` (``TimeDelta``), and ``str``
+(``Str`` / ``std::string``), plus explicit aliases such as
+``int8``/``int16``/``int32``/``int64`` and
 ``uint8``/``uint16``/``uint32``/``uint64``. In C++ static schema syntax, use
 ``TS<Int>`` for the standard hgraph ``TS[int]``; ``TS<std::int32_t>`` is the
 explicit C++ ``int32`` storage type.

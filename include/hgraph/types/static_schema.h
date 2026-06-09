@@ -218,11 +218,11 @@ namespace hgraph
         template <>
         struct scalar_name<std::string> { static constexpr std::string_view value{"str"};         };
         template <>
-        struct scalar_name<engine_date_t> { static constexpr std::string_view value{"date"};      };
+        struct scalar_name<Date>        { static constexpr std::string_view value{"date"};        };
         template <>
-        struct scalar_name<engine_time_t> { static constexpr std::string_view value{"datetime"};  };
+        struct scalar_name<DateTime>    { static constexpr std::string_view value{"datetime"};    };
         template <>
-        struct scalar_name<engine_time_delta_t> { static constexpr std::string_view value{"timedelta"}; };
+        struct scalar_name<TimeDelta>   { static constexpr std::string_view value{"timedelta"};   };
     }  // namespace static_schema_detail
 
     /**

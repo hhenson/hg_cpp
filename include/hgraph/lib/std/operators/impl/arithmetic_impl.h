@@ -55,7 +55,7 @@ namespace hgraph::stdlib
 
     // ---- add_ / sub_ : heterogeneous (operands / result may all differ) ----
 
-    /** ``L + R -> O`` for any operands whose ``+`` yields ``O`` (e.g. datetime + timedelta). */
+    /** ``L + R -> O`` for any operands whose ``+`` yields ``O`` (e.g. DateTime + TimeDelta). */
     template <typename L, typename R, typename O>
     struct add_binary
     {
@@ -65,7 +65,7 @@ namespace hgraph::stdlib
         }
     };
 
-    /** ``L - R -> O`` for any operands whose ``-`` yields ``O`` (e.g. datetime - datetime -> timedelta). */
+    /** ``L - R -> O`` for any operands whose ``-`` yields ``O`` (e.g. DateTime - DateTime -> TimeDelta). */
     template <typename L, typename R, typename O>
     struct sub_binary
     {
@@ -110,26 +110,26 @@ namespace hgraph::stdlib
         }
     };
 
-    /** ``date + timedelta -> date`` — advances the calendar date by whole days (the time part is floored). */
+    /** ``Date + TimeDelta -> Date`` — advances the calendar date by whole days (the time part is floored). */
     struct add_date_timedelta
     {
-        static void eval(In<"lhs", TS<engine_date_t>> lhs, In<"rhs", TS<engine_time_delta_t>> rhs,
-                         Out<TS<engine_date_t>> out)
+        static void eval(In<"lhs", TS<Date>> lhs, In<"rhs", TS<TimeDelta>> rhs,
+                         Out<TS<Date>> out)
         {
             const std::chrono::sys_days base = lhs.value();
-            out.set(engine_date_t{base + std::chrono::floor<std::chrono::days>(rhs.value())});
+            out.set(Date{base + std::chrono::floor<std::chrono::days>(rhs.value())});
         }
     };
 
-    /** ``date - date -> timedelta`` — the (whole-day) span between two calendar dates. */
+    /** ``Date - Date -> TimeDelta`` — the (whole-day) span between two calendar dates. */
     struct sub_dates
     {
-        static void eval(In<"lhs", TS<engine_date_t>> lhs, In<"rhs", TS<engine_date_t>> rhs,
-                         Out<TS<engine_time_delta_t>> out)
+        static void eval(In<"lhs", TS<Date>> lhs, In<"rhs", TS<Date>> rhs,
+                         Out<TS<TimeDelta>> out)
         {
             const std::chrono::sys_days lhs_days = lhs.value();
             const std::chrono::sys_days rhs_days = rhs.value();
-            out.set(std::chrono::duration_cast<engine_time_delta_t>(lhs_days - rhs_days));
+            out.set(std::chrono::duration_cast<TimeDelta>(lhs_days - rhs_days));
         }
     };
 
@@ -380,10 +380,10 @@ namespace hgraph::stdlib
         }
     };
 
-    /** ``timedelta / timedelta -> Float`` — the ratio of two durations. */
+    /** ``TimeDelta / TimeDelta -> Float`` — the ratio of two durations. */
     struct div_timedeltas
     {
-        static void eval(In<"lhs", TS<engine_time_delta_t>> lhs, In<"rhs", TS<engine_time_delta_t>> rhs,
+        static void eval(In<"lhs", TS<TimeDelta>> lhs, In<"rhs", TS<TimeDelta>> rhs,
                          Out<TS<Float>> out)
         {
             out.set(static_cast<Float>(lhs.value().count()) / static_cast<Float>(rhs.value().count()));
@@ -419,7 +419,7 @@ namespace hgraph::stdlib
 
     struct abs_timedelta
     {
-        static void eval(In<"ts", TS<engine_time_delta_t>> ts, Out<TS<engine_time_delta_t>> out)
+        static void eval(In<"ts", TS<TimeDelta>> ts, Out<TS<TimeDelta>> out)
         {
             out.set(std::chrono::abs(ts.value()));
         }
@@ -450,22 +450,22 @@ namespace hgraph::stdlib
         register_overload<add_, add_same<Int>>();                                                // int + int -> int
         register_overload<add_, add_same<Float>>();                                              // float + float -> float
         register_overload<add_, add_same<Str>>();                                                // string concatenation
-        register_overload<add_, add_same<engine_time_delta_t>>();                                // timedelta + timedelta
+        register_overload<add_, add_same<TimeDelta>>();                                          // TimeDelta + TimeDelta
         register_overload<add_, add_binary<Int, Float, Float>>();                                // int + float -> float
         register_overload<add_, add_binary<Float, Int, Float>>();                                // float + int -> float
-        register_overload<add_, add_binary<engine_time_t, engine_time_delta_t, engine_time_t>>();// datetime + timedelta
-        register_overload<add_, add_binary<engine_time_delta_t, engine_time_t, engine_time_t>>();// timedelta + datetime
-        register_overload<add_, add_date_timedelta>();                                           // date + timedelta -> date
+        register_overload<add_, add_binary<DateTime, TimeDelta, DateTime>>();                    // DateTime + TimeDelta
+        register_overload<add_, add_binary<TimeDelta, DateTime, DateTime>>();                    // TimeDelta + DateTime
+        register_overload<add_, add_date_timedelta>();                                           // Date + TimeDelta -> Date
 
         // sub_ — note the result type that differs from the operands.
         register_overload<sub_, sub_same<Int>>();                                                // int - int -> int
         register_overload<sub_, sub_same<Float>>();                                              // float - float -> float
-        register_overload<sub_, sub_same<engine_time_delta_t>>();                                // timedelta - timedelta
+        register_overload<sub_, sub_same<TimeDelta>>();                                          // TimeDelta - TimeDelta
         register_overload<sub_, sub_binary<Int, Float, Float>>();                                // int - float -> float
         register_overload<sub_, sub_binary<Float, Int, Float>>();                                // float - int -> float
-        register_overload<sub_, sub_binary<engine_time_t, engine_time_delta_t, engine_time_t>>();// datetime - timedelta
-        register_overload<sub_, sub_binary<engine_time_t, engine_time_t, engine_time_delta_t>>();// datetime - datetime -> timedelta
-        register_overload<sub_, sub_dates>();                                                    // date - date -> timedelta
+        register_overload<sub_, sub_binary<DateTime, TimeDelta, DateTime>>();                    // DateTime - TimeDelta
+        register_overload<sub_, sub_binary<DateTime, DateTime, TimeDelta>>();                    // DateTime - DateTime -> TimeDelta
+        register_overload<sub_, sub_dates>();                                                    // Date - Date -> TimeDelta
 
         // mul_ — numeric products and string repetition.
         register_overload<mul_, mul_same<Int>>();
@@ -485,7 +485,7 @@ namespace hgraph::stdlib
         register_overload<div_, div_numbers<Float, Float>>();         // float / float -> float (with policy)
         register_overload<div_, div_numbers<Int, Float>>();
         register_overload<div_, div_numbers<Float, Int>>();
-        register_overload<div_, div_timedeltas>();                    // timedelta / timedelta -> float
+        register_overload<div_, div_timedeltas>();                    // TimeDelta / TimeDelta -> Float
 
         // floordiv_ / mod_ — integer outputs for int operands, Float otherwise.
         register_overload<floordiv_, floordiv_ints_default>();
@@ -518,10 +518,10 @@ namespace hgraph::stdlib
 
         register_overload<neg_, neg_same<Int>>();
         register_overload<neg_, neg_same<Float>>();
-        register_overload<neg_, neg_same<engine_time_delta_t>>();
+        register_overload<neg_, neg_same<TimeDelta>>();
         register_overload<pos_, pos_same<Int>>();
         register_overload<pos_, pos_same<Float>>();
-        register_overload<pos_, pos_same<engine_time_delta_t>>();
+        register_overload<pos_, pos_same<TimeDelta>>();
         register_overload<abs_, abs_same<Int>>();
         register_overload<abs_, abs_same<Float>>();
         register_overload<abs_, abs_timedelta>();

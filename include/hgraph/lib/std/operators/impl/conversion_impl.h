@@ -72,12 +72,12 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution) { const_resolve_output(resolution); }
 
-        static void start(Scalar<"delay", engine_time_delta_t> delay, SingleShotScheduler sched)
+        static void start(Scalar<"delay", TimeDelta> delay, SingleShotScheduler sched)
         {
             sched.schedule(delay.value());   // now + delay (now == start_time during start)
         }
 
-        static void eval(Scalar<"value", ScalarVar<"T">> value, Scalar<"delay", engine_time_delta_t> delay,
+        static void eval(Scalar<"value", ScalarVar<"T">> value, Scalar<"delay", TimeDelta> delay,
                          Out<TsVar<"S">> out)
         {
             static_cast<void>(delay);   // delay drives the start schedule; eval just applies the value

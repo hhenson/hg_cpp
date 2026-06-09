@@ -19,7 +19,7 @@ namespace hgraph::stdlib
      * The operator signature is a *suggestion*: binary operators declare independent
      * type variables for ``lhs`` / ``rhs`` / the result so a single name spans
      * homogeneous (``int + int``), mixed (``int + float``) and heterogeneous
-     * (``datetime + timedelta``) cases. Matching is driven by each implementation's own
+     * (``DateTime + TimeDelta``) cases. Matching is driven by each implementation's own
      * signature, not by these abstract ones.
      */
 

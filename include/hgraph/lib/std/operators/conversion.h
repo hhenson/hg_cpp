@@ -30,7 +30,7 @@ namespace hgraph::stdlib
         Two arities: ``const(value)`` (tick at start) and ``const(value, delay)`` (tick at
         ``start_time + delay``). */
     struct const_
-        : Operator<"const", Scalar<"value", ScalarVar<"T">>, Scalar<"delay", engine_time_delta_t>, Out<TsVar<"S">>>
+        : Operator<"const", Scalar<"value", ScalarVar<"T">>, Scalar<"delay", TimeDelta>, Out<TsVar<"S">>>
     {
     };
 

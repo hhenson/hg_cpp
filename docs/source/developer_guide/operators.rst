@@ -325,7 +325,7 @@ that operator:
    void register_standard_operators() {
        register_overload<add_, add_same<Int>>();                                    // int + int -> int
        register_overload<add_, add_binary<Int, Float, Float>>();                    // int + float -> float
-       register_overload<add_, add_binary<DateTime, TimeDelta, DateTime>>();      // datetime + timedelta
+       register_overload<add_, add_binary<DateTime, TimeDelta, DateTime>>();      // DateTime + TimeDelta
    }
 
 **The operator signature is a suggestion, not a rule.** An implementation is **not**
@@ -343,7 +343,7 @@ So ``add_same<T>`` (the repeated ``T``) accepts ``(int, int)`` but rejects
 ``(int, float)``; ``add_binary<L, R, O>`` (distinct names) accepts both because the
 operands are independent. The **result type can differ from the operands**, which is
 the same machinery viewed from the output: ``div_: int / int -> float`` (aligned
-operands, independent result) and ``sub_: datetime - datetime -> timedelta`` (result
+operands, independent result) and ``sub_: DateTime - DateTime -> TimeDelta`` (result
 differs from *both* operands) are ordinary overloads.
 
 **C++ note.** Python expresses the homogeneous case as a *single* generic overload
@@ -538,8 +538,8 @@ Roadmap
    registers scalar arithmetic, comparison, logical / bitwise, const / zero and simple IO
    sink overloads through an explicit ``register_standard_operators()`` call. Arithmetic
    includes homogeneous and mixed numeric cases, heterogeneous-temporal cases
-   (``datetime + timedelta -> datetime``, ``date + timedelta -> date``), result-differs
-   cases (``div_: int / int -> float``, ``sub_: datetime - datetime -> timedelta``),
+   (``DateTime + TimeDelta -> DateTime``, ``Date + TimeDelta -> Date``), result-differs
+   cases (``div_: Int / Int -> Float``, ``sub_: DateTime - DateTime -> TimeDelta``),
    Python-style floor semantics for integer ``floordiv_`` / ``mod_``, and optional
    wiring-time ``DivideByZero`` policy overloads (``Error`` / ``Nan`` / ``Inf`` /
    ``NoTick`` / ``Zero`` / ``One``, mirroring ``ext/2603`` where applicable).

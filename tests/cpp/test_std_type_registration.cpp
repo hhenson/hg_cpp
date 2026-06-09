@@ -47,14 +47,17 @@ TEST_CASE("stdlib::register_standard_types registers scalar aliases")
     STATIC_REQUIRE(std::is_same_v<Bool, bool>);
     STATIC_REQUIRE(std::is_same_v<Int, std::int64_t>);
     STATIC_REQUIRE(std::is_same_v<Float, double>);
+    STATIC_REQUIRE(std::is_same_v<Date, engine_date_t>);
+    STATIC_REQUIRE(std::is_same_v<DateTime, engine_time_t>);
+    STATIC_REQUIRE(std::is_same_v<TimeDelta, engine_time_delta_t>);
     STATIC_REQUIRE(std::is_same_v<Str, std::string>);
 
     const auto *bool_type      = registry.scalar_binding<Bool>()->type_meta;
     const auto *int_type       = registry.scalar_binding<Int>()->type_meta;
     const auto *float_type     = registry.scalar_binding<Float>()->type_meta;
-    const auto *date_type      = registry.scalar_binding<engine_date_t>()->type_meta;
-    const auto *datetime_type  = registry.scalar_binding<engine_time_t>()->type_meta;
-    const auto *timedelta_type = registry.scalar_binding<engine_time_delta_t>()->type_meta;
+    const auto *date_type      = registry.scalar_binding<Date>()->type_meta;
+    const auto *datetime_type  = registry.scalar_binding<DateTime>()->type_meta;
+    const auto *timedelta_type = registry.scalar_binding<TimeDelta>()->type_meta;
     const auto *str_type       = registry.scalar_binding<Str>()->type_meta;
 
     CHECK(registry.value_type("bool") == bool_type);
@@ -215,6 +218,9 @@ TEST_CASE("date-time aliases and constants match the 2603 runtime definitions")
                                   std::chrono::time_point<engine_clock, std::chrono::microseconds>>);
     STATIC_REQUIRE(std::is_same_v<engine_time_delta_t, std::chrono::microseconds>);
     STATIC_REQUIRE(std::is_same_v<engine_date_t, std::chrono::year_month_day>);
+    STATIC_REQUIRE(std::is_same_v<Date, engine_date_t>);
+    STATIC_REQUIRE(std::is_same_v<DateTime, engine_time_t>);
+    STATIC_REQUIRE(std::is_same_v<TimeDelta, engine_time_delta_t>);
 
     CHECK(MIN_DT == min_time());
     CHECK(MAX_DT == max_time());
@@ -222,7 +228,7 @@ TEST_CASE("date-time aliases and constants match the 2603 runtime definitions")
     CHECK(MAX_ET == max_end_time());
     CHECK(MIN_TD == smallest_time_increment());
 
-    CHECK(std::string{scalar_descriptor<engine_date_t>::value_meta()->name()} == "date");
-    CHECK(std::string{scalar_descriptor<engine_time_t>::value_meta()->name()} == "datetime");
-    CHECK(std::string{scalar_descriptor<engine_time_delta_t>::value_meta()->name()} == "timedelta");
+    CHECK(std::string{scalar_descriptor<Date>::value_meta()->name()} == "date");
+    CHECK(std::string{scalar_descriptor<DateTime>::value_meta()->name()} == "datetime");
+    CHECK(std::string{scalar_descriptor<TimeDelta>::value_meta()->name()} == "timedelta");
 }

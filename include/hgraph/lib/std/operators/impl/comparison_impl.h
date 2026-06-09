@@ -153,9 +153,9 @@ namespace hgraph::stdlib
         register_overload<Operator, Impl<Int>>();
         register_overload<Operator, Impl<Float>>();
         register_overload<Operator, Impl<Str>>();
-        register_overload<Operator, Impl<engine_date_t>>();
-        register_overload<Operator, Impl<engine_time_t>>();
-        register_overload<Operator, Impl<engine_time_delta_t>>();
+        register_overload<Operator, Impl<Date>>();
+        register_overload<Operator, Impl<DateTime>>();
+        register_overload<Operator, Impl<TimeDelta>>();
     }
 
     template <typename Operator, template <typename, typename> class Impl>
@@ -172,18 +172,18 @@ namespace hgraph::stdlib
         register_overload<eq_, eq_same<Int>>();
         register_overload<eq_, eq_same<Float>>();
         register_overload<eq_, eq_same<Str>>();
-        register_overload<eq_, eq_same<engine_date_t>>();
-        register_overload<eq_, eq_same<engine_time_t>>();
-        register_overload<eq_, eq_same<engine_time_delta_t>>();
+        register_overload<eq_, eq_same<Date>>();
+        register_overload<eq_, eq_same<DateTime>>();
+        register_overload<eq_, eq_same<TimeDelta>>();
         register_mixed_numeric_comparisons<eq_, eq_binary>();
 
         register_overload<ne_, ne_same<Bool>>();
         register_overload<ne_, ne_same<Int>>();
         register_overload<ne_, ne_same<Float>>();
         register_overload<ne_, ne_same<Str>>();
-        register_overload<ne_, ne_same<engine_date_t>>();
-        register_overload<ne_, ne_same<engine_time_t>>();
-        register_overload<ne_, ne_same<engine_time_delta_t>>();
+        register_overload<ne_, ne_same<Date>>();
+        register_overload<ne_, ne_same<DateTime>>();
+        register_overload<ne_, ne_same<TimeDelta>>();
         register_mixed_numeric_comparisons<ne_, ne_binary>();
 
         register_ordered_same_scalar_comparisons<lt_, lt_same>();

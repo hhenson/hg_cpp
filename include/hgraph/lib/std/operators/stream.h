@@ -14,7 +14,7 @@ namespace hgraph::stdlib
      * Python ``hgraph`` stream operators (``_stream.py``) and the analytical operators
      * (``_analytical_operators.py``). A ``period`` / ``count`` that Python types as
      * ``INT_OR_TIME_DELTA`` is modelled here as ``Int`` (ticks) — an implementation may also
-     * accept ``engine_time_delta_t``.
+     * accept ``TimeDelta``.
      */
 
     /** ``sample`` — snap ``ts`` on each tick of ``signal``. */
@@ -28,12 +28,12 @@ namespace hgraph::stdlib
     };
 
     /** ``schedule`` — a source ticking ``True`` every ``delay``. */
-    struct schedule : Operator<"schedule", Scalar<"delay", engine_time_delta_t>, Out<TS<Bool>>>
+    struct schedule : Operator<"schedule", Scalar<"delay", TimeDelta>, Out<TS<Bool>>>
     {
     };
 
     /** ``resample`` — re-tick ``ts`` at ``period``, even when the input does not tick. */
-    struct resample : Operator<"resample", In<"ts", TsVar<"S">>, Scalar<"period", engine_time_delta_t>, Out<TsVar<"S">>>
+    struct resample : Operator<"resample", In<"ts", TsVar<"S">>, Scalar<"period", TimeDelta>, Out<TsVar<"S">>>
     {
     };
 
@@ -63,7 +63,7 @@ namespace hgraph::stdlib
     };
 
     /** ``throttle`` — limit the tick rate of ``ts`` to ``period``. */
-    struct throttle : Operator<"throttle", In<"ts", TsVar<"S">>, In<"period", TS<engine_time_delta_t>>, Out<TsVar<"S">>>
+    struct throttle : Operator<"throttle", In<"ts", TsVar<"S">>, In<"period", TS<TimeDelta>>, Out<TsVar<"S">>>
     {
     };
 
@@ -95,7 +95,7 @@ namespace hgraph::stdlib
 
     /** ``batch`` — like ``gate`` but releases queued ticks in batches with ``delay`` between them. */
     struct batch : Operator<"batch", In<"condition", TS<Bool>>, In<"ts", TsVar<"S">>,
-                            Scalar<"delay", engine_time_delta_t>, Scalar<"buffer_length", Int>, Out<TsVar<"O">>>
+                            Scalar<"delay", TimeDelta>, Scalar<"buffer_length", Int>, Out<TsVar<"O">>>
     {
     };
 
