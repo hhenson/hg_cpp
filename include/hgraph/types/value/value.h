@@ -77,7 +77,7 @@ namespace hgraph
             {
                 throw std::invalid_argument("Value(ValueView): view has no binding");
             }
-            const auto &ops     = view_binding->checked_ops();
+            const auto &ops     = view_binding->ops_ref();
             const auto &binding = ops.owning_binding(*view_binding);
             if (view.data() == nullptr)
             {

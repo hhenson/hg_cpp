@@ -128,32 +128,32 @@ namespace hgraph
 
     ValueView TSOutputView::value() const
     {
-        return data_.valid() ? data_.value() : ValueView{};
+        return data_.value();
     }
 
     ValueView TSOutputView::delta_value() const
     {
-        return data_.valid() ? data_.delta_value(evaluation_time_) : ValueView{};
+        return data_.delta_value(evaluation_time_);
     }
 
     DateTime TSOutputView::last_modified_time() const
     {
-        return data_.valid() ? data_.last_modified_time() : MIN_DT;
+        return data_.last_modified_time();
     }
 
     bool TSOutputView::modified() const
     {
-        return evaluation_time_ != MIN_DT && data_.valid() && data_.modified(evaluation_time_);
+        return evaluation_time_ != MIN_DT && data_.modified(evaluation_time_);
     }
 
     bool TSOutputView::valid() const
     {
-        return data_.valid() && data_.has_current_value();
+        return data_.has_current_value();
     }
 
     bool TSOutputView::all_valid() const
     {
-        return data_.valid() && data_.all_valid();
+        return data_.all_valid();
     }
 
     bool TSOutputView::forwarding() const noexcept

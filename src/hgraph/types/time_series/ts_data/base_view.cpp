@@ -64,40 +64,35 @@ namespace hgraph
 
     std::size_t TSDataView::child_id() const
     {
-        if (!valid()) { return TS_DATA_NO_CHILD_ID; }
         const auto &link = tracking().parent;
         return link.has_parent() ? link.child_id : TS_DATA_NO_CHILD_ID;
     }
 
     bool TSDataView::has_parent() const
     {
-        return valid() && tracking().parent.has_parent();
+        return tracking().parent.has_parent();
     }
 
     std::vector<std::size_t> TSDataView::path_from_root() const
     {
-        return valid() ? tracking().parent.path_from_root() : std::vector<std::size_t>{};
+        return tracking().parent.path_from_root();
     }
 
     TSDataView TSDataView::root_view() const
     {
-        if (!valid()) { return borrowed_ref(); }
         const auto &link = tracking().parent;
         return link.has_ts_data_parent() ? link.root_view() : borrowed_ref();
     }
 
     void *TSDataView::mutable_data() const
     {
-        if (!valid()) { throw std::logic_error("TSDataView::mutable_data requires a live view"); }
         if (!ops().allows_mutation) { throw std::logic_error("TSDataView::mutable_data requires mutable TSData ops"); }
         return storage_.data();
     }
 
     const TSDataOps &TSDataView::ops() const
     {
-        const auto *bound = binding();
-        if (bound == nullptr) { throw std::logic_error("TSDataView is not bound"); }
-        return bound->checked_ops();
+        return storage_.ops();
     }
 
     const TSDataLayout &TSDataView::layout() const
@@ -108,21 +103,18 @@ namespace hgraph
 
     const TSDataTracking &TSDataView::tracking() const
     {
-        require_live("TSDataView::tracking");
         const auto &table = ops();
         return *table.tracking_impl(table.context, data());
     }
 
     ValueView TSDataView::value() const
     {
-        require_live("TSDataView::value");
         const auto &table = ops();
         return ValueView{layout().value_binding, table.value_memory_impl(table.context, data())};
     }
 
     ValueView TSDataView::delta_value(DateTime evaluation_time) const
     {
-        require_live("TSDataView::delta_value");
         const auto &data_layout = layout();
         if (!modified(evaluation_time)) { return ValueView{data_layout.delta_binding, nullptr}; }
 
@@ -133,7 +125,6 @@ namespace hgraph
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
     nb::object TSDataView::value_to_python() const
     {
-        require_live("TSDataView::value_to_python");
         if (!has_current_value()) { return nb::none(); }
 
         const auto &table = ops();
@@ -142,7 +133,6 @@ namespace hgraph
 
     nb::object TSDataView::delta_value_to_python(DateTime evaluation_time) const
     {
-        require_live("TSDataView::delta_value_to_python");
         if (!modified(evaluation_time)) { return nb::none(); }
 
         const auto &table = ops();
@@ -157,7 +147,7 @@ namespace hgraph
 
     bool TSDataView::modified(DateTime evaluation_time) const
     {
-        return tracking().last_modified_time == evaluation_time;
+        return evaluation_time != MIN_DT && tracking().last_modified_time == evaluation_time;
     }
 
     void TSDataView::subscribe(Notifiable *observer) const
@@ -180,24 +170,22 @@ namespace hgraph
 
     bool TSDataView::has_observers() const
     {
-        return valid() && !tracking().observers.empty();
+        return !tracking().observers.empty();
     }
 
     std::size_t TSDataView::observer_count() const
     {
-        return valid() ? tracking().observers.size() : 0;
+        return tracking().observers.size();
     }
 
     bool TSDataView::has_current_value() const
     {
-        require_live("TSDataView::has_current_value");
         const auto &table = ops();
         return table.has_current_value_impl(table.context, data());
     }
 
     bool TSDataView::all_valid() const
     {
-        require_live("TSDataView::all_valid");
         if (!has_current_value()) { return false; }
         const auto &table = ops();
         return table.all_valid_impl(table.context, data());
@@ -205,7 +193,6 @@ namespace hgraph
 
     void TSDataView::cleanup_delta(DateTime modified_time) const
     {
-        require_live("TSDataView::cleanup_delta");
         if (modified_time == MIN_DT || tracking().last_modified_time != modified_time) { return; }
 
         const auto &table = ops();

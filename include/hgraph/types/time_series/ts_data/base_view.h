@@ -23,12 +23,19 @@ namespace hgraph
     class TSDataStorageRef
     {
       public:
-        constexpr TSDataStorageRef() noexcept = default;
+        TSDataStorageRef() noexcept
+            : storage_(nullptr, static_cast<void *>(nullptr))
+        {
+            if constexpr (std::same_as<DataOps, TSDataOps>)
+            {
+                ops_ = &ts_data_detail::default_ts_data_ops();
+            }
+        }
 
         constexpr TSDataStorageRef(const TSDataBinding *binding, void *data) noexcept
             requires std::same_as<DataOps, TSDataOps>
             : storage_(binding, data),
-              ops_(binding != nullptr ? binding->ops : nullptr)
+              ops_(binding != nullptr && data != nullptr ? binding->ops : &ts_data_detail::default_ts_data_ops())
         {
         }
 
@@ -41,7 +48,7 @@ namespace hgraph
         TSDataStorageRef(TSDataStorageRef<> storage, TSTypeKind expected_kind)
             requires(!std::same_as<DataOps, TSDataOps>)
             : storage_(storage.storage_),
-              ops_(checked_ops(storage, expected_kind))
+              ops_(typed_ops(storage, expected_kind))
         {
         }
 
@@ -88,11 +95,18 @@ namespace hgraph
         void reset() noexcept
         {
             storage_.reset();
-            ops_ = nullptr;
+            if constexpr (std::same_as<DataOps, TSDataOps>)
+            {
+                ops_ = &ts_data_detail::default_ts_data_ops();
+            }
+            else
+            {
+                ops_ = nullptr;
+            }
         }
 
       private:
-        [[nodiscard]] static const DataOps *checked_ops(TSDataStorageRef<> storage, TSTypeKind expected_kind)
+        [[nodiscard]] static const DataOps *typed_ops(TSDataStorageRef<> storage, TSTypeKind expected_kind)
             requires(!std::same_as<DataOps, TSDataOps>)
         {
             if (!storage.has_value()) { throw std::logic_error("TSDataStorageRef requires live TSData storage"); }

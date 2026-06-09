@@ -73,6 +73,57 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("empty delta");
     }
 
+    const TSDataLayout *default_layout(const void *)
+    {
+        static const TSDataLayout layout{};
+        return &layout;
+    }
+
+    const TSDataTracking *default_tracking(const void *, const void *)
+    {
+        static const TSDataTracking tracking{};
+        return &tracking;
+    }
+
+    bool default_has_current_value(const void *, const void *)
+    {
+        return false;
+    }
+
+    bool default_all_valid(const void *, const void *)
+    {
+        return false;
+    }
+
+    const void *default_value_memory(const void *, const void *)
+    {
+        return nullptr;
+    }
+
+    const void *default_delta_memory(const void *, const void *)
+    {
+        return nullptr;
+    }
+
+    const TSDataOps &default_ts_data_ops() noexcept
+    {
+        static const TSDataOps table{
+            .context = nullptr,
+            .kind = TSTypeKind::SIGNAL,
+            .allows_mutation = false,
+            .layout_impl = &default_layout,
+            .tracking_impl = &default_tracking,
+            .mutable_tracking_impl = &missing_mutable_tracking,
+            .has_current_value_impl = &default_has_current_value,
+            .all_valid_impl = &default_all_valid,
+            .value_memory_impl = &default_value_memory,
+            .mutable_value_memory_impl = &missing_mutable_value_memory,
+            .delta_memory_impl = &default_delta_memory,
+            .mutable_delta_memory_impl = &missing_mutable_delta_memory,
+        };
+        return table;
+    }
+
     Value missing_capture_delta(const TSInputView &)
     {
         missing_ts_data_op("capture delta");

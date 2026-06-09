@@ -90,7 +90,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             void cleanup_delta(DateTime modified_time)
             {
-                const auto &child_ops = element_binding().checked_ops();
+                const auto &child_ops = element_binding().ops_ref();
                 for (std::size_t index = 0; index < elements_.size(); ++index)
                 {
                     void       *child = child_memory(index);
@@ -178,7 +178,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
         [[nodiscard]] const TSDataOps &child_ops(const TSDataBinding &child)
         {
-            return child.checked_ops();
+            return child.ops_ref();
         }
 
         struct DynamicTSLContext
@@ -798,7 +798,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 for (std::size_t index = 0; index < store.size(); ++index)
                 {
                     if (!child_modified_for_parent_time(state, memory, index)) { continue; }
-                    const auto key_hash = state->ordinal_key_binding->checked_ops().hash(&store.ordinal_key(index));
+                    const auto key_hash = state->ordinal_key_binding->ops_ref().hash(&store.ordinal_key(index));
                     const auto value_hash = view_hash(child_delta_view(state, memory, index));
                     result ^= dynamic_combine_hash(key_hash, value_hash);
                 }
@@ -932,7 +932,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     if (child_modified_for_parent_time(state, memory, index))
                     {
-                        result ^= state->ordinal_key_binding->checked_ops().hash(&store.ordinal_key(index));
+                        result ^= state->ordinal_key_binding->ops_ref().hash(&store.ordinal_key(index));
                     }
                 }
                 return result;

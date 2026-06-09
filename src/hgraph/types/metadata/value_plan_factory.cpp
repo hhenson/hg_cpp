@@ -102,7 +102,7 @@ namespace hgraph
             std::size_t seed  = 0;
             for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
             {
-                const auto &ops = state->child_bindings[index]->checked_ops();
+                const auto &ops = state->child_bindings[index]->ops_ref();
                 const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                 seed = combine_hash(seed, ops.hash(child));
             }
@@ -116,7 +116,7 @@ namespace hgraph
                 const auto *state = static_cast<const CompositeIndexedContext *>(context);
                 for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
                 {
-                    const auto &ops = state->child_bindings[index]->checked_ops();
+                    const auto &ops = state->child_bindings[index]->ops_ref();
                     const auto *a = static_cast<const std::byte *>(lhs) + state->offsets[index];
                     const auto *b = static_cast<const std::byte *>(rhs) + state->offsets[index];
                     if (!ops.equals(a, b)) { return false; }
@@ -134,7 +134,7 @@ namespace hgraph
                 const auto *state = static_cast<const CompositeIndexedContext *>(context);
                 for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
                 {
-                    const auto &ops = state->child_bindings[index]->checked_ops();
+                    const auto &ops = state->child_bindings[index]->ops_ref();
                     const auto *a = static_cast<const std::byte *>(lhs) + state->offsets[index];
                     const auto *b = static_cast<const std::byte *>(rhs) + state->offsets[index];
                     const auto  c = ops.compare(a, b);
@@ -159,7 +159,7 @@ namespace hgraph
                     const char *name = state->schema->fields[index].name;
                     fmt::format_to(std::back_inserter(out), "{}: ", name != nullptr ? name : "");
                 }
-                const auto &ops = state->child_bindings[index]->checked_ops();
+                const auto &ops = state->child_bindings[index]->ops_ref();
                 const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                 fmt::format_to(std::back_inserter(out), "{}", ops.to_string(child));
             }
@@ -186,7 +186,7 @@ namespace hgraph
         {
             if (memory == nullptr) { throw std::runtime_error(std::string{what} + " child memory is not live"); }
             if (source.is_none()) { throw std::invalid_argument(std::string{what} + " does not allow None elements"); }
-            binding.checked_ops().from_python(binding, memory, source);
+            binding.ops_ref().from_python(binding, memory, source);
         }
 
         [[nodiscard]] nb::object composite_value_to_python(const void *context, const void *memory)
@@ -202,7 +202,7 @@ namespace hgraph
                 {
                     const char *name = state->schema->fields[index].name;
                     if (name == nullptr || *name == '\0') { continue; }
-                    const auto &ops = state->child_bindings[index]->checked_ops();
+                    const auto &ops = state->child_bindings[index]->ops_ref();
                     const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                     result[nb::str{name}] = ops.to_python(child);
                 }
@@ -212,7 +212,7 @@ namespace hgraph
             nb::list result;
             for (std::size_t index = 0; index < state->child_bindings.size(); ++index)
             {
-                const auto &ops = state->child_bindings[index]->checked_ops();
+                const auto &ops = state->child_bindings[index]->ops_ref();
                 const auto *child = static_cast<const std::byte *>(memory) + state->offsets[index];
                 result.append(ops.to_python(child));
             }
@@ -364,7 +364,7 @@ namespace hgraph
         [[nodiscard]] std::size_t array_value_hash(const void *context, const void *memory)
         {
             const auto *state = static_cast<const ArrayIndexedContext *>(context);
-            const auto &ops   = state->element_binding->checked_ops();
+            const auto &ops   = state->element_binding->ops_ref();
             std::size_t seed  = 0;
             for (std::size_t index = 0; index < state->size; ++index)
             {
@@ -379,7 +379,7 @@ namespace hgraph
             if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
             return fallback_on_exception(false, [&] {
                 const auto *state = static_cast<const ArrayIndexedContext *>(context);
-                const auto &ops   = state->element_binding->checked_ops();
+                const auto &ops   = state->element_binding->ops_ref();
                 for (std::size_t index = 0; index < state->size; ++index)
                 {
                     const auto *a = static_cast<const std::byte *>(lhs) + index * state->stride;
@@ -397,7 +397,7 @@ namespace hgraph
 
             return fallback_on_exception(std::partial_ordering::unordered, [&]() {
                 const auto *state = static_cast<const ArrayIndexedContext *>(context);
-                const auto &ops   = state->element_binding->checked_ops();
+                const auto &ops   = state->element_binding->ops_ref();
                 for (std::size_t index = 0; index < state->size; ++index)
                 {
                     const auto *a = static_cast<const std::byte *>(lhs) + index * state->stride;
@@ -413,7 +413,7 @@ namespace hgraph
         {
             if (memory == nullptr) { return "[]"; }
             const auto *state = static_cast<const ArrayIndexedContext *>(context);
-            const auto &ops   = state->element_binding->checked_ops();
+            const auto &ops   = state->element_binding->ops_ref();
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "[");
             for (std::size_t index = 0; index < state->size; ++index)
@@ -431,7 +431,7 @@ namespace hgraph
         {
             if (memory == nullptr) { throw std::runtime_error("array to_python requires live value memory"); }
             const auto *state = static_cast<const ArrayIndexedContext *>(context);
-            const auto &ops   = state->element_binding->checked_ops();
+            const auto &ops   = state->element_binding->ops_ref();
             if (ops.can_to_python_buffer(*state->element_binding))
             {
                 struct ArrayBufferOwner

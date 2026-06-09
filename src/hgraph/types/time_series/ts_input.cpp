@@ -391,7 +391,7 @@ namespace hgraph
         [[nodiscard]] const ValueTypeBinding *value_binding_for_data_binding(const TSDataBinding *binding)
         {
             if (binding == nullptr) { return nullptr; }
-            const auto &ops = binding->checked_ops();
+            const auto &ops = binding->ops_ref();
             const auto *layout = ops.layout_impl(ops.context);
             return layout != nullptr ? layout->value_binding : nullptr;
         }
@@ -702,7 +702,7 @@ namespace hgraph
                 const auto *binding = input_element_binding(context, memory, index);
                 const auto *data    = input_element_memory(context, memory, index);
                 if (binding == nullptr || data == nullptr) { continue; }
-                const auto &ops = binding->checked_ops();
+                const auto &ops = binding->ops_ref();
                 if (ops.has_current_value_impl(ops.context, data)) { return true; }
             }
             return false;
@@ -717,7 +717,7 @@ namespace hgraph
                 const auto *binding = input_element_binding(context, memory, index);
                 const auto *data    = input_element_memory(context, memory, index);
                 if (binding == nullptr || data == nullptr) { return false; }
-                const auto &ops = binding->checked_ops();
+                const auto &ops = binding->ops_ref();
                 if (!ops.all_valid_impl(ops.context, data)) { return false; }
             }
             return true;
@@ -736,7 +736,7 @@ namespace hgraph
                 const auto *binding = input_element_binding(context, memory, index);
                 const auto *data    = input_element_memory(context, memory, index);
                 if (binding == nullptr || data == nullptr) { continue; }
-                const auto &ops = binding->checked_ops();
+                const auto &ops = binding->ops_ref();
                 const auto *tracking = ops.tracking_impl(ops.context, data);
                 if (tracking != nullptr && tracking->last_modified_time == modified_time)
                 {
@@ -772,7 +772,7 @@ namespace hgraph
             if (!child.target_link)
             {
                 const auto *binding = child.input_binding;
-                const auto &ops = binding->checked_ops();
+                const auto &ops = binding->ops_ref();
                 return ops.value_memory_impl(ops.context, memory);
             }
             const auto *link = child_target_storage(child, memory);
@@ -799,7 +799,7 @@ namespace hgraph
             {
                 const auto *binding = input_value_element_binding(context, memory, index);
                 const auto *child   = input_value_element_at(context, memory, index);
-                const auto  value   = child != nullptr && binding != nullptr ? binding->checked_ops().hash(child) : 0;
+                const auto  value   = child != nullptr && binding != nullptr ? binding->ops_ref().hash(child) : 0;
                 seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
             }
             return seed;
@@ -821,7 +821,7 @@ namespace hgraph
                         if (a != b) { return false; }
                         continue;
                     }
-                    if (binding == nullptr || !binding->checked_ops().equals(a, b)) { return false; }
+                    if (binding == nullptr || !binding->ops_ref().equals(a, b)) { return false; }
                 }
                 return true;
             });
@@ -845,7 +845,7 @@ namespace hgraph
                         if (a != b) { return std::partial_ordering::unordered; }
                         continue;
                     }
-                    const auto order = binding->checked_ops().compare(a, b);
+                    const auto order = binding->ops_ref().compare(a, b);
                     if (order != 0) { return order; }
                 }
                 const auto lhs_size = input_indexed_size(context, lhs);
@@ -878,7 +878,7 @@ namespace hgraph
                 const auto *child   = input_value_element_at(context, memory, index);
                 if (binding != nullptr && child != nullptr)
                 {
-                    fmt::format_to(std::back_inserter(out), "{}", binding->checked_ops().to_string(child));
+                    fmt::format_to(std::back_inserter(out), "{}", binding->ops_ref().to_string(child));
                 }
             }
             fmt::format_to(std::back_inserter(out), "{}", endpoint_ops.value_close);
@@ -891,7 +891,7 @@ namespace hgraph
         {
             const auto *binding = input_element_binding(context, memory, index);
             if (binding == nullptr) { return nullptr; }
-            const auto &ops = binding->checked_ops();
+            const auto &ops = binding->ops_ref();
             const auto *layout = ops.layout_impl(ops.context);
             return layout != nullptr ? layout->delta_binding : nullptr;
         }
@@ -904,7 +904,7 @@ namespace hgraph
             const auto *data = input_element_memory(context, memory, index);
             if (binding == nullptr || data == nullptr) { return false; }
 
-            const auto &ops = binding->checked_ops();
+            const auto &ops = binding->ops_ref();
             const auto *tracking = ops.tracking_impl(ops.context, data);
             return tracking != nullptr && tracking->last_modified_time == input_tracking(context, memory)->last_modified_time;
         }
@@ -922,7 +922,7 @@ namespace hgraph
 
             const auto *child_binding = input_element_binding(context, memory, index);
             const auto *child_data = input_element_memory(context, memory, index);
-            const auto &child_ops = child_binding->checked_ops();
+            const auto &child_ops = child_binding->ops_ref();
             return ValueView{binding, child_ops.delta_memory_impl(child_ops.context, child_data)};
         }
 
@@ -1187,7 +1187,7 @@ namespace hgraph
             for (std::size_t index = 0; index < state->children.size(); ++index)
             {
                 if (!input_child_modified_for_parent_time(context, memory, index)) { continue; }
-                const auto key_hash = delta.ordinal_key_binding->checked_ops().hash(&delta.ordinal_keys[index]);
+                const auto key_hash = delta.ordinal_key_binding->ops_ref().hash(&delta.ordinal_keys[index]);
                 const auto value_hash = input_view_hash(input_child_delta_view(context, memory, index));
                 result ^= combine_hash(key_hash, value_hash);
             }
@@ -1250,7 +1250,7 @@ namespace hgraph
             for (std::size_t index = 0; index < state->children.size(); ++index)
             {
                 if (!input_child_modified_for_parent_time(context, memory, index)) { continue; }
-                result ^= delta.ordinal_key_binding->checked_ops().hash(&delta.ordinal_keys[index]);
+                result ^= delta.ordinal_key_binding->ops_ref().hash(&delta.ordinal_keys[index]);
             }
             return result;
         }
@@ -1351,7 +1351,7 @@ namespace hgraph
         [[nodiscard]] nb::object child_value_to_python(const TSDataBinding *binding, const void *memory)
         {
             if (binding == nullptr || memory == nullptr) { return nb::none(); }
-            const auto &ops = binding->checked_ops();
+            const auto &ops = binding->ops_ref();
             if (!ops.has_current_value_impl(ops.context, memory)) { return nb::none(); }
             return ops.to_python_impl(ops.context, memory);
         }
@@ -1361,7 +1361,7 @@ namespace hgraph
                                                        DateTime        evaluation_time)
         {
             if (binding == nullptr || memory == nullptr) { return nb::none(); }
-            const auto &ops = binding->checked_ops();
+            const auto &ops = binding->ops_ref();
             const auto *tracking = ops.tracking_impl(ops.context, memory);
             if (tracking == nullptr || tracking->last_modified_time != evaluation_time) { return nb::none(); }
             return ops.delta_to_python_impl(ops.context, memory, evaluation_time);
@@ -1474,7 +1474,7 @@ namespace hgraph
                 throw std::logic_error("TSInput target-link binding requires a resolved regular TSData binding");
             }
 
-            const auto &regular_ops = regular_binding->checked_ops();
+            const auto &regular_ops = regular_binding->ops_ref();
             const auto *regular_layout = regular_ops.layout_impl(regular_ops.context);
             if (regular_layout == nullptr)
             {

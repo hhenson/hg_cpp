@@ -65,7 +65,7 @@ namespace hgraph
     const TSDataView &TSInputView::InputDataCursor::resolved_value_data() const noexcept
     {
         if (is_target_position()) { value_data = detail::target_link_resolve(raw_data, target_node); }
-        return value_data.valid() ? value_data : detail::empty_ts_data_view();
+        return value_data;
     }
 
     bool TSInputView::InputDataCursor::value_live() const noexcept
@@ -77,7 +77,7 @@ namespace hgraph
     {
         const auto &data = resolved_value_data();
         if (is_target_position() && !data.valid()) { return raw_data.last_modified_time(); }
-        return data.valid() ? data.last_modified_time() : MIN_DT;
+        return data.last_modified_time();
     }
 
     bool TSInputView::InputDataCursor::modified(DateTime evaluation_time) const

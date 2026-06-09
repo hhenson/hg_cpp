@@ -128,12 +128,12 @@ namespace hgraph
 
             [[nodiscard]] std::size_t operator()(std::int32_t slot) const
             {
-                return context->binding->checked_ops().hash(context->at(context->owner, static_cast<std::size_t>(slot)));
+                return context->binding->ops_ref().hash(context->at(context->owner, static_cast<std::size_t>(slot)));
             }
 
             [[nodiscard]] std::size_t operator()(LookupKey key) const
             {
-                return context->binding->checked_ops().hash(key.key);
+                return context->binding->ops_ref().hash(key.key);
             }
         };
 
@@ -145,26 +145,26 @@ namespace hgraph
 
             [[nodiscard]] bool operator()(std::int32_t lhs, std::int32_t rhs) const
             {
-                const auto &ops = context->binding->checked_ops();
+                const auto &ops = context->binding->ops_ref();
                 return ops.equals(context->at(context->owner, static_cast<std::size_t>(lhs)),
                                   context->at(context->owner, static_cast<std::size_t>(rhs)));
             }
 
             [[nodiscard]] bool operator()(LookupKey lhs, std::int32_t rhs) const
             {
-                return context->binding->checked_ops().equals(
+                return context->binding->ops_ref().equals(
                     lhs.key, context->at(context->owner, static_cast<std::size_t>(rhs)));
             }
 
             [[nodiscard]] bool operator()(std::int32_t lhs, LookupKey rhs) const
             {
-                return context->binding->checked_ops().equals(
+                return context->binding->ops_ref().equals(
                     context->at(context->owner, static_cast<std::size_t>(lhs)), rhs.key);
             }
 
             [[nodiscard]] bool operator()(LookupKey lhs, LookupKey rhs) const
             {
-                return context->binding->checked_ops().equals(lhs.key, rhs.key);
+                return context->binding->ops_ref().equals(lhs.key, rhs.key);
             }
         };
 

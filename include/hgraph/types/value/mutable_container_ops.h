@@ -230,7 +230,7 @@ namespace hgraph
         {
             const auto *storage = static_cast<const MutableListStorage *>(memory);
             if (storage->element_binding() == nullptr) { throw std::logic_error("mutable list hash requires a binding"); }
-            const auto &ops  = storage->element_binding()->checked_ops();
+            const auto &ops  = storage->element_binding()->ops_ref();
             std::size_t seed = 0;
             for (std::size_t i = 0; i < storage->size(); ++i)
             {
@@ -246,7 +246,7 @@ namespace hgraph
             if (a->size() == 0) { return true; }
             if (a->element_binding() == nullptr || b->element_binding() == nullptr) { return false; }
             if (a->element_binding() != b->element_binding()) { return false; }
-            const auto &ops = a->element_binding()->checked_ops();
+            const auto &ops = a->element_binding()->ops_ref();
             for (std::size_t i = 0; i < a->size(); ++i)
             {
                 if (!ops.equals(a->element_at(i), b->element_at(i))) { return false; }
@@ -261,7 +261,7 @@ namespace hgraph
             const auto *b_binding = b->element_binding();
             if (const auto order = value_ops_detail::null_order(a_binding, b_binding)) { return *order; }
             if (a_binding != b_binding) { return std::partial_ordering::unordered; }
-            const auto &ops = a_binding->checked_ops();
+            const auto &ops = a_binding->ops_ref();
             const auto  n   = std::min(a->size(), b->size());
             for (std::size_t i = 0; i < n; ++i)
             {
@@ -276,7 +276,7 @@ namespace hgraph
         {
             const auto *storage = static_cast<const MutableListStorage *>(memory);
             if (storage->element_binding() == nullptr) { return "[]"; }
-            const auto &ops = storage->element_binding()->checked_ops();
+            const auto &ops = storage->element_binding()->ops_ref();
             return container_ops_detail::format_delimited(
                 '[', ']', storage->size(), [&](fmt::memory_buffer &out, std::size_t i) {
                     fmt::format_to(std::back_inserter(out), "{}", ops.to_string(storage->element_at(i)));
@@ -391,7 +391,7 @@ namespace hgraph
             return KeySlotStoreOps{
                 .hash    = &key_hash_adapter,
                 .equal   = &key_equal_adapter,
-                .context = &key_binding.checked_ops(),
+                .context = &key_binding.ops_ref(),
             };
         }
     }  // namespace mutable_container_detail
@@ -646,8 +646,8 @@ namespace hgraph
         inline std::size_t map_hash(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding()->checked_ops();
-            const auto &vops = s->value_binding()->checked_ops();
+            const auto &kops = s->key_binding()->ops_ref();
+            const auto &vops = s->value_binding()->ops_ref();
             std::size_t acc  = 0;  // xor of per-entry hashes -> order-independent
             for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
             {
@@ -662,7 +662,7 @@ namespace hgraph
             const auto *b = static_cast<const MutableMapStorage *>(rhs);
             if (a->size() != b->size()) { return false; }
             if (a->key_binding() != b->key_binding() || a->value_binding() != b->value_binding()) { return false; }
-            const auto &vops = a->value_binding()->checked_ops();
+            const auto &vops = a->value_binding()->ops_ref();
             for (std::size_t slot = 0; slot < a->slot_capacity(); ++slot)
             {
                 if (!a->slot_live(slot)) { continue; }
@@ -679,8 +679,8 @@ namespace hgraph
         inline std::string map_to_string(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding()->checked_ops();
-            const auto &vops = s->value_binding()->checked_ops();
+            const auto &kops = s->key_binding()->ops_ref();
+            const auto &vops = s->value_binding()->ops_ref();
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "{{");
             bool first = true;
@@ -715,7 +715,7 @@ namespace hgraph
         inline std::size_t map_key_set_hash(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding()->checked_ops();
+            const auto &kops = s->key_binding()->ops_ref();
             std::size_t acc = 0;
             for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
             {
@@ -742,7 +742,7 @@ namespace hgraph
         inline std::string map_key_set_to_string(const void *, const void *m)
         {
             const auto *s = static_cast<const MutableMapStorage *>(m);
-            const auto &kops = s->key_binding()->checked_ops();
+            const auto &kops = s->key_binding()->ops_ref();
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "{{");
             bool first = true;
@@ -1021,7 +1021,7 @@ namespace hgraph
         inline std::size_t set_hash(const void *, const void *m)
         {
             const auto *s    = static_cast<const MutableSetStorage *>(m);
-            const auto &eops = s->element_binding()->checked_ops();
+            const auto &eops = s->element_binding()->ops_ref();
             std::size_t acc  = 0;  // xor of element hashes -> order-independent
             for (std::size_t slot = 0; slot < s->slot_capacity(); ++slot)
             {
@@ -1047,7 +1047,7 @@ namespace hgraph
         inline std::string set_to_string(const void *, const void *m)
         {
             const auto *s    = static_cast<const MutableSetStorage *>(m);
-            const auto &eops = s->element_binding()->checked_ops();
+            const auto &eops = s->element_binding()->ops_ref();
             fmt::memory_buffer out;
             fmt::format_to(std::back_inserter(out), "{{");
             bool first = true;

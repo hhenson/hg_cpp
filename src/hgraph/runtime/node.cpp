@@ -479,52 +479,64 @@ namespace hgraph
 
         GraphValue *graph_impl(const void *context, const void *memory) noexcept
         {
-            return memory != nullptr ? node_storage(runtime_context(context), memory).graph : nullptr;
+            return node_storage(runtime_context(context), memory).graph;
         }
 
         std::size_t node_index_impl(const void *context, const void *memory) noexcept
         {
-            return memory != nullptr ? node_storage(runtime_context(context), memory).node_index : 0;
+            return node_storage(runtime_context(context), memory).node_index;
+        }
+
+        std::string_view label_impl(const void *context, const void *memory) noexcept
+        {
+            return node_storage(runtime_context(context), memory).label;
         }
 
         bool started_impl(const void *context, const void *memory) noexcept
         {
-            return memory != nullptr && node_storage(runtime_context(context), memory).started;
+            return node_storage(runtime_context(context), memory).started;
         }
 
         bool has_input_impl(const void *context, const void *memory) noexcept
         {
-            return memory != nullptr && runtime_context(context).layout.has_input();
+            static_cast<void>(memory);
+            return runtime_context(context).layout.has_input();
         }
 
         bool has_output_impl(const void *context, const void *memory) noexcept
         {
-            return memory != nullptr && runtime_context(context).layout.has_output();
+            static_cast<void>(memory);
+            return runtime_context(context).layout.has_output();
         }
 
         bool has_state_impl(const void *context, const void *memory) noexcept
         {
-            return memory != nullptr && runtime_context(context).layout.has_state();
+            static_cast<void>(memory);
+            return runtime_context(context).layout.has_state();
         }
 
         bool has_scalars_impl(const void *context, const void *memory) noexcept
         {
-            return memory != nullptr && runtime_context(context).layout.has_scalars();
+            static_cast<void>(memory);
+            return runtime_context(context).layout.has_scalars();
         }
 
         bool has_scheduler_impl(const void *context, const void *memory) noexcept
         {
-            return memory != nullptr && runtime_context(context).layout.has_scheduler();
+            static_cast<void>(memory);
+            return runtime_context(context).layout.has_scheduler();
         }
 
         bool has_error_output_impl(const void *context, const void *memory) noexcept
         {
-            return memory != nullptr && runtime_context(context).layout.has_error_output();
+            static_cast<void>(memory);
+            return runtime_context(context).layout.has_error_output();
         }
 
         bool has_recordable_state_impl(const void *context, const void *memory) noexcept
         {
-            return memory != nullptr && runtime_context(context).layout.has_recordable_state();
+            static_cast<void>(memory);
+            return runtime_context(context).layout.has_recordable_state();
         }
 
         TSInputView input_view_impl(const void *context, void *memory, DateTime evaluation_time)
@@ -671,6 +683,75 @@ namespace hgraph
             if (runtime.layout.has_recordable_state()) { node_recordable_state(runtime, view.data()).cleanup_delta(); }
         }
 
+        void default_attach_graph_impl(const void *, void *, GraphValue *, std::size_t) {}
+        GraphValue *default_graph_impl(const void *, const void *) noexcept { return nullptr; }
+        std::size_t default_node_index_impl(const void *, const void *) noexcept { return 0; }
+        std::string_view default_label_impl(const void *, const void *) noexcept { return {}; }
+        bool default_started_impl(const void *, const void *) noexcept { return false; }
+
+        void default_start_impl(const void *, const NodeView &, DateTime)
+        {
+            throw std::logic_error("NodeView::start requires a live node");
+        }
+
+        void default_stop_impl(const void *, const NodeView &, DateTime)
+        {
+            throw std::logic_error("NodeView::stop requires a live node");
+        }
+
+        void default_evaluate_impl(const void *, const NodeView &, DateTime, bool)
+        {
+            throw std::logic_error("NodeView::evaluate requires a live node");
+        }
+
+        void default_cleanup_delta_impl(const void *, const NodeView &)
+        {
+            throw std::logic_error("NodeView::cleanup_delta requires a live node");
+        }
+
+        bool default_has_input_impl(const void *, const void *) noexcept { return false; }
+        bool default_has_output_impl(const void *, const void *) noexcept { return false; }
+        bool default_has_state_impl(const void *, const void *) noexcept { return false; }
+        bool default_has_scalars_impl(const void *, const void *) noexcept { return false; }
+        bool default_has_scheduler_impl(const void *, const void *) noexcept { return false; }
+        bool default_has_error_output_impl(const void *, const void *) noexcept { return false; }
+        bool default_has_recordable_state_impl(const void *, const void *) noexcept { return false; }
+
+        TSInputView default_input_view_impl(const void *, void *, DateTime)
+        {
+            throw std::logic_error("NodeView::input requires a live node");
+        }
+
+        TSOutputView default_output_view_impl(const void *, void *, DateTime)
+        {
+            throw std::logic_error("NodeView::output requires a live node");
+        }
+
+        ValueView default_state_view_impl(const void *, void *)
+        {
+            throw std::logic_error("NodeView::state requires a live node");
+        }
+
+        ValueView default_scalars_view_impl(const void *, void *)
+        {
+            throw std::logic_error("NodeView::scalars requires a live node");
+        }
+
+        NodeSchedulerState *default_scheduler_state_impl(const void *, void *)
+        {
+            throw std::logic_error("NodeView::scheduler_state requires a live node");
+        }
+
+        TSOutputView default_error_output_view_impl(const void *, void *, DateTime)
+        {
+            throw std::logic_error("NodeView::error_output requires a live node");
+        }
+
+        TSOutputView default_recordable_state_view_impl(const void *, void *, DateTime)
+        {
+            throw std::logic_error("NodeView::recordable_state requires a live node");
+        }
+
         struct NodeRuntimeRegistry
         {
             const NodeTypeBinding &make_binding(
@@ -701,6 +782,7 @@ namespace hgraph
                 if (ops.attach_graph_impl == nullptr) { ops.attach_graph_impl = &attach_graph_impl; }
                 if (ops.graph_impl == nullptr) { ops.graph_impl = &graph_impl; }
                 if (ops.node_index_impl == nullptr) { ops.node_index_impl = &node_index_impl; }
+                if (ops.label_impl == nullptr) { ops.label_impl = &label_impl; }
                 if (ops.started_impl == nullptr) { ops.started_impl = &started_impl; }
                 if (ops.start_impl == nullptr) { ops.start_impl = &start_impl; }
                 if (ops.stop_impl == nullptr) { ops.stop_impl = &stop_impl; }
@@ -738,6 +820,50 @@ namespace hgraph
         {
             static NodeRuntimeRegistry registry;
             return registry;
+        }
+
+        const NodeOps &default_node_ops()
+        {
+            static const NodeOps table{
+                .context = nullptr,
+                .attach_graph_impl = &default_attach_graph_impl,
+                .graph_impl = &default_graph_impl,
+                .node_index_impl = &default_node_index_impl,
+                .label_impl = &default_label_impl,
+                .started_impl = &default_started_impl,
+                .start_impl = &default_start_impl,
+                .stop_impl = &default_stop_impl,
+                .evaluate_impl = &default_evaluate_impl,
+                .cleanup_delta_impl = &default_cleanup_delta_impl,
+                .has_input_impl = &default_has_input_impl,
+                .has_output_impl = &default_has_output_impl,
+                .has_state_impl = &default_has_state_impl,
+                .has_scalars_impl = &default_has_scalars_impl,
+                .has_scheduler_impl = &default_has_scheduler_impl,
+                .has_error_output_impl = &default_has_error_output_impl,
+                .has_recordable_state_impl = &default_has_recordable_state_impl,
+                .input_view_impl = &default_input_view_impl,
+                .output_view_impl = &default_output_view_impl,
+                .state_view_impl = &default_state_view_impl,
+                .scalars_view_impl = &default_scalars_view_impl,
+                .scheduler_state_impl = &default_scheduler_state_impl,
+                .error_output_view_impl = &default_error_output_view_impl,
+                .recordable_state_view_impl = &default_recordable_state_view_impl,
+                .extended_view_type_id = nullptr,
+                .extended_view_context = nullptr,
+            };
+            return table;
+        }
+
+        const NodeTypeBinding &default_node_binding()
+        {
+            static const NodeTypeMetaData meta{};
+            static const NodeTypeBinding binding{
+                .type_meta = &meta,
+                .storage_plan = &MemoryUtils::plan_for<std::byte>(),
+                .ops = &default_node_ops(),
+            };
+            return binding;
         }
     }  // namespace
 
@@ -783,47 +909,51 @@ namespace hgraph
     bool NodeTypeMetaData::has_error_output() const noexcept { return error_output_schema != nullptr; }
     bool NodeTypeMetaData::has_recordable_state() const noexcept { return recordable_state_schema != nullptr; }
 
-    NodeView::NodeView() noexcept = default;
+    NodeView::NodeView() noexcept
+        : storage_(NodeStorageRef::empty(default_node_binding()))
+    {
+    }
 
     NodeView::NodeView(const NodeTypeBinding *binding, void *memory) noexcept
-        : storage_(binding, memory)
+        : storage_(binding != nullptr && memory != nullptr ? binding : &default_node_binding(),
+                   binding != nullptr && memory != nullptr ? memory : nullptr)
     {
     }
 
     bool NodeView::valid() const noexcept { return storage_.has_value(); }
-    const NodeTypeBinding *NodeView::binding() const noexcept { return storage_.binding(); }
+    const NodeTypeBinding *NodeView::binding() const noexcept
+    {
+        return storage_.binding();
+    }
     const NodeTypeMetaData *NodeView::schema() const noexcept
     {
-        const auto *bound = binding();
-        return bound != nullptr ? bound->type_meta : nullptr;
+        return binding()->type_meta;
     }
     void *NodeView::data() const noexcept { return storage_.data(); }
 
     std::string_view NodeView::label() const noexcept
     {
-        if (!valid()) { return {}; }
-        const auto &state = node_storage(runtime_context(ops().context), data());
-        return state.label.empty() ? schema()->name() : std::string_view{state.label};
+        return ops().label_impl(ops().context, data());
     }
 
     NodeKind NodeView::node_kind() const noexcept
     {
-        return schema() != nullptr ? schema()->node_kind : NodeKind::Compute;
+        return storage_.binding()->type_meta->node_kind;
     }
 
     bool NodeView::started() const noexcept
     {
-        return valid() && ops().started_impl(ops().context, data());
+        return ops().started_impl(ops().context, data());
     }
 
     std::size_t NodeView::node_index() const noexcept
     {
-        return valid() ? ops().node_index_impl(ops().context, data()) : 0;
+        return ops().node_index_impl(ops().context, data());
     }
 
     GraphValue *NodeView::graph_value() const noexcept
     {
-        return valid() ? ops().graph_impl(ops().context, data()) : nullptr;
+        return ops().graph_impl(ops().context, data());
     }
 
     GraphView NodeView::graph() const
@@ -834,37 +964,37 @@ namespace hgraph
 
     bool NodeView::has_input() const noexcept
     {
-        return valid() && ops().has_input_impl(ops().context, data());
+        return ops().has_input_impl(ops().context, data());
     }
 
     bool NodeView::has_output() const noexcept
     {
-        return valid() && ops().has_output_impl(ops().context, data());
+        return ops().has_output_impl(ops().context, data());
     }
 
     bool NodeView::has_state() const noexcept
     {
-        return valid() && ops().has_state_impl(ops().context, data());
+        return ops().has_state_impl(ops().context, data());
     }
 
     bool NodeView::has_scalars() const noexcept
     {
-        return valid() && ops().has_scalars_impl(ops().context, data());
+        return ops().has_scalars_impl(ops().context, data());
     }
 
     bool NodeView::has_scheduler() const noexcept
     {
-        return valid() && ops().has_scheduler_impl(ops().context, data());
+        return ops().has_scheduler_impl(ops().context, data());
     }
 
     bool NodeView::has_error_output() const noexcept
     {
-        return valid() && ops().has_error_output_impl(ops().context, data());
+        return ops().has_error_output_impl(ops().context, data());
     }
 
     bool NodeView::has_recordable_state() const noexcept
     {
-        return valid() && ops().has_recordable_state_impl(ops().context, data());
+        return ops().has_recordable_state_impl(ops().context, data());
     }
 
     TSInputView NodeView::input(DateTime evaluation_time) const
@@ -912,8 +1042,7 @@ namespace hgraph
 
     const NodeOps &NodeView::ops() const
     {
-        if (!valid()) { throw std::logic_error("NodeView requires a live node"); }
-        return binding()->checked_ops();
+        return storage_.binding()->ops_ref();
     }
 
     NodeValue::NodeValue() noexcept = default;
@@ -921,7 +1050,7 @@ namespace hgraph
     NodeValue::NodeValue(const NodeBuilder &builder, std::size_t node_index)
     {
         const auto &binding = builder.binding();
-        const auto &runtime = runtime_context(binding.checked_ops().context);
+        const auto &runtime = runtime_context(binding.ops_ref().context);
         storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
             construct_node_storage(runtime, *binding.type_meta, builder.input_endpoint(), std::string{builder.label()},
                                    builder.scalars(), dst);
@@ -962,7 +1091,7 @@ namespace hgraph
     void NodeValue::attach_graph(GraphValue *graph, std::size_t node_index)
     {
         if (!has_value()) { return; }
-        const auto &table = binding()->checked_ops();
+        const auto &table = binding()->ops_ref();
         table.attach_graph_impl(table.context, storage_.data(), graph, node_index);
     }
 

@@ -214,7 +214,7 @@ namespace hgraph
             throw std::invalid_argument("ValueView::copy_from requires matching storage plans");
         }
 
-        const auto &other_ops    = other_bound->checked_ops();
+        const auto &other_ops    = other_bound->ops_ref();
         const auto &copy_binding = other_ops.owning_binding(*other_bound);
         if (bound->plan() != copy_binding.plan())
         {
@@ -237,7 +237,7 @@ namespace hgraph
             return false;
         }
 
-        const auto &other_ops    = other_bound->checked_ops();
+        const auto &other_ops    = other_bound->ops_ref();
         const auto &copy_binding = other_ops.owning_binding(*other_bound);
         if (bound->plan() != copy_binding.plan()) { return false; }
         other_ops.copy_assign_view(*bound, mutable_data(), other.data_);
@@ -259,7 +259,7 @@ namespace hgraph
         }
 
         return fallback_on_exception(false, [&] {
-            if (bound == other_bound) { return bound->checked_ops().equals(data_, other.data_); }
+            if (bound == other_bound) { return bound->ops_ref().equals(data_, other.data_); }
             if (!value_schema_equivalent(schema(), other.schema())) { return false; }
             return semantic_equals(*this, other);
         });
@@ -282,7 +282,7 @@ namespace hgraph
         }
 
         return fallback_on_exception(std::partial_ordering::unordered, [&]() {
-            if (bound == other_bound) { return bound->checked_ops().compare(data_, other.data_); }
+            if (bound == other_bound) { return bound->ops_ref().compare(data_, other.data_); }
             if (!value_schema_equivalent(schema(), other.schema())) { return std::partial_ordering::unordered; }
             return semantic_compare(*this, other);
         });
@@ -292,7 +292,7 @@ namespace hgraph
     nb::object ValueView::to_python() const
     {
         if (!valid()) { throw std::runtime_error("ValueView::to_python requires a non-empty view"); }
-        return binding()->checked_ops().to_python(data_);
+        return binding()->ops_ref().to_python(data_);
     }
 
     void ValueView::from_python(nb::handle source)
@@ -304,7 +304,7 @@ namespace hgraph
         }
 
         const auto *bound = binding();
-        bound->checked_ops().from_python(*bound, mutable_data(), source);
+        bound->ops_ref().from_python(*bound, mutable_data(), source);
     }
 
     nb::object Value::to_python() const
@@ -326,7 +326,7 @@ namespace hgraph
         }
 
         Value replacement{*binding()};
-        binding()->checked_ops().from_python(*binding(), const_cast<void *>(replacement.view().data()), source);
+        binding()->ops_ref().from_python(*binding(), const_cast<void *>(replacement.view().data()), source);
         *this = std::move(replacement);
     }
 #endif

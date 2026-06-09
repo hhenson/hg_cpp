@@ -169,22 +169,21 @@ namespace hgraph
 
         bool started_impl(const void *, const void *memory) noexcept
         {
-            return memory != nullptr && storage(memory).started;
+            return storage(memory).started;
         }
 
         bool evaluating_impl(const void *, const void *memory) noexcept
         {
-            return memory != nullptr && storage(memory).evaluating;
+            return storage(memory).evaluating;
         }
 
         DateTime evaluation_time_impl(const void *, const void *memory) noexcept
         {
-            return memory != nullptr ? storage(memory).evaluation_time : MIN_DT;
+            return storage(memory).evaluation_time;
         }
 
         DateTime next_scheduled_time_impl(const void *, const void *memory) noexcept
         {
-            if (memory == nullptr) { return MAX_DT; }
             const auto &state = storage(memory);
             DateTime next = MAX_DT;
             for (const auto &entry : state.schedule) { next = std::min(next, entry.scheduled); }
@@ -193,7 +192,7 @@ namespace hgraph
 
         std::size_t node_count_impl(const void *, const void *memory) noexcept
         {
-            return memory != nullptr ? storage(memory).nodes.size() : 0;
+            return storage(memory).nodes.size();
         }
 
         NodeView node_at_impl(const void *, void *memory, std::size_t index)
@@ -203,19 +202,18 @@ namespace hgraph
             return state.nodes[index].view();
         }
 
-        GlobalState *global_state_impl(const void *, void *memory) noexcept
+        GlobalStateView global_state_impl(const void *, void *memory)
         {
-            return memory != nullptr ? &storage(memory).global_state : nullptr;
+            return storage(memory).global_state.view();
         }
 
         DateTime clock_evaluation_time_impl(const void *, const void *memory) noexcept
         {
-            return memory != nullptr ? storage(memory).evaluation_time : MIN_DT;
+            return storage(memory).evaluation_time;
         }
 
         TimeDelta clock_cycle_time_impl(const void *, const void *memory) noexcept
         {
-            if (memory == nullptr) { return TimeDelta{0}; }
             const auto &state = storage(memory);
             const TimeDelta elapsed = current_wall_time() - state.cycle_wall_start;
             return elapsed >= TimeDelta{0} ? elapsed : TimeDelta{0};
@@ -223,13 +221,12 @@ namespace hgraph
 
         DateTime clock_now_impl(const void *context, const void *memory) noexcept
         {
-            if (memory == nullptr) { return MIN_DT; }
             return clock_evaluation_time_impl(context, memory) + clock_cycle_time_impl(context, memory);
         }
 
         DateTime clock_next_cycle_evaluation_time_impl(const void *, const void *memory) noexcept
         {
-            return memory != nullptr ? storage(memory).evaluation_time + MIN_TD : MIN_DT;
+            return storage(memory).evaluation_time + MIN_TD;
         }
 
         const EvaluationClockOps &evaluation_clock_ops() noexcept
@@ -247,6 +244,49 @@ namespace hgraph
         EvaluationClockView evaluation_clock_impl(const void *, const void *memory) noexcept
         {
             return EvaluationClockView{&evaluation_clock_ops(), memory};
+        }
+
+        void default_attach_nodes_impl(const void *, void *, GraphValue *) {}
+
+        void default_start_impl(const void *, const GraphView &, DateTime)
+        {
+            throw std::logic_error("GraphView::start requires a live graph");
+        }
+
+        void default_stop_impl(const void *, const GraphView &)
+        {
+            throw std::logic_error("GraphView::stop requires a live graph");
+        }
+
+        void default_evaluate_impl(const void *, const GraphView &, DateTime)
+        {
+            throw std::logic_error("GraphView::evaluate requires a live graph");
+        }
+
+        void default_schedule_node_impl(const void *, const GraphView &, std::size_t, DateTime, bool)
+        {
+            throw std::logic_error("GraphView::schedule_node requires a live graph");
+        }
+
+        bool default_started_impl(const void *, const void *) noexcept { return false; }
+        bool default_evaluating_impl(const void *, const void *) noexcept { return false; }
+        DateTime default_evaluation_time_impl(const void *, const void *) noexcept { return MIN_DT; }
+        DateTime default_next_scheduled_time_impl(const void *, const void *) noexcept { return MAX_DT; }
+        std::size_t default_node_count_impl(const void *, const void *) noexcept { return 0; }
+
+        NodeView default_node_at_impl(const void *, void *, std::size_t)
+        {
+            throw std::logic_error("GraphView::node_at requires a live graph");
+        }
+
+        GlobalStateView default_global_state_impl(const void *, void *)
+        {
+            throw std::logic_error("GraphView::global_state requires a live graph");
+        }
+
+        EvaluationClockView default_graph_evaluation_clock_impl(const void *, const void *) noexcept
+        {
+            return EvaluationClockView{};
         }
 
         void schedule_node_impl(const void *, const GraphView &graph, std::size_t node_index, DateTime when, bool force)
@@ -399,6 +439,38 @@ namespace hgraph
             static GraphRuntimeRegistry registry;
             return registry;
         }
+
+        const GraphOps &default_graph_ops()
+        {
+            static const GraphOps table{
+                .context = nullptr,
+                .attach_nodes_impl = &default_attach_nodes_impl,
+                .start_impl = &default_start_impl,
+                .stop_impl = &default_stop_impl,
+                .evaluate_impl = &default_evaluate_impl,
+                .schedule_node_impl = &default_schedule_node_impl,
+                .started_impl = &default_started_impl,
+                .evaluating_impl = &default_evaluating_impl,
+                .evaluation_time_impl = &default_evaluation_time_impl,
+                .next_scheduled_time_impl = &default_next_scheduled_time_impl,
+                .node_count_impl = &default_node_count_impl,
+                .node_at_impl = &default_node_at_impl,
+                .global_state_impl = &default_global_state_impl,
+                .evaluation_clock_impl = &default_graph_evaluation_clock_impl,
+            };
+            return table;
+        }
+
+        const GraphTypeBinding &default_graph_binding()
+        {
+            static const GraphTypeMetaData meta{};
+            static const GraphTypeBinding binding{
+                .type_meta = &meta,
+                .storage_plan = &MemoryUtils::plan_for<std::byte>(),
+                .ops = &default_graph_ops(),
+            };
+            return binding;
+        }
     }  // namespace
 
     std::string_view GraphTypeMetaData::name() const noexcept
@@ -406,35 +478,41 @@ namespace hgraph
         return display_name != nullptr ? std::string_view{display_name} : std::string_view{};
     }
 
-    GraphView::GraphView() noexcept = default;
+    GraphView::GraphView() noexcept
+        : storage_(GraphStorageRef::empty(default_graph_binding()))
+    {
+    }
 
     GraphView::GraphView(const GraphTypeBinding *binding, void *memory) noexcept
-        : storage_(binding, memory)
+        : storage_(binding != nullptr && memory != nullptr ? binding : &default_graph_binding(),
+                   binding != nullptr && memory != nullptr ? memory : nullptr)
     {
     }
 
     bool GraphView::valid() const noexcept { return storage_.has_value(); }
-    const GraphTypeBinding *GraphView::binding() const noexcept { return storage_.binding(); }
+    const GraphTypeBinding *GraphView::binding() const noexcept
+    {
+        return storage_.binding();
+    }
     const GraphTypeMetaData *GraphView::schema() const noexcept
     {
-        const auto *bound = binding();
-        return bound != nullptr ? bound->type_meta : nullptr;
+        return binding()->type_meta;
     }
     void *GraphView::data() const noexcept { return storage_.data(); }
 
-    bool GraphView::started() const noexcept { return valid() && ops().started_impl(ops().context, data()); }
-    bool GraphView::evaluating() const noexcept { return valid() && ops().evaluating_impl(ops().context, data()); }
+    bool GraphView::started() const noexcept { return ops().started_impl(ops().context, data()); }
+    bool GraphView::evaluating() const noexcept { return ops().evaluating_impl(ops().context, data()); }
     DateTime GraphView::evaluation_time() const noexcept
     {
-        return valid() ? ops().evaluation_time_impl(ops().context, data()) : MIN_DT;
+        return ops().evaluation_time_impl(ops().context, data());
     }
     DateTime GraphView::next_scheduled_time() const noexcept
     {
-        return valid() ? ops().next_scheduled_time_impl(ops().context, data()) : MAX_DT;
+        return ops().next_scheduled_time_impl(ops().context, data());
     }
     std::size_t GraphView::node_count() const noexcept
     {
-        return valid() ? ops().node_count_impl(ops().context, data()) : 0;
+        return ops().node_count_impl(ops().context, data());
     }
 
     NodeView GraphView::node_at(std::size_t index) const
@@ -444,14 +522,12 @@ namespace hgraph
 
     GlobalStateView GraphView::global_state() const
     {
-        GlobalState *state = valid() ? ops().global_state_impl(ops().context, data()) : nullptr;
-        if (state == nullptr) { throw std::logic_error("GraphView::global_state requires a live graph"); }
-        return state->view();
+        return ops().global_state_impl(ops().context, data());
     }
 
     EvaluationClockView GraphView::evaluation_clock() const noexcept
     {
-        return valid() ? ops().evaluation_clock_impl(ops().context, data()) : EvaluationClockView{};
+        return ops().evaluation_clock_impl(ops().context, data());
     }
 
     GraphView GraphView::root() const
@@ -471,8 +547,7 @@ namespace hgraph
 
     const GraphOps &GraphView::ops() const
     {
-        if (!valid()) { throw std::logic_error("GraphView requires a live graph"); }
-        return binding()->checked_ops();
+        return storage_.binding()->ops_ref();
     }
 
     GraphValue::GraphValue() noexcept = default;
@@ -531,7 +606,7 @@ namespace hgraph
     void GraphValue::attach_nodes()
     {
         if (!has_value()) { return; }
-        const auto &table = binding()->checked_ops();
+        const auto &table = binding()->ops_ref();
         table.attach_nodes_impl(table.context, storage_.data(), this);
     }
 

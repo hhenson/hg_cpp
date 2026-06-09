@@ -61,11 +61,8 @@ namespace hgraph
         /** Lifecycle hooks pulled from the bound plan; throws if no plan is bound. */
         [[nodiscard]] const MemoryUtils::LifecycleOps &checked_lifecycle() const { return checked_plan().lifecycle; }
 
-        /** Reference to ``*ops`` or throws when missing. */
-        [[nodiscard]] const Ops &checked_ops() const {
-            if (ops == nullptr) { throw std::logic_error("TypeBinding is missing runtime operations"); }
-            return *ops;
-        }
+        /** Reference to the bound runtime ops table. Bindings are expected to always carry ops. */
+        [[nodiscard]] constexpr const Ops &ops_ref() const noexcept { return *ops; }
 
         /** Pointer to the lifecycle hooks; null when no plan is bound. */
         [[nodiscard]] const MemoryUtils::LifecycleOps *lifecycle() const noexcept {

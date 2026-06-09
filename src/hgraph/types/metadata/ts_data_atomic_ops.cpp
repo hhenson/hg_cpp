@@ -180,7 +180,7 @@ namespace hgraph::ts_data_plan_factory_detail
             const auto *layout = atomic_layout(context);
             const auto *tracking = atomic_tracking(context, memory);
             const bool  first_for_time = tracking->last_modified_time != modified_time;
-            layout->value_binding->checked_ops().from_python(
+            layout->value_binding->ops_ref().from_python(
                 *layout->value_binding,
                 atomic_mutable_value_memory(context, memory),
                 source);
@@ -190,7 +190,7 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static nb::object atomic_to_python(const void *context, const void *memory)
         {
             const auto *layout = atomic_layout(context);
-            return layout->value_binding->checked_ops().to_python(atomic_value_memory(context, memory));
+            return layout->value_binding->ops_ref().to_python(atomic_value_memory(context, memory));
         }
 
         [[nodiscard]] static nb::object atomic_delta_to_python(const void *context,
@@ -199,7 +199,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             if (atomic_tracking(context, memory)->last_modified_time != evaluation_time) { return nb::none(); }
             const auto *layout = atomic_layout(context);
-            return layout->delta_binding->checked_ops().to_python(atomic_delta_memory(context, memory));
+            return layout->delta_binding->ops_ref().to_python(atomic_delta_memory(context, memory));
         }
 #endif
     };

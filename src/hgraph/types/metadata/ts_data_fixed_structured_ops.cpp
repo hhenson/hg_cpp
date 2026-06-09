@@ -80,7 +80,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     throw std::logic_error("TSDataPlanFactory: fixed TSData element binding is not resolved");
                 }
 
-                const auto &indexed_table = indexed_binding->checked_ops();
+                const auto &indexed_table = indexed_binding->ops_ref();
                 const auto *indexed_layout = indexed_table.layout_impl(indexed_table.context);
                 if (indexed_layout == nullptr)
                 {
@@ -220,7 +220,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 return bundle_layout.fields[index].layout;
             }
             const auto *binding = element_binding(index);
-            const auto &ops     = binding->checked_ops();
+            const auto &ops     = binding->ops_ref();
             return ops.layout_impl(ops.context);
         }
 
@@ -470,7 +470,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
         [[nodiscard]] static const TSDataOps &child_ops(const TSDataBinding &child)
         {
-            return child.checked_ops();
+            return child.ops_ref();
         }
 
         [[nodiscard]] static ValueView child_value_view(const FixedTSDataContext *state, const void *memory,
@@ -1052,7 +1052,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     continue;
                 }
-                const auto key_hash   = state->ordinal_key_binding->checked_ops().hash(&state->ordinal_keys[index]);
+                const auto key_hash   = state->ordinal_key_binding->ops_ref().hash(&state->ordinal_keys[index]);
                 const auto value_hash = view_hash(child_delta_view(state, memory, index));
                 result ^= combine_hash(key_hash, value_hash);
             }
@@ -1209,7 +1209,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     continue;
                 }
-                result ^= state->ordinal_key_binding->checked_ops().hash(&state->ordinal_keys[index]);
+                result ^= state->ordinal_key_binding->ops_ref().hash(&state->ordinal_keys[index]);
             }
             return result;
         }
@@ -1385,7 +1385,7 @@ namespace hgraph::ts_data_plan_factory_detail
         [[nodiscard]] static nb::object fixed_to_python(const void *context, const void *memory)
         {
             const auto *state = ctx(context);
-            return state->layout_ptr()->value_binding->checked_ops().to_python(fixed_value_memory(context, memory));
+            return state->layout_ptr()->value_binding->ops_ref().to_python(fixed_value_memory(context, memory));
         }
 
         [[nodiscard]] static nb::object fixed_delta_to_python(const void *context,
@@ -1394,7 +1394,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             const auto *state = ctx(context);
             if (fixed_tracking(state, memory)->last_modified_time != evaluation_time) { return nb::none(); }
-            return state->layout_ptr()->delta_binding->checked_ops().to_python(fixed_delta_memory(context, memory));
+            return state->layout_ptr()->delta_binding->ops_ref().to_python(fixed_delta_memory(context, memory));
         }
 
         [[nodiscard]] static bool is_python_sequence(nb::handle source)

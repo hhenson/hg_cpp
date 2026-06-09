@@ -540,7 +540,7 @@ namespace hgraph
             /** Build a typed empty reference that retains its binding. */
             [[nodiscard]] static constexpr StorageRef empty(const Binding &binding) noexcept
             {
-                return StorageRef{binding, nullptr};
+                return StorageRef{&binding, static_cast<void *>(nullptr)};
             }
 
             /** Build a live borrowed reference to externally owned storage. */

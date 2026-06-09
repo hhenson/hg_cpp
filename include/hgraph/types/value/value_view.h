@@ -305,7 +305,7 @@ namespace hgraph
         [[nodiscard]] std::size_t hash() const
         {
             if (!valid()) { throw std::logic_error("ValueView::hash requires a non-empty view"); }
-            return binding()->checked_ops().hash(data_);
+            return binding()->ops_ref().hash(data_);
         }
         [[nodiscard]] bool equals(const ValueView &other) const noexcept;
         [[nodiscard]] std::partial_ordering compare(const ValueView &other) const noexcept;
@@ -322,7 +322,7 @@ namespace hgraph
         [[nodiscard]] std::string to_string() const
         {
             if (!valid()) { return std::string{}; }
-            return binding()->checked_ops().to_string(data_);
+            return binding()->ops_ref().to_string(data_);
         }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES

@@ -62,7 +62,7 @@ namespace hgraph
                 if (!child_schema->is_collection()) { continue; }
 
                 const TSDataBinding &child_binding = ts_binding_for(child_schema, "empty_delta_tsb");
-                const auto          &child_ops     = child_binding.checked_ops();
+                const auto          &child_ops     = child_binding.ops_ref();
                 Value                empty         = child_ops.empty_delta_impl(child_binding);
                 builder.set(index, empty.view());
             }
@@ -556,13 +556,13 @@ namespace hgraph
     Value capture_delta(const TSInputView &in)
     {
         const auto &binding = ts_binding_for(&require_schema(in.schema(), "capture_delta"), "capture_delta");
-        return binding.checked_ops().capture_delta_impl(in);
+        return binding.ops_ref().capture_delta_impl(in);
     }
 
     void apply_delta(const TSOutputView &out, const ValueView &delta)
     {
         const auto &binding = require_binding(out.binding(), "apply_delta");
-        const auto &ops     = binding.checked_ops();
+        const auto &ops     = binding.ops_ref();
         if (!ops.delta_has_effect_impl(out, delta)) { return; }
         ops.apply_delta_impl(out, delta);
     }

@@ -71,6 +71,8 @@ namespace hgraph
         [[nodiscard]] Value empty_delta_tsl(const TSDataBinding &binding);
         [[nodiscard]] Value empty_delta_tsb(const TSDataBinding &binding);
 
+        [[nodiscard]] const TSDataOps &default_ts_data_ops() noexcept;
+
         [[nodiscard]] Value capture_delta_ts(const TSInputView &in);
         [[nodiscard]] Value capture_delta_signal(const TSInputView &in);
         [[nodiscard]] Value capture_delta_tsw(const TSInputView &in);

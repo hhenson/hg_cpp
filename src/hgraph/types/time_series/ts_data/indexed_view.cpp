@@ -178,7 +178,7 @@ namespace hgraph
         const auto *element_binding = ops.element_binding_impl(ops.context, storage_.data(), index);
         const auto *element_memory  = ops.element_memory_impl(ops.context, storage_.data(), index);
         if (element_binding == nullptr || element_memory == nullptr) { return MIN_DT; }
-        const auto &element_ops = element_binding->checked_ops();
+        const auto &element_ops = element_binding->ops_ref();
         return element_ops.tracking_impl(element_ops.context, element_memory)->last_modified_time;
     }
 

@@ -98,6 +98,7 @@ namespace hgraph
                                   std::size_t node_index) = nullptr;
         [[nodiscard]] GraphValue *(*graph_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] std::size_t (*node_index_impl)(const void *context, const void *memory) noexcept = nullptr;
+        [[nodiscard]] std::string_view (*label_impl)(const void *context, const void *memory) noexcept = nullptr;
 
         [[nodiscard]] bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
         void (*start_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;

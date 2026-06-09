@@ -463,7 +463,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     if ((*it).is_none()) { throw std::invalid_argument("TSW value does not allow None elements"); }
                     Value element{element_binding()};
-                    element_binding().checked_ops().from_python(element_binding(),
+                    element_binding().ops_ref().from_python(element_binding(),
                                                                 const_cast<void *>(element.view().data()),
                                                                 *it);
                     push(element.view(), modified_time);
@@ -519,7 +519,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     if ((*it).is_none()) { throw std::invalid_argument("TSW value does not allow None elements"); }
                     Value element{element_binding()};
-                    element_binding().checked_ops().from_python(element_binding(),
+                    element_binding().ops_ref().from_python(element_binding(),
                                                                 const_cast<void *>(element.view().data()),
                                                                 *it);
                     push(element.view(), modified_time);
@@ -877,7 +877,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             [[nodiscard]] static nb::object window_to_python(const void *context, const void *memory)
             {
-                return ctx(context)->layout->value_binding->checked_ops().to_python(window_value_memory(context, memory));
+                return ctx(context)->layout->value_binding->ops_ref().to_python(window_value_memory(context, memory));
             }
 
             [[nodiscard]] static nb::object window_delta_to_python(const void *context,
@@ -887,7 +887,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (window_tracking(context, memory)->last_modified_time != evaluation_time) { return nb::none(); }
                 const auto *delta = window_delta_memory(context, memory);
                 if (delta == nullptr) { return nb::none(); }
-                return ctx(context)->layout->delta_binding->checked_ops().to_python(delta);
+                return ctx(context)->layout->delta_binding->ops_ref().to_python(delta);
             }
 
             [[nodiscard]] static bool window_from_python(const void *context,
@@ -918,7 +918,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 const auto *state = ctx(context);
                 Value       element{*state->layout->element_binding};
-                state->layout->element_binding->checked_ops().from_python(
+                state->layout->element_binding->ops_ref().from_python(
                     *state->layout->element_binding,
                     const_cast<void *>(element.view().data()),
                     source);
@@ -1062,7 +1062,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::size_t window_value_hash(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                const auto &ops   = state->layout->element_binding->checked_ops();
+                const auto &ops   = state->layout->element_binding->ops_ref();
                 std::size_t seed  = 0;
                 for (std::size_t index = 0; index < storage<Storage>(memory).size(); ++index)
                 {
@@ -1081,7 +1081,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     const auto &a     = storage<Storage>(lhs);
                     const auto &b     = storage<Storage>(rhs);
                     if (a.size() != b.size()) { return false; }
-                    const auto &ops = state->layout->element_binding->checked_ops();
+                    const auto &ops = state->layout->element_binding->ops_ref();
                     for (std::size_t index = 0; index < a.size(); ++index)
                     {
                         if (!ops.equals(a.element_at(index), b.element_at(index))) { return false; }
@@ -1100,7 +1100,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     const auto *state = ctx(context);
                     const auto &a     = storage<Storage>(lhs);
                     const auto &b     = storage<Storage>(rhs);
-                    const auto &ops   = state->layout->element_binding->checked_ops();
+                    const auto &ops   = state->layout->element_binding->ops_ref();
                     const auto  count = std::min(a.size(), b.size());
                     for (std::size_t index = 0; index < count; ++index)
                     {
@@ -1117,7 +1117,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 if (memory == nullptr) { return {}; }
                 const auto *state = ctx(context);
-                const auto &ops   = state->layout->element_binding->checked_ops();
+                const auto &ops   = state->layout->element_binding->ops_ref();
                 fmt::memory_buffer out;
                 fmt::format_to(std::back_inserter(out), "[");
                 for (std::size_t index = 0; index < storage<Storage>(memory).size(); ++index)
@@ -1135,7 +1135,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 if (memory == nullptr) { throw std::runtime_error("TSW value to_python requires live storage"); }
                 const auto *state = ctx(context);
-                const auto &ops   = state->layout->element_binding->checked_ops();
+                const auto &ops   = state->layout->element_binding->ops_ref();
                 const auto &binding = *state->layout->element_binding;
                 const auto &window = storage<Storage>(memory);
                 if (ops.can_to_python_buffer(binding))

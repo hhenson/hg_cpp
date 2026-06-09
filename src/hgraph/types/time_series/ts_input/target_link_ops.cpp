@@ -77,28 +77,29 @@ namespace hgraph::detail
         {
             const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
             const auto  target = link != nullptr ? link->target_view() : TSDataView{};
-            return target.valid() && target.has_current_value();
+            return target.has_current_value();
         }
 
         [[nodiscard]] bool target_link_all_valid(const void *context, const void *memory)
         {
             const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
             const auto  target = link != nullptr ? link->target_view() : TSDataView{};
-            return target.valid() && target.all_valid();
+            return target.all_valid();
         }
 
         [[nodiscard]] const void *target_link_value_memory(const void *context, const void *memory)
         {
             const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
             const auto  target = link != nullptr ? link->target_view() : TSDataView{};
-            return target.valid() ? target.value().data() : nullptr;
+            return target.value().data();
         }
 
         [[nodiscard]] const void *target_link_delta_memory(const void *context, const void *memory)
         {
             const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
             const auto  target = link != nullptr ? link->target_view() : TSDataView{};
-            return target.valid() ? target.delta_value(link->tracking.last_modified_time).data() : nullptr;
+            const auto  evaluation_time = link != nullptr ? link->tracking.last_modified_time : MIN_DT;
+            return target.delta_value(evaluation_time).data();
         }
 
         void target_link_cleanup_delta(const void *, void *, DateTime) {}
@@ -669,7 +670,7 @@ namespace hgraph::detail
         {
             const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
             const auto  target = link != nullptr ? link->target_view() : TSDataView{};
-            return target.valid() ? target.value_to_python() : nb::none();
+            return target.value_to_python();
         }
 
         [[nodiscard]] nb::object target_link_delta_to_python(const void *context,
@@ -678,7 +679,7 @@ namespace hgraph::detail
         {
             const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
             const auto  target = link != nullptr ? link->target_view() : TSDataView{};
-            return target.valid() ? target.delta_value_to_python(evaluation_time) : nb::none();
+            return target.delta_value_to_python(evaluation_time);
         }
 #endif
 

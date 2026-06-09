@@ -40,14 +40,14 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             const auto *binding = static_cast<const ValueTypeBinding *>(context);
             if (binding == nullptr) { throw std::logic_error("slot TSData key hash requires a key binding"); }
-            return binding->checked_ops().hash(key);
+            return binding->ops_ref().hash(key);
         }
 
         [[nodiscard]] bool value_key_equal(const void *lhs, const void *rhs, const void *context)
         {
             const auto *binding = static_cast<const ValueTypeBinding *>(context);
             if (binding == nullptr) { throw std::logic_error("slot TSData key equality requires a key binding"); }
-            return binding->checked_ops().equals(lhs, rhs);
+            return binding->ops_ref().equals(lhs, rhs);
         }
 
         [[nodiscard]] KeySlotStoreOps key_store_ops(const ValueTypeBinding &key_binding) noexcept
@@ -349,7 +349,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
             void cleanup_delta(DateTime modified_time)
             {
-                const auto &child_ops = element_binding().checked_ops();
+                const auto &child_ops = element_binding().ops_ref();
                 for (std::size_t slot = 0; slot < slot_capacity(); ++slot)
                 {
                     if (!slot_live(slot)) { continue; }
@@ -531,7 +531,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             if (source.is_none()) { throw std::invalid_argument(std::string{what} + " requires a non-None value"); }
             Value value{binding};
-            binding.checked_ops().from_python(binding, const_cast<void *>(value.view().data()), source);
+            binding.ops_ref().from_python(binding, const_cast<void *>(value.view().data()), source);
             return value;
         }
 
@@ -964,7 +964,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static nb::object tss_to_python(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                return state->set_layout.value_binding->checked_ops().to_python(memory);
+                return state->set_layout.value_binding->ops_ref().to_python(memory);
             }
 
             [[nodiscard]] static nb::object tss_delta_to_python(const void *context,
@@ -973,7 +973,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctx(context);
                 if (storage<Storage>(memory).tracking().last_modified_time != evaluation_time) { return nb::none(); }
-                return state->set_layout.delta_binding->checked_ops().to_python(memory);
+                return state->set_layout.delta_binding->ops_ref().to_python(memory);
             }
 
             [[nodiscard]] static bool tss_from_python(const void *context,
@@ -1037,7 +1037,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     static_cast<void>(target.insert_key(key.view(), modified_time));
                 }
 
-                const auto &key_ops = state->set_layout.key_binding->checked_ops();
+                const auto &key_ops = state->set_layout.key_binding->ops_ref();
                 std::vector<Value> removals;
                 for (const auto key : set_make_range<SlotSetSurface::Live>(context, memory))
                 {
@@ -1226,7 +1226,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::size_t set_hash(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                const auto &ops   = state->set_layout.key_binding->checked_ops();
+                const auto &ops   = state->set_layout.key_binding->ops_ref();
                 std::size_t result = 0;
                 for (const auto key : set_make_range<Surface>(context, memory))
                 {
@@ -1270,7 +1270,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::string set_to_string(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                const auto &ops   = state->set_layout.key_binding->checked_ops();
+                const auto &ops   = state->set_layout.key_binding->ops_ref();
                 fmt::memory_buffer out;
                 fmt::format_to(std::back_inserter(out), "{{");
                 bool first = true;
@@ -1289,7 +1289,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static nb::object set_to_python(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                const auto &ops   = state->set_layout.key_binding->checked_ops();
+                const auto &ops   = state->set_layout.key_binding->ops_ref();
                 nb::set     result;
                 for (const auto key : set_make_range<Surface>(context, memory))
                 {
@@ -1337,8 +1337,8 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::size_t delta_bundle_hash(const void *context, const void *memory)
             {
                 const auto *state = ctx(context);
-                return combine_hash(state->added_set_binding->checked_ops().hash(memory),
-                                    state->removed_set_binding->checked_ops().hash(memory));
+                return combine_hash(state->added_set_binding->ops_ref().hash(memory),
+                                    state->removed_set_binding->ops_ref().hash(memory));
             }
 
             [[nodiscard]] static bool delta_bundle_equals(const void *context, const void *lhs,
@@ -1347,8 +1347,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
                 return fallback_on_exception(false, [&] {
                     const auto *state = ctx(context);
-                    return state->added_set_binding->checked_ops().equals(lhs, rhs) &&
-                           state->removed_set_binding->checked_ops().equals(lhs, rhs);
+                    return state->added_set_binding->ops_ref().equals(lhs, rhs) &&
+                           state->removed_set_binding->ops_ref().equals(lhs, rhs);
                 });
             }
 
@@ -1368,8 +1368,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctx(context);
                 return fmt::format("{{added: {}, removed: {}}}",
-                                   state->added_set_binding->checked_ops().to_string(memory),
-                                   state->removed_set_binding->checked_ops().to_string(memory));
+                                   state->added_set_binding->ops_ref().to_string(memory),
+                                   state->removed_set_binding->ops_ref().to_string(memory));
             }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -1377,8 +1377,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctx(context);
                 nb::dict    result;
-                result[nb::str{"added"}] = state->added_set_binding->checked_ops().to_python(memory);
-                result[nb::str{"removed"}] = state->removed_set_binding->checked_ops().to_python(memory);
+                result[nb::str{"added"}] = state->added_set_binding->ops_ref().to_python(memory);
+                result[nb::str{"removed"}] = state->removed_set_binding->ops_ref().to_python(memory);
                 return result;
             }
 #endif
@@ -1431,7 +1431,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                 const ValueTypeBinding &key_binding,
                                 const TSDataBinding &element_binding)
             {
-                const auto &element_ops = element_binding.checked_ops();
+                const auto &element_ops = element_binding.ops_ref();
                 const auto *element_layout = element_ops.layout_impl(element_ops.context);
                 if (element_layout == nullptr)
                 {
@@ -1735,7 +1735,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 const auto *state = ctxd(context);
                 const auto &store = storage<TSDSlotStorage>(memory);
-                const auto &child_ops = state->dict_layout.element_binding->checked_ops();
+                const auto &child_ops = state->dict_layout.element_binding->ops_ref();
                 for (std::size_t slot = 0; slot < store.slot_capacity(); ++slot)
                 {
                     if (!store.slot_live(slot)) { continue; }
@@ -1795,7 +1795,7 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static nb::object tsd_to_python(const void *context, const void *memory)
             {
                 const auto *state = ctxd(context);
-                return state->dict_layout.value_binding->checked_ops().to_python(memory);
+                return state->dict_layout.value_binding->ops_ref().to_python(memory);
             }
 
             [[nodiscard]] static nb::object tsd_delta_to_python(const void *context,
@@ -1807,7 +1807,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     return nb::none();
                 }
-                return state->dict_layout.delta_binding->checked_ops().to_python(memory);
+                return state->dict_layout.delta_binding->ops_ref().to_python(memory);
             }
 
             [[nodiscard]] static bool tsd_from_python(const void *context,
@@ -1858,7 +1858,7 @@ namespace hgraph::ts_data_plan_factory_detail
                                 if (result.changed) { static_cast<void>(target.remove_key(key.view(), modified_time)); }
                             });
 
-                            const auto &child_ops    = state->dict_layout.element_binding->checked_ops();
+                            const auto &child_ops    = state->dict_layout.element_binding->ops_ref();
                             void       *child_memory = target.child_memory_for_write(result.slot);
                             if (!child_ops.from_python_impl(child_ops.context, child_memory, value_source,
                                                             modified_time))
@@ -1897,7 +1897,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 for (const auto &[key, value_source] : entries)
                 {
                     const auto result = target.insert_key(key.view(), modified_time);
-                    const auto &child_ops = state->dict_layout.element_binding->checked_ops();
+                    const auto &child_ops = state->dict_layout.element_binding->ops_ref();
                     void       *child_memory = target.child_memory_for_write(result.slot);
                     if (child_ops.from_python_impl(child_ops.context, child_memory, value_source, modified_time))
                     {
@@ -1914,7 +1914,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     }
                 }
 
-                const auto &key_ops = state->dict_layout.key_binding->checked_ops();
+                const auto &key_ops = state->dict_layout.key_binding->ops_ref();
                 std::vector<Value> removals;
                 for (const auto key : set_make_range<SlotSetSurface::Live>(context, memory))
                 {
@@ -1951,7 +1951,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 const auto *state = ctxd(context);
                 const auto &store = storage<TSDSlotStorage>(memory);
                 if (!store.slot_live(slot)) { return false; }
-                const auto &child_ops = state->dict_layout.element_binding->checked_ops();
+                const auto &child_ops = state->dict_layout.element_binding->ops_ref();
                 const auto *child_memory = store.child_at_slot(slot);
                 return child_ops.tracking_impl(child_ops.context, child_memory)->last_modified_time != MIN_DT;
             }
@@ -2208,7 +2208,7 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctxd(context);
                 const auto &store = storage<TSDSlotStorage>(memory);
-                const auto &child_ops = state->dict_layout.element_binding->checked_ops();
+                const auto &child_ops = state->dict_layout.element_binding->ops_ref();
                 const auto *child_memory = store.child_at_slot(slot);
                 if constexpr (Surface == SlotMapSurface::Live)
                 {
@@ -2328,8 +2328,8 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::size_t map_hash(const void *context, const void *memory)
             {
                 const auto *state = ctxd(context);
-                const auto &key_ops = state->dict_layout.key_binding->checked_ops();
-                const auto &value_ops = map_value_binding<Surface>(context, memory)->checked_ops();
+                const auto &key_ops = state->dict_layout.key_binding->ops_ref();
+                const auto &value_ops = map_value_binding<Surface>(context, memory)->ops_ref();
                 std::size_t result = 0;
                 for (const auto [key, value] : map_kv_range<Surface>(context, memory))
                 {
@@ -2344,7 +2344,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
                 return fallback_on_exception(false, [&] {
                     if (map_size<Surface>(context, lhs) != map_size<Surface>(context, rhs)) { return false; }
-                    const auto &value_ops = map_value_binding<Surface>(context, lhs)->checked_ops();
+                    const auto &value_ops = map_value_binding<Surface>(context, lhs)->ops_ref();
                     for (const auto [key, value] : map_kv_range<Surface>(context, lhs))
                     {
                         const auto *rhs_value = map_value_at<Surface>(context, rhs, key.data());
@@ -2371,8 +2371,8 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::string map_to_string(const void *context, const void *memory)
             {
                 const auto *state = ctxd(context);
-                const auto &key_ops = state->dict_layout.key_binding->checked_ops();
-                const auto &value_ops = map_value_binding<Surface>(context, memory)->checked_ops();
+                const auto &key_ops = state->dict_layout.key_binding->ops_ref();
+                const auto &value_ops = map_value_binding<Surface>(context, memory)->ops_ref();
                 fmt::memory_buffer out;
                 fmt::format_to(std::back_inserter(out), "{{");
                 bool first = true;
@@ -2393,8 +2393,8 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static nb::object map_to_python(const void *context, const void *memory)
             {
                 const auto *state = ctxd(context);
-                const auto &key_ops = state->dict_layout.key_binding->checked_ops();
-                const auto &value_ops = map_value_binding<Surface>(context, memory)->checked_ops();
+                const auto &key_ops = state->dict_layout.key_binding->ops_ref();
+                const auto &value_ops = map_value_binding<Surface>(context, memory)->ops_ref();
                 nb::dict result;
                 for (const auto [key, value] : map_kv_range<Surface>(context, memory))
                 {
@@ -2471,8 +2471,8 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static std::size_t dict_delta_hash(const void *context, const void *memory)
             {
                 const auto *state = ctxd(context);
-                return combine_hash(state->removed_set_binding->checked_ops().hash(memory),
-                                    state->modified_map_binding->checked_ops().hash(memory));
+                return combine_hash(state->removed_set_binding->ops_ref().hash(memory),
+                                    state->modified_map_binding->ops_ref().hash(memory));
             }
 
             [[nodiscard]] static bool dict_delta_equals(const void *context, const void *lhs,
@@ -2481,8 +2481,8 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (lhs == nullptr || rhs == nullptr) { return lhs == rhs; }
                 return fallback_on_exception(false, [&] {
                     const auto *state = ctxd(context);
-                    return state->removed_set_binding->checked_ops().equals(lhs, rhs) &&
-                           state->modified_map_binding->checked_ops().equals(lhs, rhs);
+                    return state->removed_set_binding->ops_ref().equals(lhs, rhs) &&
+                           state->modified_map_binding->ops_ref().equals(lhs, rhs);
                 });
             }
 
@@ -2502,8 +2502,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctxd(context);
                 return fmt::format("{{removed: {}, modified: {}}}",
-                                   state->removed_set_binding->checked_ops().to_string(memory),
-                                   state->modified_map_binding->checked_ops().to_string(memory));
+                                   state->removed_set_binding->ops_ref().to_string(memory),
+                                   state->modified_map_binding->ops_ref().to_string(memory));
             }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
@@ -2511,8 +2511,8 @@ namespace hgraph::ts_data_plan_factory_detail
             {
                 const auto *state = ctxd(context);
                 nb::dict result;
-                result[nb::str{"removed"}] = state->removed_set_binding->checked_ops().to_python(memory);
-                result[nb::str{"modified"}] = state->modified_map_binding->checked_ops().to_python(memory);
+                result[nb::str{"removed"}] = state->removed_set_binding->ops_ref().to_python(memory);
+                result[nb::str{"modified"}] = state->modified_map_binding->ops_ref().to_python(memory);
                 return result;
             }
 #endif

@@ -421,7 +421,7 @@ TEST_CASE("TSDataPlanFactory: atomic TSData uses value storage and last-modified
     REQUIRE(binding != nullptr);
     REQUIRE(binding->type_meta == ts_int);
     REQUIRE(binding->plan() == plan);
-    REQUIRE(binding->checked_ops().allows_mutation);
+    REQUIRE(binding->ops_ref().allows_mutation);
     TSData data{*binding};
     REQUIRE(data.view().layout().value_binding == registry.scalar_binding<std::int32_t>());
     REQUIRE(data.view().layout().delta_binding == registry.scalar_binding<std::int32_t>());
@@ -438,7 +438,7 @@ TEST_CASE("TSDataView: mutation capability is supplied by TSDataOps")
     const auto *binding  = factory.binding_for(ts_int);
     REQUIRE(binding != nullptr);
 
-    TSDataOps immutable_ops = binding->checked_ops();
+    TSDataOps immutable_ops = binding->ops_ref();
     immutable_ops.allows_mutation = false;
     TSDataBinding immutable_binding{binding->type_meta, binding->plan(), &immutable_ops};
 
@@ -690,7 +690,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     REQUIRE(tsb_view["a"].binding() == first_child.binding());
     REQUIRE(first_child.binding()->type_meta == ts_int);
     REQUIRE(first_child.binding()->plan() == binding->plan());
-    const auto &child_ops = first_child.binding()->checked_ops();
+    const auto &child_ops = first_child.binding()->ops_ref();
     REQUIRE(&first_child.layout() == child_ops.layout_impl(child_ops.context));
     REQUIRE(view.value().is_bundle());
     REQUIRE(view.value().binding() == ValuePlanFactory::instance().binding_for(tsb->value_schema));
@@ -700,7 +700,7 @@ TEST_CASE("TSDataPlanFactory: fixed TSB groups current values before child track
     REQUIRE(current.at("a").checked_as<std::int32_t>() == 0);
     REQUIRE(current.at("b").checked_as<std::int32_t>() == 0);
 
-    auto immutable_ops = static_cast<const IndexedTSDataOps &>(binding->checked_ops());
+    auto immutable_ops = static_cast<const IndexedTSDataOps &>(binding->ops_ref());
     immutable_ops.allows_mutation = false;
     TSDataBinding immutable_binding{binding->type_meta, binding->plan(), &immutable_ops};
     TSData        immutable_data{immutable_binding};
@@ -1375,7 +1375,7 @@ TEST_CASE("TSDataPlanFactory: TSD uses slot storage with key-set and modified de
     REQUIRE(dict.at(key.view()).value().checked_as<std::int32_t>() == 42);
     REQUIRE(view.value().as_map().at(key.view()).checked_as<std::int32_t>() == 42);
 
-    auto immutable_ops = static_cast<const TSDDataOps &>(binding->checked_ops());
+    auto immutable_ops = static_cast<const TSDDataOps &>(binding->ops_ref());
     immutable_ops.allows_mutation = false;
     TSDataBinding immutable_binding{binding->type_meta, binding->plan(), &immutable_ops};
     auto          immutable_view = TSDataView{&immutable_binding, view.data()};

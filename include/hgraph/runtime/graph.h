@@ -108,7 +108,7 @@ namespace hgraph
         [[nodiscard]] DateTime (*next_scheduled_time_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] std::size_t (*node_count_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] NodeView (*node_at_impl)(const void *context, void *memory, std::size_t index) = nullptr;
-        [[nodiscard]] GlobalState *(*global_state_impl)(const void *context, void *memory) noexcept = nullptr;
+        [[nodiscard]] GlobalStateView (*global_state_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] EvaluationClockView (*evaluation_clock_impl)(const void *context,
                                                                    const void *memory) noexcept = nullptr;
     };

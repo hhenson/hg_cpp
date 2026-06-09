@@ -101,7 +101,7 @@ namespace hgraph
                     throw std::logic_error("TSDProxy element binding does not match the TSD element schema");
                 }
 
-                const auto &element_ops    = element_binding->checked_ops();
+                const auto &element_ops    = element_binding->ops_ref();
                 const auto *element_layout = element_ops.layout_impl(element_ops.context);
                 if (element_layout == nullptr)
                 {
@@ -454,7 +454,7 @@ namespace hgraph
                 return fallback_on_exception(false, [&] {
                     if (!has_current_value(context, memory)) { return false; }
                     const auto *state = ctx(context);
-                    const auto &ops   = state->element_binding->checked_ops();
+                    const auto &ops   = state->element_binding->ops_ref();
                     const auto &store = proxy_storage(memory);
                     auto        dict  = store.source_dict();
                     for (std::size_t slot = 0; slot < dict.slot_capacity(); ++slot)
@@ -528,7 +528,7 @@ namespace hgraph
                 if (!store.has_child(slot) || !source_dict(memory).slot_live(slot)) { return false; }
                 if (store.child_updated(slot)) { return true; }
                 const auto *state          = ctx(context);
-                const auto &ops            = state->element_binding->checked_ops();
+                const auto &ops            = state->element_binding->ops_ref();
                 const auto *child_tracking = ops.tracking_impl(ops.context, store.child_at_slot(slot));
                 return child_tracking != nullptr &&
                        child_tracking->last_modified_time == store.tracking().last_modified_time;
@@ -1037,7 +1037,7 @@ namespace hgraph
     {
         if (element_binding_ == nullptr) { return; }
 
-        const auto &child_ops = element_binding_->checked_ops();
+        const auto &child_ops = element_binding_->ops_ref();
         for (std::size_t slot = 0; slot < values_.slot_capacity(); ++slot)
         {
             if (!values_.has_slot(slot)) { continue; }

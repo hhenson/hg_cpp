@@ -302,7 +302,7 @@ namespace hgraph
     {
         if (!has_ts_data_parent()) { throw std::logic_error("TSDataParentLink requires a TSData parent"); }
         const auto *binding = parent_binding();
-        const auto &table   = binding->checked_ops();
+        const auto &table   = binding->ops_ref();
         return *table.tracking_impl(table.context, parent_data());
     }
 
@@ -310,7 +310,7 @@ namespace hgraph
     {
         if (!has_ts_data_parent()) { throw std::logic_error("TSDataParentLink requires a TSData parent"); }
         const auto *binding = parent_binding();
-        const auto &table   = binding->checked_ops();
+        const auto &table   = binding->ops_ref();
         auto       *memory  = const_cast<void *>(parent_data());
         return *table.mutable_tracking_impl(table.context, memory);
     }
@@ -327,7 +327,7 @@ namespace hgraph
         }
 
         const auto *binding = parent_binding();
-        const auto &table   = binding->checked_ops();
+        const auto &table   = binding->ops_ref();
         auto       *memory  = const_cast<void *>(parent_data());
         table.record_child_modified_impl(table.context, memory, child_id, mutation_time);
 
