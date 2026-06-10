@@ -168,8 +168,62 @@ namespace hgraph::testing
             using type = T;
         };
 
+        template <typename... A>
+        struct first_arg_is_optional_vector : std::false_type
+        {
+        };
+        template <typename A0, typename... Rest>
+        struct first_arg_is_optional_vector<A0, Rest...>
+            : is_optional_vector<std::remove_cvref_t<A0>>
+        {
+        };
+
+        template <typename... A>
+        inline constexpr bool first_arg_is_optional_vector_v = first_arg_is_optional_vector<A...>::value;
+
+        template <typename... A>
+        inline constexpr bool any_optional_vector_v =
+            (false || ... || is_optional_vector<std::remove_cvref_t<A>>::value);
+
         inline std::string input_key(std::size_t index) { return "eval_node::in" + std::to_string(index); }
     }  // namespace eval_node_detail
+
+    /**
+     * Evaluate a source-style static node: no time-series input, exactly one output.
+     *
+     * This is the source counterpart of the input-driven ``eval_node`` overload below.
+     * Scalar arguments are passed in the node's wire-parameter order, the output is recorded,
+     * and the returned sequence contains every output tick produced until quiescence.
+     */
+    template <typename NodeT, typename... Args>
+        requires(!std::derived_from<NodeT, operator_tag> &&
+                 eval_node_detail::has_eval<NodeT> &&
+                 StaticNodeSignature<NodeT>::input_count() == 0)
+    [[nodiscard]] std::vector<std::optional<eval_node_detail::output_element_t<NodeT>>>
+    eval_node(Args &&...args)
+    {
+        using sig         = StaticNodeSignature<NodeT>;
+        using wire_params = eval_node_detail::wire_params_t<NodeT>;
+        using out_schema  = eval_node_detail::output_schema_t<NodeT>;
+        constexpr std::size_t arg_count = sizeof...(Args);
+
+        static_assert(sig::output_count() == 1, "eval_node: source NodeT must have exactly one output");
+        static_assert(arg_count == std::tuple_size_v<wire_params>,
+                      "eval_node: argument count must match the source node's Scalar parameters");
+
+        Wiring w;
+        auto   out_port = wire<NodeT>(w, std::forward<Args>(args)...);
+        ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"});
+
+        GraphBuilder gb = std::move(w).finish();
+        GraphExecutorBuilder eb;
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
+        GraphExecutorValue executor = eb.make_executor();
+        auto               view     = executor.view();
+        view.run();
+
+        return ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
+    }
 
     /**
      * Evaluate a node over per-cycle inputs and return its per-cycle outputs — the
@@ -279,12 +333,11 @@ namespace hgraph::testing
      * out of scope (wire those as a graph and use ``record`` directly).
      */
     template <typename Op, typename Input0, typename... Rest>
-        requires std::derived_from<Op, operator_tag>
+        requires(std::derived_from<Op, operator_tag> &&
+                 eval_node_detail::is_optional_vector<std::remove_cvref_t<Input0>>::value)
     [[nodiscard]] std::vector<std::optional<Value>> eval_node(const Input0 &input0, Rest &&...rest)
     {
         static_assert(Op::has_output, "eval_node<Op>: the operator must have an output (sinks are out of scope)");
-        static_assert(eval_node_detail::is_optional_vector<Input0>::value,
-                      "eval_node<Op>: the first argument must be a time-series input (vector<optional<T>>)");
 
         constexpr std::size_t arg_count = 1 + sizeof...(Rest);
         Wiring                w;
@@ -340,6 +393,57 @@ namespace hgraph::testing
         auto out = get_recorded_deltas(view.graph().global_state(), "eval_node::out");
         if (out.size() < max_len) { out.resize(max_len); }
         return out;
+    }
+
+    /**
+     * Evaluate a source-style operator: scalar arguments only, exactly one output.
+     *
+     * Use ``eval_node<Op>(args...)`` when the operator can resolve its output from its
+     * scalar arguments, or ``eval_node<Op, OutSchema>(args...)`` when the output must be
+     * supplied explicitly, mirroring ``wire<Op, OutSchema>(w, args...)``.
+     */
+    template <typename Op, typename... Args>
+        requires(std::derived_from<Op, operator_tag> &&
+                 Op::has_output &&
+                 !eval_node_detail::first_arg_is_optional_vector_v<Args...>)
+    [[nodiscard]] std::vector<std::optional<Value>> eval_node(Args &&...args)
+    {
+        static_assert(!eval_node_detail::any_optional_vector_v<Args...>,
+                      "eval_node<Op>: source-style operator overload accepts scalar arguments only");
+
+        Wiring w;
+        auto   out_port = wire<Op>(w, std::forward<Args>(args)...);
+        wire<record>(w, out_port, std::string{"eval_node::out"});
+
+        GraphBuilder gb = std::move(w).finish();
+        GraphExecutorBuilder eb;
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
+        GraphExecutorValue executor = eb.make_executor();
+        auto               view     = executor.view();
+        view.run();
+
+        return get_recorded_deltas(view.graph().global_state(), "eval_node::out");
+    }
+
+    template <typename Op, typename OutSchema, typename... Args>
+        requires(std::derived_from<Op, operator_tag> &&
+                 Op::has_output &&
+                 !std::is_void_v<OutSchema> &&
+                 !eval_node_detail::any_optional_vector_v<Args...>)
+    [[nodiscard]] std::vector<std::optional<Value>> eval_node(Args &&...args)
+    {
+        Wiring w;
+        auto   out_port = wire<Op, OutSchema>(w, std::forward<Args>(args)...);
+        wire<record>(w, out_port, std::string{"eval_node::out"});
+
+        GraphBuilder gb = std::move(w).finish();
+        GraphExecutorBuilder eb;
+        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
+        GraphExecutorValue executor = eb.make_executor();
+        auto               view     = executor.view();
+        view.run();
+
+        return get_recorded_deltas(view.graph().global_state(), "eval_node::out");
     }
 }  // namespace hgraph::testing
 
