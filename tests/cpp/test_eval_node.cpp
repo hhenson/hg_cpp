@@ -24,6 +24,13 @@ namespace
         static void           eval(In<"in", TS<Int>> in, Out<TS<Int>> out) { out.set(in.value() + 1); }
     };
 
+    struct ConstantSource
+    {
+        static constexpr auto name              = "eval_node_constant_source";
+        static constexpr bool schedule_on_start = true;
+        static void           eval(Out<TS<Int>> out) { out.set(Int{41}); }
+    };
+
     // A stateful node: a running sum, to show state persists across cycles.
     struct RunningSum
     {
@@ -112,6 +119,14 @@ TEST_CASE("eval_node: maps each input tick through a compute node")
 
     // A skipped input cycle (none) stays skipped in the output.
     CHECK_OUTPUT(testing::eval_node<AddOne>({1, none, 3}), {2, none, 4});
+}
+
+TEST_CASE("eval_node: drives a source node without time-series inputs")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    CHECK_OUTPUT(testing::eval_node<ConstantSource>(), {Int{41}});
 }
 
 TEST_CASE("eval_node: node state persists across cycles")
