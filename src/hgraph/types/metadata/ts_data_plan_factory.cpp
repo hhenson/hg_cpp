@@ -68,6 +68,7 @@ namespace hgraph
         plan_detail::clear_dynamic_list_ts_data_contexts();
         plan_detail::clear_window_ts_data_contexts();
         plan_detail::clear_slot_ts_data_contexts();
+        clear_tsd_proxy_contexts();
     }
 
     const TSDataBinding *TSDataPlanFactory::binding_for(const TSValueTypeMetaData *schema)

@@ -133,6 +133,9 @@ namespace hgraph
     [[nodiscard]] const TSDataBinding &tsd_proxy_binding_for(const TSValueTypeMetaData &schema,
                                                              const TSDataBinding      &element_binding);
 
+    /** Clear interned proxy binding contexts that borrow schema and TSData binding pointers. */
+    void clear_tsd_proxy_contexts() noexcept;
+
     /** Bind a live proxy TSData view to a source dictionary. */
     void bind_tsd_proxy(const TSDataView       &proxy,
                         const TSDDataView      &source,

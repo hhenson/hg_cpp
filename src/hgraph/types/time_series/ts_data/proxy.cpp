@@ -1228,6 +1228,12 @@ namespace hgraph
         return TSDataBinding::intern(schema, *context.plan, context.dict_ops);
     }
 
+    void clear_tsd_proxy_contexts() noexcept
+    {
+        std::lock_guard<std::recursive_mutex> lock(tsd_proxy_context_mutex());
+        tsd_proxy_contexts().clear();
+    }
+
     void bind_tsd_proxy(const TSDataView       &proxy,
                         const TSDDataView      &source,
                         TSDProxy::ValueBuilder  builder,

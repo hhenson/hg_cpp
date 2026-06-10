@@ -6,5 +6,6 @@
 #include <hgraph/runtime/graph.h>
 #include <hgraph/runtime/nested_graph_node.h>
 #include <hgraph/runtime/executor.h>
+#include <hgraph/runtime/push_source_node.h>
 
 #endif  // HGRAPH_RUNTIME_RUNTIME_H
