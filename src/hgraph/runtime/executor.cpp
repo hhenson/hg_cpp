@@ -314,8 +314,7 @@ namespace hgraph
 
         [[nodiscard]] bool waits_for_push_sources(const RealTimeExecutorStorage &, const GraphView &graph) noexcept
         {
-            const auto *schema = graph.schema();
-            return schema != nullptr && schema->push_source_nodes_end > 0;
+            return graph.schema()->push_source_nodes_end > 0;
         }
 
         template <typename Storage, typename Advance>
