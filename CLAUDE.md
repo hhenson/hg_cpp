@@ -142,9 +142,30 @@ Sources are
 stateful). See `docs/.../testing_graphs_cpp.rst` + memory `value-any-globalstate-testing-plan`.
 `ext/2603` is the working reference.
 
-**Next milestone:** to be decided — candidates include
-more `lib/std` operators, or beginning the non-flattening nested-graph work
-(`map_`/`reduce`/`switch_`). **C++ only for now** — keep Python out of the
+**Real-time execution + push sources — DONE.** The executor now runs in
+`GraphExecutorMode::RealTime`: wall-clock waiting on a condition variable,
+`request_stop()` wakes a sleeping executor, and **push-source nodes** deliver values
+from external threads (`runtime/push_source_node.{h,cpp}`): `PushSourcePolicy` with
+**Queue** (FIFO, drains one value per cycle) and **Conflating** (delta-merging
+accumulator) policies, a thread-safe `PushSourceSender` handed to user code at `start`,
+schema validation on send, and executor wake-up via the push-pending signal. Push
+sources require a real-time **root** graph (rejected in simulation mode and in nested
+graphs). Tests: `tests/cpp/test_realtime_execution.cpp`. Docs: `architecture.rst`
+(push-source subsection), `data_structures/overview/execution_layer.rst`, `wiring.rst`,
+`python_integration.rst`. The single-threaded rule stands: senders are the only
+cross-thread entry point.
+
+**Current milestone: non-flattening nested graphs** (`map_`/`reduce`/`switch_`).
+The runtime substrate already works — `single_nested_graph_node`
+(`runtime/nested_graph_node.{h,cpp}`) is a tested generic single-child nested node
+(lazy child `GraphValue` in node storage, per-cycle input re-binding, root output
+forwarding, schedule propagation; see `graph_wiring.rst` "Nested graphs"). The
+milestone adds the wiring surface (`CompiledSubGraph`/`compile_subgraph<G>`/`nested_<G>`)
+and the keyed/branching operators on top; plan increments are recorded in
+`docs/source/developer_guide/nested_graphs.rst` as they land. Design sources:
+`ext/2603/docs/design/2026-04-v2-nested-graphs-rfc.md` + implementation notes +
+sampled-runtime contract, reconciled toward current code (no separate engine/clock, no
+wiring stub nodes). **C++ only for now** — keep Python out of the
 configure/build/run path.
 
 ---
