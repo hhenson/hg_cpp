@@ -5,6 +5,7 @@
 #include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/testing/mock_runtime.h>
+#include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/time_series/ts_delta.h>
@@ -572,18 +573,6 @@ namespace
         }
     };
 
-    GraphExecutorValue run_start(GraphBuilder graph_builder)
-    {
-        GraphExecutorBuilder executor_builder;
-        executor_builder.graph_builder(std::move(graph_builder))
-            .start_time(MIN_ST)
-            .end_time(MIN_ST + TimeDelta{2});
-
-        GraphExecutorValue executor = executor_builder.make_executor();
-        executor.view().run();
-        return executor;
-    }
-
     NodeBuilder static_node_builder_for_add_one()
     {
         NodeBuilder builder;
@@ -929,7 +918,7 @@ TEST_CASE("graph wiring: brace initializer wires fixed TSL input as non-peered s
 {
     using namespace hgraph;
 
-    GraphExecutorValue executor = run_start(build_graph<BraceListInputGraph>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<BraceListInputGraph>());
 
     auto graph = executor.view().graph();
     REQUIRE(graph.node_count() == 2);
@@ -941,7 +930,7 @@ TEST_CASE("graph wiring: brace initializer wires TSB input as non-peered structu
 {
     using namespace hgraph;
 
-    GraphExecutorValue executor = run_start(build_graph<BraceBundleInputGraph>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<BraceBundleInputGraph>());
 
     auto graph = executor.view().graph();
     REQUIRE(graph.node_count() == 2);
@@ -953,7 +942,7 @@ TEST_CASE("graph wiring: named brace initializer wires TSB fields by name")
 {
     using namespace hgraph;
 
-    GraphExecutorValue executor = run_start(build_graph<BraceBundleNamedInputGraph>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<BraceBundleNamedInputGraph>());
 
     auto graph = executor.view().graph();
     REQUIRE(graph.node_count() == 3);
@@ -965,7 +954,7 @@ TEST_CASE("graph wiring: partial named TSB initializer fills missing fields with
 {
     using namespace hgraph;
 
-    GraphExecutorValue executor = run_start(build_graph<BraceBundlePartialInputGraph>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<BraceBundlePartialInputGraph>());
 
     auto graph = executor.view().graph();
     REQUIRE(graph.node_count() == 2);
@@ -982,7 +971,7 @@ TEST_CASE("graph wiring: recordable_state exposes the hidden recordable-state po
     CHECK(graph_edge_source_node(graph_builder.edges()[1].source_node) == 1);
     CHECK(graph_edge_source_kind(graph_builder.edges()[1].source_node) == GraphEdgeSourceKind::RecordableState);
 
-    GraphExecutorValue executor = run_start(std::move(graph_builder));
+    GraphExecutorValue executor = testing::run_graph(std::move(graph_builder));
 
     auto graph = executor.view().graph();
     REQUIRE(graph.node_count() == 3);
@@ -999,7 +988,7 @@ TEST_CASE("graph wiring: error_output exposes the hidden error-output port")
     CHECK(graph_edge_source_node(graph_builder.edges()[0].source_node) == 0);
     CHECK(graph_edge_source_kind(graph_builder.edges()[0].source_node) == GraphEdgeSourceKind::ErrorOutput);
 
-    GraphExecutorValue executor = run_start(std::move(graph_builder));
+    GraphExecutorValue executor = testing::run_graph(std::move(graph_builder));
 
     auto graph = executor.view().graph();
     REQUIRE(graph.node_count() == 2);
@@ -1028,7 +1017,7 @@ TEST_CASE("graph wiring: nested node binds outer input into child graph input")
         .add_node(nested_add_one_builder())
         .add_edge(GraphEdge{.source_node = 0, .target_node = 1, .target_path = {0}});
 
-    GraphExecutorValue executor = run_start(std::move(graph_builder));
+    GraphExecutorValue executor = testing::run_graph(std::move(graph_builder));
 
     auto graph = executor.view().graph();
     REQUIRE(graph.node_count() == 2);
@@ -1067,7 +1056,7 @@ TEST_CASE("graph wiring: nested node forwards child output to downstream input")
         .add_edge(GraphEdge{.source_node = 0, .target_node = 1, .target_path = {0}})
         .add_edge(GraphEdge{.source_node = 1, .target_node = 2, .target_path = {0}});
 
-    GraphExecutorValue executor = run_start(std::move(graph_builder));
+    GraphExecutorValue executor = testing::run_graph(std::move(graph_builder));
 
     auto graph = executor.view().graph();
     REQUIRE(graph.node_count() == 3);
@@ -1082,7 +1071,7 @@ TEST_CASE("graph wiring: nested node propagates child graph schedule")
     GraphBuilder graph_builder;
     graph_builder.label("outer_nested_constant").add_node(nested_constant_builder());
 
-    GraphExecutorValue executor = run_start(std::move(graph_builder));
+    GraphExecutorValue executor = testing::run_graph(std::move(graph_builder));
 
     auto graph = executor.view().graph();
     REQUIRE(graph.node_count() == 1);
@@ -1158,7 +1147,7 @@ TEST_CASE("graph wiring: REF round trip supports TSS")
 {
     using namespace hgraph;
 
-    GraphExecutorValue executor = run_start(build_graph<RefRoundTripFor<SetSource, TSS<Int>>>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<RefRoundTripFor<SetSource, TSS<Int>>>());
 
     auto graph  = executor.view().graph();
     auto output = graph.node_at(2).output(MIN_ST);
@@ -1176,7 +1165,7 @@ TEST_CASE("graph wiring: REF round trip supports TSD")
 {
     using namespace hgraph;
 
-    GraphExecutorValue executor = run_start(build_graph<RefRoundTripFor<DictSource, TSD<Int, TS<Int>>>>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<RefRoundTripFor<DictSource, TSD<Int, TS<Int>>>>());
 
     auto graph  = executor.view().graph();
     auto output = graph.node_at(2).output(MIN_ST);
@@ -1195,7 +1184,7 @@ TEST_CASE("graph wiring: REF round trip supports fixed TSL")
 {
     using namespace hgraph;
 
-    GraphExecutorValue executor = run_start(build_graph<RefRoundTripFor<ListSource, TSL<TS<Int>, 2>>>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<RefRoundTripFor<ListSource, TSL<TS<Int>, 2>>>());
 
     auto graph  = executor.view().graph();
     auto output = graph.node_at(2).output(MIN_ST);
@@ -1211,7 +1200,7 @@ TEST_CASE("graph wiring: REF round trip supports TSB")
 {
     using namespace hgraph;
 
-    GraphExecutorValue executor = run_start(build_graph<RefRoundTripFor<BundleSource, RefRoundTripBundle>>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<RefRoundTripFor<BundleSource, RefRoundTripBundle>>());
 
     auto graph  = executor.view().graph();
     auto output = graph.node_at(2).output(MIN_ST);
@@ -1227,7 +1216,7 @@ TEST_CASE("graph wiring: REF round trip supports nested collection children")
     using namespace hgraph;
 
     GraphExecutorValue executor =
-        run_start(build_graph<RefRoundTripFor<NestedListSetSource, TSL<TSS<Int>, 2>>>());
+        testing::run_graph(build_graph<RefRoundTripFor<NestedListSetSource, TSL<TSS<Int>, 2>>>());
 
     auto graph         = executor.view().graph();
     auto output        = graph.node_at(2).output(MIN_ST);

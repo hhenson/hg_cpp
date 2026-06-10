@@ -1,8 +1,8 @@
+#include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/value/value.h>
-#include <hgraph/util/scope.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -17,112 +17,7 @@
 namespace
 {
     using namespace hgraph;
-
-    [[nodiscard]] DateTime wall_now() noexcept
-    {
-        return std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now());
-    }
-
-    void write_int_output(const NodeView &view, DateTime evaluation_time, Int value)
-    {
-        Value wrapped{value};
-        auto  mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
-        REQUIRE(mutation.copy_value_from(wrapped.view()));
-    }
-
-    NodeBuilder push_queue_source(const TSValueTypeMetaData *ts_int,
-                                  PushSourceSender *sender)
-    {
-        return make_push_source_node(*ts_int, [sender](PushSourceSender started_sender) {
-            *sender = started_sender;
-        });
-    }
-
-    NodeBuilder recording_sink(const TSValueTypeMetaData *input_schema,
-                               const TSValueTypeMetaData *ts_int,
-                               Int *observed_value,
-                               std::int32_t *eval_count)
-    {
-        NodeTypeMetaData schema;
-        schema.display_name = "recording_sink";
-        schema.input_schema = input_schema;
-        schema.node_kind    = NodeKind::Sink;
-
-        NodeCallbacks callbacks;
-        callbacks.evaluate = [observed_value, eval_count](const NodeView &view, DateTime evaluation_time) {
-            ++*eval_count;
-            auto root = view.input(evaluation_time);
-            auto bundle = root.as_bundle();
-            auto input = bundle[0];
-            *observed_value = input.value().checked_as<Int>();
-            view.graph().executor().request_stop();
-        };
-
-        auto endpoint = TSEndpointSchema::non_peered(
-            input_schema,
-            {
-                TSEndpointSchema::peered(ts_int),
-            });
-        return NodeBuilder::native(std::move(schema), std::move(callbacks), std::move(endpoint));
-    }
-
-    NodeBuilder collecting_sink(const TSValueTypeMetaData *input_schema,
-                                const TSValueTypeMetaData *ts_int,
-                                std::vector<Int> *observed_values,
-                                std::size_t expected_count)
-    {
-        NodeTypeMetaData schema;
-        schema.display_name = "collecting_sink";
-        schema.input_schema = input_schema;
-        schema.node_kind    = NodeKind::Sink;
-
-        NodeCallbacks callbacks;
-        callbacks.evaluate = [observed_values, expected_count](const NodeView &view, DateTime evaluation_time) {
-            auto root = view.input(evaluation_time);
-            auto bundle = root.as_bundle();
-            auto input = bundle[0];
-            observed_values->push_back(input.value().checked_as<Int>());
-            if (observed_values->size() >= expected_count)
-            {
-                view.graph().executor().request_stop();
-            }
-        };
-
-        auto endpoint = TSEndpointSchema::non_peered(
-            input_schema,
-            {
-                TSEndpointSchema::peered(ts_int),
-            });
-        return NodeBuilder::native(std::move(schema), std::move(callbacks), std::move(endpoint));
-    }
-
-    NodeBuilder recording_value_sink(const TSValueTypeMetaData *input_schema,
-                                     const TSValueTypeMetaData *input_ts,
-                                     Value *observed_value,
-                                     std::int32_t *eval_count)
-    {
-        NodeTypeMetaData schema;
-        schema.display_name = "recording_value_sink";
-        schema.input_schema = input_schema;
-        schema.node_kind    = NodeKind::Sink;
-
-        NodeCallbacks callbacks;
-        callbacks.evaluate = [observed_value, eval_count](const NodeView &view, DateTime evaluation_time) {
-            ++*eval_count;
-            auto root = view.input(evaluation_time);
-            auto bundle = root.as_bundle();
-            auto input = bundle[0];
-            *observed_value = Value{input.value()};
-            view.graph().executor().request_stop();
-        };
-
-        auto endpoint = TSEndpointSchema::non_peered(
-            input_schema,
-            {
-                TSEndpointSchema::peered(input_ts),
-            });
-        return NodeBuilder::native(std::move(schema), std::move(callbacks), std::move(endpoint));
-    }
+    using namespace hgraph::testing;
 
     NodeBuilder delayed_source(TimeDelta delay,
                                std::atomic_int *eval_count,
@@ -152,7 +47,7 @@ namespace
                 *observed_evaluation_time = evaluation_time;
                 *observed_clock_evaluation_time = clock.evaluation_time();
                 *observed_clock_now = clock.now();
-                write_int_output(view, evaluation_time, Int{1});
+                set_output_value(view, evaluation_time, Int{1});
             };
 
         return NodeBuilder::native(std::move(schema), std::move(callbacks));
@@ -178,7 +73,7 @@ TEST_CASE("real-time executor waits for the future scheduled time")
                                           &observed_clock_evaluation_time,
                                           &observed_clock_now));
 
-    const DateTime start_time = wall_now() + start_offset;
+    const DateTime start_time = hgraph::testing::wall_now() + start_offset;
     const DateTime target_time = start_time + delay;
 
     GraphExecutorBuilder executor_builder;
@@ -196,7 +91,7 @@ TEST_CASE("real-time executor waits for the future scheduled time")
     CHECK(observed_evaluation_time == target_time);
     CHECK(observed_clock_evaluation_time == observed_evaluation_time);
     CHECK(observed_clock_now >= observed_clock_evaluation_time);
-    CHECK(wall_now() >= target_time);
+    CHECK(hgraph::testing::wall_now() >= target_time);
 }
 
 TEST_CASE("real-time executor stop request wakes a sleeping executor")
@@ -218,7 +113,7 @@ TEST_CASE("real-time executor stop request wakes a sleeping executor")
                                           &observed_clock_evaluation_time,
                                           &observed_clock_now));
 
-    const DateTime run_started = wall_now();
+    const DateTime run_started = hgraph::testing::wall_now();
     const DateTime start_time  = run_started + start_offset;
 
     GraphExecutorBuilder executor_builder;
@@ -230,20 +125,14 @@ TEST_CASE("real-time executor stop request wakes a sleeping executor")
     GraphExecutorValue executor = executor_builder.make_executor();
     auto               view     = executor.view();
 
-    FirstExceptionRecorder errors;
-    std::thread runner{[&] {
-        errors.capture([&] {
-            view.run();
-        });
-    }};
+    hgraph::testing::AsyncGraphExecutorRun runner{view};
 
     std::this_thread::sleep_for(std::chrono::milliseconds{30});
     view.request_stop();
     runner.join();
-    errors.rethrow_if_any();
 
     CHECK(eval_count.load() == 0);
-    CHECK(wall_now() < run_started + TimeDelta{500'000});
+    CHECK(hgraph::testing::wall_now() < run_started + TimeDelta{500'000});
 }
 
 TEST_CASE("real-time executor evaluates root push queues after pending update signal")
@@ -253,15 +142,19 @@ TEST_CASE("real-time executor evaluates root push queues after pending update si
     auto       &registry = TypeRegistry::instance();
     const auto *int_meta = registry.register_scalar<Int>("int");
     const auto *ts_int   = registry.ts(int_meta);
-    const auto *input_schema = registry.un_named_tsb({{"in", ts_int}});
+    const auto *input_schema = hgraph::testing::single_input_schema(*ts_int);
 
     Int              observed_value{0};
     std::int32_t     sink_eval_count{0};
     PushSourceSender sender;
 
     GraphBuilder graph_builder;
-    graph_builder.add_node(push_queue_source(ts_int, &sender));
-    graph_builder.add_node(recording_sink(input_schema, ts_int, &observed_value, &sink_eval_count));
+    graph_builder.add_node(hgraph::testing::capturing_push_source(*ts_int, sender));
+    graph_builder.add_node(hgraph::testing::recording_scalar_sink<Int>(
+        *input_schema,
+        *ts_int,
+        observed_value,
+        sink_eval_count));
     graph_builder.add_edge(GraphEdge{
         .source_node = make_graph_edge_source(0),
         .source_path = {},
@@ -269,7 +162,7 @@ TEST_CASE("real-time executor evaluates root push queues after pending update si
         .target_path = {0},
     });
 
-    const DateTime start_time = wall_now();
+    const DateTime start_time = hgraph::testing::wall_now();
 
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
@@ -280,18 +173,12 @@ TEST_CASE("real-time executor evaluates root push queues after pending update si
     GraphExecutorValue executor = executor_builder.make_executor();
     auto               view     = executor.view();
 
-    FirstExceptionRecorder errors;
-    std::thread runner{[&] {
-        errors.capture([&] {
-            view.run();
-        });
-    }};
+    hgraph::testing::AsyncGraphExecutorRun runner{view};
 
     std::this_thread::sleep_for(std::chrono::milliseconds{20});
     REQUIRE(sender.valid());
     sender.send(Int{42});
     runner.join();
-    errors.rethrow_if_any();
 
     CHECK(sink_eval_count == 1);
     CHECK(observed_value == Int{42});
@@ -304,14 +191,18 @@ TEST_CASE("real-time push source drains multiple queued values across cycles")
     auto       &registry = TypeRegistry::instance();
     const auto *int_meta = registry.register_scalar<Int>("int");
     const auto *ts_int   = registry.ts(int_meta);
-    const auto *input_schema = registry.un_named_tsb({{"in", ts_int}});
+    const auto *input_schema = hgraph::testing::single_input_schema(*ts_int);
 
     std::vector<Int> observed_values;
     PushSourceSender sender;
 
     GraphBuilder graph_builder;
-    graph_builder.add_node(push_queue_source(ts_int, &sender));
-    graph_builder.add_node(collecting_sink(input_schema, ts_int, &observed_values, 2));
+    graph_builder.add_node(hgraph::testing::capturing_push_source(*ts_int, sender));
+    graph_builder.add_node(hgraph::testing::collecting_scalar_sink<Int>(
+        *input_schema,
+        *ts_int,
+        observed_values,
+        2));
     graph_builder.add_edge(GraphEdge{
         .source_node = make_graph_edge_source(0),
         .source_path = {},
@@ -319,7 +210,7 @@ TEST_CASE("real-time push source drains multiple queued values across cycles")
         .target_path = {0},
     });
 
-    const DateTime start_time = wall_now();
+    const DateTime start_time = hgraph::testing::wall_now();
 
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
@@ -330,19 +221,13 @@ TEST_CASE("real-time push source drains multiple queued values across cycles")
     GraphExecutorValue executor = executor_builder.make_executor();
     auto               view     = executor.view();
 
-    FirstExceptionRecorder errors;
-    std::thread runner{[&] {
-        errors.capture([&] {
-            view.run();
-        });
-    }};
+    hgraph::testing::AsyncGraphExecutorRun runner{view};
 
     std::this_thread::sleep_for(std::chrono::milliseconds{20});
     REQUIRE(sender.valid());
     sender.send(Int{1});
     sender.send(Int{2});
     runner.join();
-    errors.rethrow_if_any();
 
     REQUIRE(observed_values.size() == 2);
     CHECK(observed_values[0] == Int{1});
@@ -356,7 +241,7 @@ TEST_CASE("real-time conflating push source emits only the latest pending value"
     auto       &registry = TypeRegistry::instance();
     const auto *int_meta = registry.register_scalar<Int>("int");
     const auto *ts_int   = registry.ts(int_meta);
-    const auto *input_schema = registry.un_named_tsb({{"in", ts_int}});
+    const auto *input_schema = hgraph::testing::single_input_schema(*ts_int);
 
     Int          observed_value{0};
     std::int32_t sink_eval_count{0};
@@ -369,7 +254,11 @@ TEST_CASE("real-time conflating push source emits only the latest pending value"
             sender.send(Int{1});
             sender.send(Int{2});
         }));
-    graph_builder.add_node(recording_sink(input_schema, ts_int, &observed_value, &sink_eval_count));
+    graph_builder.add_node(hgraph::testing::recording_scalar_sink<Int>(
+        *input_schema,
+        *ts_int,
+        observed_value,
+        sink_eval_count));
     graph_builder.add_edge(GraphEdge{
         .source_node = make_graph_edge_source(0),
         .source_path = {},
@@ -377,7 +266,7 @@ TEST_CASE("real-time conflating push source emits only the latest pending value"
         .target_path = {0},
     });
 
-    const DateTime start_time = wall_now();
+    const DateTime start_time = hgraph::testing::wall_now();
 
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
@@ -402,7 +291,7 @@ TEST_CASE("real-time conflating push source applies collection deltas before emi
     const auto *str_meta = registry.register_scalar<Str>("str");
     const auto *ts_int   = registry.ts(int_meta);
     const auto *tsd_int  = registry.tsd(str_meta, ts_int);
-    const auto *input_schema = registry.un_named_tsb({{"in", tsd_int}});
+    const auto *input_schema = hgraph::testing::single_input_schema(*tsd_int);
 
     Value        observed_value;
     std::int32_t sink_eval_count{0};
@@ -416,7 +305,11 @@ TEST_CASE("real-time conflating push source applies collection deltas before emi
             sender.send(dict_delta<Str, TS<Int>>({{"b"s, Int{2}}}));
             sender.send(dict_delta<Str, TS<Int>>({{"a"s, Int{3}}}));
         }));
-    graph_builder.add_node(recording_value_sink(input_schema, tsd_int, &observed_value, &sink_eval_count));
+    graph_builder.add_node(hgraph::testing::recording_value_sink(
+        *input_schema,
+        *tsd_int,
+        observed_value,
+        sink_eval_count));
     graph_builder.add_edge(GraphEdge{
         .source_node = make_graph_edge_source(0),
         .source_path = {},
@@ -424,7 +317,7 @@ TEST_CASE("real-time conflating push source applies collection deltas before emi
         .target_path = {0},
     });
 
-    const DateTime start_time = wall_now();
+    const DateTime start_time = hgraph::testing::wall_now();
 
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
@@ -461,9 +354,9 @@ TEST_CASE("push source policy validates output shape and sender payload schema s
 
     PushSourceSender sender;
     GraphBuilder graph_builder;
-    graph_builder.add_node(push_queue_source(ts_int, &sender));
+    graph_builder.add_node(hgraph::testing::capturing_push_source(*ts_int, sender));
 
-    const DateTime start_time = wall_now();
+    const DateTime start_time = hgraph::testing::wall_now();
 
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
@@ -474,19 +367,13 @@ TEST_CASE("push source policy validates output shape and sender payload schema s
     GraphExecutorValue executor = executor_builder.make_executor();
     auto               view     = executor.view();
 
-    FirstExceptionRecorder errors;
-    std::thread runner{[&] {
-        errors.capture([&] {
-            view.run();
-        });
-    }};
+    hgraph::testing::AsyncGraphExecutorRun runner{view};
 
     std::this_thread::sleep_for(std::chrono::milliseconds{20});
     REQUIRE(sender.valid());
     CHECK_THROWS_AS(sender.send(Str{"wrong-schema"}), std::invalid_argument);
     view.request_stop();
     runner.join();
-    errors.rethrow_if_any();
 }
 
 TEST_CASE("push source nodes require a real-time root graph executor")
@@ -499,7 +386,7 @@ TEST_CASE("push source nodes require a real-time root graph executor")
 
     PushSourceSender sender;
     GraphBuilder graph_builder;
-    graph_builder.add_node(push_queue_source(ts_int, &sender));
+    graph_builder.add_node(hgraph::testing::capturing_push_source(*ts_int, sender));
 
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))
@@ -515,7 +402,7 @@ TEST_CASE("push source nodes require a real-time root graph executor")
     NodeView  parent_view = parent.view();
 
     GraphBuilder nested_builder;
-    nested_builder.add_node(push_queue_source(ts_int, &sender));
+    nested_builder.add_node(hgraph::testing::capturing_push_source(*ts_int, sender));
 
     CHECK_THROWS_AS(nested_builder.make_nested_graph(NodeStorageRef{parent.binding(), parent_view.data()}),
                     std::invalid_argument);

@@ -128,6 +128,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/node_scheduler.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/testing/record_replay.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/testing/eval_node.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/testing/runtime_support.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/std/std_nodes.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/std/standard_types.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/std/value_util.h

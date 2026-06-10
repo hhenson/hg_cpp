@@ -5,7 +5,6 @@
 
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
-#include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/value/value.h>
@@ -30,33 +29,6 @@ namespace
         static void           eval(In<"in", TS<T>> in, Out<TS<T>> out) { out.set(in.value()); }
     };
 
-    struct ConstDoubleGraph
-    {
-        static constexpr auto name = "const_double_graph";
-        static void           compose(Wiring &w)
-        {
-            wire<testing::record>(w, wire<stdlib::const_>(w, 3.5), std::string{"out"});
-        }
-    };
-
-    struct ConstStringGraph
-    {
-        static constexpr auto name = "const_string_graph";
-        static void           compose(Wiring &w)
-        {
-            wire<testing::record>(w, wire<stdlib::const_>(w, std::string{"hi"}),
-                                                   std::string{"out"});
-        }
-    };
-
-    GraphExecutorValue run_once(GraphBuilder gb)
-    {
-        GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{3});
-        GraphExecutorValue executor = eb.make_executor();
-        executor.view().run();
-        return executor;
-    }
 }  // namespace
 
 TEMPLATE_TEST_CASE("eval_node round-trips every scalar value type", "[value_types]", bool, std::int8_t, std::int16_t,
@@ -95,9 +67,6 @@ TEST_CASE("stdlib::const_ produces the configured value for non-int scalar types
     using namespace std::string_literals;
     hgraph::stdlib::register_standard_operators();   // const_ is an operator
 
-    GraphExecutorValue dbl = run_once(build_graph<ConstDoubleGraph>());
-    CHECK_OUTPUT(testing::get_recorded_values<double>(dbl.view().graph().global_state(), "out"), {3.5});
-
-    GraphExecutorValue str = run_once(build_graph<ConstStringGraph>());
-    CHECK_OUTPUT(testing::get_recorded_values<std::string>(str.view().graph().global_state(), "out"), {"hi"s});
+    CHECK_OUTPUT(testing::eval_node<stdlib::const_>(3.5), {Value{Float{3.5}}});
+    CHECK_OUTPUT(testing::eval_node<stdlib::const_>(std::string{"hi"}), {Value{Str{"hi"}}});
 }

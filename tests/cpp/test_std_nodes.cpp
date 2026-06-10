@@ -1,10 +1,14 @@
-// Tests for the small standard library nodes (lib/std): const_, null_sink,
-// pass_through_node and debug_print, exercised through wired graphs.
+// Tests for the small standard library nodes/operators (lib/std): const_,
+// null_sink, pass_through_node and debug_print. Use eval_node where the operator
+// has an output; keep wired graphs for sinks and structural wiring helpers.
 
 #include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/std/value_util.h>
+#include <hgraph/lib/testing/check_output.h>
+#include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/record_replay.h>
+#include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -25,6 +29,7 @@ namespace
 {
     using namespace hgraph;
     using namespace hgraph::literals;
+    using hgraph::testing::none;
 
     using ConstPairTSB = TSB<"ConstPair",
                              Field<"left", TS<Int>>,
@@ -46,70 +51,6 @@ namespace
         builder.set("right", right_value.view());
         return builder.build();
     }
-
-    // const_(7) -> record: the constant is emitted once at start.
-    struct ConstRecordGraph
-    {
-        static constexpr auto name = "const_record_graph";
-        static void           compose(Wiring &w)
-        {
-            auto c = wire<stdlib::const_>(w, 7_i);
-            wire<testing::record>(w, c, "out"_str);
-        }
-    };
-
-    // Explicit TS output resolution: still scalar, but now resolved via TsVar<"S">.
-    struct ExplicitTsConstRecordGraph
-    {
-        static constexpr auto name = "explicit_ts_const_record_graph";
-        static void           compose(Wiring &w)
-        {
-            auto c = wire<stdlib::const_, TS<Int>>(w, 11_i);
-            wire<testing::record>(w, c, "out"_str);
-        }
-    };
-
-    // Explicit collection output resolution: the scalar argument is a value-layer set.
-    struct ConstSetRecordGraph
-    {
-        static constexpr auto name = "const_set_record_graph";
-        static void           compose(Wiring &w)
-        {
-            auto c = wire<stdlib::const_, TSS<Int>>(w, stdlib::make_set<Int>({1_i, 2_i}));
-            wire<testing::record>(w, c, "out"_str);
-        }
-    };
-
-    struct ConstListRecordGraph
-    {
-        static constexpr auto name = "const_list_record_graph";
-        static void           compose(Wiring &w)
-        {
-            auto c = wire<stdlib::const_, TSL<TS<Int>, 3>>(w, stdlib::make_list<Int>({1_i, 2_i, 3_i}));
-            wire<testing::record>(w, c, "out"_str);
-        }
-    };
-
-    struct ConstDictRecordGraph
-    {
-        static constexpr auto name = "const_dict_record_graph";
-        static void           compose(Wiring &w)
-        {
-            auto c = wire<stdlib::const_, TSD<Str, TS<Int>>>(
-                w, stdlib::make_map<Str, Int>({{Str{"alpha"}, 11_i}, {Str{"beta"}, 22_i}}));
-            wire<testing::record>(w, c, "out"_str);
-        }
-    };
-
-    struct ConstBundleRecordGraph
-    {
-        static constexpr auto name = "const_bundle_record_graph";
-        static void           compose(Wiring &w)
-        {
-            auto c = wire<stdlib::const_, ConstPairTSB>(w, make_const_pair_value(34_i, 55_i));
-            wire<testing::record>(w, c, "out"_str);
-        }
-    };
 
     struct ToTslConstRecordGraph
     {
@@ -159,17 +100,6 @@ namespace
         }
     };
 
-    // const_(7, delay=2*MIN_TD) -> record: a single delayed tick (Python yields start + delay).
-    struct DelayedConstRecordGraph
-    {
-        static constexpr auto name = "delayed_const_record_graph";
-        static void           compose(Wiring &w)
-        {
-            auto c = wire<stdlib::const_>(w, 7_i, MIN_TD * 2);   // value=7, delay=2*MIN_TD
-            wire<testing::record>(w, c, "out"_str);
-        }
-    };
-
     // const_(5) -> null_sink: the sink consumes the tick without effect.
     struct NullSinkGraph
     {
@@ -204,14 +134,6 @@ namespace
         }
     };
 
-    GraphExecutorValue run_once(GraphBuilder gb)
-    {
-        GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{3});
-        GraphExecutorValue executor = eb.make_executor();
-        executor.view().run();
-        return executor;
-    }
 }  // namespace
 
 TEST_CASE("stdlib::const_ emits its configured value once at start")
@@ -220,10 +142,7 @@ TEST_CASE("stdlib::const_ emits its configured value once at start")
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     stdlib::register_standard_operators();
 
-    GraphExecutorValue executor = run_once(build_graph<ConstRecordGraph>());
-    const auto         out      = testing::get_recorded_values<Int>(executor.view().graph().global_state(), "out");
-    REQUIRE(out.size() == 1);
-    CHECK(out[0] == std::optional<Int>{Int{7}});
+    CHECK_OUTPUT(testing::eval_node<stdlib::const_>(7_i), {Value{Int{7}}});
 }
 
 TEST_CASE("stdlib::const_ delays its single tick by the configured delay")
@@ -234,12 +153,8 @@ TEST_CASE("stdlib::const_ delays its single tick by the configured delay")
 
     // const_(7, delay=2*MIN_TD): no tick until start + 2 cycles, then the value once.
     // Matches Python `eval_node(const, 7, delay=MIN_TD * 2) == [None, None, 7]`.
-    GraphExecutorValue executor = run_once(build_graph<DelayedConstRecordGraph>());
-    const auto         out      = testing::get_recorded_values<Int>(executor.view().graph().global_state(), "out");
-    REQUIRE(out.size() == 3);
-    CHECK_FALSE(out[0].has_value());
-    CHECK_FALSE(out[1].has_value());
-    CHECK(out[2] == std::optional<Int>{Int{7}});
+    CHECK_OUTPUT(testing::eval_node<stdlib::const_>(7_i, MIN_TD * 2),
+                 {none, none, Value{Int{7}}});
 }
 
 TEST_CASE("stdlib::const_ accepts an explicit scalar output resolution")
@@ -248,10 +163,7 @@ TEST_CASE("stdlib::const_ accepts an explicit scalar output resolution")
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     stdlib::register_standard_operators();
 
-    GraphExecutorValue executor = run_once(build_graph<ExplicitTsConstRecordGraph>());
-    const auto         out      = testing::get_recorded_values<Int>(executor.view().graph().global_state(), "out");
-    REQUIRE(out.size() == 1);
-    CHECK(out[0] == std::optional<Int>{Int{11}});
+    CHECK_OUTPUT((testing::eval_node<stdlib::const_, TS<Int>>(11_i)), {Value{Int{11}}});
 }
 
 TEST_CASE("stdlib::const_ accepts an explicit collection output resolution")
@@ -260,11 +172,8 @@ TEST_CASE("stdlib::const_ accepts an explicit collection output resolution")
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     stdlib::register_standard_operators();
 
-    GraphExecutorValue executor = run_once(build_graph<ConstSetRecordGraph>());
-    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
-    REQUIRE(out.size() == 1);
-    REQUIRE(out[0].has_value());
-    CHECK(out[0]->equals(set_delta<Int>({1, 2}, {})));
+    CHECK_OUTPUT((testing::eval_node<stdlib::const_, TSS<Int>>(stdlib::make_set<Int>({1_i, 2_i}))),
+                 {set_delta<Int>({1, 2}, {})});
 }
 
 TEST_CASE("stdlib::const_ creates a non-peered fixed TSL from a list value")
@@ -272,17 +181,14 @@ TEST_CASE("stdlib::const_ creates a non-peered fixed TSL from a list value")
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    GraphExecutorValue executor = run_once(build_graph<ConstListRecordGraph>());
-    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
-    REQUIRE(out.size() == 1);
-    REQUIRE(out[0].has_value());
-
     Value expected = list_delta<TS<Int>>({
         std::pair<std::size_t, Int>{0, 1_i},
         std::pair<std::size_t, Int>{1, 2_i},
         std::pair<std::size_t, Int>{2, 3_i},
     });
-    CHECK(out[0]->equals(expected));
+    CHECK_OUTPUT((testing::eval_node<stdlib::const_, TSL<TS<Int>, 3>>(
+                     stdlib::make_list<Int>({1_i, 2_i, 3_i}))),
+                 {expected});
 }
 
 TEST_CASE("stdlib::const_ creates a TSD from a map value")
@@ -290,16 +196,13 @@ TEST_CASE("stdlib::const_ creates a TSD from a map value")
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    GraphExecutorValue executor = run_once(build_graph<ConstDictRecordGraph>());
-    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
-    REQUIRE(out.size() == 1);
-    REQUIRE(out[0].has_value());
-
     Value expected = dict_delta<Str, TS<Int>>({
         std::pair<Str, Int>{Str{"alpha"}, 11_i},
         std::pair<Str, Int>{Str{"beta"}, 22_i},
     });
-    CHECK(out[0]->equals(expected));
+    CHECK_OUTPUT((testing::eval_node<stdlib::const_, TSD<Str, TS<Int>>>(
+                     stdlib::make_map<Str, Int>({{Str{"alpha"}, 11_i}, {Str{"beta"}, 22_i}}))),
+                 {expected});
 }
 
 TEST_CASE("stdlib::const_ creates a non-peered TSB from a structural bundle value")
@@ -307,13 +210,9 @@ TEST_CASE("stdlib::const_ creates a non-peered TSB from a structural bundle valu
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    GraphExecutorValue executor = run_once(build_graph<ConstBundleRecordGraph>());
-    const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
-    REQUIRE(out.size() == 1);
-    REQUIRE(out[0].has_value());
-
     Value expected = tsb_delta<ConstPairTSB>(34_i, 55_i);
-    CHECK(out[0]->equals(expected));
+    CHECK_OUTPUT((testing::eval_node<stdlib::const_, ConstPairTSB>(make_const_pair_value(34_i, 55_i))),
+                 {expected});
 }
 
 TEST_CASE("stdlib::to_tsl wires const outputs into a fixed non-peered TSL")
@@ -321,7 +220,7 @@ TEST_CASE("stdlib::to_tsl wires const outputs into a fixed non-peered TSL")
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    GraphExecutorValue executor = run_once(build_graph<ToTslConstRecordGraph>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<ToTslConstRecordGraph>());
     const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
     REQUIRE(out.size() == 1);
     REQUIRE(out[0].has_value());
@@ -348,7 +247,7 @@ TEST_CASE("stdlib::to_tsl forwards sparse child deltas as inputs become valid")
                                      std::optional<Str>{Str{"b"}},
                                      std::nullopt});
 
-    GraphExecutorValue executor = run_once(std::move(gb));
+    GraphExecutorValue executor = testing::run_graph(std::move(gb));
     const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
     REQUIRE(out.size() == 3);
     REQUIRE(out[0].has_value());
@@ -374,7 +273,7 @@ TEST_CASE("stdlib::to_tsb wires const outputs into a non-peered TSB")
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    GraphExecutorValue executor = run_once(build_graph<ToTsbConstRecordGraph>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<ToTsbConstRecordGraph>());
     const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
     REQUIRE(out.size() == 1);
     REQUIRE(out[0].has_value());
@@ -398,7 +297,7 @@ TEST_CASE("stdlib::to_tsb emits partial field deltas as inputs become valid")
                                      std::optional<Str>{Str{"b"}},
                                      std::nullopt});
 
-    GraphExecutorValue executor = run_once(std::move(gb));
+    GraphExecutorValue executor = testing::run_graph(std::move(gb));
     const auto         out      = testing::get_recorded_deltas(executor.view().graph().global_state(), "out");
     REQUIRE(out.size() == 3);
     REQUIRE(out[0].has_value());
@@ -470,7 +369,7 @@ TEST_CASE("stdlib::null_sink consumes its input without error")
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     stdlib::register_standard_operators();
 
-    GraphExecutorValue executor = run_once(build_graph<NullSinkGraph>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<NullSinkGraph>());
     // The source ticked and the sink consumed it; reaching here (no throw) is the check.
     CHECK(executor.view().graph().node_count() == 2);
 }
@@ -484,7 +383,7 @@ TEST_CASE("stdlib::pass_through_node preserves input ticks")
     GraphBuilder gb = build_graph<PassThroughGraph>();
     testing::set_replay_values<Int>(gb.global_state(), "in",
                                     {std::optional<Int>{Int{1}}, std::nullopt, std::optional<Int>{Int{3}}});
-    GraphExecutorValue executor = run_once(std::move(gb));
+    GraphExecutorValue executor = testing::run_graph(std::move(gb));
     const auto         out      = testing::get_recorded_values<Int>(executor.view().graph().global_state(), "out");
     REQUIRE(out.size() == 3);
     CHECK(out[0] == std::optional<Int>{Int{1}});
@@ -498,6 +397,6 @@ TEST_CASE("stdlib::debug_print runs over a tick")
     (void)TypeRegistry::instance().register_scalar<Int>("int");
     stdlib::register_standard_operators();
 
-    GraphExecutorValue executor = run_once(build_graph<DebugPrintGraph>());
+    GraphExecutorValue executor = testing::run_graph(build_graph<DebugPrintGraph>());
     CHECK(executor.view().graph().node_count() == 2);
 }

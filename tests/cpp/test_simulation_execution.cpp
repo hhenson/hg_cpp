@@ -19,6 +19,7 @@
 // false-positive on the multi-cycle semantics.
 
 #include <hgraph/lib/testing/mock_runtime.h>
+#include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -35,13 +36,6 @@ namespace
 {
     using namespace hgraph;
 
-    void write_int_output(const NodeView &view, DateTime evaluation_time, std::int32_t value)
-    {
-        Value wrapped{value};
-        auto  mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
-        REQUIRE(mutation.copy_value_from(wrapped.view()));
-    }
-
     // A source that writes a fixed value and counts how many times it is evaluated.
     NodeBuilder counting_source(const TSValueTypeMetaData *ts_int, int value, std::int32_t *eval_count)
     {
@@ -54,7 +48,7 @@ namespace
         NodeCallbacks callbacks;
         callbacks.evaluate = [value, eval_count](const NodeView &view, DateTime evaluation_time) {
             ++*eval_count;
-            write_int_output(view, evaluation_time, value);
+            testing::set_output_value(view, evaluation_time, value);
         };
         return NodeBuilder::native(std::move(schema), std::move(callbacks));
     }
@@ -76,7 +70,7 @@ namespace
             auto      bundle = root.as_bundle();
             auto      input = bundle[0];
             const std::int32_t value = input.value().checked_as<std::int32_t>();
-            write_int_output(view, evaluation_time, value + 1);
+            testing::set_output_value(view, evaluation_time, value + 1);
         };
 
         auto endpoint = TSEndpointSchema::non_peered(
@@ -177,7 +171,7 @@ TEST_CASE("simulation: a node that does not schedule itself in start is never ev
     NodeCallbacks callbacks;
     callbacks.evaluate = [&evals](const NodeView &view, DateTime evaluation_time) {
         ++evals;
-        write_int_output(view, evaluation_time, 1);
+        testing::set_output_value(view, evaluation_time, 1);
     };
 
     GraphBuilder graph_builder;

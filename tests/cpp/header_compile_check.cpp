@@ -35,6 +35,7 @@
 #include <hgraph/types/value/specialized_views.h>
 #include <hgraph/types/value/value_builder.h>
 #include <hgraph/types/value/value_range.h>
+#include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/util/date_time.h>
 #include <hgraph/util/scope.h>
 #include <hgraph/util/tagged_ptr.h>

@@ -1,4 +1,5 @@
 #include <hgraph/lib/testing/mock_runtime.h>
+#include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/value/value.h>
@@ -13,13 +14,6 @@
 
 namespace
 {
-    void write_int_output(const hgraph::NodeView &view, hgraph::DateTime evaluation_time, std::int32_t value)
-    {
-        hgraph::Value wrapped{value};
-        auto mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
-        REQUIRE(mutation.copy_value_from(wrapped.view()));
-    }
-
     hgraph::NodeBuilder source_node(const hgraph::TSValueTypeMetaData *ts_int, std::int32_t value)
     {
         hgraph::NodeTypeMetaData schema;
@@ -30,7 +24,7 @@ namespace
 
         hgraph::NodeCallbacks callbacks;
         callbacks.evaluate = [value](const hgraph::NodeView &view, hgraph::DateTime evaluation_time) {
-            write_int_output(view, evaluation_time, value);
+            hgraph::testing::set_output_value(view, evaluation_time, value);
         };
         return hgraph::NodeBuilder::native(std::move(schema), std::move(callbacks));
     }
@@ -50,7 +44,7 @@ namespace
             auto bundle = root.as_bundle();
             auto input = bundle[0];
             const std::int32_t value = input.value().checked_as<std::int32_t>();
-            write_int_output(view, evaluation_time, value + 1);
+            hgraph::testing::set_output_value(view, evaluation_time, value + 1);
         };
 
         auto endpoint = hgraph::TSEndpointSchema::non_peered(
@@ -74,7 +68,7 @@ namespace
             const std::int32_t next = view.state().checked_as<std::int32_t>() + 1;
             auto state = view.state().begin_mutation();
             state.set_scalar(next);
-            write_int_output(view, evaluation_time, next);
+            hgraph::testing::set_output_value(view, evaluation_time, next);
         };
 
         return hgraph::NodeBuilder::native(std::move(schema), std::move(callbacks));
@@ -93,7 +87,10 @@ namespace
 
         hgraph::NodeCallbacks callbacks;
         callbacks.evaluate = [](const hgraph::NodeView &view, hgraph::DateTime evaluation_time) {
-            write_int_output(view, evaluation_time, view.scalars().checked_as<std::int32_t>());
+            hgraph::testing::set_output_value(
+                view,
+                evaluation_time,
+                view.scalars().checked_as<std::int32_t>());
         };
 
         return hgraph::NodeBuilder::native(std::move(schema), std::move(callbacks));
