@@ -12,8 +12,10 @@
 
 #include <array>
 #include <cstddef>
+#include <functional>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <span>
 #include <string>
@@ -67,12 +69,26 @@ namespace hgraph
             std::vector<WiringPortRef> children{};
         };
 
+        /**
+         * A sub-graph boundary placeholder: the source is the ``arg_index``-th
+         * time-series input of the enclosing sub-graph (``path`` walks within
+         * it). Boundary sources exist only while compiling a sub-graph
+         * (``compile_subgraph<G>``); ``Wiring::finish_subgraph`` converts them
+         * into nested-graph input bindings — no stub node is ever created.
+         */
+        struct BoundarySource
+        {
+            std::size_t              arg_index{0};
+            std::vector<std::size_t> path{};
+        };
+
         enum class SourceKind
         {
             Unbound,
             Null,
             Peered,
             Structural,
+            Boundary,
         };
 
         const TSValueTypeMetaData *schema{nullptr};
@@ -106,10 +122,22 @@ namespace hgraph
             return ref;
         }
 
+        [[nodiscard]] static WiringPortRef boundary_source(std::size_t arg_index,
+                                                           std::vector<std::size_t> path,
+                                                           const TSValueTypeMetaData *schema)
+        {
+            if (schema == nullptr) { throw std::logic_error("WiringPortRef::boundary_source requires a schema"); }
+            WiringPortRef ref;
+            ref.schema  = schema;
+            ref.source_ = BoundarySource{arg_index, std::move(path)};
+            return ref;
+        }
+
         [[nodiscard]] SourceKind source_kind() const noexcept
         {
             if (std::holds_alternative<PeeredSource>(source_)) { return SourceKind::Peered; }
             if (std::holds_alternative<StructuralSource>(source_)) { return SourceKind::Structural; }
+            if (std::holds_alternative<BoundarySource>(source_)) { return SourceKind::Boundary; }
             return schema != nullptr ? SourceKind::Null : SourceKind::Unbound;
         }
 
@@ -117,6 +145,21 @@ namespace hgraph
         [[nodiscard]] bool is_structural_source() const noexcept { return source_kind() == SourceKind::Structural; }
         [[nodiscard]] bool is_null_source() const noexcept { return source_kind() == SourceKind::Null; }
         [[nodiscard]] bool is_unbound_source() const noexcept { return source_kind() == SourceKind::Unbound; }
+        [[nodiscard]] bool is_boundary_source() const noexcept { return source_kind() == SourceKind::Boundary; }
+
+        [[nodiscard]] std::size_t boundary_arg_index() const
+        {
+            const auto *source = std::get_if<BoundarySource>(&source_);
+            if (source == nullptr) { throw std::logic_error("WiringPortRef source is not a sub-graph boundary"); }
+            return source->arg_index;
+        }
+
+        [[nodiscard]] const std::vector<std::size_t> &boundary_path() const
+        {
+            const auto *source = std::get_if<BoundarySource>(&source_);
+            if (source == nullptr) { throw std::logic_error("WiringPortRef source is not a sub-graph boundary"); }
+            return source->path;
+        }
 
         [[nodiscard]] const WiringInstance *peered_node() const
         {
@@ -167,7 +210,7 @@ namespace hgraph
         }
 
       private:
-        std::variant<std::monostate, PeeredSource, StructuralSource> source_{};
+        std::variant<std::monostate, PeeredSource, StructuralSource, BoundarySource> source_{};
     };
 
     /** Consumer-side wiring input: source port plus optional target path on the consuming node. */
@@ -224,6 +267,26 @@ namespace hgraph
         std::vector<WiringInputRef> inputs;
     };
 
+    struct CompiledSubGraph;   // defined in subgraph_wiring.h
+
+    /**
+     * The node's resolved schema identity — the (registry-interned, hence
+     * stable) schema pointers that enter the interning key. Normally derived
+     * from a builder's ``NodeTypeMetaData``; supplied explicitly for the
+     * deferred-builder ``add_node`` overload.
+     */
+    struct WiringNodeSchema
+    {
+        const TSValueTypeMetaData *input{nullptr};
+        const TSValueTypeMetaData *output{nullptr};
+        const TSValueTypeMetaData *error_output{nullptr};
+        const TSValueTypeMetaData *recordable_state{nullptr};
+        const ValueTypeMetaData   *scalar{nullptr};
+        const ValueTypeMetaData   *state{nullptr};
+
+        bool operator==(const WiringNodeSchema &) const noexcept = default;
+    };
+
     /**
      * Shared runtime wiring core: accumulates interned ``WiringInstance``s and, on
      * ``finish``, topologically sorts + ranks them into a ``GraphBuilder``. (The
@@ -258,6 +321,17 @@ namespace hgraph
                                Value scalars);
 
         /**
+         * Deferred-builder overload: intern by ``(def, schema, inputs, scalars)``
+         * and call ``make_builder`` only when no interned instance exists. Use
+         * when constructing the builder has a side effect or real cost that must
+         * not happen for a deduped instance — e.g. a nested-graph node
+         * registering its program-lifetime child-graph context.
+         */
+        WiringPortRef add_node(std::type_index def, const WiringNodeSchema &schema,
+                               std::span<const WiringPortRef> inputs, Value scalars,
+                               std::function<NodeBuilder()> make_builder);
+
+        /**
          * A view over the wiring-time ``GlobalState``. A ``compose`` body can seed
          * the store here; ``finish`` carries the populated state onto the produced
          * ``GraphBuilder`` (and thence onto each graph it builds).
@@ -266,6 +340,18 @@ namespace hgraph
 
         /** Topologically sort + rank the wired nodes into a rank-ordered GraphBuilder. */
         [[nodiscard]] GraphBuilder finish() &&;
+
+        /**
+         * Compile this wiring as a **sub-graph**: rank the nodes into a child
+         * ``GraphBuilder`` and convert every boundary-sourced input into a
+         * nested-graph input binding instead of an edge. ``output`` is the
+         * sub-graph's returned output port (must be a peered port on a node of
+         * this wiring), ``input_schemas`` the boundary arg schemas in arg
+         * order. Used by ``compile_subgraph<G>`` (see ``subgraph_wiring.h``).
+         */
+        [[nodiscard]] CompiledSubGraph finish_subgraph(
+            std::optional<WiringPortRef> output,
+            std::vector<const TSValueTypeMetaData *> input_schemas) &&;
 
       private:
         struct Impl;

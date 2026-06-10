@@ -12,6 +12,7 @@ The developer guide describes the internal design of the C++ implementation. The
    data_structures
    wiring
    graph_wiring
+   nested_graphs
    operators
    python_integration
    testing

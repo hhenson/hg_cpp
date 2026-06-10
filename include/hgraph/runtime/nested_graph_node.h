@@ -5,6 +5,7 @@
 #include <hgraph/runtime/graph.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -36,11 +37,24 @@ namespace hgraph
     };
 
     /**
-     * Forward one child graph output position through an outer node output position.
+     * Forward a time-series through an outer node output position.
+     *
+     * ``ChildOutput`` forwards a child node's output endpoint. ``ParentInput``
+     * aliases the upstream output the outer node's own input is bound to — the
+     * pass-through mode (the 2603 RFC's ``alias_parent_input``), produced when a
+     * sub-graph returns a boundary input directly.
      */
     struct HGRAPH_EXPORT NestedGraphOutputBinding
     {
-        NestedGraphEndpoint      source{};
+        enum class Kind : std::uint8_t
+        {
+            ChildOutput,
+            ParentInput,
+        };
+
+        Kind                     kind{Kind::ChildOutput};
+        NestedGraphEndpoint      source{};              // ChildOutput: child node output endpoint
+        std::vector<std::size_t> parent_source_path{};  // ParentInput: path within the outer input root
         std::vector<std::size_t> target_path{};
     };
 

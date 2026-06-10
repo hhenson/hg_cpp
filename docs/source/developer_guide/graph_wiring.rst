@@ -250,8 +250,10 @@ current ``Wiring``; only nodes become runtime objects. This matches Python, wher
 
 Nested graphs that must **not** flatten — ``map_`` / ``reduce`` / ``switch_`` and
 other higher-order operators — own a child graph at runtime rather than inlining.
-The runtime substrate for that now exists (see *Nested graphs*); the ``wire``-level
-operators that build on it are the next step.
+The runtime substrate exists (see *Nested graphs* below) and the wiring surface
+that compiles a sub-graph into it — ``compile_subgraph<G>`` / ``nested_<G>`` — is
+done; the design record for that layer and the higher-order operators is the
+dedicated *Nested Graphs* page.
 
 
 Nested graphs
@@ -285,10 +287,11 @@ callbacks), and a ``NodeView::as<SingleNestedGraphNodeView>()`` extension view.
   (``try_`` / ``switch_`` / delayed component) can supply their own callbacks while
   reusing the same storage and binding model.
 
-Implemented today: a single child, output forwarding at the output root only, and
-graphs built by hand (``GraphBuilder``). The multiplexing operators (``map_`` /
-``reduce`` / ``switch_``) and the ``wire``-level entry points that construct these
-nodes from a sub-graph are the next step.
+Implemented today: a single child and output forwarding at the output root only.
+Child graphs are built either by hand (``GraphBuilder``) or — the normal path —
+compiled from a sub-graph ``compose`` via ``compile_subgraph<G>`` and wired with
+``nested_<G>`` (see *Nested Graphs*). The multiplexing operators (``map_`` /
+``reduce`` / ``switch_``) build on the same artifacts and are specified there.
 
 
 Extending to Python
@@ -381,9 +384,14 @@ Slices:
 8. **Nested-graph node — first cut done.** ``single_nested_graph_node`` owns one
    child graph and reference-binds its boundaries (see *Nested graphs*). Tests:
    ``tests/cpp/test_graph_wiring.cpp``.
-9. **Next.** The ``wire``-level higher-order operators (``map_`` / ``reduce`` /
-   ``switch_``) that construct nested-graph nodes from a sub-graph, standalone
-   sub-graph building with supplied time-series boundary ports, and feedback edges.
+9. **Standalone sub-graph building — done.** ``compile_subgraph<G>`` compiles a
+   sub-graph ``compose`` against boundary placeholder ports (a wiring-only
+   ``WiringPortRef`` source kind — no stub nodes) into a ``CompiledSubGraph``;
+   ``nested_<G>`` wires it as a non-flattening nested-graph node. Design record:
+   *Nested Graphs*. Tests: ``tests/cpp/test_nested_wiring.cpp``.
+10. **Next.** The higher-order operators (``switch_`` / ``map_`` / ``reduce``)
+    that build on ``CompiledSubGraph`` (roadmap on the *Nested Graphs* page), and
+    feedback edges.
 
 Deferred: **by-name graph/node scalar arguments and parameter defaults** (today
 arguments are positional and all required — a compile-time ``arg<"name">(value)``

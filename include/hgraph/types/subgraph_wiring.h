@@ -1,0 +1,428 @@
+#ifndef HGRAPH_TYPES_SUBGRAPH_WIRING_H
+#define HGRAPH_TYPES_SUBGRAPH_WIRING_H
+
+#include <hgraph/runtime/nested_graph_node.h>
+#include <hgraph/types/graph_wiring.h>
+
+#include <array>
+#include <cstddef>
+#include <initializer_list>
+#include <optional>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <typeindex>
+#include <typeinfo>
+#include <utility>
+#include <vector>
+
+namespace hgraph
+{
+    /**
+     * A wiring-compiled child-graph template: the ranked child ``GraphBuilder``
+     * plus the boundary binding specs that connect it to an owning nested node.
+     *
+     * Produced by ``compile_subgraph<G>`` (the only place a sub-graph ``compose``
+     * binds to a child graph) and consumed by the nested-graph operators —
+     * ``nested_<G>`` today; ``switch_``/``map_`` build on the same artifact.
+     * See the developer guide *Nested Graphs*.
+     */
+    struct CompiledSubGraph
+    {
+        GraphBuilder                            graph_builder{};
+        std::vector<NestedGraphInputBinding>    input_bindings{};
+        std::optional<NestedGraphOutputBinding> output_binding{};
+        /** Boundary time-series input schemas, in compose ``Port`` parameter order. */
+        std::vector<const TSValueTypeMetaData *> input_schemas{};
+        const TSValueTypeMetaData               *output_schema{nullptr};
+    };
+
+    namespace subgraph_wiring_detail
+    {
+        // Interning identity for a nested_<G> node instance.
+        template <typename G>
+        struct nested_marker
+        {
+        };
+
+        template <typename Params, std::size_t I>
+        [[nodiscard]] constexpr std::size_t ports_before()
+        {
+            return []<std::size_t... K>(std::index_sequence<K...>) {
+                return (std::size_t{0} + ... +
+                        (graph_wiring_detail::is_port<
+                             std::remove_cvref_t<std::tuple_element_t<K, Params>>>::value
+                             ? std::size_t{1}
+                             : std::size_t{0}));
+            }(std::make_index_sequence<I>{});
+        }
+
+        template <typename Params, std::size_t I>
+        [[nodiscard]] constexpr std::size_t scalars_before()
+        {
+            return []<std::size_t... K>(std::index_sequence<K...>) {
+                return (std::size_t{0} + ... +
+                        (static_node_detail::is_scalar_selector<
+                             std::remove_cvref_t<std::tuple_element_t<K, Params>>>::value
+                             ? std::size_t{1}
+                             : std::size_t{0}));
+            }(std::make_index_sequence<I>{});
+        }
+
+        // Positions of the Scalar parameters within a compose parameter tuple,
+        // so wiring arguments can be split by role at compile time.
+        template <typename Params, std::size_t Count>
+        [[nodiscard]] constexpr std::array<std::size_t, Count> scalar_positions_of()
+        {
+            return []<std::size_t... I>(std::index_sequence<I...>) {
+                std::array<std::size_t, Count> positions{};
+                std::size_t                    next = 0;
+                (
+                    [&] {
+                        using P = std::remove_cvref_t<std::tuple_element_t<I, Params>>;
+                        if constexpr (static_node_detail::is_scalar_selector<P>::value) { positions[next++] = I; }
+                    }(),
+                    ...);
+                return positions;
+            }(std::make_index_sequence<std::tuple_size_v<Params>>{});
+        }
+
+        // Mirror an outer wiring source as the sub-graph's boundary shape: a
+        // peered (or erased) source becomes a boundary placeholder, a structural
+        // source keeps its shape with boundary leaves (so child endpoints derive
+        // as non-peered with bindable leaf slots), and a null leaf stays null
+        // (the child slot simply never binds).
+        [[nodiscard]] inline WiringPortRef boundary_shape(const WiringPortRef &source,
+                                                          std::size_t arg_index,
+                                                          std::vector<std::size_t> path)
+        {
+            if (source.is_structural_source())
+            {
+                const auto &source_children = source.structural_children();
+                std::vector<WiringPortRef> children;
+                children.reserve(source_children.size());
+                for (std::size_t index = 0; index < source_children.size(); ++index)
+                {
+                    std::vector<std::size_t> child_path = path;
+                    child_path.push_back(index);
+                    children.push_back(boundary_shape(source_children[index], arg_index, std::move(child_path)));
+                }
+                return WiringPortRef::structural_source(source.schema, std::move(children));
+            }
+            if (source.is_null_source()) { return source; }
+            return WiringPortRef::boundary_source(arg_index, std::move(path), source.schema);
+        }
+
+        /**
+         * Compile sub-graph ``G`` against a fresh wiring whose ``Port``
+         * parameters carry the supplied boundary shapes (or plain boundary
+         * placeholders when ``boundary_shapes`` is empty), then convert the
+         * boundary-sourced edges into binding specs via ``finish_subgraph``.
+         */
+        template <typename G, typename ScalarTuple>
+        [[nodiscard]] CompiledSubGraph compile_subgraph_impl(std::span<const WiringPortRef> boundary_shapes,
+                                                             ScalarTuple &&scalar_tuple)
+        {
+            using sig    = StaticGraphSignature<G>;
+            using params = typename sig::param_types;
+
+            Wiring w;
+
+            // Boundary arg schemas, in Port-parameter order.
+            std::vector<const TSValueTypeMetaData *> input_schemas;
+            input_schemas.reserve(sig::input_count());
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                (
+                    [&] {
+                        using P = std::remove_cvref_t<std::tuple_element_t<I, params>>;
+                        if constexpr (graph_wiring_detail::is_port<P>::value)
+                        {
+                            static_assert(!graph_wiring_detail::is_erased_port<P>::value,
+                                          "compile_subgraph<G>: a sub-graph boundary Port must carry a concrete "
+                                          "schema");
+                            input_schemas.push_back(schema_descriptor<typename P::schema>::ts_meta());
+                        }
+                    }(),
+                    ...);
+            }(std::make_index_sequence<sig::param_count()>{});
+
+            auto make_param = [&]<std::size_t I>() {
+                using P = std::remove_cvref_t<std::tuple_element_t<I, params>>;
+                if constexpr (graph_wiring_detail::is_port<P>::value)
+                {
+                    constexpr std::size_t ordinal = ports_before<params, I>();
+                    if (!boundary_shapes.empty()) { return P{w, boundary_shapes[ordinal]}; }
+                    const auto *schema = schema_descriptor<typename P::schema>::ts_meta();
+                    return P{w, WiringPortRef::boundary_source(ordinal, {}, schema)};
+                }
+                else
+                {
+                    return graph_wiring_detail::make_scalar_param<P>(
+                        std::get<scalars_before<params, I>()>(scalar_tuple));
+                }
+            };
+
+            CompiledSubGraph compiled = [&]<std::size_t... I>(std::index_sequence<I...>) {
+                if constexpr (std::is_void_v<typename sig::output_type>)
+                {
+                    G::compose(w, make_param.template operator()<I>()...);
+                    return std::move(w).finish_subgraph(std::nullopt, std::move(input_schemas));
+                }
+                else
+                {
+                    auto out = G::compose(w, make_param.template operator()<I>()...);
+                    return std::move(w).finish_subgraph(out.erased(), std::move(input_schemas));
+                }
+            }(std::make_index_sequence<sig::param_count()>{});
+
+            if constexpr (static_node_detail::has_name<G>) { compiled.graph_builder.label(std::string{G::name}); }
+            return compiled;
+        }
+    }  // namespace subgraph_wiring_detail
+
+    /**
+     * Compile sub-graph ``G`` into a ``CompiledSubGraph``.
+     *
+     * ``G::compose(Wiring &, Port..., Scalar...)`` runs against a **fresh**
+     * wiring whose ``Port`` parameters are boundary placeholders (no stub nodes);
+     * ``finish_subgraph`` then converts every boundary-sourced input edge into a
+     * nested-graph input binding and the returned output port into the output
+     * binding (a returned boundary input becomes the pass-through
+     * ``ParentInput`` mode). ``scalar_args`` supplies the ``Scalar`` parameters
+     * (in compose order); their values are baked into the compiled child nodes.
+     */
+    template <typename G, typename... ScalarArgs>
+    [[nodiscard]] CompiledSubGraph compile_subgraph(ScalarArgs &&...scalar_args)
+    {
+        static_assert(sizeof...(ScalarArgs) == StaticGraphSignature<G>::scalar_count(),
+                      "compile_subgraph<G>: argument count must match the sub-graph's Scalar parameters "
+                      "(in compose order)");
+        return subgraph_wiring_detail::compile_subgraph_impl<G>(
+            {}, std::forward_as_tuple(std::forward<ScalarArgs>(scalar_args)...));
+    }
+
+    /**
+     * Wire sub-graph ``G`` into ``w`` as a **nested-graph node** (non-flattening).
+     *
+     * Unlike ``wire<G>`` — which inlines the compose body into the enclosing
+     * wiring — ``nested_<G>`` compiles ``G`` into its own child graph (via
+     * ``compile_subgraph``) and adds one ``single_nested_graph_node`` that owns
+     * and evaluates it. Arguments follow the same rule as ``wire<G>``: a
+     * ``Port`` (or a ``{…}`` structural initializer) for each ``Port`` parameter
+     * and a scalar value for each ``Scalar`` parameter, in compose order.
+     * Returns the nested node's output port (or ``void`` for a sink sub-graph).
+     *
+     * Instances are interned like ordinary nodes: same ``G`` + equal inputs +
+     * equal scalar values dedup to one nested node — the child graph builder and
+     * its program-lifetime context are only created on an intern miss.
+     */
+    template <typename G, typename... Args>
+    auto nested_(Wiring &w, const Args &...args)
+    {
+        using sig    = StaticGraphSignature<G>;
+        using params = typename sig::param_types;
+        static_assert(sizeof...(Args) == sig::param_count(),
+                      "nested_<G>: argument count must match the sub-graph's Port + Scalar parameters "
+                      "(in compose order)");
+
+        auto arg_tuple = std::forward_as_tuple(args...);
+
+        // 1. Collect + schema-check the outer input sources (the Port positions)
+        //    and mirror each as the boundary shape the child compiles against.
+        std::vector<WiringPortRef> inputs;
+        std::vector<WiringPortRef> shapes;
+        inputs.reserve(sig::input_count());
+        shapes.reserve(sig::input_count());
+        [&]<std::size_t... I>(std::index_sequence<I...>) {
+            (
+                [&] {
+                    using P = std::remove_cvref_t<std::tuple_element_t<I, params>>;
+                    if constexpr (graph_wiring_detail::is_port<P>::value)
+                    {
+                        using A = std::remove_cvref_t<std::tuple_element_t<I, std::tuple<const Args &...>>>;
+                        static_assert(graph_wiring_detail::is_port<A>::value ||
+                                          graph_wiring_detail::is_structural_source_arg<A>::value,
+                                      "nested_<G>: a sub-graph time-series input expects a Port argument or "
+                                      "structural initializer");
+                        const auto *expected = schema_descriptor<typename P::schema>::ts_meta();
+
+                        WiringPortRef ref;
+                        if constexpr (graph_wiring_detail::is_structural_source_arg<A>::value)
+                        {
+                            ref = graph_wiring_detail::structural_source_for_input_schema(expected,
+                                                                                          std::get<I>(arg_tuple));
+                        }
+                        else
+                        {
+                            ref = std::get<I>(arg_tuple).erased();
+                            if constexpr (graph_wiring_detail::is_erased_port<A>::value)
+                            {
+                                if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
+                                {
+                                    throw std::logic_error(
+                                        "nested_<G>: erased input port schema does not match the sub-graph's "
+                                        "time-series input");
+                                }
+                            }
+                            else
+                            {
+                                static_assert(graph_wiring_detail::statically_accepts_output_v<typename P::schema,
+                                                                                               typename A::schema>,
+                                              "nested_<G>: input port schema does not match the sub-graph's "
+                                              "time-series input");
+                            }
+                        }
+                        ref = graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref));
+                        shapes.push_back(subgraph_wiring_detail::boundary_shape(ref, inputs.size(), {}));
+                        inputs.push_back(std::move(ref));
+                    }
+                }(),
+                ...);
+        }(std::make_index_sequence<sig::param_count()>{});
+
+        // 2. Compile the child graph against the boundary shapes; scalar args
+        //    are baked into the child nodes.
+        constexpr auto scalar_positions =
+            subgraph_wiring_detail::scalar_positions_of<params, sig::scalar_count()>();
+        CompiledSubGraph compiled = [&]<std::size_t... S>(std::index_sequence<S...>) {
+            return subgraph_wiring_detail::compile_subgraph_impl<G>(
+                std::span<const WiringPortRef>{shapes.data(), shapes.size()},
+                std::forward_as_tuple(std::get<scalar_positions[S]>(arg_tuple)...));
+        }(std::make_index_sequence<sig::scalar_count()>{});
+
+        // 3. The outer node's schemas: input TSB over the boundary args; output =
+        //    the sub-graph output.
+        const TSValueTypeMetaData *input_schema = nullptr;
+        if (!compiled.input_schemas.empty())
+        {
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+            fields.reserve(compiled.input_schemas.size());
+            for (std::size_t i = 0; i < compiled.input_schemas.size(); ++i)
+            {
+                fields.emplace_back(std::to_string(i), compiled.input_schemas[i]);
+            }
+            input_schema = TypeRegistry::instance().un_named_tsb(fields);
+        }
+
+        // 4. Scalar configuration bundle: the nested node does not consume it at
+        //    runtime (the values are baked into the child graph), but it must
+        //    enter the interning identity so equal scalars dedup and distinct
+        //    ones do not.
+        Value scalars;
+        if constexpr (sig::scalar_count() > 0)
+        {
+            std::vector<std::pair<std::string, const ValueTypeMetaData *>> fields;
+            fields.reserve(sig::scalar_count());
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                (
+                    [&] {
+                        using P = std::remove_cvref_t<std::tuple_element_t<I, params>>;
+                        if constexpr (static_node_detail::is_scalar_selector<P>::value)
+                        {
+                            fields.emplace_back(std::string{P::field_name.sv()},
+                                                graph_wiring_detail::scalar_argument_meta(std::get<I>(arg_tuple)));
+                        }
+                    }(),
+                    ...);
+            }(std::make_index_sequence<sig::param_count()>{});
+
+            const auto   *binding = ValuePlanFactory::instance().binding_for(
+                TypeRegistry::instance().un_named_bundle(fields));
+            BundleBuilder bundle{*binding};
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                (
+                    [&] {
+                        using P = std::remove_cvref_t<std::tuple_element_t<I, params>>;
+                        if constexpr (static_node_detail::is_scalar_selector<P>::value)
+                        {
+                            Value field = graph_wiring_detail::make_scalar_field<P>(std::get<I>(arg_tuple));
+                            bundle.set(P::field_name.sv(), field.view());
+                        }
+                    }(),
+                    ...);
+            }(std::make_index_sequence<sig::param_count()>{});
+            scalars = bundle.build();
+        }
+
+        // 5. Add the nested node; the builder (and its program-lifetime child
+        //    graph context) is only created when interning does not dedup.
+        WiringNodeSchema node_schema;
+        node_schema.input  = input_schema;
+        node_schema.output = compiled.output_schema;
+
+        WiringPortRef out = w.add_node(
+            std::type_index(typeid(subgraph_wiring_detail::nested_marker<G>)), node_schema,
+            std::span<const WiringPortRef>{inputs.data(), inputs.size()}, std::move(scalars),
+            [&]() {
+                NodeTypeMetaData meta;
+                if constexpr (static_node_detail::has_name<G>) { meta.display_name = G::name; }
+                else { meta.display_name = "nested"; }
+                meta.input_schema  = input_schema;
+                meta.output_schema = compiled.output_schema;
+
+                SingleNestedGraphNodeSpec spec;
+                spec.graph_builder  = std::move(compiled.graph_builder);
+                spec.input_bindings = std::move(compiled.input_bindings);
+                spec.output_binding = compiled.output_binding;
+
+                NodeBuilder builder = single_nested_graph_node(std::move(meta), std::move(spec));
+                builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                    input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                return builder;
+            });
+
+        using output_type = std::remove_cvref_t<typename sig::output_type>;
+        if constexpr (!std::is_void_v<output_type>)
+        {
+            return output_type{w, std::move(out)};
+        }
+    }
+
+    /**
+     * Brace-initializer entry points for ``nested_<G>(w, {a, b}, …)`` — the
+     * ``wire<>`` rule applies: only the first three positions accept a bare
+     * ``{…}``; later positions wrap explicitly as a
+     * ``WiringStructuralSourceArg`` / ``WiringNamedStructuralSourceArg``.
+     */
+    template <typename G, typename... Rest>
+    auto nested_(Wiring &w, std::initializer_list<WiringPortRef> first, const Rest &...rest)
+    {
+        return nested_<G>(w, WiringStructuralSourceArg{first}, rest...);
+    }
+
+    template <typename G, typename... Rest>
+    auto nested_(Wiring &w, std::initializer_list<WiringNamedPortRef> first, const Rest &...rest)
+    {
+        return nested_<G>(w, WiringNamedStructuralSourceArg{first}, rest...);
+    }
+
+    template <typename G, typename A0, typename... Rest>
+    auto nested_(Wiring &w, const A0 &a0, std::initializer_list<WiringPortRef> second, const Rest &...rest)
+    {
+        return nested_<G>(w, a0, WiringStructuralSourceArg{second}, rest...);
+    }
+
+    template <typename G, typename A0, typename... Rest>
+    auto nested_(Wiring &w, const A0 &a0, std::initializer_list<WiringNamedPortRef> second, const Rest &...rest)
+    {
+        return nested_<G>(w, a0, WiringNamedStructuralSourceArg{second}, rest...);
+    }
+
+    template <typename G, typename A0, typename A1, typename... Rest>
+    auto nested_(Wiring &w, const A0 &a0, const A1 &a1, std::initializer_list<WiringPortRef> third,
+                 const Rest &...rest)
+    {
+        return nested_<G>(w, a0, a1, WiringStructuralSourceArg{third}, rest...);
+    }
+
+    template <typename G, typename A0, typename A1, typename... Rest>
+    auto nested_(Wiring &w, const A0 &a0, const A1 &a1, std::initializer_list<WiringNamedPortRef> third,
+                 const Rest &...rest)
+    {
+        return nested_<G>(w, a0, a1, WiringNamedStructuralSourceArg{third}, rest...);
+    }
+}  // namespace hgraph
+
+#endif  // HGRAPH_TYPES_SUBGRAPH_WIRING_H

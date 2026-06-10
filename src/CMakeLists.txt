@@ -73,6 +73,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_schema.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/static_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/graph_wiring.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/subgraph_wiring.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/type_pattern.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/operator_dispatch.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series_reference.h

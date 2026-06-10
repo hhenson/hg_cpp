@@ -294,10 +294,27 @@ namespace hgraph
         const auto &binding = nested.context().spec.output_binding;
         if (!binding.has_value()) { return; }
 
+        auto target = walk_path(nested.node().output(evaluation_time), binding->target_path);
+
+        if (binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
+        {
+            // Pass-through (alias_parent_input): forward whatever upstream output
+            // this node's own input is bound to. Re-resolved each cycle like the
+            // input bindings; cleared while the upstream is unbound.
+            auto root_input = nested.node().input(evaluation_time);
+            auto source     = walk_path(root_input.borrowed_ref(), binding->parent_source_path).bound_output();
+            if (!source.bound())
+            {
+                if (target.forwarding_bound()) { target.clear_forwarding_target(); }
+                return;
+            }
+            bind_forwarding_output_to_source(target, source);
+            return;
+        }
+
         auto source = walk_path(
             nested.child_graph().node_at(binding->source.node).output(evaluation_time),
             binding->source.path);
-        auto target = walk_path(nested.node().output(evaluation_time), binding->target_path);
         bind_forwarding_output_to_source(target, source);
     }
 
