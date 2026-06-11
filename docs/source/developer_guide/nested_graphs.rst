@@ -353,8 +353,10 @@ ts…)``).
   by test). The previous retired set is released on the next switch
   evaluation, and on node stop. The output's resolver discovers the schema by
   compiling the first branch (``resolve_default_types`` on the overloads).
-- Deferred: variadic time-series arguments (overloads cover none/one until
-  variadic operator parameters exist) and all-sink switches.
+- ``switch_(key, cases, *ts)`` takes **any number** of time-series
+  arguments (the variadic ``VarIn`` overload — see *Operators > Variadic
+  operator parameters*); branches bind them positionally, optionally
+  preceded by the key. Deferred: all-sink switches.
 
 Tests: ``tests/cpp/test_switch.cpp``.
 

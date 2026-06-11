@@ -115,8 +115,8 @@ namespace hgraph::stdlib
      *   branch at the switch time (the sampled-runtime contract; a deliberate
      *   divergence from Python's ``value = None`` reset);
      * - a branch may take the key as its first argument (by arity);
-     * - the time-series arguments are fixed-arity overloads today (none / one);
-     *   variadic arguments arrive with variadic operator support.
+     * - the time-series arguments are variadic (``*ts``): branches bind them
+     *   positionally, optionally preceded by the key.
      */
     struct switch_ : Operator<"switch_",
                               In<"key", TS<ScalarVar<"K">>>,
@@ -146,9 +146,8 @@ namespace hgraph::stdlib
      *   instantiated per key; the child's terminal output is a forwarding
      *   endpoint bound onto that element, so the child **writes the parent's
      *   storage directly** (no copy);
-     * - fixed-arity overloads today (no broadcast / one broadcast argument);
-     *   variadic arguments, ``__keys__`` / ``pass_through`` / ``no_key``
-     *   wrappers, and sink maps arrive later.
+     * - broadcast arguments are variadic; ``__keys__`` / ``pass_through`` /
+     *   ``no_key`` wrappers and sink maps arrive later.
      */
     struct map_ : Operator<"map_",
                            Scalar<"func", WiredFn>,

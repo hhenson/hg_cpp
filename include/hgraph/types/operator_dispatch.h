@@ -71,6 +71,41 @@ namespace hgraph
         const ValueTypeMetaData *scalar_meta{nullptr};   ///< ``Scalar``: its interned value schema.
     };
 
+    /**
+     * Trailing **variadic** time-series parameter for operator graph overloads
+     * (Python's ``*ts``). The implementation receives the tail arguments as
+     * erased port refs — they may carry heterogeneous schemas; each is matched
+     * against the declared pattern independently at dispatch (tail matches do
+     * not bind type variables). Must be the LAST ``compose`` parameter. This
+     * is a runtime-dispatch capability: the candidate's matcher handles any
+     * argument count, so a future Python frontend dispatches identically.
+     */
+    template <typename S>
+    struct VarIn
+    {
+        using schema_type = S;
+
+        std::vector<WiringPortRef> ports{};
+
+        [[nodiscard]] std::size_t size() const noexcept { return ports.size(); }
+        [[nodiscard]] bool        empty() const noexcept { return ports.empty(); }
+        [[nodiscard]] const WiringPortRef &operator[](std::size_t index) const { return ports[index]; }
+        [[nodiscard]] auto begin() const noexcept { return ports.begin(); }
+        [[nodiscard]] auto end() const noexcept { return ports.end(); }
+    };
+
+    namespace operator_dispatch_detail
+    {
+        template <typename T>
+        struct is_var_in : std::false_type
+        {
+        };
+        template <typename S>
+        struct is_var_in<VarIn<S>> : std::true_type
+        {
+        };
+    }  // namespace operator_dispatch_detail
+
     /** One operator parameter pattern: an input (time-series) pattern or a scalar pattern. */
     struct ParamPattern
     {
@@ -126,6 +161,8 @@ namespace hgraph
         std::string               name{};
         std::string               label{};        ///< rendered signature, for error messages
         std::vector<ParamPattern>  params{};
+        /** Last param is variadic: matches zero-or-more trailing time-series args, each independently. */
+        bool                       variadic{false};
         bool                       has_output{false};
         TypePattern                output{};
         int                        rank{0};
@@ -328,7 +365,14 @@ namespace hgraph
                     [&] {
                         using P = std::tuple_element_t<I, params_tuple>;
                         ParamPattern pp;
-                        if constexpr (graph_wiring_detail::is_port<P>::value)
+                        if constexpr (operator_dispatch_detail::is_var_in<P>::value)
+                        {
+                            static_assert(I + 1 == std::tuple_size_v<params_tuple>,
+                                          "VarIn must be the last compose parameter");
+                            pp.kind = ParamPattern::Kind::Input;
+                            pp.ts   = to_pattern<typename P::schema_type>();
+                        }
+                        else if constexpr (graph_wiring_detail::is_port<P>::value)
                         {
                             pp.kind = ParamPattern::Kind::Input;
                             if constexpr (!std::is_void_v<typename port_schema<P>::type>)
@@ -616,11 +660,22 @@ namespace hgraph
             }
         }
 
-        [[nodiscard]] inline int operator_rank(const std::vector<ParamPattern> &params)
+        [[nodiscard]] inline int param_pattern_rank(const ParamPattern &param)
         {
             RankAccumulator acc;
-            for (const ParamPattern &p : params)
+            if (param.kind == ParamPattern::Kind::Input) { collect_ts_rank(param.ts, acc); }
+            else { collect_scalar_rank(param.scalar, acc, 1); }
+            return acc.total();
+        }
+
+        [[nodiscard]] inline int operator_rank(const std::vector<ParamPattern> &params,
+                                               bool skip_variadic_tail = false)
+        {
+            RankAccumulator   acc;
+            const std::size_t count = skip_variadic_tail && !params.empty() ? params.size() - 1 : params.size();
+            for (std::size_t i = 0; i < count; ++i)
             {
+                const ParamPattern &p = params[i];
                 if (p.kind == ParamPattern::Kind::Input) { collect_ts_rank(p.ts, acc); }
                 else { collect_scalar_rank(p.scalar, acc, 1); }
             }
@@ -637,6 +692,7 @@ namespace hgraph
             for (std::size_t i = 0; i < params.size(); ++i)
             {
                 if (i != 0) { out += ", "; }
+                if (impl.variadic && i + 1 == params.size()) { out += "*"; }
                 out += params[i].kind == ParamPattern::Kind::Input ? ts_pattern_to_string(params[i].ts)
                                                                    : scalar_pattern_to_string(params[i].scalar);
             }
@@ -738,6 +794,14 @@ namespace hgraph
         impl.source = OperatorImpl::Source::Cpp;
         impl.params = operator_dispatch_detail::build_graph_params<Impl>();
 
+        using params_tuple_t = typename sig::param_types;
+        constexpr std::size_t total_params = std::tuple_size_v<params_tuple_t>;
+        if constexpr (total_params > 0)
+        {
+            impl.variadic = operator_dispatch_detail::is_var_in<
+                std::tuple_element_t<total_params - 1, params_tuple_t>>::value;
+        }
+
         using output_type = typename sig::output_type;
         if constexpr (operator_dispatch_detail::is_output_port<output_type>::value)
         {
@@ -753,7 +817,7 @@ namespace hgraph
             }
         }
 
-        impl.rank  = operator_dispatch_detail::operator_rank(impl.params);
+        impl.rank  = operator_dispatch_detail::operator_rank(impl.params, impl.variadic);
         impl.label = operator_dispatch_detail::render_label<Impl>(impl.params, impl);
 
         if constexpr (operator_dispatch_detail::has_resolve_default_types_with_context<Impl>)
@@ -775,20 +839,51 @@ namespace hgraph
 
         impl.wire = [](Wiring &w, const ResolutionMap &map, std::span<const WiringArg> args) -> OperatorWireResult {
             using params_tuple = typename sig::param_types;
+            constexpr std::size_t total = std::tuple_size_v<params_tuple>;
+            constexpr bool        is_variadic =
+                total > 0 &&
+                operator_dispatch_detail::is_var_in<std::tuple_element_t<total - 1, params_tuple>>::value;
+            constexpr std::size_t fixed = total - (is_variadic ? 1 : 0);
+
             return [&]<std::size_t... I>(std::index_sequence<I...>) -> OperatorWireResult {
-                if constexpr (std::is_void_v<output_type>)
+                auto invoke = [&](auto &&...rest) -> OperatorWireResult {
+                    if constexpr (std::is_void_v<output_type>)
+                    {
+                        Impl::compose(w,
+                                      operator_dispatch_detail::make_graph_arg<std::tuple_element_t<I, params_tuple>>(
+                                          w, map, args[I])...,
+                                      std::forward<decltype(rest)>(rest)...);
+                        return OperatorWireResult{};
+                    }
+                    else
+                    {
+                        auto out =
+                            Impl::compose(w,
+                                          operator_dispatch_detail::make_graph_arg<std::tuple_element_t<I, params_tuple>>(
+                                              w, map, args[I])...,
+                                          std::forward<decltype(rest)>(rest)...);
+                        return OperatorWireResult{true, Port<void>{w, out.erased()}};
+                    }
+                };
+
+                if constexpr (is_variadic)
                 {
-                    Impl::compose(w, operator_dispatch_detail::make_graph_arg<std::tuple_element_t<I, params_tuple>>(
-                                         w, map, args[I])...);
-                    return OperatorWireResult{};
+                    using V = std::tuple_element_t<total - 1, params_tuple>;
+                    V tail{};
+                    tail.ports.reserve(args.size() - fixed);
+                    for (std::size_t i = fixed; i < args.size(); ++i)
+                    {
+                        if (args[i].kind != WiringArg::Kind::TimeSeries)
+                        {
+                            throw std::invalid_argument(
+                                "operator variadic arguments must be time-series ports");
+                        }
+                        tail.ports.push_back(args[i].port);
+                    }
+                    return invoke(std::move(tail));
                 }
-                else
-                {
-                    auto out = Impl::compose(w, operator_dispatch_detail::make_graph_arg<std::tuple_element_t<I, params_tuple>>(
-                                                    w, map, args[I])...);
-                    return OperatorWireResult{true, Port<void>{w, out.erased()}};
-                }
-            }(std::make_index_sequence<std::tuple_size_v<params_tuple>>{});
+                else { return invoke(); }
+            }(std::make_index_sequence<fixed>{});
         };
         return impl;
     }

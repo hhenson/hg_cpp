@@ -283,3 +283,54 @@ TEST_CASE("map_ over TSL: a broadcast argument feeds every index")
                  values<Value>(list_delta<TS<Int>>({101, 102}),
                                list_delta<TS<Int>>({201, 202})));
 }
+
+namespace
+{
+    // Two broadcast args: (element, offset1, offset2).
+    struct AddTwoOffsetsG
+    {
+        static constexpr auto name = "add_two_offsets_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> ts, Port<TS<Int>> o1, Port<TS<Int>> o2)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return ((ts + o1).as<TS<Int>>() + o2).as<TS<Int>>();
+        }
+    };
+
+    // Key + element + broadcast (arity 3 with one broadcast = key-consuming).
+    struct KeyOffsetG
+    {
+        static constexpr auto name = "key_offset_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> key, Port<TS<Int>> ts, Port<TS<Int>> offset)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return ((key + ts).as<TS<Int>>() + offset).as<TS<Int>>();
+        }
+    };
+}  // namespace
+
+TEST_CASE("map_ over TSD: variadic broadcast arguments feed every child")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSD<Str, TS<Int>>>(
+                     fn<AddTwoOffsetsG>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}), none),
+                     values<Int>(10, none),
+                     values<Int>(100, 200))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 111}, {"b"s, 112}}),
+                               dict_delta<Str, TS<Int>>({{"a"s, 211}, {"b"s, 212}})));
+}
+
+TEST_CASE("map_ over TSL: key plus broadcast (arity = key + element + broadcast)")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSL<TS<Int>, 3>>(
+                     fn<KeyOffsetG>(),
+                     values<Value>(list_delta<TS<Int>>({10, 20, 30})),
+                     values<Int>(100))),
+                 values<Value>(list_delta<TS<Int>>({110, 121, 132})));
+}

@@ -127,10 +127,25 @@ namespace hgraph
                 why = *output_required ? "candidate has no output" : "candidate unexpectedly has an output";
                 return false;
             }
-            if (impl.params.size() != args.size())
+            const std::size_t fixed_params =
+                impl.variadic && !impl.params.empty() ? impl.params.size() - 1 : impl.params.size();
+            if (impl.variadic ? args.size() < fixed_params : impl.params.size() != args.size())
             {
-                why = fmt::format("expects {} argument(s), got {}", impl.params.size(), args.size());
+                why = impl.variadic
+                          ? fmt::format("expects at least {} argument(s), got {}", fixed_params, args.size())
+                          : fmt::format("expects {} argument(s), got {}", impl.params.size(), args.size());
                 return false;
+            }
+            // Variadic tails are matched independently per supplied argument, so
+            // they must also be ranked per supplied argument. The base rank for a
+            // variadic impl excludes its tail pattern; add it back for each
+            // consumed tail argument plus a small fixed penalty so exact fixed
+            // arity wins at equal specificity.
+            if (impl.variadic)
+            {
+                const int tail_rank = operator_dispatch_detail::param_pattern_rank(impl.params.back());
+                rank_adjustment +=
+                    tail_rank * static_cast<int>(args.size() - fixed_params) + 1;
             }
 
             if (expected_output != nullptr && impl.has_output)
@@ -146,8 +161,34 @@ namespace hgraph
 
             for (std::size_t i = 0; i < args.size(); ++i)
             {
-                const ParamPattern &param = impl.params[i];
+                const bool          tail  = impl.variadic && i >= fixed_params;
+                const ParamPattern &param = impl.params[std::min(i, impl.params.size() - 1)];
                 const WiringArg    &arg   = args[i];
+
+                if (tail)
+                {
+                    // Variadic tail: time-series only, matched against the
+                    // declared pattern INDEPENDENTLY per argument (a throwaway
+                    // binding scope — fixed-prefix bindings constrain the
+                    // match, but heterogeneous tail args never bind vars).
+                    if (arg.kind != WiringArg::Kind::TimeSeries)
+                    {
+                        why = fmt::format("variadic argument {} must be a time-series", i);
+                        return false;
+                    }
+                    ResolutionMap tail_scope = map;
+                    if (!ts_pattern_match(param.ts, arg.port.schema, tail_scope))
+                    {
+                        why = fmt::format("variadic argument {} (a {}) does not match {}", i,
+                                          arg.port.schema != nullptr && arg.port.schema->display_name != nullptr
+                                              ? arg.port.schema->display_name
+                                              : "time-series",
+                                          ts_pattern_to_string(param.ts));
+                        return false;
+                    }
+                    continue;
+                }
+
                 if (param.kind == ParamPattern::Kind::Input)
                 {
                     if (arg.kind == WiringArg::Kind::TimeSeries)

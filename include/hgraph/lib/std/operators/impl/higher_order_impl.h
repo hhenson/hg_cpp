@@ -513,40 +513,22 @@ namespace hgraph::stdlib
             }
         }
 
-        /** ``switch_(key, cases)`` — source-style branches (no time-series arguments). */
-        struct switch_impl_key_only
+        /** ``switch_(key, cases, *ts)`` — any number of time-series arguments. */
+        struct switch_impl
         {
             static constexpr auto name = "switch_impl";
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                resolve_switch_output(resolution, context, 0);
+                const std::size_t ts_count = context.args.size() >= 2 ? context.args.size() - 2 : 0;
+                resolve_switch_output(resolution, context, ts_count);
             }
 
             static Port<TsVar<"O">> compose(Wiring &w, Port<TS<ScalarVar<"K">>> key,
-                                            Scalar<"cases", SwitchCases> cases)
+                                            Scalar<"cases", SwitchCases> cases, VarIn<TsVar<"TS">> ts)
             {
-                auto out = wire_switch(w, key.erased(), cases.value(), {});
-                return Port<TsVar<"O">>{w, out.erased()};
-            }
-        };
-
-        /** ``switch_(key, cases, ts)`` — one time-series argument. */
-        struct switch_impl_one_ts
-        {
-            static constexpr auto name = "switch_impl";
-
-            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
-            {
-                resolve_switch_output(resolution, context, 1);
-            }
-
-            static Port<TsVar<"O">> compose(Wiring &w, Port<TS<ScalarVar<"K">>> key,
-                                            Scalar<"cases", SwitchCases> cases, Port<TsVar<"TS">> ts)
-            {
-                std::vector<WiringPortRef> args;
-                args.push_back(ts.erased());
-                auto out = wire_switch(w, key.erased(), cases.value(), std::move(args));
+                auto out = wire_switch(w, key.erased(), cases.value(),
+                                       std::vector<WiringPortRef>{ts.begin(), ts.end()});
                 return Port<TsVar<"O">>{w, out.erased()};
             }
         };
@@ -730,40 +712,23 @@ namespace hgraph::stdlib
             }
         }
 
-        /** ``map_(func, tsd)`` — the multiplexed TSD only. */
+        /** ``map_(func, tsd, *broadcasts)`` — keyed runtime children over the TSD. */
         struct map_impl_tsd
         {
             static constexpr auto name = "map_impl";
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                resolve_map_output(resolution, context, 0);
+                const std::size_t broadcast_count = context.args.size() >= 2 ? context.args.size() - 2 : 0;
+                resolve_map_output(resolution, context, broadcast_count);
             }
 
             static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            Port<TSD<ScalarVar<"K">, TsVar<"V">>> tsd)
+                                            Port<TSD<ScalarVar<"K">, TsVar<"V">>> tsd,
+                                            VarIn<TsVar<"B">> broadcasts)
             {
-                auto out = wire_map(w, func, tsd.erased(), {});
-                return Port<TsVar<"O">>{w, out.erased()};
-            }
-        };
-
-        /** ``map_(func, tsd, ts)`` — one broadcast (non-multiplexed) argument. */
-        struct map_impl_tsd_one_ts
-        {
-            static constexpr auto name = "map_impl";
-
-            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
-            {
-                resolve_map_output(resolution, context, 1);
-            }
-
-            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            Port<TSD<ScalarVar<"K">, TsVar<"V">>> tsd, Port<TsVar<"B">> ts)
-            {
-                std::vector<WiringPortRef> broadcasts;
-                broadcasts.push_back(ts.erased());
-                auto out = wire_map(w, func, tsd.erased(), std::move(broadcasts));
+                auto out = wire_map(w, func, tsd.erased(),
+                                    std::vector<WiringPortRef>{broadcasts.begin(), broadcasts.end()});
                 return Port<TsVar<"O">>{w, out.erased()};
             }
         };
@@ -880,49 +845,27 @@ namespace hgraph::stdlib
             }
         }
 
-        /** ``map_(func, tsl)`` — the multiplexed fixed-size TSL only. */
+        /** ``map_(func, tsl, *broadcasts)`` — wiring-time expansion over the fixed TSL. */
         struct map_impl_tsl
         {
             static constexpr auto name = "map_impl";
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return map_ts_is_fixed_tsl(context, 2);
+                return map_ts_is_fixed_tsl(context, context.args.size());
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                resolve_map_tsl_output(resolution, context, 0);
-            }
-
-            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func, Port<TSL<TsVar<"V">>> ts)
-            {
-                auto out = wire_map_tsl(w, func.value(), ts.erased(), {});
-                return Port<TsVar<"O">>{w, out.erased()};
-            }
-        };
-
-        /** ``map_(func, tsl, ts)`` — one broadcast (non-multiplexed) argument. */
-        struct map_impl_tsl_one_ts
-        {
-            static constexpr auto name = "map_impl";
-
-            static bool requires_(const ResolutionMap &, OperatorCallContext context)
-            {
-                return map_ts_is_fixed_tsl(context, 3);
-            }
-
-            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
-            {
-                resolve_map_tsl_output(resolution, context, 1);
+                const std::size_t broadcast_count = context.args.size() >= 2 ? context.args.size() - 2 : 0;
+                resolve_map_tsl_output(resolution, context, broadcast_count);
             }
 
             static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func, Port<TSL<TsVar<"V">>> ts,
-                                            Port<TsVar<"B">> broadcast)
+                                            VarIn<TsVar<"B">> broadcasts)
             {
-                std::vector<WiringPortRef> broadcasts;
-                broadcasts.push_back(broadcast.erased());
-                auto out = wire_map_tsl(w, func.value(), ts.erased(), std::move(broadcasts));
+                auto out = wire_map_tsl(w, func.value(), ts.erased(),
+                                        std::vector<WiringPortRef>{broadcasts.begin(), broadcasts.end()});
                 return Port<TsVar<"O">>{w, out.erased()};
             }
         };
@@ -935,13 +878,10 @@ namespace hgraph::stdlib
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsd>();
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsd_zero>();
 
-        register_graph_overload<switch_, higher_order_impl_detail::switch_impl_key_only>();
-        register_graph_overload<switch_, higher_order_impl_detail::switch_impl_one_ts>();
+        register_graph_overload<switch_, higher_order_impl_detail::switch_impl>();
 
         register_graph_overload<map_, higher_order_impl_detail::map_impl_tsd>();
-        register_graph_overload<map_, higher_order_impl_detail::map_impl_tsd_one_ts>();
         register_graph_overload<map_, higher_order_impl_detail::map_impl_tsl>();
-        register_graph_overload<map_, higher_order_impl_detail::map_impl_tsl_one_ts>();
     }
 }  // namespace hgraph::stdlib
 

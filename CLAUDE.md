@@ -172,9 +172,13 @@ Also landed: **dynamic-TSD `reduce`** (2603 design ported into the doc first;
 `runtime/reduce_node.*` — alias leaves, minimal combiner tree, zero = empty-result only,
 sampled root re-publication). Also: `map_` over fixed
 TSL (wiring-time expansion, Python `_map_no_index` parity) and `reload_on_ticked`
-exposed on `SwitchCases` (`switch_cases({…}).reload()`). Remaining (deferred — see the
-doc's roadmap + non-goals): dynamic-TSL multiplexing/reduce, non-associative reduce,
-variadic operator args, sink maps/switches, `mesh_`/`try_except`/services. **C++ only for
+exposed on `SwitchCases` (`switch_cases({…}).reload()`). **Variadic operator args — DONE** (`VarIn<Pattern>` trailing
+compose param; runtime-matcher capability — tail args matched per-arg in a throwaway
+binding scope, fixed-arity candidates preferred; `switch_`/`map_` are single variadic
+overloads now; Python-port constraint recorded in memory `python-port-operator-compat`).
+Remaining (deferred — see the doc's roadmap + non-goals): dynamic-TSL
+multiplexing/reduce, non-associative reduce, sink maps/switches,
+`mesh_`/`try_except`/services. **C++ only for
 now** — keep Python out of the configure/build/run path.
 
 ---

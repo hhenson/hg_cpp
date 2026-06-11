@@ -555,6 +555,36 @@ over erased ports. Because it is just a scalar:
 - equal functions hash/compare equal, so nodes configured with the same
   function intern/dedup like any other scalar configuration.
 
+Variadic operator parameters
+----------------------------
+
+An operator overload may take **zero-or-more trailing time-series arguments**
+(Python's ``*ts``) by declaring its last ``compose`` parameter as
+``VarIn<Pattern>`` (``operator_dispatch.h``) — the implementation receives the
+tail as erased ``WiringPortRef``\ s. ``switch_(key, cases, *ts)`` and
+``map_(func, mux, *broadcasts)`` use it.
+
+Dispatch semantics (all in the **runtime** matcher — the capability is fully
+available to a future Python frontend, which calls the same
+``OperatorRegistry::resolve`` over erased args; the typed ``wire<Op>`` form is
+sugar):
+
+- a variadic candidate matches when ``args >= fixed-params``; each tail
+  argument must be a time-series and is matched against the declared pattern
+  **independently** (a throwaway binding scope per argument: bindings made by
+  the fixed prefix constrain the match, but heterogeneous tail arguments
+  never bind type variables — ``switch_`` branches see differently-typed
+  ``ts`` args);
+- the variadic tail contributes rank once per supplied tail argument, plus a
+  small fixed penalty, so fixed-arity candidates are **preferred** over
+  variadic ones at equal specificity; a user specialisation with an exact
+  signature wins against the variadic default;
+- candidate labels render the variadic parameter with a ``*`` prefix.
+
+Scalars cannot appear in the tail — configuration belongs in the fixed
+prefix (cf. ``SwitchCases``).
+
+
 The markers live in ``operators/higher_order.h`` and the default overloads in
 ``impl/higher_order_impl.h`` — **their own family files in lib/std**; there is
 nothing special about them now that sub-graph compilation is standardised
