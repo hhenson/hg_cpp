@@ -714,15 +714,16 @@ namespace hgraph
 
             if (has_scheduler)
             {
-                NodeScheduler sched{*scheduler, view.graph_value(), view.node_index(), evaluation_time};
+                auto         &graph = *view.graph_value();
+                NodeScheduler sched{*scheduler, &graph, view.node_index(), evaluation_time};
                 if (scheduled_now)
                 {
                     sched.advance();  // consume the fired event(s) and re-arm the next
                 }
-                else if (sched.is_scheduled() && view.graph_value() != nullptr)
+                else if (sched.is_scheduled())
                 {
                     // Ran for another reason (an input ticked): just re-arm the timer.
-                    view.graph_value()->schedule_node(view.node_index(), sched.next_scheduled_time());
+                    graph.schedule_node(view.node_index(), sched.next_scheduled_time());
                 }
             }
         }

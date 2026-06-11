@@ -90,6 +90,9 @@ query. After graph start, the cache is seeded from the schedule table so
 reset and rebuilt by folding only schedule entries strictly after the current
 ``evaluation_time``. The scheduler does not rewrite a same-cycle request to a
 future time; ordering errors are graph/scheduler bugs, not implicit deferrals.
+The runtime trusts the compiled wiring topology to prevent invalid same-cycle
+backward scheduling. That contract should be protected with wiring/compiler
+tests rather than additional production checks in the scheduling hot path.
 
 The graph schedule is the only activation gate. There is deliberately no
 eval-level bypass flag: if a node is scheduled at the current evaluation time,
@@ -102,6 +105,10 @@ Evaluation Cycle
 ~~~~~~~~~~~~~~~~
 
 Each evaluation cycle runs at one ``evaluation_time``.
+
+Graph instances are currently treated as run-and-dispose objects. ``stop()``
+is cleanup before disposal; restarting a stopped graph instance is not part of
+the runtime contract.
 
 The normal cycle shape is:
 
