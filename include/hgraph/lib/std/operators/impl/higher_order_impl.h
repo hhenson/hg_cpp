@@ -419,6 +419,7 @@ namespace hgraph::stdlib
 
             const TSValueTypeMetaData *output_schema = nullptr;
             SwitchNodeSpec             spec;
+            spec.reload_on_ticked = cases.reload_on_ticked;
             spec.branches.reserve(cases.cases.size());
             for (const SwitchCase &entry : cases.cases)
             {
@@ -766,6 +767,165 @@ namespace hgraph::stdlib
                 return Port<TsVar<"O">>{w, out.erased()};
             }
         };
+        [[nodiscard]] inline bool map_ts_is_fixed_tsl(OperatorCallContext context, std::size_t expected_args)
+        {
+            if (context.args.size() != expected_args) { return false; }
+            if (context.args.size() < 2 || context.args[1].kind != WiringArg::Kind::TimeSeries) { return false; }
+            const auto *schema = TypeRegistry::instance().dereference(context.args[1].port.schema);
+            return schema != nullptr && schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0;
+        }
+
+        /**
+         * ``map_`` over a fixed-size TSL is a **wiring-time expansion** —
+         * Python's ``_map_no_index``: one inline application of ``func`` per
+         * index (key = ``const(i)`` when ``func`` takes it first), assembled
+         * into a structural TSL output. No runtime node is involved.
+         */
+        [[nodiscard]] inline Port<void> wire_map_tsl(Wiring &w, const WiredFn &func, WiringPortRef ts,
+                                                     std::vector<WiringPortRef> broadcasts)
+        {
+            auto       &registry   = TypeRegistry::instance();
+            const auto *tsl_schema = registry.dereference(ts.schema);
+            if (tsl_schema == nullptr || tsl_schema->kind != TSTypeKind::TSL || tsl_schema->fixed_size() == 0)
+            {
+                throw std::invalid_argument("map_: the multiplexed input must be a fixed-size TSL");
+            }
+            const auto       *element = tsl_schema->element_ts();
+            const std::size_t size    = tsl_schema->fixed_size();
+
+            const std::size_t base_arity = 1 + broadcasts.size();
+            const bool        takes_key  = func.arity == base_arity + 1;
+            if ((!takes_key && func.arity != base_arity) || !func.has_output)
+            {
+                throw std::invalid_argument(
+                    "map_: 'func' must take (element, broadcasts...) — optionally preceded by the Int index — "
+                    "and produce an output");
+            }
+
+            const auto *key_meta = scalar_descriptor<Int>::value_meta();
+            const auto *key_ts   = registry.ts(key_meta);
+
+            std::vector<WiringPortRef> children;
+            children.reserve(size);
+            for (std::size_t i = 0; i < size; ++i)
+            {
+                std::vector<WiringPortRef> args;
+                args.reserve(func.arity);
+                if (takes_key)
+                {
+                    WiringArg key_arg;
+                    key_arg.kind         = WiringArg::Kind::Scalar;
+                    key_arg.scalar_value = Value{static_cast<Int>(i)};
+                    key_arg.scalar_meta  = key_meta;
+                    args.push_back(wire_operator(w, "const", {&key_arg, 1}, true, key_ts).output.erased());
+                }
+                args.push_back(subgraph_wiring_detail::tsl_element_ref(ts, i, element));
+                for (const WiringPortRef &broadcast : broadcasts) { args.push_back(broadcast); }
+
+                WiringPortRef out = func.wire(w, {args.data(), args.size()});
+                if (!children.empty() &&
+                    !time_series_schema_equivalent(registry.dereference(out.schema),
+                                                   registry.dereference(children.front().schema)))
+                {
+                    throw std::invalid_argument(
+                        "map_: 'func' produced differing output schemas across the TSL indices");
+                }
+                children.push_back(std::move(out));
+            }
+
+            const auto *output_schema = registry.tsl(children.front().schema, size);
+            return Port<void>{w, WiringPortRef::structural_source(output_schema, std::move(children))};
+        }
+
+        /** Bind the output var ``O`` for the resolver: ``TSL<OUT(func), SIZE>``. */
+        inline void resolve_map_tsl_output(ResolutionMap &resolution, OperatorCallContext context,
+                                           std::size_t broadcast_count)
+        {
+            if (resolution.find_ts("O") != nullptr) { return; }
+
+            const WiredFn *func = context.scalar_as<WiredFn>("func");
+            if (func == nullptr) { return; }
+            if (context.args.size() < 2 || context.args[1].kind != WiringArg::Kind::TimeSeries) { return; }
+
+            auto       &registry   = TypeRegistry::instance();
+            const auto *tsl_schema = registry.dereference(context.args[1].port.schema);
+            if (tsl_schema == nullptr || tsl_schema->kind != TSTypeKind::TSL || tsl_schema->fixed_size() == 0)
+            {
+                return;
+            }
+
+            std::vector<const TSValueTypeMetaData *> schemas;
+            schemas.reserve(func->arity);
+            const std::size_t base_arity = 1 + broadcast_count;
+            if (func->arity == base_arity + 1) { schemas.push_back(registry.ts(scalar_descriptor<Int>::value_meta())); }
+            else if (func->arity != base_arity) { return; }
+            schemas.push_back(tsl_schema->element_ts());
+            for (std::size_t i = 2; i < 2 + broadcast_count; ++i)
+            {
+                if (i >= context.args.size() || context.args[i].kind != WiringArg::Kind::TimeSeries) { return; }
+                schemas.push_back(context.args[i].port.schema);
+            }
+
+            try
+            {
+                CompiledSubGraph compiled = func->compile({schemas.data(), schemas.size()});
+                if (compiled.output_schema != nullptr)
+                {
+                    resolution.bind_ts("O", registry.tsl(compiled.output_schema, tsl_schema->fixed_size()));
+                }
+            }
+            catch (...)
+            {
+                // Leave unresolved; the real wiring path reports the error.
+            }
+        }
+
+        /** ``map_(func, tsl)`` — the multiplexed fixed-size TSL only. */
+        struct map_impl_tsl
+        {
+            static constexpr auto name = "map_impl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return map_ts_is_fixed_tsl(context, 2);
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_map_tsl_output(resolution, context, 0);
+            }
+
+            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func, Port<TSL<TsVar<"V">>> ts)
+            {
+                auto out = wire_map_tsl(w, func.value(), ts.erased(), {});
+                return Port<TsVar<"O">>{w, out.erased()};
+            }
+        };
+
+        /** ``map_(func, tsl, ts)`` — one broadcast (non-multiplexed) argument. */
+        struct map_impl_tsl_one_ts
+        {
+            static constexpr auto name = "map_impl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return map_ts_is_fixed_tsl(context, 3);
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_map_tsl_output(resolution, context, 1);
+            }
+
+            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func, Port<TSL<TsVar<"V">>> ts,
+                                            Port<TsVar<"B">> broadcast)
+            {
+                std::vector<WiringPortRef> broadcasts;
+                broadcasts.push_back(broadcast.erased());
+                auto out = wire_map_tsl(w, func.value(), ts.erased(), std::move(broadcasts));
+                return Port<TsVar<"O">>{w, out.erased()};
+            }
+        };
     }  // namespace higher_order_impl_detail
 
     inline void register_higher_order_operators()
@@ -780,6 +940,8 @@ namespace hgraph::stdlib
 
         register_graph_overload<map_, higher_order_impl_detail::map_impl_tsd>();
         register_graph_overload<map_, higher_order_impl_detail::map_impl_tsd_one_ts>();
+        register_graph_overload<map_, higher_order_impl_detail::map_impl_tsl>();
+        register_graph_overload<map_, higher_order_impl_detail::map_impl_tsl_one_ts>();
     }
 }  // namespace hgraph::stdlib
 

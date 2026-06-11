@@ -240,3 +240,46 @@ TEST_CASE("map_: a pass-through child output is rejected at wiring time")
         fn<IdentityG>(),
         values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}})))));
 }
+
+// ---------------------------------------------------------------------------
+// map_ over a fixed-size TSL: a wiring-time expansion (Python _map_no_index)
+// — one inline application of func per index, key = the Int index, output a
+// structural TSL. No runtime node.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("map_ over TSL: applies func per index, partial ticks stay element-wise")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSL<TS<Int>, 3>>(
+                     fn<AddOneG>(),
+                     values<Value>(list_delta<TS<Int>>({1, 2, 3}),
+                                   list_delta<TS<Int>>({none, 20, none})))),
+                 values<Value>(list_delta<TS<Int>>({2, 3, 4}),
+                               list_delta<TS<Int>>({none, 21, none})));
+}
+
+TEST_CASE("map_ over TSL: the function may consume the Int index as its first argument")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSL<TS<Int>, 3>>(
+                     fn<AddKeyG>(),
+                     values<Value>(list_delta<TS<Int>>({10, 20, 30})))),
+                 values<Value>(list_delta<TS<Int>>({10, 21, 32})));
+}
+
+TEST_CASE("map_ over TSL: a broadcast argument feeds every index")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSL<TS<Int>, 2>>(
+                     fn<AddOffsetG>(),
+                     values<Value>(list_delta<TS<Int>>({1, 2}), none),
+                     values<Int>(100, 200))),
+                 values<Value>(list_delta<TS<Int>>({101, 102}),
+                               list_delta<TS<Int>>({201, 202})));
+}

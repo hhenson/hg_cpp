@@ -354,8 +354,7 @@ ts…)``).
   evaluation, and on node stop. The output's resolver discovers the schema by
   compiling the first branch (``resolve_default_types`` on the overloads).
 - Deferred: variadic time-series arguments (overloads cover none/one until
-  variadic operator parameters exist), exposing ``reload_on_ticked``, and
-  all-sink switches.
+  variadic operator parameters exist) and all-sink switches.
 
 Tests: ``tests/cpp/test_switch.cpp``.
 
@@ -419,8 +418,16 @@ of its multiplexed ``TSD`` input — an operator like the rest of the family
   through the nested-graph delegation as everywhere else.
 - The output schema resolver discovers ``TSD<K, OUT>`` by compiling ``func``
   at the element schema (``resolve_default_types``, like ``switch_``).
-- Deferred: TSL multiplexing, variadic/multi-multiplexed inputs, explicit
-  ``__keys__`` / ``pass_through`` / ``no_key`` wrappers, and sink maps.
+- **TSL multiplexing is a wiring-time expansion**, not a runtime node —
+  Python's ``_map_no_index``: the fixed-TSL overloads inline one application
+  of ``func`` per index (key = ``const(i)`` at ``TS<Int>`` when ``func``
+  takes it first, broadcasts passed whole), validate the per-index output
+  schemas agree, and assemble a **structural TSL** output. Selected by the
+  same ``map_`` name (``requires_`` gates on a fixed-size TSL input); the
+  resolver discovers ``TSL<OUT, SIZE>`` by compiling ``func`` once.
+- Deferred: dynamic-TSL multiplexing, variadic/multi-multiplexed inputs,
+  explicit ``__keys__`` / ``pass_through`` / ``no_key`` wrappers, and sink
+  maps.
 
 Tests: ``tests/cpp/test_map.cpp``. ASAN/UBSAN-verified (keyed
 create/destroy churn).

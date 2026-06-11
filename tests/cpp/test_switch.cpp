@@ -161,3 +161,23 @@ TEST_CASE("switch_: switching away destroys the branch; switching back rebuilds 
                      values<Int>(5, 6, 7, 8)),
                  values<Int>(1, 2, 14, 1));
 }
+
+TEST_CASE("switch_: reload_on_ticked rebuilds the branch on every key tick")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // Without the flag a same-key re-tick keeps the branch (counter keeps
+    // counting); with reload the branch is rebuilt fresh each key tick.
+    CHECK_OUTPUT(eval_node<stdlib::switch_>(
+                     values<Str>(Str{"c"}, Str{"c"}, none),
+                     stdlib::switch_cases({{Value{Str{"c"}}, fn<CounterNode>()}}),
+                     values<Int>(5, 6, 7)),
+                 values<Int>(1, 2, 3));
+
+    CHECK_OUTPUT(eval_node<stdlib::switch_>(
+                     values<Str>(Str{"c"}, Str{"c"}, none),
+                     stdlib::switch_cases({{Value{Str{"c"}}, fn<CounterNode>()}}).reload(),
+                     values<Int>(5, 6, 7)),
+                 values<Int>(1, 1, 2));
+}

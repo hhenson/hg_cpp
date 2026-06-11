@@ -79,10 +79,19 @@ namespace hgraph::stdlib
     {
         std::vector<SwitchCase> cases{};
         std::optional<WiredFn>  default_branch{};
+        /** Rebuild the active branch on EVERY key tick, not just a key change (Python ``reload_on_ticked``). */
+        bool reload_on_ticked{false};
+
+        [[nodiscard]] SwitchCases &&reload(bool value = true) &&
+        {
+            reload_on_ticked = value;
+            return std::move(*this);
+        }
 
         [[nodiscard]] bool operator==(const SwitchCases &other) const
         {
-            return cases == other.cases && default_branch == other.default_branch;
+            return cases == other.cases && default_branch == other.default_branch &&
+                   reload_on_ticked == other.reload_on_ticked;
         }
     };
 
@@ -122,8 +131,10 @@ namespace hgraph::stdlib
      * one child graph instance **per key**. This is the current C++ subset of
      * Python ``map_(func, *args)``:
      *
-     * - the multiplexed input is a ``TSD`` (TSL multiplexing follows as a
-     *   further overload of this name); key lifecycle is reconciled against
+     * - the multiplexed input is a ``TSD`` (keyed runtime children) or a
+     *   fixed-size ``TSL`` (wiring-time expansion: one inline application of
+     *   ``func`` per index, key = the ``Int`` index — Python's
+     *   ``_map_no_index``, no runtime node); TSD key lifecycle is reconciled against
      *   the current key set when the mapped source modifies or re-points — a
      *   new key builds/binds/starts a fresh child, a missing key destroys it
      *   and removes the output entry;
@@ -169,6 +180,7 @@ struct std::hash<hgraph::stdlib::SwitchCases>
             combine(std::hash<hgraph::WiredFn>{}(entry.branch));
         }
         if (cases.default_branch.has_value()) { combine(std::hash<hgraph::WiredFn>{}(*cases.default_branch)); }
+        combine(cases.reload_on_ticked ? 1 : 0);
         return h;
     }
 };
