@@ -324,6 +324,13 @@ namespace hgraph
 
         [[nodiscard]] const NodeTypeBinding &binding() const;
         [[nodiscard]] const TSEndpointSchema &input_endpoint() const noexcept;
+        /**
+         * Construct this node directly into caller-owned storage matching
+         * ``binding().checked_plan()``. The caller owns destruction through the
+         * same binding/plan; this is used by graph storage to colocate
+         * variable-sized node payloads in the graph allocation.
+         */
+        void construct_node_storage(void *memory, std::size_t node_index = 0) const;
         [[nodiscard]] NodeValue make_node(std::size_t node_index = 0) const;
 
       private:

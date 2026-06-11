@@ -220,6 +220,17 @@ TEST_CASE("GraphValue wires node views and evaluates scheduled notifications")
     REQUIRE(graph_view.valid());
     REQUIRE(graph_view.schema()->nodes.size() == 2);
     REQUIRE(graph_view.node_count() == 2);
+    const auto &graph_plan = graph_view.binding()->checked_plan();
+    const auto *node_storage = graph_plan.find_component("nodes");
+    REQUIRE(node_storage != nullptr);
+    REQUIRE(node_storage->plan->is_tuple());
+    REQUIRE(node_storage->plan->component_count() == 2);
+    REQUIRE(node_storage->plan->component(0).plan == graph_view.node_at(0).binding()->plan());
+    REQUIRE(node_storage->plan->component(1).plan == graph_view.node_at(1).binding()->plan());
+    const auto *schedule_storage = graph_plan.find_component("schedule");
+    REQUIRE(schedule_storage != nullptr);
+    REQUIRE(schedule_storage->plan->is_array());
+    REQUIRE(schedule_storage->plan->array_count() == 2);
     REQUIRE(graph_view.node_at(1).binding()->checked_plan().find_component("input") != nullptr);
     REQUIRE(graph_view.node_at(1).binding()->checked_plan().find_component("output") != nullptr);
     REQUIRE(graph_view.node_at(1).binding()->checked_plan().find_component("state") == nullptr);

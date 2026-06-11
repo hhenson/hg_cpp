@@ -34,10 +34,11 @@ Binding           ``NodeTypeBinding`` — interned ``(schema, plan, ops)``
 Builder           ``NodeBuilder`` — reusable builder that wraps a
                   binding and constructs runtime node instances from
                   graph contexts.
-Value             ``NodeValue`` — the owning runtime node instance that
-                  lives in the graph's flattened node array. It owns the
-                  node storage through the same binding + storage-handle
-                  pattern as value and time-series data.
+Value             ``NodeValue`` — the standalone owning runtime node
+                  instance used by focused tests and direct node
+                  construction. Graph instances colocate node payloads
+                  directly in graph storage and expose them through
+                  ``NodeView``.
 View              ``NodeView`` — a borrowed type-erased cursor over a
                   node allocation. It carries the node binding, data
                   pointer, and no cycle-local state. Evaluation time is

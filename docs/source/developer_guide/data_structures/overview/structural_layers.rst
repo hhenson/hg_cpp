@@ -44,7 +44,7 @@ The high-level relationship is:
       Receiver[Push Message Receiver]
       Graph[Graph]
       Schedule[Graph Schedule Table]
-      Nodes[Flattened Node Array]
+      Nodes[Flattened Node Storage]
       Boundaries[Graph Boundaries]
       Node[Node]
       NodeScheduler[Optional Node Scheduler]
@@ -92,7 +92,10 @@ Core elements:
     Stable graph id, optional label, and optional parent-node link for nested graphs.
 
 ``FlattenedNodeArray``
-    The fully ordered node set. The array order is rank order and is the evaluation order.
+    The fully ordered node set. The index order is rank order and is the
+    evaluation order. Physically, graph storage uses a heterogeneous node
+    storage tuple plus a node-location table, so this is an indexed runtime
+    view rather than a homogeneous ``NodeValue`` array.
 
 ``GraphScheduleTable``
     Parallel array indexed by node index. Each entry is the next visible
@@ -106,7 +109,13 @@ Core elements:
     Runtime bindings for graph inputs, outputs, nested graph boundaries, and parent/child graph communication.
 
 ``GraphStorage``
-    Memory owned by the graph instance. This may eventually be an arena or packed allocation that contains nodes, node-local schedulers, node-local state, and time-series objects.
+    Memory owned by the graph instance. A compiled graph binding carries a
+    fixed-size storage plan with a graph header, a heterogeneous node-storage
+    tuple, and a parallel ``DateTime`` schedule array sized from the graph
+    topology. The graph binding also carries the node-location table that maps
+    ``node_index`` to ``(NodeTypeBinding, storage_offset)``. Creating a graph
+    instance therefore performs one graph storage allocation rather than
+    allocating separate vectors for nodes and schedules.
 
 The graph's most important paired structure is:
 
@@ -167,10 +176,11 @@ Scheduling Structures
 Scheduling uses two layers:
 
 Graph schedule table
-    A dense ``DateTime`` vector indexed by ``node_index``. Each slot stores the
-    node's single visible scheduled time, or ``MIN_DT`` when the node has no
-    visible graph schedule. Normal evaluation starts after ``MIN_DT``, so this
-    floor value cannot become due in an evaluation cycle.
+    A dense ``DateTime`` array indexed by ``node_index`` and stored inside the
+    graph instance's fixed storage plan. Each slot stores the node's single
+    visible scheduled time, or ``MIN_DT`` when the node has no visible graph
+    schedule. Normal evaluation starts after ``MIN_DT``, so this floor value
+    cannot become due in an evaluation cycle.
 
 Cached next scheduled time
     A graph-level ``DateTime`` cache maintained alongside the schedule table.

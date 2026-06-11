@@ -210,12 +210,12 @@ namespace hgraph
             }
         }
 
-        void construct_node_storage(const NodeRuntimeContext &context,
-                                    const NodeTypeMetaData   &schema,
-                                    TSEndpointSchema          input_endpoint,
-                                    std::string               runtime_label,
-                                    const Value              &scalars,
-                                    void                     *memory)
+        void construct_node_storage_impl(const NodeRuntimeContext &context,
+                                         const NodeTypeMetaData   &schema,
+                                         TSEndpointSchema          input_endpoint,
+                                         std::string               runtime_label,
+                                         const Value              &scalars,
+                                         void                     *memory)
         {
             if (context.plan == nullptr) { throw std::logic_error("Node runtime context has no storage plan"); }
             const MemoryUtils::StoragePlan &plan = *context.plan;
@@ -1142,12 +1142,9 @@ namespace hgraph
     NodeValue::NodeValue(const NodeBuilder &builder, std::size_t node_index)
     {
         const auto &binding = builder.binding();
-        const auto &runtime = runtime_context(binding.ops_ref().context);
         storage_ = storage_type::owning_constructed(binding, [&](void *dst) {
-            construct_node_storage(runtime, *binding.type_meta, builder.input_endpoint(), std::string{builder.label()},
-                                   builder.scalars(), dst);
+            builder.construct_node_storage(dst, node_index);
         });
-        attach_graph(nullptr, node_index);
     }
 
     NodeValue::~NodeValue() = default;
@@ -1288,6 +1285,23 @@ namespace hgraph
     const TSEndpointSchema &NodeBuilder::input_endpoint() const noexcept
     {
         return input_endpoint_;
+    }
+
+    void NodeBuilder::construct_node_storage(void *memory, std::size_t node_index) const
+    {
+        if (memory == nullptr) { throw std::logic_error("NodeBuilder::construct_node_storage requires memory"); }
+
+        const auto &binding = this->binding();
+        const auto &runtime = runtime_context(binding.ops_ref().context);
+        construct_node_storage_impl(runtime,
+                                    *binding.type_meta,
+                                    input_endpoint(),
+                                    std::string{label()},
+                                    scalars(),
+                                    memory);
+
+        const auto &table = binding.ops_ref();
+        table.attach_graph_impl(table.context, memory, nullptr, node_index);
     }
 
     NodeValue NodeBuilder::make_node(std::size_t node_index) const
