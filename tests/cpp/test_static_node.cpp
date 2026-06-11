@@ -441,7 +441,7 @@ TEST_CASE("static node: Scalar<> configures a source from per-instance values")
 
     const auto t1 = MIN_ST;
     view.start(t1);
-    view.evaluate(t1, true);
+    view.evaluate(t1);
     CHECK(node.view().output(t1).value().checked_as<Int>() == Int{7});
 }
 
@@ -481,11 +481,11 @@ TEST_CASE("static node: State<Int> is constructed and mutated across evaluations
     REQUIRE(view.has_state());
 
     view.start(t1);
-    view.evaluate(t1, true);
+    view.evaluate(t1);
     CHECK(node.view().state().checked_as<Int>() == 1);
     CHECK(node.view().output(t1).value().checked_as<Int>() == 1);
 
-    node.view().evaluate(t2, true);
+    node.view().evaluate(t2);
     CHECK(node.view().state().checked_as<Int>() == 2);
     CHECK(node.view().output(t2).value().checked_as<Int>() == 2);
 }
@@ -598,14 +598,14 @@ TEST_CASE("static node: RecordableState<TSB> is hidden output-backed state")
     source.view().start(t1);
     view.start(t1);
 
-    source.view().evaluate(t1, true);
+    source.view().evaluate(t1);
     {
         auto root   = view.input(t1);
         auto bundle = root.as_bundle();
         auto input  = bundle.field("in");
         input.bind_output(source.view().output(t1));
     }
-    view.evaluate(t1, true);
+    view.evaluate(t1);
     CHECK(node.view().output(t1).value().checked_as<Int>() == Int{-1});
     {
         auto recordable = node.view().recordable_state(t1);
@@ -615,8 +615,8 @@ TEST_CASE("static node: RecordableState<TSB> is hidden output-backed state")
         CHECK(last.value().checked_as<Int>() == Int{1});
     }
 
-    source.view().evaluate(t2, true);
-    node.view().evaluate(t2, true);
+    source.view().evaluate(t2);
+    node.view().evaluate(t2);
     CHECK(node.view().output(t2).value().checked_as<Int>() == Int{1});
     {
         auto recordable = node.view().recordable_state(t2);

@@ -905,6 +905,8 @@ TEST_CASE("TSInput shape casts return endpoint views for slot collections")
     active_dict_child.make_active();
     REQUIRE(active_set.active());
     REQUIRE(active_dict_child.active());
+    REQUIRE(recorder.notified == std::vector<DateTime>{t2, t2});
+    recorder.notified.clear();
 
     {
         auto set_view = set_output.view(t2);

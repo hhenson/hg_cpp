@@ -52,6 +52,28 @@ namespace
 
         return NodeBuilder::native(std::move(schema), std::move(callbacks));
     }
+
+    NodeBuilder scheduled_push_source(const TSValueTypeMetaData &output_schema, std::int32_t &eval_count)
+    {
+        NodeTypeMetaData schema;
+        schema.display_name = "scheduled_push_source";
+        schema.output_schema = &output_schema;
+        schema.node_kind = NodeKind::PushSource;
+        schema.schedule_on_start = true;
+
+        NodeCallbacks callbacks;
+        callbacks.evaluate = [&eval_count](const NodeView &view, DateTime evaluation_time) {
+            const Int value{eval_count};
+            testing::set_output_value(view, evaluation_time, value);
+            ++eval_count;
+            if (eval_count < 2)
+            {
+                view.graph_value()->schedule_node(view.node_index(), evaluation_time + MIN_TD);
+            }
+        };
+
+        return NodeBuilder::native(std::move(schema), std::move(callbacks));
+    }
 }  // namespace
 
 TEST_CASE("real-time executor waits for the future scheduled time")
@@ -182,6 +204,49 @@ TEST_CASE("real-time executor evaluates root push queues after pending update si
 
     CHECK(sink_eval_count == 1);
     CHECK(observed_value == Int{42});
+}
+
+TEST_CASE("real-time executor evaluates scheduled root push source nodes without a pending queue signal")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<Int>("int");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *input_schema = hgraph::testing::single_input_schema(*ts_int);
+
+    std::int32_t     source_eval_count{0};
+    std::vector<Int> observed_values;
+
+    GraphBuilder graph_builder;
+    graph_builder.add_node(scheduled_push_source(*ts_int, source_eval_count));
+    graph_builder.add_node(hgraph::testing::collecting_scalar_sink<Int>(
+        *input_schema,
+        *ts_int,
+        observed_values,
+        2));
+    graph_builder.add_edge(GraphEdge{
+        .source_node = make_graph_edge_source(0),
+        .source_path = {},
+        .target_node = 1,
+        .target_path = {0},
+    });
+
+    const DateTime start_time = hgraph::testing::wall_now();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .mode(GraphExecutorMode::RealTime)
+        .start_time(start_time)
+        .end_time(start_time + TimeDelta{1'000'000});
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    executor.view().run();
+
+    CHECK(source_eval_count == 2);
+    REQUIRE(observed_values.size() == 2);
+    CHECK(observed_values[0] == Int{0});
+    CHECK(observed_values[1] == Int{1});
 }
 
 TEST_CASE("real-time push source drains multiple queued values across cycles")

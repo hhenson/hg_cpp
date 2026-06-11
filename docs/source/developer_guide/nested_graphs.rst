@@ -103,12 +103,13 @@ and adds **one** ``single_nested_graph_node`` that owns the child graph:
 - a sink sub-graph (``compose`` returns ``void``) wires as a nested sink node
   (not interned, like every output-less node).
 
-Scheduling follows the existing substrate: the child's
-``next_scheduled_time()`` is propagated to the parent after start/evaluate, so
-a source-only sub-graph drives the outer graph (proven by
-``tests/cpp/test_nested_wiring.cpp``). Child-driven **push** propagation (a
-child node scheduled by notification while the parent is idle) is the next
-increment.
+Scheduling follows the existing substrate: child start can schedule the parent
+from the child's cached ``next_scheduled_time()``, and child evaluation
+propagates the cached next time to the parent before the nested evaluation
+block returns. A source-only sub-graph therefore drives the outer graph
+(proven by ``tests/cpp/test_nested_wiring.cpp``). Child-driven **push**
+propagation covers a child node scheduled by notification while the parent is
+idle.
 
 Tests: ``tests/cpp/test_nested_wiring.cpp``.
 
@@ -168,7 +169,7 @@ inside a sub-graph ``compose`` over a boundary TSL). The overloads'
 ``requires_`` accept fixed-size TSL inputs only, leaving dynamic-TSL/TSD
 reductions to future overloads of the same name (the gated milestone
 increment — see roadmap). Still deferred: a time-series (port) ``zero``
-argument, and non-associative/linear-forced reduction.
+argument, and non-associative linear reduction.
 
 Tests: ``tests/cpp/test_reduce.cpp`` (including a user overload gated on the
 wired function's identity, mirroring ``ext/main``'s ``test_map_overload``).
@@ -181,11 +182,12 @@ The RFC's clock invariant — *the parent must wake no later than the child's
 next scheduled work* — is realised as two halves folded into the existing
 graph ops (no separate engine/clock object; see the recorded decision):
 
-- **Pull** (``single_nested_graph_propagate_schedule``): after the child is
-  started or evaluated, the owning node force-schedules itself at the child's
-  ``next_scheduled_time()``. This covers every schedule created while the
-  parent is already driving the child (self-rescheduling sources, scheduler
-  calls inside child ``start``/``eval``).
+- **Pull** (nested graph evaluation in ``graph.cpp``): child graph evaluation
+  maintains a cached ``next_scheduled_time()`` as it scans and evaluates child
+  nodes. Before the nested evaluation block returns, it schedules the parent
+  node at that cached time. ``single_nested_graph_propagate_schedule`` remains
+  for the start path because child start can schedule work before any child
+  evaluation block exists.
 - **Push** (``nested_schedule_node_impl`` in ``graph.cpp``): any
   ``schedule_node`` recorded on a child graph **while it is idle**
   (``started && !evaluating``) immediately schedules the parent node at the
@@ -196,13 +198,16 @@ graph ops (no separate engine/clock object; see the recorded decision):
   pushing mid-evaluate would schedule a spurious extra parent cycle) and
   while the child is stopped.
 
-The parent graph's own same-cycle clamp supplies the ``+MIN_TD`` behaviour,
-and multi-level nesting recurses up to the root naturally. The boundary
-*binding* helpers shared by all nested node implementations
+Multi-level nesting recurses up to the root naturally. The boundary *binding*
+helpers shared by all nested node implementations
 (``walk_ts_path`` / ``bind_input_to_source`` /
 ``bind_forwarding_output_to_source``) live in
 ``include/hgraph/runtime/nested_bindings.h`` — no bespoke bind/unbind logic
 per operator.
+
+An evaluating nested graph always has a parent node. Missing parent state is a
+construction/test setup error, not a scheduling case to branch around in the
+nested evaluation path.
 
 
 ``switch_``
@@ -233,9 +238,10 @@ ts…)``).
 - **Sampled semantics** (the sampled-runtime contract; the recorded
   divergence from Python's ``value = None`` reset): the freshly selected
   branch evaluates with the *current* upstream values even when they did not
-  tick that cycle — after the child starts, every consumer whose bound source
-  is already valid is force-scheduled at the switch time. Pinned by test
-  (a swap while the ts input holds emits the new branch's value immediately).
+  tick that cycle. Binding or rebinding an active child input to an
+  already-valid source schedules the child through the normal input
+  notification path at the switch time. Pinned by test (a swap while the ts
+  input holds emits the new branch's value immediately).
 - **Lifecycle**: switching away destroys the child ``GraphValue`` (immediate
   destroy is safe — the output is re-pointed first); switching back rebuilds
   a fresh instance (per-branch state resets — pinned by test). The output's
@@ -261,8 +267,7 @@ current code wins:
   the executor ops). The RFC's clock invariant — the parent must wake no later
   than the child's next scheduled time — is realised as (a) pull-style
   propagation after child start/evaluate (exists) and (b) push propagation from
-  the nested graph's ``schedule_node`` to the parent node (next increment). The
-  parent graph's existing same-cycle clamp provides the ``+MIN_TD`` behaviour.
+  the nested graph's ``schedule_node`` to the parent node.
 - **No ``ChildGraphTemplate`` / ``ChildGraphInstance`` classes.** Template =
   ``CompiledSubGraph``; instance = ``GraphValue`` in node storage.
 - **Binding modes.** Of the RFC's binding-mode catalogue only the modes the
@@ -274,9 +279,11 @@ current code wins:
   (context import/export, REF adaptation across the boundary, recordable-state
   pass-through) is rejected explicitly at wiring time until designed here.
 - **Sampled semantics on rebind.** Per the sampled-runtime contract, when
-  ``switch_`` retargets the forwarding output at time *t* the output samples the
-  new branch at *t*; we deliberately diverge from Python's ``value = None``
-  reset and will pin the behaviour with tests when ``switch_`` lands.
+  ``switch_`` retargets the active branch at time *t*, the new child samples any
+  already-valid bound inputs at *t*. That happens by scheduling the child
+  through active input bind/rebind notification, not by bypassing normal graph
+  scheduling or forcing eval directly. We deliberately diverge from Python's
+  ``value = None`` reset.
 - **No slab payload stores yet.** ``map_`` will use
   ``unordered_dense::map<Value, std::unique_ptr<PerKeyState>>`` — pointer-stable
   per-key state (a relocated live ``GraphValue`` would break notifier

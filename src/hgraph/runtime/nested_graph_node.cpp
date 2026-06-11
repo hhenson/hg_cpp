@@ -52,7 +52,7 @@ namespace hgraph
             return view.as<SingleNestedGraphNodeView>();
         }
 
-        void single_nested_graph_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time, bool)
+        void single_nested_graph_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
         {
             single_nested_graph_evaluate(view, evaluation_time);
         }
@@ -204,7 +204,6 @@ namespace hgraph
         single_nested_graph_bind_inputs(nested, evaluation_time);
         single_nested_graph_bind_output(nested, evaluation_time);
         nested.child_graph().evaluate(evaluation_time);
-        single_nested_graph_propagate_schedule(nested);
     }
 
     void single_nested_graph_bind_inputs(const SingleNestedGraphNodeView &nested,
@@ -273,9 +272,9 @@ namespace hgraph
         if (!nested.context().options.propagate_child_schedule || !nested.child_graph_value().has_value()) { return; }
 
         const DateTime next = nested.child_graph().next_scheduled_time();
-        if (next != MAX_DT && nested.node().graph_value() != nullptr)
+        if (next != MAX_DT)
         {
-            nested.node().graph_value()->schedule_node(nested.node().node_index(), next, true);
+            nested.node().graph().schedule_node(nested.node().node_index(), next);
         }
     }
 }  // namespace hgraph

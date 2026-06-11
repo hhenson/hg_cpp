@@ -18,12 +18,6 @@ namespace hgraph
     {
         constexpr std::size_t invalid_cursor = std::numeric_limits<std::size_t>::max();
 
-        struct GraphScheduleEntry
-        {
-            DateTime scheduled{MAX_DT};
-            bool          force{false};
-        };
-
         [[nodiscard]] DateTime current_wall_time() noexcept
         {
             return std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now());
@@ -116,7 +110,7 @@ namespace hgraph
                 {
                     nodes.push_back(builder.nodes()[index].make_node(index));
                 }
-                schedule.resize(nodes.size());
+                schedule.assign(nodes.size(), MIN_DT);
                 bind_edges(builder.edges());
             }
 
@@ -139,8 +133,9 @@ namespace hgraph
                 }
             }
 
-            std::vector<NodeValue>          nodes{};
-            std::vector<GraphScheduleEntry> schedule{};
+            std::vector<NodeValue> nodes{};
+            std::vector<DateTime>  schedule{};
+            DateTime                        next_scheduled_time{MAX_DT};
             DateTime                        evaluation_time{MIN_DT};
             DateTime                        cycle_wall_start{current_wall_time()};
             std::size_t                     evaluation_cursor{invalid_cursor};
@@ -194,6 +189,15 @@ namespace hgraph
 
             NodeStorageRef parent_node_ref{};
         };
+
+        void propagate_nested_parent_schedule(NestedGraphRuntimeStorage &state)
+        {
+            const DateTime next = state.next_scheduled_time;
+            if (next >= MAX_DT) { return; }
+
+            auto parent = state.parent_node();
+            parent.graph().schedule_node(parent.node_index(), next);
+        }
 
         template <typename Storage>
         [[nodiscard]] Storage &typed_storage(void *memory)
@@ -277,10 +281,7 @@ namespace hgraph
         template <typename Storage>
         DateTime next_scheduled_time_impl(const void *, const void *memory) noexcept
         {
-            const auto &state = storage<Storage>(memory);
-            DateTime next = MAX_DT;
-            for (const auto &entry : state.schedule) { next = std::min(next, entry.scheduled); }
-            return next;
+            return storage<Storage>(memory).next_scheduled_time;
         }
 
         template <typename Storage>
@@ -364,7 +365,7 @@ namespace hgraph
             throw std::logic_error("GraphView::evaluate requires a live graph");
         }
 
-        void default_schedule_node_impl(const void *, const GraphView &, std::size_t, DateTime, bool)
+        void default_schedule_node_impl(const void *, const GraphView &, std::size_t, DateTime)
         {
             throw std::logic_error("GraphView::schedule_node requires a live graph");
         }
@@ -401,29 +402,25 @@ namespace hgraph
         }
 
         template <typename Storage>
-        void schedule_node_impl(const void *, const GraphView &graph, std::size_t node_index, DateTime when, bool force)
+        void schedule_node_impl(const void *, const GraphView &graph, std::size_t node_index, DateTime when)
         {
             auto &state = storage<Storage>(graph.data());
             if (node_index >= state.schedule.size()) { throw std::out_of_range("Graph schedule node index is out of range"); }
 
             const DateTime current = state.evaluation_time;
-            if (current != MIN_DT && when < current)
+            if (when < current)
             {
                 throw std::runtime_error("Graph cannot schedule a node in the past");
             }
 
-            DateTime effective_when = when;
-            if (state.evaluating && current != MIN_DT && when == current &&
-                state.evaluation_cursor != invalid_cursor && node_index <= state.evaluation_cursor)
+            auto &scheduled = state.schedule[node_index];
+            if (scheduled <= current || when < scheduled)
             {
-                effective_when = current + MIN_TD;
-            }
-
-            auto &entry = state.schedule[node_index];
-            if (force || entry.scheduled <= current || effective_when < entry.scheduled)
-            {
-                entry.scheduled = effective_when;
-                entry.force = force;
+                scheduled = when;
+                if (when > current && when < state.next_scheduled_time)
+                {
+                    state.next_scheduled_time = when;
+                }
             }
         }
 
@@ -434,21 +431,17 @@ namespace hgraph
         // covers schedules created while the parent is already driving the child,
         // so the push is gated to out-of-band calls only — a notification or
         // scheduler arriving while the child is idle (``started && !evaluating``).
-        // The parent graph's own same-cycle clamp supplies the ``+MIN_TD``
-        // behaviour; multi-level nesting recurses up to the root naturally.
+        // Multi-level nesting recurses up to the root naturally.
         void nested_schedule_node_impl(const void *context, const GraphView &graph, std::size_t node_index,
-                                       DateTime when, bool force)
+                                       DateTime when)
         {
-            schedule_node_impl<NestedGraphRuntimeStorage>(context, graph, node_index, when, force);
+            schedule_node_impl<NestedGraphRuntimeStorage>(context, graph, node_index, when);
 
             auto &state = typed_storage<NestedGraphRuntimeStorage>(graph.data());
-            if (when == MAX_DT || !state.started || state.evaluating) { return; }
+            if (!state.started || state.evaluating) { return; }
 
             auto parent = state.parent_node();
-            if (auto *parent_graph = parent.graph_value(); parent_graph != nullptr)
-            {
-                parent_graph->schedule_node(parent.node_index(), when);
-            }
+            parent.graph().schedule_node(parent.node_index(), when);
         }
 
         template <typename Storage>
@@ -465,6 +458,7 @@ namespace hgraph
                 {
                     state.nodes[index - 1].view().stop(state.evaluation_time);
                 }
+                state.next_scheduled_time = MAX_DT;
                 state.started = false;
             });
 
@@ -478,6 +472,15 @@ namespace hgraph
             {
                 state.nodes[index].view().start(state.evaluation_time);
                 ++started_nodes;
+            }
+
+            state.next_scheduled_time = MAX_DT;
+            for (const DateTime scheduled : state.schedule)
+            {
+                if (scheduled >= state.evaluation_time && scheduled < state.next_scheduled_time)
+                {
+                    state.next_scheduled_time = scheduled;
+                }
             }
             state.started = true;
             rollback.release();
@@ -506,6 +509,7 @@ namespace hgraph
 
             state.evaluation_time = evaluation_time;
             state.cycle_wall_start = current_wall_time();
+            state.next_scheduled_time = MAX_DT;
             state.evaluating = true;
             state.evaluation_cursor = invalid_cursor;
             auto reset = make_scope_exit([&] noexcept {
@@ -520,12 +524,20 @@ namespace hgraph
                 if (first_normal_node > 0)
                 {
                     PushQueueEngineView push_queue = graph.root().executor().push_queue_engine();
-                    if (push_queue.reset_push_update_pending())
+                    const bool push_update_pending = push_queue.reset_push_update_pending();
+                    for (std::size_t index = 0; index < first_normal_node; ++index)
                     {
-                        for (std::size_t index = 0; index < first_normal_node; ++index)
+                        auto &scheduled = state.schedule[index];
+                        const bool scheduled_now = scheduled == evaluation_time;
+                        if (push_update_pending || scheduled_now)
                         {
+                            if (scheduled_now) { scheduled = MIN_DT; }
                             state.evaluation_cursor = index;
                             state.nodes[index].view().evaluate(evaluation_time);
+                        }
+                        if (scheduled > evaluation_time && scheduled < state.next_scheduled_time)
+                        {
+                            state.next_scheduled_time = scheduled;
                         }
                     }
                 }
@@ -533,18 +545,25 @@ namespace hgraph
 
             for (std::size_t index = first_normal_node; index < state.nodes.size(); ++index)
             {
-                auto &entry = state.schedule[index];
-                if (entry.scheduled == evaluation_time)
+                auto &scheduled = state.schedule[index];
+                if (scheduled == evaluation_time)
                 {
-                    const bool force = entry.force;
-                    entry.scheduled = MAX_DT;
-                    entry.force = false;
+                    scheduled = MIN_DT;
                     state.evaluation_cursor = index;
-                    state.nodes[index].view().evaluate(state.evaluation_time, force);
+                    state.nodes[index].view().evaluate(state.evaluation_time);
+                }
+                else if (scheduled > evaluation_time)
+                {
+                    if (scheduled < state.next_scheduled_time) { state.next_scheduled_time = scheduled; }
                 }
             }
 
             for (auto &node : state.nodes) { node.view().cleanup_delta(); }
+
+            if constexpr (std::is_same_v<Storage, NestedGraphRuntimeStorage>)
+            {
+                propagate_nested_parent_schedule(typed_storage<NestedGraphRuntimeStorage>(graph.data()));
+            }
         }
 
         struct GraphRuntimeRegistry
@@ -772,9 +791,9 @@ namespace hgraph
     void GraphView::start(DateTime start_time) const { ops().start_impl(ops().context, *this, start_time); }
     void GraphView::stop() const { ops().stop_impl(ops().context, *this); }
     void GraphView::evaluate(DateTime evaluation_time) const { ops().evaluate_impl(ops().context, *this, evaluation_time); }
-    void GraphView::schedule_node(std::size_t node_index, DateTime when, bool force) const
+    void GraphView::schedule_node(std::size_t node_index, DateTime when) const
     {
-        ops().schedule_node_impl(ops().context, *this, node_index, when, force);
+        ops().schedule_node_impl(ops().context, *this, node_index, when);
     }
 
     const GraphOps &GraphView::ops() const
@@ -886,9 +905,9 @@ namespace hgraph
         return GraphView{binding(), const_cast<void *>(storage_.data())};
     }
 
-    void GraphValue::schedule_node(std::size_t node_index, DateTime when, bool force)
+    void GraphValue::schedule_node(std::size_t node_index, DateTime when)
     {
-        view().schedule_node(node_index, when, force);
+        view().schedule_node(node_index, when);
     }
 
     void GraphValue::attach_nodes()

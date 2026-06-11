@@ -132,7 +132,7 @@ A ``NodeTypeMetaData`` carries:
     Optional list of top-level input selector slots that are active. ``nullopt``
     means the runtime default: every top-level input is active. An engaged empty
     vector is an explicit empty selector set: no input tick can activate the node,
-    so the node only evaluates when forced or scheduled by some other mechanism.
+    so the node only evaluates when scheduled by some other mechanism.
     Static C++ nodes populate this from ``InputActivity`` flags on ``In``.
 
 ``valid_inputs``

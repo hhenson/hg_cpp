@@ -344,6 +344,16 @@ trie only for active input paths and forwards to the owning node. The
 trie records boundary-relative path identity without storing an eager
 map or vector-valued path on every input view.
 
+Active target-link inputs also notify on live bind operations. Binding
+or rebinding an active input to an already-valid source schedules the
+owning node at the current evaluation time, even if the source did not
+modify during that cycle. Rebinding an existing active target schedules
+for the same reason: the sampled source identity changed. Unbinding a
+valid active target schedules so the owning node can observe the input
+becoming invalid. This is the sampled-input mechanism used by nested
+operators such as ``switch_``; it writes the graph schedule table through
+the normal notification path rather than bypassing node evaluation.
+
 Non-peered input prefixes are structural TSData projections with typed
 bindings and value projections. They do not copy the bound output's
 aggregate payload; instead, their input-local erased ops project the

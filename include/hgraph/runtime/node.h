@@ -107,7 +107,7 @@ namespace hgraph
         [[nodiscard]] bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
         void (*start_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
         void (*stop_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
-        void (*evaluate_impl)(const void *context, const NodeView &view, DateTime evaluation_time, bool force) = nullptr;
+        void (*evaluate_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
         void (*cleanup_delta_impl)(const void *context, const NodeView &view) = nullptr;
 
         [[nodiscard]] bool (*has_input_impl)(const void *context, const void *memory) noexcept = nullptr;
@@ -230,7 +230,7 @@ namespace hgraph
 
         void start(DateTime evaluation_time) const;
         void stop(DateTime evaluation_time) const;
-        void evaluate(DateTime evaluation_time, bool force = false) const;
+        void evaluate(DateTime evaluation_time) const;
         void cleanup_delta() const;
 
       private:

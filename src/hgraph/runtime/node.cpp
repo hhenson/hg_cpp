@@ -479,36 +479,6 @@ namespace hgraph
             return true;
         }
 
-        [[nodiscard]] bool active_input_modified(const NodeView &view, DateTime evaluation_time)
-        {
-            if (!view.has_input()) { return false; }
-
-            const auto *schema = view.schema()->input_schema;
-            if (schema == nullptr || schema->kind != TSTypeKind::TSB)
-            {
-                auto input = view.input(evaluation_time);
-                return input.active() && input.modified();
-            }
-
-            const auto &slots = view.schema()->active_inputs;
-            if (slots.has_value())
-            {
-                for (const std::size_t slot : *slots)
-                {
-                    auto child = input_slot(view, slot, evaluation_time);
-                    if (child.active() && child.modified()) { return true; }
-                }
-                return false;
-            }
-
-            for (std::size_t slot = 0; slot < schema->field_count(); ++slot)
-            {
-                auto child = input_slot(view, slot, evaluation_time);
-                if (child.active() && child.modified()) { return true; }
-            }
-            return false;
-        }
-
         void attach_graph_impl(const void *context, void *memory, GraphValue *graph, std::size_t node_index)
         {
             auto &state = node_storage(runtime_context(context), memory);
@@ -720,14 +690,15 @@ namespace hgraph
             deactivate.complete();
         }
 
-        void evaluate_impl(const void *context, const NodeView &view, DateTime evaluation_time, bool force)
+        void evaluate_impl(const void *context, const NodeView &view, DateTime evaluation_time)
         {
             if (!view.started()) { return; }
 
-            // Mirror the authoritative Python NodeImpl.eval: capture whether the
-            // node fired on a scheduler event *before* evaluating, gate the
-            // evaluation, then do the scheduler bookkeeping at the end regardless
-            // of whether the evaluation actually ran.
+            // Graph scheduling is the activation gate. Node eval only enforces
+            // lifecycle/validity policy, then lets node-specific code decide any
+            // additional guards. This mirrors Python's NodeImpl.eval: active inputs
+            // schedule the node by notification; eval does not re-poll modified
+            // flags.
             const auto         &runtime      = runtime_context(context);
             const bool          has_scheduler = runtime.layout.has_scheduler();
             NodeSchedulerState *scheduler     = has_scheduler ? &node_scheduler_state(runtime, view.data()) : nullptr;
@@ -735,14 +706,6 @@ namespace hgraph
                                        scheduler->events.begin()->first == evaluation_time;
 
             bool do_eval = ready_to_evaluate(view, evaluation_time);
-            if (do_eval && !force && view.has_input())
-            {
-                const bool modified = active_input_modified(view, evaluation_time);
-                // A scheduler-bearing node also evaluates when its timer fires,
-                // even if no input ticked; a plain node only on input changes.
-                if (has_scheduler) { do_eval = scheduled_now || modified; }
-                else { do_eval = modified; }
-            }
 
             if (do_eval)
             {
@@ -788,7 +751,7 @@ namespace hgraph
             throw std::logic_error("NodeView::stop requires a live node");
         }
 
-        void default_evaluate_impl(const void *, const NodeView &, DateTime, bool)
+        void default_evaluate_impl(const void *, const NodeView &, DateTime)
         {
             throw std::logic_error("NodeView::evaluate requires a live node");
         }
@@ -1163,9 +1126,9 @@ namespace hgraph
 
     void NodeView::start(DateTime evaluation_time) const { ops().start_impl(ops().context, *this, evaluation_time); }
     void NodeView::stop(DateTime evaluation_time) const { ops().stop_impl(ops().context, *this, evaluation_time); }
-    void NodeView::evaluate(DateTime evaluation_time, bool force) const
+    void NodeView::evaluate(DateTime evaluation_time) const
     {
-        ops().evaluate_impl(ops().context, *this, evaluation_time, force);
+        ops().evaluate_impl(ops().context, *this, evaluation_time);
     }
     void NodeView::cleanup_delta() const { ops().cleanup_delta_impl(ops().context, *this); }
     const NodeOps &NodeView::ops() const

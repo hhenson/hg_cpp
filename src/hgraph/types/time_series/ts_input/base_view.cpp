@@ -118,7 +118,7 @@ namespace hgraph
     {
         if (is_target_position())
         {
-                detail::make_target_link_active(raw_data,
+            detail::make_target_link_active(raw_data,
                                             target_node,
                                             value_live() ? value_data.borrowed_ref() : TSDataView{},
                                             scheduling_notifier);
@@ -173,8 +173,10 @@ namespace hgraph
     {
         void TSInputViewOps::make_active(TSInputView &view) const
         {
+            const bool was_active = view.active();
             view.data_.make_active(view.input_, view.scheduling_notifier_);
-            if (view.scheduling_notifier_ != nullptr && view.evaluation_time_ != MIN_DT && view.modified())
+            if (!was_active && view.scheduling_notifier_ != nullptr && view.evaluation_time_ != MIN_DT &&
+                view.active() && view.valid())
             {
                 view.scheduling_notifier_->notify(view.evaluation_time_);
             }
@@ -308,8 +310,12 @@ namespace hgraph
         {
             throw std::logic_error("TSInputView::bind_output requires a peered target-link input view");
         }
+        const bool was_bound = bound();
+        const bool was_active = active();
+        const bool source_valid = output.valid();
         data_.bind_target(output);
-        if (scheduling_notifier_ != nullptr && evaluation_time_ != MIN_DT && modified())
+        if (was_active && scheduling_notifier_ != nullptr && evaluation_time_ != MIN_DT &&
+            (was_bound || source_valid || valid()))
         {
             scheduling_notifier_->notify(evaluation_time_);
         }
@@ -322,8 +328,9 @@ namespace hgraph
             throw std::logic_error("TSInputView::unbind_output requires a peered target-link input view");
         }
         const bool was_valid = valid();
+        const bool was_active = active();
         data_.unbind_target();
-        if (was_valid && scheduling_notifier_ != nullptr && evaluation_time_ != MIN_DT)
+        if (was_active && was_valid && scheduling_notifier_ != nullptr && evaluation_time_ != MIN_DT)
         {
             scheduling_notifier_->notify(evaluation_time_);
         }

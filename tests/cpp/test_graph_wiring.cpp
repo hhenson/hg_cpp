@@ -1105,6 +1105,41 @@ TEST_CASE("graph wiring: an out-of-band child graph schedule pushes through to t
     graph.stop();
 }
 
+TEST_CASE("graph wiring: nested graph evaluation propagates cached child next schedule")
+{
+    using namespace hgraph;
+
+    const auto *ts_int = ts_type<TS<Int>>();
+
+    GraphBuilder child;
+    child.label("nested_cached_next_child").add_node(ticking_int_source(ts_int, 2));
+
+    NodeTypeMetaData meta;
+    meta.display_name  = "nested_cached_next";
+    meta.output_schema = ts_int;
+
+    SingleNestedGraphNodeSpec spec;
+    spec.graph_builder = std::move(child);
+    spec.output_binding = NestedGraphOutputBinding{.source = NestedGraphEndpoint{.node = 0}};
+
+    GraphBuilder graph_builder;
+    graph_builder.label("outer_nested_cached_next")
+        .add_node(single_nested_graph_node(std::move(meta), std::move(spec)));
+
+    testing::MockRootGraph root{graph_builder};
+    auto graph = root.graph();
+
+    graph.start(MIN_ST);
+    REQUIRE(graph.next_scheduled_time() == MIN_ST);
+
+    graph.evaluate(MIN_ST);
+
+    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<Int>() == Int{0});
+    CHECK(graph.next_scheduled_time() == MIN_ST + MIN_TD);
+
+    graph.stop();
+}
+
 TEST_CASE("graph wiring: nested node re-evaluates its child across multiple cycles")
 {
     using namespace hgraph;

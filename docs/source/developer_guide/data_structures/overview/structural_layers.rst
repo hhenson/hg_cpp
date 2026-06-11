@@ -95,7 +95,9 @@ Core elements:
     The fully ordered node set. The array order is rank order and is the evaluation order.
 
 ``GraphScheduleTable``
-    Parallel array indexed by node index. Each entry is the next visible scheduled time for that node.
+    Parallel array indexed by node index. Each entry is the next visible
+    scheduled time for that node, or ``MIN_DT`` when the node has no visible
+    schedule.
 
 ``PushSourcePartition``
     Index boundary that separates push-source nodes from the normal rank-ordered scan. Push-source nodes occupy the prefix ``[0, push_source_nodes_end)``.
@@ -164,8 +166,21 @@ Scheduling Structures
 
 Scheduling uses two layers:
 
-``GraphScheduleEntry``
-    A single ``scheduled_time`` stored in the graph schedule table at ``node_index``.
+Graph schedule table
+    A dense ``DateTime`` vector indexed by ``node_index``. Each slot stores the
+    node's single visible scheduled time, or ``MIN_DT`` when the node has no
+    visible graph schedule. Normal evaluation starts after ``MIN_DT``, so this
+    floor value cannot become due in an evaluation cycle.
+
+Cached next scheduled time
+    A graph-level ``DateTime`` cache maintained alongside the schedule table.
+    Graph start seeds it from the schedule table, allowing ``schedule(now())``
+    during start to drive the first cycle. Normal scheduling updates it
+    incrementally; evaluation resets it for the cycle and folds in only entries
+    strictly after the current evaluation time. ``GraphView::next_scheduled_time()``
+    returns ``MAX_DT`` when no pending time is cached. Root executors read this
+    cache directly, and nested graphs use it to schedule the parent node before
+    the nested evaluation block returns.
 
 ``NodeScheduledEvent``
     A node-local event containing ``scheduled_time`` and optional ``tag``. Real-time scheduling may also be backed by a wall-clock alarm handle.
@@ -183,12 +198,16 @@ The intended relationship is:
       Event3[NodeScheduledEvent time=t3]
       NodeScheduler[NodeScheduler]
       GraphEntry[GraphScheduleTable node_index = min time]
-      Clock[EvaluationClock next scheduled time]
+      GraphNext[Graph cached next time]
+      Clock[Executor next evaluation time]
 
       Event1 --> NodeScheduler
       Event2 --> NodeScheduler
       Event3 --> NodeScheduler
       NodeScheduler --> GraphEntry
-      GraphEntry --> Clock
+      GraphEntry --> GraphNext
+      GraphNext --> Clock
 
-The node scheduler owns the complete set of pending events. The graph schedule table owns only the next visible time for the node.
+The node scheduler owns the complete set of pending events. The graph schedule
+table owns only the next visible time for the node; the graph-level cache owns
+the next real evaluation time exposed to the executor or parent graph.

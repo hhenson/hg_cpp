@@ -65,18 +65,38 @@ The order is part of the runtime invariant. During a cycle, a node may cause lat
 Graph Scheduler
 ~~~~~~~~~~~~~~~
 
-The graph owns the schedule table used by the evaluation loop. This table stores at most one visible scheduled time per flattened node: the next time that node may need evaluation.
+The graph owns the schedule table used by the evaluation loop. This table
+stores at most one visible scheduled time per flattened node: the next time
+that node may need evaluation. A per-node slot starts at ``MIN_DT`` when the
+node has no visible graph schedule. ``MIN_DT`` is the smallest runtime time,
+below ``MIN_ST``, so it can never become due in a normal evaluation cycle.
 
 The graph scheduler follows these rules:
 
-- scheduling before the current ``evaluation_time`` is invalid,
+- scheduling before the current ``evaluation_time`` is invalid and is the only
+  hot-path validation check,
 - scheduling at the current ``evaluation_time`` means "evaluate during the current cycle" if the node has not yet been reached,
 - a node schedule is replaced when the existing time is already current or consumed,
 - a node schedule is replaced when the new time is earlier than the existing time,
-- an explicit force operation may replace the visible time when a node-local scheduler changes its earliest event,
-- each accepted future time is folded into the clock's next scheduled evaluation time.
+- the cached next scheduled time is updated only when the accepted time is
+  strictly greater than the current ``evaluation_time`` and earlier than the
+  current cache value.
 
-The clock must not advance to a same-cycle schedule entry. When it tracks the next scheduled evaluation time, it ignores ``evaluation_time`` and clamps advancement to at least ``next_cycle_evaluation_time``.
+``GraphView::next_scheduled_time()`` returns ``MAX_DT`` when no pending
+scheduled time is cached. The graph stores this as an incrementally maintained
+cached value rather than scanning the full schedule table on every executor
+query. After graph start, the cache is seeded from the schedule table so
+``schedule(now())`` can drive the first cycle. During evaluation, the cache is
+reset and rebuilt by folding only schedule entries strictly after the current
+``evaluation_time``. The scheduler does not rewrite a same-cycle request to a
+future time; ordering errors are graph/scheduler bugs, not implicit deferrals.
+
+The graph schedule is the only activation gate. There is deliberately no
+eval-level bypass flag: if a node is scheduled at the current evaluation time,
+the graph calls its eval operation; if it is not scheduled, it is not
+considered. Active time-series inputs, node-local schedulers, ``schedule_on_start``,
+and explicit graph scheduling APIs all express work by writing the graph
+schedule table.
 
 Evaluation Cycle
 ~~~~~~~~~~~~~~~~
@@ -105,9 +125,23 @@ not call a generic ``apply_message`` node operation directly.
 Node Evaluation
 ~~~~~~~~~~~~~~~
 
-A scheduled node still has to satisfy its node-level readiness rules. The node must have the required valid inputs, and nodes that require all-valid input state must enforce that before invoking user code or system-node code.
+A scheduled node still has to satisfy its node-level readiness rules. The node
+must have the required valid inputs, and nodes that require all-valid input
+state must enforce that before invoking user code or system-node code. Eval
+does not re-poll active input ``modified`` flags; those inputs schedule the node
+through their notification path when a relevant source ticks, binds, rebinds, or
+unbinds.
 
-A node that uses a scheduler may evaluate because its scheduler fired at the current ``evaluation_time`` or because a time-series input was modified. If neither is true, the node should not pay evaluation cost for a scheduler merely being present.
+A node that uses a scheduler consumes due scheduler events after its eval
+operation and then re-arms the graph schedule from the next pending event, if
+one remains. Cancellation happens during evaluation, so a cancelled event simply
+does not re-arm a future graph schedule entry.
+
+Nested graph evaluation uses the same cache. At the end of a nested graph
+evaluation block, the nested graph schedules its parent node at the cached next
+scheduled time, when one exists. That is the pull half of nested scheduling
+delegation; out-of-band child schedules still push to the parent immediately
+through ``nested_schedule_node_impl``.
 
 Errors raised during evaluation should be surfaced deterministically. If the node schema provides an error output, the node may capture the error there. Otherwise, the exception is propagated as an evaluation failure.
 

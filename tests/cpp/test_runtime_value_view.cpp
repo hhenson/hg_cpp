@@ -127,7 +127,7 @@ TEST_CASE("NodeValue exposes a type-erased view over node storage")
 
     view.start(t1);
     REQUIRE(view.started());
-    view.evaluate(t1, true);
+    view.evaluate(t1);
 
     auto output = node.view().output(t1);
     REQUIRE(output.valid());
@@ -158,11 +158,11 @@ TEST_CASE("NodeValue state is read-write value storage")
     REQUIRE(view.state().checked_as<std::int32_t>() == 0);
 
     view.start(t1);
-    view.evaluate(t1, true);
+    view.evaluate(t1);
     REQUIRE(node.view().state().checked_as<std::int32_t>() == 1);
     REQUIRE(node.view().output(t1).value().checked_as<std::int32_t>() == 1);
 
-    node.view().evaluate(t2, true);
+    node.view().evaluate(t2);
     REQUIRE(node.view().state().checked_as<std::int32_t>() == 2);
     REQUIRE(node.view().output(t2).value().checked_as<std::int32_t>() == 2);
 }
@@ -187,7 +187,7 @@ TEST_CASE("NodeValue scalar configuration is read-only per-instance value storag
     REQUIRE(view.scalars().checked_as<std::int32_t>() == 7);
 
     view.start(t1);
-    view.evaluate(t1, true);
+    view.evaluate(t1);
     REQUIRE(node.view().output(t1).value().checked_as<std::int32_t>() == 7);
     // The scalar configuration is unchanged by evaluation.
     REQUIRE(node.view().scalars().checked_as<std::int32_t>() == 7);

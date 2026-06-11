@@ -81,15 +81,6 @@ namespace hgraph
             if (target.forwarding_bound()) { target.clear_forwarding_target(); }
         }
 
-        void propagate_child_schedule(const NodeView &view, GraphView child)
-        {
-            const DateTime next = child.next_scheduled_time();
-            if (next != MAX_DT && view.graph_value() != nullptr)
-            {
-                view.graph_value()->schedule_node(view.node_index(), next, true);
-            }
-        }
-
         [[nodiscard]] const SingleNestedGraphNodeSpec *select_branch(const SwitchNodeContext &context,
                                                                      const Value &key)
         {
@@ -149,35 +140,25 @@ namespace hgraph
                     bind_branch_output(view, *spec, storage.active.view(), evaluation_time);
                     storage.active.view().start(evaluation_time);
 
-                    // Sampled rebind (the sampled-runtime contract): a freshly
-                    // selected branch evaluates with the *current* upstream
-                    // values, even when they did not tick this cycle — schedule
-                    // every consumer whose bound source is already valid.
-                    for (const NestedGraphInputBinding &binding : spec->input_bindings)
-                    {
-                        auto source = walk_ts_path(root_input.borrowed_ref(), binding.source_path).bound_output();
-                        if (source.bound() && source.valid())
-                        {
-                            storage.active.view().schedule_node(binding.target.node, evaluation_time, true);
-                        }
-                    }
+                    // Sampled rebind (the sampled-runtime contract): binding an
+                    // active child input to an already-valid source schedules the
+                    // child through the input notification path.
                 }
             }
 
             if (storage.active.has_value())
             {
                 // Re-bind boundaries each cycle (cheap no-op when stable; absorbs
-                // upstream REF re-points), evaluate the active child, then pull
-                // its schedule up to this node.
+                // upstream REF re-points). The nested graph evaluator propagates
+                // its cached next scheduled time back to this node before returning.
                 const SingleNestedGraphNodeSpec &spec = *storage.active_spec;
                 bind_branch_inputs(view, spec, storage.active.view(), evaluation_time);
                 bind_branch_output(view, spec, storage.active.view(), evaluation_time);
                 storage.active.view().evaluate(evaluation_time);
-                propagate_child_schedule(view, storage.active.view());
             }
         }
 
-        void switch_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time, bool)
+        void switch_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
         {
             switch_evaluate(view, evaluation_time);
         }
