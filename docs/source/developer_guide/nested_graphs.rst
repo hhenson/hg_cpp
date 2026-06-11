@@ -205,6 +205,49 @@ and multi-level nesting recurses up to the root naturally. The boundary
 per operator.
 
 
+``switch_``
+-----------
+
+``switch_(key, cases[, ts])`` routes through **one** child graph at a time,
+selected by ``key`` — an operator like the rest of the family
+(``wire<stdlib::switch_>(w, key, switch_cases({{k, fn<G>()}, …}[, fn<Default>]),
+ts…)``).
+
+- **Branches are ``WiredFn`` values** (graphs, nodes, or operators). Each is
+  compiled into a ``SingleNestedGraphNodeSpec`` via the function's **compile
+  thunk** (``WiredFn::compile`` — the same value either inlines via ``wire``
+  or compiles into a child graph; the caller chooses). All branches must
+  produce the same output schema.
+- **The key is just a boundary input.** The outer switch node's inputs are
+  ``[key, ts…]``, so a key-consuming branch (arity = ts-count + 1, key first)
+  binds outer input ``0`` through the standard binding mechanism — none of
+  the Python key-stub plumbing exists. A non-key branch's binding paths
+  simply shift past the key input. Source-style branches (arity 0) take no
+  bindings at all.
+- **Runtime** (``runtime/switch_node.{h,cpp}``, on the shared
+  ``nested_bindings`` helpers): at most one live child in node storage. On a
+  key change (or any key tick with ``reload_on_ticked`` — runtime-supported,
+  not yet exposed by the operator) the active child is stopped and destroyed,
+  the new branch (else the default, else a runtime error) is built, bound and
+  started, and the forwarding output **re-points**.
+- **Sampled semantics** (the sampled-runtime contract; the recorded
+  divergence from Python's ``value = None`` reset): the freshly selected
+  branch evaluates with the *current* upstream values even when they did not
+  tick that cycle — after the child starts, every consumer whose bound source
+  is already valid is force-scheduled at the switch time. Pinned by test
+  (a swap while the ts input holds emits the new branch's value immediately).
+- **Lifecycle**: switching away destroys the child ``GraphValue`` (immediate
+  destroy is safe — the output is re-pointed first); switching back rebuilds
+  a fresh instance (per-branch state resets — pinned by test). The output's
+  resolver discovers the schema by compiling the first branch
+  (``resolve_default_types`` on the overloads).
+- Deferred: variadic time-series arguments (overloads cover none/one until
+  variadic operator parameters exist), exposing ``reload_on_ticked``, and
+  all-sink switches.
+
+Tests: ``tests/cpp/test_switch.cpp``.
+
+
 Reconciliation with the 2603 RFC
 --------------------------------
 
@@ -256,8 +299,9 @@ Roadmap (this milestone)
 3. **Done — scheduling push delegation + shared binding helpers.** See
    *Scheduling delegation* above; helpers extracted to
    ``runtime/nested_bindings.h``.
-4. ``switch_`` — one active branch child, sampled retarget on key change,
-   key-value injection into the branch.
+4. **Done — ``switch_``** (see its section above): one active branch child,
+   sampled retarget on key change, key consumption as an ordinary boundary
+   input. ASAN/UBSAN-verified (branch teardown/rebuild churn).
 5. ``map_`` over ``TSD`` — keyed child instances driven by the input dict
    delta; child outputs **copy-merged** into the owned ``TSD`` output (child
    outputs cannot alias into TSD elements while ``TSDSlotStorage`` has no

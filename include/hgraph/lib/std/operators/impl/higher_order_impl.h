@@ -2,6 +2,7 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_HIGHER_ORDER_IMPL_H
 
 #include <hgraph/lib/std/operators/higher_order.h>
+#include <hgraph/runtime/switch_node.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/wired_fn.h>
@@ -11,6 +12,9 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
+#include <typeindex>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
@@ -197,10 +201,221 @@ namespace hgraph::stdlib
         };
     }  // namespace higher_order_impl_detail
 
+    namespace higher_order_impl_detail
+    {
+        struct switch_node_tag
+        {
+        };
+
+        /**
+         * Compile one ``switch_`` branch for the outer inputs ``[key, ts...]``.
+         * A branch may consume the key (arity == ts_count + 1, key first) or
+         * not (arity == ts_count; its binding paths shift past the key input,
+         * which is outer input 0). Returns the runtime branch spec; records /
+         * verifies the common output schema across branches.
+         */
+        [[nodiscard]] inline SingleNestedGraphNodeSpec compile_switch_branch(
+            const WiredFn &branch,
+            const TSValueTypeMetaData *key_schema,
+            std::span<const TSValueTypeMetaData *const> ts_schemas,
+            const TSValueTypeMetaData *&output_schema)
+        {
+            if (!branch.valid())
+            {
+                throw std::invalid_argument("switch_: every branch must be a wirable function (fn<X>())");
+            }
+
+            const std::size_t ts_count  = ts_schemas.size();
+            const bool        takes_key = branch.arity == ts_count + 1;
+            if (!takes_key && branch.arity != ts_count)
+            {
+                throw std::invalid_argument(
+                    "switch_: a branch must take the time-series arguments (optionally preceded by the key)");
+            }
+
+            std::vector<const TSValueTypeMetaData *> schemas;
+            schemas.reserve(branch.arity);
+            if (takes_key) { schemas.push_back(key_schema); }
+            schemas.insert(schemas.end(), ts_schemas.begin(), ts_schemas.end());
+
+            CompiledSubGraph compiled = branch.compile({schemas.data(), schemas.size()});
+
+            if (compiled.output_schema == nullptr)
+            {
+                throw std::invalid_argument("switch_: every branch must produce an output");
+            }
+            if (output_schema == nullptr) { output_schema = compiled.output_schema; }
+            else if (!time_series_schema_equivalent(output_schema, compiled.output_schema))
+            {
+                throw std::invalid_argument("switch_: all branches must produce the same output schema");
+            }
+
+            SingleNestedGraphNodeSpec spec;
+            spec.graph_builder  = std::move(compiled.graph_builder);
+            spec.input_bindings = std::move(compiled.input_bindings);
+            spec.output_binding = compiled.output_binding;
+            if (!takes_key)
+            {
+                // Branch boundary args are the ts args only; outer input 0 is the key.
+                for (NestedGraphInputBinding &binding : spec.input_bindings) { binding.source_path[0] += 1; }
+            }
+            return spec;
+        }
+
+        /** The shared switch wiring: compile every branch, then add one switch node. */
+        [[nodiscard]] inline Port<void> wire_switch(Wiring &w, WiringPortRef key, const SwitchCases &cases,
+                                                    std::vector<WiringPortRef> ts)
+        {
+            if (cases.cases.empty() && !cases.default_branch.has_value())
+            {
+                throw std::invalid_argument("switch_: requires at least one case");
+            }
+
+            std::vector<const TSValueTypeMetaData *> ts_schemas;
+            ts_schemas.reserve(ts.size());
+            for (const WiringPortRef &port : ts) { ts_schemas.push_back(port.schema); }
+
+            const TSValueTypeMetaData *output_schema = nullptr;
+            SwitchNodeSpec             spec;
+            spec.branches.reserve(cases.cases.size());
+            for (const SwitchCase &entry : cases.cases)
+            {
+                spec.branches.push_back(SwitchBranch{
+                    .key  = entry.key,
+                    .spec = compile_switch_branch(entry.branch, key.schema,
+                                                  {ts_schemas.data(), ts_schemas.size()}, output_schema),
+                });
+            }
+            if (cases.default_branch.has_value())
+            {
+                spec.default_branch = compile_switch_branch(*cases.default_branch, key.schema,
+                                                            {ts_schemas.data(), ts_schemas.size()}, output_schema);
+            }
+
+            // Outer node inputs: [key, ts...].
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+            fields.reserve(1 + ts.size());
+            fields.emplace_back("key", key.schema);
+            for (std::size_t i = 0; i < ts_schemas.size(); ++i)
+            {
+                fields.emplace_back(std::to_string(i), ts_schemas[i]);
+            }
+            const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
+
+            std::vector<WiringPortRef> inputs;
+            inputs.reserve(1 + ts.size());
+            inputs.push_back(std::move(key));
+            for (WiringPortRef &port : ts) { inputs.push_back(std::move(port)); }
+
+            WiringNodeSchema node_schema;
+            node_schema.input  = input_schema;
+            node_schema.output = output_schema;
+
+            WiringPortRef out = w.add_node(
+                std::type_index(typeid(switch_node_tag)), node_schema,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()}, Value{cases},
+                [&]() {
+                    NodeTypeMetaData meta;
+                    meta.display_name  = "switch_";
+                    meta.input_schema  = input_schema;
+                    meta.output_schema = output_schema;
+
+                    NodeBuilder builder = switch_node(std::move(meta), std::move(spec));
+                    builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                        input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                    return builder;
+                });
+            return Port<void>{w, std::move(out)};
+        }
+
+        /**
+         * The output schema is whatever the branches compute — discover it for
+         * the resolver by compiling the first branch (a side-effect-free
+         * wiring-time computation), unless an explicit output schema already
+         * bound ``O``.
+         */
+        inline void resolve_switch_output(ResolutionMap &resolution, OperatorCallContext context,
+                                          std::size_t ts_count)
+        {
+            if (resolution.find_ts("O") != nullptr) { return; }
+
+            const SwitchCases *cases = context.scalar_as<SwitchCases>("cases");
+            if (cases == nullptr) { return; }
+            const WiredFn *branch = !cases->cases.empty()
+                                        ? &cases->cases.front().branch
+                                        : (cases->default_branch.has_value() ? &*cases->default_branch : nullptr);
+            if (branch == nullptr) { return; }
+
+            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+            const TSValueTypeMetaData *key_schema = context.args[0].port.schema;
+
+            std::vector<const TSValueTypeMetaData *> ts_schemas;
+            ts_schemas.reserve(ts_count);
+            for (std::size_t i = 2; i < 2 + ts_count; ++i)
+            {
+                if (i >= context.args.size() || context.args[i].kind != WiringArg::Kind::TimeSeries) { return; }
+                ts_schemas.push_back(context.args[i].port.schema);
+            }
+
+            try
+            {
+                const TSValueTypeMetaData *output_schema = nullptr;
+                (void)compile_switch_branch(*branch, key_schema, {ts_schemas.data(), ts_schemas.size()},
+                                            output_schema);
+                if (output_schema != nullptr) { resolution.bind_ts("O", output_schema); }
+            }
+            catch (...)
+            {
+                // Leave unresolved; the real wiring path reports the error.
+            }
+        }
+
+        /** ``switch_(key, cases)`` — source-style branches (no time-series arguments). */
+        struct switch_impl_key_only
+        {
+            static constexpr auto name = "switch_impl";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_switch_output(resolution, context, 0);
+            }
+
+            static Port<TsVar<"O">> compose(Wiring &w, Port<TS<ScalarVar<"K">>> key,
+                                            Scalar<"cases", SwitchCases> cases)
+            {
+                auto out = wire_switch(w, key.erased(), cases.value(), {});
+                return Port<TsVar<"O">>{w, out.erased()};
+            }
+        };
+
+        /** ``switch_(key, cases, ts)`` — one time-series argument. */
+        struct switch_impl_one_ts
+        {
+            static constexpr auto name = "switch_impl";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_switch_output(resolution, context, 1);
+            }
+
+            static Port<TsVar<"O">> compose(Wiring &w, Port<TS<ScalarVar<"K">>> key,
+                                            Scalar<"cases", SwitchCases> cases, Port<TsVar<"TS">> ts)
+            {
+                std::vector<WiringPortRef> args;
+                args.push_back(ts.erased());
+                auto out = wire_switch(w, key.erased(), cases.value(), std::move(args));
+                return Port<TsVar<"O">>{w, out.erased()};
+            }
+        };
+    }  // namespace higher_order_impl_detail
+
     inline void register_higher_order_operators()
     {
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsl>();
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsl_zero>();
+
+        register_graph_overload<switch_, higher_order_impl_detail::switch_impl_key_only>();
+        register_graph_overload<switch_, higher_order_impl_detail::switch_impl_one_ts>();
     }
 }  // namespace hgraph::stdlib
 

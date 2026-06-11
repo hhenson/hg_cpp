@@ -4,7 +4,15 @@
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
+#include <hgraph/types/value/value.h>
 #include <hgraph/types/wired_fn.h>
+
+#include <cstddef>
+#include <functional>
+#include <initializer_list>
+#include <optional>
+#include <utility>
+#include <vector>
 
 namespace hgraph::stdlib
 {
@@ -44,6 +52,96 @@ namespace hgraph::stdlib
                               Out<TsVar<"V">>>
     {
     };
+
+    /**
+     * The ``switch_`` case table: key value -> wirable branch, with an optional
+     * default branch. An ordinary registered scalar, so it participates in
+     * interning and overload selection like any other configuration value.
+     *
+     * A branch may consume the switch key as its **first** argument: its arity
+     * is either the number of time-series arguments, or that plus one (key
+     * first). Branches may also be pure sources (arity zero with no ts args).
+     */
+    struct SwitchCase
+    {
+        Value   key{};
+        WiredFn branch{};
+
+        [[nodiscard]] bool operator==(const SwitchCase &other) const
+        {
+            if (!(branch == other.branch)) { return false; }
+            if (key.has_value() != other.key.has_value()) { return false; }
+            return !key.has_value() || key.equals(other.key);
+        }
+    };
+
+    struct SwitchCases
+    {
+        std::vector<SwitchCase> cases{};
+        std::optional<WiredFn>  default_branch{};
+
+        [[nodiscard]] bool operator==(const SwitchCases &other) const
+        {
+            return cases == other.cases && default_branch == other.default_branch;
+        }
+    };
+
+    [[nodiscard]] inline SwitchCases switch_cases(std::initializer_list<SwitchCase> entries)
+    {
+        return SwitchCases{.cases = std::vector<SwitchCase>{entries}};
+    }
+
+    [[nodiscard]] inline SwitchCases switch_cases(std::initializer_list<SwitchCase> entries, WiredFn default_branch)
+    {
+        return SwitchCases{.cases = std::vector<SwitchCase>{entries}, .default_branch = default_branch};
+    }
+
+    /**
+     * ``switch_`` — route through **one** child graph at a time, selected by
+     * ``key``. Mirrors Python ``switch_(key, cases, *ts)``:
+     *
+     * - on a key change the active branch is stopped and destroyed, the branch
+     *   for the new key (else the default, else a runtime error) is built,
+     *   bound and started, and the output **re-points** — sampling the new
+     *   branch at the switch time (the sampled-runtime contract; a deliberate
+     *   divergence from Python's ``value = None`` reset);
+     * - a branch may take the key as its first argument (by arity);
+     * - the time-series arguments are fixed-arity overloads today (none / one);
+     *   variadic arguments arrive with variadic operator support.
+     */
+    struct switch_ : Operator<"switch_",
+                              In<"key", TS<ScalarVar<"K">>>,
+                              Scalar<"cases", SwitchCases>,
+                              In<"ts", TsVar<"TS">>,          // optional (arity) time-series argument(s)
+                              Out<TsVar<"O">>>
+    {
+    };
 }  // namespace hgraph::stdlib
+
+namespace hgraph::static_schema_detail
+{
+    template <>
+    struct scalar_name<hgraph::stdlib::SwitchCases>
+    {
+        static constexpr std::string_view value{"switch_cases"};
+    };
+}  // namespace hgraph::static_schema_detail
+
+template <>
+struct std::hash<hgraph::stdlib::SwitchCases>
+{
+    [[nodiscard]] std::size_t operator()(const hgraph::stdlib::SwitchCases &cases) const noexcept
+    {
+        std::size_t h = cases.cases.size();
+        const auto  combine = [&h](std::size_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); };
+        for (const auto &entry : cases.cases)
+        {
+            combine(entry.key.has_value() ? entry.key.hash() : 0);
+            combine(std::hash<hgraph::WiredFn>{}(entry.branch));
+        }
+        if (cases.default_branch.has_value()) { combine(std::hash<hgraph::WiredFn>{}(*cases.default_branch)); }
+        return h;
+    }
+};
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_HIGHER_ORDER_H

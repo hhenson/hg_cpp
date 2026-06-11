@@ -2,6 +2,7 @@
 #define HGRAPH_TYPES_WIRED_FN_H
 
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/subgraph_wiring.h>
 
 #include <cstddef>
 #include <functional>
@@ -9,6 +10,7 @@
 #include <stdexcept>
 #include <typeinfo>
 #include <utility>
+#include <vector>
 
 namespace hgraph
 {
@@ -31,19 +33,37 @@ namespace hgraph
     struct WiredFn
     {
         using WireThunk = WiringPortRef (*)(Wiring &, std::span<const WiringPortRef>);
+        using CompileThunk = CompiledSubGraph (*)(std::span<const TSValueTypeMetaData *const>);
 
         WireThunk             wire_fn{nullptr};
+        CompileThunk          compile_fn{nullptr};
         const std::type_info *identity{nullptr};
         std::size_t           arity{0};
         bool                  has_output{false};
 
         [[nodiscard]] bool valid() const noexcept { return wire_fn != nullptr && identity != nullptr; }
 
-        /** Wire one application over the given (already-erased) argument ports. */
+        /** Wire one application **inline** over the given (already-erased) argument ports. */
         [[nodiscard]] WiringPortRef wire(Wiring &w, std::span<const WiringPortRef> args) const
         {
             if (!valid()) { throw std::logic_error("WiredFn::wire called on an empty function value"); }
             return wire_fn(w, args);
+        }
+
+        /**
+         * Compile one application as a **child graph** (``CompiledSubGraph``):
+         * boundary args at the supplied runtime schemas, in order. This is what
+         * the nested operators (``switch_`` / ``map_``) consume — the same
+         * function value either inlines (``wire``) or compiles, the caller
+         * chooses.
+         */
+        [[nodiscard]] CompiledSubGraph compile(std::span<const TSValueTypeMetaData *const> input_schemas) const
+        {
+            if (compile_fn == nullptr)
+            {
+                throw std::logic_error("WiredFn::compile called on an empty function value");
+            }
+            return compile_fn(input_schemas);
         }
 
         [[nodiscard]] bool operator==(const WiredFn &other) const noexcept
@@ -124,6 +144,35 @@ namespace hgraph
                 }
             }(std::make_index_sequence<arity>{});
         }
+
+        // Compile one application of X as a child graph: a fresh Wiring whose
+        // arguments are boundary placeholders at the supplied runtime schemas,
+        // wired through the same wire<X> dispatch (node / operator / sub-graph),
+        // then converted to binding specs by finish_subgraph.
+        template <typename X>
+        [[nodiscard]] CompiledSubGraph compile_thunk(std::span<const TSValueTypeMetaData *const> input_schemas)
+        {
+            constexpr std::size_t arity = arity_of<X>();
+            if (input_schemas.size() != arity)
+            {
+                throw std::invalid_argument("fn<X>: compiled input schema count does not match the function's inputs");
+            }
+
+            Wiring w;
+            std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
+            return [&]<std::size_t... I>(std::index_sequence<I...>) -> CompiledSubGraph {
+                if constexpr (has_output_of<X>())
+                {
+                    auto out = wire<X>(w, Port<void>{w, WiringPortRef::boundary_source(I, {}, input_schemas[I])}...);
+                    return std::move(w).finish_subgraph(out.erased(), std::move(schemas));
+                }
+                else
+                {
+                    wire<X>(w, Port<void>{w, WiringPortRef::boundary_source(I, {}, input_schemas[I])}...);
+                    return std::move(w).finish_subgraph(std::nullopt, std::move(schemas));
+                }
+            }(std::make_index_sequence<arity>{});
+        }
     }  // namespace wired_fn_detail
 
     /** Erase the operator marker / node / sub-graph ``X`` into a ``WiredFn`` value. */
@@ -132,6 +181,7 @@ namespace hgraph
     {
         return WiredFn{
             .wire_fn    = &wired_fn_detail::wire_thunk<X>,
+            .compile_fn = &wired_fn_detail::compile_thunk<X>,
             .identity   = &typeid(X),
             .arity      = wired_fn_detail::arity_of<X>(),
             .has_output = wired_fn_detail::has_output_of<X>(),
