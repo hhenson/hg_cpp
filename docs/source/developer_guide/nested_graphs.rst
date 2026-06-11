@@ -8,9 +8,9 @@ wiring time. It builds on the runtime nested-graph node described in *Graph
 Wiring > Nested graphs* and supersedes the prior C++ attempt's design where the
 two conflict (see *Reconciliation with the 2603 RFC* below).
 
-Scope of this page: the wiring-side sub-graph compilation (done), and the design
-decisions the upcoming operators implement. Sections are added in the same change
-as the code they describe.
+Scope of this page: the wiring-side sub-graph compilation and the runtime
+design decisions for the nested operators implemented so far. Sections are added
+in the same change as the code they describe.
 
 
 The model
@@ -141,7 +141,8 @@ every reduction node). The operator's contract covers any collection kind
 (``TSL`` / ``TSD``; ``TSS`` once the Python reference grows one) — each kind
 is its own registered overload selected by pattern rank. Implemented today:
 the **fixed-size TSL** overloads
-(``wire<stdlib::reduce_>(w, fn<add_>(), tsl_port)``).
+(``wire<stdlib::reduce_>(w, fn<add_>(), tsl_port)``) described here, and the
+**dynamic TSD** kernel (next section).
 
 The default overloads lay the reduction out **statically at wiring time**,
 mirroring Python ``_reduce_tsl``: every leaf is ``default(ts[i], zero)`` — an
@@ -166,13 +167,115 @@ the erased ``tsl_element_ref`` projection (typed form ``tsl_element(port, i)``
 in ``subgraph_wiring.h``), which works on any source kind: a peered output
 path, a structural child, or a **sub-graph boundary** (so ``reduce`` composes
 inside a sub-graph ``compose`` over a boundary TSL). The overloads'
-``requires_`` accept fixed-size TSL inputs only, leaving dynamic-TSL/TSD
-reductions to future overloads of the same name (the gated milestone
-increment — see roadmap). Still deferred: a time-series (port) ``zero``
-argument, and non-associative linear reduction.
+``requires_`` accept fixed-size TSL inputs only; the dynamic-TSD overloads
+(next section) gate on a TSD input the same way. Still deferred: dynamic-TSL
+reduction, a time-series (port) ``zero`` argument, and non-associative linear
+reduction.
 
 Tests: ``tests/cpp/test_reduce.cpp`` (including a user overload gated on the
 wired function's identity, mirroring ``ext/main``'s ``test_map_overload``).
+
+
+``reduce`` over dynamic ``TSD``
+-------------------------------
+
+The dynamic kernel is a further registered overload of ``reduce`` — one
+**runtime node** owning a balanced binary tree of combiner child graphs over
+the live keys of its TSD input. This section is the port of the 2603 design
+record (``ext/2603/docs/design/2026-04-v2-reduce-design.md``), reconciled to
+the current substrate; where the two differ, this section is authoritative.
+
+**Vocabulary reconciliation** (2603 → current): ``ChildGraphTemplate`` /
+``ChildGraphInstance`` → ``CompiledSubGraph`` (compiled once at wiring from
+the ``WiredFn``, two boundary args ``(lhs, rhs)``) / ``GraphValue`` via
+``make_nested_graph``; ``OutputLink`` root publication → the node's
+**forwarding output** + ``bind_forwarding_output_to_source``;
+``StablePayloadStore`` + per-graph slabs → ``unique_ptr`` combiner entries
+(pointer-stable; the slab store remains the recorded refinement, as for
+``map_``); ``MapViewDispatch`` slot observers → **current-key
+reconciliation** when the TSD input modifies, re-points, becomes invalid, or
+is first observed (the same lifecycle lesson as ``map_``; observer-driven
+mirroring is the recorded refinement, settling the 2603 doc's open question 1
+for v1).
+
+**Core decisions kept from 2603** (the load-bearing ones):
+
+- **Leaves are aliases, not child graphs.** A leaf position references a live
+  source element output (``tsd.at(key)``); only **internal combine points**
+  instantiate the combiner child graph, and only when **both** subtrees are
+  non-empty. ``n`` live keys cost at most ``n - 1`` live combiners; 0 or 1
+  keys cost none.
+- **``zero`` is the empty-collection result, not odd-branch padding.** The
+  Python implementation pads odd branches with ``zero`` (the known
+  spurious-zero-tick wart); the dynamic kernel never does. Root publication:
+  no live keys → forward to the ``zero`` input's bound output; one →
+  forward to that element directly; more → forward to the root combiner's
+  output. (The **fixed-TSL** overloads above retain Python's
+  ``default(ts[i], zero)`` semantics — a principled difference: a fixed TSL
+  has not-yet-valid *positions*, a TSD key is live by existence.)
+- **Dense leaves over a power-of-two capacity.** ``key ↔ dense leaf``
+  mappings; erasing a key moves the **last** live leaf into the vacated
+  position (bounded rebalancing). Internal nodes are heap-indexed
+  (``0`` = root, children of ``i`` at ``2i+1`` / ``2i+2``), so deeper nodes
+  have higher indices.
+- **Aggregate resolution** (per position): empty leaf → ``Empty``; live leaf
+  → ``Leaf``; internal: both children empty → ``Empty``, exactly one
+  non-empty → alias that child's aggregate, both → ``Node`` (the combiner).
+
+**Binding discipline (the map_ lesson, restated):** value ticks normally flow
+through standing bindings: a leaf tick notifies its combiner's child node
+directly (the input is bound to the upstream element output), the combiner's
+output tick notifies its parent combiner, and the cascade resolves within one
+evaluation pass by processing combiners **deepest-first** (descending heap
+index — a parent has a lower index than its children, so it evaluates after
+them). When the TSD root modifies or re-points, v1 conservatively reconciles
+the current key set and refreshes live combiner/root bindings; this covers
+ordinary add/remove deltas and forwarding/REF retargets, including same-key
+different-source retargets. Combiner evaluation is **unconditional** per
+pass, like the other nested operators: a same-cycle notification lands in a
+child's schedule array but not its cached next time, and an idle child
+evaluate is a cheap scan. Re-binding samples held values (``bind_output``
+notifies on valid-source binds), and a root **re-point to an already-valid
+source is a tick of the reduce output at the publication time** (the aliased
+value changed without the target writing — ``mark_modified`` through the
+forwarding link), per the sampled-runtime contract.
+
+**v1 simplifications (recorded, with the refinement path):** structural
+events recompute the internal bindings in one ``O(capacity)`` pass (per-path
+dirty propagation is the refinement); ``leaf_capacity`` is monotonic
+(conservative shrink is the refinement). Structural recompute is **three
+phases ordered so a link is never bound to or unbound from a dead target**:
+create needed combiners deepest-first (parents can reference fresh
+children), bind every live combiner and publish the root while every old
+target is still alive, then retire displaced combiners **root-first**
+(ascending heap index — a doomed parent unbinds from its still-alive doomed
+child; the same teardown-direction reasoning as the ``map_`` storage-plan
+ordering, and also the explicit ``ReduceNodeStorage`` destructor order).
+The node's own output is a forwarding endpoint linking into field-held
+combiner outputs, so the reduce field uses the default *before-output* plan
+placement (the ``nested_``/``switch_`` direction).
+
+**Exception / unwind policy:** reduce rebuild failures are not intended to
+recover and continue execution. If child construction, binding, starting, root
+publication, or evaluation throws, the exception propagates to the graph
+evaluator; an outer error-capture policy may catch it, but the graph is
+considered failed and should be stopped. The nested node must still be safe to
+stop and destroy after such an unwind: all link mutations and retired-child
+handling must preserve pointer stability, keep old targets alive until
+subscribers have moved off them, and use rollback/cleanup guards so no input
+subscription or forwarding output is left pointing at dead child storage. Future
+optimisations to the rebuild path must keep that stop-after-failure safety
+property even if they make the key/combiner update more transactional.
+
+**Deferred:** non-associative ordered reduction (a linear chain over
+``TSD[int]``; ``zero`` as a true lhs seed) and tuple reduction through it,
+``TSS`` reduction, pass-through combiner outputs for the dynamic kernel, and
+unifying the fixed-TSL overload onto this kernel (2603 §10 recommends keeping
+TSL static-shaped first — we do).
+
+Runtime: ``runtime/reduce_node.{h,cpp}``. Tests: ``tests/cpp/test_reduce.cpp``
+(dynamic-TSD cases, including the no-spurious-zero regression from 2603
+phase 3).
 
 
 Scheduling delegation
@@ -382,10 +485,12 @@ Roadmap (this milestone)
    modification/repoint; child terminals write through forwarding outputs into
    the owned ``TSD``'s instantiated elements (no copy). ASAN/UBSAN-verified
    (keyed create/destroy churn).
-6. *(gated)* associative ``reduce`` over ``TSD`` — only after the 2603 reduce
-   design is ported into this page and reconciled.
+6. **Done — associative ``reduce`` over ``TSD``** (see its section above):
+   the 2603 design ported/reconciled first, then the runtime kernel —
+   alias leaves, minimal combiner tree, zero as the empty result only.
+   ASAN/UBSAN-verified.
 
 Non-goals for the milestone: ``mesh_``, ``try_except``, services/contexts,
 push sources inside nested graphs, explicit ``__keys__`` / ``pass_through`` /
-``no_key`` wrappers, TSD link-children aliasing, non-associative or dynamic-TSD
-reduce kernels, graph-level generic (``TsVar``) sub-graphs.
+``no_key`` wrappers, TSD link-children aliasing, non-associative reduce,
+dynamic-TSL reduction, graph-level generic (``TsVar``) sub-graphs.

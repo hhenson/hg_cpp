@@ -168,8 +168,10 @@ instances from the dict delta; per-key elements instantiated in the owned TSD ou
 child terminals re-homed as forwarding outputs that write them directly — no copy). Catalogue:
 `lib/std/operators/higher_order.h` + `impl/higher_order_impl.h`; runtime nodes
 `runtime/{nested_graph,switch,map}_node.*` on shared `runtime/nested_bindings.h`.
-Remaining (gated/deferred — see the doc's roadmap + non-goals): dynamic-TSD `reduce`
-(port the 2603 reduce design first), TSL multiplexing for `map_`, variadic operator
+Also landed: **dynamic-TSD `reduce`** (2603 design ported into the doc first;
+`runtime/reduce_node.*` — alias leaves, minimal combiner tree, zero = empty-result only,
+sampled root re-publication). Remaining (deferred — see the doc's roadmap + non-goals):
+TSL multiplexing for `map_`, dynamic-TSL/non-associative reduce, variadic operator
 args, `mesh_`/`try_except`/services. **C++ only for
 now** — keep Python out of the configure/build/run path.
 

@@ -1,0 +1,61 @@
+#ifndef HGRAPH_RUNTIME_REDUCE_NODE_H
+#define HGRAPH_RUNTIME_REDUCE_NODE_H
+
+#include <hgraph/hgraph_export.h>
+#include <hgraph/runtime/nested_graph_node.h>   // SingleNestedGraphNodeSpec (the combiner template shape)
+
+#include <cstddef>
+
+namespace hgraph
+{
+    struct HGRAPH_EXPORT ReduceNodeSpec
+    {
+        /**
+         * The compiled binary combiner template; binding ``source_path[0]`` is
+         * the boundary arg ordinal (0 = lhs, 1 = rhs).
+         */
+        SingleNestedGraphNodeSpec child{};
+    };
+
+    /** Typed extension view exposed by ``reduce_node`` (runtime inspection surface). */
+    class HGRAPH_EXPORT ReduceNodeView
+    {
+      public:
+        [[nodiscard]] static const void *node_view_type_id() noexcept;
+        [[nodiscard]] static ReduceNodeView from_node(NodeView view, const void *context);
+
+        [[nodiscard]] const NodeView &node() const noexcept;
+        /** Live key (dense leaf) count. */
+        [[nodiscard]] std::size_t leaf_count() const noexcept;
+        /** Live internal combiner child-graph count (at most ``leaf_count - 1``). */
+        [[nodiscard]] std::size_t combiner_count() const noexcept;
+
+        /** Internal (reduce_node implementation) — the registered context / storage. */
+        [[nodiscard]] const void *internal_context() const noexcept { return context_; }
+        [[nodiscard]] void       *internal_storage() const noexcept { return storage_; }
+
+      private:
+        ReduceNodeView(NodeView view, const void *context, void *storage) noexcept;
+
+        NodeView    view_{};
+        const void *context_{nullptr};
+        void       *storage_{nullptr};
+    };
+
+    /**
+     * Build the dynamic associative ``reduce`` node over a multiplexed TSD
+     * input: a balanced binary tree whose **leaves alias the live source
+     * elements** and whose internal combine points own combiner child graphs
+     * — instantiated only when both subtrees are non-empty. The node's
+     * forwarding output publishes the root aggregate (``zero`` input when
+     * empty, the single element when one key is live, else the root
+     * combiner's output). The live key set is reconciled against the current
+     * TSD input when the input modifies, re-points, becomes invalid, or is
+     * first observed. See *Nested Graphs > reduce over dynamic TSD*.
+     *
+     * Outer inputs: ``[ts (TSD), zero (element)]``.
+     */
+    [[nodiscard]] HGRAPH_EXPORT NodeBuilder reduce_node(NodeTypeMetaData meta, ReduceNodeSpec spec);
+}  // namespace hgraph
+
+#endif  // HGRAPH_RUNTIME_REDUCE_NODE_H

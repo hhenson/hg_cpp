@@ -9,5 +9,6 @@
 #include <hgraph/runtime/push_source_node.h>
 #include <hgraph/runtime/switch_node.h>
 #include <hgraph/runtime/map_node.h>
+#include <hgraph/runtime/reduce_node.h>
 
 #endif  // HGRAPH_RUNTIME_RUNTIME_H

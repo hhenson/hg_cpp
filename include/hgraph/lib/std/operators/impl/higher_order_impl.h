@@ -3,6 +3,7 @@
 
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/runtime/map_node.h>
+#include <hgraph/runtime/reduce_node.h>
 #include <hgraph/runtime/switch_node.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/subgraph_wiring.h>
@@ -204,6 +205,146 @@ namespace hgraph::stdlib
 
     namespace higher_order_impl_detail
     {
+        struct reduce_tsd_node_tag
+        {
+        };
+
+        /**
+         * The dynamic-TSD reduce wiring core (see *Nested Graphs > reduce over
+         * dynamic TSD*): compile the binary combiner once, add ONE reduce node
+         * whose outer inputs are ``[ts (TSD), zero (element)]`` and whose
+         * forwarding output publishes the root aggregate.
+         */
+        [[nodiscard]] inline Port<void> wire_reduce_tsd(Wiring &w, const Scalar<"func", WiredFn> &func,
+                                                        WiringPortRef ts, WiringPortRef zero)
+        {
+            const WiredFn &combiner = func.value();
+            if (!combiner.valid() || combiner.arity != 2 || !combiner.has_output)
+            {
+                throw std::invalid_argument(
+                    "reduce: 'func' must be a wirable (lhs, rhs) -> value function (fn<X>())");
+            }
+
+            auto       &registry   = TypeRegistry::instance();
+            const auto *tsd_schema = registry.dereference(ts.schema);
+            if (tsd_schema == nullptr || tsd_schema->kind != TSTypeKind::TSD)
+            {
+                throw std::invalid_argument("reduce: the collection input must be a TSD");
+            }
+            const auto *element = tsd_schema->element_ts();
+
+            const std::array<const TSValueTypeMetaData *, 2> schemas{element, element};
+            CompiledSubGraph combiner_graph = combiner.compile({schemas.data(), schemas.size()});
+            if (combiner_graph.output_schema == nullptr || !combiner_graph.output_binding.has_value())
+            {
+                throw std::invalid_argument("reduce: the combiner must produce an output");
+            }
+            if (combiner_graph.output_binding->kind != NestedGraphOutputBinding::Kind::ChildOutput)
+            {
+                throw std::invalid_argument(
+                    "reduce: pass-through combiner outputs are not supported by dynamic TSD reduce yet");
+            }
+            if (!time_series_schema_equivalent(registry.dereference(combiner_graph.output_schema),
+                                               registry.dereference(element)))
+            {
+                throw std::invalid_argument(
+                    "reduce: the combiner output schema must match the collection's element schema");
+            }
+
+            ReduceNodeSpec spec;
+            spec.child.graph_builder  = std::move(combiner_graph.graph_builder);
+            spec.child.input_bindings = std::move(combiner_graph.input_bindings);
+            spec.child.output_binding = combiner_graph.output_binding;
+
+            const auto *input_schema =
+                TypeRegistry::instance().un_named_tsb({{"ts", ts.schema}, {"zero", zero.schema}});
+            const auto *output_schema = element;
+
+            const std::array<WiringPortRef, 2> inputs{std::move(ts), std::move(zero)};
+
+            WiringNodeSchema node_schema;
+            node_schema.input  = input_schema;
+            node_schema.output = output_schema;
+
+            WiringPortRef out = w.add_node(
+                std::type_index(typeid(reduce_tsd_node_tag)), node_schema,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()}, Value{combiner},
+                [&]() {
+                    NodeTypeMetaData meta;
+                    meta.display_name  = "reduce";
+                    meta.input_schema  = input_schema;
+                    meta.output_schema = output_schema;
+
+                    NodeBuilder builder = reduce_node(std::move(meta), std::move(spec));
+                    builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                        input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                    return builder;
+                });
+            return Port<void>{w, std::move(out)};
+        }
+
+        [[nodiscard]] inline bool reduce_ts_is_tsd(OperatorCallContext context, std::size_t expected_args)
+        {
+            if (context.args.size() != expected_args) { return false; }
+            if (context.args.size() < 2 || context.args[1].kind != WiringArg::Kind::TimeSeries) { return false; }
+            const auto *schema = TypeRegistry::instance().dereference(context.args[1].port.schema);
+            return schema != nullptr && schema->kind == TSTypeKind::TSD;
+        }
+
+        /** ``reduce(func, ts: TSD[K, V]) -> V`` — the zero is ``zero(item_tp, func)``. */
+        struct reduce_tsd
+        {
+            static constexpr auto name = "reduce_tsd";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return reduce_ts_is_tsd(context, 2);
+            }
+
+            static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                            Port<TSD<ScalarVar<"K">, TsVar<"V">>> ts)
+            {
+                const auto *element =
+                    TypeRegistry::instance().dereference(ts.erased().schema)->element_ts();
+
+                const std::array<WiringArg, 1> zero_args{operator_dispatch_detail::make_wiring_arg(func)};
+                const WiringPortRef            zero =
+                    wire_operator(w, "zero", {zero_args.data(), zero_args.size()}, true, element).output.erased();
+
+                auto out = wire_reduce_tsd(w, func, ts.erased(), zero);
+                return Port<TsVar<"V">>{w, out.erased()};
+            }
+        };
+
+        /** ``reduce(func, ts: TSD[K, V], zero) -> V`` — the explicit-zero arity. */
+        struct reduce_tsd_zero
+        {
+            static constexpr auto name = "reduce_tsd_zero";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return reduce_ts_is_tsd(context, 3);
+            }
+
+            static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                            Port<TSD<ScalarVar<"K">, TsVar<"V">>> ts,
+                                            Scalar<"zero", ScalarVar<"Z">> zero_value)
+            {
+                const auto *element =
+                    TypeRegistry::instance().dereference(ts.erased().schema)->element_ts();
+
+                WiringArg zero_arg;
+                zero_arg.kind         = WiringArg::Kind::Scalar;
+                zero_arg.scalar_value = Value{zero_value.value()};
+                zero_arg.scalar_meta  = zero_arg.scalar_value.schema();
+                const WiringPortRef zero =
+                    wire_operator(w, "const", {&zero_arg, 1}, true, element).output.erased();
+
+                auto out = wire_reduce_tsd(w, func, ts.erased(), zero);
+                return Port<TsVar<"V">>{w, out.erased()};
+            }
+        };
+
         struct switch_node_tag
         {
         };
@@ -631,6 +772,8 @@ namespace hgraph::stdlib
     {
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsl>();
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsl_zero>();
+        register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsd>();
+        register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsd_zero>();
 
         register_graph_overload<switch_, higher_order_impl_detail::switch_impl_key_only>();
         register_graph_overload<switch_, higher_order_impl_detail::switch_impl_one_ts>();

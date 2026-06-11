@@ -14,6 +14,7 @@
 // eval_node<const_, TSL<...>>(...)).
 
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/record_replay.h>
@@ -72,6 +73,53 @@ namespace
     {
         static constexpr auto name = "first_combiner";
         static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> lhs, Port<TS<Int>>) { return lhs; }
+    };
+
+    struct ConstLeftReduceDict
+    {
+        static constexpr auto          name = "const_left_reduce_dict";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w)
+        {
+            return wire<stdlib::const_, TSD<Str, TS<Int>>>(
+                w, stdlib::make_map<Str, Int>({{Str{"a"}, Int{1}}, {Str{"b"}, Int{2}}}));
+        }
+    };
+
+    struct ConstRightReduceDict
+    {
+        static constexpr auto          name = "const_right_reduce_dict";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w)
+        {
+            return wire<stdlib::const_, TSD<Str, TS<Int>>>(
+                w, stdlib::make_map<Str, Int>({{Str{"a"}, Int{10}}, {Str{"b"}, Int{20}}}));
+        }
+    };
+
+    struct NeverReduceDictNode
+    {
+        static constexpr auto name = "never_reduce_dict";
+        static void eval(Out<TSD<Str, TS<Int>>>) {}
+    };
+
+    struct NoReduceDict
+    {
+        static constexpr auto          name = "no_reduce_dict";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w) { return wire<NeverReduceDictNode>(w); }
+    };
+
+    struct ReduceSwitchedDictGraph
+    {
+        static constexpr auto name = "reduce_switched_dict_graph";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Str>> select)
+        {
+            auto source = wire<stdlib::switch_>(
+                              w, select,
+                              stdlib::switch_cases({{Value{Str{"left"}}, fn<ConstLeftReduceDict>()},
+                                                     {Value{Str{"right"}}, fn<ConstRightReduceDict>()},
+                                                     {Value{Str{"none"}}, fn<NoReduceDict>()}}))
+                              .as<TSD<Str, TS<Int>>>();
+            return wire<stdlib::reduce_>(w, fn<stdlib::add_>(), source, Int{100}).as<TS<Int>>();
+        }
     };
 
     // Specialised reduce overload: concrete TSL<TS<Int>, 2>, gated on the wired
@@ -196,4 +244,110 @@ TEST_CASE("reduce: a user overload gated on the wired function's identity wins s
     CHECK_OUTPUT((eval_node<stdlib::reduce_, TSL<TS<Int>, 2>>(
                      fn<stdlib::add_>(), values<Value>(list_delta<TS<Int>>({3, 9})))),
                  values<Int>(12));
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic TSD reduce (the runtime kernel — Nested Graphs > reduce over
+// dynamic TSD): a balanced tree of combiner child graphs over the LIVE keys.
+// Leaves alias source elements (no leaf child graphs); zero is the
+// empty-collection result only — never odd-branch padding.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("reduce over TSD: sums the live values, follows updates and removals")
+{
+    using namespace hgraph;
+    using namespace std::string_literals;
+    stdlib::register_standard_operators();
+
+    // t0: {a:1, b:2, c:3} -> 6; t1: a -> 10 ticks through standing bindings
+    // -> 15; t2: c removed -> the tree re-shapes and re-publishes -> 12.
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSD<Str, TS<Int>>>(
+                     fn<stdlib::add_>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}, {"c"s, 3}}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 10}}),
+                                   dict_delta<Str, TS<Int>>({}, {"c"s})))),
+                 values<Int>(6, 15, 12));
+}
+
+TEST_CASE("reduce over TSD: an empty collection publishes the derived zero")
+{
+    using namespace hgraph;
+    using namespace std::string_literals;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSD<Str, TS<Int>>>(
+                     fn<stdlib::add_>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({})))),
+                 values<Int>(0));
+}
+
+TEST_CASE("reduce over TSD: a single live key aliases the element — no zero padding")
+{
+    using namespace hgraph;
+    using namespace std::string_literals;
+    stdlib::register_standard_operators();
+
+    // The 2603 no-spurious-zero regression: with an explicit zero of 100, one
+    // live key must publish the element itself (1), NOT element + zero (101);
+    // emptying the collection falls back to the zero (100).
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSD<Str, TS<Int>>>(
+                     fn<stdlib::add_>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 7}}),
+                                   dict_delta<Str, TS<Int>>({}, {"a"s})),
+                     Int{100})),
+                 values<Int>(1, 7, 100));
+}
+
+TEST_CASE("reduce over TSD: keys added over time grow the tree")
+{
+    using namespace hgraph;
+    using namespace std::string_literals;
+    stdlib::register_standard_operators();
+
+    // 1 key (alias) -> 2 keys (one combiner) -> 5 keys (capacity growth
+    // rebuild) — values stay exact sums throughout.
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSD<Str, TS<Int>>>(
+                     fn<stdlib::add_>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}}),
+                                   dict_delta<Str, TS<Int>>({{"b"s, 2}}),
+                                   dict_delta<Str, TS<Int>>(
+                                       {{"c"s, 3}, {"d"s, 4}, {"e"s, 5}})))),
+                 values<Int>(1, 3, 15));
+}
+
+TEST_CASE("reduce over TSD: a sub-graph combiner with an explicit zero")
+{
+    using namespace hgraph;
+    using namespace std::string_literals;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSD<Str, TS<Int>>>(
+                     fn<SumCombiner>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 10}, {"b"s, 20}, {"c"s, 30}}),
+                                   dict_delta<Str, TS<Int>>({{"b"s, 200}})),
+                     Int{0})),
+                 values<Int>(60, 240));
+}
+
+TEST_CASE("reduce over TSD: source retarget refreshes bindings and invalid source publishes zero")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<ReduceSwitchedDictGraph>(
+                     values<Str>(Str{"left"}, Str{"right"}, Str{"none"})),
+                 values<Int>(3, 30, 100));
+}
+
+TEST_CASE("reduce over TSD: a pass-through combiner is rejected")
+{
+    using namespace hgraph;
+    using namespace std::string_literals;
+    stdlib::register_standard_operators();
+
+    REQUIRE_THROWS((eval_node<stdlib::reduce_, TSD<Str, TS<Int>>>(
+        fn<FirstCombiner>(),
+        values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}})),
+        Int{0})));
 }
