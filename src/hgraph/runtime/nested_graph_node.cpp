@@ -1,3 +1,4 @@
+#include <hgraph/runtime/nested_bindings.h>
 #include <hgraph/runtime/nested_graph_node.h>
 
 #include <array>
@@ -17,40 +18,6 @@ namespace hgraph
         {
             GraphValue graph{};
         };
-
-        // Walk an indexed time-series view (TSB field index or TSL index) along a
-        // path. Inputs and outputs traverse identically, so one template serves both.
-        template <typename View>
-        [[nodiscard]] View walk_path(View view, const std::vector<std::size_t> &path)
-        {
-            for (const std::size_t component : path)
-            {
-                const auto *schema = view.schema();
-                if (schema == nullptr)
-                {
-                    throw std::logic_error("Nested graph path requires a typed time-series view");
-                }
-                switch (schema->kind)
-                {
-                    case TSTypeKind::TSB:
-                    {
-                        auto bundle = view.as_bundle();
-                        view = bundle[component];
-                        break;
-                    }
-                    case TSTypeKind::TSL:
-                    {
-                        auto list = view.as_list();
-                        view = list[component];
-                        break;
-                    }
-                    default:
-                        throw std::invalid_argument(
-                            "Nested graph path can only traverse indexed time-series structures");
-                }
-            }
-            return view;
-        }
 
         // Program-lifetime, intentionally-leaked storage for node contexts. A
         // context is type-level metadata referenced by interned ops tables, and it
@@ -90,33 +57,6 @@ namespace hgraph
             single_nested_graph_evaluate(view, evaluation_time);
         }
 
-        void bind_input_to_source(TSInputView target, const TSOutputView &source)
-        {
-            if (!target.is_bindable())
-            {
-                throw std::logic_error("Nested graph input binding target must be a peered child input endpoint");
-            }
-
-            if (!source.bound())
-            {
-                if (target.bound()) { target.unbind_output(); }
-                return;
-            }
-
-            auto current = target.bound_output();
-            if (!current.handle().same_as(source.handle())) { target.bind_output(source); }
-        }
-
-        void bind_forwarding_output_to_source(const TSOutputView &target, const TSOutputView &source)
-        {
-            if (!target.forwarding())
-            {
-                throw std::logic_error("Nested graph output binding target must be a forwarding output endpoint");
-            }
-
-            const auto current = target.forwarding_target();
-            if (!current.same_as(source.handle())) { target.bind_forwarding_target(source); }
-        }
     }  // namespace
 
     const void *SingleNestedGraphNodeView::node_view_type_id() noexcept
@@ -278,10 +218,10 @@ namespace hgraph
 
         for (const NestedGraphInputBinding &binding : bindings)
         {
-            auto source = walk_path(root_input.borrowed_ref(), binding.source_path);
+            auto source = walk_ts_path(root_input.borrowed_ref(), binding.source_path);
             auto source_output = source.bound_output();
 
-            auto target = walk_path(
+            auto target = walk_ts_path(
                 child_graph.node_at(binding.target.node).input(evaluation_time),
                 binding.target.path);
             bind_input_to_source(std::move(target), source_output);
@@ -294,7 +234,7 @@ namespace hgraph
         const auto &binding = nested.context().spec.output_binding;
         if (!binding.has_value()) { return; }
 
-        auto target = walk_path(nested.node().output(evaluation_time), binding->target_path);
+        auto target = walk_ts_path(nested.node().output(evaluation_time), binding->target_path);
 
         if (binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
         {
@@ -302,7 +242,7 @@ namespace hgraph
             // this node's own input is bound to. Re-resolved each cycle like the
             // input bindings; cleared while the upstream is unbound.
             auto root_input = nested.node().input(evaluation_time);
-            auto source     = walk_path(root_input.borrowed_ref(), binding->parent_source_path).bound_output();
+            auto source     = walk_ts_path(root_input.borrowed_ref(), binding->parent_source_path).bound_output();
             if (!source.bound())
             {
                 if (target.forwarding_bound()) { target.clear_forwarding_target(); }
@@ -312,7 +252,7 @@ namespace hgraph
             return;
         }
 
-        auto source = walk_path(
+        auto source = walk_ts_path(
             nested.child_graph().node_at(binding->source.node).output(evaluation_time),
             binding->source.path);
         bind_forwarding_output_to_source(target, source);
@@ -324,7 +264,7 @@ namespace hgraph
         const auto &binding = nested.context().spec.output_binding;
         if (!binding.has_value()) { return; }
 
-        auto target = walk_path(nested.node().output(evaluation_time), binding->target_path);
+        auto target = walk_ts_path(nested.node().output(evaluation_time), binding->target_path);
         if (target.forwarding_bound()) { target.clear_forwarding_target(); }
     }
 

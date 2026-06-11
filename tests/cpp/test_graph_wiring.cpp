@@ -1079,6 +1079,32 @@ TEST_CASE("graph wiring: nested node propagates child graph schedule")
     CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<Int>() == Int{41});
 }
 
+TEST_CASE("graph wiring: an out-of-band child graph schedule pushes through to the parent node")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder;
+    graph_builder.label("outer_nested_constant").add_node(nested_constant_builder());
+
+    testing::MockRootGraph root{graph_builder};
+    auto graph = root.graph();
+    graph.start(MIN_ST);
+    graph.evaluate(MIN_ST);   // child evaluated; nothing further scheduled
+
+    auto nested_view = graph.node_at(0).as<SingleNestedGraphNodeView>();
+    REQUIRE(graph.next_scheduled_time() == MAX_DT);
+
+    // Schedule a child node directly while the child graph is idle (the path a
+    // notification or wall-clock alarm takes between parent evaluations): the
+    // push half of the scheduling delegation must wake the parent node at the
+    // same time, without waiting for the next pull-after-evaluate.
+    const DateTime when = MIN_ST + TimeDelta{7};
+    nested_view.child_graph_value().schedule_node(0, when);
+
+    CHECK(graph.next_scheduled_time() == when);
+    graph.stop();
+}
+
 TEST_CASE("graph wiring: nested node re-evaluates its child across multiple cycles")
 {
     using namespace hgraph;

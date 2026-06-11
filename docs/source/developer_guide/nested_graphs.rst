@@ -174,6 +174,37 @@ Tests: ``tests/cpp/test_reduce.cpp`` (including a user overload gated on the
 wired function's identity, mirroring ``ext/main``'s ``test_map_overload``).
 
 
+Scheduling delegation
+---------------------
+
+The RFC's clock invariant — *the parent must wake no later than the child's
+next scheduled work* — is realised as two halves folded into the existing
+graph ops (no separate engine/clock object; see the recorded decision):
+
+- **Pull** (``single_nested_graph_propagate_schedule``): after the child is
+  started or evaluated, the owning node force-schedules itself at the child's
+  ``next_scheduled_time()``. This covers every schedule created while the
+  parent is already driving the child (self-rescheduling sources, scheduler
+  calls inside child ``start``/``eval``).
+- **Push** (``nested_schedule_node_impl`` in ``graph.cpp``): any
+  ``schedule_node`` recorded on a child graph **while it is idle**
+  (``started && !evaluating``) immediately schedules the parent node at the
+  same time — the path a notification or wall-clock alarm takes between
+  parent evaluations, and the safety net the keyed operators (``switch_`` /
+  ``map_``) rely on when a child is not evaluated every parent cycle. The
+  push is deliberately gated off during child evaluation (pull covers it, and
+  pushing mid-evaluate would schedule a spurious extra parent cycle) and
+  while the child is stopped.
+
+The parent graph's own same-cycle clamp supplies the ``+MIN_TD`` behaviour,
+and multi-level nesting recurses up to the root naturally. The boundary
+*binding* helpers shared by all nested node implementations
+(``walk_ts_path`` / ``bind_input_to_source`` /
+``bind_forwarding_output_to_source``) live in
+``include/hgraph/runtime/nested_bindings.h`` — no bespoke bind/unbind logic
+per operator.
+
+
 Reconciliation with the 2603 RFC
 --------------------------------
 
@@ -222,8 +253,9 @@ Roadmap (this milestone)
    ``default(ts[i], zero)`` with the op-aware ``zero_`` (derived) or the
    explicit-zero arity. ``map_`` / ``switch_`` follow the same operator shape
    when they land.
-3. Child-driven scheduling **push** propagation + extraction of the shared
-   boundary-binding helpers for reuse by ``switch_`` / ``map_``.
+3. **Done — scheduling push delegation + shared binding helpers.** See
+   *Scheduling delegation* above; helpers extracted to
+   ``runtime/nested_bindings.h``.
 4. ``switch_`` — one active branch child, sampled retarget on key change,
    key-value injection into the branch.
 5. ``map_`` over ``TSD`` — keyed child instances driven by the input dict

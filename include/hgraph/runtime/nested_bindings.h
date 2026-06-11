@@ -1,0 +1,92 @@
+#ifndef HGRAPH_RUNTIME_NESTED_BINDINGS_H
+#define HGRAPH_RUNTIME_NESTED_BINDINGS_H
+
+#include <hgraph/types/time_series/ts_input.h>
+#include <hgraph/types/time_series/ts_output.h>
+
+#include <cstddef>
+#include <stdexcept>
+#include <vector>
+
+namespace hgraph
+{
+    /**
+     * Shared boundary-binding helpers for nested-graph node implementations
+     * (``single_nested_graph_node`` today; ``switch_`` / ``map_`` build on the
+     * same model — no bespoke bind/unbind logic per operator). See the
+     * developer guide *Nested Graphs*.
+     */
+
+    /**
+     * Walk an indexed time-series view (TSB field index or TSL index) along a
+     * path. Inputs and outputs traverse identically, so one template serves both.
+     */
+    template <typename View>
+    [[nodiscard]] View walk_ts_path(View view, const std::vector<std::size_t> &path)
+    {
+        for (const std::size_t component : path)
+        {
+            const auto *schema = view.schema();
+            if (schema == nullptr)
+            {
+                throw std::logic_error("Nested graph path requires a typed time-series view");
+            }
+            switch (schema->kind)
+            {
+                case TSTypeKind::TSB:
+                {
+                    auto bundle = view.as_bundle();
+                    view = bundle[component];
+                    break;
+                }
+                case TSTypeKind::TSL:
+                {
+                    auto list = view.as_list();
+                    view = list[component];
+                    break;
+                }
+                default:
+                    throw std::invalid_argument(
+                        "Nested graph path can only traverse indexed time-series structures");
+            }
+        }
+        return view;
+    }
+
+    /**
+     * Bind a peered child input endpoint to the *same upstream output* the
+     * outer boundary is bound to (re-resolved each cycle; a no-op when the
+     * endpoint already references the same output, and unbinds while the
+     * upstream is unbound).
+     */
+    inline void bind_input_to_source(TSInputView target, const TSOutputView &source)
+    {
+        if (!target.is_bindable())
+        {
+            throw std::logic_error("Nested graph input binding target must be a peered child input endpoint");
+        }
+
+        if (!source.bound())
+        {
+            if (target.bound()) { target.unbind_output(); }
+            return;
+        }
+
+        auto current = target.bound_output();
+        if (!current.handle().same_as(source.handle())) { target.bind_output(source); }
+    }
+
+    /** Re-point a forwarding output endpoint at ``source`` (no-op when already there). */
+    inline void bind_forwarding_output_to_source(const TSOutputView &target, const TSOutputView &source)
+    {
+        if (!target.forwarding())
+        {
+            throw std::logic_error("Nested graph output binding target must be a forwarding output endpoint");
+        }
+
+        const auto current = target.forwarding_target();
+        if (!current.same_as(source.handle())) { target.bind_forwarding_target(source); }
+    }
+}  // namespace hgraph
+
+#endif  // HGRAPH_RUNTIME_NESTED_BINDINGS_H

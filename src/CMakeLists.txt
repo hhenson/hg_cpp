@@ -66,6 +66,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/nested_graph_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/push_source_node.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/nested_bindings.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/runtime.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/python/chrono.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/notifiable.h

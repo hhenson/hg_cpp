@@ -427,6 +427,30 @@ namespace hgraph
             }
         }
 
+        // The **push** half of nested scheduling delegation (the RFC clock
+        // invariant, executor-ops style): any schedule recorded on a child graph
+        // immediately wakes the parent node no later than that time. The **pull**
+        // half (``single_nested_graph_propagate_schedule`` after start/evaluate)
+        // covers schedules created while the parent is already driving the child,
+        // so the push is gated to out-of-band calls only — a notification or
+        // scheduler arriving while the child is idle (``started && !evaluating``).
+        // The parent graph's own same-cycle clamp supplies the ``+MIN_TD``
+        // behaviour; multi-level nesting recurses up to the root naturally.
+        void nested_schedule_node_impl(const void *context, const GraphView &graph, std::size_t node_index,
+                                       DateTime when, bool force)
+        {
+            schedule_node_impl<NestedGraphRuntimeStorage>(context, graph, node_index, when, force);
+
+            auto &state = typed_storage<NestedGraphRuntimeStorage>(graph.data());
+            if (when == MAX_DT || !state.started || state.evaluating) { return; }
+
+            auto parent = state.parent_node();
+            if (auto *parent_graph = parent.graph_value(); parent_graph != nullptr)
+            {
+                parent_graph->schedule_node(parent.node_index(), when);
+            }
+        }
+
         template <typename Storage>
         void start_impl(const void *, const GraphView &graph, DateTime start_time)
         {
@@ -597,7 +621,7 @@ namespace hgraph
                     .start_impl = &start_impl<NestedGraphRuntimeStorage>,
                     .stop_impl = &stop_impl<NestedGraphRuntimeStorage>,
                     .evaluate_impl = &evaluate_impl<NestedGraphRuntimeStorage>,
-                    .schedule_node_impl = &schedule_node_impl<NestedGraphRuntimeStorage>,
+                    .schedule_node_impl = &nested_schedule_node_impl,
                     .started_impl = &started_impl<NestedGraphRuntimeStorage>,
                     .evaluating_impl = &evaluating_impl<NestedGraphRuntimeStorage>,
                     .evaluation_time_impl = &evaluation_time_impl<NestedGraphRuntimeStorage>,
