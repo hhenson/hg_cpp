@@ -213,6 +213,7 @@ namespace hgraph
         void construct_node_storage_impl(const NodeRuntimeContext &context,
                                          const NodeTypeMetaData   &schema,
                                          TSEndpointSchema          input_endpoint,
+                                         TSEndpointSchema          output_endpoint_override,
                                          std::string               runtime_label,
                                          const Value              &scalars,
                                          void                     *memory)
@@ -251,7 +252,9 @@ namespace hgraph
             {
                 const auto *component = plan.find_component("output");
                 if (component == nullptr) { throw std::logic_error("Node storage plan is missing output"); }
-                if (schema.output_endpoint_schema.empty())
+                const TSEndpointSchema &output_endpoint =
+                    !output_endpoint_override.empty() ? output_endpoint_override : schema.output_endpoint_schema;
+                if (output_endpoint.empty())
                 {
                     std::construct_at(MemoryUtils::cast<TSOutput>(
                                           MemoryUtils::advance(memory, component->offset)),
@@ -261,7 +264,7 @@ namespace hgraph
                 {
                     std::construct_at(MemoryUtils::cast<TSOutput>(
                                           MemoryUtils::advance(memory, component->offset)),
-                                      schema.output_endpoint_schema);
+                                      output_endpoint);
                 }
                 constructed.push_back(component);
             }
@@ -939,7 +942,8 @@ namespace hgraph
 
     const MemoryUtils::StoragePlan &node_storage_plan_for(
         const NodeTypeMetaData &schema,
-        std::span<const NodeStorageField> extra_fields)
+        std::span<const NodeStorageField> extra_fields,
+        std::span<const NodeStorageField> extra_fields_after_output)
     {
         auto builder = MemoryUtils::named_tuple();
         builder.add_field("runtime_storage", MemoryUtils::plan_for<NodeRuntimeStorage>());
@@ -950,6 +954,13 @@ namespace hgraph
             builder.add_field(field.name, *field.plan);
         }
         if (schema.output_schema != nullptr) { builder.add_field("output", MemoryUtils::plan_for<TSOutput>()); }
+        // Destroyed BEFORE the output (reverse-order destruction): for fields
+        // holding links INTO the node's own output (see the header note).
+        for (const NodeStorageField &field : extra_fields_after_output)
+        {
+            if (field.plan == nullptr) { throw std::logic_error("Node storage field requires a storage plan"); }
+            builder.add_field(field.name, *field.plan);
+        }
         if (schema.state_schema != nullptr) { builder.add_field("state", MemoryUtils::plan_for<Value>()); }
         if (schema.scalar_schema != nullptr) { builder.add_field("scalars", MemoryUtils::plan_for<Value>()); }
         if (schema.uses_scheduler)
@@ -1287,6 +1298,26 @@ namespace hgraph
         return input_endpoint_;
     }
 
+    NodeBuilder &NodeBuilder::output_endpoint(TSEndpointSchema endpoint)
+    {
+        const auto *type_meta = binding_ != nullptr ? binding_->type_meta : nullptr;
+        if (type_meta == nullptr || type_meta->output_schema == nullptr)
+        {
+            throw std::invalid_argument("NodeBuilder output endpoint requires a node output schema");
+        }
+        if (!endpoint.empty() && !time_series_schema_equivalent(type_meta->output_schema, endpoint.schema()))
+        {
+            throw std::invalid_argument("NodeBuilder output endpoint schema does not match node output schema");
+        }
+        output_endpoint_ = std::move(endpoint);
+        return *this;
+    }
+
+    const TSEndpointSchema &NodeBuilder::output_endpoint() const noexcept
+    {
+        return output_endpoint_;
+    }
+
     void NodeBuilder::construct_node_storage(void *memory, std::size_t node_index) const
     {
         if (memory == nullptr) { throw std::logic_error("NodeBuilder::construct_node_storage requires memory"); }
@@ -1296,6 +1327,7 @@ namespace hgraph
         construct_node_storage_impl(runtime,
                                     *binding.type_meta,
                                     input_endpoint(),
+                                    output_endpoint(),
                                     std::string{label()},
                                     scalars(),
                                     memory);

@@ -359,14 +359,14 @@ namespace hgraph
         const auto &table   = current.ops();
         const bool newly_modified =
             table.copy_value_from_impl(table.context, current.mutable_data(), source, mutation_time_);
-        if (newly_modified && !record_modified_local())
-        {
-            throw std::logic_error(
-                "TSDataMutationView::copy_value_from reported a new modification that was already recorded");
-        }
         if (newly_modified)
         {
-            notify_parent_modified();
+            // The modification may already be recorded for this cycle — e.g.
+            // the storage was structurally created earlier in the same dict
+            // mutation (which marks it), or a write-through forwarding link
+            // landed on pre-marked storage. Recording is idempotent; parents
+            // are notified only by the first recording.
+            if (record_modified_local()) { notify_parent_modified(); }
         }
         return newly_modified;
     }

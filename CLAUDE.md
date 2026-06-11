@@ -155,18 +155,23 @@ graphs). Tests: `tests/cpp/test_realtime_execution.cpp`. Docs: `architecture.rst
 `python_integration.rst`. The single-threaded rule stands: senders are the only
 cross-thread entry point.
 
-**Current milestone: non-flattening nested graphs** (`map_`/`reduce`/`switch_`).
-The runtime substrate already works — `single_nested_graph_node`
-(`runtime/nested_graph_node.{h,cpp}`) is a tested generic single-child nested node
-(lazy child `GraphValue` in node storage, per-cycle input re-binding, root output
-forwarding, schedule propagation; see `graph_wiring.rst` "Nested graphs"). The
-milestone adds the wiring surface (`CompiledSubGraph`/`compile_subgraph<G>`/`nested_<G>`)
-and the keyed/branching operators on top; plan increments are recorded in
-`docs/source/developer_guide/nested_graphs.rst` as they land. Design sources:
-`ext/2603/docs/design/2026-04-v2-nested-graphs-rfc.md` + implementation notes +
-sampled-runtime contract, reconciled toward current code (no separate engine/clock, no
-wiring stub nodes). **C++ only for now** — keep Python out of the
-configure/build/run path.
+**Non-flattening nested graphs — core DONE** (design record:
+`docs/source/developer_guide/nested_graphs.rst`, authoritative). Landed, ASAN-verified:
+sub-graph compilation (`CompiledSubGraph`/`compile_subgraph<G>`/`nested_<G>`, boundary
+placeholders — no stub nodes), `alias_parent_input` pass-through, structural boundary
+args, scheduling delegation (pull + idle-push), and the **higher-order operators** —
+all ordinary registry operators (ext/main pattern; callable arg = the `WiredFn` scalar,
+`fn<X>()`, which both inlines and compiles): `reduce` over fixed TSL (leaves =
+`default(ts[i], zero)`, op-aware `zero_`, explicit-zero arity), `switch_` (one branch
+child, sampled retarget, key as ordinary boundary input), `map_` over TSD (keyed child
+instances from the dict delta; per-key elements instantiated in the owned TSD output,
+child terminals re-homed as forwarding outputs that write them directly — no copy). Catalogue:
+`lib/std/operators/higher_order.h` + `impl/higher_order_impl.h`; runtime nodes
+`runtime/{nested_graph,switch,map}_node.*` on shared `runtime/nested_bindings.h`.
+Remaining (gated/deferred — see the doc's roadmap + non-goals): dynamic-TSD `reduce`
+(port the 2603 reduce design first), TSL multiplexing for `map_`, variadic operator
+args, `mesh_`/`try_except`/services. **C++ only for
+now** — keep Python out of the configure/build/run path.
 
 ---
 

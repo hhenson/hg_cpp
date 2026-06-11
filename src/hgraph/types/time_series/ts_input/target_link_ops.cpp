@@ -683,6 +683,26 @@ namespace hgraph::detail
         }
 #endif
 
+        /**
+         * Write-through: a value written to a bound link lands on the TARGET
+         * output through its standard mutation path (modified tracking and
+         * parent recording included). This is what lets a node whose output is
+         * a forwarding endpoint (``map_`` child terminals re-homed onto the
+         * parent's TSD elements) write externally-owned storage directly.
+         */
+        [[nodiscard]] bool target_link_copy_value_from(const void *context, void *memory, const ValueView &value,
+                                                       DateTime modified_time)
+        {
+            const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
+            if (link == nullptr || !link->target_output().bound())
+            {
+                throw std::logic_error("TSInput target-link write-through requires a bound target output");
+            }
+            auto target_view = link->target_output().view(modified_time);
+            auto mutation    = target_view.begin_mutation(modified_time);
+            return mutation.copy_value_from(value);
+        }
+
         [[nodiscard]] TSDataOps target_link_base_ops(TSInputTargetLinkContext &context)
         {
             return TSDataOps{
@@ -697,6 +717,7 @@ namespace hgraph::detail
                 .value_memory_impl         = &target_link_value_memory,
                 .delta_memory_impl         = &target_link_delta_memory,
                 .cleanup_delta_impl        = &target_link_cleanup_delta,
+                .copy_value_from_impl      = &target_link_copy_value_from,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                 .to_python_impl            = &target_link_to_python,
                 .delta_to_python_impl      = &target_link_delta_to_python,

@@ -254,6 +254,69 @@ ts…)``).
 Tests: ``tests/cpp/test_switch.cpp``.
 
 
+``map_``
+--------
+
+``map_(func, tsd[, broadcasts…])`` owns **one child graph instance per key**
+of its multiplexed ``TSD`` input — an operator like the rest of the family
+(``wire<stdlib::map_>(w, fn<G>(), tsd_port[, ts…])``).
+
+- **Key lifecycle follows the input's dict delta**: a removed key stops and
+  destroys its child (and removes the owned output's entry); a key present in
+  the input without a child builds, binds and starts a fresh instance (the
+  full-key scan on the first evaluation also covers an already-valid input).
+  A removed-then-re-added key gets a **fresh** child (state resets — pinned
+  by test).
+- **Per-key state** lives in node storage as
+  ``unordered_dense::map<Value, unique_ptr<MapKeyEntry>>`` — ``unique_ptr``
+  for pointer stability across rehash (a relocated live ``GraphValue`` would
+  break its nodes' notifier subscriptions; the RFC's ``StablePayloadStore``
+  is the recorded refinement). Entry member order is load-bearing: the child
+  graph (subscriber) tears down before the key output it observes.
+- **Child boundary args** are sourced per ordinal (``MapArgSource``): the
+  **element** binds to the parent TSD input's bound output child *at the
+  entry's key* (re-resolved each cycle); the **key** (when ``func`` takes it
+  first, by arity — like ``switch_`` branches) binds to an entry-owned
+  ``TS<K>`` output written once at creation; **broadcast** args bind whole to
+  the corresponding outer input. All through the shared ``nested_bindings``
+  helpers.
+- **Output (write-through, no copy)**: the output is an *owned*
+  ``TSD<K, OUT>`` — for every key a **real element is instantiated** in it
+  (``TSDDataMutationView::operator[]`` at entry creation), and the child's
+  terminal node is built with a **forwarding output endpoint**
+  (``NodeBuilder::output_endpoint`` override, set by the operator on the
+  compiled template's terminal) that the map node binds onto the parent's
+  element. The child node then **writes the parent's storage directly**
+  through the link (``target_link_copy_value_from`` resolves the target and
+  runs the standard mutation path, so modified tracking and dict parent
+  recording are exactly the owned-write path). All bindings are made **once
+  at entry creation** — elements live in stable slot storage and exist
+  exactly as long as the entry, so nothing re-binds per cycle; the only
+  invalidation is an outer input's bound output re-pointing (an upstream REF
+  retarget), detected with one handle compare per outer input per cycle and
+  re-binding entry inputs only then. Removals destroy the child (its link
+  unbinds) and then ``erase`` the element (publishing the removed delta). Wiring rejects
+  ``OUT`` shapes that cannot embed as TSD elements (``TSD`` / dynamic
+  ``TSL``), reference-valued outputs, and pass-through/sub-path outputs.
+- **Storage-plan ordering is load-bearing**: the map field is placed *after*
+  ``output`` in the node storage plan (``node_storage_plan_for``'s
+  ``extra_fields_after_output``) so reverse-order destruction tears the
+  children (whose links point INTO the output) down before the output —
+  the mirror image of ``nested_``/``switch_``, whose outer forwarding output
+  links INTO the field-held child and therefore destroys first.
+- **Scheduling**: an evaluated child propagates its own next time to the map
+  node (the graph-level pull); children left unevaluated this cycle pull
+  their pending schedule up explicitly; out-of-band child schedules push
+  through the nested-graph delegation as everywhere else.
+- The output schema resolver discovers ``TSD<K, OUT>`` by compiling ``func``
+  at the element schema (``resolve_default_types``, like ``switch_``).
+- Deferred: TSL multiplexing, variadic/multi-multiplexed inputs, explicit
+  ``__keys__`` / ``pass_through`` / ``no_key`` wrappers, and sink maps.
+
+Tests: ``tests/cpp/test_map.cpp``. ASAN/UBSAN-verified (keyed
+create/destroy churn).
+
+
 Reconciliation with the 2603 RFC
 --------------------------------
 
@@ -309,11 +372,10 @@ Roadmap (this milestone)
 4. **Done — ``switch_``** (see its section above): one active branch child,
    sampled retarget on key change, key consumption as an ordinary boundary
    input. ASAN/UBSAN-verified (branch teardown/rebuild churn).
-5. ``map_`` over ``TSD`` — keyed child instances driven by the input dict
-   delta; child outputs **copy-merged** into the owned ``TSD`` output (child
-   outputs cannot alias into TSD elements while ``TSDSlotStorage`` has no
-   link children — recorded as the tactical mode, with proxy/link-based
-   aliasing as the refinement).
+5. **Done — ``map_`` over ``TSD``** (see its section above): keyed child
+   instances driven by the input dict delta; child terminals write through
+   forwarding outputs into the owned ``TSD``'s instantiated elements (no
+   copy). ASAN/UBSAN-verified (keyed create/destroy churn).
 6. *(gated)* associative ``reduce`` over ``TSD`` — only after the 2603 reduce
    design is ported into this page and reconciled.
 

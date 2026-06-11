@@ -59,6 +59,7 @@ add_executable(hgraph_unit_tests
     test_nested_wiring.cpp
     test_reduce.cpp
     test_switch.cpp
+    test_map.cpp
     test_operators.cpp
     test_std_operators.cpp
     test_compact_storage.cpp

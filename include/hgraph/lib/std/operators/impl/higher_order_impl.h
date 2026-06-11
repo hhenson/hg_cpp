@@ -2,6 +2,7 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_HIGHER_ORDER_IMPL_H
 
 #include <hgraph/lib/std/operators/higher_order.h>
+#include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/switch_node.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/subgraph_wiring.h>
@@ -409,6 +410,221 @@ namespace hgraph::stdlib
         };
     }  // namespace higher_order_impl_detail
 
+    namespace higher_order_impl_detail
+    {
+        struct map_node_tag
+        {
+        };
+
+        /**
+         * Compile the ``map_`` child template for a TSD input and (optional)
+         * broadcast args, deriving the boundary-arg source table and the
+         * ``TSD<K, OUT>`` output schema. ``func`` may take the key first
+         * (arity = 1 + broadcasts + 1).
+         */
+        [[nodiscard]] inline MapNodeSpec compile_map_child(const WiredFn &func,
+                                                           const TSValueTypeMetaData *tsd_schema,
+                                                           std::span<const TSValueTypeMetaData *const> broadcasts,
+                                                           const TSValueTypeMetaData *&output_schema)
+        {
+            if (!func.valid())
+            {
+                throw std::invalid_argument("map_: 'func' must be a wirable function (fn<X>())");
+            }
+
+            auto       &registry = TypeRegistry::instance();
+            const auto *deref    = registry.dereference(tsd_schema);
+            if (deref == nullptr || deref->kind != TSTypeKind::TSD)
+            {
+                throw std::invalid_argument("map_: the multiplexed input must be a TSD");
+            }
+            const auto *key_meta = deref->key_type();
+            const auto *element  = deref->element_ts();
+
+            const std::size_t base_arity = 1 + broadcasts.size();
+            const bool        takes_key  = func.arity == base_arity + 1;
+            if (!takes_key && func.arity != base_arity)
+            {
+                throw std::invalid_argument(
+                    "map_: 'func' must take (element, broadcasts...) — optionally preceded by the key");
+            }
+
+            const auto *key_ts = registry.ts(key_meta);
+
+            std::vector<const TSValueTypeMetaData *> schemas;
+            schemas.reserve(func.arity);
+            if (takes_key) { schemas.push_back(key_ts); }
+            schemas.push_back(element);
+            schemas.insert(schemas.end(), broadcasts.begin(), broadcasts.end());
+
+            CompiledSubGraph compiled = func.compile({schemas.data(), schemas.size()});
+            if (compiled.output_schema == nullptr)
+            {
+                throw std::invalid_argument("map_: 'func' must produce an output (sink maps are not supported yet)");
+            }
+            if (!compiled.output_binding.has_value() || !compiled.output_binding->source.path.empty())
+            {
+                throw std::invalid_argument(
+                    "map_: the function output must be a whole node output (pass-through and sub-path outputs "
+                    "are not supported yet)");
+            }
+            const auto *out = compiled.output_schema;
+            if (registry.dereference(out) != out)
+            {
+                throw std::invalid_argument(
+                    "map_: a reference-valued function output cannot back a TSD element");
+            }
+            if (out->kind == TSTypeKind::TSD || (out->kind == TSTypeKind::TSL && out->fixed_size() == 0))
+            {
+                throw std::invalid_argument(
+                    "map_: the function output cannot be embedded as a TSD element yet (TSD / dynamic-TSL "
+                    "elements are a recorded deferral)");
+            }
+            output_schema = registry.tsd(key_meta, out);
+
+            MapNodeSpec spec;
+            spec.child.graph_builder  = std::move(compiled.graph_builder);
+            spec.child.input_bindings = std::move(compiled.input_bindings);
+            spec.child.output_binding = compiled.output_binding;
+            spec.tsd_input_index      = 0;
+            spec.key_output_schema    = takes_key ? key_ts : nullptr;
+
+            // The design intent: every key has a REAL element instantiated in
+            // the parent's owned TSD output, and the child's terminal node
+            // WRITES THROUGH to it — its output is re-homed as a forwarding
+            // endpoint that the map node points at the parent element. No copy.
+            spec.child.graph_builder.node_at(spec.child.output_binding->source.node)
+                .output_endpoint(TSEndpointSchema::peered(out));
+
+            spec.args.reserve(func.arity);
+            if (takes_key) { spec.args.push_back(MapArgSource{.kind = MapArgSourceKind::Key}); }
+            spec.args.push_back(MapArgSource{.kind = MapArgSourceKind::Element});
+            for (std::size_t i = 0; i < broadcasts.size(); ++i)
+            {
+                spec.args.push_back(MapArgSource{.kind = MapArgSourceKind::OuterInput, .outer_index = 1 + i});
+            }
+            return spec;
+        }
+
+        /** The shared map wiring: compile the child template, add one map node. */
+        [[nodiscard]] inline Port<void> wire_map(Wiring &w, const Scalar<"func", WiredFn> &func,
+                                                 WiringPortRef tsd, std::vector<WiringPortRef> broadcasts)
+        {
+            std::vector<const TSValueTypeMetaData *> broadcast_schemas;
+            broadcast_schemas.reserve(broadcasts.size());
+            for (const WiringPortRef &port : broadcasts) { broadcast_schemas.push_back(port.schema); }
+
+            const TSValueTypeMetaData *output_schema = nullptr;
+            MapNodeSpec spec = compile_map_child(func.value(), tsd.schema,
+                                                 {broadcast_schemas.data(), broadcast_schemas.size()},
+                                                 output_schema);
+
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+            fields.reserve(1 + broadcasts.size());
+            fields.emplace_back("ts", tsd.schema);
+            for (std::size_t i = 0; i < broadcast_schemas.size(); ++i)
+            {
+                fields.emplace_back(std::to_string(i), broadcast_schemas[i]);
+            }
+            const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
+
+            std::vector<WiringPortRef> inputs;
+            inputs.reserve(1 + broadcasts.size());
+            inputs.push_back(std::move(tsd));
+            for (WiringPortRef &port : broadcasts) { inputs.push_back(std::move(port)); }
+
+            WiringNodeSchema node_schema;
+            node_schema.input  = input_schema;
+            node_schema.output = output_schema;
+
+            WiringPortRef out = w.add_node(
+                std::type_index(typeid(map_node_tag)), node_schema,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()},
+                Value{func.value()},
+                [&]() {
+                    NodeTypeMetaData meta;
+                    meta.display_name  = "map_";
+                    meta.input_schema  = input_schema;
+                    meta.output_schema = output_schema;
+
+                    NodeBuilder builder = map_node(std::move(meta), std::move(spec));
+                    builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                        input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                    return builder;
+                });
+            return Port<void>{w, std::move(out)};
+        }
+
+        /** Bind the output var ``O`` for the resolver: ``TSD<K, OUT(func)>``. */
+        inline void resolve_map_output(ResolutionMap &resolution, OperatorCallContext context,
+                                       std::size_t broadcast_count)
+        {
+            if (resolution.find_ts("O") != nullptr) { return; }
+
+            const WiredFn *func = context.scalar_as<WiredFn>("func");
+            if (func == nullptr) { return; }
+            if (context.args.size() < 2 || context.args[1].kind != WiringArg::Kind::TimeSeries) { return; }
+
+            std::vector<const TSValueTypeMetaData *> broadcasts;
+            broadcasts.reserve(broadcast_count);
+            for (std::size_t i = 2; i < 2 + broadcast_count; ++i)
+            {
+                if (i >= context.args.size() || context.args[i].kind != WiringArg::Kind::TimeSeries) { return; }
+                broadcasts.push_back(context.args[i].port.schema);
+            }
+
+            try
+            {
+                const TSValueTypeMetaData *output_schema = nullptr;
+                (void)compile_map_child(*func, context.args[1].port.schema,
+                                        {broadcasts.data(), broadcasts.size()}, output_schema);
+                if (output_schema != nullptr) { resolution.bind_ts("O", output_schema); }
+            }
+            catch (...)
+            {
+                // Leave unresolved; the real wiring path reports the error.
+            }
+        }
+
+        /** ``map_(func, tsd)`` — the multiplexed TSD only. */
+        struct map_impl_tsd
+        {
+            static constexpr auto name = "map_impl";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_map_output(resolution, context, 0);
+            }
+
+            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                            Port<TSD<ScalarVar<"K">, TsVar<"V">>> tsd)
+            {
+                auto out = wire_map(w, func, tsd.erased(), {});
+                return Port<TsVar<"O">>{w, out.erased()};
+            }
+        };
+
+        /** ``map_(func, tsd, ts)`` — one broadcast (non-multiplexed) argument. */
+        struct map_impl_tsd_one_ts
+        {
+            static constexpr auto name = "map_impl";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_map_output(resolution, context, 1);
+            }
+
+            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                            Port<TSD<ScalarVar<"K">, TsVar<"V">>> tsd, Port<TsVar<"B">> ts)
+            {
+                std::vector<WiringPortRef> broadcasts;
+                broadcasts.push_back(ts.erased());
+                auto out = wire_map(w, func, tsd.erased(), std::move(broadcasts));
+                return Port<TsVar<"O">>{w, out.erased()};
+            }
+        };
+    }  // namespace higher_order_impl_detail
+
     inline void register_higher_order_operators()
     {
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsl>();
@@ -416,6 +632,9 @@ namespace hgraph::stdlib
 
         register_graph_overload<switch_, higher_order_impl_detail::switch_impl_key_only>();
         register_graph_overload<switch_, higher_order_impl_detail::switch_impl_one_ts>();
+
+        register_graph_overload<map_, higher_order_impl_detail::map_impl_tsd>();
+        register_graph_overload<map_, higher_order_impl_detail::map_impl_tsd_one_ts>();
     }
 }  // namespace hgraph::stdlib
 

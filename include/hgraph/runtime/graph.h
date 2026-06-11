@@ -253,6 +253,8 @@ namespace hgraph
         [[nodiscard]] std::string_view label() const noexcept;
         [[nodiscard]] std::size_t node_count() const noexcept;
         [[nodiscard]] const std::vector<NodeBuilder> &nodes() const noexcept;
+        /** Mutable access to a wired node builder (nested operators adjust per-instance endpoints). */
+        [[nodiscard]] NodeBuilder &node_at(std::size_t index);
         [[nodiscard]] const std::vector<GraphEdge> &edges() const noexcept;
         [[nodiscard]] const GraphTypeBinding &binding() const;
         [[nodiscard]] GraphValue make_root_graph(GraphExecutorStorageRef root_executor) const;

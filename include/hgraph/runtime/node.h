@@ -154,9 +154,20 @@ namespace hgraph
         const MemoryUtils::StoragePlan *plan{nullptr};
     };
 
+    /**
+     * Build (and intern) the node storage plan. Components destroy in
+     * **reverse** order, so field placement encodes link direction:
+     * ``extra_fields`` sit before ``output`` — right for fields holding data
+     * the node's forwarding output links INTO (``nested_`` / ``switch_``
+     * child graphs: the output link unbinds first, while the child is alive).
+     * ``extra_fields_after_output`` destroy BEFORE the output — required for
+     * fields holding links INTO the node's own output (``map_`` children,
+     * whose terminal forwarding outputs write the owned TSD's elements).
+     */
     [[nodiscard]] HGRAPH_EXPORT const MemoryUtils::StoragePlan &node_storage_plan_for(
         const NodeTypeMetaData &schema,
-        std::span<const NodeStorageField> extra_fields = {});
+        std::span<const NodeStorageField> extra_fields = {},
+        std::span<const NodeStorageField> extra_fields_after_output = {});
 
     struct HGRAPH_EXPORT NodeTypeDescriptor
     {
@@ -318,6 +329,16 @@ namespace hgraph
         /** Override the input endpoint annotation for this node instance. */
         NodeBuilder &input_endpoint(TSEndpointSchema endpoint);
 
+        /**
+         * Override the output endpoint annotation for this node instance —
+         * e.g. a nested operator re-homing the node's output as a
+         * **forwarding** endpoint that writes through to externally-owned
+         * storage (``map_`` binds a child's terminal output into the parent's
+         * TSD element).
+         */
+        NodeBuilder &output_endpoint(TSEndpointSchema endpoint);
+        [[nodiscard]] const TSEndpointSchema &output_endpoint() const noexcept;
+
         /** Per-instance immutable scalar configuration (its shape is the schema's ``scalar_schema``). */
         NodeBuilder &scalars(Value scalars);
         [[nodiscard]] const Value &scalars() const noexcept;
@@ -340,6 +361,7 @@ namespace hgraph
 
         const NodeTypeBinding *binding_{nullptr};
         TSEndpointSchema       input_endpoint_{};
+        TSEndpointSchema       output_endpoint_{};
         std::string            label_{};
         Value                  scalars_{};
     };

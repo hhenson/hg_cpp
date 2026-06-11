@@ -1140,6 +1140,12 @@ namespace hgraph
     const std::vector<NodeBuilder> &GraphBuilder::nodes() const noexcept { return nodes_; }
     const std::vector<GraphEdge> &GraphBuilder::edges() const noexcept { return edges_; }
 
+    NodeBuilder &GraphBuilder::node_at(std::size_t index)
+    {
+        if (index >= nodes_.size()) { throw std::out_of_range("GraphBuilder node index is out of range"); }
+        return nodes_[index];
+    }
+
     const GraphTypeBinding &GraphBuilder::binding() const
     {
         return root_binding();

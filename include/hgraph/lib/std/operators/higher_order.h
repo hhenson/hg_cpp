@@ -116,6 +116,33 @@ namespace hgraph::stdlib
                               Out<TsVar<"O">>>
     {
     };
+
+    /**
+     * ``map_`` — apply ``func`` element-wise over a multiplexed collection,
+     * one child graph instance **per key**. Mirrors Python ``map_(func, *args)``:
+     *
+     * - the multiplexed input is a ``TSD`` (TSL multiplexing follows as a
+     *   further overload of this name); key lifecycle follows its dict delta —
+     *   an added key builds/binds/starts a fresh child, a removed key destroys
+     *   it and removes the output entry;
+     * - ``func`` may take the key as its first argument (by arity): with one
+     *   multiplexed input, arity 1 is ``(element)`` and arity 2 is
+     *   ``(key, element)``; further (broadcast) time-series arguments are
+     *   passed whole and extend the arity accordingly;
+     * - the output is an owned ``TSD<K, OUT>`` with a real element
+     *   instantiated per key; the child's terminal output is a forwarding
+     *   endpoint bound onto that element, so the child **writes the parent's
+     *   storage directly** (no copy);
+     * - fixed-arity overloads today (no broadcast / one broadcast argument);
+     *   variadic arguments, ``__keys__`` / ``pass_through`` / ``no_key``
+     *   wrappers, and sink maps arrive later.
+     */
+    struct map_ : Operator<"map_",
+                           Scalar<"func", WiredFn>,
+                           In<"ts", TsVar<"TS">>,             // the multiplexed collection (+ broadcast args)
+                           Out<TsVar<"O">>>
+    {
+    };
 }  // namespace hgraph::stdlib
 
 namespace hgraph::static_schema_detail
