@@ -178,7 +178,12 @@ namespace hgraph
         {
             throw std::logic_error("TSOutputView::bind_forwarding_target requires a forwarding output view");
         }
+        const TSOutputHandle previous = forwarding_target();
         detail::bind_target_link(data_, source);
+        if (evaluation_time_ != MIN_DT && previous.bound() && !previous.same_as(forwarding_target()))
+        {
+            detail::mutable_target_link_storage(data_)->record_target_modified(evaluation_time_);
+        }
     }
 
     void TSOutputView::clear_forwarding_target() const
@@ -187,7 +192,12 @@ namespace hgraph
         {
             throw std::logic_error("TSOutputView::clear_forwarding_target requires a forwarding output view");
         }
+        const TSOutputHandle previous = forwarding_target();
         detail::unbind_target_link(data_);
+        if (evaluation_time_ != MIN_DT && previous.bound())
+        {
+            detail::mutable_target_link_storage(data_)->record_target_modified(evaluation_time_);
+        }
     }
 
     void TSOutputView::subscribe(Notifiable *observer) const

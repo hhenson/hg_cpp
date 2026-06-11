@@ -18,8 +18,8 @@ namespace hgraph::stdlib
 {
     /**
      * Higher-order operator **definitions** (markers only), mirroring the
-     * ``ext/main`` Python direction where ``map_`` (and, to follow, ``reduce`` /
-     * ``switch_``) are ``@operator``s whose default implementations are ordinary
+     * ``ext/main`` Python direction where higher-order constructs are
+     * ``@operator``s whose default implementations are ordinary
      * registered overloads. The wirable-function argument is the ``WiredFn``
      * scalar (``fn<X>()``), so overload selection — including user
      * specialisations gated by ``requires_`` on the function's identity — runs
@@ -119,12 +119,14 @@ namespace hgraph::stdlib
 
     /**
      * ``map_`` — apply ``func`` element-wise over a multiplexed collection,
-     * one child graph instance **per key**. Mirrors Python ``map_(func, *args)``:
+     * one child graph instance **per key**. This is the current C++ subset of
+     * Python ``map_(func, *args)``:
      *
      * - the multiplexed input is a ``TSD`` (TSL multiplexing follows as a
-     *   further overload of this name); key lifecycle follows its dict delta —
-     *   an added key builds/binds/starts a fresh child, a removed key destroys
-     *   it and removes the output entry;
+     *   further overload of this name); key lifecycle is reconciled against
+     *   the current key set when the mapped source modifies or re-points — a
+     *   new key builds/binds/starts a fresh child, a missing key destroys it
+     *   and removes the output entry;
      * - ``func`` may take the key as its first argument (by arity): with one
      *   multiplexed input, arity 1 is ``(element)`` and arity 2 is
      *   ``(key, element)``; further (broadcast) time-series arguments are

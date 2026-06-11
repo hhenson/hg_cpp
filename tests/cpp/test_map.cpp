@@ -9,6 +9,7 @@
 // arguments broadcast whole to every child. See *Nested Graphs*.
 
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/value_util.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/record_replay.h>
@@ -59,6 +60,59 @@ namespace
         {
             using namespace hgraph::stdlib::syntax;
             return (ts + offset).as<TS<Int>>();
+        }
+    };
+
+    struct IdentityG
+    {
+        static constexpr auto name = "identity_g";
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts) { return ts; }
+    };
+
+    struct ConstLeftDict
+    {
+        static constexpr auto             name = "const_left_dict";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w)
+        {
+            return wire<stdlib::const_, TSD<Str, TS<Int>>>(
+                w, stdlib::make_map<Str, Int>({{Str{"a"}, Int{1}}, {Str{"b"}, Int{2}}}));
+        }
+    };
+
+    struct ConstRightDict
+    {
+        static constexpr auto             name = "const_right_dict";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w)
+        {
+            return wire<stdlib::const_, TSD<Str, TS<Int>>>(
+                w, stdlib::make_map<Str, Int>({{Str{"b"}, Int{20}}, {Str{"c"}, Int{30}}}));
+        }
+    };
+
+    struct NeverDictNode
+    {
+        static constexpr auto name = "never_dict";
+        static void eval(Out<TSD<Str, TS<Int>>>) {}
+    };
+
+    struct NoDict
+    {
+        static constexpr auto             name = "no_dict";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w) { return wire<NeverDictNode>(w); }
+    };
+
+    struct MapSwitchedDictGraph
+    {
+        static constexpr auto             name = "map_switched_dict_graph";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TS<Str>> select)
+        {
+            auto source = wire<stdlib::switch_>(
+                              w, select,
+                              stdlib::switch_cases({{Value{Str{"left"}}, fn<ConstLeftDict>()},
+                                                     {Value{Str{"right"}}, fn<ConstRightDict>()},
+                                                     {Value{Str{"none"}}, fn<NoDict>()}}))
+                              .as<TSD<Str, TS<Int>>>();
+            return wire<stdlib::map_>(w, fn<AddOneG>(), source).as<TSD<Str, TS<Int>>>();
         }
     };
 
@@ -151,6 +205,18 @@ TEST_CASE("map_: a removed key re-added later gets a fresh child instance")
                                dict_delta<Str, TS<Int>>({{"a"s, 1}})));
 }
 
+TEST_CASE("map_: a mapped source retarget reconciles keys and clears when the input goes invalid")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<MapSwitchedDictGraph>(
+                     values<Str>(Str{"left"}, Str{"right"}, Str{"none"})),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}, {"b"s, 3}}),
+                               dict_delta<Str, TS<Int>>({{"b"s, 21}, {"c"s, 31}}, {"a"s}),
+                               dict_delta<Str, TS<Int>>({}, {"b"s, "c"s})));
+}
+
 TEST_CASE("map_: a function whose signature does not fit the inputs is rejected at wiring time")
 {
     using namespace hgraph;
@@ -163,4 +229,14 @@ TEST_CASE("map_: a function whose signature does not fit the inputs is rejected 
                           fn<AddOffsetG>(),
                           values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}})))),
                       OperatorResolutionError);
+}
+
+TEST_CASE("map_: a pass-through child output is rejected at wiring time")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    REQUIRE_THROWS((eval_node<stdlib::map_, TSD<Str, TS<Int>>>(
+        fn<IdentityG>(),
+        values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}})))));
 }

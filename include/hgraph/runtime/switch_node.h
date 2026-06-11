@@ -60,12 +60,12 @@ namespace hgraph
     /**
      * Build a node owning **at most one** child graph, selected by its first
      * (``key``) input per ``switch_`` semantics: on a key change (or any key
-     * tick with ``reload_on_ticked``) the active child is stopped and
-     * destroyed, the branch for the new key (else the default branch, else a
-     * runtime error) is built, bound and started, and the forwarding output
-     * **re-points** — sampling the new branch's output at the switch time (the
-     * sampled-runtime contract; a deliberate divergence from Python's
-     * ``value = None`` reset).
+     * tick with ``reload_on_ticked``) the active child is stopped and retired
+     * for at least one outer evaluation cycle, the branch for the new key
+     * (else the default branch, else a runtime error) is built, bound and
+     * started, and the forwarding output **re-points** — sampling the new
+     * branch's output at the switch time (the sampled-runtime contract; a
+     * deliberate divergence from Python's ``value = None`` reset).
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder switch_node(NodeTypeMetaData meta, SwitchNodeSpec spec);
 }  // namespace hgraph

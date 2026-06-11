@@ -61,12 +61,13 @@ namespace hgraph
 
     /**
      * Build a node owning **one child graph per key** of its multiplexed TSD
-     * input. Key lifecycle follows the input's dict delta: an added key
-     * instantiates a real element in the owned TSD output and builds, binds
-     * and starts a fresh child instance whose terminal **forwarding output is
-     * bound onto that element** — the child writes the parent's storage
-     * directly (no copy). A removed key stops and destroys the child, then
-     * removes the element (see *Nested Graphs*).
+     * input. Key lifecycle is reconciled against the current TSD key set when
+     * the multiplexed input modifies, re-points, or is first observed: a new
+     * key instantiates a real element in the owned TSD output and builds,
+     * binds and starts a fresh child instance whose terminal **forwarding
+     * output is bound onto that element** — the child writes the parent's
+     * storage directly (no copy). A missing key stops and destroys the child,
+     * then removes the element (see *Nested Graphs*).
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder map_node(NodeTypeMetaData meta, MapNodeSpec spec);
 }  // namespace hgraph

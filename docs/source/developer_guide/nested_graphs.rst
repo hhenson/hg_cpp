@@ -117,7 +117,7 @@ Tests: ``tests/cpp/test_nested_wiring.cpp``.
 Higher-order constructs are operators
 -------------------------------------
 
-``reduce`` — and ``map_`` / ``switch_`` when they land — are **ordinary
+``reduce``, ``switch_`` and the current ``map_`` subset are **ordinary
 operators**, not bespoke wiring functions. This mirrors the ``ext/main``
 direction (``map_`` is an ``@operator`` whose old implementation became the
 default registered overload): the default implementation is one registry
@@ -232,9 +232,12 @@ ts…)``).
 - **Runtime** (``runtime/switch_node.{h,cpp}``, on the shared
   ``nested_bindings`` helpers): at most one live child in node storage. On a
   key change (or any key tick with ``reload_on_ticked`` — runtime-supported,
-  not yet exposed by the operator) the active child is stopped and destroyed,
+  not yet exposed by the operator) the active child is stopped and retired,
   the new branch (else the default, else a runtime error) is built, bound and
-  started, and the forwarding output **re-points**.
+  started, and the forwarding output **re-points**. Retired branches are kept
+  alive for at least one outer evaluation cycle so downstream consumers that
+  were bound through the previous branch can unsubscribe in normal topological
+  order.
 - **Sampled semantics** (the sampled-runtime contract; the recorded
   divergence from Python's ``value = None`` reset): the freshly selected
   branch evaluates with the *current* upstream values even when they did not
@@ -242,11 +245,11 @@ ts…)``).
   already-valid source schedules the child through the normal input
   notification path at the switch time. Pinned by test (a swap while the ts
   input holds emits the new branch's value immediately).
-- **Lifecycle**: switching away destroys the child ``GraphValue`` (immediate
-  destroy is safe — the output is re-pointed first); switching back rebuilds
-  a fresh instance (per-branch state resets — pinned by test). The output's
-  resolver discovers the schema by compiling the first branch
-  (``resolve_default_types`` on the overloads).
+- **Lifecycle**: switching away stops and retires the child ``GraphValue``;
+  switching back rebuilds a fresh instance (per-branch state resets — pinned
+  by test). The previous retired set is released on the next switch
+  evaluation, and on node stop. The output's resolver discovers the schema by
+  compiling the first branch (``resolve_default_types`` on the overloads).
 - Deferred: variadic time-series arguments (overloads cover none/one until
   variadic operator parameters exist), exposing ``reload_on_ticked``, and
   all-sink switches.
@@ -261,12 +264,14 @@ Tests: ``tests/cpp/test_switch.cpp``.
 of its multiplexed ``TSD`` input — an operator like the rest of the family
 (``wire<stdlib::map_>(w, fn<G>(), tsd_port[, ts…])``).
 
-- **Key lifecycle follows the input's dict delta**: a removed key stops and
-  destroys its child (and removes the owned output's entry); a key present in
-  the input without a child builds, binds and starts a fresh instance (the
-  full-key scan on the first evaluation also covers an already-valid input).
-  A removed-then-re-added key gets a **fresh** child (state resets — pinned
-  by test).
+- **Key lifecycle is current-key reconciliation**: when the mapped TSD
+  modifies, re-points, or is first observed, the map node scans the current
+  key set. A key missing from the current input stops and destroys its child
+  (and removes the owned output's entry); a key present in the input without a
+  child builds, binds and starts a fresh instance. This handles ordinary dict
+  deltas and upstream forwarding/REF retargets that replace the source rather
+  than publishing per-key removals. A removed-then-re-added key gets a
+  **fresh** child (state resets — pinned by test).
 - **Per-key state** lives in node storage as
   ``unordered_dense::map<Value, unique_ptr<MapKeyEntry>>`` — ``unique_ptr``
   for pointer stability across rehash (a relocated live ``GraphValue`` would
@@ -289,15 +294,16 @@ of its multiplexed ``TSD`` input — an operator like the rest of the family
   element. The child node then **writes the parent's storage directly**
   through the link (``target_link_copy_value_from`` resolves the target and
   runs the standard mutation path, so modified tracking and dict parent
-  recording are exactly the owned-write path). All bindings are made **once
-  at entry creation** — elements live in stable slot storage and exist
-  exactly as long as the entry, so nothing re-binds per cycle; the only
-  invalidation is an outer input's bound output re-pointing (an upstream REF
-  retarget), detected with one handle compare per outer input per cycle and
-  re-binding entry inputs only then. Removals destroy the child (its link
-  unbinds) and then ``erase`` the element (publishing the removed delta). Wiring rejects
-  ``OUT`` shapes that cannot embed as TSD elements (``TSD`` / dynamic
-  ``TSL``), reference-valued outputs, and pass-through/sub-path outputs.
+  recording are exactly the owned-write path). Bindings are established at
+  entry creation and refreshed only when an outer input's bound output
+  re-points (an upstream forwarding/REF retarget), detected with one handle
+  compare per outer input per cycle. Output forwarding retargets mark the
+  forwarding endpoint modified so active downstream consumers schedule for the
+  retarget cycle, including retargets to an invalid source. Removals destroy
+  the child (its link unbinds) and then ``erase`` the element (publishing the
+  removed delta). Wiring rejects ``OUT`` shapes that cannot embed as TSD
+  elements (``TSD`` / dynamic ``TSL``), reference-valued outputs, and
+  pass-through/sub-path outputs.
 - **Storage-plan ordering is load-bearing**: the map field is placed *after*
   ``output`` in the node storage plan (``node_storage_plan_for``'s
   ``extra_fields_after_output``) so reverse-order destruction tears the
@@ -364,8 +370,7 @@ Roadmap (this milestone)
    default registered overload of the ``reduce`` operator; the combiner is the
    ``WiredFn`` scalar (see its section above); leaves are
    ``default(ts[i], zero)`` with the op-aware ``zero_`` (derived) or the
-   explicit-zero arity. ``map_`` / ``switch_`` follow the same operator shape
-   when they land.
+   explicit-zero arity. ``map_`` / ``switch_`` follow the same operator shape.
 3. **Done — scheduling push delegation + shared binding helpers.** See
    *Scheduling delegation* above; helpers extracted to
    ``runtime/nested_bindings.h``.
@@ -373,9 +378,10 @@ Roadmap (this milestone)
    sampled retarget on key change, key consumption as an ordinary boundary
    input. ASAN/UBSAN-verified (branch teardown/rebuild churn).
 5. **Done — ``map_`` over ``TSD``** (see its section above): keyed child
-   instances driven by the input dict delta; child terminals write through
-   forwarding outputs into the owned ``TSD``'s instantiated elements (no
-   copy). ASAN/UBSAN-verified (keyed create/destroy churn).
+   instances driven by current-key reconciliation on mapped-source
+   modification/repoint; child terminals write through forwarding outputs into
+   the owned ``TSD``'s instantiated elements (no copy). ASAN/UBSAN-verified
+   (keyed create/destroy churn).
 6. *(gated)* associative ``reduce`` over ``TSD`` — only after the 2603 reduce
    design is ported into this page and reconciled.
 

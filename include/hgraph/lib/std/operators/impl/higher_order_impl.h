@@ -462,7 +462,9 @@ namespace hgraph::stdlib
             {
                 throw std::invalid_argument("map_: 'func' must produce an output (sink maps are not supported yet)");
             }
-            if (!compiled.output_binding.has_value() || !compiled.output_binding->source.path.empty())
+            if (!compiled.output_binding.has_value() ||
+                compiled.output_binding->kind != NestedGraphOutputBinding::Kind::ChildOutput ||
+                !compiled.output_binding->source.path.empty())
             {
                 throw std::invalid_argument(
                     "map_: the function output must be a whole node output (pass-through and sub-path outputs "

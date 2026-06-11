@@ -523,7 +523,9 @@ concrete overloads and a ``register_<family>_operators()`` function, and
 implemented subset currently covers scalar arithmetic (``impl/arithmetic_impl.h``),
 scalar comparison (``impl/comparison_impl.h``), scalar logical / bitwise operators
 (``impl/logical_impl.h``), ``const_`` / ``zero_`` (``impl/conversion_impl.h``) and
-``debug_print`` / ``null_sink`` (``impl/io_impl.h``). Further families gain their
+``debug_print`` / ``null_sink`` (``impl/io_impl.h``), plus the current
+higher-order subset (``reduce``, ``switch_`` and ``map_`` in
+``impl/higher_order_impl.h``). Further families gain their
 ``impl/<family>_impl.h`` (and a registration call) as they land. The
 ``<hgraph/lib/std/std_operators.h>`` umbrella pulls in both the definitions and the
 implementations, plus opt-in expression sugar in ``operators/syntax.h``.
@@ -532,12 +534,13 @@ implementations, plus opt-in expression sugar in ``operators/syntax.h``.
 Higher-order operators and the ``WiredFn`` scalar
 -------------------------------------------------
 
-The higher-order constructs (``reduce``; ``map_`` / ``switch_`` to follow) are
-**ordinary operators**, mirroring the ``ext/main`` Python direction where
-``map_`` is an ``@operator`` whose old wiring-time implementation became the
-default registered overload (``map_default``), and user specialisations
-register alongside it — selected by the standard best-match machinery,
-including ``requires`` predicates over the *value* of the callable argument.
+The higher-order constructs (``reduce``, ``switch_`` and the current ``map_``
+subset) are **ordinary operators**, mirroring the ``ext/main`` Python
+direction where ``map_`` is an ``@operator`` whose old wiring-time
+implementation became the default registered overload (``map_default``), and
+user specialisations register alongside it — selected by the standard
+best-match machinery, including ``requires`` predicates over the *value* of
+the callable argument.
 
 The C++ analogue of ``func: Callable`` is the **``WiredFn`` scalar**
 (``include/hgraph/types/wired_fn.h``): ``fn<X>()`` erases an operator marker,

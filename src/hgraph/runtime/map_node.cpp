@@ -1,5 +1,7 @@
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/nested_bindings.h>
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/util/scope.h>
 
 #include <ankerl/unordered_dense.h>
 
@@ -59,8 +61,8 @@ namespace hgraph
             // GraphValue would break its nodes' notifier subscriptions.
             ankerl::unordered_dense::map<Value, std::unique_ptr<MapKeyEntry>, ValueKeyHash, ValueKeyEqual> active{};
             // Cached bound-output handles of the outer inputs (tsd + broadcast
-            // sources). Bindings are made ONCE at entry creation; a change here
-            // (an upstream re-point) is the only thing that re-binds entries.
+            // sources). Entry input bindings are established at creation and
+            // refreshed only when an upstream source re-points.
             std::vector<TSOutputHandle> outer_sources{};
             bool primed{false};
         };
@@ -69,6 +71,12 @@ namespace hgraph
         {
             MapNodeSpec spec{};
             std::size_t storage_offset{0};
+        };
+
+        struct SourceRepointStatus
+        {
+            bool any_repointed{false};
+            bool tsd_repointed{false};
         };
 
         // Program-lifetime, intentionally-leaked context storage — same rationale
@@ -93,6 +101,67 @@ namespace hgraph
         [[nodiscard]] std::vector<std::size_t> path_suffix(const std::vector<std::size_t> &path)
         {
             return std::vector<std::size_t>{path.begin() + 1, path.end()};
+        }
+
+        [[nodiscard]] SourceRepointStatus update_source_handles(const TSInputView &root_input,
+                                                                MapNodeStorage &storage,
+                                                                std::size_t tsd_input_index)
+        {
+            const std::size_t outer_count = root_input.as_bundle().size();
+            const bool        initialized = storage.outer_sources.size() == outer_count;
+            storage.outer_sources.resize(outer_count);
+
+            SourceRepointStatus status;
+            for (std::size_t i = 0; i < outer_count; ++i)
+            {
+                TSOutputHandle current{
+                    walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{i}).bound_output()};
+                if (!current.same_as(storage.outer_sources[i]))
+                {
+                    storage.outer_sources[i] = current;
+                    if (initialized)
+                    {
+                        status.any_repointed = true;
+                        if (i == tsd_input_index) { status.tsd_repointed = true; }
+                    }
+                }
+            }
+            return status;
+        }
+
+        void remove_entry(MapNodeStorage &storage, TSDDataMutationView &output_mutation, const Value &key)
+        {
+            auto it = storage.active.find(key);
+            if (it == storage.active.end()) { return; }
+
+            if (it->second->graph.has_value()) { it->second->graph.view().stop(); }
+            (void)output_mutation.erase(key.view());
+            storage.active.erase(it);
+        }
+
+        void remove_entries_missing_from_input(MapNodeStorage &storage,
+                                               TSDDataMutationView &output_mutation,
+                                               const TSDInputView &dict_input)
+        {
+            std::vector<Value> stale_keys;
+            for (const auto &[key, entry] : storage.active)
+            {
+                static_cast<void>(entry);
+                if (!dict_input.contains(key.view())) { stale_keys.push_back(key); }
+            }
+            for (const Value &key : stale_keys) { remove_entry(storage, output_mutation, key); }
+        }
+
+        void remove_all_entries(MapNodeStorage &storage, TSDDataMutationView &output_mutation)
+        {
+            std::vector<Value> keys;
+            keys.reserve(storage.active.size());
+            for (const auto &[key, entry] : storage.active)
+            {
+                static_cast<void>(entry);
+                keys.push_back(key);
+            }
+            for (const Value &key : keys) { remove_entry(storage, output_mutation, key); }
         }
 
         /** Bind (or re-bind) one entry's child boundary inputs for its key. */
@@ -191,12 +260,17 @@ namespace hgraph
             // the child's terminal forwarding output to it (stable for the
             // entry's lifetime).
             (void)output_mutation[key_view];
+            auto rollback = UnwindCleanupGuard([&] {
+                if (entry->graph.has_value() && entry->graph.view().started()) { entry->graph.view().stop(); }
+                (void)output_mutation.erase(key.view());
+            });
 
             bind_entry(view, context, *entry, key, evaluation_time);
             bind_entry_output(view, context, *entry, key, evaluation_time);
             entry->graph.view().start(evaluation_time);
 
             storage.active.emplace(std::move(key), std::move(entry));
+            rollback.release();
         }
 
         void map_evaluate(const NodeView &view, DateTime evaluation_time)
@@ -211,36 +285,25 @@ namespace hgraph
             auto root_input = view.input(evaluation_time);
             auto tsd_input  = walk_ts_path(root_input.borrowed_ref(),
                                            std::vector<std::size_t>{spec.tsd_input_index});
+            SourceRepointStatus source_status =
+                update_source_handles(root_input.borrowed_ref(), storage, spec.tsd_input_index);
+            bool bindings_need_refresh = source_status.any_repointed;
 
             if (tsd_input.valid())
             {
-                // Key lifecycle in one output-mutation scope: removed keys first
-                // (the input's delta surface), then a fresh child per new key
-                // (the full key scan also covers the first evaluation over an
-                // already-valid input). Child evaluations below write through
-                // their forwarding outputs and need no mutation scope here.
+                // Key lifecycle in one output-mutation scope: reconcile stale
+                // children against the current key set, then create one fresh
+                // child per new key. Child evaluations below write through their
+                // forwarding outputs and need no mutation scope here.
                 auto output          = view.output(evaluation_time);
                 auto output_dict     = output.as_dict();
                 auto output_mutation = output_dict.begin_mutation(evaluation_time);
 
                 auto dict_input = tsd_input.as_dict();
 
-                if (tsd_input.modified())
+                if (source_status.tsd_repointed || tsd_input.modified() || !storage.primed)
                 {
-                    for (const ValueView &key : dict_input.removed_keys())
-                    {
-                        if (auto it = storage.active.find(Value{key}); it != storage.active.end())
-                        {
-                            // Destroy the child (its terminal unbinds from the
-                            // element) BEFORE removing the element itself.
-                            it->second->graph.view().stop();
-                            storage.active.erase(it);
-                            (void)output_mutation.erase(key);
-                        }
-                    }
-                }
-                if (tsd_input.modified() || !storage.primed)
-                {
+                    remove_entries_missing_from_input(storage, output_mutation, dict_input);
                     for (const ValueView &key : dict_input.keys())
                     {
                         if (storage.active.find(Value{key}) == storage.active.end())
@@ -249,29 +312,19 @@ namespace hgraph
                         }
                     }
                     storage.primed = true;
+                    if (tsd_input.modified()) { bindings_need_refresh = true; }
                 }
             }
-
-            // Bindings are made once at entry creation; the only invalidation
-            // is an outer input's bound output re-pointing (e.g. an upstream
-            // REF retarget) — detected with one handle compare per outer input
-            // per cycle, re-binding every entry's inputs only then. The output
-            // forwarding never re-binds: the owned element is stable for the
-            // entry's lifetime.
-            bool outer_repointed = false;
+            else if (source_status.tsd_repointed || tsd_input.modified())
             {
-                const std::size_t outer_count = root_input.as_bundle().size();
-                storage.outer_sources.resize(outer_count);
-                for (std::size_t i = 0; i < outer_count; ++i)
+                if (!storage.active.empty())
                 {
-                    TSOutputHandle current{
-                        walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{i}).bound_output()};
-                    if (!current.same_as(storage.outer_sources[i]))
-                    {
-                        storage.outer_sources[i] = current;
-                        outer_repointed          = true;
-                    }
+                    auto output          = view.output(evaluation_time);
+                    auto output_dict     = output.as_dict();
+                    auto output_mutation = output_dict.begin_mutation(evaluation_time);
+                    remove_all_entries(storage, output_mutation);
                 }
+                storage.primed = false;
             }
 
             // Evaluate due children: their terminal forwarding outputs write the
@@ -282,7 +335,7 @@ namespace hgraph
             for (auto &[key, entry] : storage.active)
             {
                 auto child = entry->graph.view();
-                if (outer_repointed) { bind_entry(view, context, *entry, key, evaluation_time); }
+                if (bindings_need_refresh) { bind_entry(view, context, *entry, key, evaluation_time); }
 
                 if (child.next_scheduled_time() <= evaluation_time)
                 {
@@ -307,6 +360,110 @@ namespace hgraph
             for (auto &[key, entry] : storage.active)
             {
                 if (entry->graph.has_value()) { entry->graph.view().stop(); }
+            }
+        }
+
+        void validate_map_node_spec(const NodeTypeMetaData &meta, const MapNodeSpec &spec)
+        {
+            if (!spec.child.output_binding.has_value())
+            {
+                throw std::invalid_argument("map_node requires a child output binding (sink maps are not supported yet)");
+            }
+            if (meta.input_schema == nullptr || meta.input_schema->kind != TSTypeKind::TSB)
+            {
+                throw std::invalid_argument("map_node requires a TSB input schema");
+            }
+            if (meta.output_schema == nullptr || meta.output_schema->kind != TSTypeKind::TSD)
+            {
+                throw std::invalid_argument("map_node requires a TSD output schema");
+            }
+            if (spec.tsd_input_index >= meta.input_schema->field_count())
+            {
+                throw std::invalid_argument("map_node TSD input index is out of range");
+            }
+
+            const auto *input_fields = meta.input_schema->fields();
+            const auto *tsd_schema =
+                TypeRegistry::instance().dereference(input_fields[spec.tsd_input_index].type);
+            if (tsd_schema == nullptr || tsd_schema->kind != TSTypeKind::TSD)
+            {
+                throw std::invalid_argument("map_node TSD input index must select a TSD input field");
+            }
+            if (tsd_schema->key_type() != meta.output_schema->key_type())
+            {
+                throw std::invalid_argument("map_node output key type must match the multiplexed input key type");
+            }
+
+            const std::size_t child_node_count = spec.child.graph_builder.node_count();
+            const auto       &output_binding   = *spec.child.output_binding;
+            if (output_binding.kind != NestedGraphOutputBinding::Kind::ChildOutput)
+            {
+                throw std::invalid_argument(
+                    "map_node requires the child graph output to be a real child output, not a parent-input alias");
+            }
+            if (!output_binding.target_path.empty())
+            {
+                throw std::invalid_argument("map_node child output binding must target the map element root");
+            }
+            if (output_binding.source.node >= child_node_count)
+            {
+                throw std::invalid_argument("map_node child output source node is out of range");
+            }
+
+            bool key_source_seen = false;
+            bool element_source_seen = false;
+            for (const NestedGraphInputBinding &binding : spec.child.input_bindings)
+            {
+                if (binding.source_path.empty())
+                {
+                    throw std::invalid_argument("map_node child input binding requires a boundary argument ordinal");
+                }
+                if (binding.source_path[0] >= spec.args.size())
+                {
+                    throw std::invalid_argument("map_node child input binding source ordinal is out of range");
+                }
+                if (binding.target.node >= child_node_count)
+                {
+                    throw std::invalid_argument("map_node child input target node is out of range");
+                }
+
+                const MapArgSource &arg = spec.args[binding.source_path[0]];
+                switch (arg.kind)
+                {
+                    case MapArgSourceKind::Key:
+                        key_source_seen = true;
+                        break;
+                    case MapArgSourceKind::Element:
+                        element_source_seen = true;
+                        break;
+                    case MapArgSourceKind::OuterInput:
+                        if (arg.outer_index >= meta.input_schema->field_count())
+                        {
+                            throw std::invalid_argument("map_node outer input source index is out of range");
+                        }
+                        break;
+                }
+            }
+            if (!element_source_seen)
+            {
+                throw std::invalid_argument("map_node requires one child input sourced from the mapped TSD element");
+            }
+
+            if (key_source_seen)
+            {
+                if (spec.key_output_schema == nullptr)
+                {
+                    throw std::invalid_argument("map_node key argument requires a key output schema");
+                }
+                if (spec.key_output_schema->kind != TSTypeKind::TS ||
+                    spec.key_output_schema->value_schema != tsd_schema->key_type())
+                {
+                    throw std::invalid_argument("map_node key output schema must be TS<K> for the mapped key type");
+                }
+            }
+            else if (spec.key_output_schema != nullptr)
+            {
+                throw std::invalid_argument("map_node key output schema was supplied but no key argument is bound");
             }
         }
     }  // namespace
@@ -341,16 +498,10 @@ namespace hgraph
 
     NodeBuilder map_node(NodeTypeMetaData meta, MapNodeSpec spec)
     {
-        if (!spec.child.output_binding.has_value())
-        {
-            throw std::invalid_argument("map_node requires a child output binding (sink maps are not supported yet)");
-        }
-        if (meta.output_schema == nullptr || meta.output_schema->kind != TSTypeKind::TSD)
-        {
-            throw std::invalid_argument("map_node requires a TSD output schema");
-        }
+        validate_map_node_spec(meta, spec);
 
         meta.node_kind = NodeKind::Nested;
+        meta.valid_inputs = std::vector<std::size_t>{};
 
         NodeTypeDescriptor descriptor;
         descriptor.schema = std::move(meta);

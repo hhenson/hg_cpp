@@ -17,6 +17,7 @@ namespace hgraph
         struct SwitchNodeStorage
         {
             GraphValue                       active{};
+            std::vector<GraphValue>          retired{};
             Value                            active_key{};
             const SingleNestedGraphNodeSpec *active_spec{nullptr};
         };
@@ -97,7 +98,9 @@ namespace hgraph
             if (!storage.active.has_value()) { return; }
             if (storage.active_spec != nullptr) { clear_branch_output(view, *storage.active_spec, evaluation_time); }
             storage.active.view().stop();
+            storage.retired.push_back(std::move(storage.active));
             storage.active      = GraphValue{};
+            storage.active_key  = Value{};
             storage.active_spec = nullptr;
         }
 
@@ -108,6 +111,8 @@ namespace hgraph
             auto        switch_view = view.as<SwitchNodeView>();
             const auto &context = *static_cast<const SwitchNodeContext *>(switch_view.internal_context());
             auto       &storage = *MemoryUtils::cast<SwitchNodeStorage>(switch_view.internal_storage());
+
+            storage.retired.clear();
 
             auto root_input   = view.input(evaluation_time);
             auto root_bundle  = root_input.as_bundle();
@@ -172,6 +177,7 @@ namespace hgraph
             // torn down with the parent output, so the last forwarded value stays
             // observable after a run.
             if (storage.active.has_value()) { storage.active.view().stop(); }
+            storage.retired.clear();
         }
     }  // namespace
 
