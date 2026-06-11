@@ -48,97 +48,48 @@ namespace
         return Date{year{y} / month{m} / day{d}};
     }
 
-    // zero_ is a *source* operator (no time-series input), so it is outside eval_node's
-    // scope; drive it through a small graph instead.
-    template <typename Schema>
-    struct ZeroGraph
-    {
-        static constexpr auto name = "zero_graph";
-        static void           compose(Wiring &w)
-        {
-            auto z = wire<stdlib::zero_, Schema>(w);
-            wire<testing::record>(w, z, Str{"out"});
-        }
-    };
 
+    // Lightweight graphs with declared inputs/outputs, driven through eval_node.
     struct SyntaxArithmeticGraph
     {
         static constexpr auto name = "syntax_arithmetic_graph";
-        static void           compose(Wiring &w)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> a, Port<TS<Int>> b)
         {
             using namespace hgraph::stdlib::syntax;
-
-            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
-            auto b = wire<testing::replay, TS<Int>>(w, Str{"b"});
-            auto c = (a + b * Int{2}).as<TS<Int>>();
-            wire<testing::record>(w, c, Str{"out"});
+            return (a + b * Int{2}).as<TS<Int>>();
         }
     };
 
     struct SyntaxComparisonGraph
     {
         static constexpr auto name = "syntax_comparison_graph";
-        static void           compose(Wiring &w)
+        static Port<TS<Bool>> compose(Wiring &, Port<TS<Int>> a, Port<TS<Float>> b)
         {
             using namespace hgraph::stdlib::syntax;
-
-            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
-            auto b = wire<testing::replay, TS<Float>>(w, Str{"b"});
-            auto c = (a < b) || !(a == Int{0});
-            wire<testing::record>(w, c, Str{"out"});
+            return ((a < b) || !(a == Int{0})).as<TS<Bool>>();
         }
     };
 
     struct SyntaxNamedHelperGraph
     {
         static constexpr auto name = "syntax_named_helper_graph";
-        static void           compose(Wiring &w)
+        static Port<TS<Float>> compose(Wiring &, Port<TS<Int>> a)
         {
             using namespace hgraph::stdlib::syntax;
-
-            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
-            auto c = (pow(abs(-a), Int{2}) / Int{2}).as<TS<Float>>();
-            wire<testing::record>(w, c, Str{"out"});
+            return (pow(abs(-a), Int{2}) / Int{2}).as<TS<Float>>();
         }
     };
 
     struct SyntaxBadCastGraph
     {
         static constexpr auto name = "syntax_bad_cast_graph";
-        static void           compose(Wiring &w)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> a, Port<TS<Int>> b)
         {
             using namespace hgraph::stdlib::syntax;
-
-            auto a = wire<testing::replay, TS<Int>>(w, Str{"a"});
-            auto b = wire<testing::replay, TS<Int>>(w, Str{"b"});
-            auto c = (a / b).as<TS<Int>>();
-            wire<testing::record>(w, c, Str{"out"});
+            return (a / b).as<TS<Int>>();   // int / int -> float: the cast must throw
         }
     };
 
-    template <typename Graph>
-    GraphExecutorValue run_graph()
-    {
-        GraphBuilder         gb = build_graph<Graph>();
-        GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
-        GraphExecutorValue ex = eb.make_executor();
-        ex.view().run();
-        return ex;
-    }
-
-    template <typename Graph, typename Seed>
-    GraphExecutorValue run_graph(Seed seed)
-    {
-        GraphBuilder gb = build_graph<Graph>();
-        seed(gb.global_state());
-
-        GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
-        GraphExecutorValue ex = eb.make_executor();
-        ex.view().run();
-        return ex;
-    }
 }  // namespace
 
 TEST_CASE("std operators: add_ selects the int implementation for TS<Int> operands")
@@ -235,60 +186,59 @@ TEST_CASE("std operators: eq_ works for strings")
                  values<Bool>(true, false));
 }
 
-TEST_CASE("std operators: zero_ emits the additive zero for standard scalar outputs")
+TEST_CASE("std operators: zero_ emits the op-aware zero for standard scalar outputs")
 {
     stdlib::register_standard_operators();
 
-    {
-        auto ex = run_graph<ZeroGraph<TS<Int>>>();
-        CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {0});
-    }
-    {
-        auto ex = run_graph<ZeroGraph<TS<Float>>>();
-        CHECK_OUTPUT(get_recorded_values<Float>(ex.view().graph().global_state(), "out"), {Float{0}});
-    }
-    {
-        auto ex = run_graph<ZeroGraph<TS<Str>>>();
-        CHECK_OUTPUT(get_recorded_values<Str>(ex.view().graph().global_state(), "out"), {Str{}});
-    }
+    CHECK_OUTPUT((eval_node<stdlib::zero_, TS<Int>>(fn<stdlib::add_>())), values<Int>(0));
+    CHECK_OUTPUT((eval_node<stdlib::zero_, TS<Int>>(fn<stdlib::mul_>())), values<Int>(1));
+    CHECK_OUTPUT((eval_node<stdlib::zero_, TS<Int>>(fn<stdlib::min_>())),
+                 values<Int>(std::numeric_limits<Int>::max()));
+    CHECK_OUTPUT((eval_node<stdlib::zero_, TS<Float>>(fn<stdlib::add_>())), values<Float>(Float{0}));
+    CHECK_OUTPUT((eval_node<stdlib::zero_, TS<Float>>(fn<stdlib::max_>())),
+                 values<Float>(-std::numeric_limits<Float>::infinity()));
+    CHECK_OUTPUT((eval_node<stdlib::zero_, TS<Str>>(fn<stdlib::add_>())), values<Str>(Str{}));
+}
+
+TEST_CASE("std operators: default_ substitutes the default until ts first ticks")
+{
+    stdlib::register_standard_operators();
+
+    // ts invalid for two cycles: the default (9) holds, then ts takes over.
+    CHECK_OUTPUT(eval_node<stdlib::default_>(values<Int>(none, none, 3, 4), values<Int>(9)),
+                 values<Int>(9, none, 3, 4));
+
+    // ts valid from the first cycle: the default never shows.
+    CHECK_OUTPUT(eval_node<stdlib::default_>(values<Int>(1, 2), values<Int>(9)), values<Int>(1, 2));
 }
 
 TEST_CASE("std operators: syntax sugar wires arithmetic expressions through standard overloads")
 {
     stdlib::register_standard_operators();
 
-    auto ex = run_graph<SyntaxArithmeticGraph>([](const GlobalStateView &gs) {
-        set_replay_values<Int>(gs, "a", values<Int>(1, 2, 3));
-        set_replay_values<Int>(gs, "b", values<Int>(10, 20, 30));
-    });
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), values<Int>(21, 42, 63));
+    CHECK_OUTPUT(eval_node<SyntaxArithmeticGraph>(values<Int>(1, 2, 3), values<Int>(10, 20, 30)),
+                 values<Int>(21, 42, 63));
 }
 
 TEST_CASE("std operators: syntax sugar composes comparisons and logical operators")
 {
     stdlib::register_standard_operators();
 
-    auto ex = run_graph<SyntaxComparisonGraph>([](const GlobalStateView &gs) {
-        set_replay_values<Int>(gs, "a", values<Int>(1, 0, 5));
-        set_replay_values<Float>(gs, "b", values<Float>(2.0, -1.0, 4.0));
-    });
-    CHECK_OUTPUT(get_recorded_values<Bool>(ex.view().graph().global_state(), "out"), values<Bool>(true, false, true));
+    CHECK_OUTPUT(eval_node<SyntaxComparisonGraph>(values<Int>(1, 0, 5), values<Float>(2.0, -1.0, 4.0)),
+                 values<Bool>(true, false, true));
 }
 
 TEST_CASE("std operators: syntax helpers cover non-overloadable arithmetic operators")
 {
     stdlib::register_standard_operators();
 
-    auto ex = run_graph<SyntaxNamedHelperGraph>([](const GlobalStateView &gs) {
-        set_replay_values<Int>(gs, "a", values<Int>(-2, 3));
-    });
-    CHECK_OUTPUT(get_recorded_values<Float>(ex.view().graph().global_state(), "out"), values<Float>(2.0, 4.5));
+    CHECK_OUTPUT(eval_node<SyntaxNamedHelperGraph>(values<Int>(-2, 3)), values<Float>(2.0, 4.5));
 }
 
 TEST_CASE("std operators: syntax port cast validates the resolved runtime schema")
 {
     stdlib::register_standard_operators();
-    REQUIRE_THROWS_AS(build_graph<SyntaxBadCastGraph>(), std::logic_error);
+    REQUIRE_THROWS_AS(eval_node<SyntaxBadCastGraph>(values<Int>(7), values<Int>(2)), std::logic_error);
 }
 
 TEST_CASE("std operators: floordiv_ and mod_ use floor semantics")

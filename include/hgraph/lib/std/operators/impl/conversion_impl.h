@@ -1,7 +1,10 @@
 #ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_CONVERSION_IMPL_H
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_CONVERSION_IMPL_H
 
-#include <hgraph/lib/std/operators/conversion.h>   // const_ / zero_
+#include <hgraph/lib/std/operators/arithmetic.h>    // add_ / mul_ (zero_ op mapping)
+#include <hgraph/lib/std/operators/collection.h>    // sum_     (zero_ op mapping)
+#include <hgraph/lib/std/operators/comparison.h>    // min_ / max_ (zero_ op mapping)
+#include <hgraph/lib/std/operators/conversion.h>    // const_ / zero_ / default_
 #include <hgraph/runtime/node_scheduler.h>          // SingleShotScheduler
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -9,8 +12,10 @@
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/type_resolution.h>
+#include <hgraph/types/wired_fn.h>
 #include <hgraph/util/date_time.h>
 
+#include <limits>
 #include <stdexcept>
 
 namespace hgraph::stdlib
@@ -85,25 +90,102 @@ namespace hgraph::stdlib
         }
     };
 
-    /** ``zero_`` — additive zero source for ``TS<Int>``. */
+    /**
+     * ``zero_`` implementations — op-aware zero sources, mirroring Python
+     * ``_impl/_operators/_zero.py``: the zero value depends on both the output
+     * type and the operation (``add_``/``sum_`` -> identity of addition,
+     * ``mul_`` -> identity of multiplication, ``min_``/``max_`` -> the
+     * saturating bound). An unmapped operation is a wiring-time error, like
+     * Python's ``KeyError``.
+     */
     struct zero_int
     {
-        static constexpr bool schedule_on_start = true;
-        static void           eval(Out<TS<Int>> out) { out.set(Int{0}); }
+        static constexpr auto name = "zero_int";
+
+        static Port<TS<Int>> compose(Wiring &w, Scalar<"op", WiredFn> op)
+        {
+            const WiredFn &f = op.value();
+            Int            value{};
+            if (f == fn<add_>() || f == fn<sum_>()) { value = Int{0}; }
+            else if (f == fn<min_>()) { value = std::numeric_limits<Int>::max(); }
+            else if (f == fn<max_>()) { value = std::numeric_limits<Int>::lowest(); }
+            else if (f == fn<mul_>()) { value = Int{1}; }
+            else { throw std::invalid_argument("zero: no TS<Int> zero value registered for the supplied operation"); }
+            return wire<const_, TS<Int>>(w, value);
+        }
     };
 
-    /** ``zero_`` — additive zero source for ``TS<Float>``. */
     struct zero_float
     {
-        static constexpr bool schedule_on_start = true;
-        static void           eval(Out<TS<Float>> out) { out.set(Float{0}); }
+        static constexpr auto name = "zero_float";
+
+        static Port<TS<Float>> compose(Wiring &w, Scalar<"op", WiredFn> op)
+        {
+            const WiredFn &f = op.value();
+            Float          value{};
+            if (f == fn<add_>() || f == fn<sum_>()) { value = Float{0}; }
+            else if (f == fn<min_>()) { value = std::numeric_limits<Float>::infinity(); }
+            else if (f == fn<max_>()) { value = -std::numeric_limits<Float>::infinity(); }
+            else if (f == fn<mul_>()) { value = Float{1}; }
+            else
+            {
+                throw std::invalid_argument("zero: no TS<Float> zero value registered for the supplied operation");
+            }
+            return wire<const_, TS<Float>>(w, value);
+        }
     };
 
-    /** ``zero_`` — additive zero source for ``TS<Str>`` (the empty string). */
     struct zero_str
     {
-        static constexpr bool schedule_on_start = true;
-        static void           eval(Out<TS<Str>> out) { out.set(Str{}); }
+        static constexpr auto name = "zero_str";
+
+        static Port<TS<Str>> compose(Wiring &w, Scalar<"op", WiredFn> op)
+        {
+            const WiredFn &f = op.value();
+            if (f == fn<add_>() || f == fn<sum_>() || f == fn<mul_>())
+            {
+                return wire<const_, TS<Str>>(w, Str{});
+            }
+            throw std::invalid_argument("zero: no TS<Str> zero value registered for the supplied operation");
+        }
+    };
+
+    /**
+     * ``default`` implementation — the REF-forwarding node, mirroring Python
+     * ``_impl/_operators/_graph_operators.py`` ``_default`` (``valid=()``):
+     * while ``ts`` is invalid the output references ``default_value`` and ``ts``
+     * is kept active (to notice its first tick); once valid the output
+     * references ``ts`` and ``ts`` is made passive — downstream reads flow
+     * *through* the reference without this node evaluating per tick. (Python
+     * takes ``default_value`` as a ``REF`` input so value ticks never re-fire
+     * the node; here it is a plain active input — for the ``const`` zeros it
+     * ticks once, and a re-emit of the same reference is a cheap downstream
+     * no-op rebind.)
+     *
+     * The output **is** a ``REF`` and its port keeps that computed schema —
+     * the declared ``-> S`` contract holds because ``REF`` is transparent to
+     * matching/unification (a variable binds the dereferenced type) and
+     * consumers bind through the reference at runtime.
+     */
+    struct default_impl
+    {
+        static constexpr auto name = "default";
+
+        static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts,
+                         In<"default_value", TsVar<"S">, InputValidity::Unchecked> default_value,
+                         Out<REF<TsVar<"S">>> out)
+        {
+            if (!ts.valid())
+            {
+                ts.make_active();
+                out.set(default_value.reference());
+            }
+            else
+            {
+                ts.make_passive();
+                out.set(ts.reference());
+            }
+        }
     };
 
     /** Register the conversion / utility operator overloads. */
@@ -112,9 +194,11 @@ namespace hgraph::stdlib
         register_overload<const_, const_source>();    // const(value)         -> tick at start
         register_overload<const_, const_delayed>();   // const(value, delay)  -> tick at start + delay
 
-        register_overload<zero_, zero_int>();
-        register_overload<zero_, zero_float>();
-        register_overload<zero_, zero_str>();
+        register_graph_overload<zero_, zero_int>();
+        register_graph_overload<zero_, zero_float>();
+        register_graph_overload<zero_, zero_str>();
+
+        register_overload<default_, default_impl>();
     }
 }  // namespace hgraph::stdlib
 

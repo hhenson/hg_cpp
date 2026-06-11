@@ -223,16 +223,6 @@ namespace
         }
     };
 
-    struct ZeroGraph
-    {
-        static constexpr auto name = "zero_graph";
-        static void           compose(Wiring &w)
-        {
-            auto z = wire<stdlib::zero_, TS<Int>>(w);
-            wire<testing::record>(w, z, Str{"out"});
-        }
-    };
-
     struct EchoSetGraph
     {
         static constexpr auto name = "echo_set_graph";
@@ -460,10 +450,10 @@ TEST_CASE("operators: TypePattern matches generic TSW and TSB structures")
 
 TEST_CASE("operators: explicit output schemas participate in operator resolution")
 {
-    register_overload<stdlib::zero_, stdlib::zero_int>();
+    // zero_int composes const_, so the conversion family supplies both.
+    stdlib::register_conversion_operators();
 
-    auto ex = run_graph<ZeroGraph>([](const GlobalStateView &) {});
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), {0});
+    CHECK_OUTPUT((eval_node<stdlib::zero_, TS<Int>>(fn<stdlib::add_>())), values<Int>(0));
 }
 
 TEST_CASE("operators: explicit collection output schema drives scalar auto-const matching")

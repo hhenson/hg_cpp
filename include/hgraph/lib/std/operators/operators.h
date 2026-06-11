@@ -21,6 +21,7 @@
 #include <hgraph/lib/std/operators/container.h>
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/lib/std/operators/conversion.h>
+#include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/std/operators/io.h>
 #include <hgraph/lib/std/operators/logical.h>
 #include <hgraph/lib/std/operators/stream.h>

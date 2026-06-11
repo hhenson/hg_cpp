@@ -17,6 +17,7 @@
 #include <hgraph/lib/std/operators/impl/arithmetic_impl.h>
 #include <hgraph/lib/std/operators/impl/comparison_impl.h>
 #include <hgraph/lib/std/operators/impl/conversion_impl.h>
+#include <hgraph/lib/std/operators/impl/higher_order_impl.h>
 #include <hgraph/lib/std/operators/impl/io_impl.h>
 #include <hgraph/lib/std/operators/impl/logical_impl.h>
 
@@ -33,6 +34,7 @@ namespace hgraph::stdlib
         register_comparison_operators();
         register_logical_operators();
         register_conversion_operators();
+        register_higher_order_operators();
         register_io_operators();
     }
 }  // namespace hgraph::stdlib

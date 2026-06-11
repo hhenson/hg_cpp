@@ -423,6 +423,56 @@ namespace hgraph
     {
         return nested_<G>(w, a0, a1, WiringNamedStructuralSourceArg{third}, rest...);
     }
+
+    namespace subgraph_wiring_detail
+    {
+        /**
+         * Erased core of ``tsl_element``: project the ``index``-th element ref
+         * out of a TSL-shaped wiring source of any kind (peered output path,
+         * structural child, sub-graph boundary). Used by the typed projection
+         * below and by erased consumers such as the ``reduce`` operator impl.
+         */
+        [[nodiscard]] inline WiringPortRef tsl_element_ref(const WiringPortRef &ts, std::size_t index,
+                                                           const TSValueTypeMetaData *element_schema)
+        {
+            switch (ts.source_kind())
+            {
+                case WiringPortRef::SourceKind::Peered:
+                {
+                    std::vector<std::size_t> path = ts.peered_path();
+                    path.push_back(index);
+                    return WiringPortRef::peered_source(ts.peered_node(), std::move(path), element_schema,
+                                                        ts.peered_output_kind());
+                }
+                case WiringPortRef::SourceKind::Structural:
+                    return ts.structural_children()[index];
+                case WiringPortRef::SourceKind::Boundary:
+                {
+                    std::vector<std::size_t> path = ts.boundary_path();
+                    path.push_back(index);
+                    return WiringPortRef::boundary_source(ts.boundary_arg_index(), std::move(path), element_schema);
+                }
+                case WiringPortRef::SourceKind::Null:
+                    return WiringPortRef::null_source(element_schema);
+                case WiringPortRef::SourceKind::Unbound:
+                    break;
+            }
+            throw std::logic_error("tsl_element: the TSL port is unbound");
+        }
+    }  // namespace subgraph_wiring_detail
+
+    /**
+     * Project the ``index``-th element port out of a fixed-size TSL port — a
+     * wiring-time projection only, usable on any source kind (peered output
+     * path, structural child, sub-graph boundary).
+     */
+    template <typename E, std::size_t N>
+    [[nodiscard]] Port<E> tsl_element(const Port<TSL<E, N>> &ts, std::size_t index)
+    {
+        if (index >= N) { throw std::out_of_range("tsl_element: index is out of range for the fixed TSL"); }
+        return Port<E>{ts.wiring(), subgraph_wiring_detail::tsl_element_ref(ts.erased(), index,
+                                                                            schema_descriptor<E>::ts_meta())};
+    }
 }  // namespace hgraph
 
 #endif  // HGRAPH_TYPES_SUBGRAPH_WIRING_H

@@ -113,6 +113,67 @@ increment.
 Tests: ``tests/cpp/test_nested_wiring.cpp``.
 
 
+Higher-order constructs are operators
+-------------------------------------
+
+``reduce`` — and ``map_`` / ``switch_`` when they land — are **ordinary
+operators**, not bespoke wiring functions. This mirrors the ``ext/main``
+direction (``map_`` is an ``@operator`` whose old implementation became the
+default registered overload): the default implementation is one registry
+candidate, the future dynamic kernels (e.g. ``reduce`` over ``TSD``) are
+further overloads of the same name, and user specialisations — including ones
+gated on the supplied function's identity via ``requires_`` — are selected by
+the standard best-match machinery. The callable argument is the ``WiredFn``
+scalar (``fn<X>()``; see *Operators > Higher-order operators*). Their markers
+and default overloads live in their own ``lib/std`` family files
+(``operators/higher_order.h`` + ``impl/higher_order_impl.h``) — there is
+nothing special about them now that sub-graph compilation is standardised.
+
+
+``reduce``
+----------
+
+``reduce(func, ts[, zero])`` reduces a time-series **collection** into one
+time-series with the (associative) combiner — any wirable function: an
+operator (``add_``), a node, or an ``(lhs, rhs)`` sub-graph (flattened at
+every reduction node). The operator's contract covers any collection kind
+(``TSL`` / ``TSD``; ``TSS`` once the Python reference grows one) — each kind
+is its own registered overload selected by pattern rank. Implemented today:
+the **fixed-size TSL** overloads
+(``wire<stdlib::reduce_>(w, fn<add_>(), tsl_port)``).
+
+The default overloads lay the reduction out **statically at wiring time**,
+mirroring Python ``_reduce_tsl``: every leaf is ``default(ts[i], zero)`` — an
+element that has not ticked yet counts as ``zero`` — then a linear chain below
+four elements, otherwise balanced binary pairing with an odd-element carry
+(``over_run``). No nested node is involved. Two arities, like Python:
+
+- ``reduce(func, ts)`` — the zero is derived from the operation,
+  ``zero(item_tp, func)`` (the op-aware ``zero_`` operator: ``add_`` -> 0,
+  ``mul_`` -> 1, ``min_`` -> the max bound, …). A combiner with no registered
+  zero (e.g. a custom sub-graph) is a wiring-time error, like Python's
+  ``KeyError``;
+- ``reduce(func, ts, zero)`` — the explicit zero value, wired as
+  ``const(zero)`` at the element schema.
+
+The leaves dispatch ``zero`` / ``default`` / ``const`` **through the registry
+at the resolved element schema** (``wire_operator`` — the runtime-schema
+counterpart of ``wire<Op, OutSchema>``). ``default`` itself is the
+REF-forwarding implementation mirroring Python's ``_default`` (substitute
+while invalid, then forward the reference and go passive). Element access uses
+the erased ``tsl_element_ref`` projection (typed form ``tsl_element(port, i)``
+in ``subgraph_wiring.h``), which works on any source kind: a peered output
+path, a structural child, or a **sub-graph boundary** (so ``reduce`` composes
+inside a sub-graph ``compose`` over a boundary TSL). The overloads'
+``requires_`` accept fixed-size TSL inputs only, leaving dynamic-TSL/TSD
+reductions to future overloads of the same name (the gated milestone
+increment — see roadmap). Still deferred: a time-series (port) ``zero``
+argument, and non-associative/linear-forced reduction.
+
+Tests: ``tests/cpp/test_reduce.cpp`` (including a user overload gated on the
+wired function's identity, mirroring ``ext/main``'s ``test_map_overload``).
+
+
 Reconciliation with the 2603 RFC
 --------------------------------
 
@@ -154,8 +215,13 @@ Roadmap (this milestone)
 1. **Done — sub-graph compilation.** ``BoundarySource`` +
    ``Wiring::finish_subgraph`` + ``compile_subgraph<G>`` + ``nested_<G>``
    (this page, above).
-2. ``reduce`` over a fixed-size ``TSL`` — wiring-time binary-tree flatten
-   (mirrors Python ``_reduce_tsl``); no nested node involved.
+2. **Done — ``reduce`` over a fixed-size ``TSL``, as an operator** — the
+   wiring-time linear/tree flatten mirroring Python ``_reduce_tsl`` is the
+   default registered overload of the ``reduce`` operator; the combiner is the
+   ``WiredFn`` scalar (see its section above); leaves are
+   ``default(ts[i], zero)`` with the op-aware ``zero_`` (derived) or the
+   explicit-zero arity. ``map_`` / ``switch_`` follow the same operator shape
+   when they land.
 3. Child-driven scheduling **push** propagation + extraction of the shared
    boundary-binding helpers for reuse by ``switch_`` / ``map_``.
 4. ``switch_`` — one active branch child, sampled retarget on key change,

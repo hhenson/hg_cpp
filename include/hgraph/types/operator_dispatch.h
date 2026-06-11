@@ -489,6 +489,29 @@ namespace hgraph
             }
         }
 
+        // A graph-overload ``Port`` parameter never becomes an input endpoint of
+        // its declared schema — the port is handed to ``compose`` carrying the
+        // argument's own runtime schema. Acceptance therefore mirrors the
+        // *pattern* semantics rather than strict schema equivalence: a declared
+        // size-0 TSL is a size wildcard (matching ``type_pattern``'s rule), so a
+        // generic ``Port<TSL<TsVar<"V">>>`` accepts any fixed-size TSL the
+        // matcher accepted. (Node overloads keep the strict check — they build a
+        // real input endpoint of the declared schema.)
+        [[nodiscard]] inline bool graph_port_accepts(const TSValueTypeMetaData *expected,
+                                                     const TSValueTypeMetaData *actual)
+        {
+            if (graph_wiring_detail::input_accepts_output_schema(expected, actual)) { return true; }
+            if (expected == nullptr || actual == nullptr) { return false; }
+
+            auto &registry = TypeRegistry::instance();
+            const auto *expected_deref = registry.dereference(expected);
+            const auto *actual_deref   = registry.dereference(actual);
+            if (expected_deref == nullptr || actual_deref == nullptr) { return false; }
+            if (expected_deref->kind != TSTypeKind::TSL || actual_deref->kind != TSTypeKind::TSL) { return false; }
+            if (expected_deref->fixed_size() != 0) { return false; }
+            return graph_port_accepts(expected_deref->element_ts(), actual_deref->element_ts());
+        }
+
         template <typename PortParam>
         [[nodiscard]] PortParam make_graph_port_arg(Wiring &w, const ResolutionMap &map, const WiringArg &arg)
         {
@@ -503,8 +526,16 @@ namespace hgraph
             }
             else
             {
-                WiringPortRef ref = wiring_input_ref<S>(w, map, arg);
-                return PortParam{w, std::move(ref)};
+                const TSValueTypeMetaData *expected = ts_resolver<S>::resolve(map);
+                if (arg.kind == WiringArg::Kind::TimeSeries)
+                {
+                    if (!graph_port_accepts(expected, arg.port.schema))
+                    {
+                        throw std::logic_error("operator selected overload input schema does not match");
+                    }
+                    return PortParam{w, graph_wiring_detail::adapt_source_for_input(w, expected, arg.port)};
+                }
+                return PortParam{w, wire_scalar_const(w, arg, expected)};
             }
         }
 
@@ -774,6 +805,22 @@ namespace hgraph
     void register_graph_overload()
     {
         OperatorRegistry::instance().register_overload(make_operator_graph_impl<Impl>(std::string{Op::name}));
+    }
+
+    /**
+     * Dispatch operator ``name`` over **already-erased** wiring arguments — the
+     * runtime-schema counterpart of ``wire<Op, OutSchema>`` for callers that only
+     * know the expected output schema at wiring time (e.g. an operator
+     * implementation composing other operators, such as ``reduce`` wiring
+     * ``zero``/``default`` at its resolved element schema).
+     */
+    [[nodiscard]] inline OperatorWireResult wire_operator(Wiring &w, std::string_view name,
+                                                          std::span<const WiringArg> args,
+                                                          std::optional<bool> output_required = std::nullopt,
+                                                          const TSValueTypeMetaData *expected_output = nullptr)
+    {
+        auto [impl, map] = OperatorRegistry::instance().resolve(name, args, output_required, expected_output);
+        return impl->wire(w, map, args);
     }
 
     namespace operator_dispatch_detail

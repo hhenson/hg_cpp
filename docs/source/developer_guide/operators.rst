@@ -143,6 +143,15 @@ across candidates. Building the chosen static-node C++ candidate still goes thro
 *builder's* compile-time schema substitution for that one known ``Impl`` — it is
 not a second matcher.
 
+**REF transparency.** ``REF[X]`` is type-compatible with ``X`` (Python parity):
+both the runtime matcher (``ts_pattern_match``) and the static unifier
+(``ts_unifier``) look *through* a reference schema unless the pattern asks for a
+``REF`` explicitly — a type variable always binds the **dereferenced** type. A
+port whose producer computes a ``REF`` output (e.g. ``default``) keeps that
+computed schema — the result schema is **never rewritten**; consumers bind
+through the reference at runtime, and matching simply treats the two shapes as
+the same type.
+
 
 ``WiringArg`` — erased arguments
 --------------------------------
@@ -520,6 +529,52 @@ scalar comparison (``impl/comparison_impl.h``), scalar logical / bitwise operato
 implementations, plus opt-in expression sugar in ``operators/syntax.h``.
 
 
+Higher-order operators and the ``WiredFn`` scalar
+-------------------------------------------------
+
+The higher-order constructs (``reduce``; ``map_`` / ``switch_`` to follow) are
+**ordinary operators**, mirroring the ``ext/main`` Python direction where
+``map_`` is an ``@operator`` whose old wiring-time implementation became the
+default registered overload (``map_default``), and user specialisations
+register alongside it — selected by the standard best-match machinery,
+including ``requires`` predicates over the *value* of the callable argument.
+
+The C++ analogue of ``func: Callable`` is the **``WiredFn`` scalar**
+(``include/hgraph/types/wired_fn.h``): ``fn<X>()`` erases an operator marker,
+static node, or sub-graph ``X`` into a small registered scalar value — a stable
+identity (its ``type_info``) plus a wiring thunk that dispatches ``wire<X>``
+over erased ports. Because it is just a scalar:
+
+- a ``Scalar<"func", WiredFn>`` parameter matches by type in patterns;
+- an overload's ``requires_`` gates on the function's **identity**
+  (``context.scalar_as<WiredFn>("func")`` and ``*func == fn<Only>()``) — the
+  C++ mirror of Python's ``requires=lambda m, func: func == only_even``;
+- equal functions hash/compare equal, so nodes configured with the same
+  function intern/dedup like any other scalar configuration.
+
+The markers live in ``operators/higher_order.h`` and the default overloads in
+``impl/higher_order_impl.h`` — **their own family files in lib/std**; there is
+nothing special about them now that sub-graph compilation is standardised
+(``compile_subgraph`` / ``nested_``, see *Nested Graphs*). The ``reduce``
+default overload is an ordinary **graph overload**
+(``register_graph_overload``) whose ``compose`` takes a **generic port
+parameter** — ``Port<TSL<TsVar<"V">>>`` — and lays the reduction out
+statically; the dynamic ``TSD`` kernel arrives later as another overload of
+the same name, selected by pattern rank.
+
+Two framework rules make generic graph-overload ports work:
+
+- a ``Port`` whose static schema is **non-concrete** (contains a type
+  variable) keeps the ref's runtime-resolved schema instead of stamping an
+  interned one (``schema_descriptor`` returns ``nullptr`` for var schemas);
+- a graph-overload port argument is accepted by **pattern semantics**, not
+  strict schema equivalence (``graph_port_accepts``): a declared size-0 TSL is
+  a size wildcard, matching the ``TypePattern`` rule — the port never becomes
+  an input endpoint of the declared schema, it is handed to ``compose``
+  carrying the argument's own schema. Node overloads keep the strict check,
+  since they build a real input endpoint of the declared schema.
+
+
 Roadmap
 -------
 
@@ -546,8 +601,13 @@ Roadmap
    ``DivideByZero`` is a registered *enum scalar*. Because parameter defaults are not yet
    a framework feature, optional scalar policies are modelled as two overloads selected by
    **arity** — e.g. ``div_(a, b)`` defaults to ``Error`` and ``div_(a, b, policy)`` uses
-   the supplied policy. ``zero_`` currently covers the additive scalar zeros mirrored from
-   Python's ``zero`` helper for ``int`` / ``float`` / ``str``.
+   the supplied policy. ``zero_`` mirrors Python's ``zero(tp, op)``: the value depends on
+   the output type **and** the operation (a ``WiredFn`` argument — ``add_``/``sum_`` -> 0,
+   ``mul_`` -> 1, ``min_``/``max_`` -> the saturating bound) for ``int`` / ``float`` /
+   ``str``; an unmapped operation is a wiring-time error (Python's ``KeyError``).
+   ``default_`` is the REF-forwarding substitute-until-valid implementation mirroring
+   Python's ``_default`` (``valid=()``; keeps ``ts`` active while invalid, forwards the
+   reference and goes passive once valid).
 4. **Phase 4 — Python implementation path.** Runtime-data ``OperatorImpl`` from a
    Python signature; ``NodeCallbacks`` hosting a Python callable; cross-boundary
    identity asserted. Behind ``HGRAPH_ENABLE_PYTHON_USER_NODES``.

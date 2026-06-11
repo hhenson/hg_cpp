@@ -5,6 +5,7 @@
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
+#include <hgraph/types/wired_fn.h>
 #include <hgraph/util/date_time.h>
 
 namespace hgraph::stdlib
@@ -79,8 +80,10 @@ namespace hgraph::stdlib
     {
     };
 
-    /** ``zero_`` — the additive (or operation-specific) zero source for a requested output type. */
-    struct zero_ : Operator<"zero", Out<TsVar<"S">>>
+    /** ``zero_`` — the zero source for a requested output type and operation
+        (mirrors Python ``zero(tp, op)``: the value depends on both — e.g. ``add_``
+        -> 0 but ``mul_`` -> 1). ``op`` is the wired function (``fn<add_>()``). */
+    struct zero_ : Operator<"zero", Scalar<"op", WiredFn>, Out<TsVar<"S">>>
     {
     };
 

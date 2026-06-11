@@ -64,6 +64,15 @@ namespace hgraph
     bool ts_pattern_match(const TypePattern &pattern, const TSValueTypeMetaData *concrete, ResolutionMap &map)
     {
         if (concrete == nullptr) { return false; }
+        // REF is transparent to matching (Python parity: ``REF[X]`` is
+        // type-compatible with ``X``; consumers bind through the reference at
+        // runtime — a type variable binds the *dereferenced* schema). A
+        // reference schema only matches *as* a reference when the pattern asks
+        // for one explicitly.
+        if (pattern.kind != TypePattern::Kind::REF && concrete->kind == TSTypeKind::REF)
+        {
+            return ts_pattern_match(pattern, concrete->referenced_ts(), map);
+        }
         switch (pattern.kind)
         {
             case TypePattern::Kind::Var:

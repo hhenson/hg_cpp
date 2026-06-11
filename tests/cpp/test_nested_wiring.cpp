@@ -114,35 +114,26 @@ namespace
 
     // ---------------- top-level test graphs ----------------
 
+    // Lightweight wrappers with declared inputs/outputs, driven through eval_node.
     struct NestedAddOneGraph
     {
         static constexpr auto name = "nested_add_one_graph";
-        static void           compose(Wiring &w)
-        {
-            auto in = wire<replay, TS<Int>>(w, Str{"in"});
-            wire<record>(w, nested_<AddOneSubGraph>(w, in), Str{"out"});
-        }
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in) { return nested_<AddOneSubGraph>(w, in); }
     };
 
     struct NestedSumGraph
     {
         static constexpr auto name = "nested_sum_graph";
-        static void           compose(Wiring &w)
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> a, Port<TS<Int>> b)
         {
-            auto a = wire<replay, TS<Int>>(w, Str{"a"});
-            auto b = wire<replay, TS<Int>>(w, Str{"b"});
-            wire<record>(w, nested_<SumSubGraph>(w, a, b), Str{"out"});
+            return nested_<SumSubGraph>(w, a, b);
         }
     };
 
     struct NestedFanOutGraph
     {
         static constexpr auto name = "nested_fan_out_graph";
-        static void           compose(Wiring &w)
-        {
-            auto in = wire<replay, TS<Int>>(w, Str{"in"});
-            wire<record>(w, nested_<FanOutSubGraph>(w, in), Str{"out"});
-        }
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in) { return nested_<FanOutSubGraph>(w, in); }
     };
 
     struct NestedSourceOnlyGraph
@@ -187,10 +178,9 @@ namespace
     struct NestedPassThroughGraph
     {
         static constexpr auto name = "nested_pass_through_graph";
-        static void           compose(Wiring &w)
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in)
         {
-            auto in = wire<replay, TS<Int>>(w, Str{"in"});
-            wire<record>(w, nested_<PassThroughSubGraph>(w, in), Str{"out"});
+            return nested_<PassThroughSubGraph>(w, in);
         }
     };
 
@@ -219,10 +209,7 @@ TEST_CASE("nested wiring: nested_<G> binds an outer input into the child graph a
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    auto ex = run_seeded<NestedAddOneGraph>([](const GlobalStateView &gs) {
-        set_replay_values<Int>(gs, "in", values<Int>(1, 2, 3));
-    });
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), values<Int>(2, 3, 4));
+    CHECK_OUTPUT(eval_node<NestedAddOneGraph>(values<Int>(1, 2, 3)), values<Int>(2, 3, 4));
 }
 
 TEST_CASE("nested wiring: a sub-graph with multiple boundary inputs binds each arg")
@@ -230,11 +217,8 @@ TEST_CASE("nested wiring: a sub-graph with multiple boundary inputs binds each a
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    auto ex = run_seeded<NestedSumGraph>([](const GlobalStateView &gs) {
-        set_replay_values<Int>(gs, "a", values<Int>(1, 2, 3));
-        set_replay_values<Int>(gs, "b", values<Int>(10, 20, 30));
-    });
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), values<Int>(11, 22, 33));
+    CHECK_OUTPUT(eval_node<NestedSumGraph>(values<Int>(1, 2, 3), values<Int>(10, 20, 30)),
+                 values<Int>(11, 22, 33));
 }
 
 TEST_CASE("nested wiring: one boundary arg feeds multiple child input endpoints")
@@ -242,10 +226,7 @@ TEST_CASE("nested wiring: one boundary arg feeds multiple child input endpoints"
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    auto ex = run_seeded<NestedFanOutGraph>([](const GlobalStateView &gs) {
-        set_replay_values<Int>(gs, "in", values<Int>(1, 2, 3));
-    });
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), values<Int>(2, 4, 6));
+    CHECK_OUTPUT(eval_node<NestedFanOutGraph>(values<Int>(1, 2, 3)), values<Int>(2, 4, 6));
 }
 
 TEST_CASE("nested wiring: a source-only sub-graph drives the outer graph via schedule propagation")
@@ -291,10 +272,7 @@ TEST_CASE("nested wiring: a pass-through sub-graph aliases the outer input (alia
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    auto ex = run_seeded<NestedPassThroughGraph>([](const GlobalStateView &gs) {
-        set_replay_values<Int>(gs, "in", values<Int>(1, 2, 3));
-    });
-    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), values<Int>(1, 2, 3));
+    CHECK_OUTPUT(eval_node<NestedPassThroughGraph>(values<Int>(1, 2, 3)), values<Int>(1, 2, 3));
 }
 
 TEST_CASE("nested wiring: a structural initializer boundary binds leaf-wise into the child")

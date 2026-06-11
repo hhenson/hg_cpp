@@ -953,9 +953,14 @@ namespace hgraph
             }
         }
 
-        [[nodiscard]] static TimeSeriesReference normalize(const TimeSeriesReference &reference)
+        [[nodiscard]] TimeSeriesReference normalize(const TimeSeriesReference &reference) const
         {
-            const auto *expected = schema_descriptor<TSchema>::ts_meta();
+            // The runtime view carries the resolved output schema — authoritative
+            // for a generic target (``REF<TsVar<...>>``, where the static
+            // descriptor is non-concrete) and identical to it when concrete.
+            const auto *output_schema = TSOutputView::schema();
+            const auto *expected      = output_schema != nullptr ? output_schema->referenced_ts()
+                                                                 : schema_descriptor<TSchema>::ts_meta();
             const auto *actual   = reference.target_schema();
             if (actual == nullptr)
             {

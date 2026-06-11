@@ -159,11 +159,50 @@ used for the inputs; ``CHECK_OUTPUT`` boxes it and compares with ``Value`` equal
                 values<Float>(0.5, std::numeric_limits<Float>::infinity()));
 
 Arguments are in the operator's call order: a time-series input is a ``values<T>(...)``
-sequence (a scalar leaf ``T`` → ``TS<T>``), a scalar input is the value itself. Scope:
-the operator must have **at least one time-series input and exactly one output** — sinks
-(no output) and sources (no time-series input), and collection time-series *inputs*, are
-wired as a graph instead. A no-match / ambiguous dispatch raises
+sequence (a scalar leaf ``T`` → ``TS<T>``) or — for any other time-series kind — the
+usual canonical-delta ``values<Value>(...)`` sequence, with its time-series schema
+supplied as an **explicit template argument** in input order (the same convention as
+``eval_node<const_, TSL<…>>``); a scalar input is the value itself — including a
+wirable function ``fn<X>()`` for the higher-order operators:
+
+.. code-block:: cpp
+
+   CHECK_OUTPUT((testing::eval_node<stdlib::reduce_, TSL<TS<Int>, 5>>(
+                    fn<stdlib::add_>(),
+                    values<Value>(list_delta<TS<Int>>({1, 2, 3, 4, 5})))),
+                values<Int>(15));
+
+Scope: the operator must have **at least one time-series input and exactly one
+output** — sinks (no output) and sources (no time-series input) use the source-style
+overloads / a hand-wired graph. A no-match / ambiguous dispatch raises
 ``OperatorResolutionError`` from the ``eval_node`` call.
+
+Evaluating graphs
+.................
+
+A lightweight **graph** with declared inputs and outputs — a struct whose
+``compose(Wiring &, Port..., Scalar...)`` returns an output port — runs through the
+same harness: ``eval_node<G>(inputs…)`` wires a ``replay`` per declared ``Port``
+parameter, passes scalar values straight through, records the returned output, and
+reads it back typed. This is the preferred shape for testing wiring compositions
+(operator syntax expressions, ``nested_`` wrappers, …) — no hand-wired
+``replay`` / ``record`` plumbing in the test graph:
+
+.. code-block:: cpp
+
+   struct SyntaxArithmeticGraph
+   {
+       static constexpr auto name = "syntax_arithmetic_graph";
+       static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> a, Port<TS<Int>> b)
+       {
+           using namespace hgraph::stdlib::syntax;
+           return (a + b * Int{2}).as<TS<Int>>();
+       }
+   };
+
+   CHECK_OUTPUT(testing::eval_node<SyntaxArithmeticGraph>(values<Int>(1, 2, 3),
+                                                          values<Int>(10, 20, 30)),
+                values<Int>(21, 42, 63));
 
 The cycle-aligned buffer
 ------------------------

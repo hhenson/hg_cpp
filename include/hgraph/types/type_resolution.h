@@ -216,6 +216,20 @@ namespace hgraph
         static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m) { m.bind_scalar(Name.sv(), concrete); }
     };
 
+    /**
+     * REF transparency (Python parity: ``REF[X]`` is type-compatible with
+     * ``X``; consumers bind through the reference at runtime): a non-``REF``
+     * unifier sees the *dereferenced* schema — so a bare variable binds the
+     * referenced type, never the reference shape. The result port's schema is
+     * NOT rewritten anywhere; only matching/unification looks through it. The
+     * runtime matcher applies the same rule (``ts_pattern_match``).
+     */
+    [[nodiscard]] inline const TSValueTypeMetaData *unify_dereference(const TSValueTypeMetaData *c) noexcept
+    {
+        while (c != nullptr && c->kind == TSTypeKind::REF) { c = c->referenced_ts(); }
+        return c;
+    }
+
     template <typename S>
     struct ts_unifier
     {
@@ -225,7 +239,10 @@ namespace hgraph
     template <fixed_string Name, typename... C>
     struct ts_unifier<TsVar<Name, C...>>
     {
-        static void unify(const TSValueTypeMetaData *concrete, ResolutionMap &m) { m.bind_ts(Name.sv(), concrete); }
+        static void unify(const TSValueTypeMetaData *concrete, ResolutionMap &m)
+        {
+            m.bind_ts(Name.sv(), unify_dereference(concrete));
+        }
     };
 
     template <typename V>
@@ -233,6 +250,7 @@ namespace hgraph
     {
         static void unify(const TSValueTypeMetaData *c, ResolutionMap &m)
         {
+            c = unify_dereference(c);
             scalar_unifier<V>::unify(c != nullptr ? c->value_schema : nullptr, m);
         }
     };
@@ -242,6 +260,7 @@ namespace hgraph
     {
         static void unify(const TSValueTypeMetaData *c, ResolutionMap &m)
         {
+            c = unify_dereference(c);
             const ValueTypeMetaData *elem = (c != nullptr && c->value_schema != nullptr) ? c->value_schema->element_type : nullptr;
             scalar_unifier<V>::unify(elem, m);
         }
@@ -252,6 +271,7 @@ namespace hgraph
     {
         static void unify(const TSValueTypeMetaData *c, ResolutionMap &m)
         {
+            c = unify_dereference(c);
             ts_unifier<C>::unify(c != nullptr ? c->element_ts() : nullptr, m);
         }
     };
@@ -261,6 +281,7 @@ namespace hgraph
     {
         static void unify(const TSValueTypeMetaData *c, ResolutionMap &m)
         {
+            c = unify_dereference(c);
             scalar_unifier<K>::unify(c != nullptr ? c->key_type() : nullptr, m);
             ts_unifier<V>::unify(c != nullptr ? c->element_ts() : nullptr, m);
         }
@@ -281,6 +302,7 @@ namespace hgraph
     {
         static void unify(const TSValueTypeMetaData *c, ResolutionMap &m)
         {
+            c = unify_dereference(c);
             scalar_unifier<V>::unify(c != nullptr && c->kind == TSTypeKind::TSW ? c->value_type : nullptr, m);
         }
     };
@@ -290,6 +312,7 @@ namespace hgraph
         template <typename Field>
         void unify_tsb_field(const TSValueTypeMetaData *c, ResolutionMap &m)
         {
+            c = unify_dereference(c);
             if (c == nullptr || c->kind != TSTypeKind::TSB) { return; }
             const std::string expected_name = ts_field_descriptor<Field>::field_name();
             for (std::size_t i = 0; i < c->field_count(); ++i)

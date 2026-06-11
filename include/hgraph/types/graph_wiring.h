@@ -383,19 +383,19 @@ namespace hgraph
         explicit Port(WiringPortRef ref) noexcept
             : ref_(std::move(ref))
         {
-            ref_.schema = schema_descriptor<Schema>::ts_meta();
+            stamp_schema();
         }
         Port(Wiring &wiring, WiringPortRef ref) noexcept
             : wiring_(&wiring),
               ref_(std::move(ref))
         {
-            ref_.schema = schema_descriptor<Schema>::ts_meta();
+            stamp_schema();
         }
         Port(Wiring *wiring, WiringPortRef ref) noexcept
             : wiring_(wiring),
               ref_(std::move(ref))
         {
-            ref_.schema = schema_descriptor<Schema>::ts_meta();
+            stamp_schema();
         }
 
         [[nodiscard]] const WiringInstance           *node() const noexcept { return ref_.peered_node_or_null(); }
@@ -418,6 +418,15 @@ namespace hgraph
         [[nodiscard]] operator WiringPortRef() const { return erased(); }
 
       private:
+        // A concrete ``Schema`` stamps its interned runtime schema onto the ref; a
+        // non-concrete (type-variable) schema keeps the ref's runtime-resolved
+        // schema — the form an operator graph overload's generic ``Port``
+        // parameter receives (e.g. ``Port<TSL<TsVar<"V">>>``).
+        void stamp_schema() noexcept
+        {
+            if (const auto *meta = schema_descriptor<Schema>::ts_meta(); meta != nullptr) { ref_.schema = meta; }
+        }
+
         Wiring        *wiring_{nullptr};
         WiringPortRef ref_{};
     };
