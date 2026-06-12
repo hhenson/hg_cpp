@@ -31,6 +31,13 @@ namespace
         static void           eval(Out<TS<Int>> out) { out.set(Int{41}); }
     };
 
+    struct ConfiguredSource
+    {
+        static constexpr auto name              = "eval_node_configured_source";
+        static constexpr bool schedule_on_start = true;
+        static void           eval(Scalar<"value", Int> value, Out<TS<Int>> out) { out.set(value.value()); }
+    };
+
     // A stateful node: a running sum, to show state persists across cycles.
     struct RunningSum
     {
@@ -129,6 +136,14 @@ TEST_CASE("eval_node: drives a source node without time-series inputs")
     CHECK_OUTPUT(testing::eval_node<ConstantSource>(), {Int{41}});
 }
 
+TEST_CASE("eval_node: source node scalar args accept keyword wrappers")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    CHECK_OUTPUT(testing::eval_node<ConfiguredSource>(arg<"value">(Int{12})), {Int{12}});
+}
+
 TEST_CASE("eval_node: node state persists across cycles")
 {
     using namespace hgraph;
@@ -161,6 +176,8 @@ TEST_CASE("eval_node: passes scalar inputs to the node-under-test")
 
     // The time-series input is braced; the scalar arg (delta = 5) follows.
     CHECK_OUTPUT(testing::eval_node<Shift>({1, 2, 3}, 5), {6, 7, 8});
+    CHECK_OUTPUT(testing::eval_node<Shift>(arg<"in">(values<Int>(1, 2, 3)), arg<"delta">(Int{5})),
+                 values<Int>(6, 7, 8));
 }
 
 TEST_CASE("eval_node: drives a node with multiple time-series inputs")
@@ -172,6 +189,9 @@ TEST_CASE("eval_node: drives a node with multiple time-series inputs")
     // at cycle 1 lhs's persisted value (1) is summed with rhs (20) -> 21.
     const std::vector<std::optional<Int>> rhs{10, 20, 30};
     CHECK_OUTPUT(testing::eval_node<Sum>({1, none, 3}, rhs), {11, 21, 33});
+    CHECK_OUTPUT(testing::eval_node<Sum>(arg<"lhs">(values<Int>(1, none, 3)),
+                                         arg<"rhs">(values<Int>(10, 20, 30))),
+                 values<Int>(11, 21, 33));
 }
 
 TEST_CASE("eval_node: a TSS output is read back as a per-cycle SetDelta")

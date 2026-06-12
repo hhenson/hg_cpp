@@ -4,6 +4,7 @@
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/util/date_time.h>
 
@@ -168,6 +169,17 @@ namespace hgraph::testing
         // ``StaticNodeSignature``-based computations would be a hard error (not SFINAE), so
         // they are guarded: a non-eval type falls back to ``Value`` and the concrete overload
         // is removed by its ``operator_tag`` constraint instead of failing to compile.
+        template <typename NodeT, bool HasInput>
+        struct first_input_element_from_signature
+        {
+            using type = Value;
+        };
+        template <typename NodeT>
+        struct first_input_element_from_signature<NodeT, true>
+        {
+            using type = typename first_input_element<NodeT, wire_params_t<NodeT>>::type;
+        };
+
         template <typename NodeT, bool = has_eval<NodeT>>
         struct first_input_element_lazy
         {
@@ -175,8 +187,8 @@ namespace hgraph::testing
         };
         template <typename NodeT>
         struct first_input_element_lazy<NodeT, true>
+            : first_input_element_from_signature<NodeT, (StaticNodeSignature<NodeT>::input_count() >= 1)>
         {
-            using type = typename first_input_element<NodeT, wire_params_t<NodeT>>::type;
         };
 
         template <typename NodeT, bool = has_eval<NodeT>>
@@ -196,6 +208,40 @@ namespace hgraph::testing
 
         template <typename NodeT>
         using output_element_t = typename output_element_lazy<NodeT>::type;
+
+        // ``arg<"name">(...)`` wrappers are transparent to the harness when it
+        // decides whether an argument is a replay sequence. Node/graph harnesses
+        // unwrap the payload in their positional wiring path; the operator harness
+        // re-wraps replay ports so erased dispatch can bind true keyword args.
+        template <typename A>
+        struct named_payload
+        {
+            using type                  = A;
+            static constexpr bool named = false;
+        };
+        template <typename T>
+        struct named_payload<NamedArg<T>>
+        {
+            using type                  = T;
+            static constexpr bool named = true;
+        };
+        template <typename A>
+        using payload_t = typename named_payload<std::remove_cvref_t<A>>::type;
+        template <typename A>
+        inline constexpr bool is_named_arg_v = named_payload<std::remove_cvref_t<A>>::named;
+
+        template <typename Arg>
+        [[nodiscard]] const auto &payload_of(const Arg &argument)
+        {
+            if constexpr (is_named_arg_v<Arg>) { return argument.value; }
+            else { return argument; }
+        }
+
+        template <std::size_t I, typename Tuple>
+        [[nodiscard]] const auto &payload_at(const Tuple &arguments)
+        {
+            return payload_of(std::get<I>(arguments));
+        }
 
         // A time-series input argument to the operator harness is a ``vector<optional<T>>``;
         // any other argument is a wiring-time scalar.
@@ -217,7 +263,7 @@ namespace hgraph::testing
 
         template <typename... A>
         inline constexpr bool any_optional_vector_v =
-            (false || ... || is_optional_vector<std::remove_cvref_t<A>>::value);
+            (false || ... || is_optional_vector<payload_t<A>>::value);
 
         // A ``vector<optional<Value>>`` input is a canonical-delta sequence and
         // carries no schema of its own; the schema is supplied positionally via
@@ -232,7 +278,7 @@ namespace hgraph::testing
         {
         };
         template <typename A>
-        inline constexpr bool is_value_sequence_v = is_value_sequence<std::remove_cvref_t<A>>::value;
+        inline constexpr bool is_value_sequence_v = is_value_sequence<payload_t<A>>::value;
 
         template <typename... A>
         [[nodiscard]] consteval std::size_t value_sequence_count()
@@ -253,6 +299,183 @@ namespace hgraph::testing
         }
 
         inline std::string input_key(std::size_t index) { return "eval_node::in" + std::to_string(index); }
+
+        template <typename NodeT, typename... Args>
+        [[nodiscard]] std::vector<std::optional<output_element_t<NodeT>>> eval_source_node(Args &&...args)
+        {
+            using sig         = StaticNodeSignature<NodeT>;
+            using wire_params = wire_params_t<NodeT>;
+            using out_schema  = output_schema_t<NodeT>;
+            constexpr std::size_t arg_count = sizeof...(Args);
+
+            static_assert(sig::output_count() == 1, "eval_node: source NodeT must have exactly one output");
+            static_assert(arg_count == std::tuple_size_v<wire_params>,
+                          "eval_node: argument count must match the source node's Scalar parameters");
+
+            Wiring w;
+            auto   all = std::forward_as_tuple(std::forward<Args>(args)...);
+            auto   out_port = [&]<std::size_t... I>(std::index_sequence<I...>) {
+                return wire<NodeT>(w, payload_at<I>(all)...);
+            }(std::make_index_sequence<arg_count>{});
+            ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"});
+
+            GraphBuilder gb = std::move(w).finish();
+            GraphExecutorBuilder eb;
+            eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
+            GraphExecutorValue executor = eb.make_executor();
+            auto               view     = executor.view();
+            view.run();
+
+            return ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
+        }
+
+        template <typename NodeT, typename... Args>
+        [[nodiscard]] std::vector<std::optional<output_element_t<NodeT>>> eval_input_node(Args &&...args)
+        {
+            using sig         = StaticNodeSignature<NodeT>;
+            using wire_params = wire_params_t<NodeT>;
+            using out_schema  = output_schema_t<NodeT>;
+            constexpr std::size_t arg_count = sizeof...(Args);
+
+            static_assert(sig::output_count() == 1, "eval_node: NodeT must have exactly one output");
+            static_assert(sig::input_count() >= 1, "eval_node: NodeT must have at least one time-series input");
+            static_assert(arg_count == std::tuple_size_v<wire_params>,
+                          "eval_node: argument count must match the node's In + Scalar parameters (in eval order)");
+            static_assert(static_node_detail::is_input_selector<std::tuple_element_t<0, wire_params>>::value,
+                          "eval_node: the first In/Scalar parameter must be a time-series input");
+
+            Wiring w;
+            auto   all = std::forward_as_tuple(std::forward<Args>(args)...);
+
+            // Pass 1: wire the matching replay per time-series input (returning its
+            // port) and pass scalar payloads straight through, building wire<NodeT>.
+            auto wire_arg = [&]<std::size_t I>() {
+                using P = std::tuple_element_t<I, wire_params>;
+                if constexpr (static_node_detail::is_input_selector<P>::value)
+                {
+                    return ts_harness<typename P::schema>::wire_replay(w, input_key(I));
+                }
+                else
+                {
+                    return payload_at<I>(all);  // scalar value, with arg<...> unwrapped
+                }
+            };
+
+            auto out_port = [&]<std::size_t... I>(std::index_sequence<I...>) {
+                return wire<NodeT>(w, wire_arg.template operator()<I>()...);
+            }(std::make_index_sequence<arg_count>{});
+
+            ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"});
+            GraphBuilder gb = std::move(w).finish();
+
+            // Pass 2: seed each time-series input's replay buffer (same key per
+            // slot) and track the longest input.
+            std::size_t max_len = 0;
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                (
+                    [&] {
+                        using P = std::tuple_element_t<I, wire_params>;
+                        if constexpr (static_node_detail::is_input_selector<P>::value)
+                        {
+                            const auto &seq = payload_at<I>(all);
+                            max_len         = std::max(max_len, seq.size());
+                            ts_harness<typename P::schema>::seed(gb.global_state(), input_key(I), seq);
+                        }
+                    }(),
+                    ...);
+            }(std::make_index_sequence<arg_count>{});
+
+            GraphExecutorBuilder eb;
+            eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
+            GraphExecutorValue executor = eb.make_executor();
+            auto               view     = executor.view();
+            view.run();
+
+            // Cycle-align: pad to the longest input, never truncate (see record).
+            auto out = ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
+            if (out.size() < max_len) { out.resize(max_len); }
+            return out;
+        }
+
+        template <typename GraphT, typename... Args>
+        [[nodiscard]] std::vector<std::optional<typename graph_output_element<GraphT>::type>>
+        eval_input_graph(Args &&...args)
+        {
+            using sig    = StaticGraphSignature<GraphT>;
+            using params = typename sig::param_types;
+            constexpr std::size_t arg_count = sizeof...(Args);
+
+            static_assert(sig::input_count() >= 1, "eval_node<G>: the graph must have at least one time-series input");
+            static_assert(arg_count == sig::param_count(),
+                          "eval_node<G>: argument count must match the graph's Port + Scalar parameters "
+                          "(in compose order)");
+
+            using out_schema = typename graph_output_element<GraphT>::schema;
+            static_assert(!std::is_void_v<std::remove_cvref_t<typename sig::output_type>>,
+                          "eval_node<G>: the graph must return an output port");
+
+            Wiring w;
+            auto   all = std::forward_as_tuple(std::forward<Args>(args)...);
+
+            // Pass 1: wire the matching replay per Port parameter (returning the
+            // typed port compose expects) and pass scalar payloads straight through.
+            auto wire_arg = [&]<std::size_t I>() {
+                using P = std::remove_cvref_t<std::tuple_element_t<I, params>>;
+                if constexpr (graph_wiring_detail::is_port<P>::value)
+                {
+                    static_assert(!graph_wiring_detail::is_erased_port<P>::value,
+                                  "eval_node<G>: graph time-series inputs must declare concrete schemas");
+                    return ts_harness<typename P::schema>::wire_replay(w, input_key(I));
+                }
+                else
+                {
+                    return graph_wiring_detail::make_scalar_param<P>(payload_at<I>(all));
+                }
+            };
+
+            auto out_port = [&]<std::size_t... I>(std::index_sequence<I...>) {
+                return GraphT::compose(w, wire_arg.template operator()<I>()...);
+            }(std::make_index_sequence<arg_count>{});
+
+            if constexpr (std::is_void_v<out_schema>) { wire<record>(w, out_port, std::string{"eval_node::out"}); }
+            else { ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"}); }
+            GraphBuilder gb = std::move(w).finish();
+
+            // Pass 2: seed each Port parameter's replay buffer; track the longest input.
+            std::size_t max_len = 0;
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                (
+                    [&] {
+                        using P = std::remove_cvref_t<std::tuple_element_t<I, params>>;
+                        if constexpr (graph_wiring_detail::is_port<P>::value)
+                        {
+                            const auto &seq = payload_at<I>(all);
+                            max_len         = std::max(max_len, seq.size());
+                            ts_harness<typename P::schema>::seed(gb.global_state(), input_key(I), seq);
+                        }
+                    }(),
+                    ...);
+            }(std::make_index_sequence<arg_count>{});
+
+            GraphExecutorBuilder eb;
+            eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
+            GraphExecutorValue executor = eb.make_executor();
+            auto               view     = executor.view();
+            view.run();
+
+            auto out = [&] {
+                if constexpr (std::is_void_v<out_schema>)
+                {
+                    return get_recorded_deltas(view.graph().global_state(), "eval_node::out");
+                }
+                else
+                {
+                    return ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
+                }
+            }();
+            if (out.size() < max_len) { out.resize(max_len); }
+            return out;
+        }
     }  // namespace eval_node_detail
 
     /**
@@ -269,27 +492,7 @@ namespace hgraph::testing
     [[nodiscard]] std::vector<std::optional<eval_node_detail::output_element_t<NodeT>>>
     eval_node(Args &&...args)
     {
-        using sig         = StaticNodeSignature<NodeT>;
-        using wire_params = eval_node_detail::wire_params_t<NodeT>;
-        using out_schema  = eval_node_detail::output_schema_t<NodeT>;
-        constexpr std::size_t arg_count = sizeof...(Args);
-
-        static_assert(sig::output_count() == 1, "eval_node: source NodeT must have exactly one output");
-        static_assert(arg_count == std::tuple_size_v<wire_params>,
-                      "eval_node: argument count must match the source node's Scalar parameters");
-
-        Wiring w;
-        auto   out_port = wire<NodeT>(w, std::forward<Args>(args)...);
-        ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"});
-
-        GraphBuilder gb = std::move(w).finish();
-        GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
-        GraphExecutorValue executor = eb.make_executor();
-        auto               view     = executor.view();
-        view.run();
-
-        return ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
+        return eval_node_detail::eval_source_node<NodeT>(std::forward<Args>(args)...);
     }
 
     /**
@@ -320,69 +523,19 @@ namespace hgraph::testing
     [[nodiscard]] std::vector<std::optional<eval_node_detail::output_element_t<NodeT>>>
     eval_node(const std::vector<std::optional<eval_node_detail::first_input_element_t<NodeT>>> &input0, Rest &&...rest)
     {
-        using sig         = StaticNodeSignature<NodeT>;
-        using wire_params = eval_node_detail::wire_params_t<NodeT>;
-        using out_schema  = eval_node_detail::output_schema_t<NodeT>;
-        constexpr std::size_t arg_count = 1 + sizeof...(Rest);
+        return eval_node_detail::eval_input_node<NodeT>(input0, std::forward<Rest>(rest)...);
+    }
 
-        static_assert(sig::output_count() == 1, "eval_node: NodeT must have exactly one output");
-        static_assert(sig::input_count() >= 1, "eval_node: NodeT must have at least one time-series input");
-        static_assert(arg_count == std::tuple_size_v<wire_params>,
-                      "eval_node: argument count must match the node's In + Scalar parameters (in eval order)");
-        static_assert(static_node_detail::is_input_selector<std::tuple_element_t<0, wire_params>>::value,
-                      "eval_node: the first In/Scalar parameter must be a time-series input");
-
-        Wiring w;
-        auto   all = std::forward_as_tuple(input0, std::forward<Rest>(rest)...);
-
-        // Pass 1: wire the matching replay per time-series input (returning its port)
-        // and pass scalar values straight through, building the wire<NodeT> arg list.
-        auto wire_arg = [&]<std::size_t I>() {
-            using P = std::tuple_element_t<I, wire_params>;
-            if constexpr (static_node_detail::is_input_selector<P>::value)
-            {
-                return ts_harness<typename P::schema>::wire_replay(w, eval_node_detail::input_key(I));
-            }
-            else
-            {
-                return std::get<I>(all);  // scalar value
-            }
-        };
-
-        auto out_port = [&]<std::size_t... I>(std::index_sequence<I...>) {
-            return wire<NodeT>(w, wire_arg.template operator()<I>()...);
-        }(std::make_index_sequence<arg_count>{});
-
-        ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"});
-        GraphBuilder gb = std::move(w).finish();
-
-        // Pass 2: seed each time-series input's replay buffer (same key per slot) and
-        // track the longest input.
-        std::size_t max_len = 0;
-        [&]<std::size_t... I>(std::index_sequence<I...>) {
-            (
-                [&] {
-                    using P = std::tuple_element_t<I, wire_params>;
-                    if constexpr (static_node_detail::is_input_selector<P>::value)
-                    {
-                        const auto &seq = std::get<I>(all);
-                        max_len         = std::max(max_len, seq.size());
-                        ts_harness<typename P::schema>::seed(gb.global_state(), eval_node_detail::input_key(I), seq);
-                    }
-                }(),
-                ...);
-        }(std::make_index_sequence<arg_count>{});
-
-        GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
-        GraphExecutorValue executor = eb.make_executor();
-        auto               view     = executor.view();
-        view.run();
-
-        // Cycle-align: pad to the longest input, never truncate (see record).
-        auto out = ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
-        if (out.size() < max_len) { out.resize(max_len); }
-        return out;
+    template <typename NodeT, typename First, typename... Rest>
+        requires(!std::derived_from<NodeT, operator_tag> &&
+                 eval_node_detail::has_eval<NodeT> &&
+                 StaticNodeSignature<NodeT>::input_count() >= 1 &&
+                 eval_node_detail::is_named_arg_v<First> &&
+                 eval_node_detail::any_optional_vector_v<First, Rest...>)
+    [[nodiscard]] std::vector<std::optional<eval_node_detail::output_element_t<NodeT>>>
+    eval_node(First &&first, Rest &&...rest)
+    {
+        return eval_node_detail::eval_input_node<NodeT>(std::forward<First>(first), std::forward<Rest>(rest)...);
     }
 
     /**
@@ -422,20 +575,29 @@ namespace hgraph::testing
         // vector<optional<Value>> -> the next explicit schema, in order), pass scalar
         // values straight through, dispatch the operator, then record its output.
         auto wire_arg = [&]<std::size_t I>() {
-            using A = std::remove_cvref_t<std::tuple_element_t<I, decltype(all)>>;
-            if constexpr (eval_node_detail::is_value_sequence_v<A>)
+            using A0             = std::remove_cvref_t<std::tuple_element_t<I, decltype(all)>>;
+            using A              = eval_node_detail::payload_t<A0>;
+            constexpr bool named = eval_node_detail::is_named_arg_v<A0>;
+            auto rewrap          = [&](auto port) {
+                if constexpr (named)
+                {
+                    return NamedArg<decltype(port)>{std::get<I>(all).name, std::move(port)};
+                }
+                else { return port; }
+            };
+            if constexpr (eval_node_detail::is_value_sequence<A>::value)
             {
                 using S = std::tuple_element_t<eval_node_detail::value_sequences_before<I, Args...>(), in_schemas>;
-                return ts_harness<S>::wire_replay(w, eval_node_detail::input_key(I));
+                return rewrap(ts_harness<S>::wire_replay(w, eval_node_detail::input_key(I)));
             }
             else if constexpr (eval_node_detail::is_optional_vector<A>::value)
             {
                 using T = typename eval_node_detail::optional_vector_element<A>::type;
-                return wire<replay, TS<T>>(w, eval_node_detail::input_key(I));
+                return rewrap(wire<replay, TS<T>>(w, eval_node_detail::input_key(I)));
             }
             else
             {
-                return std::get<I>(all);  // scalar value
+                return std::get<I>(all);  // scalar value (named or not — wire<> handles both)
             }
         };
 
@@ -451,19 +613,20 @@ namespace hgraph::testing
         [&]<std::size_t... I>(std::index_sequence<I...>) {
             (
                 [&] {
-                    using A = std::remove_cvref_t<std::tuple_element_t<I, decltype(all)>>;
-                    if constexpr (eval_node_detail::is_value_sequence_v<A>)
+                    using A0 = std::remove_cvref_t<std::tuple_element_t<I, decltype(all)>>;
+                    using A  = eval_node_detail::payload_t<A0>;
+                    if constexpr (eval_node_detail::is_value_sequence<A>::value)
                     {
                         using S = std::tuple_element_t<eval_node_detail::value_sequences_before<I, Args...>(),
                                                        in_schemas>;
-                        const auto &seq = std::get<I>(all);
+                        const auto &seq = eval_node_detail::payload_of(std::get<I>(all));
                         max_len         = std::max(max_len, seq.size());
                         ts_harness<S>::seed(gb.global_state(), eval_node_detail::input_key(I), seq);
                     }
                     else if constexpr (eval_node_detail::is_optional_vector<A>::value)
                     {
                         using T         = typename eval_node_detail::optional_vector_element<A>::type;
-                        const auto &seq = std::get<I>(all);
+                        const auto &seq = eval_node_detail::payload_of(std::get<I>(all));
                         max_len         = std::max(max_len, seq.size());
                         set_replay_values<T>(gb.global_state(), eval_node_detail::input_key(I), seq);
                     }
@@ -548,80 +711,19 @@ namespace hgraph::testing
     eval_node(const std::vector<std::optional<typename eval_node_detail::graph_first_input_element<GraphT>::type>> &input0,
               Rest &&...rest)
     {
-        using sig    = StaticGraphSignature<GraphT>;
-        using params = typename sig::param_types;
-        constexpr std::size_t arg_count = 1 + sizeof...(Rest);
+        return eval_node_detail::eval_input_graph<GraphT>(input0, std::forward<Rest>(rest)...);
+    }
 
-        static_assert(sig::input_count() >= 1, "eval_node<G>: the graph must have at least one time-series input");
-        static_assert(arg_count == sig::param_count(),
-                      "eval_node<G>: argument count must match the graph's Port + Scalar parameters "
-                      "(in compose order)");
-
-        using out_schema = typename eval_node_detail::graph_output_element<GraphT>::schema;
-        static_assert(!std::is_void_v<std::remove_cvref_t<typename sig::output_type>>,
-                      "eval_node<G>: the graph must return an output port");
-
-        Wiring w;
-        auto   all = std::forward_as_tuple(input0, std::forward<Rest>(rest)...);
-
-        // Pass 1: wire the matching replay per Port parameter (returning the typed
-        // port compose expects) and pass scalar values straight through.
-        auto wire_arg = [&]<std::size_t I>() {
-            using P = std::remove_cvref_t<std::tuple_element_t<I, params>>;
-            if constexpr (graph_wiring_detail::is_port<P>::value)
-            {
-                static_assert(!graph_wiring_detail::is_erased_port<P>::value,
-                              "eval_node<G>: graph time-series inputs must declare concrete schemas");
-                return ts_harness<typename P::schema>::wire_replay(w, eval_node_detail::input_key(I));
-            }
-            else
-            {
-                return graph_wiring_detail::make_scalar_param<P>(std::get<I>(all));
-            }
-        };
-
-        auto out_port = [&]<std::size_t... I>(std::index_sequence<I...>) {
-            return GraphT::compose(w, wire_arg.template operator()<I>()...);
-        }(std::make_index_sequence<arg_count>{});
-
-        if constexpr (std::is_void_v<out_schema>) { wire<record>(w, out_port, std::string{"eval_node::out"}); }
-        else { ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"}); }
-        GraphBuilder gb = std::move(w).finish();
-
-        // Pass 2: seed each Port parameter's replay buffer; track the longest input.
-        std::size_t max_len = 0;
-        [&]<std::size_t... I>(std::index_sequence<I...>) {
-            (
-                [&] {
-                    using P = std::remove_cvref_t<std::tuple_element_t<I, params>>;
-                    if constexpr (graph_wiring_detail::is_port<P>::value)
-                    {
-                        const auto &seq = std::get<I>(all);
-                        max_len         = std::max(max_len, seq.size());
-                        ts_harness<typename P::schema>::seed(gb.global_state(), eval_node_detail::input_key(I), seq);
-                    }
-                }(),
-                ...);
-        }(std::make_index_sequence<arg_count>{});
-
-        GraphExecutorBuilder eb;
-        eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
-        GraphExecutorValue executor = eb.make_executor();
-        auto               view     = executor.view();
-        view.run();
-
-        auto out = [&] {
-            if constexpr (std::is_void_v<out_schema>)
-            {
-                return get_recorded_deltas(view.graph().global_state(), "eval_node::out");
-            }
-            else
-            {
-                return ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
-            }
-        }();
-        if (out.size() < max_len) { out.resize(max_len); }
-        return out;
+    template <typename GraphT, typename First, typename... Rest>
+        requires(!std::derived_from<GraphT, operator_tag> &&
+                 eval_node_detail::is_graph<GraphT> &&
+                 StaticGraphSignature<GraphT>::input_count() >= 1 &&
+                 eval_node_detail::is_named_arg_v<First> &&
+                 eval_node_detail::any_optional_vector_v<First, Rest...>)
+    [[nodiscard]] std::vector<std::optional<typename eval_node_detail::graph_output_element<GraphT>::type>>
+    eval_node(First &&first, Rest &&...rest)
+    {
+        return eval_node_detail::eval_input_graph<GraphT>(std::forward<First>(first), std::forward<Rest>(rest)...);
     }
 }  // namespace hgraph::testing
 

@@ -50,6 +50,9 @@ a ``std::vector<std::optional<T>>``; a scalar input is the value itself. Value t
 are inferred from the node's signature, and **every scalar value type** is supported
 (``bool``, the integer widths, ``float``/``double``, ``std::string``, …) — the
 harness plumbs values type-erased, so it is generic over the value type.
+For consistency with operator tests, any node argument may be wrapped as
+``arg<"name">(…)``; the wrapper is accepted and unwrapped by the harness, but static
+nodes are still wired in eval-parameter order.
 
 A node configured by a **scalar** takes the scalar after its inputs:
 
@@ -60,6 +63,9 @@ A node configured by a **scalar** takes the scalar after its inputs:
 
    CHECK_OUTPUT(testing::eval_node<Shift>({Int{1}, Int{2}, Int{3}}, Int{5}),
                 {Int{6}, Int{7}, Int{8}});
+   CHECK_OUTPUT(testing::eval_node<Shift>(arg<"in">(values<Int>(1, 2, 3)),
+                                          arg<"delta">(Int{5})),
+                values<Int>(6, 7, 8));
 
 A node with **multiple time-series inputs** takes one sequence per input. The first
 input may be a braced list (its type is inferred); later inputs are passed as
@@ -163,7 +169,11 @@ sequence (a scalar leaf ``T`` → ``TS<T>``) or — for any other time-series ki
 usual canonical-delta ``values<Value>(...)`` sequence, with its time-series schema
 supplied as an **explicit template argument** in input order (the same convention as
 ``eval_node<const_, TSL<…>>``); a scalar input is the value itself — including a
-wirable function ``fn<X>()`` for the higher-order operators:
+wirable function ``fn<X>()`` for the higher-order operators. **Keyword arguments**
+work too: wrap any argument — including a sequence — in ``arg<"name">(…)`` and the
+harness wires its replay before dispatching by name
+(``eval_node<map_, TSD<…>>(fn<F>(), arg<"rhs">(values<Value>(…)), …)``); the schema
+template arguments still follow the sequences in call order:
 
 .. code-block:: cpp
 
@@ -186,7 +196,9 @@ same harness: ``eval_node<G>(inputs…)`` wires a ``replay`` per declared ``Port
 parameter, passes scalar values straight through, records the returned output, and
 reads it back typed. This is the preferred shape for testing wiring compositions
 (operator syntax expressions, ``nested_`` wrappers, …) — no hand-wired
-``replay`` / ``record`` plumbing in the test graph:
+``replay`` / ``record`` plumbing in the test graph. Like static-node tests, graph
+arguments may be wrapped in ``arg<"name">(…)`` for consistency, but graph compose
+parameters are still supplied in compose-parameter order:
 
 .. code-block:: cpp
 

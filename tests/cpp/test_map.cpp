@@ -506,19 +506,6 @@ namespace
         }
     };
 
-    struct MapKwargsGraph
-    {
-        static constexpr auto name = "map_kwargs_graph";
-        static void           compose(Wiring &w)
-        {
-            auto a = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"a"});
-            auto b = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"b"});
-            // All-keyword call, deliberately rhs-first: names must win.
-            wire<testing::record>(w, wire<stdlib::map_>(w, fn<NamedPairFn>(), arg<"rhs">(b), arg<"lhs">(a)),
-                                  Str{"out"});
-        }
-    };
-
     struct NamedTsdThenTslFn
     {
         static constexpr auto name = "named_tsd_then_tsl_fn";
@@ -552,19 +539,13 @@ TEST_CASE("map_: keyword arguments resolve onto the function's named ports")
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    GraphBuilder gb = build_graph<MapKwargsGraph>();
-    set_replay_deltas(gb.global_state(), "a",
-                      values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 10}, {"y"s, 100}})));
-    set_replay_deltas(gb.global_state(), "b",
-                      values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 3}})));
-
-    GraphExecutorBuilder eb;
-    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
-    GraphExecutorValue ex = eb.make_executor();
-    ex.view().run();
-
-    // lhs=a, rhs=b despite the rhs-first call: x -> 10 - 3 = 7; y waits for b.
-    CHECK_OUTPUT(get_recorded_deltas(ex.view().graph().global_state(), "out"),
+    // All-keyword call, deliberately rhs-first: names must win — lhs=a,
+    // rhs=b, so x -> 10 - 3 = 7; y waits for b. (Schema template args follow
+    // the sequences in CALL order: rhs first.)
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSD<Str, TS<Int>>, TSD<Str, TS<Int>>>(
+                     fn<NamedPairFn>(),
+                     arg<"rhs">(values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 3}}))),
+                     arg<"lhs">(values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 10}, {"y"s, 100}}))))),
                  values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 7}})));
 }
 

@@ -219,6 +219,9 @@ TEST_CASE("nested wiring: a sub-graph with multiple boundary inputs binds each a
 
     CHECK_OUTPUT(eval_node<NestedSumGraph>(values<Int>(1, 2, 3), values<Int>(10, 20, 30)),
                  values<Int>(11, 22, 33));
+    CHECK_OUTPUT(eval_node<NestedSumGraph>(arg<"a">(values<Int>(1, 2, 3)),
+                                           arg<"b">(values<Int>(10, 20, 30))),
+                 values<Int>(11, 22, 33));
 }
 
 TEST_CASE("nested wiring: one boundary arg feeds multiple child input endpoints")
@@ -254,6 +257,15 @@ TEST_CASE("nested wiring: scalar parameters configure the child graph and partit
     });
     CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "doubled"), values<Int>(2, 4, 6));
     CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "tripled"), values<Int>(3, 6, 9));
+}
+
+TEST_CASE("nested wiring: graph eval_node accepts keyword wrappers around inputs and scalars")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<ScaledSubGraph>(arg<"in">(values<Int>(1, 2, 3)), arg<"factor">(Int{4})),
+                 values<Int>(4, 8, 12));
 }
 
 TEST_CASE("nested wiring: a sink sub-graph wires as a nested sink node")
