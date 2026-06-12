@@ -14,6 +14,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace hgraph::stdlib
 {
@@ -218,6 +219,14 @@ namespace hgraph::stdlib
         return lhs - floor_divide_int(lhs, rhs) * rhs;
     }
 
+    [[nodiscard]] inline std::pair<Float, Float> divmod_float(Float lhs, Float rhs)
+    {
+        if (rhs == Float{0}) { throw std::domain_error("divmod_: division by zero"); }
+        const Float quotient  = std::floor(lhs / rhs);
+        const Float remainder = lhs - quotient * rhs;
+        return {quotient, remainder};
+    }
+
     [[nodiscard]] inline std::optional<Int> floor_divide_int_with_policy(Int lhs, Int rhs, DivideByZero on_zero)
     {
         if (rhs != 0) { return floor_divide_int(lhs, rhs); }
@@ -352,6 +361,27 @@ namespace hgraph::stdlib
         static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out)
         {
             out.set(modulo_int(lhs.value(), rhs.value()));
+        }
+    };
+
+    struct divmod_ints
+    {
+        static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TSL<TS<Int>, 2>> out)
+        {
+            out.set(0, floor_divide_int(lhs.value(), rhs.value()));
+            out.set(1, modulo_int(lhs.value(), rhs.value()));
+        }
+    };
+
+    template <typename L, typename R>
+    struct divmod_numbers
+    {
+        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs, Out<TSL<TS<Float>, 2>> out)
+        {
+            const auto [quotient, remainder] =
+                divmod_float(static_cast<Float>(lhs.value()), static_cast<Float>(rhs.value()));
+            out.set(0, quotient);
+            out.set(1, remainder);
         }
     };
 
@@ -505,6 +535,12 @@ namespace hgraph::stdlib
         register_overload<mod_, mod_numbers<Float, Float>>();
         register_overload<mod_, mod_numbers<Int, Float>>();
         register_overload<mod_, mod_numbers<Float, Int>>();
+
+        // divmod_ — mirrors floordiv_ / mod_ result typing.
+        register_overload<divmod_, divmod_ints>();
+        register_overload<divmod_, divmod_numbers<Float, Float>>();
+        register_overload<divmod_, divmod_numbers<Int, Float>>();
+        register_overload<divmod_, divmod_numbers<Float, Int>>();
 
         // pow_ — numeric power is explicitly Float-valued in C++.
         register_overload<pow_, pow_numbers_default<Int, Int>>();

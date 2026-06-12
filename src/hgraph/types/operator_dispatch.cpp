@@ -65,6 +65,60 @@ namespace hgraph
             return false;
         }
 
+        [[nodiscard]] bool input_ts_pattern_match(const TypePattern &pattern,
+                                                  const TSValueTypeMetaData *concrete,
+                                                  ResolutionMap &map)
+        {
+            if (concrete == nullptr) { return false; }
+            if (pattern.kind == TypePattern::Kind::Signal) { return true; }
+            if (pattern.kind != TypePattern::Kind::REF && concrete->kind == TSTypeKind::REF)
+            {
+                return input_ts_pattern_match(pattern, concrete->referenced_ts(), map);
+            }
+
+            switch (pattern.kind)
+            {
+                case TypePattern::Kind::Concrete:
+                    return graph_wiring_detail::input_accepts_output_schema(pattern.meta, concrete);
+                case TypePattern::Kind::TSL:
+                    if (concrete->kind != TSTypeKind::TSL) { return false; }
+                    if (pattern.fixed_size != 0 && pattern.fixed_size != concrete->fixed_size()) { return false; }
+                    return input_ts_pattern_match(pattern.children[0], concrete->element_ts(), map);
+                case TypePattern::Kind::TSD:
+                    return concrete->kind == TSTypeKind::TSD &&
+                           scalar_pattern_match(pattern.scalar, concrete->key_type(), map) &&
+                           input_ts_pattern_match(pattern.children[0], concrete->element_ts(), map);
+                case TypePattern::Kind::TSB:
+                    if (concrete->kind != TSTypeKind::TSB) { return false; }
+                    if (pattern.named_bundle)
+                    {
+                        if (!concrete->is_named_tsb() || concrete->bundle_name() == nullptr ||
+                            pattern.bundle_name != concrete->bundle_name())
+                        {
+                            return false;
+                        }
+                    }
+                    if (concrete->field_count() != pattern.children.size()) { return false; }
+                    for (std::size_t i = 0; i < pattern.children.size(); ++i)
+                    {
+                        const TSFieldMetaData &field = concrete->fields()[i];
+                        if (field.name == nullptr || pattern.field_names[i] != field.name) { return false; }
+                        if (!input_ts_pattern_match(pattern.children[i], field.type, map)) { return false; }
+                    }
+                    return true;
+                case TypePattern::Kind::REF:
+                    return concrete->kind == TSTypeKind::REF &&
+                           input_ts_pattern_match(pattern.children[0], concrete->referenced_ts(), map);
+                case TypePattern::Kind::Var:
+                case TypePattern::Kind::TS:
+                case TypePattern::Kind::TSS:
+                case TypePattern::Kind::TSW:
+                case TypePattern::Kind::Signal:
+                    return ts_pattern_match(pattern, concrete, map);
+            }
+            return false;
+        }
+
         [[nodiscard]] bool scalar_value_matches_ts_pattern(const TypePattern &pattern,
                                                            const Value &value,
                                                            ResolutionMap &map,
@@ -313,7 +367,7 @@ namespace hgraph
                         return false;
                     }
                     ResolutionMap tail_scope = map;
-                    if (!ts_pattern_match(param.ts, arg.port.schema, tail_scope))
+                    if (!input_ts_pattern_match(param.ts, arg.port.schema, tail_scope))
                     {
                         why = fmt::format("variadic argument {} (a {}) does not match {}", i,
                                           arg.port.schema != nullptr && arg.port.schema->display_name != nullptr
@@ -335,7 +389,7 @@ namespace hgraph
                     }
                     if (arg.kind == WiringArg::Kind::TimeSeries)
                     {
-                        if (!ts_pattern_match(param.ts, arg.port.schema, map))
+                        if (!input_ts_pattern_match(param.ts, arg.port.schema, map))
                         {
                             why = fmt::format("argument {} (a {}) does not match {}", i,
                                               arg.port.schema != nullptr && arg.port.schema->display_name != nullptr

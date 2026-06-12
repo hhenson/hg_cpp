@@ -32,7 +32,8 @@ chosen implementation is baked into the graph.
    scalar-aware ``requires_`` / ``resolve_default_types`` hooks, graph overloads,
    sink operators, explicit output schema resolution, and a ``lib/std`` operator family
    in ``include/hgraph/lib/std/std_operators.h`` — covering scalar arithmetic,
-   comparison, logical / bitwise, const / zero, and simple IO sink overloads, including
+   comparison, logical / bitwise, string basics, ``str_``, const / zero,
+   date / time-series-property operators, and simple IO sink overloads, including
    homogeneous, mixed, heterogeneous-temporal, result-differs and optional-scalar
    (``DivideByZero`` policy) overloads — proven by
    ``tests/cpp/test_std_operators.cpp`` and the scalar / auto-const / ``requires`` /
@@ -151,6 +152,12 @@ port whose producer computes a ``REF`` output (e.g. ``default``) keeps that
 computed schema — the result schema is **never rewritten**; consumers bind
 through the reference at runtime, and matching simply treats the two shapes as
 the same type.
+
+**SIGNAL input compatibility.** In input position, ``SIGNAL`` follows the same
+rule as ordinary node / graph wiring: an ``In<..., SIGNAL>`` or ``Port<SIGNAL>``
+overload accepts any time-series source and observes only its tick / modified
+state. Output matching remains concrete — a ``SIGNAL`` output is not treated as
+``TS<T>``.
 
 
 ``WiringArg`` — erased arguments
@@ -522,8 +529,11 @@ concrete overloads and a ``register_<family>_operators()`` function, and
 ``impl/operators_impl.h`` aggregates them into ``register_standard_operators()``. The
 implemented subset currently covers scalar arithmetic (``impl/arithmetic_impl.h``),
 scalar comparison (``impl/comparison_impl.h``), scalar logical / bitwise operators
-(``impl/logical_impl.h``), ``const_`` / ``zero_`` (``impl/conversion_impl.h``) and
-``debug_print`` / ``null_sink`` (``impl/io_impl.h``), plus the current
+(``impl/logical_impl.h``), string basics (``impl/string_impl.h`` and string
+container overloads in ``impl/container_impl.h``), ``const_`` / ``zero_`` /
+``str_`` (``impl/conversion_impl.h``), date components and time-series
+properties (``impl/temporal_impl.h``) and ``debug_print`` / ``null_sink``
+(``impl/io_impl.h``), plus the current
 higher-order subset (``reduce``, ``switch_`` and ``map_`` in
 ``impl/higher_order_impl.h``). Further families gain their
 ``impl/<family>_impl.h`` (and a registration call) as they land. The
@@ -679,7 +689,11 @@ Roadmap
    includes homogeneous and mixed numeric cases, heterogeneous-temporal cases
    (``DateTime + TimeDelta -> DateTime``, ``Date + TimeDelta -> Date``), result-differs
    cases (``div_: Int / Int -> Float``, ``sub_: DateTime - DateTime -> TimeDelta``),
-   Python-style floor semantics for integer ``floordiv_`` / ``mod_``, and optional
+   Python-style floor semantics for integer ``floordiv_`` / ``mod_`` / ``divmod_``,
+   binary scalar ``min_`` / ``max_``, string ``contains_`` / ``len_`` / ``is_empty`` /
+   ``getitem_`` plus regex ``replace`` / ``substr``, ``str_``, date components /
+   ``explode(Date)``, time-series properties (``valid`` / ``modified`` /
+   ``last_modified_*``), and optional
    wiring-time ``DivideByZero`` policy overloads (``Error`` / ``Nan`` / ``Inf`` /
    ``NoTick`` / ``Zero`` / ``One``, mirroring ``ext/2603`` where applicable).
    ``DivideByZero`` is a registered *enum scalar*. Because parameter defaults are not yet

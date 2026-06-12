@@ -179,6 +179,19 @@ TEST_CASE("std operators: comparison operators support ordering and cmp_")
                  values<stdlib::CmpResult>(stdlib::CmpResult::LT, stdlib::CmpResult::EQ, stdlib::CmpResult::GT));
 }
 
+TEST_CASE("std operators: min_ and max_ support binary scalar operands")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::min_>(values<Int>(3, 1), values<Int>(2, 5)), values<Int>(2, 1));
+    CHECK_OUTPUT(eval_node<stdlib::max_>(values<Int>(3, 1), values<Float>(2.5, 5.5)), values<Float>(3.0, 5.5));
+    CHECK_OUTPUT(eval_node<stdlib::min_>(values<Str>(Str{"b"}, Str{"a"}), values<Str>(Str{"a"}, Str{"c"})),
+                 values<Str>(Str{"a"}, Str{"a"}));
+    CHECK_OUTPUT(eval_node<stdlib::max_>(values<Date>(ymd(2020, 1, 1), ymd(2020, 1, 10)),
+                                         values<Date>(ymd(2020, 1, 3), ymd(2020, 1, 5))),
+                 values<Date>(ymd(2020, 1, 3), ymd(2020, 1, 10)));
+}
+
 TEST_CASE("std operators: eq_ works for strings")
 {
     stdlib::register_standard_operators();
@@ -249,6 +262,19 @@ TEST_CASE("std operators: floordiv_ and mod_ use floor semantics")
     CHECK_OUTPUT(eval_node<stdlib::floordiv_>(values<Float>(7.5, -7.5), values<Int>(2, 2)), values<Float>(3.0, -4.0));
 }
 
+TEST_CASE("std operators: divmod_ returns quotient and remainder as a two-element list")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::divmod_>(values<Int>(5, -7), values<Int>(2, 3)),
+                 values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 1}}),
+                               list_delta<TS<Int>>({{0, -3}, {1, 2}})));
+    CHECK_OUTPUT(eval_node<stdlib::divmod_>(values<Float>(5.0), values<Int>(2)),
+                 values<Value>(list_delta<TS<Float>>({{0, 2.0}, {1, 1.0}})));
+    CHECK_OUTPUT(eval_node<stdlib::divmod_>(values<Int>(5), values<Float>(2.0)),
+                 values<Value>(list_delta<TS<Float>>({{0, 2.0}, {1, 1.0}})));
+}
+
 TEST_CASE("std operators: pow_ is Float-valued for numeric operands")
 {
     stdlib::register_standard_operators();
@@ -279,6 +305,76 @@ TEST_CASE("std operators: logical and bitwise operators support standard scalars
     CHECK_OUTPUT(eval_node<stdlib::invert_>(values<Int>(0, 1)), values<Int>(~Int{0}, ~Int{1}));
     CHECK_OUTPUT(eval_node<stdlib::lshift_>(values<Int>(1, 2), values<Int>(3, 2)), values<Int>(8, 8));
     CHECK_OUTPUT(eval_node<stdlib::rshift_>(values<Int>(8, 9), values<Int>(1, 2)), values<Int>(4, 2));
+}
+
+TEST_CASE("std operators: string operators support replace substr and container basics")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::replace>(values<Str>(Str{"a"}, Str{"^a"}),
+                                            values<Str>(Str{"z"}, Str{"z"}),
+                                            values<Str>(Str{"abcabcabc"}, Str{"abcabcabc"})),
+                 values<Str>(Str{"zbczbczbc"}, Str{"zbcabcabc"}));
+    CHECK_OUTPUT(eval_node<stdlib::substr>(values<Str>(Str{"abcdef"}, Str{"abcdef"}, Str{"abcdef"}),
+                                           values<Int>(0, 2, 1),
+                                           values<Int>(3, 4, 5)),
+                 values<Str>(Str{"abc"}, Str{"cd"}, Str{"bcde"}));
+    CHECK_OUTPUT(eval_node<stdlib::contains_>(values<Str>(Str{"abc"}, none, Str{}),
+                                              values<Str>(Str{"z"}, Str{"bc"}, Str{})),
+                 values<Bool>(false, true, true));
+    CHECK_OUTPUT(eval_node<stdlib::len_>(values<Str>(Str{}, Str{"abc"})), values<Int>(0, 3));
+    CHECK_OUTPUT(eval_node<stdlib::is_empty>(values<Str>(Str{}, Str{"abc"})), values<Bool>(true, false));
+    CHECK_OUTPUT(eval_node<stdlib::getitem_>(values<Str>(Str{"abc"}, Str{"abc"}), values<Int>(1, -1)),
+                 values<Str>(Str{"b"}, Str{"c"}));
+}
+
+TEST_CASE("std operators: str_ converts scalar time-series values to strings")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::str_>(values<Int>(3, -2)), values<Str>(Str{"3"}, Str{"-2"}));
+    CHECK_OUTPUT(eval_node<stdlib::str_>(values<Bool>(true, false)), values<Str>(Str{"true"}, Str{"false"}));
+}
+
+TEST_CASE("std operators: date component operators extract day month year and explode")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::day_of_month>(values<Date>(ymd(2020, 1, 3), ymd(2021, 12, 31))),
+                 values<Int>(3, 31));
+    CHECK_OUTPUT(eval_node<stdlib::month_of_year>(values<Date>(ymd(2020, 1, 3), ymd(2021, 12, 31))),
+                 values<Int>(1, 12));
+    CHECK_OUTPUT(eval_node<stdlib::year>(values<Date>(ymd(2020, 1, 3), ymd(2021, 12, 31))), values<Int>(2020, 2021));
+    CHECK_OUTPUT(eval_node<stdlib::explode>(values<Date>(ymd(2024, 1, 1), ymd(2024, 1, 2),
+                                                          ymd(2024, 2, 2), ymd(2025, 2, 2))),
+                 values<Value>(list_delta<TS<Int>>({{0, 2024}, {1, 1}, {2, 1}}),
+                               list_delta<TS<Int>>({{2, 2}}),
+                               list_delta<TS<Int>>({{1, 2}}),
+                               list_delta<TS<Int>>({{0, 2025}})));
+}
+
+TEST_CASE("std operators: time-series property operators report valid modified and last-modified")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::valid>(values<Int>(none, 1)), values<Bool>(false, true));
+    CHECK_OUTPUT(eval_node<stdlib::modified>(values<Int>(none, 1, none, none, 2, none)),
+                 values<Bool>(false, true, false, none, true, false));
+    CHECK_OUTPUT(eval_node<stdlib::last_modified_time>(values<Int>(1, none, 2)),
+                 values<DateTime>(MIN_ST, none, MIN_ST + 2 * MIN_TD));
+
+    const Date start_date{std::chrono::floor<std::chrono::days>(MIN_ST)};
+    CHECK_OUTPUT(eval_node<stdlib::last_modified_date>(values<Int>(1, none, 2)),
+                 values<Date>(start_date, none, start_date));
+
+    const std::vector<std::optional<Value>> wall_clock =
+        eval_node<stdlib::last_modified_wall_clock_time>(values<Int>(1, none, 2));
+    REQUIRE(wall_clock.size() == 3);
+    REQUIRE(wall_clock[0].has_value());
+    CHECK(wall_clock[0]->view().checked_as<DateTime>() != MIN_DT);
+    CHECK_FALSE(wall_clock[1].has_value());
+    REQUIRE(wall_clock[2].has_value());
+    CHECK(wall_clock[2]->view().checked_as<DateTime>() != MIN_DT);
 }
 
 TEST_CASE("std operators: an operand combination with no registered implementation raises")

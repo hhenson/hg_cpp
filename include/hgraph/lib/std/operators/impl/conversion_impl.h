@@ -188,6 +188,14 @@ namespace hgraph::stdlib
         }
     };
 
+    struct str_impl
+    {
+        static void eval(In<"ts", TsVar<"S">> ts, Out<TS<Str>> out)
+        {
+            out.set(ts.value().to_string());
+        }
+    };
+
     /** Register the conversion / utility operator overloads. */
     inline void register_conversion_operators()
     {
@@ -199,6 +207,7 @@ namespace hgraph::stdlib
         register_graph_overload<zero_, zero_str>();
 
         register_overload<default_, default_impl>();
+        register_overload<str_, str_impl>();
     }
 }  // namespace hgraph::stdlib
 

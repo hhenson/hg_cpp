@@ -8,6 +8,8 @@
 #include <hgraph/types/static_schema.h>
 #include <hgraph/util/date_time.h>
 
+#include <algorithm>
+
 namespace hgraph::stdlib
 {
     /**
@@ -147,6 +149,46 @@ namespace hgraph::stdlib
         }
     };
 
+    template <typename T>
+    struct min_same
+    {
+        static void eval(In<"lhs", TS<T>> lhs, In<"rhs", TS<T>> rhs, Out<TS<T>> out)
+        {
+            const auto &l = lhs.value();
+            const auto &r = rhs.value();
+            out.set(std::min(l, r));
+        }
+    };
+
+    template <typename L, typename R>
+    struct min_binary
+    {
+        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs, Out<TS<Float>> out)
+        {
+            out.set(std::min(static_cast<Float>(lhs.value()), static_cast<Float>(rhs.value())));
+        }
+    };
+
+    template <typename T>
+    struct max_same
+    {
+        static void eval(In<"lhs", TS<T>> lhs, In<"rhs", TS<T>> rhs, Out<TS<T>> out)
+        {
+            const auto &l = lhs.value();
+            const auto &r = rhs.value();
+            out.set(std::max(l, r));
+        }
+    };
+
+    template <typename L, typename R>
+    struct max_binary
+    {
+        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs, Out<TS<Float>> out)
+        {
+            out.set(std::max(static_cast<Float>(lhs.value()), static_cast<Float>(rhs.value())));
+        }
+    };
+
     template <typename Operator, template <typename> class Impl>
     inline void register_ordered_same_scalar_comparisons()
     {
@@ -197,6 +239,11 @@ namespace hgraph::stdlib
 
         register_ordered_same_scalar_comparisons<cmp_, cmp_same>();
         register_mixed_numeric_comparisons<cmp_, cmp_binary>();
+
+        register_ordered_same_scalar_comparisons<min_, min_same>();
+        register_ordered_same_scalar_comparisons<max_, max_same>();
+        register_mixed_numeric_comparisons<min_, min_binary>();
+        register_mixed_numeric_comparisons<max_, max_binary>();
     }
 }  // namespace hgraph::stdlib
 

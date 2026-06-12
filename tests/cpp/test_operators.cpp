@@ -130,6 +130,33 @@ namespace
         }
     };
 
+    struct count_signal_ : Operator<"count_signal_op", In<"pulse", SIGNAL>, Out<TS<Int>>>
+    {
+    };
+    struct count_signal_node
+    {
+        static constexpr auto name = "count_signal_node";
+        static void           eval(In<"pulse", SIGNAL> pulse, State<Int> count, Out<TS<Int>> out)
+        {
+            if (!pulse.ticked()) { return; }
+            const Int next = count.get() + 1;
+            count.set(next);
+            out.set(next);
+        }
+    };
+
+    struct count_signal_graph_ : Operator<"count_signal_graph_op", In<"pulse", SIGNAL>, Out<TS<Int>>>
+    {
+    };
+    struct count_signal_graph
+    {
+        static constexpr auto name = "count_signal_graph";
+        static Port<TS<Int>>  compose(Wiring &w, Port<SIGNAL> pulse)
+        {
+            return wire<count_signal_node>(w, pulse);
+        }
+    };
+
     struct choose_ : Operator<"choose", In<"lhs", TS<Int>>, In<"rhs", TS<Int>>,
                                       Scalar<"side", Str>, Out<TS<Int>>>
     {
@@ -411,6 +438,20 @@ TEST_CASE("operators: graph implementations can be registered as overloads")
     register_graph_overload<double_, double_graph>();
 
     CHECK_OUTPUT(eval_node<double_>(values<Int>(1, 2, 3)), values<Int>(2, 4, 6));
+}
+
+TEST_CASE("operators: SIGNAL node overloads accept any time-series input")
+{
+    register_overload<count_signal_, count_signal_node>();
+
+    CHECK_OUTPUT(eval_node<count_signal_>(values<Int>(1, none, 2)), values<Int>(1, none, 2));
+}
+
+TEST_CASE("operators: SIGNAL graph overloads accept any time-series input")
+{
+    register_graph_overload<count_signal_graph_, count_signal_graph>();
+
+    CHECK_OUTPUT(eval_node<count_signal_graph_>(values<Int>(1, none, 2)), values<Int>(1, none, 2));
 }
 
 TEST_CASE("operators: requires_ can inspect named scalar arguments")
