@@ -328,6 +328,63 @@ TEST_CASE("std operators: string operators support replace substr and container 
                  values<Str>(Str{"b"}, Str{"c"}));
 }
 
+TEST_CASE("std operators: collection container operators support TSS TSD and fixed TSL")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::len_, TSS<Int>>(values<Value>(set_delta<Int>({}, {}),
+                                                                  set_delta<Int>({1}, {}),
+                                                                  set_delta<Int>({2, 3}, {}),
+                                                                  set_delta<Int>({}, {1})))),
+                 values<Int>(0, 1, 3, 2));
+    CHECK_OUTPUT((eval_node<stdlib::is_empty, TSS<Int>>(values<Value>(none,
+                                                                      set_delta<Int>({1}, {}),
+                                                                      set_delta<Int>({2}, {}),
+                                                                      set_delta<Int>({}, {1}),
+                                                                      set_delta<Int>({}, {2})))),
+                 values<Bool>(true, false, none, none, true));
+    CHECK_OUTPUT((eval_node<stdlib::contains_, TSS<Int>>(values<Value>(set_delta<Int>({1, 2, 3}, {})),
+                                                         values<Int>(1, 4))),
+                 values<Bool>(true, false));
+    CHECK_OUTPUT((eval_node<stdlib::contains_, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1, 2, 3}, {})),
+                     values<Value>(set_delta<Int>({1, 2}, {}), set_delta<Int>({4}, {1, 2})))),
+                 values<Bool>(true, false));
+
+    CHECK_OUTPUT((eval_node<stdlib::len_, TSD<Int, TS<Int>>>(values<Value>(dict_delta<Int, TS<Int>>({}),
+                                                                           dict_delta<Int, TS<Int>>({{0, 1}}),
+                                                                           dict_delta<Int, TS<Int>>({}, {0})))),
+                 values<Int>(0, 1, 0));
+    CHECK_OUTPUT((eval_node<stdlib::is_empty, TSD<Int, TS<Int>>>(values<Value>(none,
+                                                                               dict_delta<Int, TS<Int>>({{1, 1}}),
+                                                                               dict_delta<Int, TS<Int>>({{2, 2}}),
+                                                                               dict_delta<Int, TS<Int>>({}, {1}),
+                                                                               dict_delta<Int, TS<Int>>({}, {2})))),
+                 values<Bool>(true, false, none, none, true));
+    CHECK_OUTPUT((eval_node<stdlib::contains_, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}})), values<Int>(1, 3))),
+                 values<Bool>(true, false));
+
+    CHECK_OUTPUT((eval_node<stdlib::len_, TSL<TS<Int>, 2>>(values<Value>(list_delta<TS<Int>>({}),
+                                                                         list_delta<TS<Int>>({{0, 1}}),
+                                                                         list_delta<TS<Int>>({{1, 2}})))),
+                 values<Int>(2, none, none));
+    CHECK_OUTPUT((eval_node<stdlib::len_, TSL<TS<Int>, 4>>(values<Value>(list_delta<TS<Int>>({1, 2, 3, 4})))),
+                 values<Int>(4));
+    CHECK_OUTPUT((eval_node<stdlib::getitem_, TSL<TS<Int>, 2>>(values<Value>(list_delta<TS<Int>>({1, 2}),
+                                                                             list_delta<TS<Int>>({2, 3}),
+                                                                             list_delta<TS<Int>>({4, 5})),
+                                                               values<Int>(0))),
+                 values<Int>(1, 2, 4));
+    CHECK_OUTPUT((eval_node<stdlib::index_of, TSL<TS<Int>, 3>>(
+                     values<Value>(list_delta<TS<Int>>({1, 2, 3}),
+                                   none,
+                                   list_delta<TS<Int>>({2, 3, 4}),
+                                   list_delta<TS<Int>>({-1, 0, 1})),
+                     values<Int>(2, 1))),
+                 values<Int>(1, 0, -1, 2));
+}
+
 TEST_CASE("std operators: str_ converts scalar time-series values to strings")
 {
     stdlib::register_standard_operators();

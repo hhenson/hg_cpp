@@ -7,6 +7,7 @@
 #include <fmt/ranges.h>
 
 #include <algorithm>
+#include <optional>
 
 namespace hgraph
 {
@@ -39,6 +40,14 @@ namespace hgraph
                 return constraint != nullptr && time_series_schema_equivalent(constraint, concrete);
             });
         }
+
+        [[nodiscard]] bool size_allowed_by_constraints(const TypePattern &pattern, std::size_t concrete)
+        {
+            if (pattern.size_constraints.empty()) { return true; }
+            return std::ranges::any_of(pattern.size_constraints, [concrete](std::size_t constraint) {
+                return constraint == concrete;
+            });
+        }
     }  // namespace
 
     bool scalar_pattern_match(const ScalarPattern &pattern, const ValueTypeMetaData *concrete, ResolutionMap &map)
@@ -59,6 +68,22 @@ namespace hgraph
             case ScalarPattern::Kind::Concrete: return pattern.meta == concrete;  // interned: pointer identity
         }
         return false;
+    }
+
+    bool size_pattern_match(const TypePattern &pattern, std::size_t concrete_size, ResolutionMap &map)
+    {
+        if (!pattern.size_var)
+        {
+            return pattern.fixed_size == 0 || pattern.fixed_size == concrete_size;
+        }
+
+        if (const std::optional<std::size_t> bound = map.find_size(pattern.size_name))
+        {
+            return *bound == concrete_size && size_allowed_by_constraints(pattern, concrete_size);
+        }
+        if (!size_allowed_by_constraints(pattern, concrete_size)) { return false; }
+        map.bind_size(pattern.size_name, concrete_size);
+        return true;
     }
 
     bool ts_pattern_match(const TypePattern &pattern, const TSValueTypeMetaData *concrete, ResolutionMap &map)
@@ -93,7 +118,7 @@ namespace hgraph
                        scalar_pattern_match(pattern.scalar, concrete->value_schema->element_type, map);
             case TypePattern::Kind::TSL:
                 if (concrete->kind != TSTypeKind::TSL) { return false; }
-                if (pattern.fixed_size != 0 && pattern.fixed_size != concrete->fixed_size()) { return false; }
+                if (!size_pattern_match(pattern, concrete->fixed_size(), map)) { return false; }
                 return ts_pattern_match(pattern.children[0], concrete->element_ts(), map);
             case TypePattern::Kind::TSD:
                 return concrete->kind == TSTypeKind::TSD && scalar_pattern_match(pattern.scalar, concrete->key_type(), map) &&
@@ -141,7 +166,9 @@ namespace hgraph
             case TypePattern::Kind::Concrete: return 0;
             case TypePattern::Kind::TS: return 1 + scalar_pattern_rank(pattern.scalar);
             case TypePattern::Kind::TSS: return 1 + scalar_pattern_rank(pattern.scalar);
-            case TypePattern::Kind::TSL: return 1 + ts_pattern_rank(pattern.children[0]);
+            case TypePattern::Kind::TSL:
+                return 1 + ts_pattern_rank(pattern.children[0]) +
+                       (pattern.size_var ? 5 : pattern.fixed_size == 0 ? 10 : 0);
             case TypePattern::Kind::TSD: return 1 + scalar_pattern_rank(pattern.scalar) + ts_pattern_rank(pattern.children[0]);
             case TypePattern::Kind::TSW: return 1 + scalar_pattern_rank(pattern.scalar);
             case TypePattern::Kind::TSB:
@@ -186,7 +213,15 @@ namespace hgraph
             case TypePattern::Kind::TSL:
             {
                 const TSValueTypeMetaData *element = ts_pattern_resolve(pattern.children[0], map);
-                return element != nullptr ? registry.tsl(element, pattern.fixed_size) : nullptr;
+                if (element == nullptr) { return nullptr; }
+                std::size_t size = pattern.fixed_size;
+                if (pattern.size_var)
+                {
+                    const std::optional<std::size_t> bound = map.find_size(pattern.size_name);
+                    if (!bound.has_value()) { return nullptr; }
+                    size = *bound;
+                }
+                return registry.tsl(element, size);
             }
             case TypePattern::Kind::TSD:
             {
@@ -246,7 +281,9 @@ namespace hgraph
             case TypePattern::Kind::TS: return fmt::format("TS[{}]", scalar_pattern_to_string(pattern.scalar));
             case TypePattern::Kind::TSS: return fmt::format("TSS[{}]", scalar_pattern_to_string(pattern.scalar));
             case TypePattern::Kind::TSL:
-                return fmt::format("TSL[{}, {}]", ts_pattern_to_string(pattern.children[0]), pattern.fixed_size);
+                return fmt::format("TSL[{}, {}]",
+                                   ts_pattern_to_string(pattern.children[0]),
+                                   pattern.size_var ? "~" + pattern.size_name : std::to_string(pattern.fixed_size));
             case TypePattern::Kind::TSD:
                 return fmt::format("TSD[{}, {}]", scalar_pattern_to_string(pattern.scalar),
                                    ts_pattern_to_string(pattern.children[0]));

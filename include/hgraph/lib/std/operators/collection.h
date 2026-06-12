@@ -121,7 +121,7 @@ namespace hgraph::stdlib
         {
         };
 
-        template <typename ElementSchema, std::size_t FixedSize>
+        template <typename ElementSchema, auto FixedSize>
         struct is_tsl_schema<TSL<ElementSchema, FixedSize>> : std::true_type
         {
         };
@@ -150,11 +150,15 @@ namespace hgraph::stdlib
         template <typename T>
         struct tsl_schema_traits;
 
-        template <typename ElementSchema, std::size_t FixedSize>
+        template <typename ElementSchema, auto FixedSize>
         struct tsl_schema_traits<TSL<ElementSchema, FixedSize>>
         {
             using element_schema = ElementSchema;
-            static constexpr std::size_t fixed_size = FixedSize;
+            static constexpr bool fixed_size_concrete =
+                static_schema_detail::size_parameter_descriptor<FixedSize>::is_concrete();
+            static constexpr std::size_t fixed_size =
+                fixed_size_concrete ? static_schema_detail::size_parameter_descriptor<FixedSize>::concrete_size()
+                                    : std::size_t{0};
         };
 
         template <typename T>
@@ -302,7 +306,7 @@ namespace hgraph::stdlib
         else if constexpr (collection_detail::is_tsl_schema_v<OutOrElementSchema>)
         {
             using Traits = collection_detail::tsl_schema_traits<OutOrElementSchema>;
-            static_assert(Traits::fixed_size == 0 || Traits::fixed_size == size,
+            static_assert(!Traits::fixed_size_concrete || Traits::fixed_size == 0 || Traits::fixed_size == size,
                           "to_tsl explicit fixed TSL output size must match the input count");
             using Result = TSL<typename Traits::element_schema,
                                Traits::fixed_size == 0 ? size : Traits::fixed_size>;

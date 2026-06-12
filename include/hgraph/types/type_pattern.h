@@ -79,8 +79,11 @@ namespace hgraph
         std::vector<std::string>   field_names{};    ///< ``TSB`` fields, parallel to ``children``.
         std::string                bundle_name{};    ///< named ``TSB`` bundle name.
         std::size_t                fixed_size{0};    ///< ``TSL`` fixed size / ``TSW`` period (0 = dynamic / unconstrained).
+        std::string                size_name{};      ///< ``TSL`` size variable name.
+        std::vector<std::size_t>   size_constraints{}; ///< ``TSL`` size variable accepted concrete sizes.
         std::size_t                min_size{0};      ///< ``TSW`` min period.
         bool                       named_bundle{false}; ///< true for nominal ``TSB<Name,...>``.
+        bool                       size_var{false};  ///< true when ``TSL`` size is a named variable.
 
         [[nodiscard]] static TypePattern var(std::string name,
                                              std::vector<const TSValueTypeMetaData *> constraints = {})
@@ -117,6 +120,18 @@ namespace hgraph
             TypePattern p;
             p.kind       = Kind::TSL;
             p.fixed_size = fixed_size;
+            p.children.push_back(std::move(element));
+            return p;
+        }
+        [[nodiscard]] static TypePattern tsl_var(TypePattern element,
+                                                 std::string size_name,
+                                                 std::vector<std::size_t> constraints = {})
+        {
+            TypePattern p;
+            p.kind             = Kind::TSL;
+            p.size_var         = true;
+            p.size_name        = std::move(size_name);
+            p.size_constraints = std::move(constraints);
             p.children.push_back(std::move(element));
             return p;
         }
@@ -181,6 +196,11 @@ namespace hgraph
     /** Scalar-layer counterpart of ``ts_pattern_match``. */
     [[nodiscard]] HGRAPH_EXPORT bool scalar_pattern_match(const ScalarPattern &pattern,
                                                           const ValueTypeMetaData *concrete, ResolutionMap &map);
+
+    /** Match and bind the ``TSL`` size part of ``pattern`` against a concrete runtime size. */
+    [[nodiscard]] HGRAPH_EXPORT bool size_pattern_match(const TypePattern &pattern,
+                                                        std::size_t concrete_size,
+                                                        ResolutionMap &map);
 
     /** Integer specificity of a pattern (lower = more specific). See *Operators > Ranking*. */
     [[nodiscard]] HGRAPH_EXPORT int ts_pattern_rank(const TypePattern &pattern);
@@ -292,10 +312,21 @@ namespace hgraph
         [[nodiscard]] static TypePattern lower() { return TypePattern::tss(to_scalar_pattern<V>()); }
     };
 
-    template <typename C, std::size_t N>
+    template <typename C, auto N>
     struct ts_pattern_lower<TSL<C, N>>
     {
-        [[nodiscard]] static TypePattern lower() { return TypePattern::tsl(to_pattern<C>(), N); }
+        [[nodiscard]] static TypePattern lower()
+        {
+            using size = static_schema_detail::size_parameter_descriptor<N>;
+            if constexpr (size::is_concrete())
+            {
+                return TypePattern::tsl(to_pattern<C>(), size::concrete_size());
+            }
+            else
+            {
+                return TypePattern::tsl_var(to_pattern<C>(), std::string{size::name()}, size::constraints());
+            }
+        }
     };
 
     template <typename V, std::size_t Period, std::size_t MinPeriod>

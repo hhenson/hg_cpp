@@ -508,7 +508,7 @@ namespace hgraph
      * wiring-time projection only, usable on any source kind (peered output
      * path, structural child, sub-graph boundary).
      */
-    template <typename E, std::size_t N>
+    template <typename E, auto N>
     [[nodiscard]] Port<E> tsl_element(const Port<TSL<E, N>> &ts, std::size_t index)
     {
         if (index >= N) { throw std::out_of_range("tsl_element: index is out of range for the fixed TSL"); }

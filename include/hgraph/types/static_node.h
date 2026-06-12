@@ -267,7 +267,7 @@ namespace hgraph
             [[nodiscard]] static Value build() { return build_dict_delta<K, V>({}, {}); }
         };
 
-        template <typename C, std::size_t N>
+        template <typename C, auto N>
         struct empty_delta_builder<TSL<C, N>>
         {
             [[nodiscard]] static Value build() { return build_list_delta<C>({}); }
@@ -603,14 +603,17 @@ namespace hgraph
      * ``Map<int, delta(C)>`` value view; ``size()`` / ``modified_items()`` /
      * ``modified()`` / ``valid()`` are inherited.
      */
-    template <fixed_string Name, typename TElementSchema, std::size_t N, auto... TPolicies>
+    template <fixed_string Name, typename TElementSchema, auto N, auto... TPolicies>
     class In<Name, TSL<TElementSchema, N>, TPolicies...> : public TSLInputView
     {
       public:
         using schema                            = TSL<TElementSchema, N>;
         using element_schema                    = TElementSchema;
         static constexpr auto        field_name = Name;
-        static constexpr std::size_t fixed_size = N;
+        static constexpr std::size_t fixed_size =
+            static_schema_detail::size_parameter_descriptor<N>::is_concrete()
+                ? static_schema_detail::size_parameter_descriptor<N>::concrete_size()
+                : std::size_t{0};
         static constexpr auto        activity   = static_node_detail::resolved_input_activity<TPolicies...>();
         static constexpr auto        validity   = static_node_detail::resolved_input_validity<TPolicies...>();
 
@@ -1027,13 +1030,16 @@ namespace hgraph
      * child, ``out[i][j]...`` for a nested list. ``set(i,v)`` / ``apply(i,v)`` are
      * scalar-child conveniences over ``out[i]``.
      */
-    template <typename TElementSchema, std::size_t N>
+    template <typename TElementSchema, auto N>
     class Out<TSL<TElementSchema, N>> : public TSLOutputView
     {
       public:
         using schema                            = TSL<TElementSchema, N>;
         using element_schema                    = TElementSchema;
-        static constexpr std::size_t fixed_size = N;
+        static constexpr std::size_t fixed_size =
+            static_schema_detail::size_parameter_descriptor<N>::is_concrete()
+                ? static_schema_detail::size_parameter_descriptor<N>::concrete_size()
+                : std::size_t{0};
 
         Out(TSOutputView view, DateTime /*evaluation_time*/) noexcept : TSLOutputView(std::move(view)) {}
 

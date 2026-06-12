@@ -95,12 +95,24 @@ namespace hgraph
         using value_schema = TValueSchema;
     };
 
-    /** List time-series schema; equivalent to ``TSL[T, N?]``. ``N == 0`` is dynamic. */
-    template <typename TElementSchema, std::size_t FixedSize = 0>
+    /** Named size variable used in generic fixed-size schemas, e.g. ``TSL<TS<Int>, SIZE<"N">>``. */
+    template <fixed_string Name, std::size_t... TConstraints>
+    struct SizeVar
+    {
+        static constexpr auto name_sv = Name;
+
+        [[nodiscard]] constexpr bool operator==(const SizeVar &) const noexcept = default;
+    };
+
+    template <fixed_string Name, std::size_t... TConstraints>
+    inline constexpr SizeVar<Name, TConstraints...> SIZE{};
+
+    /** List time-series schema; equivalent to ``TSL[T, N?]``. Concrete ``N == 0`` is dynamic. */
+    template <typename TElementSchema, auto FixedSize = 0>
     struct TSL
     {
         using element_schema             = TElementSchema;
-        static constexpr std::size_t fixed_size = FixedSize;
+        static constexpr auto fixed_size = FixedSize;
     };
 
     /**
@@ -182,6 +194,41 @@ namespace hgraph
     {
         template <typename T>
         inline constexpr bool always_false_v = false;
+
+        template <typename T>
+        struct size_var_type_descriptor
+        {
+            static constexpr bool is_size_var = false;
+            [[nodiscard]] static constexpr std::string_view name() noexcept { return {}; }
+            [[nodiscard]] static std::vector<std::size_t> constraints() { return {}; }
+        };
+
+        template <fixed_string Name, std::size_t... TConstraints>
+        struct size_var_type_descriptor<SizeVar<Name, TConstraints...>>
+        {
+            static constexpr bool is_size_var = true;
+            [[nodiscard]] static constexpr std::string_view name() noexcept { return Name.sv(); }
+            [[nodiscard]] static std::vector<std::size_t> constraints() { return {TConstraints...}; }
+        };
+
+        template <auto TSize>
+        struct size_parameter_descriptor
+        {
+            using raw_type = std::remove_cvref_t<decltype(TSize)>;
+            using var      = size_var_type_descriptor<raw_type>;
+
+            static_assert(std::is_integral_v<raw_type> || var::is_size_var,
+                          "TSL fixed size must be an integral constant or SIZE<\"Name\">");
+
+            [[nodiscard]] static constexpr bool is_concrete() noexcept { return !var::is_size_var; }
+            [[nodiscard]] static constexpr std::size_t concrete_size() noexcept
+            {
+                if constexpr (is_concrete()) { return static_cast<std::size_t>(TSize); }
+                else { return 0; }
+            }
+            [[nodiscard]] static constexpr std::string_view name() noexcept { return var::name(); }
+            [[nodiscard]] static std::vector<std::size_t> constraints() { return var::constraints(); }
+        };
 
         /**
          * Storage for the canonical scalar registration name. ``T`` carries
@@ -323,12 +370,13 @@ namespace hgraph
         }
     };
 
-    template <typename TElementSchema, std::size_t FixedSize>
+    template <typename TElementSchema, auto FixedSize>
     struct schema_descriptor<TSL<TElementSchema, FixedSize>>
     {
         [[nodiscard]] static constexpr bool is_concrete() noexcept
         {
-            return schema_descriptor<TElementSchema>::is_concrete();
+            return schema_descriptor<TElementSchema>::is_concrete() &&
+                   static_schema_detail::size_parameter_descriptor<FixedSize>::is_concrete();
         }
 
         [[nodiscard]] static const TSValueTypeMetaData *ts_meta()
@@ -336,7 +384,8 @@ namespace hgraph
             if constexpr (is_concrete())
             {
                 return TypeRegistry::instance().tsl(
-                    schema_descriptor<TElementSchema>::ts_meta(), FixedSize);
+                    schema_descriptor<TElementSchema>::ts_meta(),
+                    static_schema_detail::size_parameter_descriptor<FixedSize>::concrete_size());
             }
             else
             {

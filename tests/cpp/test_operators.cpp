@@ -392,6 +392,29 @@ TEST_CASE("operators: the TypePattern interpreter matches and ranks a nested TSL
     CHECK_FALSE(ts_pattern_match(to_pattern<TSL<TS<ScalarVar<"T">>, 3>>(), concrete, other));
 }
 
+TEST_CASE("operators: TSL TypePattern supports named SIZE variables")
+{
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    const TSValueTypeMetaData *concrete = ts_type<TSL<TS<Int>, 2>>();
+    const TypePattern pattern = to_pattern<TSL<TS<ScalarVar<"T">>, SIZE<"N">>>();
+
+    ResolutionMap map;
+    REQUIRE(ts_pattern_match(pattern, concrete, map));
+    CHECK(map.find_scalar("T") == scalar_type<Int>());
+    REQUIRE(map.find_size("N").has_value());
+    CHECK(*map.find_size("N") == 2);
+    CHECK(ts_pattern_resolve(pattern, map) == concrete);
+    CHECK(ts_pattern_to_string(pattern) == "TSL[TS[~T], ~N]");
+
+    using PairPattern = UnNamedTSB<Field<"lhs", TSL<TS<ScalarVar<"T">>, SIZE<"N">>>,
+                                   Field<"rhs", TSL<TS<ScalarVar<"T">>, SIZE<"N">>>>;
+    using PairConcreteMismatch = UnNamedTSB<Field<"lhs", TSL<TS<Int>, 2>>,
+                                            Field<"rhs", TSL<TS<Int>, 3>>>;
+    ResolutionMap repeated;
+    CHECK_FALSE(ts_pattern_match(to_pattern<PairPattern>(), ts_type<PairConcreteMismatch>(), repeated));
+}
+
 TEST_CASE("operators: a repeated type-variable name forces the operands to be aligned")
 {
     (void)TypeRegistry::instance().register_scalar<Int>("int");

@@ -33,7 +33,7 @@ chosen implementation is baked into the graph.
    sink operators, explicit output schema resolution, and a ``lib/std`` operator family
    in ``include/hgraph/lib/std/std_operators.h`` — covering scalar arithmetic,
    comparison, logical / bitwise, string basics, ``str_``, const / zero,
-   date / time-series-property operators, and simple IO sink overloads, including
+   collection container basics, date / time-series-property operators, and simple IO sink overloads, including
    homogeneous, mixed, heterogeneous-temporal, result-differs and optional-scalar
    (``DivideByZero`` policy) overloads — proven by
    ``tests/cpp/test_std_operators.cpp`` and the scalar / auto-const / ``requires`` /
@@ -107,7 +107,7 @@ C++ and Python candidates:
    TypePattern   = Var(name, constraints...)        # a TsVar / TIME_SERIES_TYPE variable
                  | Concrete(const TSValueTypeMetaData*)   # a fully-interned TS leaf
                  | TS(ScalarPattern)  | TSS(ScalarPattern)
-                 | TSL(TypePattern, N) | TSD(ScalarPattern key, TypePattern value)
+                 | TSL(TypePattern, N-or-SizeVar) | TSD(ScalarPattern key, TypePattern value)
                  | TSW(ScalarPattern, period, min_period)
                  | TSB(fields...) | REF(TypePattern) | Signal
    ScalarPattern = ScalarVar(name, constraints...) | ScalarConcrete(const ValueTypeMetaData*)
@@ -137,6 +137,12 @@ shape of ``ts_resolver`` but emit ``Var`` nodes for ``TsVar`` / ``ScalarVar`` an
 ``Concrete(schema_descriptor<S>::ts_meta())`` for concrete leaves. Python
 candidates build the same ``TypePattern`` directly from their type metadata. One
 pattern representation, one matcher — no drift.
+
+``TSL`` has one additional generic axis: a named size variable. C++ schemas write
+this as ``TSL<TS<ScalarVar<"T">>, SIZE<"N">>``. Matching binds both ``T`` and
+``N`` into ``ResolutionMap``; repeated uses of ``SIZE<"N">`` must see the same
+concrete list size, and resolving a schema with that size variable substitutes
+the bound runtime size.
 
 Note the division of labour: the ``TypePattern`` interpreter is the *matcher*
 across candidates. Building the chosen static-node C++ candidate still goes through

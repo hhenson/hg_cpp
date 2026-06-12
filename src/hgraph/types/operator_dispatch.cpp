@@ -33,8 +33,7 @@ namespace hgraph
                            scalar_pattern_match(pattern.scalar, value_schema->element_type, map);
                 case TypePattern::Kind::TSL:
                     return value_schema->kind == ValueTypeKind::List &&
-                           (pattern.fixed_size == 0 || value_schema->fixed_size == 0 ||
-                            pattern.fixed_size == value_schema->fixed_size) &&
+                           size_pattern_match(pattern, value_schema->fixed_size, map) &&
                            value_schema_matches_ts_pattern(pattern.children[0], value_schema->element_type, map);
                 case TypePattern::Kind::TSD:
                     return value_schema->kind == ValueTypeKind::Map &&
@@ -82,7 +81,7 @@ namespace hgraph
                     return graph_wiring_detail::input_accepts_output_schema(pattern.meta, concrete);
                 case TypePattern::Kind::TSL:
                     if (concrete->kind != TSTypeKind::TSL) { return false; }
-                    if (pattern.fixed_size != 0 && pattern.fixed_size != concrete->fixed_size()) { return false; }
+                    if (!size_pattern_match(pattern, concrete->fixed_size(), map)) { return false; }
                     return input_ts_pattern_match(pattern.children[0], concrete->element_ts(), map);
                 case TypePattern::Kind::TSD:
                     return concrete->kind == TSTypeKind::TSD &&

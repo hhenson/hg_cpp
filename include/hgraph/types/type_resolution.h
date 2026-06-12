@@ -8,6 +8,8 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -32,6 +34,7 @@ namespace hgraph
     {
         std::unordered_map<std::string, const TSValueTypeMetaData *> ts_vars;
         std::unordered_map<std::string, const ValueTypeMetaData *>   scalar_vars;
+        std::unordered_map<std::string, std::size_t>                 size_vars;
 
         /** Bind time-series variable ``name``; re-binding to a different meta is an error. */
         void bind_ts(std::string_view name, const TSValueTypeMetaData *meta)
@@ -52,6 +55,16 @@ namespace hgraph
             if (!inserted && it->second != meta)
             {
                 throw std::logic_error(fmt::format("scalar variable '{}' resolved inconsistently", name));
+            }
+        }
+
+        /** Bind size variable ``name``; re-binding to a different value is an error. */
+        void bind_size(std::string_view name, std::size_t size)
+        {
+            auto [it, inserted] = size_vars.try_emplace(std::string{name}, size);
+            if (!inserted && it->second != size)
+            {
+                throw std::logic_error(fmt::format("size variable '{}' resolved inconsistently", name));
             }
         }
 
@@ -80,6 +93,19 @@ namespace hgraph
             auto it = scalar_vars.find(std::string{name});
             return it != scalar_vars.end() ? it->second : nullptr;
         }
+
+        [[nodiscard]] std::size_t size(std::string_view name) const
+        {
+            auto it = size_vars.find(std::string{name});
+            if (it == size_vars.end()) { throw std::logic_error(fmt::format("unresolved size variable '{}'", name)); }
+            return it->second;
+        }
+
+        [[nodiscard]] std::optional<std::size_t> find_size(std::string_view name) const
+        {
+            auto it = size_vars.find(std::string{name});
+            return it != size_vars.end() ? std::optional<std::size_t>{it->second} : std::nullopt;
+        }
     };
 
     // -----------------------------------------------------------------
@@ -96,6 +122,17 @@ namespace hgraph
     struct scalar_resolver<ScalarVar<Name, C...>>
     {
         [[nodiscard]] static const ValueTypeMetaData *resolve(const ResolutionMap &m) { return m.scalar(Name.sv()); }
+    };
+
+    template <auto TSize>
+    struct size_resolver
+    {
+        [[nodiscard]] static std::size_t resolve(const ResolutionMap &m)
+        {
+            using size = static_schema_detail::size_parameter_descriptor<TSize>;
+            if constexpr (size::is_concrete()) { return size::concrete_size(); }
+            else { return m.size(size::name()); }
+        }
     };
 
     // -----------------------------------------------------------------
@@ -134,12 +171,12 @@ namespace hgraph
         }
     };
 
-    template <typename C, std::size_t N>
+    template <typename C, auto N>
     struct ts_resolver<TSL<C, N>>
     {
         [[nodiscard]] static const TSValueTypeMetaData *resolve(const ResolutionMap &m)
         {
-            return TypeRegistry::instance().tsl(ts_resolver<C>::resolve(m), N);
+            return TypeRegistry::instance().tsl(ts_resolver<C>::resolve(m), size_resolver<N>::resolve(m));
         }
     };
 
@@ -216,6 +253,26 @@ namespace hgraph
         static void unify(const ValueTypeMetaData *concrete, ResolutionMap &m) { m.bind_scalar(Name.sv(), concrete); }
     };
 
+    template <auto TSize>
+    struct size_unifier
+    {
+        static void unify(std::size_t concrete, ResolutionMap &m)
+        {
+            using size = static_schema_detail::size_parameter_descriptor<TSize>;
+            if constexpr (!size::is_concrete())
+            {
+                const std::vector<std::size_t> constraints = size::constraints();
+                if (!constraints.empty() &&
+                    std::find(constraints.begin(), constraints.end(), concrete) == constraints.end())
+                {
+                    throw std::logic_error(fmt::format("size variable '{}' resolved outside its constraints",
+                                                       size::name()));
+                }
+                m.bind_size(size::name(), concrete);
+            }
+        }
+    };
+
     /**
      * REF transparency (Python parity: ``REF[X]`` is type-compatible with
      * ``X``; consumers bind through the reference at runtime): a non-``REF``
@@ -266,12 +323,13 @@ namespace hgraph
         }
     };
 
-    template <typename C, std::size_t N>
+    template <typename C, auto N>
     struct ts_unifier<TSL<C, N>>
     {
         static void unify(const TSValueTypeMetaData *c, ResolutionMap &m)
         {
             c = unify_dereference(c);
+            size_unifier<N>::unify(c != nullptr ? c->fixed_size() : 0, m);
             ts_unifier<C>::unify(c != nullptr ? c->element_ts() : nullptr, m);
         }
     };

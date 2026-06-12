@@ -715,7 +715,7 @@ namespace hgraph
         {
             using type = TSD<TKey, dereferenced_static_schema_t<TValueSchema>>;
         };
-        template <typename TElementSchema, std::size_t FixedSize>
+        template <typename TElementSchema, auto FixedSize>
         struct dereferenced_static_schema<TSL<TElementSchema, FixedSize>>
         {
             using type = TSL<dereferenced_static_schema_t<TElementSchema>, FixedSize>;
@@ -742,10 +742,46 @@ namespace hgraph
             using type = TSB<Name, typename dereferenced_static_field<TFields>::type...>;
         };
 
+        template <auto Lhs, auto Rhs>
+        [[nodiscard]] consteval bool static_size_equivalent()
+        {
+            using lhs = static_schema_detail::size_parameter_descriptor<Lhs>;
+            using rhs = static_schema_detail::size_parameter_descriptor<Rhs>;
+            if constexpr (lhs::is_concrete() && rhs::is_concrete())
+            {
+                return lhs::concrete_size() == rhs::concrete_size();
+            }
+            else if constexpr (!lhs::is_concrete() && !rhs::is_concrete())
+            {
+                return lhs::name() == rhs::name();
+            }
+            else { return false; }
+        }
+
+        template <typename Lhs, typename Rhs>
+        struct static_schema_equivalent : std::bool_constant<std::is_same_v<Lhs, Rhs>>
+        {
+        };
+
+        template <typename LhsElement, auto LhsSize, typename RhsElement, auto RhsSize>
+        struct static_schema_equivalent<TSL<LhsElement, LhsSize>, TSL<RhsElement, RhsSize>>
+            : std::bool_constant<static_schema_equivalent<LhsElement, RhsElement>::value &&
+                                 static_size_equivalent<LhsSize, RhsSize>()>
+        {
+        };
+
+        template <typename LhsKey, typename LhsValue, typename RhsKey, typename RhsValue>
+        struct static_schema_equivalent<TSD<LhsKey, LhsValue>, TSD<RhsKey, RhsValue>>
+            : std::bool_constant<std::is_same_v<LhsKey, RhsKey> &&
+                                 static_schema_equivalent<LhsValue, RhsValue>::value>
+        {
+        };
+
         template <typename InputSchema, typename OutputSchema>
         inline constexpr bool statically_accepts_output_v =
             std::is_same_v<InputSchema, SIGNAL> ||
-            std::is_same_v<dereferenced_static_schema_t<InputSchema>, dereferenced_static_schema_t<OutputSchema>>;
+            static_schema_equivalent<dereferenced_static_schema_t<InputSchema>,
+                                     dereferenced_static_schema_t<OutputSchema>>::value;
 
         [[nodiscard]] inline bool input_accepts_output_schema(const TSValueTypeMetaData *input_schema,
                                                               const TSValueTypeMetaData *output_schema)
@@ -905,14 +941,15 @@ namespace hgraph
             }
         };
 
-        template <typename ElementSchema, std::size_t FixedSize>
+        template <typename ElementSchema, auto FixedSize>
         struct structural_arg_schema_infer<TSL<ElementSchema, FixedSize>>
         {
             [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringStructuralSourceArg &arg)
             {
-                if constexpr (FixedSize != 0)
+                using size = static_schema_detail::size_parameter_descriptor<FixedSize>;
+                if constexpr (size::is_concrete())
                 {
-                    if (arg.children.size() != FixedSize) { return nullptr; }
+                    if (size::concrete_size() != 0 && arg.children.size() != size::concrete_size()) { return nullptr; }
                 }
                 if (arg.children.empty() || arg.children.front().schema == nullptr) { return nullptr; }
 
@@ -921,7 +958,9 @@ namespace hgraph
                 {
                     if (!time_series_schema_equivalent(element, child.schema)) { return nullptr; }
                 }
-                return TypeRegistry::instance().tsl(element, FixedSize != 0 ? FixedSize : arg.children.size());
+                const std::size_t fixed_size =
+                    size::is_concrete() && size::concrete_size() != 0 ? size::concrete_size() : arg.children.size();
+                return TypeRegistry::instance().tsl(element, fixed_size);
             }
             [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringNamedStructuralSourceArg &) noexcept
             {
