@@ -58,9 +58,9 @@ namespace hgraph::stdlib
      * default branch. An ordinary registered scalar, so it participates in
      * interning and overload selection like any other configuration value.
      *
-     * A branch may consume the switch key as its **first** argument: its arity
-     * is either the number of time-series arguments, or that plus one (key
-     * first). Branches may also be pure sources (arity zero with no ts args).
+     * A branch may consume the switch key as its **first** argument when that
+     * parameter is named ``key``. Branches may also be pure sources (arity zero
+     * with no ts args).
      */
     struct SwitchCase
     {
@@ -114,7 +114,8 @@ namespace hgraph::stdlib
      *   bound and started, and the output **re-points** — sampling the new
      *   branch at the switch time (the sampled-runtime contract; a deliberate
      *   divergence from Python's ``value = None`` reset);
-     * - a branch may take the key as its first argument (by arity);
+     * - a branch may take the key as its first argument when that parameter is
+     *   named ``key``;
      * - the time-series arguments are variadic (``*ts``): branches bind them
      *   positionally, optionally preceded by the key.
      */
@@ -135,22 +136,25 @@ namespace hgraph::stdlib
      * - the multiplexed input is a ``TSD`` (keyed runtime children) or a
      *   fixed-size ``TSL`` (wiring-time expansion: one inline application of
      *   ``func`` per index, key = the ``Int`` index — Python's
-     *   ``_map_no_index``, no runtime node). EVERY TSD in the tail is also
-     *   multiplexed (same key type; the live key set is their UNION — a key
-     *   absent from one dict leaves that child input invalid until it
-     *   appears); same-size TSLs in the TSL form multiplex per index;
-     *   non-collection args broadcast whole. Lifecycle reconciles when any
-     *   multiplexed source modifies or re-points;
-     * - ``func`` may take the key as its first argument (by arity). After the
-     *   optional key, argument positions match the time-series arguments:
-     *   multiplexed inputs pass the per-key/per-index element and broadcast
-     *   inputs pass the whole time-series;
+     *   ``_map_no_index``, no runtime node). TSD child lifecycle follows a
+     *   required ``__keys__`` TSS input; wiring may supply it explicitly or
+     *   infer it from the union of multiplexed TSD keys. EVERY TSD in the tail
+     *   is multiplexed for per-key element binding, but membership changes
+     *   only create/destroy children through ``__keys__``. Same-size TSLs in
+     *   the TSL form multiplex per index; non-collection args broadcast whole;
+     * - ``func`` may take the key/index as its first argument when that
+     *   parameter is named ``key`` for TSD maps or ``ndx`` for TSL maps.
+     *   ``arg<"__key_arg__">(Str{...})`` renames that parameter and ``""``
+     *   disables key consumption. After the optional key, argument positions
+     *   match the time-series arguments: multiplexed inputs pass the
+     *   per-key/per-index element and broadcast inputs pass the whole
+     *   time-series;
      * - the output is an owned ``TSD<K, OUT>`` with a real element
      *   instantiated per key; the child's terminal output is a forwarding
      *   endpoint bound onto that element, so the child **writes the parent's
      *   storage directly** (no copy);
-     * - broadcast arguments are variadic; ``__keys__`` / ``pass_through`` /
-     *   ``no_key`` wrappers and sink maps arrive later.
+     * - broadcast arguments are variadic; ``pass_through`` / ``no_key``
+     *   wrappers and sink maps arrive later.
      */
     struct map_ : Operator<"map_",
                            Scalar<"func", WiredFn>,

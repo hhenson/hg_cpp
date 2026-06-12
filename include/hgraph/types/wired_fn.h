@@ -103,24 +103,40 @@ namespace hgraph
      * Resolve positional + keyword time-series arguments onto a ``WiredFn``'s
      * parameter order. Higher-order operators use this after their own operator
      * call has been normalised and unmatched keywords have collected into
-     * ``**kwargs``. ``allow_leading_key`` implements the common map_/switch_
-     * convention where ``func`` may take one extra leading key parameter.
+     * ``**kwargs``.
+     *
+     * Key detection is **name-based** (the Python rule): ``func`` consumes the
+     * operator-supplied key iff its FIRST parameter is named ``key_arg``
+     * (``"key"`` for keyed forms, ``"ndx"`` for indexed ones; overridable via
+     * the operator's ``__key_arg__``; empty = never). The arity must then be
+     * one more than the supplied arguments — a named key parameter with a
+     * mismatched arity is an error rather than a silent re-interpretation.
      */
     template <typename T>
     [[nodiscard]] WiredFnArgBinding<T> bind_wired_fn_args(std::string_view op_name,
                                                           const WiredFn &func,
                                                           std::span<const T> positional,
                                                           std::span<const std::pair<std::string, T>> named,
-                                                          bool allow_leading_key = true)
+                                                          std::string_view key_arg = "key")
     {
         const std::size_t filled = positional.size() + named.size();
 
         WiredFnArgBinding<T> result;
-        result.takes_leading_key = allow_leading_key && func.arity == filled + 1;
+        const auto fn_names      = func.param_names();
+        result.takes_leading_key = !key_arg.empty() && !fn_names.empty() && fn_names[0] == key_arg;
+        if (result.takes_leading_key && func.arity != filled + 1)
+        {
+            throw std::invalid_argument(std::string{op_name} + ": 'func' names its first parameter '" +
+                                        std::string{key_arg} +
+                                        "' (the key) but its arity does not leave room for it");
+        }
         if (!result.takes_leading_key && func.arity != filled)
         {
             throw std::invalid_argument(
-                std::string{op_name} + ": 'func' takes a different number of time-series arguments");
+                std::string{op_name} + ": 'func' takes a different number of time-series arguments (name the "
+                                       "first parameter '" +
+                std::string{key_arg.empty() ? std::string_view{"key"} : key_arg} +
+                "' to consume the operator key)");
         }
 
         const std::size_t offset = result.takes_leading_key ? 1 : 0;

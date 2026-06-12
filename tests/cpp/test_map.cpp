@@ -4,9 +4,10 @@
 // added keys instantiate an element in the owned TSD<K, OUT> output and
 // build/bind/start a fresh child whose terminal forwarding output writes that
 // element directly (no copy); removed keys destroy the child and remove the
-// element. func is a WiredFn (graph, node, or operator) and may take the key as
-// its first argument (by arity). TSD inputs multiplex; other time-series inputs
-// broadcast whole. See *Nested Graphs*.
+// element. func is a WiredFn (graph, node, or operator) and may take the key
+// when its first parameter is named "key" (or the configured __key_arg__). TSD
+// inputs multiplex; other time-series inputs broadcast whole. See *Nested
+// Graphs*.
 
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/std/value_util.h>
@@ -45,14 +46,25 @@ namespace
         }
     };
 
-    // Key-consuming function: arity = element + 1, the key first.
+    // Key-consuming functions are name-detected (the Python rule): the first
+    // parameter must be named "key" (TSD maps / switch_) or "ndx" (TSL maps).
     struct AddKeyG
     {
         static constexpr auto name = "add_key_g";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> key, Port<TS<Int>> ts)
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"key", TS<Int>> key, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
             return (key + ts).as<TS<Int>>();
+        }
+    };
+
+    struct AddNdxG
+    {
+        static constexpr auto name = "add_ndx_g";
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"ndx", TS<Int>> ndx, Port<TS<Int>> ts)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (ndx + ts).as<TS<Int>>();
         }
     };
 
@@ -323,17 +335,17 @@ TEST_CASE("map_: a mapped source retarget reconciles keys and clears when the in
                                dict_delta<Str, TS<Int>>({}, {"b"s, "c"s})));
 }
 
-TEST_CASE("map_: a function whose signature does not fit the inputs is rejected at wiring time")
+TEST_CASE("map_: unnamed arity-plus-one function does not consume the key")
 {
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    // Arity 2 with no broadcast arg reads as key-consuming, but AddOffsetG's
-    // first port is TS<Int> while the keys are Str — the output resolver leaves
-    // ``O`` unresolved and dispatch rejects the call.
-    REQUIRE_THROWS_AS((eval_node<stdlib::map_, TSD<Str, TS<Int>>>(
+    // AddOffsetG has two ordinary TS inputs. Its first parameter is not named
+    // "key", so one supplied TSD leaves a func parameter missing instead of
+    // treating the Int map key as input 0.
+    REQUIRE_THROWS_AS((eval_node<stdlib::map_, TSD<Int, TS<Int>>>(
                           fn<AddOffsetG>(),
-                          values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}})))),
+                          values<Value>(dict_delta<Int, TS<Int>>({{1, 10}})))),
                       OperatorResolutionError);
 }
 
@@ -372,7 +384,7 @@ TEST_CASE("map_ over TSL: the function may consume the Int index as its first ar
     stdlib::register_standard_operators();
 
     CHECK_OUTPUT((eval_node<stdlib::map_, TSL<TS<Int>, 3>>(
-                     fn<AddKeyG>(),
+                     fn<AddNdxG>(),
                      values<Value>(list_delta<TS<Int>>({10, 20, 30})))),
                  values<Value>(list_delta<TS<Int>>({10, 21, 32})));
 }
@@ -403,11 +415,11 @@ namespace
         }
     };
 
-    // Key + element + broadcast (arity 3 with one broadcast = key-consuming).
+    // TSL key + element + broadcast: the first parameter is named "ndx".
     struct KeyOffsetG
     {
         static constexpr auto name = "key_offset_g";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> key, Port<TS<Int>> ts, Port<TS<Int>> offset)
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"ndx", TS<Int>> key, Port<TS<Int>> ts, Port<TS<Int>> offset)
         {
             using namespace hgraph::stdlib::syntax;
             return ((key + ts).as<TS<Int>>() + offset).as<TS<Int>>();
@@ -429,7 +441,7 @@ TEST_CASE("map_ over TSD: variadic broadcast arguments feed every child")
                                dict_delta<Str, TS<Int>>({{"a"s, 211}, {"b"s, 212}})));
 }
 
-TEST_CASE("map_ over TSL: key plus broadcast (arity = key + element + broadcast)")
+TEST_CASE("map_ over TSL: ndx key plus broadcast")
 {
     using namespace hgraph;
     stdlib::register_standard_operators();
@@ -897,4 +909,62 @@ TEST_CASE("map_: __keys__ on a TSL map is rejected")
                           values<Value>(list_delta<TS<Int>>({1, 2})),
                           arg<"__keys__">(values<Value>(set_delta<Str>({"a"s}, {}))))),
                       std::invalid_argument);
+}
+
+// ---------------------------------------------------------------------------
+// Name-based key detection (the Python rule): the first parameter named
+// "key" (TSD) / "ndx" (TSL) consumes the operator key; __key_arg__ renames,
+// "" disables. Keyword-only: __key_arg__ can only be passed by name.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    struct AddInstrumentG
+    {
+        static constexpr auto name = "add_instrument_g";
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"instrument", TS<Int>> instrument, Port<TS<Int>> ts)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (instrument + ts).as<TS<Int>>();
+        }
+    };
+}  // namespace
+
+TEST_CASE("map_: __key_arg__ renames the key parameter")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSD<Int, TS<Int>>>(
+                     fn<AddInstrumentG>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}})),
+                     arg<"__key_arg__">(Str{"instrument"}))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 11}, {2, 22}})));
+}
+
+TEST_CASE("map_: an empty __key_arg__ disables key consumption by name")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // AddKeyG's first parameter is named "key", but with __key_arg__="" it is
+    // an ordinary input: two multiplexed dicts pair per key.
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSD<Str, TS<Int>>, TSD<Str, TS<Int>>>(
+                     fn<AddKeyG>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 1}})),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 2}})),
+                     arg<"__key_arg__">(Str{""}))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 3}})));
+}
+
+TEST_CASE("map_: __key_arg__ is keyword-only")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    REQUIRE_THROWS_AS((eval_node<stdlib::map_, TSD<Int, TS<Int>>>(
+                          fn<AddInstrumentG>(),
+                          values<Value>(dict_delta<Int, TS<Int>>({{1, 10}})),
+                          Str{"instrument"})),
+                      OperatorResolutionError);
 }

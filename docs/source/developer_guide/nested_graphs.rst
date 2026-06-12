@@ -327,11 +327,10 @@ ts…)``).
   or compiles into a child graph; the caller chooses). All branches must
   produce the same output schema.
 - **The key is just a boundary input.** The outer switch node's inputs are
-  ``[key, ts…]``, so a key-consuming branch (arity = ts-count + 1, key first)
-  binds outer input ``0`` through the standard binding mechanism — none of
-  the Python key-stub plumbing exists. A non-key branch's binding paths
-  simply shift past the key input. Source-style branches (arity 0) take no
-  bindings at all.
+  ``[key, ts…]``. A branch consumes outer input ``0`` as the key only when its
+  first parameter is named ``key``; non-key branch binding paths simply shift
+  past that outer input. Source-style branches (arity 0) take no bindings at
+  all.
 - **Runtime** (``runtime/switch_node.{h,cpp}``, on the shared
   ``nested_bindings`` helpers): at most one live child in node storage. On a
   key change (or any key tick with ``reload_on_ticked`` — runtime-supported,
@@ -388,8 +387,11 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
 - **Child boundary args** are sourced per ordinal (``MapArgSource``): the
   **element** binds to the parent TSD input's bound output child *at the
   entry's key*; if that key is absent from a multiplexed TSD, the child input
-  is left unbound until the key appears there. The **key** (when ``func`` takes
-  it first, by arity — like ``switch_`` branches) binds to an entry-owned
+  is left unbound until the key appears there. The **key** (when ``func``'s
+  first parameter is NAMED ``key`` — ``ndx`` on TSL maps; the Python rule,
+  applied per branch on ``switch_`` too; ``arg<"__key_arg__">(Str{…})``
+  renames it, ``""`` disables — arity detection is gone) binds to an
+  entry-owned
   ``TS<K>`` output written once at creation; **broadcast** args bind whole to
   the corresponding outer input. Any outer input re-point refreshes the
   existing child bindings through the shared ``nested_bindings`` helpers.
@@ -473,8 +475,8 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   binding (it is ``map_``'s argument, not ``func``'s), and rejected on TSL
   maps. Children for keys absent from a dict keep phantom/invalid element
   inputs, as before.
-- Deferred: dynamic-TSL multiplexing, name-based key detection /
-  ``__key_arg__``, ``pass_through`` / ``no_key`` wrappers, and sink maps.
+- Deferred: dynamic-TSL multiplexing, ``pass_through`` / ``no_key`` wrappers,
+  and sink maps.
 
 Tests: ``tests/cpp/test_map.cpp``. ASAN/UBSAN-verified (keyed
 create/destroy churn).

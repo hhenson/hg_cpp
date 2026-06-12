@@ -5,8 +5,8 @@
 // compiled-in (built/bound/started) and the forwarding output re-points —
 // sampling the new branch at the switch time (the sampled-runtime contract; a
 // deliberate divergence from Python's value=None reset). Branches are WiredFn
-// values (graphs, nodes, or operators) and may take the key as their first
-// argument (by arity). See the developer guide *Nested Graphs*.
+// values (graphs, nodes, or operators) and may take the key when their first
+// parameter is named "key". See the developer guide *Nested Graphs*.
 
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/testing/check_output.h>
@@ -48,10 +48,20 @@ namespace
         }
     };
 
-    // A key-consuming branch: arity == ts args + 1, the key first.
+    // A key-consuming branch: the first parameter is named "key".
     struct AddKey
     {
         static constexpr auto name = "add_key";
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"key", TS<Int>> key, Port<TS<Int>> ts)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (key + ts).as<TS<Int>>();
+        }
+    };
+
+    struct AddUnnamedKey
+    {
+        static constexpr auto name = "add_unnamed_key";
         static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> key, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
@@ -121,6 +131,18 @@ TEST_CASE("switch_: a branch may consume the key as its first argument (mixed ar
                      stdlib::switch_cases({{Value{Int{1}}, fn<AddKey>()}, {Value{Int{2}}, fn<Doubler>()}}),
                      values<Int>(10, 20, none)),
                  values<Int>(11, 21, 40));
+}
+
+TEST_CASE("switch_: unnamed arity-plus-one branch does not consume the key")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    REQUIRE_THROWS_AS((eval_node<stdlib::switch_>(
+                          values<Int>(1),
+                          stdlib::switch_cases({{Value{Int{1}}, fn<AddUnnamedKey>()}}),
+                          values<Int>(10))),
+                      OperatorResolutionError);
 }
 
 TEST_CASE("switch_: source-style branches need no time-series arguments")
@@ -208,7 +230,7 @@ namespace
     struct KeySumBoth
     {
         static constexpr auto name = "key_sum_both";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> key, Port<TS<Int>> a, Port<TS<Int>> b)
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"key", TS<Int>> key, Port<TS<Int>> a, Port<TS<Int>> b)
         {
             using namespace hgraph::stdlib::syntax;
             return (key + (a + b).as<TS<Int>>()).as<TS<Int>>();
@@ -222,7 +244,7 @@ TEST_CASE("switch_: variadic time-series arguments feed the branches, mixed arit
     stdlib::register_standard_operators();
 
     // Two ts args; branch 1 adds them, branch 2 subtracts, branch 3 consumes
-    // the key too (arity 3 = key first). Keys 1 -> add, 2 -> sub, 3 -> key+sum.
+    // the key too because its first parameter is named "key".
     CHECK_OUTPUT(eval_node<stdlib::switch_>(
                      values<Int>(1, none, 2, 3),
                      stdlib::switch_cases({{Value{Int{1}}, fn<AddBoth>()},

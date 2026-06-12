@@ -629,7 +629,11 @@ sugar):
 - candidate labels render the variadic parameter with a ``*`` prefix.
 
 Scalars cannot appear in the tail — configuration belongs in the fixed
-prefix (cf. ``SwitchCases``).
+prefix (cf. ``SwitchCases``) or in **keyword-only parameters**: ``Scalar``
+params declared AFTER the ``VarIn`` in ``compose`` are Python's
+keyword-only-after-``*args`` — they fill by name (``arg<"name">(…)``) or by
+default only, never positionally (positional overflow always goes to the
+tail). ``map_``'s ``__key_arg__`` is the canonical example.
 
 
 The markers live in ``operators/higher_order.h`` and the default overloads in

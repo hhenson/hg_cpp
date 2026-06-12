@@ -138,6 +138,9 @@ namespace hgraph
         {
             const std::size_t fixed =
                 impl.variadic && !impl.params.empty() ? impl.params.size() - 1 : impl.params.size();
+            // Params beyond ``positional_params`` are keyword-only (Python's
+            // params after *args): positional arguments never fill them.
+            const std::size_t positional_limit = std::min(impl.positional_params, fixed);
 
             std::size_t positional = 0;
             while (positional < args.size() && args[positional].name.empty()) { ++positional; }
@@ -150,9 +153,9 @@ namespace hgraph
                 }
             }
 
-            if (!impl.variadic && positional > impl.params.size())
+            if (!impl.variadic && positional > positional_limit)
             {
-                why = fmt::format("expects at most {} positional argument(s), got {}", impl.params.size(),
+                why = fmt::format("expects at most {} positional argument(s), got {}", positional_limit,
                                   positional);
                 return false;
             }
@@ -161,7 +164,7 @@ namespace hgraph
             std::vector<WiringArg>                tail;
             for (std::size_t i = 0; i < positional; ++i)
             {
-                if (i < fixed) { filled[i] = args[i]; }
+                if (i < positional_limit) { filled[i] = args[i]; }
                 else { tail.push_back(args[i]); }
             }
 

@@ -221,6 +221,13 @@ namespace hgraph
         std::vector<ParamPattern>  params{};
         /** Last param is variadic: matches zero-or-more trailing time-series args, each independently. */
         bool                       variadic{false};
+        /**
+         * Number of leading params fillable POSITIONALLY. Params beyond this
+         * (other than the variadic tail) are **keyword-only** — Python's
+         * params after ``*args``; they fill by name or default only.
+         * Defaults to "all" when no keyword-only params exist.
+         */
+        std::size_t                positional_params{static_cast<std::size_t>(-1)};
         /** Unmatched keyword time-series args collect into the candidate (``**kwargs``). */
         bool                       has_kwargs{false};
         bool                       has_output{false};
@@ -431,64 +438,144 @@ namespace hgraph
         }
 
         // Build the runtime parameter patterns (in compose order) for a C++ graph overload.
+        /**
+         * Compile-time layout of a graph compose's parameters:
+         * ``[prefix… , VarIn?, keyword-only Scalar… , VarKwIn?]`` — the
+         * Python shape ``(prefix…, *args, kwonly…, **kwargs)``. In the
+         * candidate's ``params`` the variadic is stored LAST (after the
+         * keyword-only scalars) so the matcher's tail logic stays uniform;
+         * the wire closure maps normalized positions back to compose order.
+         */
+        template <typename Impl>
+        struct graph_param_layout
+        {
+            using params_tuple = typename StaticGraphSignature<Impl>::param_types;
+
+            static constexpr std::size_t total = std::tuple_size_v<params_tuple>;
+
+            template <std::size_t I>
+            using param_t = std::tuple_element_t<I, params_tuple>;
+
+            static constexpr std::size_t compute_kwargs()
+            {
+                if constexpr (total > 0)
+                {
+                    return is_var_kw_in<param_t<total - 1>>::value ? 1 : 0;
+                }
+                return 0;
+            }
+            static constexpr std::size_t kwargs_count   = compute_kwargs();
+            static constexpr std::size_t pattern_total  = total - kwargs_count;
+
+            static constexpr std::size_t compute_variadic_index()
+            {
+                std::size_t index = pattern_total;
+                [&]<std::size_t... I>(std::index_sequence<I...>) {
+                    ((is_var_in<param_t<I>>::value ? (index = I, 0) : 0), ...);
+                }(std::make_index_sequence<pattern_total>{});
+                return index;
+            }
+            /** Position of VarIn within the compose params; pattern_total if absent. */
+            static constexpr std::size_t variadic_index = compute_variadic_index();
+            static constexpr bool        variadic       = variadic_index < pattern_total;
+            /** Params before VarIn — positionally fillable. */
+            static constexpr std::size_t prefix_count   = variadic ? variadic_index : pattern_total;
+            /** Keyword-only scalars (declared after VarIn). */
+            static constexpr std::size_t kwonly_count   = variadic ? pattern_total - variadic_index - 1 : 0;
+        };
+
+        template <typename Impl, std::size_t I>
+        [[nodiscard]] ParamPattern build_graph_param()
+        {
+            using params_tuple = typename StaticGraphSignature<Impl>::param_types;
+            using P            = std::tuple_element_t<I, params_tuple>;
+            ParamPattern pp;
+            if constexpr (operator_dispatch_detail::is_var_in<P>::value)
+            {
+                pp.kind = ParamPattern::Kind::Input;
+                pp.name = std::string{P::field_name.sv()};
+                pp.ts   = to_pattern<typename P::schema_type>();
+            }
+            else if constexpr (operator_dispatch_detail::is_named_port<P>::value)
+            {
+                pp.kind = ParamPattern::Kind::Input;
+                pp.name = std::string{P::field_name.sv()};
+                pp.ts   = to_pattern<typename operator_dispatch_detail::named_port_schema<P>::type>();
+            }
+            else if constexpr (graph_wiring_detail::is_port<P>::value)
+            {
+                pp.kind = ParamPattern::Kind::Input;
+                if constexpr (!std::is_void_v<typename port_schema<P>::type>)
+                {
+                    pp.ts = to_pattern<typename port_schema<P>::type>();
+                }
+                else
+                {
+                    pp.ts = TypePattern::var(std::string{"__erased_port_"} + std::to_string(I));
+                }
+            }
+            else
+            {
+                pp.kind   = ParamPattern::Kind::Scalar;
+                pp.name   = std::string{P::field_name.sv()};
+                pp.scalar = to_scalar_pattern<typename graph_wiring_detail::scalar_param_schema<P>::type>();
+            }
+            return pp;
+        }
+
+        /**
+         * Candidate param order: ``[prefix… , keyword-only… , variadic?]`` —
+         * the variadic stored LAST so the matcher's tail logic is uniform;
+         * keyword-only scalars (declared after ``VarIn`` in compose) sit
+         * between prefix and tail and are validated at declaration.
+         */
         template <typename Impl>
         [[nodiscard]] std::vector<ParamPattern> build_graph_params()
         {
+            using layout = graph_param_layout<Impl>;
             using params_tuple = typename StaticGraphSignature<Impl>::param_types;
-            std::vector<ParamPattern> params;
-            params.reserve(std::tuple_size_v<params_tuple>);
+
+            // Declaration validation: after VarIn only Scalar params (keyword-
+            // only) and an optional trailing VarKwIn are allowed.
             [&]<std::size_t... I>(std::index_sequence<I...>) {
                 (
                     [&] {
                         using P = std::tuple_element_t<I, params_tuple>;
-                        ParamPattern pp;
                         if constexpr (operator_dispatch_detail::is_var_kw_in<P>::value)
                         {
-                            static_assert(I + 1 == std::tuple_size_v<params_tuple>,
+                            static_assert(I + 1 == layout::total,
                                           "VarKwIn must be the last compose parameter");
-                            return;   // not a positional parameter — collected at call normalisation
                         }
                         else if constexpr (operator_dispatch_detail::is_var_in<P>::value)
                         {
-                            constexpr bool is_last = I + 1 == std::tuple_size_v<params_tuple>;
-                            constexpr bool followed_by_kwargs =
-                                !is_last && I + 2 == std::tuple_size_v<params_tuple> &&
-                                operator_dispatch_detail::is_var_kw_in<
-                                    std::tuple_element_t<I + (is_last ? 0 : 1), params_tuple>>::value;
-                            static_assert(is_last || followed_by_kwargs,
-                                          "VarIn must be the last compose parameter (or followed only by VarKwIn)");
-                            pp.kind = ParamPattern::Kind::Input;
-                            pp.name = std::string{P::field_name.sv()};
-                            pp.ts   = to_pattern<typename P::schema_type>();
+                            static_assert(I == layout::variadic_index,
+                                          "only one VarIn compose parameter is allowed");
                         }
-                        else if constexpr (operator_dispatch_detail::is_named_port<P>::value)
+                        else if constexpr (layout::variadic && I > layout::variadic_index &&
+                                           I < layout::pattern_total)
                         {
-                            pp.kind = ParamPattern::Kind::Input;
-                            pp.name = std::string{P::field_name.sv()};
-                            pp.ts   = to_pattern<typename operator_dispatch_detail::named_port_schema<P>::type>();
+                            static_assert(static_node_detail::is_scalar_selector<P>::value,
+                                          "parameters after VarIn must be keyword-only Scalar<\"name\", T>");
                         }
-                        else if constexpr (graph_wiring_detail::is_port<P>::value)
-                        {
-                            pp.kind = ParamPattern::Kind::Input;
-                            if constexpr (!std::is_void_v<typename port_schema<P>::type>)
-                            {
-                                pp.ts = to_pattern<typename port_schema<P>::type>();
-                            }
-                            else
-                            {
-                                pp.ts = TypePattern::var(std::string{"__erased_port_"} + std::to_string(I));
-                            }
-                        }
-                        else
-                        {
-                            pp.kind   = ParamPattern::Kind::Scalar;
-                            pp.name   = std::string{P::field_name.sv()};
-                            pp.scalar = to_scalar_pattern<typename graph_wiring_detail::scalar_param_schema<P>::type>();
-                        }
-                        params.push_back(std::move(pp));
                     }(),
                     ...);
-            }(std::make_index_sequence<std::tuple_size_v<params_tuple>>{});
+            }(std::make_index_sequence<layout::total>{});
+
+            std::vector<ParamPattern> params;
+            params.reserve(layout::pattern_total);
+            // prefix
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                (params.push_back(build_graph_param<Impl, I>()), ...);
+            }(std::make_index_sequence<layout::prefix_count>{});
+            // keyword-only (declared after the variadic)
+            [&]<std::size_t... J>(std::index_sequence<J...>) {
+                (params.push_back(build_graph_param<Impl, layout::variadic_index + 1 + J>()), ...);
+            }(std::make_index_sequence<layout::kwonly_count>{});
+            // variadic last
+            if constexpr (layout::variadic)
+            {
+                params.push_back(build_graph_param<Impl, layout::variadic_index>());
+            }
             return params;
         }
 
@@ -955,25 +1042,10 @@ namespace hgraph
         impl.source = OperatorImpl::Source::Cpp;
         impl.params = operator_dispatch_detail::build_graph_params<Impl>();
 
-        using params_tuple_t = typename sig::param_types;
-        constexpr std::size_t total_params = std::tuple_size_v<params_tuple_t>;
-        if constexpr (total_params > 0)
-        {
-            impl.has_kwargs = operator_dispatch_detail::is_var_kw_in<
-                std::tuple_element_t<total_params - 1, params_tuple_t>>::value;
-        }
-        constexpr std::size_t pattern_params =
-            total_params -
-            ((total_params > 0 &&
-              operator_dispatch_detail::is_var_kw_in<
-                  std::tuple_element_t<(total_params > 0 ? total_params - 1 : 0), params_tuple_t>>::value)
-                 ? 1
-                 : 0);
-        if constexpr (pattern_params > 0)
-        {
-            impl.variadic = operator_dispatch_detail::is_var_in<
-                std::tuple_element_t<pattern_params - 1, params_tuple_t>>::value;
-        }
+        using layout = operator_dispatch_detail::graph_param_layout<Impl>;
+        impl.has_kwargs        = layout::kwargs_count != 0;
+        impl.variadic          = layout::variadic;
+        impl.positional_params = layout::prefix_count + (layout::variadic ? 0 : layout::kwonly_count);
 
         using output_type = typename sig::output_type;
         if constexpr (operator_dispatch_detail::is_output_port<output_type>::value)
@@ -1014,18 +1086,13 @@ namespace hgraph
         impl.wire = [](Wiring &w, const ResolutionMap &map, std::span<const WiringArg> args,
                        std::span<const std::pair<std::string, WiringPortRef>> kwargs) -> OperatorWireResult {
             using params_tuple = typename sig::param_types;
-            constexpr std::size_t total = std::tuple_size_v<params_tuple>;
-            constexpr bool        with_kwargs =
-                total > 0 &&
-                operator_dispatch_detail::is_var_kw_in<std::tuple_element_t<total - 1, params_tuple>>::value;
-            constexpr std::size_t pattern_total = total - (with_kwargs ? 1 : 0);
-            constexpr bool        is_variadic =
-                pattern_total > 0 &&
-                operator_dispatch_detail::is_var_in<
-                    std::tuple_element_t<(pattern_total > 0 ? pattern_total - 1 : 0), params_tuple>>::value;
-            constexpr std::size_t fixed = pattern_total - (is_variadic ? 1 : 0);
+            using lay          = operator_dispatch_detail::graph_param_layout<Impl>;
 
-            return [&]<std::size_t... I>(std::index_sequence<I...>) -> OperatorWireResult {
+            // Normalized args layout: [prefix…, keyword-only…, variadic tail…]
+            // (the candidate's param order). Compose order interleaves the
+            // VarIn between prefix and keyword-only — map positions back.
+            return [&]<std::size_t... I, std::size_t... J>(std::index_sequence<I...>,
+                                                           std::index_sequence<J...>) -> OperatorWireResult {
                 auto invoke = [&](auto &&...rest) -> OperatorWireResult {
                     if constexpr (std::is_void_v<output_type>)
                     {
@@ -1046,23 +1113,31 @@ namespace hgraph
                     }
                 };
 
-                auto invoke_tail = [&](auto &&...rest) -> OperatorWireResult {
-                    if constexpr (with_kwargs)
-                    {
-                        using KW = std::tuple_element_t<total - 1, params_tuple>;
-                        KW collected{};
-                        collected.ports.assign(kwargs.begin(), kwargs.end());
-                        return invoke(std::forward<decltype(rest)>(rest)..., std::move(collected));
-                    }
-                    else { return invoke(std::forward<decltype(rest)>(rest)...); }
+                auto invoke_kwonly_then_kwargs = [&](auto &&...rest) -> OperatorWireResult {
+                    auto with_kwonly = [&](auto &&...tail_args) -> OperatorWireResult {
+                        if constexpr (lay::kwargs_count != 0)
+                        {
+                            using KW = std::tuple_element_t<lay::total - 1, params_tuple>;
+                            KW collected{};
+                            collected.ports.assign(kwargs.begin(), kwargs.end());
+                            return invoke(std::forward<decltype(tail_args)>(tail_args)..., std::move(collected));
+                        }
+                        else { return invoke(std::forward<decltype(tail_args)>(tail_args)...); }
+                    };
+                    return with_kwonly(
+                        std::forward<decltype(rest)>(rest)...,
+                        operator_dispatch_detail::make_graph_arg<
+                            std::tuple_element_t<lay::variadic_index + 1 + J, params_tuple>>(
+                            w, map, args[lay::prefix_count + J])...);
                 };
 
-                if constexpr (is_variadic)
+                if constexpr (lay::variadic)
                 {
-                    using V = std::tuple_element_t<fixed, params_tuple>;
+                    constexpr std::size_t tail_start = lay::prefix_count + lay::kwonly_count;
+                    using V = std::tuple_element_t<lay::variadic_index, params_tuple>;
                     V tail{};
-                    tail.ports.reserve(args.size() - fixed);
-                    for (std::size_t i = fixed; i < args.size(); ++i)
+                    tail.ports.reserve(args.size() - tail_start);
+                    for (std::size_t i = tail_start; i < args.size(); ++i)
                     {
                         if (args[i].kind != WiringArg::Kind::TimeSeries)
                         {
@@ -1071,10 +1146,10 @@ namespace hgraph
                         }
                         tail.ports.push_back(args[i].port);
                     }
-                    return invoke_tail(std::move(tail));
+                    return invoke_kwonly_then_kwargs(std::move(tail));
                 }
-                else { return invoke_tail(); }
-            }(std::make_index_sequence<fixed>{});
+                else { return invoke_kwonly_then_kwargs(); }
+            }(std::make_index_sequence<lay::prefix_count>{}, std::make_index_sequence<lay::kwonly_count>{});
         };
         return impl;
     }

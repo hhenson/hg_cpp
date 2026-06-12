@@ -353,8 +353,8 @@ namespace hgraph::stdlib
          * Compile one branch over the outer time-series slots. ``named_slots``
          * are the keyword arguments as ``(name, outer slot)`` pairs — resolved
          * per branch against ITS parameter names (branches may name and order
-         * their parameters differently, like Python). A branch may consume the
-         * key (arity == ts_count + 1, key first) or not (arity == ts_count).
+         * their parameters differently, like Python). A branch consumes the key
+         * only when its first parameter is named ``key``.
          */
         [[nodiscard]] inline SingleNestedGraphNodeSpec compile_switch_branch(
             const WiredFn &branch,
@@ -624,8 +624,9 @@ namespace hgraph::stdlib
         /**
          * Compile the ``map_`` child template over the classified time-series
          * args, deriving the boundary-arg source table and the ``TSD<K, OUT>``
-         * output schema. ``func`` may take the key first
-         * (arity = ts-arg count + 1).
+         * output schema. The caller has already resolved name-based key
+         * consumption, so this helper sees a schema count that either matches
+         * ``func`` directly or has one extra slot for the key.
          */
         [[nodiscard]] inline MapNodeSpec compile_map_child(const WiredFn &func,
                                                            std::span<const TSValueTypeMetaData *const> ts_schemas,
@@ -645,8 +646,8 @@ namespace hgraph::stdlib
             if (!takes_key && func.arity != base_arity)
             {
                 throw std::invalid_argument(
-                    "map_: 'func' must take one parameter per time-series argument — optionally preceded by "
-                    "the key");
+                    "map_: 'func' must take one parameter per time-series argument, with an optional key "
+                    "already resolved by name");
             }
 
             const auto *key_ts = registry.ts(classified.key_meta);
@@ -803,16 +804,19 @@ namespace hgraph::stdlib
             bool                                    takes_key{false};
         };
 
-        [[nodiscard]] inline std::optional<OrderedMapSchemas> ordered_map_schemas(OperatorCallContext context)
+        [[nodiscard]] inline std::optional<OrderedMapSchemas> ordered_map_schemas(OperatorCallContext context,
+                                                                                  std::string_view default_key_arg)
         {
             const WiredFn *func = context.scalar_as<WiredFn>("func");
             if (func == nullptr) { return std::nullopt; }
 
+            // Normalized args interleave the operator's own scalars (``func``,
+            // the keyword-only ``__key_arg__``) with the time-series tail —
+            // only the time-series args are func arguments.
             std::vector<const TSValueTypeMetaData *> positional;
-            for (std::size_t i = 1; i < context.args.size(); ++i)
+            for (const WiringArg &argument : context.args)
             {
-                if (context.args[i].kind != WiringArg::Kind::TimeSeries) { return std::nullopt; }
-                positional.push_back(context.args[i].port.schema);
+                if (argument.kind == WiringArg::Kind::TimeSeries) { positional.push_back(argument.port.schema); }
             }
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> named;
             named.reserve(context.kwargs.size());
@@ -822,12 +826,14 @@ namespace hgraph::stdlib
                 named.emplace_back(name, port.schema);
             }
 
+            const std::string *key_override = context.scalar_as<Str>("__key_arg__");
+
             try
             {
                 OrderedMapSchemas ordered;
                 auto bound = bind_wired_fn_args<const TSValueTypeMetaData *>(
                     "map_", *func, {positional.data(), positional.size()}, {named.data(), named.size()},
-                    true);
+                    key_override != nullptr ? std::string_view{*key_override} : default_key_arg);
                 ordered.schemas   = std::move(bound.ordered);
                 ordered.takes_key = bound.takes_leading_key;
                 return ordered;
@@ -845,7 +851,7 @@ namespace hgraph::stdlib
 
             const WiredFn *func = context.scalar_as<WiredFn>("func");
             if (func == nullptr) { return; }
-            auto ordered = ordered_map_schemas(context);
+            auto ordered = ordered_map_schemas(context, "key");
             if (!ordered.has_value()) { return; }
 
             try
@@ -864,7 +870,8 @@ namespace hgraph::stdlib
         [[nodiscard]] inline const TSValueTypeMetaData *first_map_collection(OperatorCallContext context)
         {
             auto &registry = TypeRegistry::instance();
-            auto ordered = ordered_map_schemas(context);
+            auto ordered = ordered_map_schemas(context, "key");
+            if (!ordered.has_value()) { ordered = ordered_map_schemas(context, "ndx"); }
             if (!ordered.has_value()) { return nullptr; }
             for (const auto *schema_in : ordered->schemas)
             {
@@ -920,15 +927,22 @@ namespace hgraph::stdlib
                 resolve_map_output(resolution, context);
             }
 
+            static std::vector<std::pair<std::string_view, Value>> defaults()
+            {
+                return {{"__key_arg__", Value{Str{"key"}}}};
+            }
+
             static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            VarIn<"args", TsVar<"B">> positional, VarKwIn<"kwargs"> kwargs)
+                                            VarIn<"args", TsVar<"B">> positional,
+                                            Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
             {
                 const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
                 std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
                 std::optional<WiringPortRef> keys = split_keys_kwarg(named);
                 auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(),
                                                                {pos.data(), pos.size()},
-                                                               {named.data(), named.size()});
+                                                               {named.data(), named.size()},
+                                                               key_arg.value());
                 auto out = wire_map(w, func, std::move(bound.ordered), std::move(keys));
                 return Port<TsVar<"O">>{w, out.erased()};
             }
@@ -1023,7 +1037,7 @@ namespace hgraph::stdlib
             if (func == nullptr) { return; }
 
             auto &registry = TypeRegistry::instance();
-            auto ordered = ordered_map_schemas(context);
+            auto ordered = ordered_map_schemas(context, "ndx");
             if (!ordered.has_value()) { return; }
 
             try
@@ -1085,8 +1099,14 @@ namespace hgraph::stdlib
                 resolve_map_tsl_output(resolution, context);
             }
 
+            static std::vector<std::pair<std::string_view, Value>> defaults()
+            {
+                return {{"__key_arg__", Value{Str{"ndx"}}}};
+            }
+
             static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            VarIn<"args", TsVar<"B">> positional, VarKwIn<"kwargs"> kwargs)
+                                            VarIn<"args", TsVar<"B">> positional,
+                                            Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
             {
                 const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
                 std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
@@ -1096,7 +1116,8 @@ namespace hgraph::stdlib
                 }
                 auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(),
                                                                {pos.data(), pos.size()},
-                                                               {named.data(), named.size()});
+                                                               {named.data(), named.size()},
+                                                               key_arg.value());
                 auto out = wire_map_tsl(w, func.value(), bound.takes_leading_key, std::move(bound.ordered));
                 return Port<TsVar<"O">>{w, out.erased()};
             }
