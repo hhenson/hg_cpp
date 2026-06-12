@@ -371,27 +371,28 @@ Tests: ``tests/cpp/test_switch.cpp``.
 of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
 (``wire<stdlib::map_>(w, fn<G>(), tsd_port[, ts…])``).
 
-- **Key lifecycle is current-key reconciliation**: when the mapped TSD
-  modifies, re-points, or is first observed, the map node scans the current
-  key set. A key missing from the current input stops and destroys its child
-  (and removes the owned output's entry); a key present in the input without a
-  child builds, binds and starts a fresh instance. This handles ordinary dict
-  deltas and upstream forwarding/REF retargets that replace the source rather
-  than publishing per-key removals. A removed-then-re-added key gets a
-  **fresh** child (state resets — pinned by test).
-- **Per-key state** lives in node storage as
-  ``unordered_dense::map<Value, unique_ptr<MapKeyEntry>>`` — ``unique_ptr``
-  for pointer stability across rehash (a relocated live ``GraphValue`` would
-  break its nodes' notifier subscriptions; the RFC's ``StablePayloadStore``
-  is the recorded refinement). Entry member order is load-bearing: the child
-  graph (subscriber) tears down before the key output it observes.
+- **Key lifecycle is driven by ``__keys__: TSS[K]``**. Wiring supplies either
+  the explicit ``__keys__`` argument or an inferred key set from the
+  multiplexed inputs. The runtime treats the key-set slot layout as
+  authoritative: first bind and source re-point rebuild from live key slots;
+  ordinary key ticks create or destroy children from ``slot_added`` /
+  ``slot_removed``. Multiplexed TSD membership only affects element binding,
+  not child existence. An invalid or unbound ``__keys__`` source stops all
+  children and clears the owned output.
+- **Per-key state** lives in node storage as a ``ValueSlotStore`` indexed by
+  the current ``__keys__`` slot id. Each constructed slot owns the copied key
+  ``Value``, an optional per-key ``TS<K>`` output, and the child ``GraphValue``.
+  The owned key is used for output erasure across removals and re-points. Entry
+  member order is load-bearing: the child graph (subscriber) tears down before
+  the key output it observes.
 - **Child boundary args** are sourced per ordinal (``MapArgSource``): the
   **element** binds to the parent TSD input's bound output child *at the
-  entry's key* (re-resolved each cycle); the **key** (when ``func`` takes it
-  first, by arity — like ``switch_`` branches) binds to an entry-owned
+  entry's key*; if that key is absent from a multiplexed TSD, the child input
+  is left unbound until the key appears there. The **key** (when ``func`` takes
+  it first, by arity — like ``switch_`` branches) binds to an entry-owned
   ``TS<K>`` output written once at creation; **broadcast** args bind whole to
-  the corresponding outer input. All through the shared ``nested_bindings``
-  helpers.
+  the corresponding outer input. Any outer input re-point refreshes the
+  existing child bindings through the shared ``nested_bindings`` helpers.
 - **Output (write-through, no copy)**: the output is an *owned*
   ``TSD<K, OUT>`` — for every key a **real element is instantiated** in it
   (``TSDDataMutationView::operator[]`` at entry creation), and the child's
@@ -402,15 +403,18 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   through the link (``target_link_copy_value_from`` resolves the target and
   runs the standard mutation path, so modified tracking and dict parent
   recording are exactly the owned-write path). Bindings are established at
-  entry creation and refreshed only when an outer input's bound output
-  re-points (an upstream forwarding/REF retarget), detected with one handle
-  compare per outer input per cycle. Output forwarding retargets mark the
+  entry creation and refreshed when an outer input's bound output re-points
+  (an upstream forwarding/REF retarget), detected with one handle compare per
+  outer input per cycle. Output forwarding retargets mark the
   forwarding endpoint modified so active downstream consumers schedule for the
   retarget cycle, including retargets to an invalid source. Removals destroy
   the child (its link unbinds) and then ``erase`` the element (publishing the
   removed delta). Wiring rejects ``OUT`` shapes that cannot embed as TSD
   elements (``TSD`` / dynamic ``TSL``), reference-valued outputs, and
-  pass-through/sub-path outputs.
+  pass-through/sub-path outputs. On node stop, ``map_`` stops every child,
+  erases the owned TSD elements, and clears the output; this differs from
+  ``nested_`` / ``switch_`` forwarding aliases, where the last forwarded value
+  can remain observable after stop.
 - **Storage-plan ordering is load-bearing**: the map field is placed *after*
   ``output`` in the node storage plan (``node_storage_plan_for``'s
   ``extra_fields_after_output``) so reverse-order destruction tears the

@@ -1,12 +1,12 @@
 #include <hgraph/runtime/map_node.h>
 #include <hgraph/runtime/nested_bindings.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/utils/value_slot_store.h>
 #include <hgraph/util/scope.h>
-
-#include <ankerl/unordered_dense.h>
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -22,50 +22,118 @@ namespace hgraph
 
         struct MapKeyEntry
         {
+            explicit MapKeyEntry(Value key_)
+                : key(std::move(key_))
+            {
+            }
+
             // Declaration order is load-bearing: members destroy in reverse, and
             // the child graph's inputs are subscribed to ``key_output`` — the
             // graph (the subscriber) must tear down BEFORE the output it
             // observes.
+            Value                   key{};
             std::optional<TSOutput> key_output{};
             GraphValue              graph{};
         };
 
-        struct ValueKeyHash
+        struct MapNodeStorage final : SlotObserver
         {
-            using is_transparent = void;
-            [[nodiscard]] std::size_t operator()(const Value &value) const
+            MapNodeStorage()
+                : entries(MemoryUtils::plan_for<MapKeyEntry>())
             {
-                return value.has_value() ? value.hash() : 0;
             }
-        };
 
-        struct ValueKeyEqual
-        {
-            using is_transparent = void;
-            [[nodiscard]] bool operator()(const Value &lhs, const Value &rhs) const
-            {
-                if (lhs.has_value() != rhs.has_value()) { return false; }
-                return !lhs.has_value() || lhs.equals(rhs);
-            }
-        };
-
-        struct MapNodeStorage
-        {
-            MapNodeStorage()                                  = default;
             MapNodeStorage(const MapNodeStorage &)            = delete;
             MapNodeStorage &operator=(const MapNodeStorage &) = delete;
-            MapNodeStorage(MapNodeStorage &&) noexcept        = default;
-            MapNodeStorage &operator=(MapNodeStorage &&)      = default;
-            ~MapNodeStorage()                                 = default;
+            MapNodeStorage(MapNodeStorage &&)                 = delete;
+            MapNodeStorage &operator=(MapNodeStorage &&)      = delete;
 
-            // unique_ptr entries: pointer-stable across rehash — a relocated live
-            // GraphValue would break its nodes' notifier subscriptions.
-            ankerl::unordered_dense::map<Value, std::unique_ptr<MapKeyEntry>, ValueKeyHash, ValueKeyEqual> active{};
+            ~MapNodeStorage() override
+            {
+                unsubscribe_keys_noexcept();
+                destroy_entries_without_output_noexcept();
+            }
+
+            // Slot ids mirror the current __keys__ source. ValueSlotStore keeps
+            // entry addresses stable across capacity growth.
+            ValueSlotStore entries{};
             // Cached bound-output handles of the outer inputs (tsd + broadcast
             // sources). Entry input bindings are established at creation and
             // refreshed only when an upstream source re-points.
             std::vector<TSOutputHandle> outer_sources{};
+            TSOutputHandle              observed_keys_source{};
+            bool                        observing_keys{false};
             bool primed{false};
+
+            [[nodiscard]] std::size_t active_count() const noexcept
+            {
+                return entries.constructed.count();
+            }
+
+            [[nodiscard]] bool observe_keys_source(TSOutputHandle source)
+            {
+                if (source.same_as(observed_keys_source)) { return false; }
+
+                unsubscribe_keys_noexcept();
+                observed_keys_source = source;
+                if (source.bound())
+                {
+                    auto data = source.data_view();
+                    auto set  = data.as_set();
+                    entries.reserve_to(set.slot_capacity());
+                    try
+                    {
+                        set.subscribe_slot_observer(this);
+                        observing_keys = true;
+                    }
+                    catch (const std::logic_error &)
+                    {
+                        // Target-link projections can expose TSS slot access
+                        // without supporting direct slot observer hooks.
+                        observing_keys = false;
+                    }
+                }
+                return true;
+            }
+
+            void unsubscribe_keys_noexcept() noexcept
+            {
+                if (observing_keys)
+                {
+                    static_cast<void>(fallback_on_exception(false, [&] {
+                        auto data = observed_keys_source.data_view();
+                        if (data.valid()) { data.as_set().unsubscribe_slot_observer(this); }
+                        return true;
+                    }));
+                }
+                observed_keys_source.reset();
+                observing_keys = false;
+            }
+
+            void destroy_entries_without_output_noexcept() noexcept
+            {
+                for (std::size_t slot = 0; slot < entries.slot_capacity(); ++slot)
+                {
+                    auto *entry = entries.try_value<MapKeyEntry>(slot);
+                    if (entry == nullptr || !entry->graph.has_value()) { continue; }
+                    static_cast<void>(fallback_on_exception(false, [&] {
+                        entry->graph.view().stop();
+                        return true;
+                    }));
+                }
+                entries.destroy_all();
+                primed = false;
+            }
+
+            void on_capacity(std::size_t, std::size_t new_capacity) override
+            {
+                entries.reserve_to(new_capacity);
+            }
+
+            void on_insert(std::size_t) override {}
+            void on_remove(std::size_t) override {}
+            void on_erase(std::size_t) override {}
+            void on_clear() override {}
         };
 
         struct MapNodeContext
@@ -77,7 +145,8 @@ namespace hgraph
         struct SourceRepointStatus
         {
             bool any_repointed{false};
-            bool mux_repointed{false};   ///< any MULTIPLEXED source re-pointed
+            bool mux_repointed{false};    ///< any MULTIPLEXED source re-pointed
+            bool keys_repointed{false};   ///< the __keys__ source re-pointed
         };
 
         // Program-lifetime, intentionally-leaked context storage — same rationale
@@ -104,9 +173,25 @@ namespace hgraph
             return std::vector<std::size_t>{path.begin() + 1, path.end()};
         }
 
+        [[nodiscard]] TSOutputHandle effective_output_handle(TSOutputView source)
+        {
+            if (!source.bound()) { return {}; }
+
+            TSOutputHandle current = source.handle();
+            while (source.forwarding())
+            {
+                TSOutputHandle target = source.forwarding_target();
+                if (!target.bound() || target.same_as(current)) { break; }
+                current = target;
+                source = target.view(source.evaluation_time());
+            }
+            return current;
+        }
+
         [[nodiscard]] SourceRepointStatus update_source_handles(const TSInputView &root_input,
                                                                 MapNodeStorage &storage,
-                                                                const std::vector<std::size_t> &lifecycle_inputs)
+                                                                const std::vector<std::size_t> &multiplexed_inputs,
+                                                                std::size_t keys_input_index)
         {
             const std::size_t outer_count = root_input.as_bundle().size();
             const bool        initialized = storage.outer_sources.size() == outer_count;
@@ -115,45 +200,42 @@ namespace hgraph
             SourceRepointStatus status;
             for (std::size_t i = 0; i < outer_count; ++i)
             {
-                TSOutputHandle current{
-                    walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{i}).bound_output()};
+                TSOutputHandle current = effective_output_handle(
+                    walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{i}).bound_output());
                 if (!current.same_as(storage.outer_sources[i]))
                 {
                     storage.outer_sources[i] = current;
                     if (initialized)
                     {
                         status.any_repointed = true;
-                        if (std::find(lifecycle_inputs.begin(), lifecycle_inputs.end(), i) !=
-                            lifecycle_inputs.end())
+                        if (std::find(multiplexed_inputs.begin(), multiplexed_inputs.end(), i) !=
+                            multiplexed_inputs.end())
                         {
                             status.mux_repointed = true;
                         }
+                        if (i == keys_input_index) { status.keys_repointed = true; }
                     }
                 }
             }
             return status;
         }
 
-        void remove_entry(MapNodeStorage &storage, TSDDataMutationView &output_mutation, const Value &key)
+        void remove_entry_at_slot(MapNodeStorage &storage, TSDDataMutationView &output_mutation, std::size_t slot)
         {
-            auto it = storage.active.find(key);
-            if (it == storage.active.end()) { return; }
+            auto *entry = storage.entries.try_value<MapKeyEntry>(slot);
+            if (entry == nullptr) { return; }
 
-            if (it->second->graph.has_value()) { it->second->graph.view().stop(); }
-            (void)output_mutation.erase(key.view());
-            storage.active.erase(it);
+            if (entry->graph.has_value()) { entry->graph.view().stop(); }
+            (void)output_mutation.erase(entry->key.view());
+            storage.entries.destroy_at(slot);
         }
 
         void remove_all_entries(MapNodeStorage &storage, TSDDataMutationView &output_mutation)
         {
-            std::vector<Value> keys;
-            keys.reserve(storage.active.size());
-            for (const auto &[key, entry] : storage.active)
+            for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
             {
-                static_cast<void>(entry);
-                keys.push_back(key);
+                remove_entry_at_slot(storage, output_mutation, slot);
             }
-            for (const Value &key : keys) { remove_entry(storage, output_mutation, key); }
         }
 
         /**
@@ -162,7 +244,7 @@ namespace hgraph
          * that child input UNBOUND — invalid until the key appears there (the
          * Python phantom-element behaviour under the union key rule).
          */
-        void bind_entry(const NodeView &view, const MapNodeContext &context, MapKeyEntry &entry, const Value &key,
+        void bind_entry(const NodeView &view, const MapNodeContext &context, MapKeyEntry &entry,
                         DateTime evaluation_time)
         {
             const MapNodeSpec &spec = context.spec;
@@ -189,9 +271,9 @@ namespace hgraph
                         if (mux_source.bound())
                         {
                             auto dict = mux_source.as_dict();
-                            if (dict.contains(key.view()))
+                            if (dict.contains(entry.key.view()))
                             {
-                                source = walk_ts_path(dict.at(key.view()), path_suffix(binding.source_path));
+                                source = walk_ts_path(dict.at(entry.key.view()), path_suffix(binding.source_path));
                             }
                         }
                         break;
@@ -218,15 +300,15 @@ namespace hgraph
          * live in stable slot storage and exist exactly as long as the entry.
          */
         void bind_entry_output(const NodeView &view, const MapNodeContext &context, MapKeyEntry &entry,
-                               const Value &key, DateTime evaluation_time)
+                               DateTime evaluation_time)
         {
             const auto &output_binding = context.spec.child.output_binding;
             if (!output_binding.has_value()) { return; }
 
             auto output = view.output(evaluation_time);
             auto dict   = output.as_dict();
-            if (!dict.contains(key.view())) { return; }
-            auto element = dict.at(key.view());
+            if (!dict.contains(entry.key.view())) { return; }
+            auto element = dict.at(entry.key.view());
 
             auto child_terminal = walk_ts_path(
                 entry.graph.view().node_at(output_binding->source.node).output(evaluation_time),
@@ -234,19 +316,27 @@ namespace hgraph
             bind_forwarding_output_to_source(child_terminal, element);
         }
 
-        void create_entry(const NodeView &view, const MapNodeContext &context, MapNodeStorage &storage,
-                          TSDDataMutationView &output_mutation, const ValueView &key_view,
-                          DateTime evaluation_time)
+        void create_entry_at_slot(const NodeView &view, const MapNodeContext &context, MapNodeStorage &storage,
+                                  TSDDataMutationView &output_mutation, const TSSInputView &keys_set,
+                                  std::size_t slot, DateTime evaluation_time)
         {
-            const MapNodeSpec &spec  = context.spec;
-            auto               entry = std::make_unique<MapKeyEntry>();
-            Value              key{key_view};
+            if (storage.entries.has_slot(slot)) { return; }
 
-            entry->graph = spec.child.graph_builder.make_nested_graph(NodeStorageRef{view.binding(), view.data()});
+            const MapNodeSpec &spec     = context.spec;
+            const ValueView    key_view = keys_set.at_slot(slot);
+            storage.entries.reserve_to(std::max(storage.entries.slot_capacity(), slot + 1));
+            auto &entry = storage.entries.construct_at<MapKeyEntry>(slot, Value{key_view});
+            auto rollback = UnwindCleanupGuard([&] {
+                if (entry.graph.has_value() && entry.graph.view().started()) { entry.graph.view().stop(); }
+                (void)output_mutation.erase(entry.key.view());
+                storage.entries.destroy_at(slot);
+            });
+
+            entry.graph = spec.child.graph_builder.make_nested_graph(NodeStorageRef{view.binding(), view.data()});
             if (spec.key_output_schema != nullptr)
             {
-                entry->key_output.emplace(*spec.key_output_schema);
-                auto mutation = entry->key_output->view(evaluation_time).begin_mutation(evaluation_time);
+                entry.key_output.emplace(*spec.key_output_schema);
+                auto mutation = entry.key_output->view(evaluation_time).begin_mutation(evaluation_time);
                 if (!mutation.copy_value_from(key_view))
                 {
                     throw std::logic_error("map_: failed to write the key value into the per-key output");
@@ -257,17 +347,25 @@ namespace hgraph
             // the child's terminal forwarding output to it (stable for the
             // entry's lifetime).
             (void)output_mutation[key_view];
-            auto rollback = UnwindCleanupGuard([&] {
-                if (entry->graph.has_value() && entry->graph.view().started()) { entry->graph.view().stop(); }
-                (void)output_mutation.erase(key.view());
-            });
 
-            bind_entry(view, context, *entry, key, evaluation_time);
-            bind_entry_output(view, context, *entry, key, evaluation_time);
-            entry->graph.view().start(evaluation_time);
-
-            storage.active.emplace(std::move(key), std::move(entry));
+            bind_entry(view, context, entry, evaluation_time);
+            bind_entry_output(view, context, entry, evaluation_time);
+            entry.graph.view().start(evaluation_time);
             rollback.release();
+        }
+
+        void create_live_key_entries(const NodeView &view, const MapNodeContext &context, MapNodeStorage &storage,
+                                     TSDDataMutationView &output_mutation, const TSSInputView &keys_set,
+                                     DateTime evaluation_time)
+        {
+            storage.entries.reserve_to(keys_set.slot_capacity());
+            for (std::size_t slot = 0; slot < keys_set.slot_capacity(); ++slot)
+            {
+                if (keys_set.slot_live(slot))
+                {
+                    create_entry_at_slot(view, context, storage, output_mutation, keys_set, slot, evaluation_time);
+                }
+            }
         }
 
         void map_evaluate(const NodeView &view, DateTime evaluation_time)
@@ -278,12 +376,11 @@ namespace hgraph
             const auto &context  = *static_cast<const MapNodeContext *>(map_view.internal_context());
             auto       &storage  = *MemoryUtils::cast<MapNodeStorage>(map_view.internal_storage());
             const auto &spec     = context.spec;
+            const auto  keys_index = *spec.keys_input_index;
 
             auto root_input = view.input(evaluation_time);
-            std::vector<std::size_t> lifecycle_inputs = spec.multiplexed_inputs;
-            if (spec.keys_input_index.has_value()) { lifecycle_inputs.push_back(*spec.keys_input_index); }
             SourceRepointStatus source_status =
-                update_source_handles(root_input.borrowed_ref(), storage, lifecycle_inputs);
+                update_source_handles(root_input.borrowed_ref(), storage, spec.multiplexed_inputs, keys_index);
             bool bindings_need_refresh = source_status.any_repointed;
 
             // Multiplexed-dict membership changes re-bind surviving entries
@@ -294,58 +391,62 @@ namespace hgraph
             for (const std::size_t mux_index : spec.multiplexed_inputs)
             {
                 auto mux_input = walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{mux_index});
-                if (mux_input.valid() && mux_input.modified()) { any_modified = true; }
+                if (mux_input.bound() && mux_input.modified()) { any_modified = true; }
             }
+            if (any_modified) { bindings_need_refresh = true; }
 
-            if (spec.keys_input_index.has_value())
+            // Explicit ``__keys__``: the TSS alone drives the lifecycle —
+            // children exist exactly for its members. The multiplexed dicts
+            // only feed elements; their membership changes re-bind surviving
+            // entries through ``bindings_need_refresh`` above.
+            auto keys_input = walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{keys_index});
+            auto keys_source = keys_input.bound_output();
+            const bool keys_observer_changed = storage.observe_keys_source(keys_source.handle());
+            if (!keys_input.valid())
             {
-                // Explicit ``__keys__``: the TSS alone drives the lifecycle —
-                // children exist exactly for its members. The multiplexed
-                // dicts only feed elements; their membership changes still
-                // re-bind surviving entries (a key's element may appear or
-                // vanish in one dict while the key stays in the set).
-                auto keys_input =
-                    walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{*spec.keys_input_index});
-                if (keys_input.valid())
+                auto output          = view.output(evaluation_time);
+                auto output_dict     = output.as_dict();
+                auto output_mutation = output_dict.begin_mutation(evaluation_time);
+                remove_all_entries(storage, output_mutation);
+                output_mutation.clear();
+                storage.primed = false;
+            }
+            else
+            {
+                auto key_set = keys_input.as_set();
+                storage.entries.reserve_to(key_set.slot_capacity());
+
+                const bool rebuild = !storage.primed || source_status.keys_repointed || keys_observer_changed;
+                if (rebuild)
                 {
-                    if (source_status.mux_repointed || keys_input.modified() || !storage.primed)
+                    auto output          = view.output(evaluation_time);
+                    auto output_dict     = output.as_dict();
+                    auto output_mutation = output_dict.begin_mutation(evaluation_time);
+                    remove_all_entries(storage, output_mutation);
+                    output_mutation.clear();
+                    create_live_key_entries(view, context, storage, output_mutation, key_set, evaluation_time);
+                    storage.primed = true;
+                }
+                else if (keys_input.modified())
+                {
+                    auto output          = view.output(evaluation_time);
+                    auto output_dict     = output.as_dict();
+                    auto output_mutation = output_dict.begin_mutation(evaluation_time);
+
+                    for (std::size_t slot = 0; slot < key_set.slot_capacity(); ++slot)
                     {
-                        auto output          = view.output(evaluation_time);
-                        auto output_dict     = output.as_dict();
-                        auto output_mutation = output_dict.begin_mutation(evaluation_time);
+                        if (key_set.slot_removed(slot)) { remove_entry_at_slot(storage, output_mutation, slot); }
+                    }
 
-                        auto key_set = keys_input.as_set();
-
-                        std::vector<Value> stale_keys;
-                        for (const auto &[key, entry] : storage.active)
+                    for (std::size_t slot = 0; slot < key_set.slot_capacity(); ++slot)
+                    {
+                        if (key_set.slot_live(slot) && key_set.slot_added(slot))
                         {
-                            static_cast<void>(entry);
-                            if (!key_set.contains(key.view())) { stale_keys.push_back(key); }
+                            create_entry_at_slot(view, context, storage, output_mutation, key_set, slot,
+                                                 evaluation_time);
                         }
-                        for (const Value &key : stale_keys) { remove_entry(storage, output_mutation, key); }
-
-                        for (const ValueView &key : key_set.values())
-                        {
-                            if (storage.active.find(Value{key}) == storage.active.end())
-                            {
-                                create_entry(view, context, storage, output_mutation, key, evaluation_time);
-                            }
-                        }
-                        storage.primed = true;
                     }
                 }
-                else if (source_status.mux_repointed || storage.primed)
-                {
-                    if (!storage.active.empty())
-                    {
-                        auto output          = view.output(evaluation_time);
-                        auto output_dict     = output.as_dict();
-                        auto output_mutation = output_dict.begin_mutation(evaluation_time);
-                        remove_all_entries(storage, output_mutation);
-                    }
-                    storage.primed = false;
-                }
-                if (any_modified) { bindings_need_refresh = true; }
             }
 
             // Evaluate due children: their terminal forwarding outputs write the
@@ -353,16 +454,16 @@ namespace hgraph
             // collection step. A child evaluation propagates its own next
             // scheduled time back to this node; children left unevaluated still
             // pull their pending schedule up.
-            for (auto &[key, entry] : storage.active)
+            for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
             {
-                auto child = entry->graph.view();
-                if (bindings_need_refresh) { bind_entry(view, context, *entry, key, evaluation_time); }
+                auto *entry = storage.entries.try_value<MapKeyEntry>(slot);
+                if (entry == nullptr || !entry->graph.has_value()) { continue; }
 
-                if (child.next_scheduled_time() <= evaluation_time)
-                {
-                    child.evaluate(evaluation_time);
-                }
-                else if (const DateTime next = child.next_scheduled_time(); next != MAX_DT)
+                auto child = entry->graph.view();
+                if (bindings_need_refresh) { bind_entry(view, context, *entry, evaluation_time); }
+
+                if (child.next_scheduled_time() <= evaluation_time) { child.evaluate(evaluation_time); }
+                if (const DateTime next = child.next_scheduled_time(); next != MAX_DT && next > evaluation_time)
                 {
                     view.graph().schedule_node(view.node_index(), next);
                 }
@@ -374,14 +475,18 @@ namespace hgraph
             map_evaluate(view, evaluation_time);
         }
 
-        void map_node_stop(const NodeView &view, DateTime)
+        void map_node_stop(const NodeView &view, DateTime evaluation_time)
         {
             auto  map_view = view.as<MapNodeView>();
             auto &storage  = *MemoryUtils::cast<MapNodeStorage>(map_view.internal_storage());
-            for (auto &[key, entry] : storage.active)
-            {
-                if (entry->graph.has_value()) { entry->graph.view().stop(); }
-            }
+
+            auto output          = view.output(evaluation_time);
+            auto output_dict     = output.as_dict();
+            auto output_mutation = output_dict.begin_mutation(evaluation_time);
+            remove_all_entries(storage, output_mutation);
+            output_mutation.clear();
+            storage.unsubscribe_keys_noexcept();
+            storage.primed = false;
         }
 
         void validate_map_node_spec(const NodeTypeMetaData &meta, const MapNodeSpec &spec)
@@ -558,7 +663,7 @@ namespace hgraph
 
     std::size_t MapNodeView::active_count() const noexcept
     {
-        return MemoryUtils::cast<MapNodeStorage>(storage_)->active.size();
+        return MemoryUtils::cast<MapNodeStorage>(storage_)->active_count();
     }
 
     MapNodeView::MapNodeView(NodeView view, const void *context, void *storage) noexcept
