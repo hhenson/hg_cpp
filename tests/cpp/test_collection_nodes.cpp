@@ -547,16 +547,15 @@ TEST_CASE("collections: keys_ mirrors a TSD's key membership as a TSS")
     using namespace hgraph::testing;
     stdlib::register_standard_operators();
 
-    // The key set is a ZERO-COPY view over the dict, sharing its root
-    // modified flag — a pure value tick therefore surfaces as an EMPTY set
-    // delta (a no-op for delta-driven consumers). Per-surface modified
-    // tracking is the recorded refinement.
+    // The key set is a ZERO-COPY view with DEDICATED modified tracking
+    // (stamped only by membership changes): a pure value tick on the dict is
+    // silent on the key-set surface.
     CHECK_OUTPUT((eval_node<stdlib::keys_, TSD<Str, TS<Int>>>(
                      values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
                                    dict_delta<Str, TS<Int>>({{"a"s, 9}}),   // value tick: no key change
                                    dict_delta<Str, TS<Int>>({}, {"a"s})))),
                  values<Value>(set_delta<Str>({"a"s, "b"s}, {}),
-                               set_delta<Str>({}, {}),
+                               none,
                                set_delta<Str>({}, {"a"s})));
 }
 
@@ -589,4 +588,33 @@ TEST_CASE("collections: union folds across three inputs")
                      values<Value>(set_delta<Int>({2}, {})),
                      values<Value>(set_delta<Int>({3}, {})))),
                  values<Value>(set_delta<Int>({1, 2, 3}, {})));
+}
+
+TEST_CASE("collections: the TSD key-set view is read-only but reports the owner's mutations")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    (void)TypeRegistry::instance().register_scalar<std::string>("string");
+
+    const auto *schema = ts_type<TSD<Str, TS<Int>>>();
+    TSOutput    output{schema};
+
+    const DateTime t0 = MIN_ST;
+    const DateTime t1 = MIN_ST + TimeDelta{1};
+
+    // The owner mutates through the DICT surface; the key set reports it.
+    {
+        auto view     = output.view(t0);
+        auto dict     = view.as_dict();
+        auto mutation = dict.begin_mutation(t0);
+        mutation.set(Value{Str{"a"}}.view(), Value{Int{1}}.view());
+    }
+    auto view_t1 = output.view(t1);
+    auto dict_t1 = view_t1.as_dict();
+    auto keys    = dict_t1.key_set();
+    CHECK(keys.as_set().contains(Value{Str{"a"}}.view()));
+    CHECK(keys.last_modified_time() == t0);
+
+    // The view itself can never mutate.
+    REQUIRE_THROWS_AS(keys.begin_mutation(t1), std::logic_error);
 }

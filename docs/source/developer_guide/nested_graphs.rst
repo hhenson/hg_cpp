@@ -457,7 +457,12 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   key set as a bindable ``TSS`` view over the same storage, addressed in
   edges/bindings by the ``ts_key_set_path_component`` path sentinel (no node
   is wired; works through forwarding links — the link layer carries its own
-  key-set binding). The ``union`` node reconciles removals against the full
+  key-set binding). The key-set surface is a **first-class time series**:
+  it carries its own modified tracking AND its own observer set, recorded and
+  notified only by membership changes in the dict slot storage — subscribers
+  to the key set are never woken by the dictionary's value ticks, with no
+  consumer- or link-side special-casing. The ``union`` node reconciles
+  removals against the full
   current membership, so an input going invalid (a switched-away source)
   drops its exclusive members. An explicit set is validated as a ``TSS`` of
   the mapped key type, split from the kwargs before ``func``-parameter

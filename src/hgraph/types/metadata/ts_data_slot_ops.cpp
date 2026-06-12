@@ -246,6 +246,14 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] const TSDataBinding &element_binding() const { return *element_binding_; }
             [[nodiscard]] const TSDataTracking &tracking() const noexcept { return tracking_; }
             [[nodiscard]] TSDataTracking &mutable_tracking() noexcept { return tracking_; }
+            /**
+             * Dedicated tracking for the KEY-SET projection — its OWN modified
+             * time and OWN observer set: membership changes (insert/remove)
+             * record + notify here, so key-set subscribers are woken only by
+             * actual set changes, never by the dictionary's value ticks.
+             */
+            [[nodiscard]] const TSDataTracking &key_set_tracking() const noexcept { return key_set_tracking_; }
+            [[nodiscard]] TSDataTracking &mutable_key_set_tracking() noexcept { return key_set_tracking_; }
             [[nodiscard]] const KeySlotStore &keys() const noexcept { return keys_; }
             [[nodiscard]] KeySlotStore &keys() noexcept { return keys_; }
             [[nodiscard]] std::size_t size() const noexcept { return keys_.size(); }
@@ -309,6 +317,7 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 if (slot_removed(result.slot)) { removed_.reset(result.slot); }
                 else { added_.set(result.slot); }
+                (void)key_set_tracking_.record_modified(modified_time);
                 return mutation_result(result.slot);
             }
 
@@ -325,6 +334,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 if (slot_added(slot)) { added_.reset(slot); }
                 else { removed_.set(slot); }
                 modified_.reset(slot);
+                (void)key_set_tracking_.record_modified(modified_time);
                 return mutation_result(slot);
             }
 
@@ -429,6 +439,7 @@ namespace hgraph::ts_data_plan_factory_detail
             const ValueTypeBinding     *key_binding_{nullptr};
             const TSDataBinding        *element_binding_{nullptr};
             TSDataTracking              tracking_{};
+            TSDataTracking          key_set_tracking_{};
             KeySlotStore                keys_;
             KeyMirroredValueSlotStore   values_;
             sul::dynamic_bitset<>       added_{};
@@ -1398,6 +1409,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             const TSValueTypeMetaData *dict_schema{nullptr};
             TSDDataOps              dict_ops{};
+            TSSDataOps              key_set_ts_ops{};
             TSDDataLayout           dict_layout{};
             MapValueOps             value_map_ops{};
             MapValueOps             modified_map_ops{};
@@ -1449,6 +1461,22 @@ namespace hgraph::ts_data_plan_factory_detail
                 configure_modified_map_ops();
                 configure_tsd_ops();
                 bind_tsd_surfaces(schema_, plan_);
+            }
+
+            [[nodiscard]] static const TSDataTracking *tsd_key_set_tracking(const void *,
+                                                                             const void *memory) noexcept
+            {
+                return &storage<TSDSlotStorage>(memory).key_set_tracking();
+            }
+
+            [[nodiscard]] static TSDataTracking *tsd_key_set_mutable_tracking(const void *, void *memory) noexcept
+            {
+                return &storage<TSDSlotStorage>(memory).mutable_key_set_tracking();
+            }
+
+            [[nodiscard]] static bool tsd_key_set_has_current_value(const void *, const void *memory) noexcept
+            {
+                return storage<TSDSlotStorage>(memory).key_set_tracking().last_modified_time != MIN_DT;
             }
 
             void configure_tsd_ops()
@@ -1576,8 +1604,38 @@ namespace hgraph::ts_data_plan_factory_detail
                                                                   plan_, key_set_value_ops);
                 set_layout.value_binding = key_set_value_binding;
 
+                // The key-set projection carries DEDICATED tracking: its
+                // ``modified`` reports actual membership changes only, not the
+                // dictionary's value ticks (subscriptions stay on the shared
+                // root set, so notification wiring is unchanged).
+                key_set_ts_ops = set_ops;
+                {
+                    // The projection is STRICTLY read-only: it reports the
+                    // owner's mutations (dedicated tracking + observers) but
+                    // can never perform one — every mutating entry point is
+                    // stripped back to the throwing defaults, over and above
+                    // the ``allows_mutation = false`` gate.
+                    const TSDataOps  read_only_base{};
+                    const TSSDataOps read_only_set{};
+                    TSDataOps       &ks = key_set_ts_ops;
+                    ks.allows_mutation           = false;
+                    ks.tracking_impl             = &tsd_key_set_tracking;
+                    ks.mutable_tracking_impl     = &tsd_key_set_mutable_tracking;   // subscriptions only
+                    ks.has_current_value_impl    = &tsd_key_set_has_current_value;
+                    ks.copy_value_from_impl      = read_only_base.copy_value_from_impl;
+                    ks.apply_delta_impl          = read_only_base.apply_delta_impl;
+                    ks.mutable_value_memory_impl = read_only_base.mutable_value_memory_impl;
+                    ks.mutable_delta_memory_impl = read_only_base.mutable_delta_memory_impl;
+                    ks.reset_delta_impl          = read_only_base.reset_delta_impl;
+#if HGRAPH_ENABLE_PYTHON_USER_NODES
+                    ks.from_python_impl          = read_only_base.from_python_impl;
+#endif
+                    key_set_ts_ops.insert_key_impl = read_only_set.insert_key_impl;
+                    key_set_ts_ops.remove_key_impl = read_only_set.remove_key_impl;
+                    key_set_ts_ops.touch_impl      = read_only_set.touch_impl;
+                }
                 key_set_ts_binding = &TSDataBinding::intern(*TypeRegistry::instance().tss(schema_.key_type()),
-                                                            plan_, set_ops);
+                                                            plan_, key_set_ts_ops);
                 dict_layout.key_set_binding = key_set_ts_binding;
             }
 
