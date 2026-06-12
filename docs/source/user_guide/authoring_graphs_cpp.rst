@@ -127,17 +127,22 @@ Pass one value per ``Scalar<>`` parameter, **in ``compose``-parameter order**:
 
    GraphBuilder g = build_graph<ReportGraph>(20_i, 1.5_f);
 
+   // Or by Scalar<> name, so call order does not matter.
+   GraphBuilder named = build_graph<ReportGraph>(arg<"factor">(1.5_f),
+                                                 arg<"window">(20_i));
+
 The arguments are checked at compile time: the count must match the graph's
 ``Scalar<>`` parameters and each value must be convertible to its parameter's type.
+Named arguments are matched to the ``Scalar<Name, T>`` parameter name; positional
+arguments must come before named arguments.
 A graph with no scalar parameters is simply ``build_graph<G>()``. The resulting
 ``GraphBuilder`` is handed to a ``GraphExecutor`` exactly as for a scalar-free graph
 (see *Running a graph*).
 
 .. note::
 
-   **Positional only, for now.** Arguments are matched by position. Supplying them
-   **by name** (so order does not matter, e.g. ``arg<"factor">(Float{1.5})``) and
-   **default values** for omitted parameters are planned but not yet implemented.
+   ``build_graph`` scalar parameters are still all required. **Default values** for
+   omitted graph scalar parameters are planned but not yet implemented.
 
 
 Ports

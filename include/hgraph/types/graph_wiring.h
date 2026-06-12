@@ -3,6 +3,7 @@
 
 #include <hgraph/runtime/graph.h>                       // GraphBuilder, GraphEdge
 #include <hgraph/runtime/node.h>                        // NodeBuilder, NodeTypeBinding
+#include <hgraph/types/call_args.h>                     // NamedArg / arg<"name">(...)
 #include <hgraph/types/metadata/value_plan_factory.h>   // ValuePlanFactory (scalar bundle binding)
 #include <hgraph/types/static_node.h>                   // StaticNodeSignature, In/Out/State/Scalar markers
 #include <hgraph/types/static_schema.h>                 // schema_descriptor
@@ -1131,6 +1132,144 @@ namespace hgraph
             return ScalarParam{coerce_scalar_value<typename ScalarParam::value_type>(std::forward<Arg>(arg))};
         }
 
+        template <typename ParamsTuple, std::size_t... I>
+        [[nodiscard]] consteval bool all_scalar_params(std::index_sequence<I...>)
+        {
+            return (true && ... &&
+                    static_node_detail::is_scalar_selector<std::tuple_element_t<I, ParamsTuple>>::value);
+        }
+
+        template <typename ParamsTuple, std::size_t... I>
+        [[nodiscard]] std::size_t find_scalar_param_index(std::string_view name, std::index_sequence<I...>)
+        {
+            constexpr std::size_t count = sizeof...(I);
+            std::size_t           found = count;
+            (
+                [&] {
+                    using P = std::tuple_element_t<I, ParamsTuple>;
+                    if (found == count && P::field_name.sv() == name) { found = I; }
+                }(),
+                ...);
+            return found;
+        }
+
+        template <typename ParamsTuple>
+        [[nodiscard]] std::size_t find_scalar_param_index(std::string_view name)
+        {
+            return find_scalar_param_index<ParamsTuple>(
+                name, std::make_index_sequence<std::tuple_size_v<ParamsTuple>>{});
+        }
+
+        template <typename ParamsTuple, typename ArgsTuple, std::size_t... I>
+        void validate_scalar_call_args(const ArgsTuple &args, std::index_sequence<I...>)
+        {
+            constexpr std::size_t param_count = std::tuple_size_v<ParamsTuple>;
+            std::array<bool, param_count> filled{};
+            bool                          seen_named = false;
+            std::size_t                   positional = 0;
+
+            (
+                [&] {
+                    using A0 = std::remove_cvref_t<std::tuple_element_t<I, ArgsTuple>>;
+                    const auto &argument = std::get<I>(args);
+                    if constexpr (call_args_detail::is_named_arg_v<A0>)
+                    {
+                        seen_named = true;
+                        const std::size_t param = find_scalar_param_index<ParamsTuple>(argument.name);
+                        if (param == param_count)
+                        {
+                            throw std::invalid_argument("build_graph<G>: got an unexpected keyword argument '" +
+                                                        std::string{argument.name} + "'");
+                        }
+                        if (filled[param])
+                        {
+                            throw std::invalid_argument("build_graph<G>: got multiple values for scalar parameter '" +
+                                                        std::string{argument.name} + "'");
+                        }
+                        filled[param] = true;
+                    }
+                    else
+                    {
+                        if (seen_named)
+                        {
+                            throw std::invalid_argument(
+                                "build_graph<G>: positional argument follows a named argument");
+                        }
+                        if (positional >= param_count)
+                        {
+                            throw std::invalid_argument("build_graph<G>: too many scalar arguments");
+                        }
+                        filled[positional++] = true;
+                    }
+                }(),
+                ...);
+
+            [&]<std::size_t... P>(std::index_sequence<P...>) {
+                (
+                    [&] {
+                        if (!filled[P])
+                        {
+                            using Param = std::tuple_element_t<P, ParamsTuple>;
+                            throw std::invalid_argument("build_graph<G>: missing scalar argument '" +
+                                                        std::string{Param::field_name.sv()} + "'");
+                        }
+                    }(),
+                    ...);
+            }(std::make_index_sequence<param_count>{});
+        }
+
+        template <typename ParamsTuple, typename ArgsTuple>
+        void validate_scalar_call_args(const ArgsTuple &args)
+        {
+            validate_scalar_call_args<ParamsTuple>(args, std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
+        }
+
+        template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple, std::size_t... I>
+        [[nodiscard]] auto make_bound_scalar_param(const ArgsTuple &args, std::index_sequence<I...>)
+        {
+            using Param = std::tuple_element_t<ParamIndex, ParamsTuple>;
+            std::optional<Param> result;
+            bool                 seen_named = false;
+            std::size_t          positional = 0;
+
+            (
+                [&] {
+                    using A0 = std::remove_cvref_t<std::tuple_element_t<I, ArgsTuple>>;
+                    const auto &argument = std::get<I>(args);
+                    if constexpr (call_args_detail::is_named_arg_v<A0>)
+                    {
+                        seen_named = true;
+                        if (!result.has_value() && argument.name == Param::field_name.sv())
+                        {
+                            result.emplace(make_scalar_param<Param>(argument.value));
+                        }
+                    }
+                    else
+                    {
+                        if (!seen_named && positional == ParamIndex)
+                        {
+                            result.emplace(make_scalar_param<Param>(argument));
+                        }
+                        ++positional;
+                    }
+                }(),
+                ...);
+
+            if (!result.has_value())
+            {
+                throw std::invalid_argument("build_graph<G>: missing scalar argument '" +
+                                            std::string{Param::field_name.sv()} + "'");
+            }
+            return std::move(*result);
+        }
+
+        template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple>
+        [[nodiscard]] auto make_bound_scalar_param(const ArgsTuple &args)
+        {
+            return make_bound_scalar_param<ParamIndex, ParamsTuple>(
+                args, std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
+        }
+
         // Build the owned ``Value`` for one scalar field of a *generic* node's
         // configuration bundle. For a concrete ``Scalar<Name, V>`` the field type is
         // ``V``; for a var ``Scalar<Name, ScalarVar<...>>`` it is the supplied
@@ -1611,31 +1750,29 @@ namespace hgraph
     /**
      * Build a top-level graph ``G`` — its ``static compose(Wiring &, …)`` runs at
      * wiring time. A top-level graph has **no time-series inputs or outputs**, but
-     * **may take ``Scalar`` parameters**: pass the scalar values here (plain values;
-     * they are wrapped into the graph's ``Scalar<>`` parameters and forwarded to
-     * ``compose``). Supplying time-series boundary inputs (for standalone sub-graph
-     * building) is a later slice.
-     *
-     * TODO: graph scalar parameters are currently **positional and all required**.
-     * Add by-name arguments (e.g. a compile-time ``arg<"name">(value)`` matched to
-     * the ``Scalar<Name, T>`` parameter, order-independent) and parameter
-     * **defaults** for omitted arguments. Not needed yet; see the user guide
-     * *Wiring Graphs in C++ > Graph scalar parameters*.
+     * **may take ``Scalar`` parameters**: pass scalar values positionally or by
+     * name with ``arg<"name">(value)``. Values are wrapped into the graph's
+     * ``Scalar<>`` parameters and forwarded to ``compose``.
      */
     template <typename G, typename... Args>
     [[nodiscard]] GraphBuilder build_graph(Args &&...args)
     {
-        using sig = StaticGraphSignature<G>;
+        using sig    = StaticGraphSignature<G>;
+        using params = typename sig::param_types;
         static_assert(sig::input_count() == 0,
                       "build_graph<G>: a top-level graph has no time-series inputs (only Scalar parameters)");
+        static_assert(sig::param_count() == sig::scalar_count(),
+                      "build_graph<G>: every compose parameter after Wiring& must be Scalar<>");
         static_assert(sizeof...(Args) == sig::scalar_count(),
                       "build_graph<G>: argument count must match the graph's Scalar parameters");
+        static_assert(graph_wiring_detail::all_scalar_params<params>(std::make_index_sequence<sig::param_count()>{}),
+                      "build_graph<G>: every compose parameter after Wiring& must be Scalar<>");
 
         Wiring w;
         auto   arg_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
+        graph_wiring_detail::validate_scalar_call_args<params>(arg_tuple);
         [&]<std::size_t... I>(std::index_sequence<I...>) {
-            G::compose(w, graph_wiring_detail::make_scalar_param<std::tuple_element_t<I, typename sig::param_types>>(
-                              std::get<I>(arg_tuple))...);
+            G::compose(w, graph_wiring_detail::make_bound_scalar_param<I, params>(arg_tuple)...);
         }(std::make_index_sequence<sizeof...(Args)>{});
 
         GraphBuilder graph_builder = std::move(w).finish();

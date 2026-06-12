@@ -189,7 +189,7 @@ Deferred (land with the relevant runtime layer):
   support; the node owns its queue, hands out ``Sender<T>`` during ``start``,
   and applies queued messages from its normal ``eval`` implementation;
 - named state (``State<TSchema, "name">``);
-- by-name graph/node scalar arguments and scalar defaults;
+- direct ``wire<NodeT>(...)`` by-name scalar arguments and scalar defaults;
 - standalone sub-graph boundary binding, generic graphs, and higher-order
   graph operators such as ``map_`` / ``reduce`` / ``switch_``;
 - the Python lowering.

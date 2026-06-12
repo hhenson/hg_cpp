@@ -393,10 +393,10 @@ Slices:
     that build on ``CompiledSubGraph`` (roadmap on the *Nested Graphs* page), and
     feedback edges.
 
-Deferred: **by-name graph/node scalar arguments and parameter defaults** (today
-arguments are positional and all required — a compile-time ``arg<"name">(value)``
-matched to the ``Scalar<Name, T>`` parameter, plus defaults for omitted arguments,
-are the planned additions to ``build_graph<G>`` / ``StaticGraphSignature``);
+Deferred: **parameter defaults** for omitted graph scalar arguments and **by-name
+direct static-node wiring** (``build_graph<G>`` already accepts
+``arg<"name">(value)`` for top-level graph ``Scalar<Name, T>`` parameters, but
+direct ``wire<NodeT>(...)`` calls remain positional);
 multiple outputs (``TSB`` ports, optionally returned as an array as sugar);
 **graph-level** generic resolution (``TsVar`` / ``ScalarVar`` in a *graph*
 ``compose`` signature — node-level resolution above is done); higher-order operators

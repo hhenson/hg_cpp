@@ -10,6 +10,7 @@
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/time_series/ts_delta.h>
 
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
@@ -160,6 +161,15 @@ namespace
         {
             auto source = wire<ConstantSource>(w);    // 41
             wire<Shift>(w, source, offset.value());   // 41 + offset
+        }
+    };
+
+    struct ConfiguredPairSourceGraph
+    {
+        static constexpr auto name = "configured_pair_source_graph";
+        static void           compose(Wiring &w, Scalar<"lhs", Int> lhs, Scalar<"rhs", Int> rhs)
+        {
+            wire<ScaledSource>(w, lhs.value() * Int{10} + rhs.value());
         }
     };
 
@@ -1408,6 +1418,38 @@ TEST_CASE("graph wiring: a top-level graph takes a scalar parameter via build_gr
     auto graph = executor_view.graph();
     REQUIRE(graph.node_count() == 1);
     CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<Int>() == Int{9});
+}
+
+TEST_CASE("graph wiring: build_graph scalar parameters accept keyword arguments")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<ConfiguredPairSourceGraph>(arg<"rhs">(Int{2}), arg<"lhs">(Int{4}));
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 1);
+    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<Int>() == Int{42});
+}
+
+TEST_CASE("graph wiring: build_graph rejects invalid keyword scalar calls")
+{
+    using namespace hgraph;
+
+    CHECK_THROWS_WITH(build_graph<ConfiguredPairSourceGraph>(arg<"lhs">(Int{1}), arg<"lhs">(Int{2})),
+                      Catch::Matchers::ContainsSubstring("multiple values for scalar parameter 'lhs'"));
+    CHECK_THROWS_WITH(build_graph<ConfiguredPairSourceGraph>(arg<"unknown">(Int{1}), arg<"rhs">(Int{2})),
+                      Catch::Matchers::ContainsSubstring("unexpected keyword argument 'unknown'"));
+    CHECK_THROWS_WITH(build_graph<ConfiguredPairSourceGraph>(arg<"rhs">(Int{2}), Int{4}),
+                      Catch::Matchers::ContainsSubstring("positional argument follows a named argument"));
 }
 
 TEST_CASE("graph wiring: a graph scalar parameter threads into a node's scalar")
