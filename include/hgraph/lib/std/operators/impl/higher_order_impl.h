@@ -719,7 +719,8 @@ namespace hgraph::stdlib
          * function's parameters): compile the child template, add one map node.
          */
         [[nodiscard]] inline Port<void> wire_map(Wiring &w, const Scalar<"func", WiredFn> &func,
-                                                 std::vector<WiringPortRef> ordered)
+                                                 std::vector<WiringPortRef> ordered,
+                                                 std::optional<WiringPortRef> keys = std::nullopt)
         {
             std::vector<const TSValueTypeMetaData *> ts_schemas;
             ts_schemas.reserve(ordered.size());
@@ -729,15 +730,27 @@ namespace hgraph::stdlib
             MapNodeSpec spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
                                                  output_schema);
 
+            if (keys.has_value())
+            {
+                auto &registry = TypeRegistry::instance();
+                if (registry.dereference(keys->schema) != registry.tss(output_schema->key_type()))
+                {
+                    throw std::invalid_argument("map_: '__keys__' must be a TSS of the mapped key type");
+                }
+                spec.keys_input_index = ordered.size();
+            }
+
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
-            fields.reserve(ts_schemas.size());
+            fields.reserve(ts_schemas.size() + 1);
             for (std::size_t i = 0; i < ts_schemas.size(); ++i)
             {
                 fields.emplace_back(std::to_string(i), ts_schemas[i]);
             }
+            if (keys.has_value()) { fields.emplace_back("__keys__", keys->schema); }
             const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
 
             std::vector<WiringPortRef> inputs = std::move(ordered);
+            if (keys.has_value()) { inputs.push_back(std::move(*keys)); }
 
             WiringNodeSchema node_schema;
             node_schema.input  = input_schema;
@@ -780,7 +793,11 @@ namespace hgraph::stdlib
             }
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> named;
             named.reserve(context.kwargs.size());
-            for (const auto &[name, port] : context.kwargs) { named.emplace_back(name, port.schema); }
+            for (const auto &[name, port] : context.kwargs)
+            {
+                if (name == "__keys__") { continue; }   // map_'s own argument, not func's
+                named.emplace_back(name, port.schema);
+            }
 
             try
             {
@@ -845,6 +862,26 @@ namespace hgraph::stdlib
          * arguments resolve onto ``func``'s parameters, every TSD multiplexes
          * (union key set), everything else broadcasts.
          */
+        /**
+         * Split the ``__keys__`` special out of the collected kwargs — it is
+         * an argument of ``map_`` itself (the explicit demultiplexing key
+         * set), not of ``func``.
+         */
+        [[nodiscard]] inline std::optional<WiringPortRef> split_keys_kwarg(
+            std::vector<std::pair<std::string, WiringPortRef>> &named)
+        {
+            for (auto it = named.begin(); it != named.end(); ++it)
+            {
+                if (it->first == "__keys__")
+                {
+                    std::optional<WiringPortRef> keys{std::move(it->second)};
+                    named.erase(it);
+                    return keys;
+                }
+            }
+            return std::nullopt;
+        }
+
         struct map_impl_tsd
         {
             static constexpr auto name = "map_impl";
@@ -864,11 +901,12 @@ namespace hgraph::stdlib
                                             VarIn<"args", TsVar<"B">> positional, VarKwIn<"kwargs"> kwargs)
             {
                 const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
-                const std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
+                std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
+                std::optional<WiringPortRef> keys = split_keys_kwarg(named);
                 auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(),
                                                                {pos.data(), pos.size()},
                                                                {named.data(), named.size()});
-                auto out = wire_map(w, func, std::move(bound.ordered));
+                auto out = wire_map(w, func, std::move(bound.ordered), std::move(keys));
                 return Port<TsVar<"O">>{w, out.erased()};
             }
         };
@@ -1028,7 +1066,11 @@ namespace hgraph::stdlib
                                             VarIn<"args", TsVar<"B">> positional, VarKwIn<"kwargs"> kwargs)
             {
                 const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
-                const std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
+                std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
+                if (split_keys_kwarg(named).has_value())
+                {
+                    throw std::invalid_argument("map_: '__keys__' applies to TSD maps only");
+                }
                 auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(),
                                                                {pos.data(), pos.size()},
                                                                {named.data(), named.size()});

@@ -447,8 +447,17 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   TSD/TSL kernel, and the first TSD provides the key type. Membership changes
   anywhere are structural events: they create/destroy children and re-bind
   surviving entries.
-- Deferred: dynamic-TSL multiplexing, explicit ``__keys__`` /
-  ``pass_through`` / ``no_key`` wrappers, and sink maps.
+- **Explicit key set** — ``arg<"__keys__">(tss)`` (Python's
+  ``__keys__: TSS[K]``): the set alone drives the child lifecycle — children
+  exist exactly for its members, created on insert (sampling held dict
+  elements) and destroyed on remove even while a dict still holds the key;
+  the multiplexed dicts then only feed elements (absent keys stay
+  phantom/invalid). Wired as a trailing outer input
+  (``MapNodeSpec::keys_input_index``), validated as a ``TSS`` of the mapped
+  key type, split from the kwargs before ``func``-parameter binding (it is
+  ``map_``'s argument, not ``func``'s), and rejected on TSL maps.
+- Deferred: dynamic-TSL multiplexing, name-based key detection /
+  ``__key_arg__``, ``pass_through`` / ``no_key`` wrappers, and sink maps.
 
 Tests: ``tests/cpp/test_map.cpp``. ASAN/UBSAN-verified (keyed
 create/destroy churn).

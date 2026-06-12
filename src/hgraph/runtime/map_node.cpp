@@ -106,7 +106,7 @@ namespace hgraph
 
         [[nodiscard]] SourceRepointStatus update_source_handles(const TSInputView &root_input,
                                                                 MapNodeStorage &storage,
-                                                                const std::vector<std::size_t> &multiplexed_inputs)
+                                                                const std::vector<std::size_t> &lifecycle_inputs)
         {
             const std::size_t outer_count = root_input.as_bundle().size();
             const bool        initialized = storage.outer_sources.size() == outer_count;
@@ -123,8 +123,8 @@ namespace hgraph
                     if (initialized)
                     {
                         status.any_repointed = true;
-                        if (std::find(multiplexed_inputs.begin(), multiplexed_inputs.end(), i) !=
-                            multiplexed_inputs.end())
+                        if (std::find(lifecycle_inputs.begin(), lifecycle_inputs.end(), i) !=
+                            lifecycle_inputs.end())
                         {
                             status.mux_repointed = true;
                         }
@@ -305,8 +305,10 @@ namespace hgraph
             const auto &spec     = context.spec;
 
             auto root_input = view.input(evaluation_time);
+            std::vector<std::size_t> lifecycle_inputs = spec.multiplexed_inputs;
+            if (spec.keys_input_index.has_value()) { lifecycle_inputs.push_back(*spec.keys_input_index); }
             SourceRepointStatus source_status =
-                update_source_handles(root_input.borrowed_ref(), storage, spec.multiplexed_inputs);
+                update_source_handles(root_input.borrowed_ref(), storage, lifecycle_inputs);
             bool bindings_need_refresh = source_status.any_repointed;
 
             // The live key set is the UNION over all multiplexed inputs
@@ -322,7 +324,57 @@ namespace hgraph
                 any_valid = true;
             }
 
-            if (any_valid)
+            if (spec.keys_input_index.has_value())
+            {
+                // Explicit ``__keys__``: the TSS alone drives the lifecycle —
+                // children exist exactly for its members. The multiplexed
+                // dicts only feed elements; their membership changes still
+                // re-bind surviving entries (a key's element may appear or
+                // vanish in one dict while the key stays in the set).
+                auto keys_input =
+                    walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{*spec.keys_input_index});
+                if (keys_input.valid())
+                {
+                    if (source_status.mux_repointed || keys_input.modified() || !storage.primed)
+                    {
+                        auto output          = view.output(evaluation_time);
+                        auto output_dict     = output.as_dict();
+                        auto output_mutation = output_dict.begin_mutation(evaluation_time);
+
+                        auto key_set = keys_input.as_set();
+
+                        std::vector<Value> stale_keys;
+                        for (const auto &[key, entry] : storage.active)
+                        {
+                            static_cast<void>(entry);
+                            if (!key_set.contains(key.view())) { stale_keys.push_back(key); }
+                        }
+                        for (const Value &key : stale_keys) { remove_entry(storage, output_mutation, key); }
+
+                        for (const ValueView &key : key_set.values())
+                        {
+                            if (storage.active.find(Value{key}) == storage.active.end())
+                            {
+                                create_entry(view, context, storage, output_mutation, key, evaluation_time);
+                            }
+                        }
+                        storage.primed = true;
+                    }
+                }
+                else if (source_status.mux_repointed || storage.primed)
+                {
+                    if (!storage.active.empty())
+                    {
+                        auto output          = view.output(evaluation_time);
+                        auto output_dict     = output.as_dict();
+                        auto output_mutation = output_dict.begin_mutation(evaluation_time);
+                        remove_all_entries(storage, output_mutation);
+                    }
+                    storage.primed = false;
+                }
+                if (any_modified) { bindings_need_refresh = true; }
+            }
+            else if (any_valid)
             {
                 // Key lifecycle in one output-mutation scope: reconcile stale
                 // children against the current union, then create one fresh
@@ -451,6 +503,25 @@ namespace hgraph
                 if (anchor_tsd == nullptr) { anchor_tsd = tsd_schema; }
             }
             const auto *tsd_schema = anchor_tsd;
+
+            if (spec.keys_input_index.has_value())
+            {
+                if (*spec.keys_input_index >= meta.input_schema->field_count())
+                {
+                    throw std::invalid_argument("map_node __keys__ input index is out of range");
+                }
+                const auto *keys_schema =
+                    TypeRegistry::instance().dereference(input_fields[*spec.keys_input_index].type);
+                if (keys_schema == nullptr || keys_schema->kind != TSTypeKind::TSS)
+                {
+                    throw std::invalid_argument("map_node __keys__ input must be a TSS");
+                }
+                if (keys_schema != TypeRegistry::instance().tss(meta.output_schema->key_type()))
+                {
+                    throw std::invalid_argument(
+                        "map_node __keys__ element type must match the mapped key type");
+                }
+            }
 
             const std::size_t child_node_count = spec.child.graph_builder.node_count();
             const auto       &output_binding   = *spec.child.output_binding;

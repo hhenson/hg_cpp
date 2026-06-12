@@ -568,3 +568,52 @@ TEST_CASE("map_: kwargs select the kernel from function parameter order")
     CHECK_OUTPUT(get_recorded_deltas(ex.view().graph().global_state(), "out"),
                  values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 13}})));
 }
+
+// ---------------------------------------------------------------------------
+// __keys__: an explicit TSS[K] key set drives the child lifecycle (Python's
+// map_(func, ..., __keys__=tss)) — the multiplexed dicts only feed elements.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("map_: __keys__ restricts the children to the explicit key set")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // tsd holds a, b, c but only a and c are in __keys__: b never maps.
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSD<Str, TS<Int>>, TSS<Str>>(
+                     fn<AddOneG>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}, {"c"s, 3}})),
+                     arg<"__keys__">(values<Value>(set_delta<Str>({"a"s, "c"s}, {}))))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}, {"c"s, 4}})));
+}
+
+TEST_CASE("map_: __keys__ additions and removals drive the lifecycle, not the dict")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // t0: keys {a} -> only a maps. t1: keys add b (the dict held b all along:
+    // the fresh child samples it). t2: keys remove a while the dict still has
+    // it -> the output drops a.
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSD<Str, TS<Int>>, TSS<Str>>(
+                     fn<AddOneG>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}), none, none),
+                     arg<"__keys__">(values<Value>(set_delta<Str>({"a"s}, {}),
+                                                   set_delta<Str>({"b"s}, {}),
+                                                   set_delta<Str>({}, {"a"s}))))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}}),
+                               dict_delta<Str, TS<Int>>({{"b"s, 3}}),
+                               dict_delta<Str, TS<Int>>({}, {"a"s})));
+}
+
+TEST_CASE("map_: __keys__ on a TSL map is rejected")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    REQUIRE_THROWS_AS((eval_node<stdlib::map_, TSL<TS<Int>, 2>, TSS<Str>>(
+                          fn<AddOneG>(),
+                          values<Value>(list_delta<TS<Int>>({1, 2})),
+                          arg<"__keys__">(values<Value>(set_delta<Str>({"a"s}, {}))))),
+                      std::invalid_argument);
+}

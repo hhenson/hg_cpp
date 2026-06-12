@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace hgraph
@@ -36,9 +37,18 @@ namespace hgraph
          * Outer-input indices of ALL multiplexed TSDs. The live key set is
          * their **union** (Python parity): a key builds a child when it
          * appears in any of them and the child (and output entry) is
-         * destroyed only when it has left all of them.
+         * destroyed only when it has left all of them — unless an explicit
+         * ``__keys__`` set is wired (below), which then drives the lifecycle
+         * alone.
          */
         std::vector<std::size_t> multiplexed_inputs{};
+        /**
+         * Outer-input index of the explicit ``__keys__`` ``TSS[K]`` (Python's
+         * ``__keys__`` argument), when supplied: children exist exactly for
+         * the set's members; the multiplexed dicts only feed elements
+         * (absent keys stay phantom/invalid).
+         */
+        std::optional<std::size_t> keys_input_index{};
         /** ``TS<K>`` for the entry-owned key outputs (when any arg sources ``Key``). */
         const TSValueTypeMetaData *key_output_schema{nullptr};
     };

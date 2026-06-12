@@ -187,9 +187,7 @@ defaults convert Python-style (value → `const`, empty/None → null source). `
 `switch_` take the full Python call shape — `map_(func, *args, **kwargs)` (no anchor
 param; kwargs resolve onto func's parameter names via `WiredFn::param_names`; TSD/TSL
 kernel selection uses the resolved function-parameter order),
-`switch_(key, cases, *ts, **kwargs)` (kwargs resolve per branch). Remaining (deferred — see the doc's roadmap + non-goals): dynamic-TSL
-multiplexing/reduce, non-associative reduce, sink maps/switches,
-`__keys__`/`pass_through`/`no_key`, `mesh_`/`try_except`/services. **C++ only for
+`switch_(key, cases, *ts, **kwargs)` (kwargs resolve per branch). `map_` supports `__keys__` (explicit TSS key set). Remaining (deferred — see the doc's roadmap + non-goals): dynamic-TSL multiplexing/reduce, non-associative reduce, sink maps/switches, name-based `__key_arg__`, `pass_through`/`no_key`, `mesh_`/`try_except`/services. **C++ only for
 now** — keep Python out of the configure/build/run path.
 
 ---
