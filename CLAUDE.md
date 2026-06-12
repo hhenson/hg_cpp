@@ -178,9 +178,14 @@ binding scope, fixed-arity candidates preferred; `switch_`/`map_` are single var
 overloads now; Python-port constraint recorded in memory `python-port-operator-compat`).
 **Multi-multiplexed `map_` — DONE** (Python parity:
 every TSD in the tail multiplexes, union key set, absent-key inputs stay invalid;
-same-size TSLs multiplex per index). Remaining (deferred — see the doc's roadmap +
-non-goals): dynamic-TSL multiplexing/reduce, non-associative reduce, sink
-maps/switches, `__keys__`/`pass_through`/`no_key`, `mesh_`/`try_except`/services. **C++ only for
+same-size TSLs multiplex per index). **Named args + defaults + kwargs — DONE** (Python
+calling rules as call normalisation in `OperatorRegistry::resolve`; `arg<"name">(v)`
+sugar, `defaults()` hook, `VarKwIn<"kwargs">` collector; see *Operators > Named
+arguments, defaults and kwargs*). Graph-overload ports are named via
+`NamedPort<"name",S>`; TS defaults convert Python-style (value → `const`, empty/None →
+null source). Remaining (deferred — see the doc's roadmap + non-goals): dynamic-TSL
+multiplexing/reduce, non-associative reduce, sink maps/switches,
+`__keys__`/`pass_through`/`no_key`, `mesh_`/`try_except`/services. **C++ only for
 now** — keep Python out of the configure/build/run path.
 
 ---

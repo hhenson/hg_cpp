@@ -69,7 +69,40 @@ namespace hgraph
         WiringPortRef            port{};                 ///< ``TimeSeries``: the output port (carries its schema).
         Value                    scalar_value{};         ///< ``Scalar``: the owned, self-describing value.
         const ValueTypeMetaData *scalar_meta{nullptr};   ///< ``Scalar``: its interned value schema.
+        /** Keyword-argument name (``arg<"name">(…)``); empty = positional. */
+        std::string              name{};
     };
+
+    /**
+     * Call-site keyword argument: ``wire<Op>(w, ts, arg<"zero">(Int{5}))`` —
+     * the Python ``name=value`` form. Named arguments must follow positional
+     * ones; they target the candidate's parameters by name during call
+     * normalisation (see *Operators > Named arguments, defaults and kwargs*).
+     */
+    template <typename T>
+    struct NamedArg
+    {
+        std::string_view name{};
+        T                value;
+    };
+
+    template <fixed_string Name, typename T>
+    [[nodiscard]] NamedArg<std::decay_t<T>> arg(T &&value)
+    {
+        return NamedArg<std::decay_t<T>>{Name.sv(), std::forward<T>(value)};
+    }
+
+    namespace operator_dispatch_detail
+    {
+        template <typename T>
+        struct is_named_arg : std::false_type
+        {
+        };
+        template <typename T>
+        struct is_named_arg<NamedArg<T>> : std::true_type
+        {
+        };
+    }  // namespace operator_dispatch_detail
 
     /**
      * Trailing **variadic** time-series parameter (Python's ``*ts``) — a named
@@ -113,6 +146,73 @@ namespace hgraph
         };
     }  // namespace operator_dispatch_detail
 
+    /**
+     * Trailing **keyword-arguments collector** (Python's ``**kwargs``) — a
+     * named selector usable in an ``Operator<…>`` marker and as the LAST
+     * ``compose`` parameter (after ``VarIn``, if any). Named time-series
+     * arguments that match no declared parameter land here as
+     * ``(name, port)`` pairs in call order.
+     */
+    template <fixed_string Name>
+    struct VarKwIn
+    {
+        static constexpr auto field_name = Name;
+
+        std::vector<std::pair<std::string, WiringPortRef>> ports{};
+
+        [[nodiscard]] std::size_t size() const noexcept { return ports.size(); }
+        [[nodiscard]] bool        empty() const noexcept { return ports.empty(); }
+        [[nodiscard]] const std::pair<std::string, WiringPortRef> &operator[](std::size_t index) const
+        {
+            return ports[index];
+        }
+        [[nodiscard]] auto begin() const noexcept { return ports.begin(); }
+        [[nodiscard]] auto end() const noexcept { return ports.end(); }
+    };
+
+    /**
+     * A **named** port parameter for operator graph overloads — gives a
+     * ``compose`` time-series parameter a name so keyword arguments can
+     * target it (node-overload inputs are already named via ``In<"name",…>``).
+     * Behaves exactly like ``Port<S>``.
+     */
+    template <fixed_string Name, typename S>
+    struct NamedPort : Port<S>
+    {
+        static constexpr auto field_name = Name;
+
+        using Port<S>::Port;
+        NamedPort(Port<S> base) : Port<S>(std::move(base)) {}
+    };
+
+    namespace operator_dispatch_detail
+    {
+        template <typename T>
+        struct is_named_port : std::false_type
+        {
+        };
+        template <fixed_string N, typename S>
+        struct is_named_port<NamedPort<N, S>> : std::true_type
+        {
+        };
+        template <typename T>
+        struct named_port_schema;
+        template <fixed_string N, typename S>
+        struct named_port_schema<NamedPort<N, S>>
+        {
+            using type = S;
+        };
+
+        template <typename T>
+        struct is_var_kw_in : std::false_type
+        {
+        };
+        template <fixed_string N>
+        struct is_var_kw_in<VarKwIn<N>> : std::true_type
+        {
+        };
+    }  // namespace operator_dispatch_detail
+
     /** One operator parameter pattern: an input (time-series) pattern or a scalar pattern. */
     struct ParamPattern
     {
@@ -126,6 +226,8 @@ namespace hgraph
         std::string   name{};     ///< Wiring parameter name when available.
         TypePattern   ts{};       ///< ``Input``.
         ScalarPattern scalar{};   ///< ``Scalar``.
+        /** Default for an omitted argument (scalars; the impl's ``defaults()`` hook). */
+        std::optional<Value> default_value{};
     };
 
     /** Scalar-aware view of one operator call, passed to optional resolvers / predicates. */
@@ -170,13 +272,32 @@ namespace hgraph
         std::vector<ParamPattern>  params{};
         /** Last param is variadic: matches zero-or-more trailing time-series args, each independently. */
         bool                       variadic{false};
+        /** Unmatched keyword time-series args collect into the candidate (``**kwargs``). */
+        bool                       has_kwargs{false};
         bool                       has_output{false};
         TypePattern                output{};
         int                        rank{0};
         Source                     source{Source::Cpp};
         std::function<void(ResolutionMap &, OperatorCallContext)> default_resolver{};   ///< may be empty
         std::function<bool(const ResolutionMap &, OperatorCallContext)> requires_predicate{};  ///< may be empty
-        std::function<OperatorWireResult(Wiring &, const ResolutionMap &, std::span<const WiringArg>)> wire{};
+        std::function<OperatorWireResult(Wiring &, const ResolutionMap &, std::span<const WiringArg>,
+                                         std::span<const std::pair<std::string, WiringPortRef>>)>
+            wire{};
+    };
+
+    /**
+     * The outcome of overload selection: the winning candidate, its resolved
+     * type variables, and the **normalised** call — arguments in declared
+     * parameter order with defaults materialised and the variadic tail
+     * appended, plus collected ``**kwargs``. ``impl->wire`` consumes exactly
+     * this shape.
+     */
+    struct ResolvedOperatorCall
+    {
+        const OperatorImpl *impl{nullptr};
+        ResolutionMap       map{};
+        std::vector<WiringArg> args{};
+        std::vector<std::pair<std::string, WiringPortRef>> kwargs{};
     };
 
     /** Thrown when an operator call has no matching overload, or an ambiguous one. */
@@ -198,8 +319,8 @@ namespace hgraph
 
         void register_overload(OperatorImpl impl);
 
-        /** Select the unique best candidate and the ``ResolutionMap`` it produced. */
-        [[nodiscard]] std::pair<const OperatorImpl *, ResolutionMap> resolve(
+        /** Select the unique best candidate, with the normalised call it accepted. */
+        [[nodiscard]] ResolvedOperatorCall resolve(
             std::string_view name,
             std::span<const WiringArg> args,
             std::optional<bool> output_required = std::nullopt,
@@ -372,13 +493,30 @@ namespace hgraph
                     [&] {
                         using P = std::tuple_element_t<I, params_tuple>;
                         ParamPattern pp;
-                        if constexpr (operator_dispatch_detail::is_var_in<P>::value)
+                        if constexpr (operator_dispatch_detail::is_var_kw_in<P>::value)
                         {
                             static_assert(I + 1 == std::tuple_size_v<params_tuple>,
-                                          "VarIn must be the last compose parameter");
+                                          "VarKwIn must be the last compose parameter");
+                            return;   // not a positional parameter — collected at call normalisation
+                        }
+                        else if constexpr (operator_dispatch_detail::is_var_in<P>::value)
+                        {
+                            constexpr bool is_last = I + 1 == std::tuple_size_v<params_tuple>;
+                            constexpr bool followed_by_kwargs =
+                                !is_last && I + 2 == std::tuple_size_v<params_tuple> &&
+                                operator_dispatch_detail::is_var_kw_in<
+                                    std::tuple_element_t<I + (is_last ? 0 : 1), params_tuple>>::value;
+                            static_assert(is_last || followed_by_kwargs,
+                                          "VarIn must be the last compose parameter (or followed only by VarKwIn)");
                             pp.kind = ParamPattern::Kind::Input;
                             pp.name = std::string{P::field_name.sv()};
                             pp.ts   = to_pattern<typename P::schema_type>();
+                        }
+                        else if constexpr (operator_dispatch_detail::is_named_port<P>::value)
+                        {
+                            pp.kind = ParamPattern::Kind::Input;
+                            pp.name = std::string{P::field_name.sv()};
+                            pp.ts   = to_pattern<typename operator_dispatch_detail::named_port_schema<P>::type>();
                         }
                         else if constexpr (graph_wiring_detail::is_port<P>::value)
                         {
@@ -483,6 +621,9 @@ namespace hgraph
             const TSValueTypeMetaData *expected = ts_resolver<Schema>::resolve(map);
             if (arg.kind == WiringArg::Kind::TimeSeries)
             {
+                // A schema-less time-series argument is the None default: an
+                // unwired (null-source) input at the resolved schema.
+                if (arg.port.schema == nullptr) { return WiringPortRef::null_source(expected); }
                 if (!graph_wiring_detail::input_accepts_output_schema(expected, arg.port.schema))
                 {
                     throw std::logic_error("operator selected overload input schema does not match");
@@ -581,6 +722,10 @@ namespace hgraph
                 const TSValueTypeMetaData *expected = ts_resolver<S>::resolve(map);
                 if (arg.kind == WiringArg::Kind::TimeSeries)
                 {
+                    if (arg.port.schema == nullptr)
+                    {
+                        return PortParam{w, WiringPortRef::null_source(expected)};
+                    }
                     if (!graph_port_accepts(expected, arg.port.schema))
                     {
                         throw std::logic_error("operator selected overload input schema does not match");
@@ -594,7 +739,12 @@ namespace hgraph
         template <typename Param>
         [[nodiscard]] auto make_graph_arg(Wiring &w, const ResolutionMap &map, const WiringArg &arg)
         {
-            if constexpr (graph_wiring_detail::is_port<Param>::value)
+            if constexpr (is_named_port<Param>::value)
+            {
+                using S = typename named_port_schema<Param>::type;
+                return Param{make_graph_port_arg<Port<S>>(w, map, arg)};
+            }
+            else if constexpr (graph_wiring_detail::is_port<Param>::value)
             {
                 return make_graph_port_arg<Param>(w, map, arg);
             }
@@ -703,6 +853,12 @@ namespace hgraph
                 if (impl.variadic && i + 1 == params.size()) { out += "*"; }
                 out += params[i].kind == ParamPattern::Kind::Input ? ts_pattern_to_string(params[i].ts)
                                                                    : scalar_pattern_to_string(params[i].scalar);
+                if (params[i].default_value.has_value()) { out += "=…"; }
+            }
+            if (impl.has_kwargs)
+            {
+                if (!params.empty()) { out += ", "; }
+                out += "**kwargs";
             }
             out += ")";
             if (impl.has_output) { out += " -> " + ts_pattern_to_string(impl.output); }
@@ -714,6 +870,14 @@ namespace hgraph
         [[nodiscard]] WiringArg make_wiring_arg(const A &arg)
         {
             using AA = std::remove_cvref_t<A>;
+            if constexpr (is_named_arg<AA>::value)
+            {
+                WiringArg result = make_wiring_arg(arg.value);
+                result.name      = std::string{arg.name};
+                return result;
+            }
+            else
+            {
             WiringArg result;
             if constexpr (graph_wiring_detail::is_port<AA>::value)
             {
@@ -734,6 +898,44 @@ namespace hgraph
                 else { result.scalar_value = Value{arg}; }
             }
             return result;
+            }
+        }
+    }  // namespace operator_dispatch_detail
+
+    namespace operator_dispatch_detail
+    {
+        template <typename T>
+        concept has_param_defaults = requires { T::defaults(); };
+
+        /**
+         * Apply the impl's ``defaults()`` hook —
+         * ``static std::vector<std::pair<std::string_view, Value>> defaults()``
+         * — onto the named parameters. Defaults are ordinary values: they are
+         * pattern-checked like a passed argument when materialised.
+         */
+        template <typename Impl>
+        void apply_param_defaults(OperatorImpl &impl)
+        {
+            if constexpr (has_param_defaults<Impl>)
+            {
+                for (auto &[param_name, value] : Impl::defaults())
+                {
+                    auto it = std::find_if(impl.params.begin(), impl.params.end(),
+                                           [&](const ParamPattern &p) { return p.name == param_name; });
+                    if (it == impl.params.end())
+                    {
+                        throw std::logic_error("operator default names a parameter that does not exist");
+                    }
+                    if (!value.has_value() && it->kind != ParamPattern::Kind::Input)
+                    {
+                        // An EMPTY default is Python's None and is only
+                        // meaningful for a time-series parameter (it becomes a
+                        // null source — an unwired input).
+                        throw std::logic_error("operator scalar default value must not be empty");
+                    }
+                    it->default_value = std::move(value);
+                }
+            }
         }
     }  // namespace operator_dispatch_detail
 
@@ -755,6 +957,7 @@ namespace hgraph
             impl.output     = to_pattern<typename sig::output_schema_type>();
         }
 
+        operator_dispatch_detail::apply_param_defaults<Impl>(impl);
         impl.rank  = operator_dispatch_detail::operator_rank(impl.params);
         impl.label = operator_dispatch_detail::render_label<Impl>(impl.params, impl);
 
@@ -775,7 +978,8 @@ namespace hgraph
             impl.requires_predicate = [](const ResolutionMap &m, OperatorCallContext) { return Impl::requires_(m); };
         }
 
-        impl.wire = [](Wiring &w, const ResolutionMap &map, std::span<const WiringArg> args) -> OperatorWireResult {
+        impl.wire = [](Wiring &w, const ResolutionMap &map, std::span<const WiringArg> args,
+                       std::span<const std::pair<std::string, WiringPortRef>>) -> OperatorWireResult {
             NodeBuilder builder;
             builder.template implementation<Impl>(map);
             Value scalars = operator_dispatch_detail::assemble_scalars<Impl>(map, args);
@@ -806,8 +1010,20 @@ namespace hgraph
         constexpr std::size_t total_params = std::tuple_size_v<params_tuple_t>;
         if constexpr (total_params > 0)
         {
-            impl.variadic = operator_dispatch_detail::is_var_in<
+            impl.has_kwargs = operator_dispatch_detail::is_var_kw_in<
                 std::tuple_element_t<total_params - 1, params_tuple_t>>::value;
+        }
+        constexpr std::size_t pattern_params =
+            total_params -
+            ((total_params > 0 &&
+              operator_dispatch_detail::is_var_kw_in<
+                  std::tuple_element_t<(total_params > 0 ? total_params - 1 : 0), params_tuple_t>>::value)
+                 ? 1
+                 : 0);
+        if constexpr (pattern_params > 0)
+        {
+            impl.variadic = operator_dispatch_detail::is_var_in<
+                std::tuple_element_t<pattern_params - 1, params_tuple_t>>::value;
         }
 
         using output_type = typename sig::output_type;
@@ -825,6 +1041,7 @@ namespace hgraph
             }
         }
 
+        operator_dispatch_detail::apply_param_defaults<Impl>(impl);
         impl.rank  = operator_dispatch_detail::operator_rank(impl.params, impl.variadic);
         impl.label = operator_dispatch_detail::render_label<Impl>(impl.params, impl);
 
@@ -845,13 +1062,19 @@ namespace hgraph
             impl.requires_predicate = [](const ResolutionMap &m, OperatorCallContext) { return Impl::requires_(m); };
         }
 
-        impl.wire = [](Wiring &w, const ResolutionMap &map, std::span<const WiringArg> args) -> OperatorWireResult {
+        impl.wire = [](Wiring &w, const ResolutionMap &map, std::span<const WiringArg> args,
+                       std::span<const std::pair<std::string, WiringPortRef>> kwargs) -> OperatorWireResult {
             using params_tuple = typename sig::param_types;
             constexpr std::size_t total = std::tuple_size_v<params_tuple>;
-            constexpr bool        is_variadic =
+            constexpr bool        with_kwargs =
                 total > 0 &&
-                operator_dispatch_detail::is_var_in<std::tuple_element_t<total - 1, params_tuple>>::value;
-            constexpr std::size_t fixed = total - (is_variadic ? 1 : 0);
+                operator_dispatch_detail::is_var_kw_in<std::tuple_element_t<total - 1, params_tuple>>::value;
+            constexpr std::size_t pattern_total = total - (with_kwargs ? 1 : 0);
+            constexpr bool        is_variadic =
+                pattern_total > 0 &&
+                operator_dispatch_detail::is_var_in<
+                    std::tuple_element_t<(pattern_total > 0 ? pattern_total - 1 : 0), params_tuple>>::value;
+            constexpr std::size_t fixed = pattern_total - (is_variadic ? 1 : 0);
 
             return [&]<std::size_t... I>(std::index_sequence<I...>) -> OperatorWireResult {
                 auto invoke = [&](auto &&...rest) -> OperatorWireResult {
@@ -874,9 +1097,20 @@ namespace hgraph
                     }
                 };
 
+                auto invoke_tail = [&](auto &&...rest) -> OperatorWireResult {
+                    if constexpr (with_kwargs)
+                    {
+                        using KW = std::tuple_element_t<total - 1, params_tuple>;
+                        KW collected{};
+                        collected.ports.assign(kwargs.begin(), kwargs.end());
+                        return invoke(std::forward<decltype(rest)>(rest)..., std::move(collected));
+                    }
+                    else { return invoke(std::forward<decltype(rest)>(rest)...); }
+                };
+
                 if constexpr (is_variadic)
                 {
-                    using V = std::tuple_element_t<total - 1, params_tuple>;
+                    using V = std::tuple_element_t<fixed, params_tuple>;
                     V tail{};
                     tail.ports.reserve(args.size() - fixed);
                     for (std::size_t i = fixed; i < args.size(); ++i)
@@ -888,9 +1122,9 @@ namespace hgraph
                         }
                         tail.ports.push_back(args[i].port);
                     }
-                    return invoke(std::move(tail));
+                    return invoke_tail(std::move(tail));
                 }
-                else { return invoke(); }
+                else { return invoke_tail(); }
             }(std::make_index_sequence<fixed>{});
         };
         return impl;
@@ -922,8 +1156,9 @@ namespace hgraph
                                                           std::optional<bool> output_required = std::nullopt,
                                                           const TSValueTypeMetaData *expected_output = nullptr)
     {
-        auto [impl, map] = OperatorRegistry::instance().resolve(name, args, output_required, expected_output);
-        return impl->wire(w, map, args);
+        ResolvedOperatorCall resolved =
+            OperatorRegistry::instance().resolve(name, args, output_required, expected_output);
+        return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs);
     }
 
     namespace operator_dispatch_detail
@@ -939,9 +1174,9 @@ namespace hgraph
             const TSValueTypeMetaData *expected_output = nullptr;
             if constexpr (!std::is_void_v<OutSchema>) { expected_output = ts_type<OutSchema>(); }
 
-            auto [impl, map] =
+            ResolvedOperatorCall resolved =
                 OperatorRegistry::instance().resolve(X::name, wiring_args, X::has_output, expected_output);
-            return impl->wire(w, map, wiring_args);
+            return resolved.impl->wire(w, resolved.map, resolved.args, resolved.kwargs);
         }
     }  // namespace operator_dispatch_detail
 }  // namespace hgraph

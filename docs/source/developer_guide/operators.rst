@@ -555,6 +555,47 @@ over erased ports. Because it is just a scalar:
 - equal functions hash/compare equal, so nodes configured with the same
   function intern/dedup like any other scalar configuration.
 
+Named arguments, defaults and ``**kwargs``
+------------------------------------------
+
+Operator calls follow the **Python calling rules**, applied as a call
+normalisation step inside ``OperatorRegistry::resolve`` (runtime-first: a
+future Python frontend gets identical behaviour by passing named
+``WiringArg``\ s; the typed forms are sugar):
+
+1. positional arguments fill parameters in declared order; overflow goes to
+   the variadic tail (``VarIn``);
+2. **named arguments** (``arg<"name">(value)`` at the call site — Python's
+   ``name=value``) follow all positional ones and target parameters **by
+   name**: node-overload inputs are named by their ``In<"name", …>``
+   declarations, scalars by ``Scalar<"name", …>``, and graph-overload ports
+   by ``NamedPort<"name", S>`` (a drop-in ``Port<S>``; the higher-order
+   overloads name their anchors — ``arg<"ts">(tsd)``, ``arg<"key">(k)``).
+   Duplicates ("got multiple values for argument"), unknown names
+   ("unexpected keyword argument") and positional-after-named are rejected
+   with Python-style messages;
+3. omitted parameters take their **declared defaults** — the impl's
+   ``static std::vector<std::pair<std::string_view, Value>> defaults()``
+   hook, validated at registration. A default on a **time-series** parameter
+   follows the Python conversions: a value becomes ``const(value)`` (the
+   standard scalar-to-ts promotion at the resolved schema) and an empty
+   ``Value`` is ``None`` — a null source, leaving the input unwired (pair it
+   with ``InputValidity::Unchecked`` to observe it invalid). Each default a
+   candidate falls back on costs one rank point, so an overload whose
+   parameters were all supplied wins at equal specificity;
+4. named time-series arguments matching no parameter collect into the
+   candidate's ``**kwargs`` — the trailing ``VarKwIn<"kwargs">`` selector
+   (marker + last ``compose`` parameter, after ``VarIn`` if both), received
+   as ``(name, port)`` pairs in call order. A kwargs collector costs one
+   rank point, like a variadic tail.
+
+The selected candidate's ``wire`` receives the **normalised** call:
+arguments in declared parameter order with defaults materialised and the
+variadic tail appended (``ResolvedOperatorCall``) — so node-overload scalar
+assembly and input collection are oblivious to how the call was spelled.
+Labels render defaults as ``=…`` and the collector as ``**kwargs``.
+
+
 Variadic operator parameters
 ----------------------------
 

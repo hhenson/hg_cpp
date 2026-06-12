@@ -159,7 +159,7 @@ namespace hgraph::stdlib
                 return reduce_ts_is_fixed_tsl(context, 2);
             }
 
-            static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func, Port<TSL<TsVar<"V">>> ts)
+            static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func, NamedPort<"ts", TSL<TsVar<"V">>> ts)
             {
                 const TSValueTypeMetaData *element = ts.erased().schema->element_ts();
 
@@ -186,7 +186,7 @@ namespace hgraph::stdlib
                 return reduce_ts_is_fixed_tsl(context, 3);
             }
 
-            static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func, Port<TSL<TsVar<"V">>> ts,
+            static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func, NamedPort<"ts", TSL<TsVar<"V">>> ts,
                                             Scalar<"zero", ScalarVar<"Z">> zero_value)
             {
                 const TSValueTypeMetaData *element = ts.erased().schema->element_ts();
@@ -302,7 +302,7 @@ namespace hgraph::stdlib
             }
 
             static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            Port<TSD<ScalarVar<"K">, TsVar<"V">>> ts)
+                                            NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
             {
                 const auto *element =
                     TypeRegistry::instance().dereference(ts.erased().schema)->element_ts();
@@ -327,7 +327,7 @@ namespace hgraph::stdlib
             }
 
             static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            Port<TSD<ScalarVar<"K">, TsVar<"V">>> ts,
+                                            NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts,
                                             Scalar<"zero", ScalarVar<"Z">> zero_value)
             {
                 const auto *element =
@@ -524,7 +524,7 @@ namespace hgraph::stdlib
                 resolve_switch_output(resolution, context, ts_count);
             }
 
-            static Port<TsVar<"O">> compose(Wiring &w, Port<TS<ScalarVar<"K">>> key,
+            static Port<TsVar<"O">> compose(Wiring &w, NamedPort<"key", TS<ScalarVar<"K">>> key,
                                             Scalar<"cases", SwitchCases> cases, VarIn<"ts", TsVar<"TS">> ts)
             {
                 auto out = wire_switch(w, key.erased(), cases.value(),
@@ -775,7 +775,7 @@ namespace hgraph::stdlib
             }
 
             static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            Port<TSD<ScalarVar<"K">, TsVar<"V">>> tsd,
+                                            NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> tsd,
                                             VarIn<"args", TsVar<"B">> rest)
             {
                 auto out = wire_map(w, func, tsd.erased(),
@@ -936,7 +936,7 @@ namespace hgraph::stdlib
                 resolve_map_tsl_output(resolution, context, broadcast_count);
             }
 
-            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func, Port<TSL<TsVar<"V">>> ts,
+            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func, NamedPort<"ts", TSL<TsVar<"V">>> ts,
                                             VarIn<"args", TsVar<"B">> broadcasts)
             {
                 auto out = wire_map_tsl(w, func.value(), ts.erased(),

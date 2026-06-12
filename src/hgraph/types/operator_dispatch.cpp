@@ -114,6 +114,136 @@ namespace hgraph
         // ``map``. On failure ``why`` records a human-readable reason and ``map`` is
         // discarded by the caller. This is the runtime matcher shared by every
         // candidate (C++ today, Python later).
+        struct NormalizedCall
+        {
+            std::vector<WiringArg>                              args{};
+            std::vector<std::pair<std::string, WiringPortRef>>  kwargs{};
+            int                                                 defaults_used{0};
+        };
+
+        /**
+         * Map the call onto the candidate's declared parameters using the
+         * Python calling rules: positional arguments fill parameters in
+         * order (overflow goes to the variadic tail), named arguments target
+         * named parameters (after all positional ones), omitted parameters
+         * take their declared defaults, and named arguments matching no
+         * parameter collect into ``**kwargs`` when the candidate has one.
+         * The output is positional: arguments in declared parameter order,
+         * defaults materialised, tail appended.
+         */
+        bool normalize_call(const OperatorImpl &impl,
+                            std::span<const WiringArg> args,
+                            NormalizedCall &out,
+                            std::string &why)
+        {
+            const std::size_t fixed =
+                impl.variadic && !impl.params.empty() ? impl.params.size() - 1 : impl.params.size();
+
+            std::size_t positional = 0;
+            while (positional < args.size() && args[positional].name.empty()) { ++positional; }
+            for (std::size_t i = positional; i < args.size(); ++i)
+            {
+                if (args[i].name.empty())
+                {
+                    why = "positional argument follows a named argument";
+                    return false;
+                }
+            }
+
+            if (!impl.variadic && positional > impl.params.size())
+            {
+                why = fmt::format("expects at most {} positional argument(s), got {}", impl.params.size(),
+                                  positional);
+                return false;
+            }
+
+            std::vector<std::optional<WiringArg>> filled(fixed);
+            std::vector<WiringArg>                tail;
+            for (std::size_t i = 0; i < positional; ++i)
+            {
+                if (i < fixed) { filled[i] = args[i]; }
+                else { tail.push_back(args[i]); }
+            }
+
+            for (std::size_t i = positional; i < args.size(); ++i)
+            {
+                const WiringArg &named = args[i];
+                std::size_t      index = fixed;
+                for (std::size_t p = 0; p < fixed; ++p)
+                {
+                    if (!impl.params[p].name.empty() && impl.params[p].name == named.name)
+                    {
+                        index = p;
+                        break;
+                    }
+                }
+                if (index < fixed)
+                {
+                    if (filled[index].has_value())
+                    {
+                        why = fmt::format("got multiple values for argument '{}'", named.name);
+                        return false;
+                    }
+                    filled[index] = named;
+                }
+                else if (impl.has_kwargs)
+                {
+                    if (named.kind != WiringArg::Kind::TimeSeries)
+                    {
+                        why = fmt::format("keyword argument '{}' must be a time-series", named.name);
+                        return false;
+                    }
+                    if (std::find_if(out.kwargs.begin(), out.kwargs.end(),
+                                     [&](const auto &kw) { return kw.first == named.name; }) !=
+                        out.kwargs.end())
+                    {
+                        why = fmt::format("got multiple values for argument '{}'", named.name);
+                        return false;
+                    }
+                    out.kwargs.emplace_back(named.name, named.port);
+                }
+                else
+                {
+                    why = fmt::format("got an unexpected keyword argument '{}'", named.name);
+                    return false;
+                }
+            }
+
+            for (std::size_t p = 0; p < fixed; ++p)
+            {
+                if (filled[p].has_value()) { continue; }
+                if (impl.params[p].default_value.has_value())
+                {
+                    WiringArg synthesised;
+                    if (impl.params[p].kind == ParamPattern::Kind::Input &&
+                        !impl.params[p].default_value->has_value())
+                    {
+                        // None default on a time-series parameter: a null
+                        // source — the input is left unwired.
+                        synthesised.kind = WiringArg::Kind::TimeSeries;
+                    }
+                    else
+                    {
+                        synthesised.kind         = WiringArg::Kind::Scalar;
+                        synthesised.scalar_value = *impl.params[p].default_value;
+                        synthesised.scalar_meta  = synthesised.scalar_value.schema();
+                    }
+                    filled[p] = std::move(synthesised);
+                    ++out.defaults_used;
+                    continue;
+                }
+                why = impl.params[p].name.empty()
+                          ? fmt::format("missing required argument {}", p)
+                          : fmt::format("missing required argument '{}'", impl.params[p].name);
+                return false;
+            }
+
+            out.args.reserve(fixed + tail.size());
+            for (auto &slot : filled) { out.args.push_back(std::move(*slot)); }
+            for (auto &arg : tail) { out.args.push_back(std::move(arg)); }
+            return true;
+        }
+
         bool try_match(const OperatorImpl &impl,
                        std::span<const WiringArg> args,
                        std::optional<bool> output_required,
@@ -147,6 +277,8 @@ namespace hgraph
                 rank_adjustment +=
                     tail_rank * static_cast<int>(args.size() - fixed_params) + 1;
             }
+            // A kwargs collector is less specific than an exact signature.
+            if (impl.has_kwargs) { ++rank_adjustment; }
 
             if (expected_output != nullptr && impl.has_output)
             {
@@ -191,6 +323,12 @@ namespace hgraph
 
                 if (param.kind == ParamPattern::Kind::Input)
                 {
+                    if (arg.kind == WiringArg::Kind::TimeSeries && arg.port.schema == nullptr)
+                    {
+                        // A null source (None default / unwired input): matches
+                        // any input pattern, binds no type variables.
+                        continue;
+                    }
                     if (arg.kind == WiringArg::Kind::TimeSeries)
                     {
                         if (!ts_pattern_match(param.ts, arg.port.schema, map))
@@ -296,7 +434,7 @@ namespace hgraph
 
     void OperatorRegistry::reset() noexcept { overloads_.clear(); }
 
-    std::pair<const OperatorImpl *, ResolutionMap> OperatorRegistry::resolve(
+    ResolvedOperatorCall OperatorRegistry::resolve(
         std::string_view name,
         std::span<const WiringArg> args,
         std::optional<bool> output_required,
@@ -312,6 +450,7 @@ namespace hgraph
         {
             const OperatorImpl *impl;
             ResolutionMap       map;
+            NormalizedCall      call;
             int                 rank{0};
         };
 
@@ -319,12 +458,21 @@ namespace hgraph
         std::vector<std::string> rejected;
         for (const OperatorImpl &impl : it->second)
         {
-            ResolutionMap map;
-            int           rank_adjustment = 0;
-            std::string   why;
-            if (try_match(impl, args, output_required, expected_output, map, rank_adjustment, why))
+            NormalizedCall call;
+            std::string    why;
+            if (!normalize_call(impl, args, call, why))
             {
-                survivors.push_back({&impl, std::move(map), impl.rank + rank_adjustment});
+                rejected.push_back(fmt::format("  {} [rank {}]: {}", impl.label, impl.rank, why));
+                continue;
+            }
+
+            ResolutionMap map;
+            // Each default an overload falls back on makes it a little less
+            // specific than one whose parameters were all supplied.
+            int rank_adjustment = call.defaults_used;
+            if (try_match(impl, call.args, output_required, expected_output, map, rank_adjustment, why))
+            {
+                survivors.push_back({&impl, std::move(map), std::move(call), impl.rank + rank_adjustment});
             }
             else { rejected.push_back(fmt::format("  {} [rank {}]: {}", impl.label, impl.rank, why)); }
         }
@@ -354,6 +502,7 @@ namespace hgraph
                 fmt::format("ambiguous overloads for operator '{}':\n{}", name, fmt::join(tied, "\n")));
         }
 
-        return {survivors[0].impl, std::move(survivors[0].map)};
+        return ResolvedOperatorCall{survivors[0].impl, std::move(survivors[0].map),
+                                    std::move(survivors[0].call.args), std::move(survivors[0].call.kwargs)};
     }
 }  // namespace hgraph

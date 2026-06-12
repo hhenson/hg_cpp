@@ -19,6 +19,7 @@
 #include <hgraph/types/type_resolution.h>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <array>
 #include <cstdint>
@@ -332,7 +333,7 @@ TEST_CASE("operators: a requires_ predicate that passes keeps the specific overl
     register_overload<gated_, gated_passthrough>();  // generic fallback (high rank)
 
     std::array<WiringArg, 1> args{ts_arg(ts_type<TS<Int>>())};
-    auto [impl, map] = OperatorRegistry::instance().resolve("gated", std::span<const WiringArg>{args});
+    auto [impl, map, call_args, call_kwargs] = OperatorRegistry::instance().resolve("gated", std::span<const WiringArg>{args});
     CHECK(impl->rank == 0);  // the specific overload won
 }
 
@@ -343,7 +344,7 @@ TEST_CASE("operators: a requires_ predicate that fails vetoes the specific overl
     register_overload<gated_, gated_passthrough>();  // generic fallback (high rank)
 
     std::array<WiringArg, 1> args{ts_arg(ts_type<TS<Int>>())};
-    auto [impl, map] = OperatorRegistry::instance().resolve("gated", std::span<const WiringArg>{args});
+    auto [impl, map, call_args, call_kwargs] = OperatorRegistry::instance().resolve("gated", std::span<const WiringArg>{args});
     CHECK(impl->rank > 0);  // the gate rejected the specific overload; the generic was selected
 }
 
@@ -374,7 +375,7 @@ TEST_CASE("operators: a repeated type-variable name forces the operands to be al
     // Aligned operands (both TS<Int>): ``S`` binds consistently -> matches.
     {
         std::array<WiringArg, 2> args{ts_arg(ts_type<TS<Int>>()), ts_arg(ts_type<TS<Int>>())};
-        auto [impl, map] = OperatorRegistry::instance().resolve("add", std::span<const WiringArg>{args});
+        auto [impl, map, call_args, call_kwargs] = OperatorRegistry::instance().resolve("add", std::span<const WiringArg>{args});
         CHECK(impl != nullptr);
         CHECK(map.find_ts("S") == ts_type<TS<Int>>());
     }
@@ -428,7 +429,7 @@ TEST_CASE("operators: repeated generic variables rank ahead of independent varia
     register_overload<rank_, rank_aligned>();
 
     std::array<WiringArg, 2> args{ts_arg(ts_type<TS<Int>>()), ts_arg(ts_type<TS<Int>>())};
-    auto [impl, map] = OperatorRegistry::instance().resolve("rank", std::span<const WiringArg>{args});
+    auto [impl, map, call_args, call_kwargs] = OperatorRegistry::instance().resolve("rank", std::span<const WiringArg>{args});
     REQUIRE(impl != nullptr);
     CHECK(impl->label.find("rank_aligned") != std::string::npos);
 }
@@ -441,7 +442,7 @@ TEST_CASE("operators: exact fixed graph overload ranks ahead of a variadic fallb
     std::array<WiringArg, 3> args{ts_arg(ts_type<TS<Int>>()),
                                   ts_arg(ts_type<TS<Int>>()),
                                   ts_arg(ts_type<TS<Int>>())};
-    auto [impl, map] = OperatorRegistry::instance().resolve("variadic_rank", std::span<const WiringArg>{args});
+    auto [impl, map, call_args, call_kwargs] = OperatorRegistry::instance().resolve("variadic_rank", std::span<const WiringArg>{args});
     REQUIRE(impl != nullptr);
     CHECK(impl->label.find("variadic_rank_fixed") != std::string::npos);
 }
@@ -451,7 +452,7 @@ TEST_CASE("operators: scalar variable constraints reject unsupported scalar type
     register_overload<constrained_, constrained_int>();
 
     std::array<WiringArg, 1> int_args{ts_arg(ts_type<TS<Int>>())};
-    auto [impl, map] = OperatorRegistry::instance().resolve("constrained", std::span<const WiringArg>{int_args});
+    auto [impl, map, call_args, call_kwargs] = OperatorRegistry::instance().resolve("constrained", std::span<const WiringArg>{int_args});
     CHECK(impl != nullptr);
     CHECK(map.find_scalar("T") == scalar_type<Int>());
 
@@ -503,4 +504,268 @@ TEST_CASE("operators: explicit collection output schema drives scalar auto-const
     REQUIRE(out.size() == 1);
     REQUIRE(out[0].has_value());
     CHECK(out[0]->equals(set_delta<Int>({1, 2}, {})));
+}
+
+// ---------------------------------------------------------------------------
+// Named arguments, defaults and **kwargs — the Python calling rules, applied
+// in the RUNTIME matcher (call normalisation in OperatorRegistry::resolve):
+// positional fill -> *args overflow -> named -> defaults -> **kwargs.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    using namespace hgraph;
+
+    struct scale_default_ : Operator<"scale_default", In<"ts", TS<Int>>, Scalar<"factor", Int>, Out<TS<Int>>>
+    {
+    };
+    struct scale_node
+    {
+        static constexpr auto name = "scale_node";
+        static void eval(In<"ts", TS<Int>> ts, Scalar<"factor", Int> factor, Out<TS<Int>> out)
+        {
+            out.set(ts.value() * factor.value());
+        }
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"factor", Value{Int{3}}}};
+        }
+    };
+
+    struct kw_sum_ : Operator<"kw_sum", In<"base", TS<Int>>, VarKwIn<"kwargs">, Out<TS<Int>>>
+    {
+    };
+    struct kw_sum_impl
+    {
+        static constexpr auto name = "kw_sum_impl";
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> base, VarKwIn<"kwargs"> rest)
+        {
+            static_cast<void>(rest);
+            return base;
+        }
+    };
+
+    [[nodiscard]] inline WiringArg scalar_arg(Value value)
+    {
+        WiringArg arg;
+        arg.kind         = WiringArg::Kind::Scalar;
+        arg.scalar_value = std::move(value);
+        arg.scalar_meta  = arg.scalar_value.schema();
+        return arg;
+    }
+
+    [[nodiscard]] inline WiringArg named_ts_arg(std::string name, const TSValueTypeMetaData *schema)
+    {
+        WiringArg arg;
+        arg.kind        = WiringArg::Kind::TimeSeries;
+        arg.port.schema = schema;
+        arg.name        = std::move(name);
+        return arg;
+    }
+
+    [[nodiscard]] inline WiringArg named_scalar_arg(std::string name, Value value)
+    {
+        WiringArg arg;
+        arg.kind         = WiringArg::Kind::Scalar;
+        arg.scalar_value = std::move(value);
+        arg.scalar_meta  = arg.scalar_value.schema();
+        arg.name         = std::move(name);
+        return arg;
+    }
+}  // namespace
+
+TEST_CASE("operators: an omitted parameter takes its declared default, end to end")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    register_overload<scale_default_, scale_node>();
+
+    // factor omitted -> the defaults() hook fills 3.
+    CHECK_OUTPUT(eval_node<scale_default_>(values<Int>(2, 5)), values<Int>(6, 15));
+    // factor supplied positionally -> 4.
+    CHECK_OUTPUT(eval_node<scale_default_>(values<Int>(2), Int{4}), values<Int>(8));
+}
+
+TEST_CASE("operators: named arguments target parameters by name, in any order")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    register_overload<scale_default_, scale_node>();
+
+    const auto *ts_int = ts_type<TS<Int>>();
+
+    // scale(factor=7, ... ) is rejected: positional may not follow named.
+    {
+        std::array<WiringArg, 2> args{named_scalar_arg("factor", Value{Int{7}}), ts_arg(ts_int)};
+        REQUIRE_THROWS_WITH(OperatorRegistry::instance().resolve("scale_default", std::span<const WiringArg>{args}),
+                            Catch::Matchers::ContainsSubstring("positional argument follows"));
+    }
+
+    // scale(ts, factor=7): named scalar lands in declared position.
+    {
+        std::array<WiringArg, 2> args{ts_arg(ts_int), named_scalar_arg("factor", Value{Int{7}})};
+        auto resolved = OperatorRegistry::instance().resolve("scale_default", std::span<const WiringArg>{args});
+        REQUIRE(resolved.args.size() == 2);
+        REQUIRE(resolved.args[1].scalar_value.try_as<Int>() != nullptr);
+        CHECK(*resolved.args[1].scalar_value.try_as<Int>() == 7);
+    }
+
+    // Node-overload ports are named via their In<> declarations: add(rhs=, lhs=).
+    register_overload<add_, add_ints>();
+    {
+        std::array<WiringArg, 2> args{named_ts_arg("rhs", ts_int), named_ts_arg("lhs", ts_int)};
+        auto resolved = OperatorRegistry::instance().resolve("add", std::span<const WiringArg>{args});
+        REQUIRE(resolved.args.size() == 2);
+        CHECK(resolved.args[0].name == "lhs");
+        CHECK(resolved.args[1].name == "rhs");
+    }
+}
+
+TEST_CASE("operators: calling-rule violations report Python-style errors")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    register_overload<scale_default_, scale_node>();
+
+    const auto *ts_int = ts_type<TS<Int>>();
+
+    // Duplicate: positional factor + named factor.
+    {
+        std::array<WiringArg, 3> args{ts_arg(ts_int), scalar_arg(Value{Int{2}}),
+                                      named_scalar_arg("factor", Value{Int{7}})};
+        REQUIRE_THROWS_WITH(OperatorRegistry::instance().resolve("scale_default", std::span<const WiringArg>{args}),
+                            Catch::Matchers::ContainsSubstring("multiple values for argument 'factor'"));
+    }
+    // Unknown keyword with no **kwargs collector.
+    {
+        std::array<WiringArg, 2> args{ts_arg(ts_int), named_scalar_arg("nope", Value{Int{7}})};
+        REQUIRE_THROWS_WITH(OperatorRegistry::instance().resolve("scale_default", std::span<const WiringArg>{args}),
+                            Catch::Matchers::ContainsSubstring("unexpected keyword argument 'nope'"));
+    }
+    // Missing required argument (no default on ts).
+    {
+        std::array<WiringArg, 1> args{named_scalar_arg("factor", Value{Int{7}})};
+        REQUIRE_THROWS_WITH(OperatorRegistry::instance().resolve("scale_default", std::span<const WiringArg>{args}),
+                            Catch::Matchers::ContainsSubstring("missing required argument"));
+    }
+}
+
+TEST_CASE("operators: unmatched keyword time-series collect into **kwargs")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    register_graph_overload<kw_sum_, kw_sum_impl>();
+
+    const auto *ts_int = ts_type<TS<Int>>();
+
+    std::array<WiringArg, 3> args{ts_arg(ts_int), named_ts_arg("x", ts_int), named_ts_arg("y", ts_int)};
+    auto resolved = OperatorRegistry::instance().resolve("kw_sum", std::span<const WiringArg>{args});
+    REQUIRE(resolved.kwargs.size() == 2);
+    CHECK(resolved.kwargs[0].first == "x");
+    CHECK(resolved.kwargs[1].first == "y");
+    CHECK(resolved.impl->has_kwargs);
+
+    std::array<WiringArg, 3> duplicate_args{ts_arg(ts_int), named_ts_arg("x", ts_int), named_ts_arg("x", ts_int)};
+    REQUIRE_THROWS_WITH(OperatorRegistry::instance().resolve("kw_sum", std::span<const WiringArg>{duplicate_args}),
+                        Catch::Matchers::ContainsSubstring("multiple values for argument 'x'"));
+}
+
+TEST_CASE("operators: arg<\"name\">(...) flows named arguments through wire<Op>")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    register_overload<scale_default_, scale_node>();
+
+    // Named scalar at the typed call site: scale_default(ts, factor=5).
+    CHECK_OUTPUT(eval_node<scale_default_>(values<Int>(2), arg<"factor">(Int{5})), values<Int>(10));
+}
+
+namespace
+{
+    using namespace hgraph;
+
+    // TS-parameter defaults: a value default const-wraps; an EMPTY (None)
+    // default leaves the input unwired (null source).
+    struct offset_add_ : Operator<"offset_add", In<"a", TS<Int>>, In<"b", TS<Int>>, Out<TS<Int>>>
+    {
+    };
+    struct offset_add_node
+    {
+        static constexpr auto name = "offset_add_node";
+        static void eval(In<"a", TS<Int>> a, In<"b", TS<Int>> b, Out<TS<Int>> out)
+        {
+            out.set(a.value() + b.value());
+        }
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"b", Value{Int{10}}}};
+        }
+    };
+
+    struct opt_add_ : Operator<"opt_add", In<"a", TS<Int>>, In<"opt", TS<Int>>, Out<TS<Int>>>
+    {
+    };
+    struct opt_add_node
+    {
+        static constexpr auto name = "opt_add_node";
+        static void eval(In<"a", TS<Int>> a, In<"opt", TS<Int>, InputValidity::Unchecked> opt, Out<TS<Int>> out)
+        {
+            out.set(a.value() + (opt.valid() ? opt.value() : Int{0}));
+        }
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"opt", Value{}}};   // Python None -> null source
+        }
+    };
+
+    struct pick_ : Operator<"pick", In<"lhs", TS<Int>>, In<"rhs", TS<Int>>, Out<TS<Int>>>
+    {
+    };
+    struct pick_lhs_graph
+    {
+        static constexpr auto name = "pick_lhs_graph";
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"lhs", TS<Int>> lhs, NamedPort<"rhs", TS<Int>> rhs)
+        {
+            static_cast<void>(rhs);
+            return lhs;
+        }
+    };
+}  // namespace
+
+TEST_CASE("operators: a value default on a time-series parameter const-wraps")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    register_overload<offset_add_, offset_add_node>();
+
+    // b omitted -> const(10); supplied scalar -> const(4).
+    CHECK_OUTPUT(eval_node<offset_add_>(values<Int>(1, 2)), values<Int>(11, 12));
+    CHECK_OUTPUT(eval_node<offset_add_>(values<Int>(1), Int{4}), values<Int>(5));
+}
+
+TEST_CASE("operators: a None default on a time-series parameter is a null source")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    register_overload<opt_add_, opt_add_node>();
+
+    // opt omitted -> unwired (never valid) -> a passes through.
+    CHECK_OUTPUT(eval_node<opt_add_>(values<Int>(1, 2)), values<Int>(1, 2));
+    // opt supplied -> sums.
+    CHECK_OUTPUT(eval_node<opt_add_>(values<Int>(1, 2), values<Int>(100, none)), values<Int>(101, 102));
+}
+
+TEST_CASE("operators: NamedPort lets keyword arguments target graph-overload ports")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    register_graph_overload<pick_, pick_lhs_graph>();
+
+    const auto *ts_int = ts_type<TS<Int>>();
+
+    std::array<WiringArg, 2> args{named_ts_arg("rhs", ts_int), named_ts_arg("lhs", ts_int)};
+    auto resolved = OperatorRegistry::instance().resolve("pick", std::span<const WiringArg>{args});
+    REQUIRE(resolved.args.size() == 2);
+    CHECK(resolved.args[0].name == "lhs");
+    CHECK(resolved.args[1].name == "rhs");
 }
