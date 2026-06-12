@@ -190,6 +190,31 @@ namespace
         }
     };
 
+    struct variadic_rank_ : Operator<"variadic_rank",
+                                     In<"a", TS<Int>>,
+                                     In<"b", TS<Int>>,
+                                     In<"c", TS<Int>>,
+                                     Out<TS<Int>>>
+    {
+    };
+    struct variadic_rank_fixed
+    {
+        static constexpr auto name = "variadic_rank_fixed";
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> first, Port<TS<Int>>, Port<TS<Int>>)
+        {
+            return first;
+        }
+    };
+    struct variadic_rank_fallback
+    {
+        static constexpr auto name = "variadic_rank_fallback";
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> first, VarIn<TS<Int>> rest)
+        {
+            static_cast<void>(rest);
+            return first;
+        }
+    };
+
     struct constrained_ : Operator<"constrained", In<"in", TsVar<"S">>, Out<TsVar<"S">>>
     {
     };
@@ -406,6 +431,19 @@ TEST_CASE("operators: repeated generic variables rank ahead of independent varia
     auto [impl, map] = OperatorRegistry::instance().resolve("rank", std::span<const WiringArg>{args});
     REQUIRE(impl != nullptr);
     CHECK(impl->label.find("rank_aligned") != std::string::npos);
+}
+
+TEST_CASE("operators: exact fixed graph overload ranks ahead of a variadic fallback")
+{
+    register_graph_overload<variadic_rank_, variadic_rank_fallback>();
+    register_graph_overload<variadic_rank_, variadic_rank_fixed>();
+
+    std::array<WiringArg, 3> args{ts_arg(ts_type<TS<Int>>()),
+                                  ts_arg(ts_type<TS<Int>>()),
+                                  ts_arg(ts_type<TS<Int>>())};
+    auto [impl, map] = OperatorRegistry::instance().resolve("variadic_rank", std::span<const WiringArg>{args});
+    REQUIRE(impl != nullptr);
+    CHECK(impl->label.find("variadic_rank_fixed") != std::string::npos);
 }
 
 TEST_CASE("operators: scalar variable constraints reject unsupported scalar types")
