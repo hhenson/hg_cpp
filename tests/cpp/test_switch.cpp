@@ -232,3 +232,71 @@ TEST_CASE("switch_: variadic time-series arguments feed the branches, mixed arit
                      values<Int>(4, none, 6, none)),
                  values<Int>(14, 24, 14, 29));
 }
+
+// ---------------------------------------------------------------------------
+// Keyword arguments resolve PER BRANCH against each branch's own parameter
+// names (Python parity) — branches may declare the same names in different
+// parameter orders.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    struct DiffLhsFirst
+    {
+        static constexpr auto name = "diff_lhs_first";
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"lhs", TS<Int>> lhs, NamedPort<"rhs", TS<Int>> rhs)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (lhs - rhs).as<TS<Int>>();
+        }
+    };
+
+    // Parameter ORDER reversed; the names still bind lhs=lhs, rhs=rhs — this
+    // branch computes rhs - lhs to make the per-branch resolution observable.
+    struct DiffRhsFirst
+    {
+        static constexpr auto name = "diff_rhs_first";
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"rhs", TS<Int>> rhs, NamedPort<"lhs", TS<Int>> lhs)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (rhs - lhs).as<TS<Int>>();
+        }
+    };
+
+    struct SwitchKwargsGraph
+    {
+        static constexpr auto name = "switch_kwargs_graph";
+        static void           compose(Wiring &w)
+        {
+            auto key = wire<testing::replay, TS<Str>>(w, Str{"key"});
+            auto a   = wire<testing::replay, TS<Int>>(w, Str{"a"});
+            auto b   = wire<testing::replay, TS<Int>>(w, Str{"b"});
+            wire<testing::record>(
+                w,
+                wire<stdlib::switch_>(w, key,
+                                      stdlib::switch_cases({{Value{Str{"fwd"}}, fn<DiffLhsFirst>()},
+                                                            {Value{Str{"rev"}}, fn<DiffRhsFirst>()}}),
+                                      arg<"lhs">(a), arg<"rhs">(b)),
+                Str{"out"});
+        }
+    };
+}  // namespace
+
+TEST_CASE("switch_: keyword arguments bind per branch by parameter name")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphBuilder gb = build_graph<SwitchKwargsGraph>();
+    set_replay_values<Str>(gb.global_state(), "key", values<Str>(Str{"fwd"}, Str{"rev"}));
+    set_replay_values<Int>(gb.global_state(), "a", values<Int>(10, none));
+    set_replay_values<Int>(gb.global_state(), "b", values<Int>(3, none));
+
+    GraphExecutorBuilder eb;
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
+    GraphExecutorValue ex = eb.make_executor();
+    ex.view().run();
+
+    // fwd: lhs - rhs = 7; rev (params declared rhs-first): rhs - lhs = -7.
+    CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), values<Int>(7, -7));
+}

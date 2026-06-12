@@ -6,7 +6,9 @@
 
 #include <cstddef>
 #include <functional>
+#include <array>
 #include <span>
+#include <string_view>
 #include <stdexcept>
 #include <typeinfo>
 #include <utility>
@@ -34,12 +36,26 @@ namespace hgraph
     {
         using WireThunk = WiringPortRef (*)(Wiring &, std::span<const WiringPortRef>);
         using CompileThunk = CompiledSubGraph (*)(std::span<const TSValueTypeMetaData *const>);
+        using ParamNamesThunk = std::span<const std::string_view> (*)();
 
         WireThunk             wire_fn{nullptr};
         CompileThunk          compile_fn{nullptr};
+        ParamNamesThunk       param_names_fn{nullptr};
         const std::type_info *identity{nullptr};
         std::size_t           arity{0};
         bool                  has_output{false};
+
+        /**
+         * The function's time-series parameter names, in order (empty string =
+         * unnamed). Sub-graphs name ports via ``NamedPort<"name", S>``, nodes
+         * via ``In<"name", …>``, operator markers via their ``In`` selectors.
+         * Higher-order operators use these to resolve ``**kwargs`` onto the
+         * function's parameters, Python-style.
+         */
+        [[nodiscard]] std::span<const std::string_view> param_names() const
+        {
+            return param_names_fn != nullptr ? param_names_fn() : std::span<const std::string_view>{};
+        }
 
         [[nodiscard]] bool valid() const noexcept { return wire_fn != nullptr && identity != nullptr; }
 
@@ -173,6 +189,65 @@ namespace hgraph
                 }
             }(std::make_index_sequence<arity>{});
         }
+        template <typename X>
+        [[nodiscard]] std::span<const std::string_view> param_names_thunk()
+        {
+            static const auto names = [] {
+                std::array<std::string_view, arity_of<X>()> out{};
+                std::size_t                                 next = 0;
+                if constexpr (std::is_base_of_v<operator_tag, X>)
+                {
+                    using params = typename X::param_types;
+                    [&]<std::size_t... I>(std::index_sequence<I...>) {
+                        (
+                            [&] {
+                                using P = std::tuple_element_t<I, params>;
+                                if constexpr (static_node_detail::is_input_selector<P>::value)
+                                {
+                                    out[next++] = P::field_name.sv();
+                                }
+                            }(),
+                            ...);
+                    }(std::make_index_sequence<std::tuple_size_v<params>>{});
+                }
+                else if constexpr (graph_wiring_detail::is_graph_def<X>)
+                {
+                    using params = typename StaticGraphSignature<X>::param_types;
+                    [&]<std::size_t... I>(std::index_sequence<I...>) {
+                        (
+                            [&] {
+                                using P = std::tuple_element_t<I, params>;
+                                if constexpr (graph_wiring_detail::is_named_port<P>::value)
+                                {
+                                    out[next++] = P::field_name.sv();
+                                }
+                                else if constexpr (graph_wiring_detail::is_port<P>::value)
+                                {
+                                    out[next++] = std::string_view{};
+                                }
+                            }(),
+                            ...);
+                    }(std::make_index_sequence<std::tuple_size_v<params>>{});
+                }
+                else
+                {
+                    using params = typename StaticNodeSignature<X>::wire_param_types;
+                    [&]<std::size_t... I>(std::index_sequence<I...>) {
+                        (
+                            [&] {
+                                using P = std::tuple_element_t<I, params>;
+                                if constexpr (static_node_detail::is_input_selector<P>::value)
+                                {
+                                    out[next++] = P::field_name.sv();
+                                }
+                            }(),
+                            ...);
+                    }(std::make_index_sequence<std::tuple_size_v<params>>{});
+                }
+                return out;
+            }();
+            return {names.data(), names.size()};
+        }
     }  // namespace wired_fn_detail
 
     /** Erase the operator marker / node / sub-graph ``X`` into a ``WiredFn`` value. */
@@ -180,11 +255,12 @@ namespace hgraph
     [[nodiscard]] WiredFn fn()
     {
         return WiredFn{
-            .wire_fn    = &wired_fn_detail::wire_thunk<X>,
-            .compile_fn = &wired_fn_detail::compile_thunk<X>,
-            .identity   = &typeid(X),
-            .arity      = wired_fn_detail::arity_of<X>(),
-            .has_output = wired_fn_detail::has_output_of<X>(),
+            .wire_fn        = &wired_fn_detail::wire_thunk<X>,
+            .compile_fn     = &wired_fn_detail::compile_thunk<X>,
+            .param_names_fn = &wired_fn_detail::param_names_thunk<X>,
+            .identity       = &typeid(X),
+            .arity          = wired_fn_detail::arity_of<X>(),
+            .has_output     = wired_fn_detail::has_output_of<X>(),
         };
     }
 }  // namespace hgraph

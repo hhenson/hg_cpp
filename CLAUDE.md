@@ -182,8 +182,12 @@ same-size TSLs multiplex per index). **Named args + defaults + kwargs — DONE**
 calling rules as call normalisation in `OperatorRegistry::resolve`; `arg<"name">(v)`
 sugar, `defaults()` hook, `VarKwIn<"kwargs">` collector; see *Operators > Named
 arguments, defaults and kwargs*). Graph-overload ports are named via
-`NamedPort<"name",S>`; TS defaults convert Python-style (value → `const`, empty/None →
-null source). Remaining (deferred — see the doc's roadmap + non-goals): dynamic-TSL
+`NamedPort<"name",S>` (port-like everywhere, incl. sub-graphs/WiredFn funcs); TS
+defaults convert Python-style (value → `const`, empty/None → null source). `map_` /
+`switch_` take the full Python call shape — `map_(func, *args, **kwargs)` (no anchor
+param; kwargs resolve onto func's parameter names via `WiredFn::param_names`; TSD/TSL
+kernel selection uses the resolved function-parameter order),
+`switch_(key, cases, *ts, **kwargs)` (kwargs resolve per branch). Remaining (deferred — see the doc's roadmap + non-goals): dynamic-TSL
 multiplexing/reduce, non-associative reduce, sink maps/switches,
 `__keys__`/`pass_through`/`no_key`, `mesh_`/`try_except`/services. **C++ only for
 now** — keep Python out of the configure/build/run path.

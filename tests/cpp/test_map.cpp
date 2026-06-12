@@ -1,12 +1,12 @@
 // The ``map_`` higher-order OPERATOR (lib/std/operators/higher_order.h).
 //
-// map_ owns one child graph instance per key of its multiplexed TSD input:
+// map_ owns one child graph instance per key of its multiplexed TSD inputs:
 // added keys instantiate an element in the owned TSD<K, OUT> output and
 // build/bind/start a fresh child whose terminal forwarding output writes that
 // element directly (no copy); removed keys destroy the child and remove the
-// element. func is a WiredFn (graph, node, or operator)
-// and may take the key as its first argument (by arity); further time-series
-// arguments broadcast whole to every child. See *Nested Graphs*.
+// element. func is a WiredFn (graph, node, or operator) and may take the key as
+// its first argument (by arity). TSD inputs multiplex; other time-series inputs
+// broadcast whole. See *Nested Graphs*.
 
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/std/value_util.h>
@@ -486,4 +486,104 @@ TEST_CASE("map_ over two same-size TSLs: pairs multiplex per index")
                      values<Value>(list_delta<TS<Int>>({1, 2, 3})),
                      values<Value>(list_delta<TS<Int>>({10, 20, 30})))),
                  values<Value>(list_delta<TS<Int>>({11, 22, 33})));
+}
+
+// ---------------------------------------------------------------------------
+// Keyword arguments forward onto the mapped FUNCTION's parameters (Python's
+// map_(func, **kwargs)): the function names its ports with NamedPort and the
+// kwargs resolve by name, regardless of call order.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    struct NamedPairFn
+    {
+        static constexpr auto name = "named_pair_fn";
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"lhs", TS<Int>> lhs, NamedPort<"rhs", TS<Int>> rhs)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (lhs - rhs).as<TS<Int>>();
+        }
+    };
+
+    struct MapKwargsGraph
+    {
+        static constexpr auto name = "map_kwargs_graph";
+        static void           compose(Wiring &w)
+        {
+            auto a = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"a"});
+            auto b = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"b"});
+            // All-keyword call, deliberately rhs-first: names must win.
+            wire<testing::record>(w, wire<stdlib::map_>(w, fn<NamedPairFn>(), arg<"rhs">(b), arg<"lhs">(a)),
+                                  Str{"out"});
+        }
+    };
+
+    struct NamedTsdThenTslFn
+    {
+        static constexpr auto name = "named_tsd_then_tsl_fn";
+        static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TSL<TS<Int>, 2>> rhs, Out<TS<Int>> out)
+        {
+            if (lhs.valid() && rhs[0].valid() && rhs[1].valid())
+            {
+                out.set(lhs.value() + rhs[0].value() + rhs[1].value());
+            }
+        }
+    };
+
+    struct MapKwargsMixedCollectionGraph
+    {
+        static constexpr auto name = "map_kwargs_mixed_collection_graph";
+        static void           compose(Wiring &w)
+        {
+            auto lhs = wire<testing::replay, TSD<Str, TS<Int>>>(w, Str{"lhs"});
+            auto rhs = wire<testing::replay, TSL<TS<Int>, 2>>(w, Str{"rhs"});
+            // Raw call order sees the TSL first, but func parameter order sees
+            // the TSD first. The TSD kernel must win.
+            wire<testing::record>(w, wire<stdlib::map_>(w, fn<NamedTsdThenTslFn>(),
+                                                        arg<"rhs">(rhs), arg<"lhs">(lhs)),
+                                  Str{"out"});
+        }
+    };
+}  // namespace
+
+TEST_CASE("map_: keyword arguments resolve onto the function's named ports")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphBuilder gb = build_graph<MapKwargsGraph>();
+    set_replay_deltas(gb.global_state(), "a",
+                      values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 10}, {"y"s, 100}})));
+    set_replay_deltas(gb.global_state(), "b",
+                      values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 3}})));
+
+    GraphExecutorBuilder eb;
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
+    GraphExecutorValue ex = eb.make_executor();
+    ex.view().run();
+
+    // lhs=a, rhs=b despite the rhs-first call: x -> 10 - 3 = 7; y waits for b.
+    CHECK_OUTPUT(get_recorded_deltas(ex.view().graph().global_state(), "out"),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 7}})));
+}
+
+TEST_CASE("map_: kwargs select the kernel from function parameter order")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    GraphBuilder gb = build_graph<MapKwargsMixedCollectionGraph>();
+    set_replay_deltas(gb.global_state(), "lhs",
+                      values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 10}})));
+    set_replay_deltas(gb.global_state(), "rhs",
+                      values<Value>(list_delta<TS<Int>>({1, 2})));
+
+    GraphExecutorBuilder eb;
+    eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MIN_ST + TimeDelta{10});
+    GraphExecutorValue ex = eb.make_executor();
+    ex.view().run();
+
+    CHECK_OUTPUT(get_recorded_deltas(ex.view().graph().global_state(), "out"),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 13}})));
 }

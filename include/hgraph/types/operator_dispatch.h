@@ -170,38 +170,10 @@ namespace hgraph
         [[nodiscard]] auto end() const noexcept { return ports.end(); }
     };
 
-    /**
-     * A **named** port parameter for operator graph overloads — gives a
-     * ``compose`` time-series parameter a name so keyword arguments can
-     * target it (node-overload inputs are already named via ``In<"name",…>``).
-     * Behaves exactly like ``Port<S>``.
-     */
-    template <fixed_string Name, typename S>
-    struct NamedPort : Port<S>
-    {
-        static constexpr auto field_name = Name;
-
-        using Port<S>::Port;
-        NamedPort(Port<S> base) : Port<S>(std::move(base)) {}
-    };
-
     namespace operator_dispatch_detail
     {
-        template <typename T>
-        struct is_named_port : std::false_type
-        {
-        };
-        template <fixed_string N, typename S>
-        struct is_named_port<NamedPort<N, S>> : std::true_type
-        {
-        };
-        template <typename T>
-        struct named_port_schema;
-        template <fixed_string N, typename S>
-        struct named_port_schema<NamedPort<N, S>>
-        {
-            using type = S;
-        };
+        using graph_wiring_detail::is_named_port;
+        using graph_wiring_detail::named_port_schema;
 
         template <typename T>
         struct is_var_kw_in : std::false_type
@@ -235,6 +207,8 @@ namespace hgraph
     {
         std::span<const WiringArg>     args{};
         std::span<const ParamPattern>  params{};
+        /** Collected ``**kwargs`` (named time-series matching no parameter). */
+        std::span<const std::pair<std::string, WiringPortRef>> kwargs{};
 
         [[nodiscard]] const WiringArg *scalar(std::string_view name) const noexcept
         {

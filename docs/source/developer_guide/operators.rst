@@ -569,8 +569,9 @@ future Python frontend gets identical behaviour by passing named
    ``name=value``) follow all positional ones and target parameters **by
    name**: node-overload inputs are named by their ``In<"name", …>``
    declarations, scalars by ``Scalar<"name", …>``, and graph-overload ports
-   by ``NamedPort<"name", S>`` (a drop-in ``Port<S>``; the higher-order
-   overloads name their anchors — ``arg<"ts">(tsd)``, ``arg<"key">(k)``).
+   by ``NamedPort<"name", S>`` (a drop-in ``Port<S>``; higher-order
+   overloads use these names for arguments such as ``arg<"key">(k)`` and for
+   mapping ``**kwargs`` onto a supplied ``WiredFn``).
    Duplicates ("got multiple values for argument"), unknown names
    ("unexpected keyword argument") and positional-after-named are rejected
    with Python-style messages;
@@ -605,8 +606,10 @@ An operator overload may take **zero-or-more trailing time-series arguments**
 ``Operator<…>`` **marker** it declares the variadic contract
 (``VarIn<"ts", TsVar<"TS">>``), and as the last ``compose`` parameter of a
 graph overload the implementation receives the tail as erased
-``WiringPortRef``\ s. ``switch_(key, cases, *ts)`` and
-``map_(func, ts, *args)`` use it.
+``WiringPortRef``\ s. ``switch_(key, cases, *ts, **kwargs)`` and
+``map_(func, *args, **kwargs)`` use it; ``map_`` has no fixed anchor
+parameter, so its inputs are resolved onto the mapped function's parameter
+order before the TSD/TSL kernel is selected.
 
 Dispatch semantics (all in the **runtime** matcher — the capability is fully
 available to a future Python frontend, which calls the same

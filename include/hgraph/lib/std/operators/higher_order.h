@@ -122,6 +122,7 @@ namespace hgraph::stdlib
                               In<"key", TS<ScalarVar<"K">>>,
                               Scalar<"cases", SwitchCases>,
                               VarIn<"ts", TsVar<"TS">>,       // *ts — branches bind these positionally
+                              VarKwIn<"kwargs">,              // **kwargs — resolved per branch by name
                               Out<TsVar<"O">>>
     {
     };
@@ -153,8 +154,8 @@ namespace hgraph::stdlib
      */
     struct map_ : Operator<"map_",
                            Scalar<"func", WiredFn>,
-                           In<"ts", TsVar<"TS">>,             // the anchor multiplexed collection
-                           VarIn<"args", TsVar<"A">>,         // *args — further multiplexed / broadcast inputs
+                           VarIn<"args", TsVar<"A">>,         // *args — multiplexed / broadcast inputs (positional)
+                           VarKwIn<"kwargs">,                 // **kwargs — resolved onto func's named parameters
                            Out<TsVar<"O">>>
     {
     };

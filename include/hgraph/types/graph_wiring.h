@@ -499,6 +499,23 @@ namespace hgraph
         WiringPortRef ref_{};
     };
 
+    /**
+     * A **named** port parameter — gives a ``compose`` time-series parameter a
+     * name so keyword arguments can target it (the port analogue of
+     * ``Scalar<"name", T>``; node inputs are named via ``In<"name", …>``).
+     * Behaves exactly like ``Port<S>`` and is accepted anywhere a port
+     * parameter is (operator graph overloads, sub-graphs, ``WiredFn``
+     * functions — where the name also resolves the function's ``**kwargs``).
+     */
+    template <fixed_string Name, typename S>
+    struct NamedPort : Port<S>
+    {
+        static constexpr auto field_name = Name;
+
+        using Port<S>::Port;
+        NamedPort(Port<S> base) : Port<S>(std::move(base)) {}
+    };
+
     namespace graph_wiring_detail
     {
         [[nodiscard]] inline std::logic_error special_output_error(std::string_view function_name,
@@ -620,6 +637,12 @@ namespace hgraph
         // Recognise the typed port handle and recover an ``In<Name, S>``'s schema S.
         template <typename T> struct is_port : std::false_type {};
         template <typename S> struct is_port<Port<S>> : std::true_type {};
+        template <fixed_string N, typename S> struct is_port<NamedPort<N, S>> : std::true_type {};
+
+        template <typename T> struct is_named_port : std::false_type {};
+        template <fixed_string N, typename S> struct is_named_port<NamedPort<N, S>> : std::true_type {};
+        template <typename T> struct named_port_schema;
+        template <fixed_string N, typename S> struct named_port_schema<NamedPort<N, S>> { using type = S; };
 
         template <typename T> struct is_structural_source_arg : std::false_type {};
         template <> struct is_structural_source_arg<WiringStructuralSourceArg> : std::true_type {};

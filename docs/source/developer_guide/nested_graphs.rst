@@ -353,10 +353,13 @@ ts…)``).
   by test). The previous retired set is released on the next switch
   evaluation, and on node stop. The output's resolver discovers the schema by
   compiling the first branch (``resolve_default_types`` on the overloads).
-- ``switch_(key, cases, *ts)`` takes **any number** of time-series
-  arguments (the variadic ``VarIn`` overload — see *Operators > Variadic
-  operator parameters*); branches bind them positionally, optionally
-  preceded by the key. Deferred: all-sink switches.
+- ``switch_(key, cases, *ts, **kwargs)`` takes any number of positional
+  and **keyword** time-series arguments (see *Operators > Variadic operator
+  parameters* and *Named arguments…*). Branches bind positional args in
+  order (optionally preceded by the key) and keyword args **per branch by
+  the branch's own parameter names** (``NamedPort`` / ``In<"name">`` —
+  branches may declare the same names in different orders, like Python).
+  Deferred: all-sink switches.
 
 Tests: ``tests/cpp/test_switch.cpp``.
 
@@ -364,7 +367,7 @@ Tests: ``tests/cpp/test_switch.cpp``.
 ``map_``
 --------
 
-``map_(func, tsd, *args)`` owns **one child graph instance per key**
+``map_(func, *args, **kwargs)`` owns **one child graph instance per key**
 of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
 (``wire<stdlib::map_>(w, fn<G>(), tsd_port[, ts…])``).
 
@@ -434,10 +437,16 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   behaviour), and the output entry is removed only when the key has left
   every multiplexed input. Non-TSD args broadcast whole; in the TSL form a
   tail arg that is a fixed TSL of the same size multiplexes per index.
-  Argument positions map straight onto ``func`` parameters (after the key) —
-  multiplexed-ness never reorders. Membership changes anywhere are
-  structural events: they create/destroy children and re-bind surviving
-  entries.
+  Positional arguments map onto ``func`` parameters in order (after the
+  key) and **keyword arguments resolve by the function's parameter names**
+  (``NamedPort`` on sub-graph ports, ``In<"name">`` on nodes — the
+  ``WiredFn`` carries its parameter names); multiplexed-ness never reorders.
+  There is no fixed anchor parameter (the Python shape): the call is
+  ``map_(func, *args, **kwargs)``. Inputs are first resolved onto ``func``'s
+  parameter order; the first collection in that ordered list selects the
+  TSD/TSL kernel, and the first TSD provides the key type. Membership changes
+  anywhere are structural events: they create/destroy children and re-bind
+  surviving entries.
 - Deferred: dynamic-TSL multiplexing, explicit ``__keys__`` /
   ``pass_through`` / ``no_key`` wrappers, and sink maps.
 

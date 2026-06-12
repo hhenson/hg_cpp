@@ -356,10 +356,83 @@ namespace hgraph::stdlib
          * which is outer input 0). Returns the runtime branch spec; records /
          * verifies the common output schema across branches.
          */
+        /**
+         * Resolve positional + keyword time-series arguments onto a wired
+         * function's parameters, Python-style: positional fill in order,
+         * keywords by the function's parameter names (``NamedPort`` /
+         * ``In<"name">``), every parameter exactly once. ``takes_key`` is
+         * derived from arity, as everywhere (arity = filled + 1 => the key is
+         * parameter 0 and keywords resolve against the rest).
+         */
+        template <typename T>
+        [[nodiscard]] std::vector<T> order_by_fn_params(const char *op, const WiredFn &func,
+                                                        std::span<const T> positional,
+                                                        std::span<const std::pair<std::string, T>> named,
+                                                        bool &takes_key)
+        {
+            const std::size_t filled = positional.size() + named.size();
+            takes_key                = func.arity == filled + 1;
+            if (!takes_key && func.arity != filled)
+            {
+                throw std::invalid_argument(
+                    std::string{op} + ": 'func' takes a different number of time-series arguments");
+            }
+            const std::size_t offset = takes_key ? 1 : 0;
+
+            std::vector<std::optional<T>> slots(filled);
+            for (std::size_t i = 0; i < positional.size(); ++i) { slots[i] = positional[i]; }
+
+            const auto names = func.param_names();
+            for (const auto &[name, value] : named)
+            {
+                std::size_t found = filled;
+                for (std::size_t j = 0; j < filled; ++j)
+                {
+                    const std::size_t p = offset + j;
+                    if (p < names.size() && !names[p].empty() && names[p] == name)
+                    {
+                        found = j;
+                        break;
+                    }
+                }
+                if (found == filled)
+                {
+                    throw std::invalid_argument(std::string{op} + ": 'func' has no parameter named '" + name +
+                                                "' (name ports with NamedPort / In<\"name\">)");
+                }
+                if (slots[found].has_value())
+                {
+                    throw std::invalid_argument(std::string{op} + ": got multiple values for 'func' parameter '" +
+                                                name + "'");
+                }
+                slots[found] = value;
+            }
+
+            std::vector<T> ordered;
+            ordered.reserve(filled);
+            for (auto &slot : slots)
+            {
+                if (!slot.has_value())
+                {
+                    throw std::invalid_argument(std::string{op} + ": a 'func' parameter was not supplied");
+                }
+                ordered.push_back(std::move(*slot));
+            }
+            return ordered;
+        }
+
+        /**
+         * Compile one branch over the outer time-series slots. ``named_slots``
+         * are the keyword arguments as ``(name, outer slot)`` pairs — resolved
+         * per branch against ITS parameter names (branches may name and order
+         * their parameters differently, like Python).
+         */
         [[nodiscard]] inline SingleNestedGraphNodeSpec compile_switch_branch(
             const WiredFn &branch,
             const TSValueTypeMetaData *key_schema,
-            std::span<const TSValueTypeMetaData *const> ts_schemas,
+            std::span<const TSValueTypeMetaData *const> slot_schemas,
+            std::size_t positional_count,
+            std::span<const std::pair<std::string, std::size_t>> named_slots,
             const TSValueTypeMetaData *&output_schema)
         {
             if (!branch.valid())
@@ -367,18 +440,17 @@ namespace hgraph::stdlib
                 throw std::invalid_argument("switch_: every branch must be a wirable function (fn<X>())");
             }
 
-            const std::size_t ts_count  = ts_schemas.size();
-            const bool        takes_key = branch.arity == ts_count + 1;
-            if (!takes_key && branch.arity != ts_count)
-            {
-                throw std::invalid_argument(
-                    "switch_: a branch must take the time-series arguments (optionally preceded by the key)");
-            }
+            std::vector<std::size_t> positional_slots(positional_count);
+            for (std::size_t i = 0; i < positional_count; ++i) { positional_slots[i] = i; }
+
+            bool takes_key = false;
+            const std::vector<std::size_t> ordered_slots = order_by_fn_params<std::size_t>(
+                "switch_", branch, {positional_slots.data(), positional_slots.size()}, named_slots, takes_key);
 
             std::vector<const TSValueTypeMetaData *> schemas;
             schemas.reserve(branch.arity);
             if (takes_key) { schemas.push_back(key_schema); }
-            schemas.insert(schemas.end(), ts_schemas.begin(), ts_schemas.end());
+            for (const std::size_t slot : ordered_slots) { schemas.push_back(slot_schemas[slot]); }
 
             CompiledSubGraph compiled = branch.compile({schemas.data(), schemas.size()});
 
@@ -396,21 +468,40 @@ namespace hgraph::stdlib
             spec.graph_builder  = std::move(compiled.graph_builder);
             spec.input_bindings = std::move(compiled.input_bindings);
             spec.output_binding = compiled.output_binding;
-            if (!takes_key)
+
+            // Re-target boundary ordinals onto the outer input root: ordinal 0
+            // is the key when the branch consumes it; every other parameter
+            // maps through its resolved outer slot (+1 past the key input).
+            const std::size_t offset = takes_key ? 1 : 0;
+            for (NestedGraphInputBinding &binding : spec.input_bindings)
             {
-                // Branch boundary args are the ts args only; outer input 0 is the key.
-                for (NestedGraphInputBinding &binding : spec.input_bindings) { binding.source_path[0] += 1; }
+                const std::size_t ordinal = binding.source_path[0];
+                if (takes_key && ordinal == 0) { binding.source_path[0] = 0; }
+                else { binding.source_path[0] = 1 + ordered_slots[ordinal - offset]; }
             }
             return spec;
         }
 
         /** The shared switch wiring: compile every branch, then add one switch node. */
         [[nodiscard]] inline Port<void> wire_switch(Wiring &w, WiringPortRef key, const SwitchCases &cases,
-                                                    std::vector<WiringPortRef> ts)
+                                                    std::vector<WiringPortRef> ts,
+                                                    std::vector<std::pair<std::string, WiringPortRef>> kwargs)
         {
             if (cases.cases.empty() && !cases.default_branch.has_value())
             {
                 throw std::invalid_argument("switch_: requires at least one case");
+            }
+
+            // Outer time-series slots: positional args, then keyword args in
+            // call order. Branches resolve their parameters onto these slots
+            // (keywords by each branch's own parameter names).
+            const std::size_t positional_count = ts.size();
+            std::vector<std::pair<std::string, std::size_t>> named_slots;
+            named_slots.reserve(kwargs.size());
+            for (std::size_t i = 0; i < kwargs.size(); ++i)
+            {
+                named_slots.emplace_back(kwargs[i].first, positional_count + i);
+                ts.push_back(kwargs[i].second);
             }
 
             std::vector<const TSValueTypeMetaData *> ts_schemas;
@@ -426,13 +517,17 @@ namespace hgraph::stdlib
                 spec.branches.push_back(SwitchBranch{
                     .key  = entry.key,
                     .spec = compile_switch_branch(entry.branch, key.schema,
-                                                  {ts_schemas.data(), ts_schemas.size()}, output_schema),
+                                                  {ts_schemas.data(), ts_schemas.size()}, positional_count,
+                                                  {named_slots.data(), named_slots.size()}, output_schema),
                 });
             }
             if (cases.default_branch.has_value())
             {
                 spec.default_branch = compile_switch_branch(*cases.default_branch, key.schema,
-                                                            {ts_schemas.data(), ts_schemas.size()}, output_schema);
+                                                            {ts_schemas.data(), ts_schemas.size()},
+                                                            positional_count,
+                                                            {named_slots.data(), named_slots.size()},
+                                                            output_schema);
             }
 
             // Outer node inputs: [key, ts...].
@@ -477,8 +572,7 @@ namespace hgraph::stdlib
          * wiring-time computation), unless an explicit output schema already
          * bound ``O``.
          */
-        inline void resolve_switch_output(ResolutionMap &resolution, OperatorCallContext context,
-                                          std::size_t ts_count)
+        inline void resolve_switch_output(ResolutionMap &resolution, OperatorCallContext context)
         {
             if (resolution.find_ts("O") != nullptr) { return; }
 
@@ -492,18 +586,25 @@ namespace hgraph::stdlib
             if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
             const TSValueTypeMetaData *key_schema = context.args[0].port.schema;
 
-            std::vector<const TSValueTypeMetaData *> ts_schemas;
-            ts_schemas.reserve(ts_count);
-            for (std::size_t i = 2; i < 2 + ts_count; ++i)
+            std::vector<const TSValueTypeMetaData *> slot_schemas;
+            for (std::size_t i = 2; i < context.args.size(); ++i)
             {
-                if (i >= context.args.size() || context.args[i].kind != WiringArg::Kind::TimeSeries) { return; }
-                ts_schemas.push_back(context.args[i].port.schema);
+                if (context.args[i].kind != WiringArg::Kind::TimeSeries) { return; }
+                slot_schemas.push_back(context.args[i].port.schema);
+            }
+            const std::size_t positional_count = slot_schemas.size();
+            std::vector<std::pair<std::string, std::size_t>> named_slots;
+            for (const auto &[name, port] : context.kwargs)
+            {
+                named_slots.emplace_back(name, slot_schemas.size());
+                slot_schemas.push_back(port.schema);
             }
 
             try
             {
                 const TSValueTypeMetaData *output_schema = nullptr;
-                (void)compile_switch_branch(*branch, key_schema, {ts_schemas.data(), ts_schemas.size()},
+                (void)compile_switch_branch(*branch, key_schema, {slot_schemas.data(), slot_schemas.size()},
+                                            positional_count, {named_slots.data(), named_slots.size()},
                                             output_schema);
                 if (output_schema != nullptr) { resolution.bind_ts("O", output_schema); }
             }
@@ -513,22 +614,24 @@ namespace hgraph::stdlib
             }
         }
 
-        /** ``switch_(key, cases, *ts)`` — any number of time-series arguments. */
+        /** ``switch_(key, cases, *ts, **kwargs)`` — keywords resolve per branch. */
         struct switch_impl
         {
             static constexpr auto name = "switch_impl";
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                const std::size_t ts_count = context.args.size() >= 2 ? context.args.size() - 2 : 0;
-                resolve_switch_output(resolution, context, ts_count);
+                resolve_switch_output(resolution, context);
             }
 
             static Port<TsVar<"O">> compose(Wiring &w, NamedPort<"key", TS<ScalarVar<"K">>> key,
-                                            Scalar<"cases", SwitchCases> cases, VarIn<"ts", TsVar<"TS">> ts)
+                                            Scalar<"cases", SwitchCases> cases, VarIn<"ts", TsVar<"TS">> ts,
+                                            VarKwIn<"kwargs"> kwargs)
             {
                 auto out = wire_switch(w, key.erased(), cases.value(),
-                                       std::vector<WiringPortRef>{ts.begin(), ts.end()});
+                                       std::vector<WiringPortRef>{ts.begin(), ts.end()},
+                                       std::vector<std::pair<std::string, WiringPortRef>>{kwargs.begin(),
+                                                                                          kwargs.end()});
                 return Port<TsVar<"O">>{w, out.erased()};
             }
         };
@@ -544,8 +647,9 @@ namespace hgraph::stdlib
          * Classify the ``map_`` time-series arguments, Python-style: every
          * TSD argument is **multiplexed** (the key types must all agree —
          * the live key set is their union); everything else broadcasts whole.
-         * Index 0 is the anchor and must be a TSD. Positions are preserved:
-         * argument ``i`` feeds ``func`` parameter ``i`` (after the key).
+         * The argument list has already been resolved onto ``func``'s
+         * parameter order, so argument ``i`` feeds ``func`` parameter ``i``
+         * (after the optional key).
          */
         struct MapArgClassification
         {
@@ -578,13 +682,13 @@ namespace hgraph::stdlib
                 }
                 else
                 {
-                    if (i == 0)
-                    {
-                        throw std::invalid_argument("map_: the first multiplexed input must be a TSD");
-                    }
                     result.is_multiplexed.push_back(false);
                     result.child_schemas.push_back(ts_schemas[i]);
                 }
+            }
+            if (result.key_meta == nullptr)
+            {
+                throw std::invalid_argument("map_: at least one input must be a multiplexed TSD");
             }
             return result;
         }
@@ -681,14 +785,17 @@ namespace hgraph::stdlib
             return spec;
         }
 
-        /** The shared map wiring: compile the child template, add one map node. */
+        /**
+         * The shared map wiring over the **func-parameter-ordered** time-series
+         * list (positional + keyword arguments already resolved onto the
+         * function's parameters): compile the child template, add one map node.
+         */
         [[nodiscard]] inline Port<void> wire_map(Wiring &w, const Scalar<"func", WiredFn> &func,
-                                                 WiringPortRef tsd, std::vector<WiringPortRef> rest)
+                                                 std::vector<WiringPortRef> ordered)
         {
             std::vector<const TSValueTypeMetaData *> ts_schemas;
-            ts_schemas.reserve(1 + rest.size());
-            ts_schemas.push_back(tsd.schema);
-            for (const WiringPortRef &port : rest) { ts_schemas.push_back(port.schema); }
+            ts_schemas.reserve(ordered.size());
+            for (const WiringPortRef &port : ordered) { ts_schemas.push_back(port.schema); }
 
             const TSValueTypeMetaData *output_schema = nullptr;
             MapNodeSpec spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
@@ -696,17 +803,13 @@ namespace hgraph::stdlib
 
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
             fields.reserve(ts_schemas.size());
-            fields.emplace_back("ts", tsd.schema);
-            for (std::size_t i = 1; i < ts_schemas.size(); ++i)
+            for (std::size_t i = 0; i < ts_schemas.size(); ++i)
             {
-                fields.emplace_back(std::to_string(i - 1), ts_schemas[i]);
+                fields.emplace_back(std::to_string(i), ts_schemas[i]);
             }
             const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
 
-            std::vector<WiringPortRef> inputs;
-            inputs.reserve(ts_schemas.size());
-            inputs.push_back(std::move(tsd));
-            for (WiringPortRef &port : rest) { inputs.push_back(std::move(port)); }
+            std::vector<WiringPortRef> inputs = std::move(ordered);
 
             WiringNodeSchema node_schema;
             node_schema.input  = input_schema;
@@ -730,27 +833,55 @@ namespace hgraph::stdlib
             return Port<void>{w, std::move(out)};
         }
 
+        struct OrderedMapSchemas
+        {
+            std::vector<const TSValueTypeMetaData *> schemas{};
+            bool                                    takes_key{false};
+        };
+
+        [[nodiscard]] inline std::optional<OrderedMapSchemas> ordered_map_schemas(OperatorCallContext context)
+        {
+            const WiredFn *func = context.scalar_as<WiredFn>("func");
+            if (func == nullptr) { return std::nullopt; }
+
+            std::vector<const TSValueTypeMetaData *> positional;
+            for (std::size_t i = 1; i < context.args.size(); ++i)
+            {
+                if (context.args[i].kind != WiringArg::Kind::TimeSeries) { return std::nullopt; }
+                positional.push_back(context.args[i].port.schema);
+            }
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> named;
+            named.reserve(context.kwargs.size());
+            for (const auto &[name, port] : context.kwargs) { named.emplace_back(name, port.schema); }
+
+            try
+            {
+                OrderedMapSchemas ordered;
+                ordered.schemas = order_by_fn_params<const TSValueTypeMetaData *>(
+                    "map_", *func, {positional.data(), positional.size()}, {named.data(), named.size()},
+                    ordered.takes_key);
+                return ordered;
+            }
+            catch (const std::invalid_argument &)
+            {
+                return std::nullopt;
+            }
+        }
+
         /** Bind the output var ``O`` for the resolver: ``TSD<K, OUT(func)>``. */
-        inline void resolve_map_output(ResolutionMap &resolution, OperatorCallContext context,
-                                       std::size_t ts_arg_count)
+        inline void resolve_map_output(ResolutionMap &resolution, OperatorCallContext context)
         {
             if (resolution.find_ts("O") != nullptr) { return; }
 
             const WiredFn *func = context.scalar_as<WiredFn>("func");
             if (func == nullptr) { return; }
-
-            std::vector<const TSValueTypeMetaData *> ts_schemas;
-            ts_schemas.reserve(ts_arg_count);
-            for (std::size_t i = 1; i < 1 + ts_arg_count; ++i)
-            {
-                if (i >= context.args.size() || context.args[i].kind != WiringArg::Kind::TimeSeries) { return; }
-                ts_schemas.push_back(context.args[i].port.schema);
-            }
+            auto ordered = ordered_map_schemas(context);
+            if (!ordered.has_value()) { return; }
 
             try
             {
                 const TSValueTypeMetaData *output_schema = nullptr;
-                (void)compile_map_child(*func, {ts_schemas.data(), ts_schemas.size()}, output_schema);
+                (void)compile_map_child(*func, {ordered->schemas.data(), ordered->schemas.size()}, output_schema);
                 if (output_schema != nullptr) { resolution.bind_ts("O", output_schema); }
             }
             catch (...)
@@ -759,38 +890,59 @@ namespace hgraph::stdlib
             }
         }
 
+        /** The first collection in ``func`` parameter order decides which map kernel applies. */
+        [[nodiscard]] inline const TSValueTypeMetaData *first_map_collection(OperatorCallContext context)
+        {
+            auto &registry = TypeRegistry::instance();
+            auto ordered = ordered_map_schemas(context);
+            if (!ordered.has_value()) { return nullptr; }
+            for (const auto *schema_in : ordered->schemas)
+            {
+                const auto *schema = registry.dereference(schema_in);
+                if (schema != nullptr &&
+                    (schema->kind == TSTypeKind::TSD ||
+                     (schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0)))
+                {
+                    return schema;
+                }
+            }
+            return nullptr;
+        }
+
         /**
-         * ``map_(func, tsd, *args)`` — keyed runtime children. Every TSD in
-         * the tail is **multiplexed** alongside the anchor (union key set,
-         * Python parity); non-TSD args broadcast whole.
+         * ``map_(func, *args, **kwargs)`` over TSDs — keyed runtime children,
+         * the Python shape: no fixed anchor parameter; positional + keyword
+         * arguments resolve onto ``func``'s parameters, every TSD multiplexes
+         * (union key set), everything else broadcasts.
          */
         struct map_impl_tsd
         {
             static constexpr auto name = "map_impl";
 
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                const auto *collection = first_map_collection(context);
+                return collection != nullptr && collection->kind == TSTypeKind::TSD;
+            }
+
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                const std::size_t ts_arg_count = context.args.size() >= 1 ? context.args.size() - 1 : 0;
-                resolve_map_output(resolution, context, ts_arg_count);
+                resolve_map_output(resolution, context);
             }
 
             static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> tsd,
-                                            VarIn<"args", TsVar<"B">> rest)
+                                            VarIn<"args", TsVar<"B">> positional, VarKwIn<"kwargs"> kwargs)
             {
-                auto out = wire_map(w, func, tsd.erased(),
-                                    std::vector<WiringPortRef>{rest.begin(), rest.end()});
+                bool takes_key = false;
+                const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
+                const std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
+                auto ordered = order_by_fn_params<WiringPortRef>("map_", func.value(),
+                                                                 {pos.data(), pos.size()},
+                                                                 {named.data(), named.size()}, takes_key);
+                auto out = wire_map(w, func, std::move(ordered));
                 return Port<TsVar<"O">>{w, out.erased()};
             }
         };
-        [[nodiscard]] inline bool map_ts_is_fixed_tsl(OperatorCallContext context, std::size_t expected_args)
-        {
-            if (context.args.size() != expected_args) { return false; }
-            if (context.args.size() < 2 || context.args[1].kind != WiringArg::Kind::TimeSeries) { return false; }
-            const auto *schema = TypeRegistry::instance().dereference(context.args[1].port.schema);
-            return schema != nullptr && schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0;
-        }
-
         /**
          * ``map_`` over a fixed-size TSL is a **wiring-time expansion** —
          * Python's ``_map_no_index``: one inline application of ``func`` per
@@ -804,25 +956,30 @@ namespace hgraph::stdlib
             return deref != nullptr && deref->kind == TSTypeKind::TSL && deref->fixed_size() == size;
         }
 
-        [[nodiscard]] inline Port<void> wire_map_tsl(Wiring &w, const WiredFn &func, WiringPortRef ts,
-                                                     std::vector<WiringPortRef> rest)
+        [[nodiscard]] inline Port<void> wire_map_tsl(Wiring &w, const WiredFn &func, bool takes_key,
+                                                     std::vector<WiringPortRef> ordered)
         {
-            auto       &registry   = TypeRegistry::instance();
-            const auto *tsl_schema = registry.dereference(ts.schema);
-            if (tsl_schema == nullptr || tsl_schema->kind != TSTypeKind::TSL || tsl_schema->fixed_size() == 0)
-            {
-                throw std::invalid_argument("map_: the multiplexed input must be a fixed-size TSL");
-            }
-            const auto       *element = tsl_schema->element_ts();
-            const std::size_t size    = tsl_schema->fixed_size();
+            auto &registry = TypeRegistry::instance();
 
-            const std::size_t base_arity = 1 + rest.size();
-            const bool        takes_key  = func.arity == base_arity + 1;
-            if ((!takes_key && func.arity != base_arity) || !func.has_output)
+            // The first fixed TSL anchors the size; every same-size fixed TSL
+            // multiplexes per index, the rest broadcast whole.
+            std::size_t size = 0;
+            for (const WiringPortRef &port : ordered)
             {
-                throw std::invalid_argument(
-                    "map_: 'func' must take one parameter per time-series argument — optionally preceded by "
-                    "the Int index — and produce an output");
+                const auto *schema = registry.dereference(port.schema);
+                if (schema != nullptr && schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0)
+                {
+                    size = schema->fixed_size();
+                    break;
+                }
+            }
+            if (size == 0)
+            {
+                throw std::invalid_argument("map_: at least one input must be a fixed-size TSL");
+            }
+            if (!func.has_output)
+            {
+                throw std::invalid_argument("map_: 'func' must produce an output");
             }
 
             const auto *key_meta = scalar_descriptor<Int>::value_meta();
@@ -842,8 +999,7 @@ namespace hgraph::stdlib
                     key_arg.scalar_meta  = key_meta;
                     args.push_back(wire_operator(w, "const", {&key_arg, 1}, true, key_ts).output.erased());
                 }
-                args.push_back(subgraph_wiring_detail::tsl_element_ref(ts, i, element));
-                for (const WiringPortRef &tail : rest)
+                for (const WiringPortRef &tail : ordered)
                 {
                     if (tsl_arg_is_multiplexed(tail.schema, size))
                     {
@@ -869,45 +1025,47 @@ namespace hgraph::stdlib
         }
 
         /** Bind the output var ``O`` for the resolver: ``TSL<OUT(func), SIZE>``. */
-        inline void resolve_map_tsl_output(ResolutionMap &resolution, OperatorCallContext context,
-                                           std::size_t broadcast_count)
+        inline void resolve_map_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
         {
             if (resolution.find_ts("O") != nullptr) { return; }
 
             const WiredFn *func = context.scalar_as<WiredFn>("func");
             if (func == nullptr) { return; }
-            if (context.args.size() < 2 || context.args[1].kind != WiringArg::Kind::TimeSeries) { return; }
 
-            auto       &registry   = TypeRegistry::instance();
-            const auto *tsl_schema = registry.dereference(context.args[1].port.schema);
-            if (tsl_schema == nullptr || tsl_schema->kind != TSTypeKind::TSL || tsl_schema->fixed_size() == 0)
-            {
-                return;
-            }
-
-            std::vector<const TSValueTypeMetaData *> schemas;
-            schemas.reserve(func->arity);
-            const std::size_t base_arity = 1 + broadcast_count;
-            if (func->arity == base_arity + 1) { schemas.push_back(registry.ts(scalar_descriptor<Int>::value_meta())); }
-            else if (func->arity != base_arity) { return; }
-            schemas.push_back(tsl_schema->element_ts());
-            for (std::size_t i = 2; i < 2 + broadcast_count; ++i)
-            {
-                if (i >= context.args.size() || context.args[i].kind != WiringArg::Kind::TimeSeries) { return; }
-                const auto *tail_schema = context.args[i].port.schema;
-                if (tsl_arg_is_multiplexed(tail_schema, tsl_schema->fixed_size()))
-                {
-                    schemas.push_back(registry.dereference(tail_schema)->element_ts());
-                }
-                else { schemas.push_back(tail_schema); }
-            }
+            auto &registry = TypeRegistry::instance();
+            auto ordered = ordered_map_schemas(context);
+            if (!ordered.has_value()) { return; }
 
             try
             {
+                std::size_t size = 0;
+                for (const auto *schema_in : ordered->schemas)
+                {
+                    const auto *deref = registry.dereference(schema_in);
+                    if (deref != nullptr && deref->kind == TSTypeKind::TSL && deref->fixed_size() > 0)
+                    {
+                        size = deref->fixed_size();
+                        break;
+                    }
+                }
+                if (size == 0) { return; }
+
+                std::vector<const TSValueTypeMetaData *> schemas;
+                schemas.reserve(func->arity);
+                if (ordered->takes_key) { schemas.push_back(registry.ts(scalar_descriptor<Int>::value_meta())); }
+                for (const auto *schema_in : ordered->schemas)
+                {
+                    if (tsl_arg_is_multiplexed(schema_in, size))
+                    {
+                        schemas.push_back(registry.dereference(schema_in)->element_ts());
+                    }
+                    else { schemas.push_back(schema_in); }
+                }
+
                 CompiledSubGraph compiled = func->compile({schemas.data(), schemas.size()});
                 if (compiled.output_schema != nullptr)
                 {
-                    resolution.bind_ts("O", registry.tsl(compiled.output_schema, tsl_schema->fixed_size()));
+                    resolution.bind_ts("O", registry.tsl(compiled.output_schema, size));
                 }
             }
             catch (...)
@@ -917,9 +1075,10 @@ namespace hgraph::stdlib
         }
 
         /**
-         * ``map_(func, tsl, *args)`` — wiring-time expansion over the fixed
-         * TSL. A tail arg that is a fixed TSL of the SAME size multiplexes
-         * per index; everything else broadcasts whole.
+         * ``map_(func, *args, **kwargs)`` over a fixed TSL — wiring-time
+         * expansion over the first fixed TSL in ``func`` parameter order. Any
+         * fixed TSL of the SAME size multiplexes per index; everything else
+         * broadcasts whole.
          */
         struct map_impl_tsl
         {
@@ -927,20 +1086,25 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return map_ts_is_fixed_tsl(context, context.args.size());
+                const auto *collection = first_map_collection(context);
+                return collection != nullptr && collection->kind == TSTypeKind::TSL;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                const std::size_t broadcast_count = context.args.size() >= 2 ? context.args.size() - 2 : 0;
-                resolve_map_tsl_output(resolution, context, broadcast_count);
+                resolve_map_tsl_output(resolution, context);
             }
 
-            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func, NamedPort<"ts", TSL<TsVar<"V">>> ts,
-                                            VarIn<"args", TsVar<"B">> broadcasts)
+            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                            VarIn<"args", TsVar<"B">> positional, VarKwIn<"kwargs"> kwargs)
             {
-                auto out = wire_map_tsl(w, func.value(), ts.erased(),
-                                        std::vector<WiringPortRef>{broadcasts.begin(), broadcasts.end()});
+                bool takes_key = false;
+                const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
+                const std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
+                auto ordered = order_by_fn_params<WiringPortRef>("map_", func.value(),
+                                                                 {pos.data(), pos.size()},
+                                                                 {named.data(), named.size()}, takes_key);
+                auto out = wire_map_tsl(w, func.value(), takes_key, std::move(ordered));
                 return Port<TsVar<"O">>{w, out.erased()};
             }
         };

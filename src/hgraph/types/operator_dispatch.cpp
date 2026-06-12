@@ -246,6 +246,7 @@ namespace hgraph
 
         bool try_match(const OperatorImpl &impl,
                        std::span<const WiringArg> args,
+                       std::span<const std::pair<std::string, WiringPortRef>> kwargs,
                        std::optional<bool> output_required,
                        const TSValueTypeMetaData *expected_output,
                        ResolutionMap &map,
@@ -379,7 +380,7 @@ namespace hgraph
                 }
             }
 
-            OperatorCallContext context{args, impl.params};
+            OperatorCallContext context{args, impl.params, kwargs};
             if (impl.default_resolver)
             {
                 try
@@ -470,7 +471,7 @@ namespace hgraph
             // Each default an overload falls back on makes it a little less
             // specific than one whose parameters were all supplied.
             int rank_adjustment = call.defaults_used;
-            if (try_match(impl, call.args, output_required, expected_output, map, rank_adjustment, why))
+            if (try_match(impl, call.args, call.kwargs, output_required, expected_output, map, rank_adjustment, why))
             {
                 survivors.push_back({&impl, std::move(map), std::move(call), impl.rank + rank_adjustment});
             }
