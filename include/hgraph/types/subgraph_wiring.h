@@ -459,6 +459,48 @@ namespace hgraph
             }
             throw std::logic_error("tsl_element: the TSL port is unbound");
         }
+
+        /**
+         * Project a TSD port's **key set** (``TSS[K]``) — a zero-copy view
+         * over the same output, addressed at runtime via the
+         * ``ts_key_set_path_component`` path sentinel. Usable on peered and
+         * boundary sources (a structural TSD source has no single backing
+         * dict).
+         */
+        [[nodiscard]] inline WiringPortRef tsd_key_set_ref(const WiringPortRef &ts)
+        {
+            auto       &registry = TypeRegistry::instance();
+            const auto *deref    = registry.dereference(ts.schema);
+            if (deref == nullptr || deref->kind != TSTypeKind::TSD)
+            {
+                throw std::invalid_argument("keys_: the input must be a TSD");
+            }
+            const auto *key_set_schema = registry.tss(deref->key_type());
+
+            switch (ts.source_kind())
+            {
+                case WiringPortRef::SourceKind::Peered:
+                {
+                    std::vector<std::size_t> path = ts.peered_path();
+                    path.push_back(ts_key_set_path_component);
+                    return WiringPortRef::peered_source(ts.peered_node(), std::move(path), key_set_schema,
+                                                        ts.peered_output_kind());
+                }
+                case WiringPortRef::SourceKind::Boundary:
+                {
+                    std::vector<std::size_t> path = ts.boundary_path();
+                    path.push_back(ts_key_set_path_component);
+                    return WiringPortRef::boundary_source(ts.boundary_arg_index(), std::move(path),
+                                                          key_set_schema);
+                }
+                case WiringPortRef::SourceKind::Null:
+                    return WiringPortRef::null_source(key_set_schema);
+                case WiringPortRef::SourceKind::Structural:
+                case WiringPortRef::SourceKind::Unbound:
+                    break;
+            }
+            throw std::logic_error("keys_: the TSD port must be a peered or boundary source");
+        }
     }  // namespace subgraph_wiring_detail
 
     /**

@@ -1,3 +1,4 @@
+#include <hgraph/lib/std/std_operators.h>
 #include <hgraph/lib/testing/check_output.h>
 #include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/record_replay.h>
@@ -533,4 +534,59 @@ TEST_CASE("collections: eval_node exchanges bool ticks for SIGNAL")
     (void)TypeRegistry::instance().register_scalar<bool>("bool");
 
     CHECK_OUTPUT(testing::eval_node<MirrorSignalForEvalNode>({true, none, true}), {true, none, true});
+}
+
+// ---------------------------------------------------------------------------
+// keys_ / union operators (operators/collection.h) — the building blocks
+// map_ composes for its derived __keys__ lifecycle set.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("collections: keys_ mirrors a TSD's key membership as a TSS")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    // The key set is a ZERO-COPY view over the dict, sharing its root
+    // modified flag — a pure value tick therefore surfaces as an EMPTY set
+    // delta (a no-op for delta-driven consumers). Per-surface modified
+    // tracking is the recorded refinement.
+    CHECK_OUTPUT((eval_node<stdlib::keys_, TSD<Str, TS<Int>>>(
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 9}}),   // value tick: no key change
+                                   dict_delta<Str, TS<Int>>({}, {"a"s})))),
+                 values<Value>(set_delta<Str>({"a"s, "b"s}, {}),
+                               set_delta<Str>({}, {}),
+                               set_delta<Str>({}, {"a"s})));
+}
+
+TEST_CASE("collections: union removes an element only when no input still holds it")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::union_, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1, 2}, {}),
+                                   set_delta<Int>({}, {2}),   // 2 still in rhs
+                                   none),
+                     values<Value>(set_delta<Int>({2, 3}, {}),
+                                   none,
+                                   set_delta<Int>({}, {2})))),  // now gone everywhere
+                 values<Value>(set_delta<Int>({1, 2, 3}, {}),
+                               none,
+                               set_delta<Int>({}, {2})));
+}
+
+TEST_CASE("collections: union folds across three inputs")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::union_, TSS<Int>, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1}, {})),
+                     values<Value>(set_delta<Int>({2}, {})),
+                     values<Value>(set_delta<Int>({3}, {})))),
+                 values<Value>(set_delta<Int>({1, 2, 3}, {})));
 }

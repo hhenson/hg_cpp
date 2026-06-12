@@ -217,8 +217,7 @@ namespace hgraph
 
         for (const NestedGraphInputBinding &binding : bindings)
         {
-            auto source = walk_ts_path(root_input.borrowed_ref(), binding.source_path);
-            auto source_output = source.bound_output();
+            auto source_output = walk_source_to_output(root_input.borrowed_ref(), binding.source_path);
 
             auto target = walk_ts_path(
                 child_graph.node_at(binding.target.node).input(evaluation_time),

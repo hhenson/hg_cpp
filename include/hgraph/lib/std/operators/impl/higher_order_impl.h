@@ -730,15 +730,38 @@ namespace hgraph::stdlib
             MapNodeSpec spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
                                                  output_schema);
 
-            if (keys.has_value())
+            // The lifecycle key set: an explicit ``__keys__`` when supplied,
+            // else derived from the multiplexed dicts — ``keys_(tsd)`` for
+            // one, ``union(keys_(tsd)...)`` for several (the Python wiring:
+            // ``__keys__ = union(*key_sets)``). The runtime is always
+            // keys-driven; there is no in-node union scan.
+            auto &registry = TypeRegistry::instance();
+            if (!keys.has_value())
             {
-                auto &registry = TypeRegistry::instance();
-                if (registry.dereference(keys->schema) != registry.tss(output_schema->key_type()))
+                // Each multiplexed dict contributes its ZERO-COPY key-set
+                // projection (no node); several union through the union
+                // operator — the Python wiring ``__keys__ = union(*key_sets)``.
+                std::vector<WiringArg> key_set_args;
+                key_set_args.reserve(spec.multiplexed_inputs.size());
+                for (const std::size_t mux_index : spec.multiplexed_inputs)
                 {
-                    throw std::invalid_argument("map_: '__keys__' must be a TSS of the mapped key type");
+                    WiringArg key_set_arg;
+                    key_set_arg.kind = WiringArg::Kind::TimeSeries;
+                    key_set_arg.port = subgraph_wiring_detail::tsd_key_set_ref(ordered[mux_index]);
+                    key_set_args.push_back(std::move(key_set_arg));
                 }
-                spec.keys_input_index = ordered.size();
+                if (key_set_args.size() == 1) { keys = key_set_args.front().port; }
+                else
+                {
+                    keys = wire_operator(w, "union", {key_set_args.data(), key_set_args.size()}, true)
+                               .output.erased();
+                }
             }
+            if (registry.dereference(keys->schema) != registry.tss(output_schema->key_type()))
+            {
+                throw std::invalid_argument("map_: '__keys__' must be a TSS of the mapped key type");
+            }
+            spec.keys_input_index = ordered.size();
 
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
             fields.reserve(ts_schemas.size() + 1);
@@ -746,11 +769,11 @@ namespace hgraph::stdlib
             {
                 fields.emplace_back(std::to_string(i), ts_schemas[i]);
             }
-            if (keys.has_value()) { fields.emplace_back("__keys__", keys->schema); }
+            fields.emplace_back("__keys__", keys->schema);
             const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
 
             std::vector<WiringPortRef> inputs = std::move(ordered);
-            if (keys.has_value()) { inputs.push_back(std::move(*keys)); }
+            inputs.push_back(std::move(*keys));
 
             WiringNodeSchema node_schema;
             node_schema.input  = input_schema;

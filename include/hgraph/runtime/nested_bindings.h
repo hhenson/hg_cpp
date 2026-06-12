@@ -1,6 +1,7 @@
 #ifndef HGRAPH_RUNTIME_NESTED_BINDINGS_H
 #define HGRAPH_RUNTIME_NESTED_BINDINGS_H
 
+#include <hgraph/runtime/graph.h>
 #include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/time_series/ts_output.h>
 
@@ -19,7 +20,10 @@ namespace hgraph
 
     /**
      * Walk an indexed time-series view (TSB field index or TSL index) along a
-     * path. Inputs and outputs traverse identically, so one template serves both.
+     * path. Inputs and outputs traverse identically, so one template serves
+     * both; the ``ts_key_set_path_component`` sentinel (a TSD's key-set
+     * projection) is output-side only — use ``walk_source_to_output`` when a
+     * binding path may carry it.
      */
     template <typename View>
     [[nodiscard]] View walk_ts_path(View view, const std::vector<std::size_t> &path)
@@ -44,6 +48,19 @@ namespace hgraph
                     auto list = view.as_list();
                     view = list[component];
                     break;
+                }
+                case TSTypeKind::TSD:
+                {
+                    if constexpr (std::is_same_v<View, TSOutputView>)
+                    {
+                        if (component == ts_key_set_path_component)
+                        {
+                            view = view.as_dict().key_set();
+                            break;
+                        }
+                    }
+                    throw std::invalid_argument(
+                        "Nested graph path through a TSD addresses only its key set (output side)");
                 }
                 default:
                     throw std::invalid_argument(
@@ -86,6 +103,24 @@ namespace hgraph
 
         const auto current = target.forwarding_target();
         if (!current.same_as(source.handle())) { target.bind_forwarding_target(source); }
+    }
+    /**
+     * Resolve a binding source path from an outer INPUT root to the bound
+     * OUTPUT it addresses. A trailing ``ts_key_set_path_component`` applies on
+     * the output side after the bound-output hop (the input layer has no
+     * key-set surface).
+     */
+    [[nodiscard]] inline TSOutputView walk_source_to_output(TSInputView root,
+                                                            const std::vector<std::size_t> &path)
+    {
+        if (!path.empty() && path.back() == ts_key_set_path_component)
+        {
+            const std::vector<std::size_t> prefix{path.begin(), path.end() - 1};
+            auto bound = walk_ts_path(std::move(root), prefix).bound_output();
+            if (!bound.bound()) { return {}; }
+            return bound.as_dict().key_set();
+        }
+        return walk_ts_path(std::move(root), path).bound_output();
     }
 }  // namespace hgraph
 

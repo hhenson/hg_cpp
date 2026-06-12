@@ -57,7 +57,7 @@ namespace hgraph
             auto root_input = view.input(evaluation_time);
             for (const NestedGraphInputBinding &binding : spec.input_bindings)
             {
-                auto source = walk_ts_path(root_input.borrowed_ref(), binding.source_path).bound_output();
+                auto source = walk_source_to_output(root_input.borrowed_ref(), binding.source_path);
                 auto target = walk_ts_path(child.node_at(binding.target.node).input(evaluation_time),
                                            binding.target.path);
                 bind_input_to_source(std::move(target), source);

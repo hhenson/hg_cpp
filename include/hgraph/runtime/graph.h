@@ -79,7 +79,15 @@ namespace hgraph
     }
 
     /** Directed edge from one output endpoint/path to one input position. */
-    struct HGRAPH_EXPORT GraphEdge
+        /**
+     * Reserved source-path component addressing a ``TSD``'s **key set** (the
+     * ``TSS`` projection): a path ``{…, dict, ts_key_set_path_component}``
+     * resolves the dict output's ``key_set()`` view. Only valid as the final
+     * component, on the source (output) side.
+     */
+    inline constexpr std::size_t ts_key_set_path_component = static_cast<std::size_t>(-1);
+
+struct HGRAPH_EXPORT GraphEdge
     {
         std::size_t source_node{0};
         std::vector<std::size_t> source_path{};

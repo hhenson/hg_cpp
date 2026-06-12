@@ -175,6 +175,11 @@ namespace hgraph
                                                       .projector = &tsd_output_project_item};
     }
 
+    TSOutputView TSDOutputView::key_set() const
+    {
+        return TSOutputView{view_.output(), data_view().key_set().base(), view_.evaluation_time()};
+    }
+
     TSDDataMutationView TSDOutputView::begin_mutation(DateTime evaluation_time) const
     {
         return data_view().begin_mutation(evaluation_time);

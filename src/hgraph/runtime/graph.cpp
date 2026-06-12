@@ -43,6 +43,16 @@ namespace hgraph
                         view = list[component];
                         break;
                     }
+                    case TSTypeKind::TSD:
+                    {
+                        if (component != ts_key_set_path_component)
+                        {
+                            throw std::invalid_argument(
+                                "Graph output path through a TSD addresses only its key set");
+                        }
+                        view = view.as_dict().key_set();
+                        break;
+                    }
                     default:
                         throw std::invalid_argument("Graph output path can only traverse indexed time-series structures");
                 }

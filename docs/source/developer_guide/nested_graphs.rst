@@ -447,15 +447,23 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   TSD/TSL kernel, and the first TSD provides the key type. Membership changes
   anywhere are structural events: they create/destroy children and re-bind
   surviving entries.
-- **Explicit key set** — ``arg<"__keys__">(tss)`` (Python's
-  ``__keys__: TSS[K]``): the set alone drives the child lifecycle — children
-  exist exactly for its members, created on insert (sampling held dict
-  elements) and destroyed on remove even while a dict still holds the key;
-  the multiplexed dicts then only feed elements (absent keys stay
-  phantom/invalid). Wired as a trailing outer input
-  (``MapNodeSpec::keys_input_index``), validated as a ``TSS`` of the mapped
-  key type, split from the kwargs before ``func``-parameter binding (it is
-  ``map_``'s argument, not ``func``'s), and rejected on TSL maps.
+- **The lifecycle is always keys-driven.** The ``__keys__`` ``TSS[K]``
+  outer input (``MapNodeSpec::keys_input_index``) alone creates and destroys
+  children; there is no in-node union scan. When not supplied explicitly
+  (``arg<"__keys__">(tss)``, Python's ``__keys__``), the wiring derives it —
+  ``keys_(tsd)`` for one multiplexed input, ``union(keys_(tsd)…)`` for
+  several — exactly Python's ``__keys__ = union(*key_sets)``. ``keys_`` is a
+  **zero-copy projection**: ``TSDOutputView::key_set()`` exposes the dict's
+  key set as a bindable ``TSS`` view over the same storage, addressed in
+  edges/bindings by the ``ts_key_set_path_component`` path sentinel (no node
+  is wired; works through forwarding links — the link layer carries its own
+  key-set binding). The ``union`` node reconciles removals against the full
+  current membership, so an input going invalid (a switched-away source)
+  drops its exclusive members. An explicit set is validated as a ``TSS`` of
+  the mapped key type, split from the kwargs before ``func``-parameter
+  binding (it is ``map_``'s argument, not ``func``'s), and rejected on TSL
+  maps. Children for keys absent from a dict keep phantom/invalid element
+  inputs, as before.
 - Deferred: dynamic-TSL multiplexing, name-based key detection /
   ``__key_arg__``, ``pass_through`` / ``no_key`` wrappers, and sink maps.
 

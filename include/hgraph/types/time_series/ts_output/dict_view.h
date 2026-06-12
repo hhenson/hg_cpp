@@ -50,6 +50,14 @@ namespace hgraph
         [[nodiscard]] Range<TSOutputView> removed_values() const;
         [[nodiscard]] KeyValueRange<ValueView, TSOutputView> removed_items() const;
         [[nodiscard]] TSDDataMutationView begin_mutation(DateTime evaluation_time) const;
+
+        /**
+         * The dictionary's **key set as a bindable output view** (``TSS[K]``):
+         * a zero-copy projection over the same storage — inputs may bind to
+         * it like any output (the runtime path component
+         * ``ts_key_set_path_component`` addresses it in edges/bindings).
+         */
+        [[nodiscard]] TSOutputView key_set() const;
     };
 }  // namespace hgraph
 
