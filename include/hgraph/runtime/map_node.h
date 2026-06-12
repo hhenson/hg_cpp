@@ -22,7 +22,8 @@ namespace hgraph
     struct HGRAPH_EXPORT MapArgSource
     {
         MapArgSourceKind kind{MapArgSourceKind::OuterInput};
-        std::size_t      outer_index{0};   ///< ``OuterInput``: index within the outer input root
+        /** ``Element`` / ``OuterInput``: index of the source within the outer input root. */
+        std::size_t      outer_index{0};
     };
 
     struct HGRAPH_EXPORT MapNodeSpec
@@ -31,8 +32,13 @@ namespace hgraph
         SingleNestedGraphNodeSpec child{};
         /** Per boundary arg ordinal: how the child argument is sourced. */
         std::vector<MapArgSource> args{};
-        /** The multiplexed TSD's index within the outer input root. */
-        std::size_t tsd_input_index{0};
+        /**
+         * Outer-input indices of ALL multiplexed TSDs. The live key set is
+         * their **union** (Python parity): a key builds a child when it
+         * appears in any of them and the child (and output entry) is
+         * destroyed only when it has left all of them.
+         */
+        std::vector<std::size_t> multiplexed_inputs{};
         /** ``TS<K>`` for the entry-owned key outputs (when any arg sources ``Key``). */
         const TSValueTypeMetaData *key_output_schema{nullptr};
     };

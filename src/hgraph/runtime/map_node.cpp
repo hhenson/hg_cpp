@@ -5,6 +5,7 @@
 
 #include <ankerl/unordered_dense.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
@@ -76,7 +77,7 @@ namespace hgraph
         struct SourceRepointStatus
         {
             bool any_repointed{false};
-            bool tsd_repointed{false};
+            bool mux_repointed{false};   ///< any MULTIPLEXED source re-pointed
         };
 
         // Program-lifetime, intentionally-leaked context storage — same rationale
@@ -105,7 +106,7 @@ namespace hgraph
 
         [[nodiscard]] SourceRepointStatus update_source_handles(const TSInputView &root_input,
                                                                 MapNodeStorage &storage,
-                                                                std::size_t tsd_input_index)
+                                                                const std::vector<std::size_t> &multiplexed_inputs)
         {
             const std::size_t outer_count = root_input.as_bundle().size();
             const bool        initialized = storage.outer_sources.size() == outer_count;
@@ -122,7 +123,11 @@ namespace hgraph
                     if (initialized)
                     {
                         status.any_repointed = true;
-                        if (i == tsd_input_index) { status.tsd_repointed = true; }
+                        if (std::find(multiplexed_inputs.begin(), multiplexed_inputs.end(), i) !=
+                            multiplexed_inputs.end())
+                        {
+                            status.mux_repointed = true;
+                        }
                     }
                 }
             }
@@ -139,15 +144,27 @@ namespace hgraph
             storage.active.erase(it);
         }
 
-        void remove_entries_missing_from_input(MapNodeStorage &storage,
-                                               TSDDataMutationView &output_mutation,
-                                               const TSDInputView &dict_input)
+        /** A key stays live while it is present in ANY multiplexed input (the union rule). */
+        [[nodiscard]] bool key_in_any_mux(const TSInputView &root_input, const MapNodeSpec &spec,
+                                          const ValueView &key, DateTime)
+        {
+            for (const std::size_t mux_index : spec.multiplexed_inputs)
+            {
+                auto mux_input = walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{mux_index});
+                if (mux_input.valid() && mux_input.as_dict().contains(key)) { return true; }
+            }
+            return false;
+        }
+
+        void remove_entries_missing_from_union(MapNodeStorage &storage, TSDDataMutationView &output_mutation,
+                                               const TSInputView &root_input, const MapNodeSpec &spec,
+                                               DateTime evaluation_time)
         {
             std::vector<Value> stale_keys;
             for (const auto &[key, entry] : storage.active)
             {
                 static_cast<void>(entry);
-                if (!dict_input.contains(key.view())) { stale_keys.push_back(key); }
+                if (!key_in_any_mux(root_input, spec, key.view(), evaluation_time)) { stale_keys.push_back(key); }
             }
             for (const Value &key : stale_keys) { remove_entry(storage, output_mutation, key); }
         }
@@ -164,7 +181,12 @@ namespace hgraph
             for (const Value &key : keys) { remove_entry(storage, output_mutation, key); }
         }
 
-        /** Bind (or re-bind) one entry's child boundary inputs for its key. */
+        /**
+         * Bind (or re-bind) one entry's child boundary inputs for its key. A
+         * multiplexed source whose dict does not currently hold the key leaves
+         * that child input UNBOUND — invalid until the key appears there (the
+         * Python phantom-element behaviour under the union key rule).
+         */
         void bind_entry(const NodeView &view, const MapNodeContext &context, MapKeyEntry &entry, const Value &key,
                         DateTime evaluation_time)
         {
@@ -172,9 +194,6 @@ namespace hgraph
             if (spec.child.input_bindings.empty()) { return; }
 
             auto root_input = view.input(evaluation_time);
-            auto tsd_source = walk_ts_path(root_input.borrowed_ref(),
-                                           std::vector<std::size_t>{spec.tsd_input_index})
-                                  .bound_output();
             auto child = entry.graph.view();
 
             for (const NestedGraphInputBinding &binding : spec.child.input_bindings)
@@ -189,9 +208,12 @@ namespace hgraph
                         break;
                     case MapArgSourceKind::Element:
                     {
-                        if (tsd_source.bound())
+                        auto mux_source = walk_ts_path(root_input.borrowed_ref(),
+                                                       std::vector<std::size_t>{arg.outer_index})
+                                              .bound_output();
+                        if (mux_source.bound())
                         {
-                            auto dict = tsd_source.as_dict();
+                            auto dict = mux_source.as_dict();
                             if (dict.contains(key.view()))
                             {
                                 source = walk_ts_path(dict.at(key.view()), path_suffix(binding.source_path));
@@ -283,39 +305,58 @@ namespace hgraph
             const auto &spec     = context.spec;
 
             auto root_input = view.input(evaluation_time);
-            auto tsd_input  = walk_ts_path(root_input.borrowed_ref(),
-                                           std::vector<std::size_t>{spec.tsd_input_index});
             SourceRepointStatus source_status =
-                update_source_handles(root_input.borrowed_ref(), storage, spec.tsd_input_index);
+                update_source_handles(root_input.borrowed_ref(), storage, spec.multiplexed_inputs);
             bool bindings_need_refresh = source_status.any_repointed;
 
-            if (tsd_input.valid())
+            // The live key set is the UNION over all multiplexed inputs
+            // (Python parity): reconcile when any of them modified or
+            // re-pointed (or on first observation).
+            bool any_valid    = false;
+            bool any_modified = false;
+            for (const std::size_t mux_index : spec.multiplexed_inputs)
+            {
+                auto mux_input = walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{mux_index});
+                if (mux_input.modified()) { any_modified = true; }
+                if (!mux_input.valid()) { continue; }
+                any_valid = true;
+            }
+
+            if (any_valid)
             {
                 // Key lifecycle in one output-mutation scope: reconcile stale
-                // children against the current key set, then create one fresh
-                // child per new key. Child evaluations below write through their
-                // forwarding outputs and need no mutation scope here.
-                auto output          = view.output(evaluation_time);
-                auto output_dict     = output.as_dict();
-                auto output_mutation = output_dict.begin_mutation(evaluation_time);
-
-                auto dict_input = tsd_input.as_dict();
-
-                if (source_status.tsd_repointed || tsd_input.modified() || !storage.primed)
+                // children against the current union, then create one fresh
+                // child per new key anywhere. Child evaluations below write
+                // through their forwarding outputs and need no mutation scope.
+                if (source_status.mux_repointed || any_modified || !storage.primed)
                 {
-                    remove_entries_missing_from_input(storage, output_mutation, dict_input);
-                    for (const ValueView &key : dict_input.keys())
+                    auto output          = view.output(evaluation_time);
+                    auto output_dict     = output.as_dict();
+                    auto output_mutation = output_dict.begin_mutation(evaluation_time);
+
+                    remove_entries_missing_from_union(storage, output_mutation, root_input.borrowed_ref(), spec,
+                                                      evaluation_time);
+                    for (const std::size_t mux_index : spec.multiplexed_inputs)
                     {
-                        if (storage.active.find(Value{key}) == storage.active.end())
+                        auto mux_input =
+                            walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{mux_index});
+                        if (!mux_input.valid()) { continue; }
+                        auto dict_input = mux_input.as_dict();
+                        for (const ValueView &key : dict_input.keys())
                         {
-                            create_entry(view, context, storage, output_mutation, key, evaluation_time);
+                            if (storage.active.find(Value{key}) == storage.active.end())
+                            {
+                                create_entry(view, context, storage, output_mutation, key, evaluation_time);
+                            }
                         }
                     }
                     storage.primed = true;
-                    if (tsd_input.modified()) { bindings_need_refresh = true; }
+                    // Membership may have changed in one dict while the key
+                    // stays live in the union — surviving entries re-bind.
+                    if (any_modified) { bindings_need_refresh = true; }
                 }
             }
-            else if (source_status.tsd_repointed || tsd_input.modified())
+            else if (source_status.mux_repointed || storage.primed)
             {
                 if (!storage.active.empty())
                 {
@@ -377,22 +418,39 @@ namespace hgraph
             {
                 throw std::invalid_argument("map_node requires a TSD output schema");
             }
-            if (spec.tsd_input_index >= meta.input_schema->field_count())
+            if (spec.multiplexed_inputs.empty())
             {
-                throw std::invalid_argument("map_node TSD input index is out of range");
+                throw std::invalid_argument("map_node requires at least one multiplexed TSD input");
             }
-
             const auto *input_fields = meta.input_schema->fields();
-            const auto *tsd_schema =
-                TypeRegistry::instance().dereference(input_fields[spec.tsd_input_index].type);
-            if (tsd_schema == nullptr || tsd_schema->kind != TSTypeKind::TSD)
+            const TSValueTypeMetaData *anchor_tsd = nullptr;
+            std::vector<std::size_t> seen_mux_inputs;
+            seen_mux_inputs.reserve(spec.multiplexed_inputs.size());
+            for (const std::size_t mux_index : spec.multiplexed_inputs)
             {
-                throw std::invalid_argument("map_node TSD input index must select a TSD input field");
+                if (mux_index >= meta.input_schema->field_count())
+                {
+                    throw std::invalid_argument("map_node multiplexed input index is out of range");
+                }
+                if (std::find(seen_mux_inputs.begin(), seen_mux_inputs.end(), mux_index) !=
+                    seen_mux_inputs.end())
+                {
+                    throw std::invalid_argument("map_node multiplexed input indices must be unique");
+                }
+                seen_mux_inputs.push_back(mux_index);
+                const auto *tsd_schema = TypeRegistry::instance().dereference(input_fields[mux_index].type);
+                if (tsd_schema == nullptr || tsd_schema->kind != TSTypeKind::TSD)
+                {
+                    throw std::invalid_argument("map_node multiplexed input index must select a TSD input field");
+                }
+                if (tsd_schema->key_type() != meta.output_schema->key_type())
+                {
+                    throw std::invalid_argument(
+                        "map_node output key type must match every multiplexed input key type");
+                }
+                if (anchor_tsd == nullptr) { anchor_tsd = tsd_schema; }
             }
-            if (tsd_schema->key_type() != meta.output_schema->key_type())
-            {
-                throw std::invalid_argument("map_node output key type must match the multiplexed input key type");
-            }
+            const auto *tsd_schema = anchor_tsd;
 
             const std::size_t child_node_count = spec.child.graph_builder.node_count();
             const auto       &output_binding   = *spec.child.output_binding;
@@ -435,6 +493,16 @@ namespace hgraph
                         break;
                     case MapArgSourceKind::Element:
                         element_source_seen = true;
+                        if (arg.outer_index >= meta.input_schema->field_count())
+                        {
+                            throw std::invalid_argument("map_node element source index is out of range");
+                        }
+                        if (std::find(spec.multiplexed_inputs.begin(), spec.multiplexed_inputs.end(),
+                                      arg.outer_index) == spec.multiplexed_inputs.end())
+                        {
+                            throw std::invalid_argument(
+                                "map_node element source index must select a multiplexed TSD input");
+                        }
                         break;
                     case MapArgSourceKind::OuterInput:
                         if (arg.outer_index >= meta.input_schema->field_count())

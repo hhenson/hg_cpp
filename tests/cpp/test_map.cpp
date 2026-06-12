@@ -334,3 +334,156 @@ TEST_CASE("map_ over TSL: key plus broadcast (arity = key + element + broadcast)
                      values<Int>(100))),
                  values<Value>(list_delta<TS<Int>>({110, 121, 132})));
 }
+
+// ---------------------------------------------------------------------------
+// Multi-multiplexed inputs (Python parity): every TSD in *args demultiplexes
+// by key — the live key set is the UNION; a key absent from one TSD leaves
+// that child input invalid until it appears. Same-size TSLs multiplex per
+// index in the TSL form.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // Two multiplexed elements (both must be valid before it emits).
+    struct AddPairG
+    {
+        static constexpr auto name = "add_pair_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (lhs + rhs).as<TS<Int>>();
+        }
+    };
+
+    // Two multiplexed elements plus a broadcast offset.
+    struct AddPairOffsetG
+    {
+        static constexpr auto name = "add_pair_offset_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs, Port<TS<Int>> offset)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return ((lhs + rhs).as<TS<Int>>() + offset).as<TS<Int>>();
+        }
+    };
+
+    // Emits from the second mux and treats the first mux as optional. This
+    // exposes lifecycle bugs where an invalidating mux must remove a key that
+    // existed only in that mux while another mux remains valid.
+    struct OptionalLeftRightNode
+    {
+        static constexpr auto name = "optional_left_right";
+
+        static void eval(In<"lhs", TS<Int>, InputValidity::Unchecked> lhs,
+                         In<"rhs", TS<Int>, InputValidity::Unchecked> rhs,
+                         Out<TS<Int>> out)
+        {
+            if (!rhs.valid()) { return; }
+            out.set((lhs.valid() ? lhs.value() : Int{0}) + rhs.value());
+        }
+    };
+
+    struct OptionalLeftRightG
+    {
+        static constexpr auto name = "optional_left_right_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            return wire<OptionalLeftRightNode>(w, lhs, rhs);
+        }
+    };
+
+    struct ConstLeftOnlyDict
+    {
+        static constexpr auto             name = "const_left_only_dict";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w)
+        {
+            return wire<stdlib::const_, TSD<Str, TS<Int>>>(
+                w, stdlib::make_map<Str, Int>({{Str{"left"}, Int{1}}}));
+        }
+    };
+
+    struct ConstRightOnlyDict
+    {
+        static constexpr auto             name = "const_right_only_dict";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w)
+        {
+            return wire<stdlib::const_, TSD<Str, TS<Int>>>(
+                w, stdlib::make_map<Str, Int>({{Str{"right"}, Int{7}}}));
+        }
+    };
+
+    struct MapSecondMuxInvalidGraph
+    {
+        static constexpr auto             name = "map_second_mux_invalid_graph";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TS<Str>> select)
+        {
+            auto left = wire<ConstLeftOnlyDict>(w);
+            auto right = wire<stdlib::switch_>(
+                             w, select,
+                             stdlib::switch_cases({{Value{Str{"right"}}, fn<ConstRightOnlyDict>()},
+                                                    {Value{Str{"none"}}, fn<NoDict>()}}))
+                             .as<TSD<Str, TS<Int>>>();
+            return wire<stdlib::map_>(w, fn<OptionalLeftRightG>(), left, right)
+                .as<TSD<Str, TS<Int>>>();
+        }
+    };
+}  // namespace
+
+TEST_CASE("map_ over two TSDs: union key set, per-key pairing, absent keys stay pending")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // t0: union {a, b}; only a is in both -> {a: 11}; b waits for tsd2.
+    // t1: b appears in tsd2 -> {b: 22}.
+    // t2: a leaves tsd1 only -> a stays live in the union, nothing emits.
+    // t3: a leaves tsd2 too -> the union drops a: child destroyed, key removed.
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSD<Str, TS<Int>>, TSD<Str, TS<Int>>>(
+                     fn<AddPairG>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+                                   none,
+                                   dict_delta<Str, TS<Int>>({}, {"a"s}),
+                                   none),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 10}}),
+                                   dict_delta<Str, TS<Int>>({{"b"s, 20}}),
+                                   none,
+                                   dict_delta<Str, TS<Int>>({}, {"a"s})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 11}}),
+                               dict_delta<Str, TS<Int>>({{"b"s, 22}}),
+                               none,
+                               dict_delta<Str, TS<Int>>({}, {"a"s})));
+}
+
+TEST_CASE("map_ over two TSDs plus a broadcast: positions map straight onto func parameters")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSD<Str, TS<Int>>, TSD<Str, TS<Int>>>(
+                     fn<AddPairOffsetG>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 1}})),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 2}})),
+                     values<Int>(100))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 103}})));
+}
+
+TEST_CASE("map_ removes keys from an invalidated mux while another mux remains valid")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<MapSecondMuxInvalidGraph>(values<Str>(Str{"right"}, Str{"none"})),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"right"s, 7}}),
+                               dict_delta<Str, TS<Int>>({}, {"right"s})));
+}
+
+TEST_CASE("map_ over two same-size TSLs: pairs multiplex per index")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSL<TS<Int>, 3>, TSL<TS<Int>, 3>>(
+                     fn<AddPairG>(),
+                     values<Value>(list_delta<TS<Int>>({1, 2, 3})),
+                     values<Value>(list_delta<TS<Int>>({10, 20, 30})))),
+                 values<Value>(list_delta<TS<Int>>({11, 22, 33})));
+}

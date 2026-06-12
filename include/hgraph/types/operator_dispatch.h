@@ -72,17 +72,24 @@ namespace hgraph
     };
 
     /**
-     * Trailing **variadic** time-series parameter for operator graph overloads
-     * (Python's ``*ts``). The implementation receives the tail arguments as
-     * erased port refs — they may carry heterogeneous schemas; each is matched
-     * against the declared pattern independently at dispatch (tail matches do
-     * not bind type variables). Must be the LAST ``compose`` parameter. This
-     * is a runtime-dispatch capability: the candidate's matcher handles any
-     * argument count, so a future Python frontend dispatches identically.
+     * Trailing **variadic** time-series parameter (Python's ``*ts``) — a named
+     * selector like ``In`` / ``Scalar``, serving both roles:
+     *
+     * - in an ``Operator<…>`` **marker**, it declares the variadic contract
+     *   (``VarIn<"ts", TsVar<"TS">>`` documents zero-or-more trailing
+     *   time-series arguments);
+     * - as the LAST ``compose`` parameter of a graph overload, it receives the
+     *   tail arguments as erased port refs — they may carry heterogeneous
+     *   schemas; each is matched against the declared pattern independently at
+     *   dispatch (tail matches do not bind type variables).
+     *
+     * This is a runtime-dispatch capability: the candidate's matcher handles
+     * any argument count, so a future Python frontend dispatches identically.
      */
-    template <typename S>
+    template <fixed_string Name, typename S>
     struct VarIn
     {
+        static constexpr auto field_name = Name;
         using schema_type = S;
 
         std::vector<WiringPortRef> ports{};
@@ -100,8 +107,8 @@ namespace hgraph
         struct is_var_in : std::false_type
         {
         };
-        template <typename S>
-        struct is_var_in<VarIn<S>> : std::true_type
+        template <fixed_string N, typename S>
+        struct is_var_in<VarIn<N, S>> : std::true_type
         {
         };
     }  // namespace operator_dispatch_detail
@@ -370,6 +377,7 @@ namespace hgraph
                             static_assert(I + 1 == std::tuple_size_v<params_tuple>,
                                           "VarIn must be the last compose parameter");
                             pp.kind = ParamPattern::Kind::Input;
+                            pp.name = std::string{P::field_name.sv()};
                             pp.ts   = to_pattern<typename P::schema_type>();
                         }
                         else if constexpr (graph_wiring_detail::is_port<P>::value)

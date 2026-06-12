@@ -208,7 +208,7 @@ namespace
     struct variadic_rank_fallback
     {
         static constexpr auto name = "variadic_rank_fallback";
-        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> first, VarIn<TS<Int>> rest)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> first, VarIn<"rest", TS<Int>> rest)
         {
             static_cast<void>(rest);
             return first;

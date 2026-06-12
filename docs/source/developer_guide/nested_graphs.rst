@@ -364,8 +364,8 @@ Tests: ``tests/cpp/test_switch.cpp``.
 ``map_``
 --------
 
-``map_(func, tsd[, broadcasts…])`` owns **one child graph instance per key**
-of its multiplexed ``TSD`` input — an operator like the rest of the family
+``map_(func, tsd, *args)`` owns **one child graph instance per key**
+of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
 (``wire<stdlib::map_>(w, fn<G>(), tsd_port[, ts…])``).
 
 - **Key lifecycle is current-key reconciliation**: when the mapped TSD
@@ -427,9 +427,19 @@ of its multiplexed ``TSD`` input — an operator like the rest of the family
   schemas agree, and assemble a **structural TSL** output. Selected by the
   same ``map_`` name (``requires_`` gates on a fixed-size TSL input); the
   resolver discovers ``TSL<OUT, SIZE>`` by compiling ``func`` once.
-- Deferred: dynamic-TSL multiplexing, variadic/multi-multiplexed inputs,
-  explicit ``__keys__`` / ``pass_through`` / ``no_key`` wrappers, and sink
-  maps.
+- **The variadic tail is classified, Python-style**: every TSD argument is
+  multiplexed alongside the anchor (key types must agree) — the live key set
+  is the **union** of their key sets; a key absent from one dict leaves that
+  child input unbound (invalid) until it appears there (the phantom-element
+  behaviour), and the output entry is removed only when the key has left
+  every multiplexed input. Non-TSD args broadcast whole; in the TSL form a
+  tail arg that is a fixed TSL of the same size multiplexes per index.
+  Argument positions map straight onto ``func`` parameters (after the key) —
+  multiplexed-ness never reorders. Membership changes anywhere are
+  structural events: they create/destroy children and re-bind surviving
+  entries.
+- Deferred: dynamic-TSL multiplexing, explicit ``__keys__`` /
+  ``pass_through`` / ``no_key`` wrappers, and sink maps.
 
 Tests: ``tests/cpp/test_map.cpp``. ASAN/UBSAN-verified (keyed
 create/destroy churn).

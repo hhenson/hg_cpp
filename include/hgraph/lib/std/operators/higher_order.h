@@ -121,7 +121,7 @@ namespace hgraph::stdlib
     struct switch_ : Operator<"switch_",
                               In<"key", TS<ScalarVar<"K">>>,
                               Scalar<"cases", SwitchCases>,
-                              In<"ts", TsVar<"TS">>,          // optional (arity) time-series argument(s)
+                              VarIn<"ts", TsVar<"TS">>,       // *ts — branches bind these positionally
                               Out<TsVar<"O">>>
     {
     };
@@ -134,14 +134,16 @@ namespace hgraph::stdlib
      * - the multiplexed input is a ``TSD`` (keyed runtime children) or a
      *   fixed-size ``TSL`` (wiring-time expansion: one inline application of
      *   ``func`` per index, key = the ``Int`` index — Python's
-     *   ``_map_no_index``, no runtime node); TSD key lifecycle is reconciled against
-     *   the current key set when the mapped source modifies or re-points — a
-     *   new key builds/binds/starts a fresh child, a missing key destroys it
-     *   and removes the output entry;
-     * - ``func`` may take the key as its first argument (by arity): with one
-     *   multiplexed input, arity 1 is ``(element)`` and arity 2 is
-     *   ``(key, element)``; further (broadcast) time-series arguments are
-     *   passed whole and extend the arity accordingly;
+     *   ``_map_no_index``, no runtime node). EVERY TSD in the tail is also
+     *   multiplexed (same key type; the live key set is their UNION — a key
+     *   absent from one dict leaves that child input invalid until it
+     *   appears); same-size TSLs in the TSL form multiplex per index;
+     *   non-collection args broadcast whole. Lifecycle reconciles when any
+     *   multiplexed source modifies or re-points;
+     * - ``func`` may take the key as its first argument (by arity). After the
+     *   optional key, argument positions match the time-series arguments:
+     *   multiplexed inputs pass the per-key/per-index element and broadcast
+     *   inputs pass the whole time-series;
      * - the output is an owned ``TSD<K, OUT>`` with a real element
      *   instantiated per key; the child's terminal output is a forwarding
      *   endpoint bound onto that element, so the child **writes the parent's
@@ -151,7 +153,8 @@ namespace hgraph::stdlib
      */
     struct map_ : Operator<"map_",
                            Scalar<"func", WiredFn>,
-                           In<"ts", TsVar<"TS">>,             // the multiplexed collection (+ broadcast args)
+                           In<"ts", TsVar<"TS">>,             // the anchor multiplexed collection
+                           VarIn<"args", TsVar<"A">>,         // *args — further multiplexed / broadcast inputs
                            Out<TsVar<"O">>>
     {
     };

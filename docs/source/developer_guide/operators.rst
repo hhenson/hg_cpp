@@ -559,10 +559,13 @@ Variadic operator parameters
 ----------------------------
 
 An operator overload may take **zero-or-more trailing time-series arguments**
-(Python's ``*ts``) by declaring its last ``compose`` parameter as
-``VarIn<Pattern>`` (``operator_dispatch.h``) — the implementation receives the
-tail as erased ``WiringPortRef``\ s. ``switch_(key, cases, *ts)`` and
-``map_(func, mux, *broadcasts)`` use it.
+(Python's ``*ts``) via the named ``VarIn<"name", Pattern>`` selector
+(``operator_dispatch.h``), which serves both roles like ``Scalar``: in the
+``Operator<…>`` **marker** it declares the variadic contract
+(``VarIn<"ts", TsVar<"TS">>``), and as the last ``compose`` parameter of a
+graph overload the implementation receives the tail as erased
+``WiringPortRef``\ s. ``switch_(key, cases, *ts)`` and
+``map_(func, ts, *args)`` use it.
 
 Dispatch semantics (all in the **runtime** matcher — the capability is fully
 available to a future Python frontend, which calls the same
