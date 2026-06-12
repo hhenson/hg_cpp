@@ -350,82 +350,11 @@ namespace hgraph::stdlib
         };
 
         /**
-         * Compile one ``switch_`` branch for the outer inputs ``[key, ts...]``.
-         * A branch may consume the key (arity == ts_count + 1, key first) or
-         * not (arity == ts_count; its binding paths shift past the key input,
-         * which is outer input 0). Returns the runtime branch spec; records /
-         * verifies the common output schema across branches.
-         */
-        /**
-         * Resolve positional + keyword time-series arguments onto a wired
-         * function's parameters, Python-style: positional fill in order,
-         * keywords by the function's parameter names (``NamedPort`` /
-         * ``In<"name">``), every parameter exactly once. ``takes_key`` is
-         * derived from arity, as everywhere (arity = filled + 1 => the key is
-         * parameter 0 and keywords resolve against the rest).
-         */
-        template <typename T>
-        [[nodiscard]] std::vector<T> order_by_fn_params(const char *op, const WiredFn &func,
-                                                        std::span<const T> positional,
-                                                        std::span<const std::pair<std::string, T>> named,
-                                                        bool &takes_key)
-        {
-            const std::size_t filled = positional.size() + named.size();
-            takes_key                = func.arity == filled + 1;
-            if (!takes_key && func.arity != filled)
-            {
-                throw std::invalid_argument(
-                    std::string{op} + ": 'func' takes a different number of time-series arguments");
-            }
-            const std::size_t offset = takes_key ? 1 : 0;
-
-            std::vector<std::optional<T>> slots(filled);
-            for (std::size_t i = 0; i < positional.size(); ++i) { slots[i] = positional[i]; }
-
-            const auto names = func.param_names();
-            for (const auto &[name, value] : named)
-            {
-                std::size_t found = filled;
-                for (std::size_t j = 0; j < filled; ++j)
-                {
-                    const std::size_t p = offset + j;
-                    if (p < names.size() && !names[p].empty() && names[p] == name)
-                    {
-                        found = j;
-                        break;
-                    }
-                }
-                if (found == filled)
-                {
-                    throw std::invalid_argument(std::string{op} + ": 'func' has no parameter named '" + name +
-                                                "' (name ports with NamedPort / In<\"name\">)");
-                }
-                if (slots[found].has_value())
-                {
-                    throw std::invalid_argument(std::string{op} + ": got multiple values for 'func' parameter '" +
-                                                name + "'");
-                }
-                slots[found] = value;
-            }
-
-            std::vector<T> ordered;
-            ordered.reserve(filled);
-            for (auto &slot : slots)
-            {
-                if (!slot.has_value())
-                {
-                    throw std::invalid_argument(std::string{op} + ": a 'func' parameter was not supplied");
-                }
-                ordered.push_back(std::move(*slot));
-            }
-            return ordered;
-        }
-
-        /**
          * Compile one branch over the outer time-series slots. ``named_slots``
          * are the keyword arguments as ``(name, outer slot)`` pairs — resolved
          * per branch against ITS parameter names (branches may name and order
-         * their parameters differently, like Python).
+         * their parameters differently, like Python). A branch may consume the
+         * key (arity == ts_count + 1, key first) or not (arity == ts_count).
          */
         [[nodiscard]] inline SingleNestedGraphNodeSpec compile_switch_branch(
             const WiredFn &branch,
@@ -443,14 +372,13 @@ namespace hgraph::stdlib
             std::vector<std::size_t> positional_slots(positional_count);
             for (std::size_t i = 0; i < positional_count; ++i) { positional_slots[i] = i; }
 
-            bool takes_key = false;
-            const std::vector<std::size_t> ordered_slots = order_by_fn_params<std::size_t>(
-                "switch_", branch, {positional_slots.data(), positional_slots.size()}, named_slots, takes_key);
+            const auto bound_slots = bind_wired_fn_args<std::size_t>(
+                "switch_", branch, {positional_slots.data(), positional_slots.size()}, named_slots);
 
             std::vector<const TSValueTypeMetaData *> schemas;
             schemas.reserve(branch.arity);
-            if (takes_key) { schemas.push_back(key_schema); }
-            for (const std::size_t slot : ordered_slots) { schemas.push_back(slot_schemas[slot]); }
+            if (bound_slots.takes_leading_key) { schemas.push_back(key_schema); }
+            for (const std::size_t slot : bound_slots.ordered) { schemas.push_back(slot_schemas[slot]); }
 
             CompiledSubGraph compiled = branch.compile({schemas.data(), schemas.size()});
 
@@ -472,12 +400,12 @@ namespace hgraph::stdlib
             // Re-target boundary ordinals onto the outer input root: ordinal 0
             // is the key when the branch consumes it; every other parameter
             // maps through its resolved outer slot (+1 past the key input).
-            const std::size_t offset = takes_key ? 1 : 0;
+            const std::size_t offset = bound_slots.takes_leading_key ? 1 : 0;
             for (NestedGraphInputBinding &binding : spec.input_bindings)
             {
                 const std::size_t ordinal = binding.source_path[0];
-                if (takes_key && ordinal == 0) { binding.source_path[0] = 0; }
-                else { binding.source_path[0] = 1 + ordered_slots[ordinal - offset]; }
+                if (bound_slots.takes_leading_key && ordinal == 0) { binding.source_path[0] = 0; }
+                else { binding.source_path[0] = 1 + bound_slots.ordered[ordinal - offset]; }
             }
             return spec;
         }
@@ -857,9 +785,11 @@ namespace hgraph::stdlib
             try
             {
                 OrderedMapSchemas ordered;
-                ordered.schemas = order_by_fn_params<const TSValueTypeMetaData *>(
+                auto bound = bind_wired_fn_args<const TSValueTypeMetaData *>(
                     "map_", *func, {positional.data(), positional.size()}, {named.data(), named.size()},
-                    ordered.takes_key);
+                    true);
+                ordered.schemas   = std::move(bound.ordered);
+                ordered.takes_key = bound.takes_leading_key;
                 return ordered;
             }
             catch (const std::invalid_argument &)
@@ -933,13 +863,12 @@ namespace hgraph::stdlib
             static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
                                             VarIn<"args", TsVar<"B">> positional, VarKwIn<"kwargs"> kwargs)
             {
-                bool takes_key = false;
                 const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
                 const std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
-                auto ordered = order_by_fn_params<WiringPortRef>("map_", func.value(),
-                                                                 {pos.data(), pos.size()},
-                                                                 {named.data(), named.size()}, takes_key);
-                auto out = wire_map(w, func, std::move(ordered));
+                auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(),
+                                                               {pos.data(), pos.size()},
+                                                               {named.data(), named.size()});
+                auto out = wire_map(w, func, std::move(bound.ordered));
                 return Port<TsVar<"O">>{w, out.erased()};
             }
         };
@@ -1098,13 +1027,12 @@ namespace hgraph::stdlib
             static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
                                             VarIn<"args", TsVar<"B">> positional, VarKwIn<"kwargs"> kwargs)
             {
-                bool takes_key = false;
                 const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
                 const std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
-                auto ordered = order_by_fn_params<WiringPortRef>("map_", func.value(),
-                                                                 {pos.data(), pos.size()},
-                                                                 {named.data(), named.size()}, takes_key);
-                auto out = wire_map_tsl(w, func.value(), takes_key, std::move(ordered));
+                auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(),
+                                                               {pos.data(), pos.size()},
+                                                               {named.data(), named.size()});
+                auto out = wire_map_tsl(w, func.value(), bound.takes_leading_key, std::move(bound.ordered));
                 return Port<TsVar<"O">>{w, out.erased()};
             }
         };

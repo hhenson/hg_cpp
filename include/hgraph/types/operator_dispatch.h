@@ -3,6 +3,7 @@
 
 #include <hgraph/hgraph_export.h>
 #include <hgraph/runtime/node.h>                       // NodeBuilder
+#include <hgraph/types/call_args.h>                    // NamedArg, arg<"name">(...)
 #include <hgraph/types/graph_wiring.h>                 // Wiring, Port, WiringPortRef, wire<>, operator_tag, graph_wiring_detail
 #include <hgraph/types/metadata/value_plan_factory.h>  // ValuePlanFactory
 #include <hgraph/types/static_node.h>                  // StaticNodeSignature, selector traits
@@ -73,35 +74,9 @@ namespace hgraph
         std::string              name{};
     };
 
-    /**
-     * Call-site keyword argument: ``wire<Op>(w, ts, arg<"zero">(Int{5}))`` —
-     * the Python ``name=value`` form. Named arguments must follow positional
-     * ones; they target the candidate's parameters by name during call
-     * normalisation (see *Operators > Named arguments, defaults and kwargs*).
-     */
-    template <typename T>
-    struct NamedArg
-    {
-        std::string_view name{};
-        T                value;
-    };
-
-    template <fixed_string Name, typename T>
-    [[nodiscard]] NamedArg<std::decay_t<T>> arg(T &&value)
-    {
-        return NamedArg<std::decay_t<T>>{Name.sv(), std::forward<T>(value)};
-    }
-
     namespace operator_dispatch_detail
     {
-        template <typename T>
-        struct is_named_arg : std::false_type
-        {
-        };
-        template <typename T>
-        struct is_named_arg<NamedArg<T>> : std::true_type
-        {
-        };
+        using call_args_detail::is_named_arg;
     }  // namespace operator_dispatch_detail
 
     /**
@@ -852,26 +827,26 @@ namespace hgraph
             }
             else
             {
-            WiringArg result;
-            if constexpr (graph_wiring_detail::is_port<AA>::value)
-            {
-                result.kind = WiringArg::Kind::TimeSeries;
-                result.port = arg.erased();
-            }
-            else
-            {
-                result.kind        = WiringArg::Kind::Scalar;
-                result.scalar_meta = graph_wiring_detail::scalar_argument_meta(arg);
-                if constexpr (static_node_detail::is_scalar_selector<AA>::value)
+                WiringArg result;
+                if constexpr (graph_wiring_detail::is_port<AA>::value)
                 {
-                    using V = typename graph_wiring_detail::arg_value_type<AA>::type;
-                    if constexpr (std::is_same_v<V, Value>) { result.scalar_value = arg.value(); }
-                    else { result.scalar_value = Value{arg.value()}; }
+                    result.kind = WiringArg::Kind::TimeSeries;
+                    result.port = arg.erased();
                 }
-                else if constexpr (std::is_same_v<AA, Value>) { result.scalar_value = arg; }
-                else { result.scalar_value = Value{arg}; }
-            }
-            return result;
+                else
+                {
+                    result.kind        = WiringArg::Kind::Scalar;
+                    result.scalar_meta = graph_wiring_detail::scalar_argument_meta(arg);
+                    if constexpr (static_node_detail::is_scalar_selector<AA>::value)
+                    {
+                        using V = typename graph_wiring_detail::arg_value_type<AA>::type;
+                        if constexpr (std::is_same_v<V, Value>) { result.scalar_value = arg.value(); }
+                        else { result.scalar_value = Value{arg.value()}; }
+                    }
+                    else if constexpr (std::is_same_v<AA, Value>) { result.scalar_value = arg; }
+                    else { result.scalar_value = Value{arg}; }
+                }
+                return result;
             }
         }
     }  // namespace operator_dispatch_detail

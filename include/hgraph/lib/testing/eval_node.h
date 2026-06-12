@@ -3,6 +3,7 @@
 
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/runtime.h>
+#include <hgraph/types/call_args.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
@@ -209,39 +210,12 @@ namespace hgraph::testing
         template <typename NodeT>
         using output_element_t = typename output_element_lazy<NodeT>::type;
 
-        // ``arg<"name">(...)`` wrappers are transparent to the harness when it
-        // decides whether an argument is a replay sequence. Node/graph harnesses
-        // unwrap the payload in their positional wiring path; the operator harness
-        // re-wraps replay ports so erased dispatch can bind true keyword args.
         template <typename A>
-        struct named_payload
-        {
-            using type                  = A;
-            static constexpr bool named = false;
-        };
-        template <typename T>
-        struct named_payload<NamedArg<T>>
-        {
-            using type                  = T;
-            static constexpr bool named = true;
-        };
+        using payload_t = call_args_detail::payload_t<A>;
         template <typename A>
-        using payload_t = typename named_payload<std::remove_cvref_t<A>>::type;
-        template <typename A>
-        inline constexpr bool is_named_arg_v = named_payload<std::remove_cvref_t<A>>::named;
-
-        template <typename Arg>
-        [[nodiscard]] const auto &payload_of(const Arg &argument)
-        {
-            if constexpr (is_named_arg_v<Arg>) { return argument.value; }
-            else { return argument; }
-        }
-
-        template <std::size_t I, typename Tuple>
-        [[nodiscard]] const auto &payload_at(const Tuple &arguments)
-        {
-            return payload_of(std::get<I>(arguments));
-        }
+        inline constexpr bool is_named_arg_v = call_args_detail::is_named_arg_v<A>;
+        using call_args_detail::payload_at;
+        using call_args_detail::payload_of;
 
         // A time-series input argument to the operator harness is a ``vector<optional<T>>``;
         // any other argument is a wiring-time scalar.

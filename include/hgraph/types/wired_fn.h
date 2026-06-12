@@ -7,7 +7,9 @@
 #include <cstddef>
 #include <functional>
 #include <array>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <stdexcept>
 #include <typeinfo>
@@ -89,6 +91,79 @@ namespace hgraph
             return *identity == *other.identity;
         }
     };
+
+    template <typename T>
+    struct WiredFnArgBinding
+    {
+        std::vector<T> ordered{};
+        bool           takes_leading_key{false};
+    };
+
+    /**
+     * Resolve positional + keyword time-series arguments onto a ``WiredFn``'s
+     * parameter order. Higher-order operators use this after their own operator
+     * call has been normalised and unmatched keywords have collected into
+     * ``**kwargs``. ``allow_leading_key`` implements the common map_/switch_
+     * convention where ``func`` may take one extra leading key parameter.
+     */
+    template <typename T>
+    [[nodiscard]] WiredFnArgBinding<T> bind_wired_fn_args(std::string_view op_name,
+                                                          const WiredFn &func,
+                                                          std::span<const T> positional,
+                                                          std::span<const std::pair<std::string, T>> named,
+                                                          bool allow_leading_key = true)
+    {
+        const std::size_t filled = positional.size() + named.size();
+
+        WiredFnArgBinding<T> result;
+        result.takes_leading_key = allow_leading_key && func.arity == filled + 1;
+        if (!result.takes_leading_key && func.arity != filled)
+        {
+            throw std::invalid_argument(
+                std::string{op_name} + ": 'func' takes a different number of time-series arguments");
+        }
+
+        const std::size_t offset = result.takes_leading_key ? 1 : 0;
+        std::vector<std::optional<T>> slots(filled);
+        for (std::size_t i = 0; i < positional.size(); ++i) { slots[i] = positional[i]; }
+
+        const auto names = func.param_names();
+        for (const auto &[name, value] : named)
+        {
+            std::size_t found = filled;
+            for (std::size_t j = 0; j < filled; ++j)
+            {
+                const std::size_t p = offset + j;
+                if (p < names.size() && !names[p].empty() && names[p] == name)
+                {
+                    found = j;
+                    break;
+                }
+            }
+            if (found == filled)
+            {
+                throw std::invalid_argument(std::string{op_name} + ": 'func' has no parameter named '" + name +
+                                            "' (name ports with NamedPort / In<\"name\">)");
+            }
+            if (slots[found].has_value())
+            {
+                throw std::invalid_argument(std::string{op_name} + ": got multiple values for 'func' parameter '" +
+                                            name + "'");
+            }
+            slots[found] = value;
+        }
+
+        result.ordered.reserve(filled);
+        for (auto &slot : slots)
+        {
+            if (!slot.has_value())
+            {
+                throw std::invalid_argument(std::string{op_name} + ": a 'func' parameter was not supplied");
+            }
+            result.ordered.push_back(std::move(*slot));
+        }
+        return result;
+    }
 
     namespace static_schema_detail
     {
