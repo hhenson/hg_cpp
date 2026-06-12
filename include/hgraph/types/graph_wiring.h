@@ -106,6 +106,29 @@ namespace hgraph
             return ref;
         }
 
+        /**
+         * Wiring-time **argument adornment** (Python's ``pass_through()`` /
+         * ``no_key()`` wrappers): consumed by operator implementations during
+         * classification; never part of graph structure (edges, bindings and
+         * source interning ignore it — operator configs that depend on it
+         * must fold it into their own interning identity).
+         */
+        enum class ArgTag : std::uint8_t
+        {
+            None        = 0,
+            PassThrough = 1,   ///< do not demultiplex — pass the input whole
+            NoKey       = 2,   ///< demultiplex, but exclude from key inference
+        };
+
+        ArgTag arg_tag{ArgTag::None};
+
+        [[nodiscard]] WiringPortRef with_arg_tag(ArgTag tag) const
+        {
+            WiringPortRef tagged{*this};
+            tagged.arg_tag = tag;
+            return tagged;
+        }
+
         [[nodiscard]] static WiringPortRef structural_source(const TSValueTypeMetaData *schema,
                                                              std::vector<WiringPortRef> children)
         {

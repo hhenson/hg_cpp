@@ -130,7 +130,15 @@ The shared core
        struct StructuralSource { std::vector<WiringPortRef> children; };
        enum class SourceKind { Unbound, Null, Peered, Structural };
 
+       // Wiring-time argument adornment (Python's pass_through()/no_key()
+       // map_ wrappers): consumed by the operator that receives the port,
+       // NEVER part of graph structure — edge/source interning ignores it
+       // (operators that must not dedup across tags fold them into their
+       // scalar identity, e.g. map_'s MapCallConfig).
+       enum class ArgTag : std::uint8_t { None, PassThrough, NoKey };
+
        const TSValueTypeMetaData *schema;
+       ArgTag                     arg_tag;  // with_arg_tag(tag) returns a tagged copy
        // factories peered_source / structural_source / null_source, plus
        // source_kind() and the typed accessors.
    };

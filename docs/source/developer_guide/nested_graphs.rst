@@ -475,8 +475,23 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   binding (it is ``map_``'s argument, not ``func``'s), and rejected on TSL
   maps. Children for keys absent from a dict keep phantom/invalid element
   inputs, as before.
-- Deferred: dynamic-TSL multiplexing, ``pass_through`` / ``no_key`` wrappers,
-  and sink maps.
+- **Argument tags — Python's ``pass_through`` / ``no_key`` wrappers.**
+  ``stdlib::pass_through(port)`` and ``stdlib::no_key(port)`` return the same
+  ``Port`` carrying a wiring-time tag (``WiringPortRef::ArgTag``), exactly how
+  the Python wiring marks arguments — the tag is **never part of graph
+  structure**: it rides through ``arg<"name">``, variadic and keyword
+  arguments, is ignored by edge/source interning, and instead joins the map
+  node's interning identity through the ``MapCallConfig`` scalar (function +
+  ``__key_arg__`` + per-argument tags), so equal inputs with different tags
+  never dedup to one node. Classification honours the tags: ``pass_through``
+  forces the argument to bind **whole** (broadcast, whatever its kind — the
+  only way a child can consume a full ``TSD``, or keep a same-size ``TSL``
+  whole in the TSL form, and such an argument never anchors the kernel/size
+  selection); ``no_key`` keeps a TSD multiplexed but **excludes it from
+  key-set inference** (its key *type* still participates) — if every
+  multiplexed input is ``no_key`` an explicit ``__keys__`` is required, and
+  ``no_key`` is rejected on non-TSD arguments and on TSL maps.
+- Deferred: dynamic-TSL multiplexing and sink maps.
 
 Tests: ``tests/cpp/test_map.cpp``. ASAN/UBSAN-verified (keyed
 create/destroy churn).
@@ -547,6 +562,8 @@ Roadmap (this milestone)
    ASAN/UBSAN-verified.
 
 Non-goals for the milestone: ``mesh_``, ``try_except``, services/contexts,
-push sources inside nested graphs, explicit ``__keys__`` / ``pass_through`` /
-``no_key`` wrappers, TSD link-children aliasing, non-associative reduce,
-dynamic-TSL reduction, graph-level generic (``TsVar``) sub-graphs.
+push sources inside nested graphs, TSD link-children aliasing,
+non-associative reduce, dynamic-TSL reduction, graph-level generic
+(``TsVar``) sub-graphs. (Explicit ``__keys__`` and the ``pass_through`` /
+``no_key`` wrappers, originally deferred, landed within the milestone —
+see the ``map_`` section.)

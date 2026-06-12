@@ -582,22 +582,34 @@ namespace hgraph::stdlib
         struct MapArgClassification
         {
             std::vector<bool>                        is_multiplexed{};   ///< per ts arg (call order)
+            std::vector<bool>                        exclude_from_keys{};///< per ts arg: ``no_key`` tag
             std::vector<const TSValueTypeMetaData *> child_schemas{};    ///< per ts arg: element or whole schema
             const ValueTypeMetaData                 *key_meta{nullptr};
         };
 
+        /**
+         * Classification honours the wiring-time argument tags (Python's
+         * wrappers): ``pass_through`` forces broadcast whatever the kind;
+         * ``no_key`` keeps the TSD multiplexed but excludes it from key-set
+         * inference.
+         */
         [[nodiscard]] inline MapArgClassification classify_map_args(
-            std::span<const TSValueTypeMetaData *const> ts_schemas)
+            std::span<const TSValueTypeMetaData *const> ts_schemas,
+            std::span<const std::uint8_t> arg_tags)
         {
             auto &registry = TypeRegistry::instance();
 
             MapArgClassification result;
             result.is_multiplexed.reserve(ts_schemas.size());
+            result.exclude_from_keys.reserve(ts_schemas.size());
             result.child_schemas.reserve(ts_schemas.size());
             for (std::size_t i = 0; i < ts_schemas.size(); ++i)
             {
+                const auto tag = i < arg_tags.size() ? static_cast<WiringPortRef::ArgTag>(arg_tags[i])
+                                                     : WiringPortRef::ArgTag::None;
                 const auto *deref = registry.dereference(ts_schemas[i]);
-                if (deref != nullptr && deref->kind == TSTypeKind::TSD)
+                if (tag != WiringPortRef::ArgTag::PassThrough && deref != nullptr &&
+                    deref->kind == TSTypeKind::TSD)
                 {
                     if (result.key_meta == nullptr) { result.key_meta = deref->key_type(); }
                     else if (deref->key_type() != result.key_meta)
@@ -606,11 +618,17 @@ namespace hgraph::stdlib
                             "map_: every multiplexed TSD must share the same key type");
                     }
                     result.is_multiplexed.push_back(true);
+                    result.exclude_from_keys.push_back(tag == WiringPortRef::ArgTag::NoKey);
                     result.child_schemas.push_back(deref->element_ts());
                 }
                 else
                 {
+                    if (tag == WiringPortRef::ArgTag::NoKey)
+                    {
+                        throw std::invalid_argument("map_: 'no_key' applies to multiplexed TSD inputs only");
+                    }
                     result.is_multiplexed.push_back(false);
+                    result.exclude_from_keys.push_back(false);
                     result.child_schemas.push_back(ts_schemas[i]);
                 }
             }
@@ -630,6 +648,7 @@ namespace hgraph::stdlib
          */
         [[nodiscard]] inline MapNodeSpec compile_map_child(const WiredFn &func,
                                                            std::span<const TSValueTypeMetaData *const> ts_schemas,
+                                                           std::span<const std::uint8_t> arg_tags,
                                                            const TSValueTypeMetaData *&output_schema)
         {
             if (!func.valid())
@@ -639,7 +658,7 @@ namespace hgraph::stdlib
 
             auto &registry = TypeRegistry::instance();
 
-            const MapArgClassification classified = classify_map_args(ts_schemas);
+            const MapArgClassification classified = classify_map_args(ts_schemas, arg_tags);
 
             const std::size_t base_arity = ts_schemas.size();
             const bool        takes_key  = func.arity == base_arity + 1;
@@ -720,22 +739,30 @@ namespace hgraph::stdlib
          * function's parameters): compile the child template, add one map node.
          */
         [[nodiscard]] inline Port<void> wire_map(Wiring &w, const Scalar<"func", WiredFn> &func,
+                                                 std::string_view key_arg,
                                                  std::vector<WiringPortRef> ordered,
                                                  std::optional<WiringPortRef> keys = std::nullopt)
         {
             std::vector<const TSValueTypeMetaData *> ts_schemas;
+            std::vector<std::uint8_t>                arg_tags;
             ts_schemas.reserve(ordered.size());
-            for (const WiringPortRef &port : ordered) { ts_schemas.push_back(port.schema); }
+            arg_tags.reserve(ordered.size());
+            for (const WiringPortRef &port : ordered)
+            {
+                ts_schemas.push_back(port.schema);
+                arg_tags.push_back(static_cast<std::uint8_t>(port.arg_tag));
+            }
 
             const TSValueTypeMetaData *output_schema = nullptr;
             MapNodeSpec spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
-                                                 output_schema);
+                                                 {arg_tags.data(), arg_tags.size()}, output_schema);
 
             // The lifecycle key set: an explicit ``__keys__`` when supplied,
             // else derived from the multiplexed dicts — ``keys_(tsd)`` for
             // one, ``union(keys_(tsd)...)`` for several (the Python wiring:
-            // ``__keys__ = union(*key_sets)``). The runtime is always
-            // keys-driven; there is no in-node union scan.
+            // ``__keys__ = union(*key_sets)``); ``no_key``-tagged dicts are
+            // excluded from the inference. The runtime is always keys-driven;
+            // there is no in-node union scan.
             auto &registry = TypeRegistry::instance();
             if (!keys.has_value())
             {
@@ -746,10 +773,20 @@ namespace hgraph::stdlib
                 key_set_args.reserve(spec.multiplexed_inputs.size());
                 for (const std::size_t mux_index : spec.multiplexed_inputs)
                 {
+                    if (static_cast<WiringPortRef::ArgTag>(arg_tags[mux_index]) ==
+                        WiringPortRef::ArgTag::NoKey)
+                    {
+                        continue;
+                    }
                     WiringArg key_set_arg;
                     key_set_arg.kind = WiringArg::Kind::TimeSeries;
                     key_set_arg.port = subgraph_wiring_detail::tsd_key_set_ref(ordered[mux_index]);
                     key_set_args.push_back(std::move(key_set_arg));
+                }
+                if (key_set_args.empty())
+                {
+                    throw std::invalid_argument(
+                        "map_: every multiplexed input is no_key — supply an explicit '__keys__'");
                 }
                 if (key_set_args.size() == 1) { keys = key_set_args.front().port; }
                 else
@@ -780,10 +817,16 @@ namespace hgraph::stdlib
             node_schema.input  = input_schema;
             node_schema.output = output_schema;
 
+            // The call configuration joins the interning identity: equal
+            // inputs with a different function, key-arg name, or argument
+            // tags must not dedup to one node. Unlike SwitchCases (a declared
+            // operator parameter), MapCallConfig is built here, so register
+            // the scalar at the point of use.
+            (void)scalar_descriptor<MapCallConfig>::value_meta();
             WiringPortRef out = w.add_node(
                 std::type_index(typeid(map_node_tag)), node_schema,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()},
-                Value{func.value()},
+                Value{MapCallConfig{func.value(), Str{key_arg}, arg_tags}},
                 [&]() {
                     NodeTypeMetaData meta;
                     meta.display_name  = "map_";
@@ -801,6 +844,7 @@ namespace hgraph::stdlib
         struct OrderedMapSchemas
         {
             std::vector<const TSValueTypeMetaData *> schemas{};
+            std::vector<std::uint8_t>               arg_tags{};   ///< per schema: WiringPortRef::ArgTag
             bool                                    takes_key{false};
         };
 
@@ -812,30 +856,38 @@ namespace hgraph::stdlib
 
             // Normalized args interleave the operator's own scalars (``func``,
             // the keyword-only ``__key_arg__``) with the time-series tail —
-            // only the time-series args are func arguments.
-            std::vector<const TSValueTypeMetaData *> positional;
+            // only the time-series args are func arguments. Ordering works on
+            // the full PORT REFS so the wiring-time argument tags ride along.
+            std::vector<WiringPortRef> positional;
             for (const WiringArg &argument : context.args)
             {
-                if (argument.kind == WiringArg::Kind::TimeSeries) { positional.push_back(argument.port.schema); }
+                if (argument.kind == WiringArg::Kind::TimeSeries) { positional.push_back(argument.port); }
             }
-            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> named;
+            std::vector<std::pair<std::string, WiringPortRef>> named;
             named.reserve(context.kwargs.size());
             for (const auto &[name, port] : context.kwargs)
             {
                 if (name == "__keys__") { continue; }   // map_'s own argument, not func's
-                named.emplace_back(name, port.schema);
+                named.emplace_back(name, port);
             }
 
             const std::string *key_override = context.scalar_as<Str>("__key_arg__");
 
             try
             {
-                OrderedMapSchemas ordered;
-                auto bound = bind_wired_fn_args<const TSValueTypeMetaData *>(
+                auto bound = bind_wired_fn_args<WiringPortRef>(
                     "map_", *func, {positional.data(), positional.size()}, {named.data(), named.size()},
                     key_override != nullptr ? std::string_view{*key_override} : default_key_arg);
-                ordered.schemas   = std::move(bound.ordered);
+
+                OrderedMapSchemas ordered;
                 ordered.takes_key = bound.takes_leading_key;
+                ordered.schemas.reserve(bound.ordered.size());
+                ordered.arg_tags.reserve(bound.ordered.size());
+                for (const WiringPortRef &ref : bound.ordered)
+                {
+                    ordered.schemas.push_back(ref.schema);
+                    ordered.arg_tags.push_back(static_cast<std::uint8_t>(ref.arg_tag));
+                }
                 return ordered;
             }
             catch (const std::invalid_argument &)
@@ -857,7 +909,8 @@ namespace hgraph::stdlib
             try
             {
                 const TSValueTypeMetaData *output_schema = nullptr;
-                (void)compile_map_child(*func, {ordered->schemas.data(), ordered->schemas.size()}, output_schema);
+                (void)compile_map_child(*func, {ordered->schemas.data(), ordered->schemas.size()},
+                                        {ordered->arg_tags.data(), ordered->arg_tags.size()}, output_schema);
                 if (output_schema != nullptr) { resolution.bind_ts("O", output_schema); }
             }
             catch (...)
@@ -867,15 +920,22 @@ namespace hgraph::stdlib
         }
 
         /** The first collection in ``func`` parameter order decides which map kernel applies. */
+        /** The first NON-pass-through collection decides the map kernel. */
         [[nodiscard]] inline const TSValueTypeMetaData *first_map_collection(OperatorCallContext context)
         {
             auto &registry = TypeRegistry::instance();
             auto ordered = ordered_map_schemas(context, "key");
             if (!ordered.has_value()) { ordered = ordered_map_schemas(context, "ndx"); }
             if (!ordered.has_value()) { return nullptr; }
-            for (const auto *schema_in : ordered->schemas)
+            for (std::size_t i = 0; i < ordered->schemas.size(); ++i)
             {
-                const auto *schema = registry.dereference(schema_in);
+                if (i < ordered->arg_tags.size() &&
+                    static_cast<WiringPortRef::ArgTag>(ordered->arg_tags[i]) ==
+                        WiringPortRef::ArgTag::PassThrough)
+                {
+                    continue;   // pass_through never selects the kernel
+                }
+                const auto *schema = registry.dereference(ordered->schemas[i]);
                 if (schema != nullptr &&
                     (schema->kind == TSTypeKind::TSD ||
                      (schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0)))
@@ -943,7 +1003,7 @@ namespace hgraph::stdlib
                                                                {pos.data(), pos.size()},
                                                                {named.data(), named.size()},
                                                                key_arg.value());
-                auto out = wire_map(w, func, std::move(bound.ordered), std::move(keys));
+                auto out = wire_map(w, func, key_arg.value(), std::move(bound.ordered), std::move(keys));
                 return Port<TsVar<"O">>{w, out.erased()};
             }
         };
@@ -970,6 +1030,11 @@ namespace hgraph::stdlib
             std::size_t size = 0;
             for (const WiringPortRef &port : ordered)
             {
+                if (port.arg_tag == WiringPortRef::ArgTag::NoKey)
+                {
+                    throw std::invalid_argument("map_: 'no_key' applies to TSD maps only");
+                }
+                if (port.arg_tag == WiringPortRef::ArgTag::PassThrough) { continue; }
                 const auto *schema = registry.dereference(port.schema);
                 if (schema != nullptr && schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0)
                 {
@@ -1005,7 +1070,8 @@ namespace hgraph::stdlib
                 }
                 for (const WiringPortRef &tail : ordered)
                 {
-                    if (tsl_arg_is_multiplexed(tail.schema, size))
+                    if (tail.arg_tag != WiringPortRef::ArgTag::PassThrough &&
+                        tsl_arg_is_multiplexed(tail.schema, size))
                     {
                         const auto *tail_element = registry.dereference(tail.schema)->element_ts();
                         args.push_back(subgraph_wiring_detail::tsl_element_ref(tail, i, tail_element));
@@ -1042,10 +1108,19 @@ namespace hgraph::stdlib
 
             try
             {
+                auto tag_at = [&](std::size_t index) {
+                    return index < ordered->arg_tags.size()
+                               ? static_cast<WiringPortRef::ArgTag>(ordered->arg_tags[index])
+                               : WiringPortRef::ArgTag::None;
+                };
+
+                // A no_key TSL still anchors the size here so resolution
+                // succeeds and compose can reject it with the clear message.
                 std::size_t size = 0;
-                for (const auto *schema_in : ordered->schemas)
+                for (std::size_t i = 0; i < ordered->schemas.size(); ++i)
                 {
-                    const auto *deref = registry.dereference(schema_in);
+                    if (tag_at(i) == WiringPortRef::ArgTag::PassThrough) { continue; }
+                    const auto *deref = registry.dereference(ordered->schemas[i]);
                     if (deref != nullptr && deref->kind == TSTypeKind::TSL && deref->fixed_size() > 0)
                     {
                         size = deref->fixed_size();
@@ -1057,13 +1132,14 @@ namespace hgraph::stdlib
                 std::vector<const TSValueTypeMetaData *> schemas;
                 schemas.reserve(func->arity);
                 if (ordered->takes_key) { schemas.push_back(registry.ts(scalar_descriptor<Int>::value_meta())); }
-                for (const auto *schema_in : ordered->schemas)
+                for (std::size_t i = 0; i < ordered->schemas.size(); ++i)
                 {
-                    if (tsl_arg_is_multiplexed(schema_in, size))
+                    if (tag_at(i) != WiringPortRef::ArgTag::PassThrough &&
+                        tsl_arg_is_multiplexed(ordered->schemas[i], size))
                     {
-                        schemas.push_back(registry.dereference(schema_in)->element_ts());
+                        schemas.push_back(registry.dereference(ordered->schemas[i])->element_ts());
                     }
-                    else { schemas.push_back(schema_in); }
+                    else { schemas.push_back(ordered->schemas[i]); }
                 }
 
                 CompiledSubGraph compiled = func->compile({schemas.data(), schemas.size()});

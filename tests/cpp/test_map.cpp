@@ -968,3 +968,192 @@ TEST_CASE("map_: __key_arg__ is keyword-only")
                           Str{"instrument"})),
                       OperatorResolutionError);
 }
+
+// ---------------------------------------------------------------------------
+// pass_through / no_key (Python's wrappers): wiring-time argument tags.
+// pass_through(x) -> x binds whole (broadcast) whatever its kind;
+// no_key(x) -> x demultiplexes as usual but is excluded from key inference.
+// The tags adorn Ports, so each test wraps the map_ call in a lightweight
+// graph that applies the tag inside compose — eval_node drives the rest.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // Reads a whole TSD: only reachable through pass_through (an untagged TSD
+    // argument is always multiplexed).
+    struct ElemPlusDictSizeNode
+    {
+        static constexpr auto name = "elem_plus_dict_size";
+        static void eval(In<"ts", TS<Int>> ts, In<"d", TSD<Str, TS<Int>>> d, Out<TS<Int>> out)
+        {
+            out.set(ts.value() + static_cast<Int>(d.size()));
+        }
+    };
+
+    struct ElemPlusDictSizeG
+    {
+        static constexpr auto name = "elem_plus_dict_size_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> ts, Port<TSD<Str, TS<Int>>> d)
+        {
+            return wire<ElemPlusDictSizeNode>(w, ts, d);
+        }
+    };
+
+    struct MapPassThroughDictG
+    {
+        static constexpr auto             name = "map_pass_through_dict_g";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TSD<Str, TS<Int>>> mux,
+                                               Port<TSD<Str, TS<Int>>> whole)
+        {
+            return wire<stdlib::map_>(w, fn<ElemPlusDictSizeG>(), mux,
+                                      stdlib::pass_through(whole))
+                .as<TSD<Str, TS<Int>>>();
+        }
+    };
+
+    struct MapNoKeyG
+    {
+        static constexpr auto             name = "map_no_key_g";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TSD<Str, TS<Int>>> lhs,
+                                               Port<TSD<Str, TS<Int>>> rhs)
+        {
+            return wire<stdlib::map_>(w, fn<AddPairG>(), lhs, stdlib::no_key(rhs))
+                .as<TSD<Str, TS<Int>>>();
+        }
+    };
+
+    struct MapAllNoKeyG
+    {
+        static constexpr auto             name = "map_all_no_key_g";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TSD<Str, TS<Int>>> mux)
+        {
+            return wire<stdlib::map_>(w, fn<AddOneG>(), stdlib::no_key(mux))
+                .as<TSD<Str, TS<Int>>>();
+        }
+    };
+
+    struct MapAllNoKeyExplicitKeysG
+    {
+        static constexpr auto             name = "map_all_no_key_explicit_keys_g";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TSD<Str, TS<Int>>> mux,
+                                               Port<TSS<Str>> keys)
+        {
+            return wire<stdlib::map_>(w, fn<AddOneG>(), stdlib::no_key(mux),
+                                      arg<"__keys__">(keys))
+                .as<TSD<Str, TS<Int>>>();
+        }
+    };
+
+    // Reads a whole fixed TSL: in the TSL form a same-size TSL would
+    // otherwise multiplex per index — pass_through keeps it whole.
+    struct ElemPlusListSumNode
+    {
+        static constexpr auto name = "elem_plus_list_sum";
+        static void eval(In<"ts", TS<Int>> ts, In<"l", TSL<TS<Int>, 3>> l, Out<TS<Int>> out)
+        {
+            Int total = ts.value();
+            for (std::size_t i = 0; i < 3; ++i) { total += l[i].value(); }
+            out.set(total);
+        }
+    };
+
+    struct ElemPlusListSumG
+    {
+        static constexpr auto name = "elem_plus_list_sum_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> ts, Port<TSL<TS<Int>, 3>> l)
+        {
+            return wire<ElemPlusListSumNode>(w, ts, l);
+        }
+    };
+
+    struct MapTslPassThroughG
+    {
+        static constexpr auto              name = "map_tsl_pass_through_g";
+        static Port<TSL<TS<Int>, 3>> compose(Wiring &w, Port<TSL<TS<Int>, 3>> mux,
+                                             Port<TSL<TS<Int>, 3>> whole)
+        {
+            return wire<stdlib::map_>(w, fn<ElemPlusListSumG>(), mux,
+                                      stdlib::pass_through(whole))
+                .as<TSL<TS<Int>, 3>>();
+        }
+    };
+
+    struct MapTslNoKeyG
+    {
+        static constexpr auto              name = "map_tsl_no_key_g";
+        static Port<TSL<TS<Int>, 3>> compose(Wiring &w, Port<TSL<TS<Int>, 3>> mux)
+        {
+            return wire<stdlib::map_>(w, fn<AddOneG>(), stdlib::no_key(mux))
+                .as<TSL<TS<Int>, 3>>();
+        }
+    };
+}  // namespace
+
+TEST_CASE("map_: pass_through binds a TSD whole to every child")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // Each child sees the WHOLE second dict (size 3); its keys {p,q,r} do not
+    // join the lifecycle key set — only {a,b} from the multiplexed dict map.
+    CHECK_OUTPUT((eval_node<MapPassThroughDictG>(
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}})),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"p"s, 10}, {"q"s, 20}, {"r"s, 30}})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 4}, {"b"s, 5}})));
+}
+
+TEST_CASE("map_: no_key demultiplexes but is excluded from key inference")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // Keys come from lhs only: {x, y}. x pairs (1 + 10); y's rhs element is
+    // absent so its child stays pending; rhs's z never creates a child.
+    CHECK_OUTPUT((eval_node<MapNoKeyG>(
+                     values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 1}, {"y"s, 2}})),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 10}, {"z"s, 30}})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"x"s, 11}})));
+}
+
+TEST_CASE("map_: every multiplexed input no_key requires an explicit __keys__")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    REQUIRE_THROWS_AS((eval_node<MapAllNoKeyG>(
+                          values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}})))),
+                      std::invalid_argument);
+}
+
+TEST_CASE("map_: no_key with an explicit __keys__ drives the lifecycle from the key set")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MapAllNoKeyExplicitKeysG>(
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}, {"c"s, 3}})),
+                     values<Value>(set_delta<Str>({"a"s, "c"s}, {})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}, {"c"s, 4}})));
+}
+
+TEST_CASE("map_ over TSL: pass_through keeps a same-size TSL whole")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // Without the tag the second TSL would pair per index (11, 22, 33); with
+    // pass_through every index adds the whole list's sum (60).
+    CHECK_OUTPUT((eval_node<MapTslPassThroughG>(
+                     values<Value>(list_delta<TS<Int>>({1, 2, 3})),
+                     values<Value>(list_delta<TS<Int>>({10, 20, 30})))),
+                 values<Value>(list_delta<TS<Int>>({61, 62, 63})));
+}
+
+TEST_CASE("map_ over TSL: no_key is rejected (TSD maps only)")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    REQUIRE_THROWS_AS((eval_node<MapTslNoKeyG>(values<Value>(list_delta<TS<Int>>({1, 2, 3})))),
+                      std::invalid_argument);
+}

@@ -8,6 +8,7 @@
 #include <hgraph/types/wired_fn.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <initializer_list>
 #include <optional>
@@ -153,9 +154,51 @@ namespace hgraph::stdlib
      *   instantiated per key; the child's terminal output is a forwarding
      *   endpoint bound onto that element, so the child **writes the parent's
      *   storage directly** (no copy);
-     * - broadcast arguments are variadic; ``pass_through`` / ``no_key``
-     *   wrappers and sink maps arrive later.
+     * - broadcast arguments are variadic; ``pass_through(port)`` forces an
+     *   argument to bind whole (broadcast, whatever its kind) and
+     *   ``no_key(port)`` keeps a TSD demultiplexed but excludes it from
+     *   key-set inference (Python's wrappers, as wiring-time port tags);
+     *   sink maps arrive later.
      */
+    /**
+     * Python's ``pass_through()`` — tag a ``map_`` input so it is NOT
+     * demultiplexed: the child binds the input whole (broadcast), whatever
+     * its kind. A wiring-time tag on the port; never part of graph structure.
+     */
+    template <typename S>
+    [[nodiscard]] Port<S> pass_through(const Port<S> &port)
+    {
+        return Port<S>{port.wiring(), port.erased().with_arg_tag(WiringPortRef::ArgTag::PassThrough)};
+    }
+
+    /**
+     * Python's ``no_key()`` — tag a multiplexed ``map_`` input so it is
+     * demultiplexed as usual but EXCLUDED from key-set inference (its keys do
+     * not contribute to the derived ``__keys__`` union).
+     */
+    template <typename S>
+    [[nodiscard]] Port<S> no_key(const Port<S> &port)
+    {
+        return Port<S>{port.wiring(), port.erased().with_arg_tag(WiringPortRef::ArgTag::NoKey)};
+    }
+
+    /**
+     * The ``map_`` call configuration folded into the node's interning
+     * identity: two calls with equal inputs but different function, key-arg
+     * name, or argument tags must NOT dedup to one node.
+     */
+    struct MapCallConfig
+    {
+        WiredFn                   func{};
+        Str                       key_arg{};
+        std::vector<std::uint8_t> arg_tags{};
+
+        [[nodiscard]] bool operator==(const MapCallConfig &other) const
+        {
+            return func == other.func && key_arg == other.key_arg && arg_tags == other.arg_tags;
+        }
+    };
+
     struct map_ : Operator<"map_",
                            Scalar<"func", WiredFn>,
                            VarIn<"args", TsVar<"A">>,         // *args — multiplexed / broadcast inputs (positional)
@@ -172,7 +215,25 @@ namespace hgraph::static_schema_detail
     {
         static constexpr std::string_view value{"switch_cases"};
     };
+    template <>
+    struct scalar_name<hgraph::stdlib::MapCallConfig>
+    {
+        static constexpr std::string_view value{"map_config"};
+    };
 }  // namespace hgraph::static_schema_detail
+
+template <>
+struct std::hash<hgraph::stdlib::MapCallConfig>
+{
+    [[nodiscard]] std::size_t operator()(const hgraph::stdlib::MapCallConfig &config) const noexcept
+    {
+        std::size_t h       = std::hash<hgraph::WiredFn>{}(config.func);
+        const auto  combine = [&h](std::size_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); };
+        combine(std::hash<std::string>{}(config.key_arg));
+        for (const std::uint8_t tag : config.arg_tags) { combine(tag); }
+        return h;
+    }
+};
 
 template <>
 struct std::hash<hgraph::stdlib::SwitchCases>
