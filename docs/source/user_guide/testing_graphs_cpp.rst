@@ -45,14 +45,13 @@ a stateful node accumulates as expected:
    CHECK_OUTPUT(testing::eval_node<RunningSum>({Int{1}, Int{2}, Int{3}, Int{4}}),
                 {Int{1}, Int{3}, Int{6}, Int{10}});
 
-Arguments are given in the node's **eval-parameter order**. A time-series input is
-a ``std::vector<std::optional<T>>``; a scalar input is the value itself. Value types
-are inferred from the node's signature, and **every scalar value type** is supported
-(``bool``, the integer widths, ``float``/``double``, ``std::string``, …) — the
-harness plumbs values type-erased, so it is generic over the value type.
-For consistency with operator tests, any node argument may be wrapped as
-``arg<"name">(…)``; the wrapper is accepted and unwrapped by the harness, but static
-nodes are still wired in eval-parameter order.
+Arguments may be positional in the node's **eval-parameter order**, or named with
+``arg<"name">(…)`` targeting the node's ``In<Name, ...>`` / ``Scalar<Name, ...>``
+selectors. A time-series input is a ``std::vector<std::optional<T>>``; a scalar
+input is the value itself. Value types are inferred from the node's signature, and
+**every scalar value type** is supported (``bool``, the integer widths,
+``float``/``double``, ``std::string``, …) — the harness plumbs values type-erased,
+so it is generic over the value type.
 
 A node configured by a **scalar** takes the scalar after its inputs:
 
@@ -65,6 +64,9 @@ A node configured by a **scalar** takes the scalar after its inputs:
                 {Int{6}, Int{7}, Int{8}});
    CHECK_OUTPUT(testing::eval_node<Shift>(arg<"in">(values<Int>(1, 2, 3)),
                                           arg<"delta">(Int{5})),
+                values<Int>(6, 7, 8));
+   CHECK_OUTPUT(testing::eval_node<Shift>(arg<"delta">(Int{5}),
+                                          arg<"in">(values<Int>(1, 2, 3))),
                 values<Int>(6, 7, 8));
 
 A node with **multiple time-series inputs** takes one sequence per input. The first
@@ -197,8 +199,9 @@ parameter, passes scalar values straight through, records the returned output, a
 reads it back typed. This is the preferred shape for testing wiring compositions
 (operator syntax expressions, ``nested_`` wrappers, …) — no hand-wired
 ``replay`` / ``record`` plumbing in the test graph. Like static-node tests, graph
-arguments may be wrapped in ``arg<"name">(…)`` for consistency, but graph compose
-parameters are still supplied in compose-parameter order:
+arguments may be positional or wrapped in ``arg<"name">(…)``; graph input keywords
+target explicit ``NamedPort<"name", S>`` parameters and scalar keywords target
+``Scalar<"name", T>`` parameters:
 
 .. code-block:: cpp
 

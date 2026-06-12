@@ -178,7 +178,8 @@ policy flags; ``TsVar`` / ``ScalarVar`` generic node resolution; and
 PullSource / Sink from shape with no override. ``GraphBuilder`` /
 ``GraphEdge`` and the higher-level ``Wiring`` / ``wire<T>`` / ``wire<G>`` /
 ``build_graph<G>`` layer are implemented for flattened graphs, including
-node-level scalars, graph-level scalar parameters, structural TSL/TSB input
+by-name node/graph wiring arguments, node-level scalars, scalar defaults,
+graph-level scalar parameters, structural TSL/TSB input
 initialisers, special source roots (``recordable_state(port)`` /
 ``error_output(port)``), and ordinary simulation execution.
 
@@ -189,7 +190,6 @@ Deferred (land with the relevant runtime layer):
   support; the node owns its queue, hands out ``Sender<T>`` during ``start``,
   and applies queued messages from its normal ``eval`` implementation;
 - named state (``State<TSchema, "name">``);
-- direct ``wire<NodeT>(...)`` by-name scalar arguments and scalar defaults;
 - standalone sub-graph boundary binding, generic graphs, and higher-order
   graph operators such as ``map_`` / ``reduce`` / ``switch_``;
 - the Python lowering.

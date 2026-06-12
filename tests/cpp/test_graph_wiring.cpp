@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <memory>
 #include <type_traits>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -133,6 +134,16 @@ namespace
         }
     };
 
+    struct DefaultShift
+    {
+        static constexpr auto name = "default_shift";
+        static auto           defaults() { return std::tuple{arg<"delta">(Int{5})}; }
+        static void           eval(In<"in", TS<Int>> in, Scalar<"delta", Int> delta, Out<TS<Int>> out)
+        {
+            out.set(in.value() + delta.value());
+        }
+    };
+
     struct ShiftGraph
     {
         static constexpr auto name = "shift_graph";
@@ -173,13 +184,23 @@ namespace
         }
     };
 
+    struct DefaultConfiguredSourceGraph
+    {
+        static constexpr auto name = "default_configured_source_graph";
+        static auto           defaults() { return std::tuple{arg<"value">(Int{12})}; }
+        static void           compose(Wiring &w, Scalar<"value", Int> value)
+        {
+            wire<ScaledSource>(w, value.value());
+        }
+    };
+
     // Sub-graph with a port input AND a scalar parameter: (TS<Int>, by) -> TS<Int>.
     // The received Scalar<"by", Int> is forwarded straight to wire<Shift> (whose
     // scalar parameter is Scalar<"delta", Int>) — no .value() needed; the wiring
     // layer unpacks the Scalar and re-applies it (names need not match).
     struct ShiftBy
     {
-        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> x, Scalar<"by", Int> by)
+        static Port<TS<Int>> compose(Wiring &w, NamedPort<"x", TS<Int>> x, Scalar<"by", Int> by)
         {
             return wire<Shift>(w, x, by);
         }
@@ -194,6 +215,36 @@ namespace
         {
             auto source = wire<ConstantSource>(w);
             wire<ShiftBy>(w, source, Int{5});
+        }
+    };
+
+    struct NamedNodeWireGraph
+    {
+        static constexpr auto name = "named_node_wire_graph";
+        static void           compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            wire<Shift>(w, arg<"delta">(Int{5}), arg<"in">(source));
+        }
+    };
+
+    struct DefaultNodeWireGraph
+    {
+        static constexpr auto name = "default_node_wire_graph";
+        static void           compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            wire<DefaultShift>(w, source);
+        }
+    };
+
+    struct NamedSubGraphWireGraph
+    {
+        static constexpr auto name = "named_sub_graph_wire_graph";
+        static void           compose(Wiring &w)
+        {
+            auto source = wire<ConstantSource>(w);
+            wire<ShiftBy>(w, arg<"by">(Int{5}), arg<"x">(source));
         }
     };
 
@@ -1440,6 +1491,26 @@ TEST_CASE("graph wiring: build_graph scalar parameters accept keyword arguments"
     CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<Int>() == Int{42});
 }
 
+TEST_CASE("graph wiring: build_graph uses defaulted scalar parameters")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<DefaultConfiguredSourceGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 1);
+    CHECK(graph.node_at(0).output(MIN_ST).value().checked_as<Int>() == Int{12});
+}
+
 TEST_CASE("graph wiring: build_graph rejects invalid keyword scalar calls")
 {
     using namespace hgraph;
@@ -1472,11 +1543,71 @@ TEST_CASE("graph wiring: a graph scalar parameter threads into a node's scalar")
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{46});
 }
 
+TEST_CASE("graph wiring: direct node wiring accepts keyword arguments")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<NamedNodeWireGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 2);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{46});
+}
+
+TEST_CASE("graph wiring: direct node wiring uses defaulted scalar parameters")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<DefaultNodeWireGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 2);
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{46});
+}
+
 TEST_CASE("graph wiring: wire<G> auto-wraps a scalar literal for a sub-graph parameter")
 {
     using namespace hgraph;
 
     GraphBuilder graph_builder = build_graph<ShiftBySubGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{2});
+
+    GraphExecutorValue executor      = executor_builder.make_executor();
+    auto               executor_view = executor.view();
+    executor_view.run();
+
+    auto graph = executor_view.graph();
+    REQUIRE(graph.node_count() == 2);   // source + shift (ShiftBy flattened away)
+    CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{46});
+}
+
+TEST_CASE("graph wiring: flattened sub-graph wiring accepts keyword arguments")
+{
+    using namespace hgraph;
+
+    GraphBuilder graph_builder = build_graph<NamedSubGraphWireGraph>();
 
     GraphExecutorBuilder executor_builder;
     executor_builder.graph_builder(std::move(graph_builder))

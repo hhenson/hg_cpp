@@ -61,7 +61,7 @@ namespace
     struct ScaledSubGraph
     {
         static constexpr auto name = "scaled_subgraph";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in, Scalar<"factor", Int> factor)
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"in", TS<Int>> in, Scalar<"factor", Int> factor)
         {
             using namespace hgraph::stdlib::syntax;
             return (in * factor.value()).as<TS<Int>>();
@@ -124,7 +124,7 @@ namespace
     struct NestedSumGraph
     {
         static constexpr auto name = "nested_sum_graph";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> a, Port<TS<Int>> b)
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"a", TS<Int>> a, NamedPort<"b", TS<Int>> b)
         {
             return nested_<SumSubGraph>(w, a, b);
         }
@@ -265,6 +265,8 @@ TEST_CASE("nested wiring: graph eval_node accepts keyword wrappers around inputs
     stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<ScaledSubGraph>(arg<"in">(values<Int>(1, 2, 3)), arg<"factor">(Int{4})),
+                 values<Int>(4, 8, 12));
+    CHECK_OUTPUT(eval_node<ScaledSubGraph>(arg<"factor">(Int{4}), arg<"in">(values<Int>(1, 2, 3))),
                  values<Int>(4, 8, 12));
 }
 

@@ -139,10 +139,18 @@ A graph with no scalar parameters is simply ``build_graph<G>()``. The resulting
 ``GraphBuilder`` is handed to a ``GraphExecutor`` exactly as for a scalar-free graph
 (see *Running a graph*).
 
-.. note::
+Scalar parameters may have defaults. Add ``static defaults()`` to the node or graph
+type, returning a tuple of named defaults:
 
-   ``build_graph`` scalar parameters are still all required. **Default values** for
-   omitted graph scalar parameters are planned but not yet implemented.
+.. code-block:: cpp
+
+   static auto defaults()
+   {
+       return std::tuple{arg<"window">(20_i), arg<"factor">(1.5_f)};
+   }
+
+For an external type, specialize ``signature_defaults<T>`` with a ``values()``
+method returning the same tuple shape.
 
 
 Ports
@@ -380,9 +388,9 @@ Configuring a node with scalars
 
 A node can take **scalar** parameters — read-only, non-time-series configuration
 fixed at wiring time (see *Authoring Nodes in C++ > Scalar values and arguments*).
-You pass them to ``wire<T>`` **in eval-parameter order**, interleaved with the
-input ports exactly as the node's ``eval`` lists them: a ``Port`` for each ``In``
-and a plain value for each ``Scalar``.
+You pass them to ``wire<T>`` positionally in eval-parameter order, or by selector
+name with ``arg<"name">(value)``. A call supplies a ``Port`` for each ``In`` and a
+plain value for each ``Scalar``.
 
 .. code-block:: cpp
 
@@ -391,6 +399,7 @@ and a plain value for each ``Scalar``.
    // node: eval(In<"in", TS<Int>> in, Scalar<"delta", Int> delta, Out<TS<Int>> out)
    auto src = wire<ConstantSource>(w);   // 41
    auto out = wire<Shift>(w, src, 5_i);   // port for `in`, then 5 for `delta` -> 46
+   auto same = wire<Shift>(w, arg<"delta">(5_i), arg<"in">(src));
 
 The scalar value is checked against the node's ``Scalar<>`` type at compile time,
 and it becomes part of the node's wiring identity: two ``wire`` calls dedup only
@@ -430,7 +439,9 @@ parameters after the context are the graph's inputs; the return is its output:
    {
        static constexpr auto name = "mid";
        // logical signature: (TS<Float>, TS<Float>) -> TS<Float>
-       static Port<TS<Float>> compose(Wiring &w, Port<TS<Float>> bid, Port<TS<Float>> ask)
+       static Port<TS<Float>> compose(Wiring &w,
+                                      NamedPort<"bid", TS<Float>> bid,
+                                      NamedPort<"ask", TS<Float>> ask)
        {
            return wire<Average>(w, bid, ask);
        }
@@ -454,11 +465,11 @@ Composing graphs
 the sub-graph's nodes into the current graph and returns its output port — there
 is no runtime "graph node". A call site treats a node and a graph **the same way**:
 you pass a ``Port`` for each of the sub-graph's ``Port`` parameters and a plain
-value for each of its ``Scalar`` parameters, in ``compose`` order, and the
-arguments are checked exactly as for a node. Typed ports are checked at compile
-time; erased generic-source ports are checked at wiring time and then passed to
-``compose`` as the declared port type. The only difference is whether a runtime
-node is produced.
+value for each of its ``Scalar`` parameters. Positional arguments fill ``compose``
+order; keyword arguments target ``NamedPort<"name", S>`` and ``Scalar<"name", T>``
+parameters. Typed ports are checked at compile time; erased generic-source ports
+are checked at wiring time and then passed to ``compose`` as the declared port
+type. The only difference is whether a runtime node is produced.
 
 .. code-block:: cpp
 
@@ -475,8 +486,9 @@ scalar (it is wrapped into the sub-graph's ``Scalar<>`` parameter):
 
    using namespace hgraph::literals;
 
-   // sub-graph: compose(Wiring &, Port<TS<Int>> x, Scalar<"by", Int> by) -> TS<Int>
+   // sub-graph: compose(Wiring &, NamedPort<"x", TS<Int>> x, Scalar<"by", Int> by) -> TS<Int>
    auto shifted = wire<ShiftBy>(w, src, 5_i);   // port for `x`, 5 wrapped into `by`
+   auto same = wire<ShiftBy>(w, arg<"by">(5_i), arg<"x">(src));
 
 
 Ordering is automatic

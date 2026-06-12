@@ -1139,135 +1139,31 @@ namespace hgraph
                     static_node_detail::is_scalar_selector<std::tuple_element_t<I, ParamsTuple>>::value);
         }
 
-        template <typename ParamsTuple, std::size_t... I>
-        [[nodiscard]] std::size_t find_scalar_param_index(std::string_view name, std::index_sequence<I...>)
-        {
-            constexpr std::size_t count = sizeof...(I);
-            std::size_t           found = count;
-            (
-                [&] {
-                    using P = std::tuple_element_t<I, ParamsTuple>;
-                    if (found == count && P::field_name.sv() == name) { found = I; }
-                }(),
-                ...);
-            return found;
-        }
-
-        template <typename ParamsTuple>
-        [[nodiscard]] std::size_t find_scalar_param_index(std::string_view name)
-        {
-            return find_scalar_param_index<ParamsTuple>(
-                name, std::make_index_sequence<std::tuple_size_v<ParamsTuple>>{});
-        }
-
-        template <typename ParamsTuple, typename ArgsTuple, std::size_t... I>
-        void validate_scalar_call_args(const ArgsTuple &args, std::index_sequence<I...>)
-        {
-            constexpr std::size_t param_count = std::tuple_size_v<ParamsTuple>;
-            std::array<bool, param_count> filled{};
-            bool                          seen_named = false;
-            std::size_t                   positional = 0;
-
-            (
-                [&] {
-                    using A0 = std::remove_cvref_t<std::tuple_element_t<I, ArgsTuple>>;
-                    const auto &argument = std::get<I>(args);
-                    if constexpr (call_args_detail::is_named_arg_v<A0>)
-                    {
-                        seen_named = true;
-                        const std::size_t param = find_scalar_param_index<ParamsTuple>(argument.name);
-                        if (param == param_count)
-                        {
-                            throw std::invalid_argument("build_graph<G>: got an unexpected keyword argument '" +
-                                                        std::string{argument.name} + "'");
-                        }
-                        if (filled[param])
-                        {
-                            throw std::invalid_argument("build_graph<G>: got multiple values for scalar parameter '" +
-                                                        std::string{argument.name} + "'");
-                        }
-                        filled[param] = true;
-                    }
-                    else
-                    {
-                        if (seen_named)
-                        {
-                            throw std::invalid_argument(
-                                "build_graph<G>: positional argument follows a named argument");
-                        }
-                        if (positional >= param_count)
-                        {
-                            throw std::invalid_argument("build_graph<G>: too many scalar arguments");
-                        }
-                        filled[positional++] = true;
-                    }
-                }(),
-                ...);
-
-            [&]<std::size_t... P>(std::index_sequence<P...>) {
-                (
-                    [&] {
-                        if (!filled[P])
-                        {
-                            using Param = std::tuple_element_t<P, ParamsTuple>;
-                            throw std::invalid_argument("build_graph<G>: missing scalar argument '" +
-                                                        std::string{Param::field_name.sv()} + "'");
-                        }
-                    }(),
-                    ...);
-            }(std::make_index_sequence<param_count>{});
-        }
-
-        template <typename ParamsTuple, typename ArgsTuple>
-        void validate_scalar_call_args(const ArgsTuple &args)
-        {
-            validate_scalar_call_args<ParamsTuple>(args, std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
-        }
-
-        template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple, std::size_t... I>
-        [[nodiscard]] auto make_bound_scalar_param(const ArgsTuple &args, std::index_sequence<I...>)
+        template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple, typename DefaultsTuple>
+        [[nodiscard]] auto make_bound_scalar_param(const ArgsTuple &args, const DefaultsTuple &defaults)
+            -> std::tuple_element_t<ParamIndex, ParamsTuple>
         {
             using Param = std::tuple_element_t<ParamIndex, ParamsTuple>;
-            std::optional<Param> result;
-            bool                 seen_named = false;
-            std::size_t          positional = 0;
-
-            (
-                [&] {
-                    using A0 = std::remove_cvref_t<std::tuple_element_t<I, ArgsTuple>>;
-                    const auto &argument = std::get<I>(args);
-                    if constexpr (call_args_detail::is_named_arg_v<A0>)
-                    {
-                        seen_named = true;
-                        if (!result.has_value() && argument.name == Param::field_name.sv())
-                        {
-                            result.emplace(make_scalar_param<Param>(argument.value));
-                        }
-                    }
-                    else
-                    {
-                        if (!seen_named && positional == ParamIndex)
-                        {
-                            result.emplace(make_scalar_param<Param>(argument));
-                        }
-                        ++positional;
-                    }
-                }(),
-                ...);
-
-            if (!result.has_value())
+            constexpr std::size_t arg_index =
+                call_args_detail::bound_arg_index<ParamIndex, ParamsTuple, ArgsTuple>();
+            constexpr std::size_t default_index =
+                call_args_detail::default_arg_index<ParamIndex, ParamsTuple, DefaultsTuple>();
+            if constexpr (arg_index == call_args_detail::npos)
             {
-                throw std::invalid_argument("build_graph<G>: missing scalar argument '" +
-                                            std::string{Param::field_name.sv()} + "'");
+                if constexpr (default_index == call_args_detail::npos)
+                {
+                    throw std::invalid_argument("build_graph<G>: missing scalar argument '" +
+                                                std::string{Param::field_name.sv()} + "'");
+                }
+                else
+                {
+                    return make_scalar_param<Param>(call_args_detail::payload_at<default_index>(defaults));
+                }
             }
-            return std::move(*result);
-        }
-
-        template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple>
-        [[nodiscard]] auto make_bound_scalar_param(const ArgsTuple &args)
-        {
-            return make_bound_scalar_param<ParamIndex, ParamsTuple>(
-                args, std::make_index_sequence<std::tuple_size_v<ArgsTuple>>{});
+            else
+            {
+                return make_scalar_param<Param>(call_args_detail::payload_at<arg_index>(args));
+            }
         }
 
         // Build the owned ``Value`` for one scalar field of a *generic* node's
@@ -1342,6 +1238,34 @@ namespace hgraph
                 return make_scalar_param<P>(std::forward<Arg>(arg));
             }
         }
+
+        template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple, typename DefaultsTuple>
+        [[nodiscard]] auto make_bound_compose_arg(Wiring &w, const ArgsTuple &args, const DefaultsTuple &defaults)
+            -> std::tuple_element_t<ParamIndex, ParamsTuple>
+        {
+            using P = std::tuple_element_t<ParamIndex, ParamsTuple>;
+            constexpr std::size_t arg_index =
+                call_args_detail::bound_arg_index<ParamIndex, ParamsTuple, ArgsTuple>();
+            constexpr std::size_t default_index =
+                call_args_detail::default_arg_index<ParamIndex, ParamsTuple, DefaultsTuple>();
+            if constexpr (arg_index == call_args_detail::npos)
+            {
+                if constexpr (default_index == call_args_detail::npos)
+                {
+                    throw std::invalid_argument("wire<G>: missing argument " +
+                                                call_args_detail::missing_parameter_name(
+                                                    call_args_detail::parameter_name<P>(), ParamIndex));
+                }
+                else
+                {
+                    return make_compose_arg<P>(w, call_args_detail::payload_at<default_index>(defaults));
+                }
+            }
+            else
+            {
+                return make_compose_arg<P>(w, call_args_detail::payload_at<arg_index>(args));
+            }
+        }
     }  // namespace graph_wiring_detail
 
     template <typename Schema>
@@ -1381,14 +1305,15 @@ namespace hgraph
             // sub-graph: inline its body (flatten), forwarding ports through and
             // wrapping scalar literals into the compose Scalar<> parameters.
             using sig = StaticGraphSignature<X>;
-            static_assert(sizeof...(Args) == sig::param_count(),
-                          "wire<G>: argument count must match the sub-graph's Port + Scalar parameters "
-                          "(in compose order)");
-            auto arg_tuple = std::forward_as_tuple(args...);
+            static_assert(sizeof...(Args) <= sig::param_count(),
+                          "wire<G>: too many arguments for the sub-graph's Port + Scalar parameters");
+            auto arg_tuple    = std::forward_as_tuple(args...);
+            auto default_args = call_args_detail::default_args_for<X>();
+            call_args_detail::validate_call_args<typename sig::param_types>("wire<G>", arg_tuple, default_args);
             return [&]<std::size_t... I>(std::index_sequence<I...>) {
-                return X::compose(w, graph_wiring_detail::make_compose_arg<
-                                         std::tuple_element_t<I, typename sig::param_types>>(w, std::get<I>(arg_tuple))...);
-            }(std::make_index_sequence<sizeof...(Args)>{});
+                return X::compose(w, graph_wiring_detail::make_bound_compose_arg<I, typename sig::param_types>(
+                                         w, arg_tuple, default_args)...);
+            }(std::make_index_sequence<sig::param_count()>{});
         }
         else if constexpr (std::is_base_of_v<operator_tag, X>)
         {
@@ -1430,10 +1355,12 @@ namespace hgraph
         {
             using signature   = StaticNodeSignature<X>;
             using wire_params = typename signature::wire_param_types;
-            static_assert(sizeof...(Args) == std::tuple_size_v<wire_params>,
-                          "wire<T>: argument count must match the node's In + Scalar parameters (in eval order)");
+            static_assert(sizeof...(Args) <= std::tuple_size_v<wire_params>,
+                          "wire<T>: too many arguments for the node's In + Scalar parameters");
 
-            auto arg_tuple = std::forward_as_tuple(args...);
+            auto arg_tuple    = std::forward_as_tuple(args...);
+            auto default_args = call_args_detail::default_args_for<X>();
+            call_args_detail::validate_call_args<wire_params>("wire<T>", arg_tuple, default_args);
 
             if constexpr (signature::is_generic())
             {
@@ -1451,35 +1378,56 @@ namespace hgraph
                     (
                         [&] {
                             using P = std::tuple_element_t<I, wire_params>;
-                            using A = std::remove_cvref_t<std::tuple_element_t<I, std::tuple<Args...>>>;
-                            if constexpr (static_node_detail::is_input_selector<P>::value)
+                            constexpr std::size_t arg_index =
+                                call_args_detail::bound_arg_index<I, wire_params, decltype(arg_tuple)>();
+                            constexpr std::size_t default_index =
+                                call_args_detail::default_arg_index<I, wire_params, decltype(default_args)>();
+                            if constexpr (arg_index != call_args_detail::npos ||
+                                          default_index != call_args_detail::npos)
                             {
-                                static_assert(graph_wiring_detail::is_port<A>::value ||
-                                                  graph_wiring_detail::is_structural_source_arg<A>::value,
-                                              "wire<T>: a time-series input expects a Port argument or structural initializer");
-                                if constexpr (graph_wiring_detail::is_structural_source_arg<A>::value)
+                                if constexpr (static_node_detail::is_input_selector<P>::value)
                                 {
-                                    using Expected = typename graph_wiring_detail::in_param_schema<P>::type;
-                                    const auto *inferred =
-                                        graph_wiring_detail::structural_arg_schema_infer<Expected>::infer(
-                                            std::get<I>(arg_tuple));
-                                    if (inferred != nullptr) { ts_unifier<Expected>::unify(inferred, map); }
+                                    if constexpr (arg_index != call_args_detail::npos)
+                                    {
+                                        using A0 =
+                                            std::remove_cvref_t<std::tuple_element_t<arg_index, decltype(arg_tuple)>>;
+                                        using A = call_args_detail::payload_t<A0>;
+                                        static_assert(graph_wiring_detail::is_port<A>::value ||
+                                                          graph_wiring_detail::is_structural_source_arg<A>::value,
+                                                      "wire<T>: a time-series input expects a Port argument or structural initializer");
+                                        if constexpr (graph_wiring_detail::is_structural_source_arg<A>::value)
+                                        {
+                                            using Expected = typename graph_wiring_detail::in_param_schema<P>::type;
+                                            const auto *inferred =
+                                                graph_wiring_detail::structural_arg_schema_infer<Expected>::infer(
+                                                    call_args_detail::payload_at<arg_index>(arg_tuple));
+                                            if (inferred != nullptr) { ts_unifier<Expected>::unify(inferred, map); }
+                                        }
+                                        else
+                                        {
+                                            ts_unifier<typename graph_wiring_detail::in_param_schema<P>::type>::unify(
+                                                call_args_detail::payload_at<arg_index>(arg_tuple).erased().schema, map);
+                                        }
+                                    }
                                 }
-                                else
+                                else if constexpr (static_node_detail::is_scalar_selector<P>::value)
                                 {
-                                    ts_unifier<typename graph_wiring_detail::in_param_schema<P>::type>::unify(
-                                        std::get<I>(arg_tuple).erased().schema, map);
+                                    using ST = typename graph_wiring_detail::scalar_param_schema<P>::type;
+                                    if constexpr (arg_index != call_args_detail::npos)
+                                    {
+                                        scalar_unifier<ST>::unify(graph_wiring_detail::scalar_argument_meta(
+                                            call_args_detail::payload_at<arg_index>(arg_tuple)), map);
+                                    }
+                                    else
+                                    {
+                                        scalar_unifier<ST>::unify(graph_wiring_detail::scalar_argument_meta(
+                                            call_args_detail::payload_at<default_index>(default_args)), map);
+                                    }
                                 }
-                            }
-                            else if constexpr (static_node_detail::is_scalar_selector<P>::value)
-                            {
-                                using ST = typename graph_wiring_detail::scalar_param_schema<P>::type;
-                                scalar_unifier<ST>::unify(
-                                    graph_wiring_detail::scalar_argument_meta(std::get<I>(arg_tuple)), map);
                             }
                         }(),
                         ...);
-                }(std::make_index_sequence<sizeof...(Args)>{});
+                }(std::make_index_sequence<std::tuple_size_v<wire_params>>{});
 
                 if constexpr (graph_wiring_detail::has_resolve_default_types<X>)
                 {
@@ -1495,31 +1443,38 @@ namespace hgraph
                             using P = std::tuple_element_t<I, wire_params>;
                             if constexpr (static_node_detail::is_input_selector<P>::value)
                             {
-                                using A = std::remove_cvref_t<std::tuple_element_t<I, std::tuple<Args...>>>;
-                                const auto *expected =
-                                    ts_resolver<typename graph_wiring_detail::in_param_schema<P>::type>::resolve(map);
-                                if constexpr (graph_wiring_detail::is_structural_source_arg<A>::value)
+                                constexpr std::size_t arg_index =
+                                    call_args_detail::bound_arg_index<I, wire_params, decltype(arg_tuple)>();
+                                if constexpr (arg_index != call_args_detail::npos)
                                 {
-                                    WiringPortRef ref = graph_wiring_detail::structural_source_for_input_schema(
-                                        expected, std::get<I>(arg_tuple));
-                                    inputs.push_back(
-                                        graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
-                                }
-                                else
-                                {
-                                    WiringPortRef ref = std::get<I>(arg_tuple).erased();
-                                    if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
+                                    using A0 =
+                                        std::remove_cvref_t<std::tuple_element_t<arg_index, decltype(arg_tuple)>>;
+                                    using A = call_args_detail::payload_t<A0>;
+                                    const auto *expected =
+                                        ts_resolver<typename graph_wiring_detail::in_param_schema<P>::type>::resolve(map);
+                                    if constexpr (graph_wiring_detail::is_structural_source_arg<A>::value)
                                     {
-                                        throw std::logic_error(
-                                            "wire<T>: input port schema does not match the node's time-series input");
+                                        WiringPortRef ref = graph_wiring_detail::structural_source_for_input_schema(
+                                            expected, call_args_detail::payload_at<arg_index>(arg_tuple));
+                                        inputs.push_back(
+                                            graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
                                     }
-                                    inputs.push_back(
-                                        graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
+                                    else
+                                    {
+                                        WiringPortRef ref = call_args_detail::payload_at<arg_index>(arg_tuple).erased();
+                                        if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
+                                        {
+                                            throw std::logic_error(
+                                                "wire<T>: input port schema does not match the node's time-series input");
+                                        }
+                                        inputs.push_back(
+                                            graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
+                                    }
                                 }
                             }
                         }(),
                         ...);
-                }(std::make_index_sequence<sizeof...(Args)>{});
+                }(std::make_index_sequence<std::tuple_size_v<wire_params>>{});
 
                 // Resolved scalar configuration: assembled from owned field Values so
                 // a var field's (now-resolved) type is honoured.
@@ -1534,12 +1489,26 @@ namespace hgraph
                                 using P = std::tuple_element_t<I, wire_params>;
                                 if constexpr (static_node_detail::is_scalar_selector<P>::value)
                                 {
-                                    Value field = graph_wiring_detail::make_scalar_field<P>(std::get<I>(arg_tuple));
-                                    bundle.set(P::field_name.sv(), field.view());
+                                    constexpr std::size_t arg_index =
+                                        call_args_detail::bound_arg_index<I, wire_params, decltype(arg_tuple)>();
+                                    constexpr std::size_t default_index =
+                                        call_args_detail::default_arg_index<I, wire_params, decltype(default_args)>();
+                                    if constexpr (arg_index != call_args_detail::npos)
+                                    {
+                                        Value field = graph_wiring_detail::make_scalar_field<P>(
+                                            call_args_detail::payload_at<arg_index>(arg_tuple));
+                                        bundle.set(P::field_name.sv(), field.view());
+                                    }
+                                    else if constexpr (default_index != call_args_detail::npos)
+                                    {
+                                        Value field = graph_wiring_detail::make_scalar_field<P>(
+                                            call_args_detail::payload_at<default_index>(default_args));
+                                        bundle.set(P::field_name.sv(), field.view());
+                                    }
                                 }
                             }(),
                             ...);
-                    }(std::make_index_sequence<sizeof...(Args)>{});
+                    }(std::make_index_sequence<std::tuple_size_v<wire_params>>{});
                     scalars = bundle.build();
                 }
 
@@ -1577,45 +1546,52 @@ namespace hgraph
                     (
                         [&] {
                             using P = std::tuple_element_t<I, wire_params>;
-                            using A = std::remove_cvref_t<std::tuple_element_t<I, std::tuple<Args...>>>;
                             if constexpr (static_node_detail::is_input_selector<P>::value)
                             {
-                                static_assert(graph_wiring_detail::is_port<A>::value ||
-                                                  graph_wiring_detail::is_structural_source_arg<A>::value,
-                                              "wire<T>: a time-series input expects a Port argument or structural initializer");
-                                const auto *expected = schema_descriptor<
-                                    typename graph_wiring_detail::in_param_schema<P>::type>::ts_meta();
-                                if constexpr (graph_wiring_detail::is_structural_source_arg<A>::value)
+                                constexpr std::size_t arg_index =
+                                    call_args_detail::bound_arg_index<I, wire_params, decltype(arg_tuple)>();
+                                if constexpr (arg_index != call_args_detail::npos)
                                 {
-                                    WiringPortRef ref = graph_wiring_detail::structural_source_for_input_schema(
-                                        expected, std::get<I>(arg_tuple));
-                                    inputs.push_back(
-                                        graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
-                                }
-                                else if constexpr (graph_wiring_detail::is_erased_port<A>::value)
-                                {
-                                    WiringPortRef ref = std::get<I>(arg_tuple).erased();
-                                    if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
+                                    using A0 =
+                                        std::remove_cvref_t<std::tuple_element_t<arg_index, decltype(arg_tuple)>>;
+                                    using A = call_args_detail::payload_t<A0>;
+                                    static_assert(graph_wiring_detail::is_port<A>::value ||
+                                                      graph_wiring_detail::is_structural_source_arg<A>::value,
+                                                  "wire<T>: a time-series input expects a Port argument or structural initializer");
+                                    const auto *expected = schema_descriptor<
+                                        typename graph_wiring_detail::in_param_schema<P>::type>::ts_meta();
+                                    if constexpr (graph_wiring_detail::is_structural_source_arg<A>::value)
                                     {
-                                        throw std::logic_error(
-                                            "wire<T>: erased port schema does not match the node's time-series input");
+                                        WiringPortRef ref = graph_wiring_detail::structural_source_for_input_schema(
+                                            expected, call_args_detail::payload_at<arg_index>(arg_tuple));
+                                        inputs.push_back(
+                                            graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
                                     }
-                                    inputs.push_back(
-                                        graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
-                                }
-                                else
-                                {
-                                    static_assert(graph_wiring_detail::statically_accepts_output_v<
-                                                      typename graph_wiring_detail::in_param_schema<P>::type,
-                                                      typename A::schema>,
-                                                  "wire<T>: input port schema does not match the node's time-series input");
-                                    inputs.push_back(graph_wiring_detail::adapt_source_for_input(
-                                        w, expected, std::get<I>(arg_tuple).erased()));
+                                    else if constexpr (graph_wiring_detail::is_erased_port<A>::value)
+                                    {
+                                        WiringPortRef ref = call_args_detail::payload_at<arg_index>(arg_tuple).erased();
+                                        if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
+                                        {
+                                            throw std::logic_error(
+                                                "wire<T>: erased port schema does not match the node's time-series input");
+                                        }
+                                        inputs.push_back(
+                                            graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
+                                    }
+                                    else
+                                    {
+                                        static_assert(graph_wiring_detail::statically_accepts_output_v<
+                                                          typename graph_wiring_detail::in_param_schema<P>::type,
+                                                          typename A::schema>,
+                                                      "wire<T>: input port schema does not match the node's time-series input");
+                                        inputs.push_back(graph_wiring_detail::adapt_source_for_input(
+                                            w, expected, call_args_detail::payload_at<arg_index>(arg_tuple).erased()));
+                                    }
                                 }
                             }
                         }(),
                         ...);
-                }(std::make_index_sequence<sizeof...(Args)>{});
+                }(std::make_index_sequence<std::tuple_size_v<wire_params>>{});
 
                 // Compound scalar configuration (the Scalar positions), if any.
                 Value scalars;
@@ -1630,13 +1606,28 @@ namespace hgraph
                                 using P = std::tuple_element_t<I, wire_params>;
                                 if constexpr (static_node_detail::is_scalar_selector<P>::value)
                                 {
-                                    using V = typename P::value_type;
-                                    mutation[P::field_name.sv()].template checked_mutable_as<V>() =
-                                        graph_wiring_detail::coerce_scalar_value<V>(std::get<I>(arg_tuple));
+                                    constexpr std::size_t arg_index =
+                                        call_args_detail::bound_arg_index<I, wire_params, decltype(arg_tuple)>();
+                                    constexpr std::size_t default_index =
+                                        call_args_detail::default_arg_index<I, wire_params, decltype(default_args)>();
+                                    if constexpr (arg_index != call_args_detail::npos)
+                                    {
+                                        using V = typename P::value_type;
+                                        mutation[P::field_name.sv()].template checked_mutable_as<V>() =
+                                            graph_wiring_detail::coerce_scalar_value<V>(
+                                                call_args_detail::payload_at<arg_index>(arg_tuple));
+                                    }
+                                    else if constexpr (default_index != call_args_detail::npos)
+                                    {
+                                        using V = typename P::value_type;
+                                        mutation[P::field_name.sv()].template checked_mutable_as<V>() =
+                                            graph_wiring_detail::coerce_scalar_value<V>(
+                                                call_args_detail::payload_at<default_index>(default_args));
+                                    }
                                 }
                             }(),
                             ...);
-                    }(std::make_index_sequence<sizeof...(Args)>{});
+                    }(std::make_index_sequence<std::tuple_size_v<wire_params>>{});
                 }
 
                 NodeBuilder builder = graph_wiring_detail::build_node_builder<X>();
@@ -1763,17 +1754,18 @@ namespace hgraph
                       "build_graph<G>: a top-level graph has no time-series inputs (only Scalar parameters)");
         static_assert(sig::param_count() == sig::scalar_count(),
                       "build_graph<G>: every compose parameter after Wiring& must be Scalar<>");
-        static_assert(sizeof...(Args) == sig::scalar_count(),
-                      "build_graph<G>: argument count must match the graph's Scalar parameters");
+        static_assert(sizeof...(Args) <= sig::scalar_count(),
+                      "build_graph<G>: too many arguments for the graph's Scalar parameters");
         static_assert(graph_wiring_detail::all_scalar_params<params>(std::make_index_sequence<sig::param_count()>{}),
                       "build_graph<G>: every compose parameter after Wiring& must be Scalar<>");
 
         Wiring w;
-        auto   arg_tuple = std::forward_as_tuple(std::forward<Args>(args)...);
-        graph_wiring_detail::validate_scalar_call_args<params>(arg_tuple);
+        auto   arg_tuple    = std::forward_as_tuple(std::forward<Args>(args)...);
+        auto   default_args = call_args_detail::default_args_for<G>();
+        call_args_detail::validate_call_args<params>("build_graph<G>", arg_tuple, default_args, "scalar parameter");
         [&]<std::size_t... I>(std::index_sequence<I...>) {
-            G::compose(w, graph_wiring_detail::make_bound_scalar_param<I, params>(arg_tuple)...);
-        }(std::make_index_sequence<sizeof...(Args)>{});
+            G::compose(w, graph_wiring_detail::make_bound_scalar_param<I, params>(arg_tuple, default_args)...);
+        }(std::make_index_sequence<sig::param_count()>{});
 
         GraphBuilder graph_builder = std::move(w).finish();
         if constexpr (static_node_detail::has_name<G>) { graph_builder.label(std::string{G::name}); }

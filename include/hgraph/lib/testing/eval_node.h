@@ -13,7 +13,9 @@
 #include <concepts>
 #include <cstddef>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -274,6 +276,50 @@ namespace hgraph::testing
 
         inline std::string input_key(std::size_t index) { return "eval_node::in" + std::to_string(index); }
 
+        template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple>
+        [[nodiscard]] decltype(auto) bound_payload_at(const ArgsTuple &args, std::string_view call_name)
+        {
+            using Param = std::tuple_element_t<ParamIndex, ParamsTuple>;
+            constexpr std::size_t arg_index =
+                call_args_detail::bound_arg_index<ParamIndex, ParamsTuple, ArgsTuple>();
+            if constexpr (arg_index == call_args_detail::npos)
+            {
+                throw std::invalid_argument(std::string{call_name} + ": missing argument " +
+                                            call_args_detail::missing_parameter_name(
+                                                call_args_detail::parameter_name<Param>(), ParamIndex));
+            }
+            else
+            {
+                return call_args_detail::payload_at<arg_index>(args);
+            }
+        }
+
+        template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple, typename DefaultsTuple>
+        [[nodiscard]] decltype(auto) bound_payload_or_default_at(const ArgsTuple &args,
+                                                                 const DefaultsTuple &defaults,
+                                                                 std::string_view call_name)
+        {
+            using Param = std::tuple_element_t<ParamIndex, ParamsTuple>;
+            constexpr std::size_t arg_index =
+                call_args_detail::bound_arg_index<ParamIndex, ParamsTuple, ArgsTuple>();
+            constexpr std::size_t default_index =
+                call_args_detail::default_arg_index<ParamIndex, ParamsTuple, DefaultsTuple>();
+            if constexpr (arg_index != call_args_detail::npos)
+            {
+                return call_args_detail::payload_at<arg_index>(args);
+            }
+            else if constexpr (default_index != call_args_detail::npos)
+            {
+                return call_args_detail::payload_at<default_index>(defaults);
+            }
+            else
+            {
+                throw std::invalid_argument(std::string{call_name} + ": missing argument " +
+                                            call_args_detail::missing_parameter_name(
+                                                call_args_detail::parameter_name<Param>(), ParamIndex));
+            }
+        }
+
         template <typename NodeT, typename... Args>
         [[nodiscard]] std::vector<std::optional<output_element_t<NodeT>>> eval_source_node(Args &&...args)
         {
@@ -283,14 +329,17 @@ namespace hgraph::testing
             constexpr std::size_t arg_count = sizeof...(Args);
 
             static_assert(sig::output_count() == 1, "eval_node: source NodeT must have exactly one output");
-            static_assert(arg_count == std::tuple_size_v<wire_params>,
-                          "eval_node: argument count must match the source node's Scalar parameters");
+            static_assert(arg_count <= std::tuple_size_v<wire_params>,
+                          "eval_node: too many arguments for the source node's Scalar parameters");
 
             Wiring w;
-            auto   all = std::forward_as_tuple(std::forward<Args>(args)...);
+            auto   all          = std::forward_as_tuple(std::forward<Args>(args)...);
+            auto   default_args = call_args_detail::default_args_for<NodeT>();
+            call_args_detail::validate_call_args<wire_params>("eval_node<NodeT>", all, default_args);
             auto   out_port = [&]<std::size_t... I>(std::index_sequence<I...>) {
-                return wire<NodeT>(w, payload_at<I>(all)...);
-            }(std::make_index_sequence<arg_count>{});
+                return wire<NodeT>(
+                    w, bound_payload_or_default_at<I, wire_params>(all, default_args, "eval_node<NodeT>")...);
+            }(std::make_index_sequence<std::tuple_size_v<wire_params>>{});
             ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"});
 
             GraphBuilder gb = std::move(w).finish();
@@ -313,13 +362,15 @@ namespace hgraph::testing
 
             static_assert(sig::output_count() == 1, "eval_node: NodeT must have exactly one output");
             static_assert(sig::input_count() >= 1, "eval_node: NodeT must have at least one time-series input");
-            static_assert(arg_count == std::tuple_size_v<wire_params>,
-                          "eval_node: argument count must match the node's In + Scalar parameters (in eval order)");
+            static_assert(arg_count <= std::tuple_size_v<wire_params>,
+                          "eval_node: too many arguments for the node's In + Scalar parameters");
             static_assert(static_node_detail::is_input_selector<std::tuple_element_t<0, wire_params>>::value,
                           "eval_node: the first In/Scalar parameter must be a time-series input");
 
             Wiring w;
-            auto   all = std::forward_as_tuple(std::forward<Args>(args)...);
+            auto   all          = std::forward_as_tuple(std::forward<Args>(args)...);
+            auto   default_args = call_args_detail::default_args_for<NodeT>();
+            call_args_detail::validate_call_args<wire_params>("eval_node<NodeT>", all, default_args);
 
             // Pass 1: wire the matching replay per time-series input (returning its
             // port) and pass scalar payloads straight through, building wire<NodeT>.
@@ -331,13 +382,13 @@ namespace hgraph::testing
                 }
                 else
                 {
-                    return payload_at<I>(all);  // scalar value, with arg<...> unwrapped
+                    return bound_payload_or_default_at<I, wire_params>(all, default_args, "eval_node<NodeT>");
                 }
             };
 
             auto out_port = [&]<std::size_t... I>(std::index_sequence<I...>) {
                 return wire<NodeT>(w, wire_arg.template operator()<I>()...);
-            }(std::make_index_sequence<arg_count>{});
+            }(std::make_index_sequence<std::tuple_size_v<wire_params>>{});
 
             ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"});
             GraphBuilder gb = std::move(w).finish();
@@ -351,13 +402,13 @@ namespace hgraph::testing
                         using P = std::tuple_element_t<I, wire_params>;
                         if constexpr (static_node_detail::is_input_selector<P>::value)
                         {
-                            const auto &seq = payload_at<I>(all);
+                            const auto &seq = bound_payload_at<I, wire_params>(all, "eval_node<NodeT>");
                             max_len         = std::max(max_len, seq.size());
                             ts_harness<typename P::schema>::seed(gb.global_state(), input_key(I), seq);
                         }
                     }(),
                     ...);
-            }(std::make_index_sequence<arg_count>{});
+            }(std::make_index_sequence<std::tuple_size_v<wire_params>>{});
 
             GraphExecutorBuilder eb;
             eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
@@ -380,16 +431,17 @@ namespace hgraph::testing
             constexpr std::size_t arg_count = sizeof...(Args);
 
             static_assert(sig::input_count() >= 1, "eval_node<G>: the graph must have at least one time-series input");
-            static_assert(arg_count == sig::param_count(),
-                          "eval_node<G>: argument count must match the graph's Port + Scalar parameters "
-                          "(in compose order)");
+            static_assert(arg_count <= sig::param_count(),
+                          "eval_node<G>: too many arguments for the graph's Port + Scalar parameters");
 
             using out_schema = typename graph_output_element<GraphT>::schema;
             static_assert(!std::is_void_v<std::remove_cvref_t<typename sig::output_type>>,
                           "eval_node<G>: the graph must return an output port");
 
             Wiring w;
-            auto   all = std::forward_as_tuple(std::forward<Args>(args)...);
+            auto   all          = std::forward_as_tuple(std::forward<Args>(args)...);
+            auto   default_args = call_args_detail::default_args_for<GraphT>();
+            call_args_detail::validate_call_args<params>("eval_node<G>", all, default_args);
 
             // Pass 1: wire the matching replay per Port parameter (returning the
             // typed port compose expects) and pass scalar payloads straight through.
@@ -403,13 +455,14 @@ namespace hgraph::testing
                 }
                 else
                 {
-                    return graph_wiring_detail::make_scalar_param<P>(payload_at<I>(all));
+                    return graph_wiring_detail::make_scalar_param<P>(
+                        bound_payload_or_default_at<I, params>(all, default_args, "eval_node<G>"));
                 }
             };
 
             auto out_port = [&]<std::size_t... I>(std::index_sequence<I...>) {
                 return GraphT::compose(w, wire_arg.template operator()<I>()...);
-            }(std::make_index_sequence<arg_count>{});
+            }(std::make_index_sequence<sig::param_count()>{});
 
             if constexpr (std::is_void_v<out_schema>) { wire<record>(w, out_port, std::string{"eval_node::out"}); }
             else { ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"}); }
@@ -423,13 +476,13 @@ namespace hgraph::testing
                         using P = std::remove_cvref_t<std::tuple_element_t<I, params>>;
                         if constexpr (graph_wiring_detail::is_port<P>::value)
                         {
-                            const auto &seq = payload_at<I>(all);
+                            const auto &seq = bound_payload_at<I, params>(all, "eval_node<G>");
                             max_len         = std::max(max_len, seq.size());
                             ts_harness<typename P::schema>::seed(gb.global_state(), input_key(I), seq);
                         }
                     }(),
                     ...);
-            }(std::make_index_sequence<arg_count>{});
+            }(std::make_index_sequence<sig::param_count()>{});
 
             GraphExecutorBuilder eb;
             eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);

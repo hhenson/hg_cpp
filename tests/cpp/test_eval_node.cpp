@@ -11,6 +11,7 @@
 #include <cstdint>
 
 #include <optional>
+#include <tuple>
 #include <vector>
 
 namespace
@@ -53,6 +54,16 @@ namespace
     struct Shift
     {
         static constexpr auto name = "eval_node_shift";
+        static void           eval(In<"in", TS<Int>> in, Scalar<"delta", Int> delta, Out<TS<Int>> out)
+        {
+            out.set(in.value() + delta.value());
+        }
+    };
+
+    struct DefaultShift
+    {
+        static constexpr auto name = "eval_node_default_shift";
+        static auto           defaults() { return std::tuple{arg<"delta">(Int{5})}; }
         static void           eval(In<"in", TS<Int>> in, Scalar<"delta", Int> delta, Out<TS<Int>> out)
         {
             out.set(in.value() + delta.value());
@@ -178,6 +189,16 @@ TEST_CASE("eval_node: passes scalar inputs to the node-under-test")
     CHECK_OUTPUT(testing::eval_node<Shift>({1, 2, 3}, 5), {6, 7, 8});
     CHECK_OUTPUT(testing::eval_node<Shift>(arg<"in">(values<Int>(1, 2, 3)), arg<"delta">(Int{5})),
                  values<Int>(6, 7, 8));
+    CHECK_OUTPUT(testing::eval_node<Shift>(arg<"delta">(Int{5}), arg<"in">(values<Int>(1, 2, 3))),
+                 values<Int>(6, 7, 8));
+}
+
+TEST_CASE("eval_node: uses defaulted scalar parameters")
+{
+    using namespace hgraph;
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    CHECK_OUTPUT(testing::eval_node<DefaultShift>(values<Int>(1, 2, 3)), values<Int>(6, 7, 8));
 }
 
 TEST_CASE("eval_node: drives a node with multiple time-series inputs")
@@ -191,6 +212,9 @@ TEST_CASE("eval_node: drives a node with multiple time-series inputs")
     CHECK_OUTPUT(testing::eval_node<Sum>({1, none, 3}, rhs), {11, 21, 33});
     CHECK_OUTPUT(testing::eval_node<Sum>(arg<"lhs">(values<Int>(1, none, 3)),
                                          arg<"rhs">(values<Int>(10, 20, 30))),
+                 values<Int>(11, 21, 33));
+    CHECK_OUTPUT(testing::eval_node<Sum>(arg<"rhs">(values<Int>(10, 20, 30)),
+                                         arg<"lhs">(values<Int>(1, none, 3))),
                  values<Int>(11, 21, 33));
 }
 

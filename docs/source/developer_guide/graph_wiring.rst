@@ -192,9 +192,10 @@ The typed C++ facade
   input parameter declared as ``Port<SIGNAL>`` is treated as a tick subscription:
   any upstream time-series output port may be supplied, regardless of its value
   schema.
-- ``wire<T>(w, args...)`` — takes the node's wiring arguments **in eval-parameter
-  order**: a ``Port`` for each ``In`` and a scalar argument for each ``Scalar``. It
-  checks **arity and, per position, the port schema or scalar convertibility** at
+- ``wire<T>(w, args...)`` — takes the node's wiring arguments positionally or by
+  keyword with ``arg<"name">(value)``. Names target the node's ``In<Name, ...>``
+  and ``Scalar<Name, ...>`` selectors; positional arguments fill the eval-parameter
+  order. It checks **arity and, per parameter, the port schema or scalar convertibility** at
   compile time (via ``StaticNodeSignature<T>``, which exposes the output schema
   type, the input schema types and the ordered list of wiring parameters), splits
   the arguments into the time-series input ports and a compound scalar value, lowers
@@ -203,12 +204,12 @@ The typed C++ facade
   as the un-named bundle ``StaticNodeSignature<T>::scalar_schema()`` describes.
 - ``wire<G>(w, args...)`` — inlines ``G::compose(w, …)`` (graphs flatten) and
   returns ``G``'s output port. The arguments follow the **same rule as for a node**
-  (via ``StaticGraphSignature<G>``): in compose-parameter order, a ``Port`` for each
-  ``Port`` parameter (schema-checked, then passed to ``compose`` as the declared
-  port type) and a scalar argument for each ``Scalar`` parameter (wrapped into it,
-  convertibility-checked) — so a sub-graph and a node are wired identically at the
-  call site. An erased generic-source port is checked against the declared
-  sub-graph input schema before it is retyped for ``compose``.
+  (via ``StaticGraphSignature<G>``): positional arguments fill compose-parameter
+  order, while keyword arguments target ``NamedPort<Name, S>`` and
+  ``Scalar<Name, T>`` parameters. Port arguments are schema-checked and scalar
+  arguments are wrapped into their ``Scalar<>`` selectors, so a sub-graph and a node
+  are wired identically at the call site. An erased generic-source port is checked
+  against the declared sub-graph input schema before it is retyped for ``compose``.
 - **Scalar arguments unpack uniformly.** Every scalar wiring argument (in
   ``wire<T>``, ``wire<G>`` and ``build_graph``) passes through one helper,
   ``graph_wiring_detail::coerce_scalar_value<V>``: it accepts either a plain value or
@@ -326,8 +327,8 @@ Slices:
    ``wire<X>`` dispatches on
    whether ``X`` is a node (``eval``; adds a runtime node) or a graph (``wire``;
    inlined and flattened). Tests: ``tests/cpp/test_graph_wiring.cpp``.
-2. **Done.** Scalar inputs: ``wire<T>`` takes ``Scalar<>`` arguments in
-   eval-parameter order, builds the compound scalar value, **folds the scalar
+2. **Done.** Scalar inputs: ``wire<T>`` takes ``Scalar<>`` arguments positionally
+   or by selector name, builds the compound scalar value, **folds the scalar
    values into the intern key** (so equal scalars dedup, distinct scalars do not),
    and records them on the ``NodeBuilder``. Node-layer scalar storage and the
    ``Scalar<>`` authoring selector back it (see *Authoring Nodes in C++*).
@@ -335,12 +336,15 @@ Slices:
    ``Wiring&``; classifies ``Port`` vs ``Scalar`` parameters; exposes the output
    type) and **graph-level scalar parameters**: ``build_graph<G>(values…)`` wraps
    the supplied values into the graph's ``Scalar<>`` ``compose`` parameters and
-   forwards them. Tests: ``tests/cpp/test_graph_wiring.cpp``.
+   forwards them. Scalar defaults are supplied by ``static defaults()`` or
+   ``signature_defaults<T>``, both returning ``std::tuple{arg<"name">(value)...}``.
+   Tests: ``tests/cpp/test_graph_wiring.cpp``.
 4. **3b — Done.** ``wire<G>`` parity with ``wire<T>``: the sub-graph branch now
    reflects ``compose`` via ``StaticGraphSignature<G>``, checks argument arity and
-   per-position port schema / scalar convertibility at compile time, and **auto-wraps
-   scalar literals** into the sub-graph's ``Scalar<>`` parameters. A sub-graph and a
-   node are now wired identically at the call site. Tests:
+   per-parameter port schema / scalar convertibility at compile time, supports
+   ``arg<"name">(...)`` for ``NamedPort`` / ``Scalar`` parameters, and
+   **auto-wraps scalar literals** into the sub-graph's ``Scalar<>`` parameters.
+   A sub-graph and a node are now wired identically at the call site. Tests:
    ``tests/cpp/test_graph_wiring.cpp``.
 5. **Generic (type-variable) nodes — done.** A node authored over ``TsVar`` /
    ``ScalarVar`` (one implementation, no per-type instantiation) is resolved to a
@@ -393,11 +397,7 @@ Slices:
     that build on ``CompiledSubGraph`` (roadmap on the *Nested Graphs* page), and
     feedback edges.
 
-Deferred: **parameter defaults** for omitted graph scalar arguments and **by-name
-direct static-node wiring** (``build_graph<G>`` already accepts
-``arg<"name">(value)`` for top-level graph ``Scalar<Name, T>`` parameters, but
-direct ``wire<NodeT>(...)`` calls remain positional);
-multiple outputs (``TSB`` ports, optionally returned as an array as sugar);
+Deferred: multiple outputs (``TSB`` ports, optionally returned as an array as sugar);
 **graph-level** generic resolution (``TsVar`` / ``ScalarVar`` in a *graph*
 ``compose`` signature — node-level resolution above is done); higher-order operators
 and feedback; dead-node pruning; and the Python bridge that drives the core.
