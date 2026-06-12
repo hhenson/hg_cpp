@@ -171,75 +171,82 @@ namespace hgraph
             return "at position " + std::to_string(index);
         }
 
-        template <typename ParamsTuple, typename ArgsTuple, std::size_t... I>
-        void validate_call_args(std::string_view call_name,
-                                const ArgsTuple &args,
-                                std::string_view parameter_kind,
-                                std::index_sequence<I...>)
+        enum class named_parameter_binding
         {
+            default_value,
+            call_argument,
+        };
+
+        template <named_parameter_binding Binding>
+        [[noreturn]] inline void throw_unknown_named_parameter(std::string_view call_name,
+                                                               std::string_view parameter_kind,
+                                                               std::string_view name)
+        {
+            if constexpr (Binding == named_parameter_binding::default_value)
+            {
+                throw std::logic_error(std::string{call_name} + ": default names an unknown " +
+                                       std::string{parameter_kind} + " '" + std::string{name} + "'");
+            }
+            else
+            {
+                throw std::invalid_argument(std::string{call_name} + ": got an unexpected keyword argument '" +
+                                            std::string{name} + "'");
+            }
+        }
+
+        template <named_parameter_binding Binding>
+        [[noreturn]] inline void throw_duplicate_named_parameter(std::string_view call_name,
+                                                                 std::string_view parameter_kind,
+                                                                 std::string_view name)
+        {
+            if constexpr (Binding == named_parameter_binding::default_value)
+            {
+                throw std::logic_error(std::string{call_name} + ": multiple defaults for " +
+                                       std::string{parameter_kind} + " '" + std::string{name} + "'");
+            }
+            else
+            {
+                throw std::invalid_argument(std::string{call_name} + ": got multiple values for " +
+                                            std::string{parameter_kind} + " '" + std::string{name} + "'");
+            }
+        }
+
+        template <named_parameter_binding Binding, typename ParamsTuple, std::size_t ParamCount>
+        void mark_named_parameter(std::array<bool, ParamCount> &filled,
+                                  std::string_view name,
+                                  std::string_view call_name,
+                                  std::string_view parameter_kind)
+        {
+            static_assert(ParamCount == std::tuple_size_v<ParamsTuple>);
+
             constexpr std::size_t param_count = std::tuple_size_v<ParamsTuple>;
-            std::array<bool, param_count> filled{};
-            bool                          seen_named = false;
-            std::size_t                   positional = 0;
+            const std::size_t     param       = find_parameter_index<ParamsTuple>(name);
+            if (param == param_count)
+            {
+                throw_unknown_named_parameter<Binding>(call_name, parameter_kind, name);
+            }
+            if (filled[param])
+            {
+                throw_duplicate_named_parameter<Binding>(call_name, parameter_kind, name);
+            }
+            filled[param] = true;
+        }
 
-            (
-                [&] {
-                    using A0 = std::remove_cvref_t<std::tuple_element_t<I, ArgsTuple>>;
-                    const auto &argument = std::get<I>(args);
-                    if constexpr (is_named_arg_v<A0>)
-                    {
-                        seen_named = true;
-                        if constexpr (!is_static_named_arg_v<A0>)
-                        {
-                            throw std::invalid_argument(
-                                std::string{call_name} +
-                                ": static call binding requires arg<\"name\">(...) keyword wrappers");
-                        }
-
-                        const std::size_t param = find_parameter_index<ParamsTuple>(argument.name);
-                        if (param == param_count)
-                        {
-                            throw std::invalid_argument(std::string{call_name} +
-                                                        ": got an unexpected keyword argument '" +
-                                                        std::string{argument.name} + "'");
-                        }
-                        if (filled[param])
-                        {
-                            throw std::invalid_argument(std::string{call_name} + ": got multiple values for " +
-                                                        std::string{parameter_kind} + " '" +
-                                                        std::string{argument.name} + "'");
-                        }
-                        filled[param] = true;
-                    }
-                    else
-                    {
-                        if (seen_named)
-                        {
-                            throw std::invalid_argument(std::string{call_name} +
-                                                        ": positional argument follows a named argument");
-                        }
-                        if (positional >= param_count)
-                        {
-                            throw std::invalid_argument(std::string{call_name} + ": too many arguments");
-                        }
-                        filled[positional++] = true;
-                    }
-                }(),
-                ...);
-
-            [&]<std::size_t... P>(std::index_sequence<P...>) {
-                (
-                    [&] {
-                        if (!filled[P])
-                        {
-                            using Param = std::tuple_element_t<P, ParamsTuple>;
-                            throw std::invalid_argument(std::string{call_name} + ": missing " +
-                                                        std::string{parameter_kind} + " " +
-                                                        missing_parameter_name(parameter_name<Param>(), P));
-                        }
-                    }(),
-                    ...);
-            }(std::make_index_sequence<param_count>{});
+        template <std::size_t ParamIndex, typename ParamsTuple, typename Arg>
+        [[nodiscard]] consteval bool static_named_arg_matches_parameter()
+        {
+            using A0 = std::remove_cvref_t<Arg>;
+            if constexpr (is_static_named_arg_v<A0>)
+            {
+                using Param = std::tuple_element_t<ParamIndex, ParamsTuple>;
+                constexpr std::string_view param_name = parameter_name<Param>();
+                constexpr std::string_view arg_name   = static_arg_name<A0>();
+                return !param_name.empty() && param_name == arg_name;
+            }
+            else
+            {
+                return false;
+            }
         }
 
         template <std::size_t ParamIndex, typename ParamsTuple, typename DefaultsTuple, std::size_t... I>
@@ -250,13 +257,7 @@ namespace hgraph
                 [&] {
                     if (found != npos) { return; }
                     using A0 = std::remove_cvref_t<std::tuple_element_t<I, DefaultsTuple>>;
-                    if constexpr (is_static_named_arg_v<A0>)
-                    {
-                        using Param = std::tuple_element_t<ParamIndex, ParamsTuple>;
-                        constexpr std::string_view param_name = parameter_name<Param>();
-                        constexpr std::string_view arg_name   = static_arg_name<A0>();
-                        if constexpr (!param_name.empty() && param_name == arg_name) { found = I; }
-                    }
+                    if constexpr (static_named_arg_matches_parameter<ParamIndex, ParamsTuple, A0>()) { found = I; }
                 }(),
                 ...);
             return found;
@@ -291,20 +292,8 @@ namespace hgraph
                     }
                     else
                     {
-                        const std::size_t param = find_parameter_index<ParamsTuple>(argument.name);
-                        if (param == param_count)
-                        {
-                            throw std::logic_error(std::string{call_name} + ": default names an unknown " +
-                                                   std::string{parameter_kind} + " '" +
-                                                   std::string{argument.name} + "'");
-                        }
-                        if (filled[param])
-                        {
-                            throw std::logic_error(std::string{call_name} + ": multiple defaults for " +
-                                                   std::string{parameter_kind} + " '" +
-                                                   std::string{argument.name} + "'");
-                        }
-                        filled[param] = true;
+                        mark_named_parameter<named_parameter_binding::default_value, ParamsTuple>(
+                            filled, argument.name, call_name, parameter_kind);
                     }
                 }(),
                 ...);
@@ -323,11 +312,11 @@ namespace hgraph
         }
 
         template <typename ParamsTuple, typename ArgsTuple, typename DefaultsTuple, std::size_t... I>
-        void validate_call_args(std::string_view call_name,
-                                const ArgsTuple &args,
-                                const DefaultsTuple &defaults,
-                                std::string_view parameter_kind,
-                                std::index_sequence<I...>)
+        void validate_call_args_impl(std::string_view call_name,
+                                     const ArgsTuple &args,
+                                     const DefaultsTuple &defaults,
+                                     std::string_view parameter_kind,
+                                     std::index_sequence<I...>)
         {
             validate_default_args<ParamsTuple>(call_name, defaults, parameter_kind);
 
@@ -350,20 +339,8 @@ namespace hgraph
                                 ": static call binding requires arg<\"name\">(...) keyword wrappers");
                         }
 
-                        const std::size_t param = find_parameter_index<ParamsTuple>(argument.name);
-                        if (param == param_count)
-                        {
-                            throw std::invalid_argument(std::string{call_name} +
-                                                        ": got an unexpected keyword argument '" +
-                                                        std::string{argument.name} + "'");
-                        }
-                        if (filled[param])
-                        {
-                            throw std::invalid_argument(std::string{call_name} + ": got multiple values for " +
-                                                        std::string{parameter_kind} + " '" +
-                                                        std::string{argument.name} + "'");
-                        }
-                        filled[param] = true;
+                        mark_named_parameter<named_parameter_binding::call_argument, ParamsTuple>(
+                            filled, argument.name, call_name, parameter_kind);
                     }
                     else
                     {
@@ -403,10 +380,12 @@ namespace hgraph
                                 std::string_view parameter_kind = "argument")
         {
             using args_tuple = std::remove_reference_t<ArgsTuple>;
-            validate_call_args<ParamsTuple>(call_name,
-                                            args,
-                                            parameter_kind,
-                                            std::make_index_sequence<std::tuple_size_v<args_tuple>>{});
+            const auto defaults = std::tuple{};
+            validate_call_args_impl<ParamsTuple>(call_name,
+                                                 args,
+                                                 defaults,
+                                                 parameter_kind,
+                                                 std::make_index_sequence<std::tuple_size_v<args_tuple>>{});
         }
 
         template <typename ParamsTuple, typename ArgsTuple, typename DefaultsTuple>
@@ -416,11 +395,11 @@ namespace hgraph
                                 std::string_view parameter_kind = "argument")
         {
             using args_tuple = std::remove_reference_t<ArgsTuple>;
-            validate_call_args<ParamsTuple>(call_name,
-                                            args,
-                                            defaults,
-                                            parameter_kind,
-                                            std::make_index_sequence<std::tuple_size_v<args_tuple>>{});
+            validate_call_args_impl<ParamsTuple>(call_name,
+                                                 args,
+                                                 defaults,
+                                                 parameter_kind,
+                                                 std::make_index_sequence<std::tuple_size_v<args_tuple>>{});
         }
 
         template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple, std::size_t... I>
@@ -440,10 +419,10 @@ namespace hgraph
                         seen_named = true;
                         if constexpr (is_static_named_arg_v<A0>)
                         {
-                            using Param = std::tuple_element_t<ParamIndex, ParamsTuple>;
-                            constexpr std::string_view param_name = parameter_name<Param>();
-                            constexpr std::string_view arg_name   = static_arg_name<A0>();
-                            if constexpr (!param_name.empty() && param_name == arg_name) { found = I; }
+                            if constexpr (static_named_arg_matches_parameter<ParamIndex, ParamsTuple, A0>())
+                            {
+                                found = I;
+                            }
                         }
                     }
                     else
