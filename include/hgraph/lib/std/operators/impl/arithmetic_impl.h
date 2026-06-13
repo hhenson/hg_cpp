@@ -27,67 +27,6 @@ namespace hgraph::stdlib
      * of concrete overloads and ``register_arithmetic_operators`` to register them.
      */
 
-    // ---- add_ / sub_ : homogeneous (aligned operands) ----
-
-    template <typename T>
-    struct add_same
-    {
-        static void eval(In<"lhs", TS<T>> lhs, In<"rhs", TS<T>> rhs, Out<TS<T>> out)
-        {
-            out.set(lhs.value() + rhs.value());
-        }
-    };
-
-    template <typename T>
-    struct sub_same
-    {
-        static void eval(In<"lhs", TS<T>> lhs, In<"rhs", TS<T>> rhs, Out<TS<T>> out)
-        {
-            out.set(lhs.value() - rhs.value());
-        }
-    };
-
-    template <typename T>
-    struct mul_same
-    {
-        static void eval(In<"lhs", TS<T>> lhs, In<"rhs", TS<T>> rhs, Out<TS<T>> out)
-        {
-            out.set(lhs.value() * rhs.value());
-        }
-    };
-
-    // ---- add_ / sub_ : heterogeneous (operands / result may all differ) ----
-
-    /** ``L + R -> O`` for any operands whose ``+`` yields ``O`` (e.g. DateTime + TimeDelta). */
-    template <typename L, typename R, typename O>
-    struct add_binary
-    {
-        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs, Out<TS<O>> out)
-        {
-            out.set(lhs.value() + rhs.value());
-        }
-    };
-
-    /** ``L - R -> O`` for any operands whose ``-`` yields ``O`` (e.g. DateTime - DateTime -> TimeDelta). */
-    template <typename L, typename R, typename O>
-    struct sub_binary
-    {
-        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs, Out<TS<O>> out)
-        {
-            out.set(lhs.value() - rhs.value());
-        }
-    };
-
-    /** ``L * R -> O`` for operands whose product type differs from one or both operands. */
-    template <typename L, typename R, typename O>
-    struct mul_binary
-    {
-        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs, Out<TS<O>> out)
-        {
-            out.set(lhs.value() * rhs.value());
-        }
-    };
-
     struct repeat_string_right
     {
         static void eval(In<"lhs", TS<Str>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Str>> out)
@@ -267,17 +206,6 @@ namespace hgraph::stdlib
         }
     };
 
-    /** ``L / R -> Float`` with no policy supplied — defaults to ``DivideByZero::Error``. */
-    template <typename L, typename R>
-    struct div_numbers_default
-    {
-        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs, Out<TS<Float>> out)
-        {
-            out.set(*divide_with_policy(static_cast<Float>(lhs.value()), static_cast<Float>(rhs.value()),
-                                        DivideByZero::Error));
-        }
-    };
-
     template <typename L, typename R>
     struct floordiv_numbers
     {
@@ -292,16 +220,6 @@ namespace hgraph::stdlib
         }
     };
 
-    template <typename L, typename R>
-    struct floordiv_numbers_default
-    {
-        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs, Out<TS<Float>> out)
-        {
-            out.set(*floor_divide_with_policy(static_cast<Float>(lhs.value()), static_cast<Float>(rhs.value()),
-                                              DivideByZero::Error));
-        }
-    };
-
     struct floordiv_ints
     {
         static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs,
@@ -311,14 +229,6 @@ namespace hgraph::stdlib
             {
                 out.set(*result);
             }
-        }
-    };
-
-    struct floordiv_ints_default
-    {
-        static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out)
-        {
-            out.set(floor_divide_int(lhs.value(), rhs.value()));
         }
     };
 
@@ -336,16 +246,6 @@ namespace hgraph::stdlib
         }
     };
 
-    template <typename L, typename R>
-    struct mod_numbers_default
-    {
-        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs, Out<TS<Float>> out)
-        {
-            out.set(*modulo_with_policy(static_cast<Float>(lhs.value()), static_cast<Float>(rhs.value()),
-                                        DivideByZero::Error));
-        }
-    };
-
     struct mod_ints
     {
         static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs,
@@ -355,14 +255,6 @@ namespace hgraph::stdlib
             {
                 out.set(*result);
             }
-        }
-    };
-
-    struct mod_ints_default
-    {
-        static void eval(In<"lhs", TS<Int>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<Int>> out)
-        {
-            out.set(modulo_int(lhs.value(), rhs.value()));
         }
     };
 
@@ -402,16 +294,6 @@ namespace hgraph::stdlib
         }
     };
 
-    template <typename L, typename R>
-    struct pow_numbers_default
-    {
-        static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs, Out<TS<Float>> out)
-        {
-            out.set(*pow_with_policy(static_cast<Float>(lhs.value()), static_cast<Float>(rhs.value()),
-                                     DivideByZero::Error));
-        }
-    };
-
     /** ``TimeDelta / TimeDelta -> Float`` — the ratio of two durations. */
     struct div_timedeltas
     {
@@ -422,56 +304,11 @@ namespace hgraph::stdlib
         }
     };
 
-    template <typename T>
-    struct neg_same
-    {
-        static void eval(In<"ts", TS<T>> ts, Out<TS<T>> out)
-        {
-            out.set(-ts.value());
-        }
-    };
-
-    template <typename T>
-    struct pos_same
-    {
-        static void eval(In<"ts", TS<T>> ts, Out<TS<T>> out)
-        {
-            out.set(+ts.value());
-        }
-    };
-
-    template <typename T>
-    struct abs_same
-    {
-        static void eval(In<"ts", TS<T>> ts, Out<TS<T>> out)
-        {
-            out.set(static_cast<T>(std::abs(ts.value())));
-        }
-    };
-
     struct abs_timedelta
     {
         static void eval(In<"ts", TS<TimeDelta>> ts, Out<TS<TimeDelta>> out)
         {
             out.set(std::chrono::abs(ts.value()));
-        }
-    };
-
-    template <typename T>
-    struct sign_same
-    {
-        static void eval(In<"ts", TS<T>> ts, Out<TS<T>> out)
-        {
-            const T value = ts.value();
-            out.set(value < T{0} ? T{-1} : value > T{0} ? T{1} : T{0});
-        }
-    };
-
-    struct ln_float
-    {
-        static void eval(In<"ts", TS<Float>> ts, Out<TS<Float>> out)
-        {
-            out.set(std::log(ts.value()));
         }
     };
 
