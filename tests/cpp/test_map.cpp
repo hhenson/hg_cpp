@@ -1138,6 +1138,19 @@ namespace
         }
     };
 
+    struct MapOperatorDivTslG
+    {
+        static constexpr auto name = "map_operator_div_tsl_g";
+
+        static Port<TSL<TS<Float>, 3>> compose(Wiring &w,
+                                               Port<TSL<TS<Int>, 3>> lhs,
+                                               Port<TSL<TS<Int>, 3>> rhs)
+        {
+            return wire<stdlib::map_>(w, fn<stdlib::div_>(), lhs, rhs)
+                .as<TSL<TS<Float>, 3>>();
+        }
+    };
+
     struct MapLiftedMinBroadcastG
     {
         static constexpr auto name = "map_lifted_min_broadcast_g";
@@ -1160,6 +1173,21 @@ namespace
             auto rhs = wire<stdlib::const_, TSL<TS<Int>, 3>>(
                 w, stdlib::make_list<Int>({Int{10}, Int{20}, Int{30}}));
             return wire<stdlib::map_>(w, lift<stdlib::scalar_add<Int>>(), lhs, rhs)
+                .as<TSL<TS<Int>, 3>>();
+        }
+    };
+
+    struct MapOperatorSubConstG
+    {
+        static constexpr auto name = "map_operator_sub_const_g";
+
+        static Port<TSL<TS<Int>, 3>> compose(Wiring &w)
+        {
+            auto lhs = wire<stdlib::const_, TSL<TS<Int>, 3>>(
+                w, stdlib::make_list<Int>({Int{10}, Int{20}, Int{30}}));
+            auto rhs = wire<stdlib::const_, TSL<TS<Int>, 3>>(
+                w, stdlib::make_list<Int>({Int{1}, Int{2}, Int{3}}));
+            return wire<stdlib::map_>(w, fn<stdlib::sub_>(), lhs, rhs)
                 .as<TSL<TS<Int>, 3>>();
         }
     };
@@ -1242,6 +1270,9 @@ TEST_CASE("map_ over TSL: lifted scalar add uses one specialised vector node")
 
     GraphBuilder gb = build_graph<MapLiftedAddConstG>();
     CHECK(gb.node_count() == 3);   // two const sources + one lifted TSL map node
+
+    GraphBuilder operator_fn_gb = build_graph<MapOperatorSubConstG>();
+    CHECK(operator_fn_gb.node_count() == 3);   // two const sources + one lifted TSL map node via fn<sub_>
 }
 
 TEST_CASE("map_ over TSL: lifted standard kernels cover subtraction division and min")
@@ -1255,6 +1286,11 @@ TEST_CASE("map_ over TSL: lifted standard kernels cover subtraction division and
                  values<Value>(list_delta<TS<Int>>({9, 18, 27})));
 
     CHECK_OUTPUT((eval_node<MapLiftedDivTslG>(
+                     values<Value>(list_delta<TS<Int>>({10, 20, 30})),
+                     values<Value>(list_delta<TS<Int>>({2, 5, 4})))),
+                 values<Value>(list_delta<TS<Float>>({Float{5.0}, Float{4.0}, Float{7.5}})));
+
+    CHECK_OUTPUT((eval_node<MapOperatorDivTslG>(
                      values<Value>(list_delta<TS<Int>>({10, 20, 30})),
                      values<Value>(list_delta<TS<Int>>({2, 5, 4})))),
                  values<Value>(list_delta<TS<Float>>({Float{5.0}, Float{4.0}, Float{7.5}})));

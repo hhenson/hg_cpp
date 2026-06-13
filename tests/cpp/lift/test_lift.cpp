@@ -238,3 +238,25 @@ TEST_CASE("lift: standard comparison and logical kernels evaluate directly")
     CHECK(value_as_int(eval_binary<stdlib::scalar_lshift>(Int{3}, Int{2})) == Int{12});
     CHECK(value_as_int(eval_binary<stdlib::scalar_rshift>(Int{12}, Int{2})) == Int{3});
 }
+
+TEST_CASE("lift: standard operator overloads expose their lifted kernel metadata")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK(std::string{fn<stdlib::add_>().operator_name} == "add_");
+    CHECK(fn<stdlib::min_>().arity == std::size_t{2});
+
+    WiringArg lhs;
+    lhs.kind = WiringArg::Kind::TimeSeries;
+    lhs.port.schema = ts_type<TS<Int>>();
+
+    WiringArg rhs = lhs;
+    std::array<WiringArg, 2> args{lhs, rhs};
+
+    ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
+        "add_", std::span<const WiringArg>{args.data(), args.size()}, true);
+    REQUIRE(resolved.impl != nullptr);
+    REQUIRE(resolved.impl->lifted_kernel != nullptr);
+    CHECK(resolved.impl->lifted_kernel == lift<stdlib::scalar_add<Int>>().lifted);
+}

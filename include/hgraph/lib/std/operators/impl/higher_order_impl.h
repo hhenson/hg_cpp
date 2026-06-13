@@ -37,6 +37,40 @@ namespace hgraph::stdlib
         {
         };
 
+        [[nodiscard]] inline const LiftedKernel *resolve_lifted_kernel_for_schemas(
+            const WiredFn &func,
+            std::span<const TSValueTypeMetaData *const> input_schemas,
+            const TSValueTypeMetaData *expected_output = nullptr)
+        {
+            if (func.lifted != nullptr) { return func.lifted->valid() ? func.lifted : nullptr; }
+            if (func.operator_name.empty() || func.arity != input_schemas.size()) { return nullptr; }
+
+            std::vector<WiringArg> args;
+            args.reserve(input_schemas.size());
+            for (const TSValueTypeMetaData *schema : input_schemas)
+            {
+                WiringArg arg;
+                arg.kind = WiringArg::Kind::TimeSeries;
+                arg.port.schema = schema;
+                args.push_back(std::move(arg));
+            }
+
+            try
+            {
+                ResolvedOperatorCall resolved =
+                    OperatorRegistry::instance().resolve(func.operator_name,
+                                                         std::span<const WiringArg>{args.data(), args.size()},
+                                                         func.has_output,
+                                                         expected_output);
+                const LiftedKernel *kernel = resolved.impl != nullptr ? resolved.impl->lifted_kernel : nullptr;
+                return kernel != nullptr && kernel->valid() ? kernel : nullptr;
+            }
+            catch (...)
+            {
+                return nullptr;
+            }
+        }
+
         // A fixed-size TSL second argument (shared requires_ of the TSL overloads;
         // the dynamic-TSL/TSD reductions are separate, future overloads).
         [[nodiscard]] inline bool reduce_ts_is_fixed_tsl(OperatorCallContext context, std::size_t arity)
@@ -56,18 +90,6 @@ namespace hgraph::stdlib
                 return nullptr;
             }
 
-            const WiredFn *func = context.scalar_as<WiredFn>("func");
-            if (func == nullptr || func->lifted == nullptr || !func->lifted->valid())
-            {
-                return nullptr;
-            }
-
-            const LiftedKernel *kernel = func->lifted;
-            if (kernel->arity != 2 || !kernel->associative || !kernel->has_identity())
-            {
-                return nullptr;
-            }
-
             auto       &registry   = TypeRegistry::instance();
             const auto *collection = registry.dereference(context.args[1].port.schema);
             if (collection == nullptr || collection->kind != TSTypeKind::TSL || collection->fixed_size() == 0)
@@ -76,6 +98,20 @@ namespace hgraph::stdlib
             }
             const auto *element = registry.dereference(collection->element_ts());
             if (element == nullptr || element->kind != TSTypeKind::TS)
+            {
+                return nullptr;
+            }
+
+            const WiredFn *func = context.scalar_as<WiredFn>("func");
+            if (func == nullptr) { return nullptr; }
+
+            std::array<const TSValueTypeMetaData *, 2> input_schemas{element, element};
+            const LiftedKernel *kernel =
+                resolve_lifted_kernel_for_schemas(*func,
+                                                  std::span<const TSValueTypeMetaData *const>{input_schemas.data(),
+                                                                                              input_schemas.size()},
+                                                  element);
+            if (kernel == nullptr || kernel->arity != 2 || !kernel->associative || !kernel->has_identity())
             {
                 return nullptr;
             }
@@ -91,9 +127,9 @@ namespace hgraph::stdlib
 
         [[nodiscard]] inline Port<void> wire_lifted_reduce_tsl(Wiring &w,
                                                                const WiredFn &func,
+                                                               const LiftedKernel *kernel,
                                                                const WiringPortRef &ts)
         {
-            const LiftedKernel *kernel = func.lifted;
             if (kernel == nullptr || !kernel->valid() || !kernel->has_identity())
             {
                 throw std::invalid_argument("reduce: lifted fast path requires a lifted function with an identity");
@@ -183,7 +219,21 @@ namespace hgraph::stdlib
                                 Scalar<"func", WiredFn> func,
                                 NamedPort<"ts", TSL<TS<ScalarVar<"T">>>> ts)
             {
-                return wire_lifted_reduce_tsl(w, func.value(), ts.erased());
+                WiringPortRef ts_ref = ts.erased();
+                auto &registry = TypeRegistry::instance();
+                const auto *collection = registry.dereference(ts_ref.schema);
+                if (collection == nullptr || collection->kind != TSTypeKind::TSL)
+                {
+                    throw std::invalid_argument("reduce: lifted fast path requires a fixed-size TSL input");
+                }
+                const TSValueTypeMetaData *element = collection->element_ts();
+                std::array<const TSValueTypeMetaData *, 2> input_schemas{element, element};
+                const LiftedKernel *kernel =
+                    resolve_lifted_kernel_for_schemas(func.value(),
+                                                      std::span<const TSValueTypeMetaData *const>{
+                                                          input_schemas.data(), input_schemas.size()},
+                                                      element);
+                return wire_lifted_reduce_tsl(w, func.value(), kernel, ts_ref);
             }
         };
 
@@ -1175,12 +1225,7 @@ namespace hgraph::stdlib
             std::span<const std::uint8_t> arg_tags,
             bool takes_key)
         {
-            if (takes_key || func.lifted == nullptr || !func.lifted->valid() || !func.has_output)
-            {
-                return std::nullopt;
-            }
-            const LiftedKernel *kernel = func.lifted;
-            if (kernel->arity != schemas.size()) { return std::nullopt; }
+            if (takes_key || !func.has_output || func.arity != schemas.size()) { return std::nullopt; }
 
             auto &registry = TypeRegistry::instance();
             std::size_t size = 0;
@@ -1200,12 +1245,12 @@ namespace hgraph::stdlib
             if (size == 0) { return std::nullopt; }
 
             LiftedMapTslPlan plan;
-            plan.kernel = kernel;
-            plan.output_schema = registry.tsl(kernel->output_schema(), size);
             plan.size = size;
             plan.multiplexed.reserve(schemas.size());
             plan.arg_tags.assign(arg_tags.begin(), arg_tags.end());
 
+            std::vector<const TSValueTypeMetaData *> expected_schemas;
+            expected_schemas.reserve(schemas.size());
             for (std::size_t i = 0; i < schemas.size(); ++i)
             {
                 const auto tag = i < arg_tags.size() ? static_cast<WiringPortRef::ArgTag>(arg_tags[i])
@@ -1214,12 +1259,26 @@ namespace hgraph::stdlib
                                          tsl_arg_is_multiplexed(schemas[i], size);
                 const TSValueTypeMetaData *expected =
                     multiplexed ? registry.dereference(schemas[i])->element_ts() : schemas[i];
+                expected_schemas.push_back(expected);
+                plan.multiplexed.push_back(multiplexed);
+            }
+
+            const LiftedKernel *kernel =
+                resolve_lifted_kernel_for_schemas(func,
+                                                  std::span<const TSValueTypeMetaData *const>{expected_schemas.data(),
+                                                                                              expected_schemas.size()});
+            if (kernel == nullptr || kernel->arity != schemas.size()) { return std::nullopt; }
+
+            for (std::size_t i = 0; i < expected_schemas.size(); ++i)
+            {
+                const TSValueTypeMetaData *expected = expected_schemas[i];
                 if (!time_series_schema_equivalent(kernel->input_schema(i), expected))
                 {
                     return std::nullopt;
                 }
-                plan.multiplexed.push_back(multiplexed);
             }
+            plan.kernel = kernel;
+            plan.output_schema = registry.tsl(kernel->output_schema(), size);
             return plan;
         }
 

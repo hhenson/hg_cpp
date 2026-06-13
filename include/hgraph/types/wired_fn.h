@@ -100,6 +100,7 @@ namespace hgraph
         CompileThunk          compile_fn{nullptr};
         ParamNamesThunk       param_names_fn{nullptr};
         const std::type_info *identity{nullptr};
+        std::string_view      operator_name{};
         const LiftedKernel   *lifted{nullptr};
         std::size_t           arity{0};
         bool                  has_output{false};
@@ -408,6 +409,10 @@ namespace hgraph
             .compile_fn     = &wired_fn_detail::compile_thunk<X>,
             .param_names_fn = &wired_fn_detail::param_names_thunk<X>,
             .identity       = &typeid(X),
+            .operator_name  = [] {
+                if constexpr (std::is_base_of_v<operator_tag, X>) { return std::string_view{X::name}; }
+                else { return std::string_view{}; }
+            }(),
             .arity          = wired_fn_detail::arity_of<X>(),
             .has_output     = wired_fn_detail::has_output_of<X>(),
         };

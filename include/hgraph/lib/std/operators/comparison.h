@@ -73,14 +73,13 @@ namespace hgraph::stdlib
     {
     };
 
-    /** ``min_`` — the ``min`` operator. Variadic: unary = min over a collection / running min,
-        n-ary = element-wise min. (Python takes optional ``default_value`` / ``__strict__``.) */
-    struct min_ : Operator<"min_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    /** ``min_`` — binary element-wise minimum. Collection / variadic forms are separate overloads. */
+    struct min_ : Operator<"min_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 
-    /** ``max_`` — the ``max`` operator. Variadic, mirroring ``min_``. */
-    struct max_ : Operator<"max_", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
+    /** ``max_`` — binary element-wise maximum. Collection / variadic forms are separate overloads. */
+    struct max_ : Operator<"max_", In<"lhs", TsVar<"L">>, In<"rhs", TsVar<"R">>, Out<TsVar<"O">>>
     {
     };
 }  // namespace hgraph::stdlib

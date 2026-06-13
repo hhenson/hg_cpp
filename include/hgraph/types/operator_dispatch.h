@@ -11,6 +11,7 @@
 #include <hgraph/types/type_resolution.h>              // ResolutionMap
 #include <hgraph/types/value/value.h>                  // Value
 #include <hgraph/types/value/value_builder.h>          // BundleBuilder
+#include <hgraph/types/wired_fn.h>                     // WiredFn, LiftedKernel
 
 #include <algorithm>
 #include <concepts>
@@ -233,6 +234,7 @@ namespace hgraph
         bool                       has_kwargs{false};
         bool                       has_output{false};
         TypePattern                output{};
+        const LiftedKernel        *lifted_kernel{nullptr};
         int                        rank{0};
         Source                     source{Source::Cpp};
         std::function<void(ResolutionMap &, OperatorCallContext)> default_resolver{};   ///< may be empty
@@ -984,15 +986,30 @@ namespace hgraph
                 else
                 {
                     result.kind        = WiringArg::Kind::Scalar;
-                    result.scalar_meta = graph_wiring_detail::scalar_argument_meta(arg);
-                    if constexpr (static_node_detail::is_scalar_selector<AA>::value)
+                    if constexpr (!static_node_detail::is_scalar_selector<AA>::value &&
+                                  !std::is_same_v<AA, Value> &&
+                                  std::is_convertible_v<AA, WiredFn>)
                     {
+                        result.scalar_meta  = scalar_descriptor<WiredFn>::value_meta();
+                        result.scalar_value = Value{static_cast<WiredFn>(arg)};
+                    }
+                    else if constexpr (static_node_detail::is_scalar_selector<AA>::value)
+                    {
+                        result.scalar_meta = graph_wiring_detail::scalar_argument_meta(arg);
                         using V = typename graph_wiring_detail::arg_value_type<AA>::type;
                         if constexpr (std::is_same_v<V, Value>) { result.scalar_value = arg.value(); }
                         else { result.scalar_value = Value{arg.value()}; }
                     }
-                    else if constexpr (std::is_same_v<AA, Value>) { result.scalar_value = arg; }
-                    else { result.scalar_value = Value{arg}; }
+                    else if constexpr (std::is_same_v<AA, Value>)
+                    {
+                        result.scalar_meta  = graph_wiring_detail::scalar_argument_meta(arg);
+                        result.scalar_value = arg;
+                    }
+                    else
+                    {
+                        result.scalar_meta  = graph_wiring_detail::scalar_argument_meta(arg);
+                        result.scalar_value = Value{arg};
+                    }
                 }
                 return result;
             }
@@ -1033,6 +1050,87 @@ namespace hgraph
                     it->default_value = std::move(value);
                 }
             }
+        }
+    }  // namespace operator_dispatch_detail
+
+    namespace operator_dispatch_detail
+    {
+        template <typename T>
+        concept lifted_operator_impl = requires(Wiring &w, std::span<const WiringPortRef> args) {
+            { T::lifted_kernel() } -> std::same_as<const LiftedKernel *>;
+            { T::wire_lifted(w, args) } -> std::same_as<WiringPortRef>;
+        };
+
+        [[nodiscard]] inline std::string render_lifted_label(std::string_view name,
+                                                             const std::vector<ParamPattern> &params,
+                                                             const OperatorImpl &impl)
+        {
+            std::string out{name};
+            out += "(";
+            for (std::size_t i = 0; i < params.size(); ++i)
+            {
+                if (i != 0) { out += ", "; }
+                out += ts_pattern_to_string(params[i].ts);
+            }
+            out += ")";
+            if (impl.has_output) { out += " -> " + ts_pattern_to_string(impl.output); }
+            return out;
+        }
+
+        template <typename Impl>
+        [[nodiscard]] OperatorImpl make_lifted_operator_impl(std::string name)
+        {
+            const LiftedKernel *kernel = Impl::lifted_kernel();
+            if (kernel == nullptr || !kernel->valid())
+            {
+                throw std::logic_error("lifted operator overload requires a valid LiftedKernel");
+            }
+
+            OperatorImpl impl;
+            impl.name          = std::move(name);
+            impl.source        = OperatorImpl::Source::Cpp;
+            impl.has_output    = true;
+            impl.output        = TypePattern::concrete(kernel->output_schema());
+            impl.lifted_kernel = kernel;
+
+            const auto names = kernel->param_names();
+            impl.params.reserve(kernel->arity);
+            for (std::size_t i = 0; i < kernel->arity; ++i)
+            {
+                ParamPattern pp;
+                pp.kind = ParamPattern::Kind::Input;
+                if (i < names.size()) { pp.name = std::string{names[i]}; }
+                pp.ts = TypePattern::concrete(kernel->input_schema(i));
+                impl.params.push_back(std::move(pp));
+            }
+
+            impl.rank  = operator_rank(impl.params);
+            impl.label = render_lifted_label(impl.name, impl.params, impl);
+
+            impl.wire = [kernel](Wiring &w, const ResolutionMap &, std::span<const WiringArg> args,
+                                 std::span<const std::pair<std::string, WiringPortRef>>) -> OperatorWireResult {
+                std::vector<WiringPortRef> inputs;
+                inputs.reserve(args.size());
+                for (std::size_t i = 0; i < args.size(); ++i)
+                {
+                    const TSValueTypeMetaData *expected = kernel->input_schema(i);
+                    if (args[i].kind == WiringArg::Kind::TimeSeries)
+                    {
+                        if (args[i].port.schema == nullptr)
+                        {
+                            throw std::logic_error("lifted operator overload input cannot be an unwired default");
+                        }
+                        inputs.push_back(args[i].port);
+                    }
+                    else
+                    {
+                        inputs.push_back(wire_scalar_const(w, args[i], expected));
+                    }
+                }
+                WiringPortRef out = Impl::wire_lifted(w, std::span<const WiringPortRef>{inputs.data(), inputs.size()});
+                return OperatorWireResult{true, Port<void>{w, std::move(out)}};
+            };
+            return impl;
         }
     }  // namespace operator_dispatch_detail
 
@@ -1219,7 +1317,15 @@ namespace hgraph
     template <typename Op, typename Impl>
     void register_overload()
     {
-        OperatorRegistry::instance().register_overload(make_operator_impl<Impl>(std::string{Op::name}));
+        if constexpr (operator_dispatch_detail::lifted_operator_impl<Impl>)
+        {
+            OperatorRegistry::instance().register_overload(
+                operator_dispatch_detail::make_lifted_operator_impl<Impl>(std::string{Op::name}));
+        }
+        else
+        {
+            OperatorRegistry::instance().register_overload(make_operator_impl<Impl>(std::string{Op::name}));
+        }
     }
 
     /** Register the C++ graph ``Impl`` as an overload of operator ``Op``. */

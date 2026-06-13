@@ -180,6 +180,18 @@ namespace
         }
     };
 
+    struct OperatorFnReduceConstGraph
+    {
+        static constexpr auto name = "operator_fn_reduce_const_graph";
+
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            auto ts = wire<stdlib::const_, TSL<TS<Int>, 3>>(
+                w, stdlib::make_list<Int>({Int{1}, Int{2}, Int{3}}));
+            return wire<stdlib::reduce_>(w, fn<stdlib::add_>(), ts).as<TS<Int>>();
+        }
+    };
+
     struct LiftedReduceExplicitIdentityConstGraph
     {
         static constexpr auto name = "lifted_reduce_explicit_identity_const_graph";
@@ -203,6 +215,18 @@ namespace
             return wire<stdlib::reduce_>(
                        w, lift<stdlib::scalar_min<Int>, std::numeric_limits<Int>::max()>(), ts)
                 .as<TS<Int>>();
+        }
+    };
+
+    struct OperatorFnMinReduceConstGraph
+    {
+        static constexpr auto name = "operator_fn_min_reduce_const_graph";
+
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            auto ts = wire<stdlib::const_, TSL<TS<Int>, 4>>(
+                w, stdlib::make_list<Int>({Int{9}, Int{4}, Int{7}, Int{2}}));
+            return wire<stdlib::reduce_>(w, fn<stdlib::min_>(), ts).as<TS<Int>>();
         }
     };
 }  // namespace
@@ -231,6 +255,9 @@ TEST_CASE("reduce: a lifted scalar add reduces a fixed TSL in one specialised no
 
     GraphBuilder gb = build_graph<LiftedReduceConstGraph>();
     CHECK(gb.node_count() == 2);   // const source + lifted reduce node
+
+    GraphBuilder operator_fn_gb = build_graph<OperatorFnReduceConstGraph>();
+    CHECK(operator_fn_gb.node_count() == 2);   // const source + lifted reduce node resolved through fn<add_>
 }
 
 TEST_CASE("reduce: a lifted scalar function can take its identity from lift")
@@ -266,6 +293,12 @@ TEST_CASE("reduce: lifted standard kernels use built-in and explicit identities"
                  values<Int>(2, 5));
 
     CHECK_OUTPUT((eval_node<stdlib::reduce_, TSL<TS<Int>, 3>>(
+                     fn<stdlib::min_>(),
+                     values<Value>(list_delta<TS<Int>>({5, 2, 9}),
+                                   list_delta<TS<Int>>({{1, 7}})))),
+                 values<Int>(2, 5));
+
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSL<TS<Int>, 3>>(
                      lift<stdlib::scalar_max<Int>, std::numeric_limits<Int>::lowest()>(),
                      values<Value>(list_delta<TS<Int>>({5, 2, 9}),
                                    list_delta<TS<Int>>({{1, 10}})))),
@@ -273,6 +306,9 @@ TEST_CASE("reduce: lifted standard kernels use built-in and explicit identities"
 
     GraphBuilder gb = build_graph<LiftedReduceMinConstGraph>();
     CHECK(gb.node_count() == 2);   // const source + lifted reduce node
+
+    GraphBuilder operator_min_gb = build_graph<OperatorFnMinReduceConstGraph>();
+    CHECK(operator_min_gb.node_count() == 2);   // const source + lifted reduce node via fn<min_>
 }
 
 TEST_CASE("reduce: not-yet-valid elements count as the operation's zero")

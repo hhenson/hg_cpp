@@ -1,8 +1,10 @@
 #ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_ARITHMETIC_IMPL_H
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_ARITHMETIC_IMPL_H
 
+#include <hgraph/lib/std/lifted_kernels.h>
 #include <hgraph/lib/std/operators/arithmetic.h>   // add_ / sub_ / mul_ / div_ / DivideByZero
 #include <hgraph/types/operator_dispatch.h>
+#include <hgraph/types/lift.h>
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
@@ -477,40 +479,40 @@ namespace hgraph::stdlib
     inline void register_arithmetic_operators()
     {
         // add_ — homogeneous numeric / temporal, mixed numeric, and heterogeneous temporal.
-        register_overload<add_, add_same<Int>>();                                                // int + int -> int
-        register_overload<add_, add_same<Float>>();                                              // float + float -> float
-        register_overload<add_, add_same<Str>>();                                                // string concatenation
-        register_overload<add_, add_same<TimeDelta>>();                                          // TimeDelta + TimeDelta
-        register_overload<add_, add_binary<Int, Float, Float>>();                                // int + float -> float
-        register_overload<add_, add_binary<Float, Int, Float>>();                                // float + int -> float
-        register_overload<add_, add_binary<DateTime, TimeDelta, DateTime>>();                    // DateTime + TimeDelta
-        register_overload<add_, add_binary<TimeDelta, DateTime, DateTime>>();                    // TimeDelta + DateTime
+        register_overload<add_, lift<scalar_add<Int>>>();                                      // int + int -> int
+        register_overload<add_, lift<scalar_add<Float>>>();                                    // float + float -> float
+        register_overload<add_, lift<scalar_add<Str>>>();                                      // string concatenation
+        register_overload<add_, lift<scalar_add<TimeDelta>>>();                                // TimeDelta + TimeDelta
+        register_overload<add_, lift<scalar_add<Int, Float, Float>>>();                        // int + float -> float
+        register_overload<add_, lift<scalar_add<Float, Int, Float>>>();                        // float + int -> float
+        register_overload<add_, lift<scalar_add<DateTime, TimeDelta, DateTime>>>();            // DateTime + TimeDelta
+        register_overload<add_, lift<scalar_add<TimeDelta, DateTime, DateTime>>>();            // TimeDelta + DateTime
         register_overload<add_, add_date_timedelta>();                                           // Date + TimeDelta -> Date
 
         // sub_ — note the result type that differs from the operands.
-        register_overload<sub_, sub_same<Int>>();                                                // int - int -> int
-        register_overload<sub_, sub_same<Float>>();                                              // float - float -> float
-        register_overload<sub_, sub_same<TimeDelta>>();                                          // TimeDelta - TimeDelta
-        register_overload<sub_, sub_binary<Int, Float, Float>>();                                // int - float -> float
-        register_overload<sub_, sub_binary<Float, Int, Float>>();                                // float - int -> float
-        register_overload<sub_, sub_binary<DateTime, TimeDelta, DateTime>>();                    // DateTime - TimeDelta
-        register_overload<sub_, sub_binary<DateTime, DateTime, TimeDelta>>();                    // DateTime - DateTime -> TimeDelta
+        register_overload<sub_, lift<scalar_sub<Int>>>();                                      // int - int -> int
+        register_overload<sub_, lift<scalar_sub<Float>>>();                                    // float - float -> float
+        register_overload<sub_, lift<scalar_sub<TimeDelta>>>();                                // TimeDelta - TimeDelta
+        register_overload<sub_, lift<scalar_sub<Int, Float, Float>>>();                        // int - float -> float
+        register_overload<sub_, lift<scalar_sub<Float, Int, Float>>>();                        // float - int -> float
+        register_overload<sub_, lift<scalar_sub<DateTime, TimeDelta, DateTime>>>();            // DateTime - TimeDelta
+        register_overload<sub_, lift<scalar_sub<DateTime, DateTime, TimeDelta>>>();            // DateTime - DateTime -> TimeDelta
         register_overload<sub_, sub_dates>();                                                    // Date - Date -> TimeDelta
 
         // mul_ — numeric products and string repetition.
-        register_overload<mul_, mul_same<Int>>();
-        register_overload<mul_, mul_same<Float>>();
-        register_overload<mul_, mul_binary<Int, Float, Float>>();
-        register_overload<mul_, mul_binary<Float, Int, Float>>();
+        register_overload<mul_, lift<scalar_mul<Int>>>();
+        register_overload<mul_, lift<scalar_mul<Float>>>();
+        register_overload<mul_, lift<scalar_mul<Int, Float, Float>>>();
+        register_overload<mul_, lift<scalar_mul<Float, Int, Float>>>();
         register_overload<mul_, repeat_string_right>();
         register_overload<mul_, repeat_string_left>();
 
         // div_ — the two-argument form defaults to DivideByZero::Error; the three-argument
         // form takes an explicit policy. Arity selects between them.
-        register_overload<div_, div_numbers_default<Int, Int>>();      // int / int -> float
-        register_overload<div_, div_numbers_default<Float, Float>>();  // float / float -> float
-        register_overload<div_, div_numbers_default<Int, Float>>();
-        register_overload<div_, div_numbers_default<Float, Int>>();
+        register_overload<div_, lift<scalar_div<Int>>>();        // int / int -> float
+        register_overload<div_, lift<scalar_div<Float>>>();      // float / float -> float
+        register_overload<div_, lift<scalar_div<Int, Float>>>();
+        register_overload<div_, lift<scalar_div<Float, Int>>>();
         register_overload<div_, div_numbers<Int, Int>>();             // int / int -> float (with policy)
         register_overload<div_, div_numbers<Float, Float>>();         // float / float -> float (with policy)
         register_overload<div_, div_numbers<Int, Float>>();
@@ -518,19 +520,19 @@ namespace hgraph::stdlib
         register_overload<div_, div_timedeltas>();                    // TimeDelta / TimeDelta -> Float
 
         // floordiv_ / mod_ — integer outputs for int operands, Float otherwise.
-        register_overload<floordiv_, floordiv_ints_default>();
-        register_overload<floordiv_, floordiv_numbers_default<Float, Float>>();
-        register_overload<floordiv_, floordiv_numbers_default<Int, Float>>();
-        register_overload<floordiv_, floordiv_numbers_default<Float, Int>>();
+        register_overload<floordiv_, lift<scalar_floordiv<Int>>>();
+        register_overload<floordiv_, lift<scalar_floordiv<Float>>>();
+        register_overload<floordiv_, lift<scalar_floordiv<Int, Float>>>();
+        register_overload<floordiv_, lift<scalar_floordiv<Float, Int>>>();
         register_overload<floordiv_, floordiv_ints>();
         register_overload<floordiv_, floordiv_numbers<Float, Float>>();
         register_overload<floordiv_, floordiv_numbers<Int, Float>>();
         register_overload<floordiv_, floordiv_numbers<Float, Int>>();
 
-        register_overload<mod_, mod_ints_default>();
-        register_overload<mod_, mod_numbers_default<Float, Float>>();
-        register_overload<mod_, mod_numbers_default<Int, Float>>();
-        register_overload<mod_, mod_numbers_default<Float, Int>>();
+        register_overload<mod_, lift<scalar_mod<Int>>>();
+        register_overload<mod_, lift<scalar_mod<Float>>>();
+        register_overload<mod_, lift<scalar_mod<Int, Float>>>();
+        register_overload<mod_, lift<scalar_mod<Float, Int>>>();
         register_overload<mod_, mod_ints>();
         register_overload<mod_, mod_numbers<Float, Float>>();
         register_overload<mod_, mod_numbers<Int, Float>>();
@@ -543,27 +545,27 @@ namespace hgraph::stdlib
         register_overload<divmod_, divmod_numbers<Float, Int>>();
 
         // pow_ — numeric power is explicitly Float-valued in C++.
-        register_overload<pow_, pow_numbers_default<Int, Int>>();
-        register_overload<pow_, pow_numbers_default<Float, Float>>();
-        register_overload<pow_, pow_numbers_default<Int, Float>>();
-        register_overload<pow_, pow_numbers_default<Float, Int>>();
+        register_overload<pow_, lift<scalar_pow<Int>>>();
+        register_overload<pow_, lift<scalar_pow<Float>>>();
+        register_overload<pow_, lift<scalar_pow<Int, Float>>>();
+        register_overload<pow_, lift<scalar_pow<Float, Int>>>();
         register_overload<pow_, pow_numbers<Int, Int>>();
         register_overload<pow_, pow_numbers<Float, Float>>();
         register_overload<pow_, pow_numbers<Int, Float>>();
         register_overload<pow_, pow_numbers<Float, Int>>();
 
-        register_overload<neg_, neg_same<Int>>();
-        register_overload<neg_, neg_same<Float>>();
-        register_overload<neg_, neg_same<TimeDelta>>();
-        register_overload<pos_, pos_same<Int>>();
-        register_overload<pos_, pos_same<Float>>();
-        register_overload<pos_, pos_same<TimeDelta>>();
-        register_overload<abs_, abs_same<Int>>();
-        register_overload<abs_, abs_same<Float>>();
+        register_overload<neg_, lift<scalar_neg<Int>>>();
+        register_overload<neg_, lift<scalar_neg<Float>>>();
+        register_overload<neg_, lift<scalar_neg<TimeDelta>>>();
+        register_overload<pos_, lift<scalar_pos<Int>>>();
+        register_overload<pos_, lift<scalar_pos<Float>>>();
+        register_overload<pos_, lift<scalar_pos<TimeDelta>>>();
+        register_overload<abs_, lift<scalar_abs<Int>>>();
+        register_overload<abs_, lift<scalar_abs<Float>>>();
         register_overload<abs_, abs_timedelta>();
-        register_overload<sign, sign_same<Int>>();
-        register_overload<sign, sign_same<Float>>();
-        register_overload<ln, ln_float>();
+        register_overload<sign, lift<scalar_sign<Int>>>();
+        register_overload<sign, lift<scalar_sign<Float>>>();
+        register_overload<ln, lift<scalar_ln>>();
     }
 }  // namespace hgraph::stdlib
 

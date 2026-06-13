@@ -33,7 +33,7 @@ namespace hgraph
     }  // namespace lift_detail
 
     template <typename F, auto Identity = lift_detail::function_identity>
-    [[nodiscard]] WiredFn lift();
+    struct lift;
 
     namespace lift_detail
     {
@@ -407,7 +407,7 @@ namespace hgraph
             return w.add_node(std::type_index(typeid(lifted_node_identity<F, Identity>)),
                               std::move(builder),
                               std::span<const WiringPortRef>{inputs.data(), inputs.size()},
-                              Value{lift<F, Identity>()});
+                              Value{static_cast<WiredFn>(lift<F, Identity>{})});
         }
 
         template <typename F, auto Identity>
@@ -446,19 +446,79 @@ namespace hgraph
     }  // namespace lift_detail
 
     template <typename F, auto Identity>
-    [[nodiscard]] WiredFn lift()
+    struct lift
     {
-        const LiftedKernel &k = lift_detail::kernel<F, Identity>();
-        return WiredFn{
-            .wire_fn        = &lift_detail::wire_thunk<F, Identity>,
-            .compile_fn     = &lift_detail::compile_thunk<F, Identity>,
-            .param_names_fn = &lift_detail::param_names<F>,
-            .identity       = &typeid(lift_detail::lifted_identity<F, Identity>),
-            .lifted         = &k,
-            .arity          = k.arity,
-            .has_output     = true,
-        };
-    }
+        const LiftedKernel *lifted{lifted_kernel()};
+        std::size_t         arity{lifted_kernel()->arity};
+        bool                has_output{true};
+
+        [[nodiscard]] static const LiftedKernel &kernel()
+        {
+            return lift_detail::kernel<F, Identity>();
+        }
+
+        [[nodiscard]] static const LiftedKernel *lifted_kernel()
+        {
+            return &kernel();
+        }
+
+        [[nodiscard]] static WiringPortRef wire_lifted(Wiring &w, std::span<const WiringPortRef> args)
+        {
+            return lift_detail::wire_lifted<F, Identity>(w, args);
+        }
+
+        [[nodiscard]] static CompiledSubGraph compile_lifted(
+            std::span<const TSValueTypeMetaData *const> input_schemas)
+        {
+            return lift_detail::compile_lifted<F, Identity>(input_schemas);
+        }
+
+        [[nodiscard]] static WiredFn fn()
+        {
+            const LiftedKernel &k = kernel();
+            return WiredFn{
+                .wire_fn        = &lift_detail::wire_thunk<F, Identity>,
+                .compile_fn     = &lift_detail::compile_thunk<F, Identity>,
+                .param_names_fn = &lift_detail::param_names<F>,
+                .identity       = &typeid(lift_detail::lifted_identity<F, Identity>),
+                .lifted         = &k,
+                .arity          = k.arity,
+                .has_output     = true,
+            };
+        }
+
+        [[nodiscard]] std::span<const std::string_view> param_names() const
+        {
+            return lifted != nullptr ? lifted->param_names() : std::span<const std::string_view>{};
+        }
+
+        [[nodiscard]] bool valid() const noexcept
+        {
+            return lifted != nullptr && lifted->valid();
+        }
+
+        [[nodiscard]] WiringPortRef wire(Wiring &w, std::span<const WiringPortRef> args) const
+        {
+            return wire_lifted(w, args);
+        }
+
+        [[nodiscard]] CompiledSubGraph compile(std::span<const TSValueTypeMetaData *const> input_schemas) const
+        {
+            return compile_lifted(input_schemas);
+        }
+
+        template <typename Other>
+        [[nodiscard]] bool operator==(const Other &other) const
+            requires(std::is_convertible_v<Other, WiredFn>)
+        {
+            return static_cast<WiredFn>(*this) == static_cast<WiredFn>(other);
+        }
+
+        [[nodiscard]] operator WiredFn() const
+        {
+            return fn();
+        }
+    };
 }  // namespace hgraph
 
 #endif  // HGRAPH_TYPES_LIFT_H
