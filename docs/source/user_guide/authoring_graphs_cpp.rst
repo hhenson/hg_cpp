@@ -354,6 +354,47 @@ Logical and bitwise
      - ``Int``
      - Shift counts must be non-negative and smaller than the number of value bits.
 
+Flow control
+~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - Operator
+     - Registered overloads
+     - Result
+     - Notes
+   * - ``merge``
+     - variadic ``*ts`` with matching time-series schemas
+     - same as inputs
+     - Forwards the first input to tick in input order; if the selected input
+       invalidates, falls back to the most recent still-valid input.
+   * - ``all_``
+     - variadic ``*args: TS<Bool>``; ``TSD<K, TS<Bool>>``
+     - ``TS<Bool>``
+     - Empty variadic calls return ``true``. Non-empty variadic calls are packed
+       into a fixed ``TSL`` and wired through ``reduce`` with ``false`` as the
+       default value for not-yet-valid leaves.
+   * - ``any_``
+     - variadic ``*args: TS<Bool>``; ``TSD<K, TS<Bool>>``
+     - ``TS<Bool>``
+     - Empty variadic calls return ``false``. Non-empty variadic calls are packed
+       into a fixed ``TSL`` and wired through ``reduce`` with ``false`` as the
+       default value for not-yet-valid leaves.
+   * - ``if_true``
+     - ``condition: TS<Bool>``; optional scalar ``tick_once_only``
+     - ``TS<Bool>``
+     - Ticks ``true`` when ``condition`` ticks true; with ``tick_once_only`` set,
+       only the first true tick is emitted.
+   * - ``if_then_else``
+     - ``condition: TS<Bool>``, ``true_value`` and ``false_value`` with matching schemas
+     - same as selected inputs
+     - Samples the selected input when the condition or selected input ticks.
+   * - ``if_cmp``
+     - ``cmp: TS<CmpResult>``, plus matching ``lt`` / ``eq`` / ``gt`` inputs
+     - same as branch inputs
+     - Selects the branch indicated by ``CmpResult::LT`` / ``EQ`` / ``GT``.
+
 Sources, conversions and sinks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

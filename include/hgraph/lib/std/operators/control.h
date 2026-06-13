@@ -16,7 +16,7 @@ namespace hgraph::stdlib
      */
 
     /** ``merge`` — forward the first of the inputs to tick this cycle (variadic). */
-    struct merge : Operator<"merge", In<"ts", TsVar<"S">>, Out<TsVar<"S">>>
+    struct merge : Operator<"merge", VarIn<"ts", TsVar<"S">>, Out<TsVar<"S">>>
     {
     };
 
@@ -26,12 +26,12 @@ namespace hgraph::stdlib
     };
 
     /** ``all_`` — graph ``all``: ``True`` when every boolean input is ``True`` (variadic). */
-    struct all_ : Operator<"all_", In<"args", TsVar<"S">>, Out<TS<Bool>>>
+    struct all_ : Operator<"all_", VarIn<"args", TS<Bool>>, Out<TS<Bool>>>
     {
     };
 
     /** ``any_`` — graph ``any``: ``True`` when any boolean input is ``True`` (variadic). */
-    struct any_ : Operator<"any_", In<"args", TsVar<"S">>, Out<TS<Bool>>>
+    struct any_ : Operator<"any_", VarIn<"args", TS<Bool>>, Out<TS<Bool>>>
     {
     };
 
@@ -46,7 +46,7 @@ namespace hgraph::stdlib
     };
 
     /** ``if_true`` — tick ``True`` when ``condition`` ticks ``True`` (optional ``tick_once_only``). */
-    struct if_true : Operator<"if_true", In<"condition", TS<Bool>>, Out<TS<Bool>>>
+    struct if_true : Operator<"if_true", In<"condition", TS<Bool>>, Scalar<"tick_once_only", Bool>, Out<TS<Bool>>>
     {
     };
 

@@ -66,6 +66,20 @@ namespace
         }
     };
 
+    struct VariadicRawReduce : Operator<"test_variadic_raw_reduce", VarIn<"ts", TS<Int>>, Out<TS<Int>>>
+    {
+    };
+
+    struct VariadicRawReduceImpl
+    {
+        static constexpr auto name = "variadic_raw_reduce_impl";
+
+        static Port<TS<Int>> compose(Wiring &w, VarIn<"ts", TS<Int>> ts)
+        {
+            return wire<stdlib::reduce_>(w, fn<SumCombiner>(), ts).as<TS<Int>>();
+        }
+    };
+
     // ---- user specialisation, mirroring ext/main's test_map_overload ----
 
     // A combiner used purely as a selection marker for the specialised overload.
@@ -228,6 +242,21 @@ TEST_CASE("reduce: works over a sub-graph boundary TSL via boundary element proj
     auto ex = run_graph(std::move(gb), MIN_ST, MIN_ST + TimeDelta{10});
 
     CHECK_OUTPUT(get_recorded_values<Int>(ex.view().graph().global_state(), "out"), values<Int>(3, 30));
+}
+
+TEST_CASE("reduce: a VarIn tail without zero folds raw inputs")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+    register_graph_overload<VariadicRawReduce, VariadicRawReduceImpl>();
+
+    // SumCombiner has no zero overload. Passing a VarIn tail to reduce_ must
+    // therefore select the raw variadic reduction path. If it used ordinary
+    // fixed-TSL reduce semantics, wiring would require a zero and fail.
+    CHECK_OUTPUT(eval_node<VariadicRawReduce>(values<Int>(1, none, 4),
+                                              values<Int>(2, 3, none),
+                                              values<Int>(none, 5, 6)),
+                 values<Int>(none, 9, 13));
 }
 
 TEST_CASE("reduce: a user overload gated on the wired function's identity wins selection")

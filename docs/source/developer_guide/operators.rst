@@ -37,7 +37,9 @@ chosen implementation is baked into the graph.
    collection container basics and TSS set algebra, stream basics
    (``sample`` / ``filter_`` / ``take`` / ``drop`` / ``step`` / ``slice_`` /
    ``dedup`` / ``diff`` / ``count`` / ``clip`` / ``ewma``),
-   date / time-series-property operators, and simple IO sink overloads, including
+   flow-control basics (``merge`` / ``all_`` / ``any_`` / ``if_true`` /
+   ``if_then_else`` / ``if_cmp``), date / time-series-property operators, and
+   simple IO sink overloads, including
    homogeneous, mixed, heterogeneous-temporal, result-differs and optional-scalar
    (``DivideByZero`` policy) overloads — proven by
    ``tests/cpp/test_std_operators.cpp`` and the scalar / auto-const / ``requires`` /
@@ -671,6 +673,26 @@ sugar):
   variadic ones at equal specificity; a user specialisation with an exact
   signature wins against the variadic default;
 - candidate labels render the variadic parameter with a ``*`` prefix.
+
+Static-node signatures remain fixed-arity today. Variadic operator overloads
+should therefore be authored as graph overloads that receive ``VarIn``. A
+non-empty ``VarIn`` tail can be passed as a normal operator argument where a
+collection input is expected; the dispatcher erases it as a fixed structural
+``TSL`` with one child per tail element. This is the variadic-tail counterpart of
+scalar auto-const promotion, and lets graph overloads write calls such as
+``wire<reduce_>(w, fn<binary>(), args, zero)`` directly. ``reduce`` also detects
+that packed-tail marker: ``reduce(func, args)`` is a raw variadic fold with no
+zero/default leaves, while ``reduce(func, args, zero)`` is the ordinary collection
+reduction with default leaf values. This is why ``merge(*ts) -> S`` can delegate
+to ``reduce`` without sharing a private fold helper. Pure variadic overloads whose
+output type is the tail type must still provide ``resolve_default_types`` from
+the call context because variadic tail matches intentionally do not bind type
+variables.
+
+Graph compose bodies should return the port produced by their inner wiring call.
+Do not wrap an existing port in a different ``Port<...>`` type to make the graph's
+signature look more specific; output type resolution belongs in the overload
+metadata, not in a graph-body port cast.
 
 Scalars cannot appear in the tail — configuration belongs in the fixed
 prefix (cf. ``SwitchCases``) or in **keyword-only parameters**: ``Scalar``

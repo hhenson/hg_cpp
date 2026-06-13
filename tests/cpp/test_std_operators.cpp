@@ -580,6 +580,59 @@ TEST_CASE("std operators: stream operators cover sampling filtering slicing and 
                  values<Float>(1.0, 1.5, 2.25, 3.125));
 }
 
+TEST_CASE("std operators: control operators cover variadic booleans merge and selection")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::all_>(values<Bool>(true, true, true),
+                                         values<Bool>(true, false, true),
+                                         values<Bool>(true, true, none)),
+                 values<Bool>(true, false, true));
+    CHECK_OUTPUT(eval_node<stdlib::any_>(values<Bool>(false, false, none),
+                                         values<Bool>(false, true, false),
+                                         values<Bool>(false, false, none)),
+                 values<Bool>(false, true, false));
+    CHECK_OUTPUT((eval_node<stdlib::all_, TSD<Int, TS<Bool>>>(
+                     values<Value>(dict_delta<Int, TS<Bool>>({}),
+                                   dict_delta<Int, TS<Bool>>({{1, false}}),
+                                   dict_delta<Int, TS<Bool>>({{2, true}}),
+                                   dict_delta<Int, TS<Bool>>({{1, true}}),
+                                   dict_delta<Int, TS<Bool>>({{2, false}}),
+                                   dict_delta<Int, TS<Bool>>({}, {2}),
+                                   dict_delta<Int, TS<Bool>>({}, {1})))),
+                 values<Bool>(true, false, false, true, false, true, true));
+    CHECK_OUTPUT((eval_node<stdlib::any_, TSD<Int, TS<Bool>>>(
+                     values<Value>(dict_delta<Int, TS<Bool>>({}),
+                                   dict_delta<Int, TS<Bool>>({{1, false}}),
+                                   dict_delta<Int, TS<Bool>>({{2, false}}),
+                                   dict_delta<Int, TS<Bool>>({{1, true}}),
+                                   dict_delta<Int, TS<Bool>>({{2, true}}),
+                                   dict_delta<Int, TS<Bool>>({{2, false}}),
+                                   dict_delta<Int, TS<Bool>>({}, {1})))),
+                 values<Bool>(false, false, false, true, true, true, false));
+
+    CHECK_OUTPUT(eval_node<stdlib::merge>(values<Int>(none, 2, none, none, 6),
+                                          values<Int>(1, none, 4, none, none),
+                                          values<Int>(none, 3, 5, none, none)),
+                 values<Int>(1, 2, 4, none, 6));
+
+    CHECK_OUTPUT(eval_node<stdlib::if_true>(values<Bool>(true, false, true)),
+                 values<Bool>(true, none, true));
+    CHECK_OUTPUT(eval_node<stdlib::if_true>(values<Bool>(true, false, true), Bool{true}),
+                 values<Bool>(true, none, none));
+    CHECK_OUTPUT(eval_node<stdlib::if_then_else>(values<Bool>(true, false, true),
+                                                 values<Int>(1, 2, 3),
+                                                 values<Int>(4, 5, 6)),
+                 values<Int>(1, 5, 3));
+    CHECK_OUTPUT(eval_node<stdlib::if_cmp>(values<stdlib::CmpResult>(stdlib::CmpResult::LT,
+                                                                     stdlib::CmpResult::EQ,
+                                                                     stdlib::CmpResult::GT),
+                                           values<Int>(1, 2, 3),
+                                           values<Int>(10, 20, 30),
+                                           values<Int>(100, 200, 300)),
+                 values<Int>(1, 20, 300));
+}
+
 TEST_CASE("std operators: date component operators extract day month year and explode")
 {
     stdlib::register_standard_operators();

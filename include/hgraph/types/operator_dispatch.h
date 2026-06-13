@@ -70,6 +70,7 @@ namespace hgraph
         WiringPortRef            port{};                 ///< ``TimeSeries``: the output port (carries its schema).
         Value                    scalar_value{};         ///< ``Scalar``: the owned, self-describing value.
         const ValueTypeMetaData *scalar_meta{nullptr};   ///< ``Scalar``: its interned value schema.
+        bool                     from_variadic_tail{false};  ///< TimeSeries: structural TSL packed from VarIn.
         /** Keyword-argument name (``arg<"name">(…)``); empty = positional. */
         std::string              name{};
     };
@@ -901,7 +902,63 @@ namespace hgraph
             return out;
         }
 
-        // Erase one wiring argument (a Port or a scalar value) to a WiringArg.
+        template <fixed_string Name, typename Schema>
+        [[nodiscard]] const TSValueTypeMetaData *var_in_element_schema(const VarIn<Name, Schema> &tail)
+        {
+            if constexpr (schema_descriptor<Schema>::is_concrete())
+            {
+                return schema_descriptor<Schema>::ts_meta();
+            }
+            else
+            {
+                const TSValueTypeMetaData *element = tail[0].schema;
+                if (element == nullptr)
+                {
+                    throw std::logic_error("operator VarIn-to-TSL conversion cannot infer an element schema");
+                }
+                for (const WiringPortRef &port : tail)
+                {
+                    if (port.schema == nullptr || !time_series_schema_equivalent(element, port.schema))
+                    {
+                        throw std::logic_error(
+                            "operator VarIn-to-TSL conversion requires homogeneous tail input schemas");
+                    }
+                }
+                return element;
+            }
+        }
+
+        template <fixed_string Name, typename Schema>
+        [[nodiscard]] WiringArg make_var_in_tsl_wiring_arg(const VarIn<Name, Schema> &tail)
+        {
+            if (tail.empty())
+            {
+                throw std::invalid_argument("operator VarIn-to-TSL conversion requires at least one input");
+            }
+
+            const TSValueTypeMetaData *element = var_in_element_schema(tail);
+            std::vector<WiringPortRef> children;
+            children.reserve(tail.size());
+            for (const WiringPortRef &port : tail)
+            {
+                if (!graph_wiring_detail::input_accepts_output_schema(element, port.schema))
+                {
+                    throw std::logic_error(
+                        "operator VarIn-to-TSL conversion input schema does not match the element schema");
+                }
+                children.push_back(port);
+            }
+
+            WiringArg result;
+            result.kind               = WiringArg::Kind::TimeSeries;
+            result.from_variadic_tail = true;
+            result.port =
+                WiringPortRef::structural_source(TypeRegistry::instance().tsl(element, tail.size()),
+                                                 std::move(children));
+            return result;
+        }
+
+        // Erase one wiring argument (a Port, VarIn tail, or scalar value) to a WiringArg.
         template <typename A>
         [[nodiscard]] WiringArg make_wiring_arg(const A &arg)
         {
@@ -919,6 +976,10 @@ namespace hgraph
                 {
                     result.kind = WiringArg::Kind::TimeSeries;
                     result.port = arg.erased();
+                }
+                else if constexpr (is_var_in<AA>::value)
+                {
+                    result = make_var_in_tsl_wiring_arg(arg);
                 }
                 else
                 {

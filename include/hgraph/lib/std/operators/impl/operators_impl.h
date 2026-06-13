@@ -19,6 +19,7 @@
 #include <hgraph/lib/std/operators/impl/comparison_impl.h>
 #include <hgraph/lib/std/operators/impl/container_impl.h>
 #include <hgraph/lib/std/operators/impl/collection_impl.h>
+#include <hgraph/lib/std/operators/impl/control_impl.h>
 #include <hgraph/lib/std/operators/impl/conversion_impl.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
 #include <hgraph/lib/std/operators/impl/io_impl.h>
@@ -42,6 +43,7 @@ namespace hgraph::stdlib
         register_container_operators();
         register_conversion_operators();
         register_collection_operators();
+        register_control_operators();
         register_higher_order_operators();
         register_io_operators();
         register_stream_operators();
