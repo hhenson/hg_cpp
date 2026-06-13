@@ -28,7 +28,14 @@ namespace hgraph::stdlib
     {
     };
 
-    /** ``split`` — split ``s`` over ``separator`` into the requested output shape (tuple / list). */
+    /**
+     * ``split`` — split ``s`` over ``separator`` into the requested output shape.
+     *
+     * Fixed TSL output size is an output type decision, not an input-derived fact.
+     * Callers must supply the output schema explicitly, for example:
+     *
+     * ``wire<stdlib::split, TSL<TS<Str>, 2>>(w, s, Str{","})``.
+     */
     struct split : Operator<"split", In<"s", TS<Str>>, Scalar<"separator", Str>, Out<TsVar<"O">>>
     {
     };
@@ -39,7 +46,9 @@ namespace hgraph::stdlib
     };
 
     /** ``format_`` — format the supplied time-series values into a string using ``fmt`` (variadic args). */
-    struct format_ : Operator<"format_", In<"fmt", TS<Str>>, In<"args", TsVar<"A">>, Out<TS<Str>>>
+    struct format_
+        : Operator<"format_", In<"fmt", TS<Str>>, VarIn<"args", TsVar<"A">>, Scalar<"__sample__", Int>,
+                   Scalar<"__strict__", Bool>, VarKwIn<"kwargs">, Out<TS<Str>>>
     {
     };
 }  // namespace hgraph::stdlib

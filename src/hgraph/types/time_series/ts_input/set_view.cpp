@@ -16,7 +16,8 @@ namespace hgraph
 
     TSSDataView TSSInputView::data_view() const
     {
-        return view_.checked_target_data_view("TSSInputView::data_view").as_set();
+        TSDataView view = view_.input_data_view();
+        return view.as_set();
     }
 
     std::size_t TSSInputView::size() const { return data_view().size(); }

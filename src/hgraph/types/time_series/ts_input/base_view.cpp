@@ -411,6 +411,13 @@ namespace hgraph
         return data_.target_path_schema();
     }
 
+    TSDataView TSInputView::input_data_view() const noexcept
+    {
+        const auto &resolved = data_.resolved_value_data();
+        if (resolved.valid()) { return resolved.borrowed_ref(); }
+        return data_.raw_data.borrowed_ref();
+    }
+
     TSDataView TSInputView::resolve_target_data_view() const noexcept
     {
         return data_.resolved_value_data().borrowed_ref();

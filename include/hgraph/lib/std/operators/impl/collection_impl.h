@@ -3,10 +3,10 @@
 
 /**
  * Collection-operator implementations (catalogue: ``operators/collection.h``).
- * Implemented so far: ``keys_`` (TSD -> TSS of its keys) and ``union``
- * (n-ary TSS union, folded over a binary node at wiring time). These are the
- * operators ``map_`` composes to derive its ``__keys__`` lifecycle set,
- * mirroring Python (``__keys__ = union(*key_sets)``).
+ * Implemented so far: ``keys_`` (TSD -> TSS of its keys) and TSS set algebra
+ * (``union`` / ``intersection`` / ``difference`` / ``symmetric_difference``).
+ * ``union`` is also what ``map_`` composes to derive its inferred ``__keys__``
+ * lifecycle set, mirroring Python (``__keys__ = union(*key_sets)``).
  */
 
 #include <hgraph/lib/std/operators/collection.h>
@@ -22,6 +22,16 @@ namespace hgraph::stdlib
 {
     namespace collection_impl_detail
     {
+        inline void apply_tss_delta(TSSOutputView &out, const std::vector<Value> &removed,
+                                    const std::vector<Value> &added)
+        {
+            if (removed.empty() && added.empty()) { return; }
+
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            for (const Value &member : removed) { (void)mutation.remove(member.view()); }
+            for (const Value &member : added) { (void)mutation.add(member.view()); }
+        }
+
         /**
          * ``keys_(tsd) -> TSS[K]`` — the dictionary's key set as a ZERO-COPY
          * projection over the same output (``TSDOutputView::key_set``): no
@@ -53,44 +63,132 @@ namespace hgraph::stdlib
                              In<"rhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> rhs,
                              Out<TSS<ScalarVar<"K">>> out)
             {
-                auto mutation = out.begin_mutation(out.evaluation_time());
+                auto lhs_set = lhs.data_view();
+                auto rhs_set = rhs.data_view();
 
-                const bool fresh = !out.valid();
-                auto       add_side = [&](const TSInputView &side) {
-                    if (!side.valid()) { return; }
-                    auto set = side.as_set();
-                    if (fresh)
-                    {
-                        for (const ValueView &key : set.values()) { (void)mutation.add(key); }
-                        return;
-                    }
-                    if (!side.modified()) { return; }
-                    for (const ValueView &key : set.added()) { (void)mutation.add(key); }
-                };
-                add_side(lhs.base());
-                add_side(rhs.base());
-
-                // Removals reconcile against the FULL current membership: an
-                // element leaves when no valid input still holds it — this
-                // also covers a whole input going invalid (e.g. a switched
-                // source), which delta-only handling would miss.
-                if (!fresh)
+                std::vector<Value> removed;
+                for (const ValueView &key : out.values())
                 {
-                    auto held = [&](const TSInputView &side, const ValueView &key) {
-                        return side.valid() && side.as_set().contains(key);
-                    };
-                    std::vector<Value> stale;
-                    for (const ValueView &member : out.values())
-                    {
-                        if (!held(lhs.base(), member) && !held(rhs.base(), member))
-                        {
-                            stale.push_back(Value{member});
-                        }
-                    }
-                    for (const Value &member : stale) { (void)mutation.remove(member.view()); }
+                    if (!lhs_set.contains(key) && !rhs_set.contains(key)) { removed.emplace_back(key); }
                 }
+
+                std::vector<Value> added;
+                for (const ValueView &key : lhs_set.values())
+                {
+                    if (!out.contains(key)) { added.emplace_back(key); }
+                }
+                for (const ValueView &key : rhs_set.values())
+                {
+                    if (!lhs_set.contains(key) && !out.contains(key)) { added.emplace_back(key); }
+                }
+
+                apply_tss_delta(out, removed, added);
             }
         };
+
+        struct intersection_tss_binary
+        {
+            static constexpr auto name = "intersection_tss";
+
+            static void eval(In<"lhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> rhs,
+                             Out<TSS<ScalarVar<"K">>> out)
+            {
+                auto lhs_set = lhs.data_view();
+                auto rhs_set = rhs.data_view();
+
+                std::vector<Value> removed;
+                for (const ValueView &key : out.values())
+                {
+                    if (!lhs_set.contains(key) || !rhs_set.contains(key)) { removed.emplace_back(key); }
+                }
+
+                std::vector<Value> added;
+                for (const ValueView &key : lhs_set.values())
+                {
+                    if (rhs_set.contains(key) && !out.contains(key)) { added.emplace_back(key); }
+                }
+
+                apply_tss_delta(out, removed, added);
+            }
+        };
+
+        struct difference_tss_binary
+        {
+            static constexpr auto name = "difference_tss";
+
+            static void eval(In<"lhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> rhs,
+                             Out<TSS<ScalarVar<"K">>> out)
+            {
+                auto lhs_set = lhs.data_view();
+                auto rhs_set = rhs.data_view();
+
+                std::vector<Value> removed;
+                for (const ValueView &key : out.values())
+                {
+                    if (!lhs_set.contains(key) || rhs_set.contains(key)) { removed.emplace_back(key); }
+                }
+
+                std::vector<Value> added;
+                for (const ValueView &key : lhs_set.values())
+                {
+                    if (!rhs_set.contains(key) && !out.contains(key)) { added.emplace_back(key); }
+                }
+
+                apply_tss_delta(out, removed, added);
+            }
+        };
+
+        struct symmetric_difference_tss_binary
+        {
+            static constexpr auto name = "symmetric_difference_tss";
+
+            static void eval(In<"lhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> rhs,
+                             Out<TSS<ScalarVar<"K">>> out)
+            {
+                auto lhs_set = lhs.data_view();
+                auto rhs_set = rhs.data_view();
+
+                std::vector<Value> removed;
+                for (const ValueView &key : out.values())
+                {
+                    if (lhs_set.contains(key) == rhs_set.contains(key)) { removed.emplace_back(key); }
+                }
+
+                std::vector<Value> added;
+                for (const ValueView &key : lhs_set.values())
+                {
+                    if (!rhs_set.contains(key) && !out.contains(key)) { added.emplace_back(key); }
+                }
+                for (const ValueView &key : rhs_set.values())
+                {
+                    if (!lhs_set.contains(key) && !out.contains(key)) { added.emplace_back(key); }
+                }
+
+                apply_tss_delta(out, removed, added);
+            }
+        };
+
+        [[nodiscard]] inline bool all_args_are_tss(OperatorCallContext context)
+        {
+            if (context.args.empty()) { return false; }
+            for (const WiringArg &argument : context.args)
+            {
+                if (argument.kind != WiringArg::Kind::TimeSeries) { return false; }
+                const auto *schema = TypeRegistry::instance().dereference(argument.port.schema);
+                if (schema == nullptr || schema->kind != TSTypeKind::TSS) { return false; }
+            }
+            return true;
+        }
+
+        inline void resolve_output_to_first_arg(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (resolution.find_ts("O") != nullptr) { return; }
+            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+            resolution.bind_ts("O", TypeRegistry::instance().dereference(context.args[0].port.schema));
+        }
 
         /** ``union(*ts)`` — n-ary TSS union, folded pairwise at wiring time. */
         struct union_tss_fold
@@ -99,21 +197,12 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                if (context.args.empty()) { return false; }
-                for (const WiringArg &argument : context.args)
-                {
-                    if (argument.kind != WiringArg::Kind::TimeSeries) { return false; }
-                    const auto *schema = TypeRegistry::instance().dereference(argument.port.schema);
-                    if (schema == nullptr || schema->kind != TSTypeKind::TSS) { return false; }
-                }
-                return true;
+                return all_args_are_tss(context);
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (resolution.find_ts("O") != nullptr) { return; }
-                if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
-                resolution.bind_ts("O", TypeRegistry::instance().dereference(context.args[0].port.schema));
+                resolve_output_to_first_arg(resolution, context);
             }
 
             static Port<TsVar<"O">> compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
@@ -127,12 +216,99 @@ namespace hgraph::stdlib
                 return Port<TsVar<"O">>{w, acc.erased()};
             }
         };
+
+        /** ``intersection(*ts)`` — n-ary TSS intersection, folded pairwise at wiring time. */
+        struct intersection_tss_fold
+        {
+            static constexpr auto name = "intersection_impl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return all_args_are_tss(context);
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_output_to_first_arg(resolution, context);
+            }
+
+            static Port<TsVar<"O">> compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
+            {
+                if (ts.empty()) { throw std::invalid_argument("intersection: requires at least one input"); }
+                Port<void> acc{w, ts[0]};
+                for (std::size_t i = 1; i < ts.size(); ++i)
+                {
+                    acc = wire<collection_impl_detail::intersection_tss_binary>(w, acc, Port<void>{w, ts[i]});
+                }
+                return Port<TsVar<"O">>{w, acc.erased()};
+            }
+        };
+
+        /** ``difference(lhs, rhs)`` — binary TSS set difference. */
+        struct difference_tss_fold
+        {
+            static constexpr auto name = "difference_impl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return all_args_are_tss(context);
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_output_to_first_arg(resolution, context);
+            }
+
+            static Port<TsVar<"O">> compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
+            {
+                if (ts.empty()) { throw std::invalid_argument("difference: requires at least one input"); }
+                if (ts.size() == 1) { return Port<TsVar<"O">>{w, ts[0]}; }
+                if (ts.size() > 2) { throw std::invalid_argument("difference: more than two inputs is not supported"); }
+                Port<void> out = wire<collection_impl_detail::difference_tss_binary>(
+                    w, Port<void>{w, ts[0]}, Port<void>{w, ts[1]});
+                return Port<TsVar<"O">>{w, out.erased()};
+            }
+        };
+
+        /** ``symmetric_difference(*ts)`` — n-ary TSS symmetric difference, folded pairwise. */
+        struct symmetric_difference_tss_fold
+        {
+            static constexpr auto name = "symmetric_difference_impl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return all_args_are_tss(context);
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_output_to_first_arg(resolution, context);
+            }
+
+            static Port<TsVar<"O">> compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
+            {
+                if (ts.empty())
+                {
+                    throw std::invalid_argument("symmetric_difference: requires at least one input");
+                }
+                Port<void> acc{w, ts[0]};
+                for (std::size_t i = 1; i < ts.size(); ++i)
+                {
+                    acc = wire<collection_impl_detail::symmetric_difference_tss_binary>(w, acc,
+                                                                                        Port<void>{w, ts[i]});
+                }
+                return Port<TsVar<"O">>{w, acc.erased()};
+            }
+        };
     }  // namespace collection_impl_detail
 
     inline void register_collection_operators()
     {
         register_graph_overload<keys_, collection_impl_detail::keys_tsd>();
         register_graph_overload<union_, collection_impl_detail::union_tss_fold>();
+        register_graph_overload<intersection_, collection_impl_detail::intersection_tss_fold>();
+        register_graph_overload<difference_, collection_impl_detail::difference_tss_fold>();
+        register_graph_overload<symmetric_difference_, collection_impl_detail::symmetric_difference_tss_fold>();
     }
 }  // namespace hgraph::stdlib
 

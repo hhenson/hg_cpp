@@ -171,6 +171,7 @@ namespace hgraph
 
         [[nodiscard]] bool is_target_position() const noexcept;
         [[nodiscard]] const TSValueTypeMetaData *target_path_schema() const noexcept;
+        [[nodiscard]] TSDataView input_data_view() const noexcept;
         [[nodiscard]] TSDataView resolve_target_data_view() const noexcept;
         [[nodiscard]] bool target_view_live() const noexcept;
         [[nodiscard]] TSDataView &checked_target_data_view(const char *what) const;

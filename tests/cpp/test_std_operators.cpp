@@ -26,6 +26,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -87,6 +88,79 @@ namespace
         {
             using namespace hgraph::stdlib::syntax;
             return (a / b).as<TS<Int>>();   // int / int -> float: the cast must throw
+        }
+    };
+
+    struct SplitToPairGraph
+    {
+        static constexpr auto  name = "split_to_pair_graph";
+        static Port<TSL<TS<Str>, 2>> compose(Wiring &w, Port<TS<Str>> s)
+        {
+            return wire<stdlib::split, TSL<TS<Str>, 2>>(w, s, Str{","});
+        }
+    };
+
+    struct JoinDefaultGraph
+    {
+        static constexpr auto name = "join_default_graph";
+        static Port<TS<Str>> compose(Wiring &w, Port<TSL<TS<Str>, 3>> strings)
+        {
+            return wire<stdlib::join>(w, strings, Str{","}).as<TS<Str>>();
+        }
+    };
+
+    struct JoinStrictGraph
+    {
+        static constexpr auto name = "join_strict_graph";
+        static Port<TS<Str>> compose(Wiring &w, Port<TSL<TS<Str>, 3>> strings)
+        {
+            return wire<stdlib::join>(w, strings, Str{","}, arg<"__strict__">(Bool{true})).as<TS<Str>>();
+        }
+    };
+
+    struct FormatArgsGraph
+    {
+        static constexpr auto name = "format_args_graph";
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> fmt, Port<TS<Int>> ts1, Port<TS<Str>> ts2)
+        {
+            return wire<stdlib::format_>(w, fmt, ts1, ts2).as<TS<Str>>();
+        }
+    };
+
+    struct FormatNoArgsGraph
+    {
+        static constexpr auto name = "format_no_args_graph";
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> fmt)
+        {
+            return wire<stdlib::format_>(w, fmt).as<TS<Str>>();
+        }
+    };
+
+    struct FormatKwargsGraph
+    {
+        static constexpr auto name = "format_kwargs_graph";
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> fmt, Port<TS<Int>> ts1, Port<TS<Str>> ts2)
+        {
+            return wire<stdlib::format_>(w, fmt, arg<"ts1">(ts1), arg<"ts2">(ts2)).as<TS<Str>>();
+        }
+    };
+
+    struct FormatMixedGraph
+    {
+        static constexpr auto name = "format_mixed_graph";
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> fmt, Port<TS<Float>> ts,
+                                     Port<TS<Int>> ts1, Port<TS<Str>> ts2)
+        {
+            return wire<stdlib::format_>(w, fmt, ts, arg<"ts1">(ts1), arg<"ts2">(ts2)).as<TS<Str>>();
+        }
+    };
+
+    struct FormatSampledGraph
+    {
+        static constexpr auto name = "format_sampled_graph";
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Str>> fmt, Port<TS<Int>> ts1, Port<TS<Str>> ts2)
+        {
+            return wire<stdlib::format_>(w, fmt, ts1, ts2, arg<"__sample__">(Int{3})).as<TS<Str>>();
         }
     };
 
@@ -311,6 +385,13 @@ TEST_CASE("std operators: string operators support replace substr and container 
 {
     stdlib::register_standard_operators();
 
+    CHECK_OUTPUT(eval_node<stdlib::match_>(values<Str>(Str{"a"}), values<Str>(Str{"a"})),
+                 values<Value>(tsb_delta<stdlib::MatchResult>(Bool{true}, std::nullopt)));
+    CHECK_OUTPUT(eval_node<stdlib::match_>(values<Str>(Str{"(a)"}), values<Str>(Str{"aa"})),
+                 values<Value>(tsb_delta<stdlib::MatchResult>(Bool{true},
+                                                              list_delta<TS<Str>>({{0, Str{"a"}}}))));
+    CHECK_OUTPUT(eval_node<stdlib::match_>(values<Str>(Str{"a"}), values<Str>(Str{"b"})),
+                 values<Value>(tsb_delta<stdlib::MatchResult>(Bool{false}, std::nullopt)));
     CHECK_OUTPUT(eval_node<stdlib::replace>(values<Str>(Str{"a"}, Str{"^a"}),
                                             values<Str>(Str{"z"}, Str{"z"}),
                                             values<Str>(Str{"abcabcabc"}, Str{"abcabcabc"})),
@@ -326,6 +407,58 @@ TEST_CASE("std operators: string operators support replace substr and container 
     CHECK_OUTPUT(eval_node<stdlib::is_empty>(values<Str>(Str{}, Str{"abc"})), values<Bool>(true, false));
     CHECK_OUTPUT(eval_node<stdlib::getitem_>(values<Str>(Str{"abc"}, Str{"abc"}), values<Int>(1, -1)),
                  values<Str>(Str{"b"}, Str{"c"}));
+
+    CHECK_OUTPUT(eval_node<SplitToPairGraph>(values<Str>(Str{"a,b,c"})),
+                 values<Value>(list_delta<TS<Str>>({{0, Str{"a"}}, {1, Str{"b,c"}}})));
+
+    WiringArg split_source;
+    split_source.kind        = WiringArg::Kind::TimeSeries;
+    split_source.port.schema = ts_type<TS<Str>>();
+
+    WiringArg split_separator;
+    split_separator.kind         = WiringArg::Kind::Scalar;
+    split_separator.scalar_value = Value{Str{","}};
+    split_separator.scalar_meta  = split_separator.scalar_value.schema();
+
+    std::array<WiringArg, 2> unresolved_split_args{split_source, split_separator};
+    CHECK_THROWS_AS(OperatorRegistry::instance().resolve(
+                        "split", std::span<const WiringArg>{unresolved_split_args.data(), unresolved_split_args.size()},
+                        true),
+                    OperatorResolutionError);
+
+    ResolvedOperatorCall resolved_split = OperatorRegistry::instance().resolve(
+        "split", std::span<const WiringArg>{unresolved_split_args.data(), unresolved_split_args.size()}, true,
+        ts_type<TSL<TS<Str>, 2>>());
+    REQUIRE(resolved_split.map.find_size("N").has_value());
+    CHECK(*resolved_split.map.find_size("N") == 2);
+    CHECK(ts_pattern_resolve(resolved_split.impl->output, resolved_split.map) == ts_type<TSL<TS<Str>, 2>>());
+
+    CHECK_OUTPUT(eval_node<JoinDefaultGraph>(values<Value>(list_delta<TS<Str>>({{0, Str{"a"}}, {2, Str{"c"}}}),
+                                                           list_delta<TS<Str>>({{1, Str{"b"}}}))),
+                 values<Str>(Str{"a,c"}, Str{"a,b,c"}));
+    CHECK_OUTPUT(eval_node<JoinStrictGraph>(values<Value>(list_delta<TS<Str>>({{0, Str{"a"}}, {2, Str{"c"}}}),
+                                                          list_delta<TS<Str>>({{1, Str{"b"}}}))),
+                 values<Str>(none, Str{"a,b,c"}));
+
+    CHECK_OUTPUT(eval_node<FormatArgsGraph>(values<Str>(Str{"{} is a test {}"}, none),
+                                            values<Int>(1, 2),
+                                            values<Str>(Str{"a"}, Str{"b"})),
+                 values<Str>(Str{"1 is a test a"}, Str{"2 is a test b"}));
+    CHECK_OUTPUT(eval_node<FormatNoArgsGraph>(values<Str>(Str{"plain"}, Str{"escaped {{brace}}"})),
+                 values<Str>(Str{"plain"}, Str{"escaped {brace}"}));
+    CHECK_OUTPUT(eval_node<FormatKwargsGraph>(values<Str>(Str{"{ts1} is a test {ts2}"}, none),
+                                              values<Int>(1, 2),
+                                              values<Str>(Str{"a"}, Str{"b"})),
+                 values<Str>(Str{"1 is a test a"}, Str{"2 is a test b"}));
+    CHECK_OUTPUT(eval_node<FormatMixedGraph>(values<Str>(Str{"{ts1} is a test {ts2}"}, none),
+                                             values<Float>(1.1, 1.2),
+                                             values<Int>(1, 2),
+                                             values<Str>(Str{"a"}, Str{"b"})),
+                 values<Str>(Str{"1 is a test a"}, Str{"2 is a test b"}));
+    CHECK_OUTPUT(eval_node<FormatSampledGraph>(values<Str>(Str{"{} is a test {}"}, none, none, none),
+                                               values<Int>(1, 2, 3, 4),
+                                               values<Str>(Str{"a"}, Str{"b"}, Str{"c"}, Str{"d"})),
+                 values<Str>(none, none, Str{"3 is a test c"}, none));
 }
 
 TEST_CASE("std operators: collection container operators support TSS TSD and fixed TSL")

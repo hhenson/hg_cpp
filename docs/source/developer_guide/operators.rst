@@ -32,8 +32,9 @@ chosen implementation is baked into the graph.
    scalar-aware ``requires_`` / ``resolve_default_types`` hooks, graph overloads,
    sink operators, explicit output schema resolution, and a ``lib/std`` operator family
    in ``include/hgraph/lib/std/std_operators.h`` — covering scalar arithmetic,
-   comparison, logical / bitwise, string basics, ``str_``, const / zero,
-   collection container basics, date / time-series-property operators, and simple IO sink overloads, including
+   comparison, logical / bitwise, string operators (``match_`` / ``replace`` /
+   ``substr`` / ``split`` / ``join`` / ``format_``), ``str_``, const / zero,
+   collection container basics and TSS set algebra, date / time-series-property operators, and simple IO sink overloads, including
    homogeneous, mixed, heterogeneous-temporal, result-differs and optional-scalar
    (``DivideByZero`` policy) overloads — proven by
    ``tests/cpp/test_std_operators.cpp`` and the scalar / auto-const / ``requires`` /
@@ -529,17 +530,40 @@ its trailing underscore where Python has one (``Operator<"add_">`` / ``"eq_">`` 
 for the future Python bridge. Deferred from the catalogue: the JSON / table / data-frame
 family (it needs scalar value types the value layer does not model yet).
 
+Some operator overloads deliberately depend on an explicit output schema. For example,
+the C++ fixed-``TSL`` ``split`` overload is authored as
+``Out<TSL<TS<Str>, SIZE<"N">>>``. The ``N`` variable does not appear in any input, so
+ordinary input unification cannot infer it. Supply the requested output shape at the
+call site:
+
+.. code-block:: c++
+
+   struct SplitToPairGraph
+   {
+       static constexpr auto name = "split_to_pair_graph";
+
+       static Port<TSL<TS<Str>, 2>> compose(Wiring &w, Port<TS<Str>> s)
+       {
+           return wire<stdlib::split, TSL<TS<Str>, 2>>(w, s, Str{","});
+       }
+   };
+
+Calling ``wire<stdlib::split>(w, s, Str{","})`` is intentionally unresolved for the
+fixed-``TSL`` overload: there is no input-side fact from which to derive ``N``.
+
 **Implementations** are a parallel tree under ``include/hgraph/lib/std/operators/impl/``:
 each definition file ``<family>.h`` has a matching ``impl/<family>_impl.h`` holding the
 concrete overloads and a ``register_<family>_operators()`` function, and
 ``impl/operators_impl.h`` aggregates them into ``register_standard_operators()``. The
 implemented subset currently covers scalar arithmetic (``impl/arithmetic_impl.h``),
 scalar comparison (``impl/comparison_impl.h``), scalar logical / bitwise operators
-(``impl/logical_impl.h``), string basics (``impl/string_impl.h`` and string
+(``impl/logical_impl.h``), string operators (``match_`` / ``replace`` /
+``substr`` / ``split`` / ``join`` / ``format_`` in ``impl/string_impl.h`` plus string
 container overloads in ``impl/container_impl.h``), ``const_`` / ``zero_`` /
 ``str_`` (``impl/conversion_impl.h``), date components and time-series
 properties (``impl/temporal_impl.h``) and ``debug_print`` / ``null_sink``
-(``impl/io_impl.h``), plus the current
+(``impl/io_impl.h``), TSD ``keys_`` and TSS set algebra
+(``impl/collection_impl.h``), plus the current
 higher-order subset (``reduce``, ``switch_`` and ``map_`` in
 ``impl/higher_order_impl.h``). Further families gain their
 ``impl/<family>_impl.h`` (and a registration call) as they land. The
@@ -697,7 +721,9 @@ Roadmap
    cases (``div_: Int / Int -> Float``, ``sub_: DateTime - DateTime -> TimeDelta``),
    Python-style floor semantics for integer ``floordiv_`` / ``mod_`` / ``divmod_``,
    binary scalar ``min_`` / ``max_``, string ``contains_`` / ``len_`` / ``is_empty`` /
-   ``getitem_`` plus regex ``replace`` / ``substr``, ``str_``, date components /
+   ``getitem_`` plus ``match_`` / regex ``replace`` / ``substr`` / ``split`` /
+   ``join`` / ``format_``, TSD ``keys_`` and TSS ``union_`` / ``intersection_`` /
+   ``difference_`` / ``symmetric_difference_``, ``str_``, date components /
    ``explode(Date)``, time-series properties (``valid`` / ``modified`` /
    ``last_modified_*``), and optional
    wiring-time ``DivideByZero`` policy overloads (``Error`` / ``Nan`` / ``Inf`` /

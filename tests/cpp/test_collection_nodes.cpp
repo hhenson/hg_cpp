@@ -590,6 +590,55 @@ TEST_CASE("collections: union folds across three inputs")
                  values<Value>(set_delta<Int>({1, 2, 3}, {})));
 }
 
+TEST_CASE("collections: intersection keeps only keys held by every TSS input")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::intersection_, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1, 2, 3}, {})),
+                     values<Value>(set_delta<Int>({3, 4, 5}, {})))),
+                 values<Value>(set_delta<Int>({3}, {})));
+}
+
+TEST_CASE("collections: difference subtracts rhs keys from lhs")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::difference_, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1, 2, 3}, {})),
+                     values<Value>(set_delta<Int>({3, 4, 5}, {})))),
+                 values<Value>(set_delta<Int>({1, 2}, {})));
+}
+
+TEST_CASE("collections: symmetric_difference keeps keys held by exactly one side")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::symmetric_difference_, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1, 2, 3}, {})),
+                     values<Value>(set_delta<Int>({3, 4, 5}, {})))),
+                 values<Value>(set_delta<Int>({1, 2, 4, 5}, {})));
+}
+
+TEST_CASE("collections: symmetric_difference folds across three inputs")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::symmetric_difference_, TSS<Int>, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1, 2}, {})),
+                     values<Value>(set_delta<Int>({2, 3}, {})),
+                     values<Value>(set_delta<Int>({3, 4}, {})))),
+                 values<Value>(set_delta<Int>({1, 4}, {})));
+}
+
 TEST_CASE("collections: the TSD key-set view is read-only but reports the owner's mutations")
 {
     using namespace hgraph;
