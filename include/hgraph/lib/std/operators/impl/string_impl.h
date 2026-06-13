@@ -2,22 +2,17 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_STRING_IMPL_H
 
 #include <hgraph/lib/std/operators/string.h>
-#include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
-#include <hgraph/types/value/value_builder.h>
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <regex>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <typeindex>
 #include <utility>
 #include <vector>
 
@@ -162,20 +157,16 @@ namespace hgraph::stdlib
             return values;
         }
 
-        [[nodiscard]] inline WiringPortRef format_bundle_source(
+        [[nodiscard]] inline WiringNamedStructuralSourceArg format_bundle_arg(
             const std::vector<std::pair<std::string, WiringPortRef>> &fields)
         {
-            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> schema_fields;
-            std::vector<WiringPortRef>                                      children;
-            schema_fields.reserve(fields.size());
-            children.reserve(fields.size());
+            std::vector<WiringNamedPortRef> refs;
+            refs.reserve(fields.size());
             for (const auto &[name, port] : fields)
             {
-                schema_fields.emplace_back(name, port.schema);
-                children.push_back(port);
+                refs.emplace_back(name, port);
             }
-            const auto *schema = TypeRegistry::instance().un_named_tsb(schema_fields);
-            return WiringPortRef::structural_source(schema, std::move(children));
+            return WiringNamedStructuralSourceArg{std::move(refs)};
         }
     }  // namespace string_impl_detail
 
@@ -274,7 +265,7 @@ namespace hgraph::stdlib
         static constexpr auto name = "format";
 
         static void eval(In<"fmt", TS<Str>> fmt,
-                         In<"__args__", TsVar<"A">, InputValidity::Unchecked> args,
+                         In<"__args__", Kwargs<>, InputValidity::Unchecked> args,
                          Scalar<"__pos_count__", Int> pos_count, Scalar<"__sample__", Int> sample,
                          Scalar<"__strict__", Bool> strict, State<Int> count, Out<TS<Str>> out)
         {
@@ -288,9 +279,8 @@ namespace hgraph::stdlib
                 if (next % sample.value() != 0) { return; }
             }
 
-            auto bundle = args.as_bundle();
             const string_impl_detail::FormatValues values =
-                string_impl_detail::collect_format_values(bundle, static_cast<std::size_t>(pos_count.value()), require_all);
+                string_impl_detail::collect_format_values(args, static_cast<std::size_t>(pos_count.value()), require_all);
             out.set(string_impl_detail::render_format_string(fmt.value(), values.positional, values.named));
         }
     };
@@ -335,54 +325,18 @@ namespace hgraph::stdlib
 
             if (fields.empty())
             {
-                ResolutionMap resolution;
-                NodeBuilder   builder;
-                builder.implementation<format_no_args_impl>(resolution);
-
-                const auto *scalar_binding = ValuePlanFactory::instance().binding_for(
-                    StaticNodeSignature<format_no_args_impl>::scalar_schema(resolution));
-                BundleBuilder scalars{*scalar_binding};
-                Value         sample_value{sample.value()};
-                Value         strict_value{strict.value()};
-                scalars.set("__sample__", sample_value.view());
-                scalars.set("__strict__", strict_value.view());
-
-                const std::array<WiringPortRef, 1> inputs{fmt.erased()};
-                builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-                    builder.binding().type_meta != nullptr ? builder.binding().type_meta->input_schema : nullptr,
-                    std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
-                WiringPortRef out = w.add_node(std::type_index(typeid(format_no_args_impl)), std::move(builder),
-                                               std::span<const WiringPortRef>{inputs.data(), inputs.size()},
-                                               scalars.build());
-                return Port<TS<Str>>{w, std::move(out)};
+                return wire<format_no_args_impl>(w,
+                                                 fmt,
+                                                 arg<"__sample__">(sample.value()),
+                                                 arg<"__strict__">(strict.value()));
             }
 
-            WiringPortRef args_source = string_impl_detail::format_bundle_source(fields);
-
-            ResolutionMap resolution;
-            resolution.bind_ts("A", args_source.schema);
-
-            NodeBuilder builder;
-            builder.implementation<format_bundle_impl>(resolution);
-
-            const auto *scalar_binding =
-                ValuePlanFactory::instance().binding_for(StaticNodeSignature<format_bundle_impl>::scalar_schema(resolution));
-            BundleBuilder scalars{*scalar_binding};
-            Value         pos_count_value{static_cast<Int>(args.size())};
-            Value         sample_value{sample.value()};
-            Value         strict_value{strict.value()};
-            scalars.set("__pos_count__", pos_count_value.view());
-            scalars.set("__sample__", sample_value.view());
-            scalars.set("__strict__", strict_value.view());
-
-            const std::array<WiringPortRef, 2> inputs{fmt.erased(), std::move(args_source)};
-            builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
-                builder.binding().type_meta != nullptr ? builder.binding().type_meta->input_schema : nullptr,
-                std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
-            WiringPortRef out = w.add_node(std::type_index(typeid(format_bundle_impl)), std::move(builder),
-                                           std::span<const WiringPortRef>{inputs.data(), inputs.size()},
-                                           scalars.build());
-            return Port<TS<Str>>{w, std::move(out)};
+            return wire<format_bundle_impl, TS<Str>>(w,
+                                                     fmt,
+                                                     arg<"__args__">(string_impl_detail::format_bundle_arg(fields)),
+                                                     arg<"__pos_count__">(static_cast<Int>(args.size())),
+                                                     arg<"__sample__">(sample.value()),
+                                                     arg<"__strict__">(strict.value()));
         }
 
         static std::vector<std::pair<std::string_view, Value>> defaults()
