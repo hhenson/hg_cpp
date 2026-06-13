@@ -18,5 +18,17 @@
       "name": "python-user-nodes",
       "configurePreset": "python-user-nodes"
     }
+  ],
+  "testPresets": [
+    {
+      "name": "cpp",
+      "configurePreset": "cpp",
+      "output": {
+        "outputOnFailure": true
+      },
+      "environment": {
+        "CTEST_PARALLEL_LEVEL": "16"
+      }
+    }
   ]
 }
