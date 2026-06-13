@@ -27,10 +27,23 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
+#include <string_view>
+
 namespace
 {
     using namespace hgraph;
     using namespace hgraph::testing;
+
+    struct ReduceLiftedAddNoIdentity
+    {
+        static constexpr const char *name = "reduce_lifted_add_no_identity";
+        static constexpr std::array<std::string_view, 2> parameter_names{"lhs", "rhs"};
+        static constexpr bool associative = true;
+        static constexpr bool commutative = true;
+
+        [[nodiscard]] static Int apply(Int lhs, Int rhs) { return lhs + rhs; }
+    };
 
     // Sub-graph combiner: flattens through wire<G> at every reduction node.
     struct SumCombiner
@@ -153,6 +166,30 @@ namespace
             out.set(ts[0].value() * 100);
         }
     };
+
+    struct LiftedReduceConstGraph
+    {
+        static constexpr auto name = "lifted_reduce_const_graph";
+
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            auto ts = wire<stdlib::const_, TSL<TS<Int>, 3>>(
+                w, stdlib::make_list<Int>({Int{1}, Int{2}, Int{3}}));
+            return wire<stdlib::reduce_>(w, lift<stdlib::scalar_add<Int>>(), ts).as<TS<Int>>();
+        }
+    };
+
+    struct LiftedReduceExplicitIdentityConstGraph
+    {
+        static constexpr auto name = "lifted_reduce_explicit_identity_const_graph";
+
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            auto ts = wire<stdlib::const_, TSL<TS<Int>, 3>>(
+                w, stdlib::make_list<Int>({Int{1}, Int{2}, Int{3}}));
+            return wire<stdlib::reduce_>(w, lift<ReduceLiftedAddNoIdentity, Int{0}>(), ts).as<TS<Int>>();
+        }
+    };
 }  // namespace
 
 TEST_CASE("reduce: a five-element TSL reduces through a binary tree with carry")
@@ -164,6 +201,36 @@ TEST_CASE("reduce: a five-element TSL reduces through a binary tree with carry")
                      fn<stdlib::add_>(),
                      values<Value>(list_delta<TS<Int>>({1, 2, 3, 4, 5}), list_delta<TS<Int>>({{0, 10}})))),
                  values<Int>(15, 24));
+}
+
+TEST_CASE("reduce: a lifted scalar add reduces a fixed TSL in one specialised node")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSL<TS<Int>, 5>>(
+                     lift<stdlib::scalar_add<Int>>(),
+                     values<Value>(list_delta<TS<Int>>({1, 2, 3, 4, 5}),
+                                   list_delta<TS<Int>>({{0, 10}})))),
+                 values<Int>(15, 24));
+
+    GraphBuilder gb = build_graph<LiftedReduceConstGraph>();
+    CHECK(gb.node_count() == 2);   // const source + lifted reduce node
+}
+
+TEST_CASE("reduce: a lifted scalar function can take its identity from lift")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::reduce_, TSL<TS<Int>, 5>>(
+                     lift<ReduceLiftedAddNoIdentity, Int{0}>(),
+                     values<Value>(list_delta<TS<Int>>({1, 2, 3, 4, 5}),
+                                   list_delta<TS<Int>>({{0, 10}})))),
+                 values<Int>(15, 24));
+
+    GraphBuilder gb = build_graph<LiftedReduceExplicitIdentityConstGraph>();
+    CHECK(gb.node_count() == 2);   // const source + lifted reduce node
 }
 
 TEST_CASE("reduce: not-yet-valid elements count as the operation's zero")

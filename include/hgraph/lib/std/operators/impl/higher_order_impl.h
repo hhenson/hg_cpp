@@ -33,6 +33,10 @@ namespace hgraph::stdlib
 
     namespace higher_order_impl_detail
     {
+        struct lifted_reduce_tsl_node_tag
+        {
+        };
+
         // A fixed-size TSL second argument (shared requires_ of the TSL overloads;
         // the dynamic-TSL/TSD reductions are separate, future overloads).
         [[nodiscard]] inline bool reduce_ts_is_fixed_tsl(OperatorCallContext context, std::size_t arity)
@@ -44,6 +48,144 @@ namespace hgraph::stdlib
             const auto *schema = context.args[1].port.schema;
             return schema != nullptr && schema->fixed_size() > 0;
         }
+
+        [[nodiscard]] inline const LiftedKernel *lifted_reduce_tsl_kernel(OperatorCallContext context)
+        {
+            if (!reduce_ts_is_fixed_tsl(context, 2) || context.args[1].from_variadic_tail)
+            {
+                return nullptr;
+            }
+
+            const WiredFn *func = context.scalar_as<WiredFn>("func");
+            if (func == nullptr || func->lifted == nullptr || !func->lifted->valid())
+            {
+                return nullptr;
+            }
+
+            const LiftedKernel *kernel = func->lifted;
+            if (kernel->arity != 2 || !kernel->associative || !kernel->has_identity())
+            {
+                return nullptr;
+            }
+
+            auto       &registry   = TypeRegistry::instance();
+            const auto *collection = registry.dereference(context.args[1].port.schema);
+            if (collection == nullptr || collection->kind != TSTypeKind::TSL || collection->fixed_size() == 0)
+            {
+                return nullptr;
+            }
+            const auto *element = registry.dereference(collection->element_ts());
+            if (element == nullptr || element->kind != TSTypeKind::TS)
+            {
+                return nullptr;
+            }
+
+            if (!time_series_schema_equivalent(kernel->input_schema(0), element) ||
+                !time_series_schema_equivalent(kernel->input_schema(1), element) ||
+                !time_series_schema_equivalent(kernel->output_schema(), element))
+            {
+                return nullptr;
+            }
+            return kernel;
+        }
+
+        [[nodiscard]] inline Port<void> wire_lifted_reduce_tsl(Wiring &w,
+                                                               const WiredFn &func,
+                                                               const WiringPortRef &ts)
+        {
+            const LiftedKernel *kernel = func.lifted;
+            if (kernel == nullptr || !kernel->valid() || !kernel->has_identity())
+            {
+                throw std::invalid_argument("reduce: lifted fast path requires a lifted function with an identity");
+            }
+
+            auto       &registry   = TypeRegistry::instance();
+            const auto *collection = registry.dereference(ts.schema);
+            if (collection == nullptr || collection->kind != TSTypeKind::TSL || collection->fixed_size() == 0)
+            {
+                throw std::invalid_argument("reduce: lifted fast path requires a fixed-size TSL input");
+            }
+            const auto *element = registry.dereference(collection->element_ts());
+            if (element == nullptr || element->kind != TSTypeKind::TS)
+            {
+                throw std::invalid_argument("reduce: lifted fast path requires scalar TS elements");
+            }
+
+            const auto *input_schema = registry.un_named_tsb({{"ts", ts.schema}});
+            const auto *output_schema = element;
+            std::array<WiringPortRef, 1> inputs{ts};
+
+            NodeTypeMetaData node_schema;
+            node_schema.display_name = "reduce_lifted";
+            node_schema.input_schema = input_schema;
+            node_schema.output_schema = output_schema;
+            node_schema.node_kind = NodeKind::Compute;
+            node_schema.valid_inputs = std::vector<std::size_t>{0};
+
+            NodeCallbacks callbacks;
+            callbacks.evaluate = [kernel](const NodeView &view, DateTime evaluation_time) {
+                auto input = view.input(evaluation_time);
+                auto root = input.as_bundle();
+                auto ts_field = root.field("ts");
+                auto list = ts_field.as_list();
+
+                Value accumulator = kernel->identity_value();
+                for (std::size_t i = 0; i < list.size(); ++i)
+                {
+                    auto item = list[i];
+                    if (!item.valid()) { continue; }
+
+                    std::array<ValueView, 2> args{accumulator.view(), item.value()};
+                    accumulator = kernel->eval(std::span<const ValueView>{args.data(), args.size()});
+                }
+
+                auto output = view.output(evaluation_time);
+                auto mutation = output.begin_mutation(evaluation_time);
+                if (!mutation.copy_value_from(accumulator.view()))
+                {
+                    throw std::logic_error("reduce: lifted fast path failed to copy the result");
+                }
+            };
+
+            NodeBuilder builder = NodeBuilder::native(std::move(node_schema), std::move(callbacks));
+            builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+
+            WiringPortRef out = w.add_node(std::type_index(typeid(lifted_reduce_tsl_node_tag)),
+                                           std::move(builder),
+                                           std::span<const WiringPortRef>{inputs.data(), inputs.size()},
+                                           Value{func});
+            return Port<void>{w, std::move(out)};
+        }
+
+        inline void resolve_lifted_reduce_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            const LiftedKernel *kernel = lifted_reduce_tsl_kernel(context);
+            if (kernel == nullptr) { return; }
+            resolution.bind_ts("__graph_output", kernel->output_schema());
+        }
+
+        struct reduce_lifted_tsl
+        {
+            static constexpr auto name = "reduce_lifted_tsl";
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_lifted_reduce_tsl_output(resolution, context);
+            }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return lifted_reduce_tsl_kernel(context) != nullptr;
+            }
+
+            static auto compose(Wiring &w,
+                                Scalar<"func", WiredFn> func,
+                                NamedPort<"ts", TSL<TS<ScalarVar<"T">>>> ts)
+            {
+                return wire_lifted_reduce_tsl(w, func.value(), ts.erased());
+            }
+        };
 
         /**
          * The shared fixed-TSL reduction wiring, mirroring Python ``_reduce_tsl``:
@@ -565,6 +707,9 @@ namespace hgraph::stdlib
         struct map_node_tag
         {
         };
+        struct lifted_map_tsl_node_tag
+        {
+        };
 
         /**
          * Classify the ``map_`` time-series arguments, Python-style: every
@@ -1015,6 +1160,186 @@ namespace hgraph::stdlib
             return deref != nullptr && deref->kind == TSTypeKind::TSL && deref->fixed_size() == size;
         }
 
+        struct LiftedMapTslPlan
+        {
+            const LiftedKernel *kernel{nullptr};
+            const TSValueTypeMetaData *output_schema{nullptr};
+            std::vector<bool> multiplexed{};
+            std::vector<std::uint8_t> arg_tags{};
+            std::size_t size{0};
+        };
+
+        [[nodiscard]] inline std::optional<LiftedMapTslPlan> lifted_map_tsl_plan(
+            const WiredFn &func,
+            std::span<const TSValueTypeMetaData *const> schemas,
+            std::span<const std::uint8_t> arg_tags,
+            bool takes_key)
+        {
+            if (takes_key || func.lifted == nullptr || !func.lifted->valid() || !func.has_output)
+            {
+                return std::nullopt;
+            }
+            const LiftedKernel *kernel = func.lifted;
+            if (kernel->arity != schemas.size()) { return std::nullopt; }
+
+            auto &registry = TypeRegistry::instance();
+            std::size_t size = 0;
+            for (std::size_t i = 0; i < schemas.size(); ++i)
+            {
+                const auto tag = i < arg_tags.size() ? static_cast<WiringPortRef::ArgTag>(arg_tags[i])
+                                                     : WiringPortRef::ArgTag::None;
+                if (tag == WiringPortRef::ArgTag::NoKey) { return std::nullopt; }
+                if (tag == WiringPortRef::ArgTag::PassThrough) { continue; }
+                const auto *schema = registry.dereference(schemas[i]);
+                if (schema != nullptr && schema->kind == TSTypeKind::TSL && schema->fixed_size() > 0)
+                {
+                    size = schema->fixed_size();
+                    break;
+                }
+            }
+            if (size == 0) { return std::nullopt; }
+
+            LiftedMapTslPlan plan;
+            plan.kernel = kernel;
+            plan.output_schema = registry.tsl(kernel->output_schema(), size);
+            plan.size = size;
+            plan.multiplexed.reserve(schemas.size());
+            plan.arg_tags.assign(arg_tags.begin(), arg_tags.end());
+
+            for (std::size_t i = 0; i < schemas.size(); ++i)
+            {
+                const auto tag = i < arg_tags.size() ? static_cast<WiringPortRef::ArgTag>(arg_tags[i])
+                                                     : WiringPortRef::ArgTag::None;
+                const bool multiplexed = tag != WiringPortRef::ArgTag::PassThrough &&
+                                         tsl_arg_is_multiplexed(schemas[i], size);
+                const TSValueTypeMetaData *expected =
+                    multiplexed ? registry.dereference(schemas[i])->element_ts() : schemas[i];
+                if (!time_series_schema_equivalent(kernel->input_schema(i), expected))
+                {
+                    return std::nullopt;
+                }
+                plan.multiplexed.push_back(multiplexed);
+            }
+            return plan;
+        }
+
+        [[nodiscard]] inline std::optional<LiftedMapTslPlan> lifted_map_tsl_plan(OperatorCallContext context)
+        {
+            const WiredFn *func = context.scalar_as<WiredFn>("func");
+            if (func == nullptr) { return std::nullopt; }
+            auto ordered = ordered_map_schemas(context, "ndx");
+            if (!ordered.has_value()) { return std::nullopt; }
+            return lifted_map_tsl_plan(*func,
+                                       {ordered->schemas.data(), ordered->schemas.size()},
+                                       {ordered->arg_tags.data(), ordered->arg_tags.size()},
+                                       ordered->takes_key);
+        }
+
+        [[nodiscard]] inline Port<void> wire_lifted_map_tsl(Wiring &w,
+                                                            const WiredFn &func,
+                                                            std::string_view key_arg,
+                                                            std::vector<WiringPortRef> ordered)
+        {
+            std::vector<const TSValueTypeMetaData *> schemas;
+            std::vector<std::uint8_t> arg_tags;
+            schemas.reserve(ordered.size());
+            arg_tags.reserve(ordered.size());
+            for (const WiringPortRef &port : ordered)
+            {
+                schemas.push_back(port.schema);
+                arg_tags.push_back(static_cast<std::uint8_t>(port.arg_tag));
+            }
+
+            std::optional<LiftedMapTslPlan> plan =
+                lifted_map_tsl_plan(func,
+                                    {schemas.data(), schemas.size()},
+                                    {arg_tags.data(), arg_tags.size()},
+                                    /*takes_key=*/false);
+            if (!plan.has_value())
+            {
+                throw std::invalid_argument("map_: lifted TSL fast path requires a compatible lifted scalar function");
+            }
+
+            auto &registry = TypeRegistry::instance();
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+            fields.reserve(schemas.size());
+            for (std::size_t i = 0; i < schemas.size(); ++i)
+            {
+                fields.emplace_back(std::to_string(i), schemas[i]);
+            }
+            const auto *input_schema = registry.un_named_tsb(fields);
+
+            NodeTypeMetaData node_schema;
+            node_schema.display_name = "map_lifted_tsl";
+            node_schema.input_schema = input_schema;
+            node_schema.output_schema = plan->output_schema;
+            node_schema.node_kind = NodeKind::Compute;
+
+            const LiftedKernel *kernel = plan->kernel;
+            std::vector<bool> multiplexed = plan->multiplexed;
+            const std::size_t size = plan->size;
+            NodeCallbacks callbacks;
+            callbacks.evaluate =
+                [kernel, multiplexed = std::move(multiplexed), size](const NodeView &view,
+                                                                     DateTime evaluation_time) {
+                    auto input_root = view.input(evaluation_time);
+                    auto bundle = input_root.as_bundle();
+                    auto output_root = view.output(evaluation_time);
+                    auto output = output_root.as_list();
+
+                    for (std::size_t i = 0; i < size; ++i)
+                    {
+                        std::vector<ValueView> values;
+                        values.reserve(multiplexed.size());
+                        bool ready = true;
+                        for (std::size_t arg = 0; arg < multiplexed.size(); ++arg)
+                        {
+                            auto input = bundle[arg];
+                            if (multiplexed[arg])
+                            {
+                                auto list = input.as_list();
+                                auto item = list[i];
+                                if (!item.valid())
+                                {
+                                    ready = false;
+                                    break;
+                                }
+                                values.emplace_back(item.value());
+                            }
+                            else
+                            {
+                                if (!input.valid())
+                                {
+                                    ready = false;
+                                    break;
+                                }
+                                values.emplace_back(input.value());
+                            }
+                        }
+                        if (!ready) { continue; }
+
+                        Value result = kernel->eval(std::span<const ValueView>{values.data(), values.size()});
+                        auto output_item = output[i];
+                        auto mutation = output_item.begin_mutation(evaluation_time);
+                        if (!mutation.copy_value_from(result.view()))
+                        {
+                            throw std::logic_error("map_: lifted TSL fast path failed to copy an element result");
+                        }
+                    }
+                };
+
+            NodeBuilder builder = NodeBuilder::native(std::move(node_schema), std::move(callbacks));
+            builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                input_schema, std::span<const WiringPortRef>{ordered.data(), ordered.size()}));
+
+            (void)scalar_descriptor<MapCallConfig>::value_meta();
+            WiringPortRef out = w.add_node(std::type_index(typeid(lifted_map_tsl_node_tag)),
+                                           std::move(builder),
+                                           std::span<const WiringPortRef>{ordered.data(), ordered.size()},
+                                           Value{MapCallConfig{func, Str{key_arg}, arg_tags}});
+            return Port<void>{w, std::move(out)};
+        }
+
         [[nodiscard]] inline Port<void> wire_map_tsl(Wiring &w, const WiredFn &func, bool takes_key,
                                                      std::vector<WiringPortRef> ordered)
         {
@@ -1149,6 +1474,57 @@ namespace hgraph::stdlib
             }
         }
 
+        inline void resolve_lifted_map_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            auto plan = lifted_map_tsl_plan(context);
+            if (plan.has_value() && plan->output_schema != nullptr)
+            {
+                if (resolution.find_ts("O") == nullptr) { resolution.bind_ts("O", plan->output_schema); }
+                resolution.bind_ts("__graph_output", plan->output_schema);
+            }
+        }
+
+        struct map_lifted_tsl
+        {
+            static constexpr auto name = "map_lifted_tsl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return lifted_map_tsl_plan(context).has_value();
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_lifted_map_tsl_output(resolution, context);
+            }
+
+            static std::vector<std::pair<std::string_view, Value>> defaults()
+            {
+                return {{"__key_arg__", Value{Str{"ndx"}}}};
+            }
+
+            static auto compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                VarIn<"args", TsVar<"B">> positional,
+                                Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
+            {
+                const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
+                std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
+                if (split_keys_kwarg(named).has_value())
+                {
+                    throw std::invalid_argument("map_: '__keys__' applies to TSD maps only");
+                }
+                auto bound = bind_wired_fn_args<WiringPortRef>("map_", func.value(),
+                                                               {pos.data(), pos.size()},
+                                                               {named.data(), named.size()},
+                                                               key_arg.value());
+                if (bound.takes_leading_key)
+                {
+                    throw std::invalid_argument("map_: lifted TSL fast path does not support index arguments yet");
+                }
+                return wire_lifted_map_tsl(w, func.value(), key_arg.value(), std::move(bound.ordered));
+            }
+        };
+
         /**
          * ``map_(func, *args, **kwargs)`` over a fixed TSL — wiring-time
          * expansion over the first fixed TSL in ``func`` parameter order. Any
@@ -1162,7 +1538,8 @@ namespace hgraph::stdlib
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
                 const auto *collection = first_map_collection(context);
-                return collection != nullptr && collection->kind == TSTypeKind::TSL;
+                return collection != nullptr && collection->kind == TSTypeKind::TSL &&
+                       !lifted_map_tsl_plan(context).has_value();
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
@@ -1198,6 +1575,7 @@ namespace hgraph::stdlib
     inline void register_higher_order_operators()
     {
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_variadic_tsl>();
+        register_graph_overload<reduce_, higher_order_impl_detail::reduce_lifted_tsl>();
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsl>();
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsl_zero>();
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_tsd>();
@@ -1206,6 +1584,7 @@ namespace hgraph::stdlib
         register_graph_overload<switch_, higher_order_impl_detail::switch_impl>();
 
         register_graph_overload<map_, higher_order_impl_detail::map_impl_tsd>();
+        register_graph_overload<map_, higher_order_impl_detail::map_lifted_tsl>();
         register_graph_overload<map_, higher_order_impl_detail::map_impl_tsl>();
     }
 }  // namespace hgraph::stdlib

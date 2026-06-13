@@ -3,6 +3,7 @@
 
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/subgraph_wiring.h>
+#include <hgraph/types/value/value_view.h>
 
 #include <cstddef>
 #include <functional>
@@ -18,6 +19,61 @@
 
 namespace hgraph
 {
+    struct LiftedKernel
+    {
+        using EvalValuesThunk = Value (*)(std::span<const ValueView>);
+
+        const char *name{nullptr};
+        const std::type_info *identity{nullptr};
+        std::size_t arity{0};
+
+        const TSValueTypeMetaData *(*input_schema_fn)(std::size_t index) = nullptr;
+        const TSValueTypeMetaData *(*output_schema_fn)() = nullptr;
+        std::span<const std::string_view> (*param_names_fn)() = nullptr;
+        EvalValuesThunk eval_values_fn{nullptr};
+        Value (*identity_value_fn)() = nullptr;
+
+        bool associative{false};
+        bool commutative{false};
+
+        [[nodiscard]] bool valid() const noexcept
+        {
+            return identity != nullptr && input_schema_fn != nullptr && output_schema_fn != nullptr &&
+                   eval_values_fn != nullptr;
+        }
+
+        [[nodiscard]] const TSValueTypeMetaData *input_schema(std::size_t index) const
+        {
+            if (input_schema_fn == nullptr) { throw std::logic_error("LiftedKernel has no input schema thunk"); }
+            return input_schema_fn(index);
+        }
+
+        [[nodiscard]] const TSValueTypeMetaData *output_schema() const
+        {
+            if (output_schema_fn == nullptr) { throw std::logic_error("LiftedKernel has no output schema thunk"); }
+            return output_schema_fn();
+        }
+
+        [[nodiscard]] std::span<const std::string_view> param_names() const
+        {
+            return param_names_fn != nullptr ? param_names_fn() : std::span<const std::string_view>{};
+        }
+
+        [[nodiscard]] bool has_identity() const noexcept { return identity_value_fn != nullptr; }
+
+        [[nodiscard]] Value identity_value() const
+        {
+            if (identity_value_fn == nullptr) { throw std::logic_error("LiftedKernel has no identity value"); }
+            return identity_value_fn();
+        }
+
+        [[nodiscard]] Value eval(std::span<const ValueView> args) const
+        {
+            if (eval_values_fn == nullptr) { throw std::logic_error("LiftedKernel has no eval thunk"); }
+            return eval_values_fn(args);
+        }
+    };
+
     /**
      * A wirable function value — the C++ analogue of Python's ``func: Callable``
      * argument to the higher-order operators (``reduce`` / ``map_`` / ``switch_``).
@@ -44,6 +100,7 @@ namespace hgraph
         CompileThunk          compile_fn{nullptr};
         ParamNamesThunk       param_names_fn{nullptr};
         const std::type_info *identity{nullptr};
+        const LiftedKernel   *lifted{nullptr};
         std::size_t           arity{0};
         bool                  has_output{false};
 
@@ -56,6 +113,7 @@ namespace hgraph
          */
         [[nodiscard]] std::span<const std::string_view> param_names() const
         {
+            if (lifted != nullptr) { return lifted->param_names(); }
             return param_names_fn != nullptr ? param_names_fn() : std::span<const std::string_view>{};
         }
 

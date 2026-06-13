@@ -1087,6 +1087,45 @@ namespace
                 .as<TSL<TS<Int>, 3>>();
         }
     };
+
+    struct MapLiftedAddTslG
+    {
+        static constexpr auto name = "map_lifted_add_tsl_g";
+
+        static Port<TSL<TS<Int>, 3>> compose(Wiring &w,
+                                             Port<TSL<TS<Int>, 3>> lhs,
+                                             Port<TSL<TS<Int>, 3>> rhs)
+        {
+            return wire<stdlib::map_>(w, lift<stdlib::scalar_add<Int>>(), lhs, rhs)
+                .as<TSL<TS<Int>, 3>>();
+        }
+    };
+
+    struct MapLiftedAddBroadcastG
+    {
+        static constexpr auto name = "map_lifted_add_broadcast_g";
+
+        static Port<TSL<TS<Int>, 3>> compose(Wiring &w, Port<TSL<TS<Int>, 3>> lhs, Port<TS<Int>> rhs)
+        {
+            return wire<stdlib::map_>(w, lift<stdlib::scalar_add<Int>>(), lhs, rhs)
+                .as<TSL<TS<Int>, 3>>();
+        }
+    };
+
+    struct MapLiftedAddConstG
+    {
+        static constexpr auto name = "map_lifted_add_const_g";
+
+        static Port<TSL<TS<Int>, 3>> compose(Wiring &w)
+        {
+            auto lhs = wire<stdlib::const_, TSL<TS<Int>, 3>>(
+                w, stdlib::make_list<Int>({Int{1}, Int{2}, Int{3}}));
+            auto rhs = wire<stdlib::const_, TSL<TS<Int>, 3>>(
+                w, stdlib::make_list<Int>({Int{10}, Int{20}, Int{30}}));
+            return wire<stdlib::map_>(w, lift<stdlib::scalar_add<Int>>(), lhs, rhs)
+                .as<TSL<TS<Int>, 3>>();
+        }
+    };
 }  // namespace
 
 TEST_CASE("map_: pass_through binds a TSD whole to every child")
@@ -1147,6 +1186,25 @@ TEST_CASE("map_ over TSL: pass_through keeps a same-size TSL whole")
                      values<Value>(list_delta<TS<Int>>({1, 2, 3})),
                      values<Value>(list_delta<TS<Int>>({10, 20, 30})))),
                  values<Value>(list_delta<TS<Int>>({61, 62, 63})));
+}
+
+TEST_CASE("map_ over TSL: lifted scalar add uses one specialised vector node")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MapLiftedAddTslG>(
+                     values<Value>(list_delta<TS<Int>>({1, 2, 3})),
+                     values<Value>(list_delta<TS<Int>>({10, 20, 30})))),
+                 values<Value>(list_delta<TS<Int>>({11, 22, 33})));
+
+    CHECK_OUTPUT((eval_node<MapLiftedAddBroadcastG>(
+                     values<Value>(list_delta<TS<Int>>({1, 2, 3})),
+                     values<Int>(10))),
+                 values<Value>(list_delta<TS<Int>>({11, 12, 13})));
+
+    GraphBuilder gb = build_graph<MapLiftedAddConstG>();
+    CHECK(gb.node_count() == 3);   // two const sources + one lifted TSL map node
 }
 
 TEST_CASE("map_ over TSL: no_key is rejected (TSD maps only)")

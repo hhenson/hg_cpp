@@ -16,8 +16,10 @@
  * ``hgraph::stdlib::syntax``. See ``docs/source/developer_guide/operators.rst``.
  */
 
+#include <hgraph/lib/std/lifted_kernels.h>
 #include <hgraph/lib/std/operators/impl/operators_impl.h>
 #include <hgraph/lib/std/operators/operators.h>
 #include <hgraph/lib/std/operators/syntax.h>
+#include <hgraph/types/lift.h>
 
 #endif  // HGRAPH_LIB_STD_STD_OPERATORS_H

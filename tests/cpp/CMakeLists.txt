@@ -57,6 +57,7 @@ add_executable(hgraph_unit_tests
     test_static_node.cpp
     test_graph_wiring.cpp
     test_nested_wiring.cpp
+    lift/test_lift.cpp
     test_reduce.cpp
     test_switch.cpp
     test_map.cpp
