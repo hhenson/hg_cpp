@@ -24,15 +24,25 @@ namespace hgraph::ts_data_plan_factory_detail
 
     [[nodiscard]] bool is_compact_atomic_ts_data(const TSValueTypeMetaData &schema) noexcept
     {
+        // Whole-value time series: the delta IS the value, stored as a single
+        // value + tracking. The value is an atomic scalar or a compound scalar
+        // (a value-layer ``Bundle``, e.g. ``TS<NodeError>``) — both copy whole
+        // through the value plan. Time-series *structure* (TSB/TSL/TSD/…) is a
+        // different schema kind and handled by the structured/slot paths.
         switch (schema.kind)
         {
         case TSTypeKind::TS:
         case TSTypeKind::REF:
         case TSTypeKind::SIGNAL:
+        {
+            const auto whole_value_kind = [](ValueTypeKind kind) {
+                return kind == ValueTypeKind::Atomic || kind == ValueTypeKind::Bundle;
+            };
             return schema.value_schema != nullptr && schema.delta_value_schema != nullptr &&
                    schema.value_schema == schema.delta_value_schema &&
-                   schema.value_schema->kind == ValueTypeKind::Atomic &&
-                   schema.delta_value_schema->kind == ValueTypeKind::Atomic;
+                   whole_value_kind(schema.value_schema->kind) &&
+                   whole_value_kind(schema.delta_value_schema->kind);
+        }
         default:
             return false;
         }

@@ -13,6 +13,7 @@ The developer guide describes the internal design of the C++ implementation. The
    wiring
    graph_wiring
    nested_graphs
+   error_handling
    operators
    python_integration
    testing

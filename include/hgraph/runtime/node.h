@@ -343,6 +343,16 @@ namespace hgraph
         NodeBuilder &scalars(Value scalars);
         [[nodiscard]] const Value &scalars() const noexcept;
 
+        /**
+         * Clone this builder's binding with error capture enabled: the new
+         * binding has ``error_output_schema = error_schema`` and
+         * ``captures_errors = true`` (so the node storage allocates an error
+         * output and ``evaluate`` runs under a try/catch). Only supported for
+         * native nodes (the standard runtime ops); a custom-ops node throws.
+         * Used by ``exception_time_series`` to activate a node's error output.
+         */
+        [[nodiscard]] NodeBuilder with_error_capture(const TSValueTypeMetaData *error_schema) const;
+
         [[nodiscard]] const NodeTypeBinding &binding() const;
         [[nodiscard]] const TSEndpointSchema &input_endpoint() const noexcept;
         /**

@@ -356,6 +356,16 @@ namespace hgraph
                                std::function<NodeBuilder()> make_builder);
 
         /**
+         * Activate error capture on an already-added node: re-bind its builder
+         * with an error output (``error_output_schema`` = ``error_schema``,
+         * ``captures_errors`` = true) so its evaluation runs under a try/catch
+         * and the error output is allocated. Returns the error-output schema.
+         * Used by ``exception_time_series`` (the node is the port's producer).
+         */
+        const TSValueTypeMetaData *activate_error_capture(const WiringInstance *node,
+                                                          const TSValueTypeMetaData *error_schema);
+
+        /**
          * A view over the wiring-time ``GlobalState``. A ``compose`` body can seed
          * the store here; ``finish`` carries the populated state onto the produced
          * ``GraphBuilder`` (and thence onto each graph it builds).

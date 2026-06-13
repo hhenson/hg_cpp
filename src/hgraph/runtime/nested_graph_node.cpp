@@ -117,7 +117,7 @@ namespace hgraph
         SingleNestedGraphNodeSpec spec,
         SingleNestedGraphNodeOptions options)
     {
-        if (spec.output_binding.has_value())
+        if (spec.output_binding.has_value() && !options.manage_output_externally)
         {
             if (meta.output_schema == nullptr)
             {

@@ -70,6 +70,12 @@ namespace hgraph
         bool start_child_on_start{true};
         bool stop_child_on_stop{true};
         bool propagate_child_schedule{true};
+        // When set, the descriptor records ``spec.output_binding`` for the
+        // owning node to consult but does NOT set up output forwarding (the node
+        // owns its output and writes it from its own callbacks — e.g. try_except
+        // copies the child output into a bundle field). The default-forwarding
+        // helpers (``single_nested_graph_bind_output``) are then not used.
+        bool manage_output_externally{false};
     };
 
     struct HGRAPH_EXPORT SingleNestedGraphNodeContext

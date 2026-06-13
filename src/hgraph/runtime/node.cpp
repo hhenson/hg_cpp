@@ -2,6 +2,7 @@
 
 #include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/graph.h>
+#include <hgraph/runtime/node_error.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/notifiable.h>
 #include <hgraph/runtime/node_scheduler.h>
@@ -10,8 +11,10 @@
 #include <algorithm>
 #include <cassert>
 #include <deque>
+#include <exception>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace hgraph
@@ -158,6 +161,27 @@ namespace hgraph
         [[nodiscard]] TSOutput &node_recordable_state(const NodeRuntimeContext &context, void *memory)
         {
             return *MemoryUtils::cast<TSOutput>(node_component(memory, context.layout.recordable_state_offset));
+        }
+
+        // Build a NodeError from the node's identity + the exception message and
+        // write it to the node's error output for this cycle. Error capture is not
+        // transactional: a node may already have written ordinary output before
+        // throwing, so callers must treat that output as unspecified.
+        void write_node_error(const NodeRuntimeContext &context, const NodeView &view, DateTime evaluation_time,
+                              std::string error_msg)
+        {
+            const NodeTypeMetaData *schema = view.schema();
+            NodeErrorFields         fields;
+            fields.signature_name =
+                schema != nullptr && schema->display_name != nullptr ? std::string{schema->display_name} : std::string{};
+            fields.label       = std::string{view.label()};
+            fields.wiring_path = fields.label.empty() ? fields.signature_name : fields.label;
+            fields.error_msg   = std::move(error_msg);
+
+            Value error_value = make_node_error_value(fields);
+            auto  output      = node_error_output(context, view.data()).view(evaluation_time);
+            auto  mutation    = output.begin_mutation(evaluation_time);
+            (void)mutation.copy_value_from(error_value.view());
         }
 
         [[nodiscard]] const NodeCallbacks &callbacks(const void *context)
@@ -712,7 +736,27 @@ namespace hgraph
 
             if (do_eval)
             {
-                if (callbacks(context).evaluate) { callbacks(context).evaluate(view, evaluation_time); }
+                if (callbacks(context).evaluate)
+                {
+                    const NodeTypeMetaData *schema = view.schema();
+                    const bool capture = schema != nullptr && schema->captures_errors && runtime.layout.has_error_output();
+                    if (capture)
+                    {
+                        try
+                        {
+                            callbacks(context).evaluate(view, evaluation_time);
+                        }
+                        catch (const std::exception &error)
+                        {
+                            write_node_error(runtime, view, evaluation_time, error.what());
+                        }
+                        catch (...)
+                        {
+                            write_node_error(runtime, view, evaluation_time, "unknown error");
+                        }
+                    }
+                    else { callbacks(context).evaluate(view, evaluation_time); }
+                }
             }
 
             if (has_scheduler)
@@ -1291,6 +1335,37 @@ namespace hgraph
     {
         if (binding_ == nullptr) { throw std::logic_error("NodeBuilder has no binding"); }
         return *binding_;
+    }
+
+    NodeBuilder NodeBuilder::with_error_capture(const TSValueTypeMetaData *error_schema) const
+    {
+        if (binding_ == nullptr) { throw std::logic_error("NodeBuilder has no binding"); }
+        if (error_schema == nullptr) { throw std::invalid_argument("with_error_capture requires an error schema"); }
+
+        const NodeOps &node_ops = binding_->ops_ref();
+        // Error capture reuses the standard runtime evaluate (which wraps the
+        // user callback in try/catch). A custom-ops node (nested/map/switch)
+        // runs its own evaluate and is not supported through this path.
+        if (node_ops.evaluate_impl != &evaluate_impl || node_ops.context == nullptr)
+        {
+            throw std::invalid_argument(
+                "with_error_capture: error capture is only supported on native nodes");
+        }
+        const auto &origin = *static_cast<const NodeRuntimeContext *>(node_ops.context);
+
+        NodeTypeMetaData schema = *binding_->type_meta;
+        schema.error_output_schema = error_schema;
+        schema.captures_errors     = true;
+
+        const auto &plan = node_storage_plan_for(schema);
+        const auto &binding =
+            node_runtime_registry().make_binding(std::move(schema), origin.callbacks, plan, NodeOps{});
+
+        NodeBuilder result{binding, input_endpoint_};
+        result.output_endpoint_ = output_endpoint_;
+        result.label_           = label_;
+        result.scalars_         = scalars_;
+        return result;
     }
 
     const TSEndpointSchema &NodeBuilder::input_endpoint() const noexcept

@@ -561,9 +561,10 @@ Roadmap (this milestone)
    alias leaves, minimal combiner tree, zero as the empty result only.
    ASAN/UBSAN-verified.
 
-Non-goals for the milestone: ``mesh_``, ``try_except``, services/contexts,
+Non-goals for the milestone: ``mesh_``, services/contexts,
 push sources inside nested graphs, TSD link-children aliasing,
 non-associative reduce, dynamic-TSL reduction, graph-level generic
 (``TsVar``) sub-graphs. (Explicit ``__keys__`` and the ``pass_through`` /
 ``no_key`` wrappers, originally deferred, landed within the milestone —
-see the ``map_`` section.)
+see the ``map_`` section. ``try_except`` landed as its own follow-on
+milestone — see :doc:`error_handling`.)

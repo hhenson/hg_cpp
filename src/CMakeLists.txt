@@ -4,10 +4,12 @@ set(HGRAPH_CORE_SOURCES
     hgraph/runtime/graph.cpp
     hgraph/runtime/nested_graph_node.cpp
     hgraph/runtime/node.cpp
+    hgraph/runtime/node_error.cpp
     hgraph/runtime/push_source_node.cpp
     hgraph/runtime/switch_node.cpp
     hgraph/runtime/map_node.cpp
     hgraph/runtime/reduce_node.cpp
+    hgraph/runtime/try_except_node.cpp
     hgraph/types/metadata/type_registry.cpp
     hgraph/types/metadata/ts_data_atomic_ops.cpp
     hgraph/types/metadata/ts_data_dynamic_list_ops.cpp

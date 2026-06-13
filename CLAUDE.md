@@ -193,8 +193,28 @@ Python specials: `__keys__` (explicit TSS key set), name-based key detection +
 (wiring-time `WiringPortRef::ArgTag` port tags, folded into node identity via the
 `MapCallConfig` scalar). Remaining (deferred — see the doc's roadmap + non-goals):
 dynamic-TSL multiplexing/reduce, non-associative reduce, sink maps/switches,
-`mesh_`/`try_except`/services. **C++ only for
+`mesh_`/services. **C++ only for
 now** — keep Python out of the configure/build/run path.
+
+**Error handling — DONE** (design record:
+`docs/source/developer_guide/error_handling.rst`, authoritative). `NodeError` is a
+value-layer compound scalar (a `bundle` of `str` fields; `TS<NodeError>` now resolves —
+the runtime gained whole-value `TS` over a `Bundle` value, via
+`is_compact_atomic_ts_data`). **Per-node capture**: `evaluate_impl` wraps the user
+eval in try/catch when `captures_errors`, writes a `NodeError` to the node error
+output, and uses `error_msg = "unknown error"` for non-`std::exception` throws;
+ordinary output on an error cycle is intentionally unspecified because writes
+before the throw are not rolled back. `exception_time_series(port)` activates
+capture by re-binding the node (`NodeBuilder::with_error_capture`,
+`Wiring::activate_error_capture`) and returns `Port<TS<NodeError>>`. **`try_except_<G>`**
+wraps a sub-graph on the `single_nested_graph_node` substrate (custom start/evaluate,
+`manage_output_externally`): runs the child under try/catch, output is an owned
+`TSB{exception, out}` (sink → bare `TS<NodeError>`), copying the child output into `out`
+on success and writing `exception` on a throw. `runtime/{node_error,try_except_node}.*`,
+`exception_time_series`/`try_except_` in `types/subgraph_wiring.h`. Tests:
+`tests/cpp/test_error_handling.cpp`. ASAN/UBSAN-verified. Deferred: `map_` error variant
+(`TSD[K, TS[NodeError]]`), `__trace_back_depth__`/`__capture_values__` + richer traces,
+zero-copy `out` forwarding, capture on custom-ops nodes.
 
 ---
 

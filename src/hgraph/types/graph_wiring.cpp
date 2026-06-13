@@ -465,6 +465,21 @@ namespace hgraph
         return WiringPortRef::peered_source(&instance, {}, output_schema_of(instance));
     }
 
+    const TSValueTypeMetaData *Wiring::activate_error_capture(const WiringInstance *node,
+                                                             const TSValueTypeMetaData *error_schema)
+    {
+        if (node == nullptr) { throw std::invalid_argument("activate_error_capture: null node"); }
+        // The deque owns the instances (stable addresses); the const port ref
+        // names one we own and may amend before finish.
+        WiringInstance         &instance = const_cast<WiringInstance &>(*node);
+        const NodeTypeMetaData *meta     = instance.builder.binding().type_meta;
+        if (meta == nullptr || meta->error_output_schema == nullptr)
+        {
+            instance.builder = instance.builder.with_error_capture(error_schema);
+        }
+        return instance.builder.binding().type_meta->error_output_schema;
+    }
+
     GlobalStateView Wiring::global_state() noexcept { return impl_->global_state.view(); }
 
     GraphBuilder Wiring::finish() &&
