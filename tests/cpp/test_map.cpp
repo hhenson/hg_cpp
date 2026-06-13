@@ -1112,6 +1112,43 @@ namespace
         }
     };
 
+    struct MapLiftedSubTslG
+    {
+        static constexpr auto name = "map_lifted_sub_tsl_g";
+
+        static Port<TSL<TS<Int>, 3>> compose(Wiring &w,
+                                             Port<TSL<TS<Int>, 3>> lhs,
+                                             Port<TSL<TS<Int>, 3>> rhs)
+        {
+            return wire<stdlib::map_>(w, lift<stdlib::scalar_sub<Int>>(), lhs, rhs)
+                .as<TSL<TS<Int>, 3>>();
+        }
+    };
+
+    struct MapLiftedDivTslG
+    {
+        static constexpr auto name = "map_lifted_div_tsl_g";
+
+        static Port<TSL<TS<Float>, 3>> compose(Wiring &w,
+                                               Port<TSL<TS<Int>, 3>> lhs,
+                                               Port<TSL<TS<Int>, 3>> rhs)
+        {
+            return wire<stdlib::map_>(w, lift<stdlib::scalar_div<Int>>(), lhs, rhs)
+                .as<TSL<TS<Float>, 3>>();
+        }
+    };
+
+    struct MapLiftedMinBroadcastG
+    {
+        static constexpr auto name = "map_lifted_min_broadcast_g";
+
+        static Port<TSL<TS<Int>, 3>> compose(Wiring &w, Port<TSL<TS<Int>, 3>> lhs, Port<TS<Int>> rhs)
+        {
+            return wire<stdlib::map_>(w, lift<stdlib::scalar_min<Int>>(), lhs, rhs)
+                .as<TSL<TS<Int>, 3>>();
+        }
+    };
+
     struct MapLiftedAddConstG
     {
         static constexpr auto name = "map_lifted_add_const_g";
@@ -1205,6 +1242,27 @@ TEST_CASE("map_ over TSL: lifted scalar add uses one specialised vector node")
 
     GraphBuilder gb = build_graph<MapLiftedAddConstG>();
     CHECK(gb.node_count() == 3);   // two const sources + one lifted TSL map node
+}
+
+TEST_CASE("map_ over TSL: lifted standard kernels cover subtraction division and min")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MapLiftedSubTslG>(
+                     values<Value>(list_delta<TS<Int>>({10, 20, 30})),
+                     values<Value>(list_delta<TS<Int>>({1, 2, 3})))),
+                 values<Value>(list_delta<TS<Int>>({9, 18, 27})));
+
+    CHECK_OUTPUT((eval_node<MapLiftedDivTslG>(
+                     values<Value>(list_delta<TS<Int>>({10, 20, 30})),
+                     values<Value>(list_delta<TS<Int>>({2, 5, 4})))),
+                 values<Value>(list_delta<TS<Float>>({Float{5.0}, Float{4.0}, Float{7.5}})));
+
+    CHECK_OUTPUT((eval_node<MapLiftedMinBroadcastG>(
+                     values<Value>(list_delta<TS<Int>>({10, 2, 30})),
+                     values<Int>(5))),
+                 values<Value>(list_delta<TS<Int>>({5, 2, 5})));
 }
 
 TEST_CASE("map_ over TSL: no_key is rejected (TSD maps only)")
