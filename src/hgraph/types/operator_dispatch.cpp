@@ -174,6 +174,40 @@ namespace hgraph
             int                                                 defaults_used{0};
         };
 
+        constexpr int variadic_pack_fixed_input_penalty = 100'000'000;
+
+        [[nodiscard]] bool append_tail_arg(const WiringArg &arg,
+                                           std::vector<WiringArg> &tail,
+                                           std::string &why)
+        {
+            if (!arg.from_variadic_tail)
+            {
+                tail.push_back(arg);
+                return true;
+            }
+            if (arg.kind != WiringArg::Kind::TimeSeries || !arg.port.is_structural_source())
+            {
+                why = "packed variadic tail is not a structural time-series source";
+                return false;
+            }
+
+            const auto *schema = TypeRegistry::instance().dereference(arg.port.schema);
+            if (schema == nullptr || schema->kind != TSTypeKind::TSL)
+            {
+                why = "packed variadic tail is not a TSL";
+                return false;
+            }
+
+            for (const WiringPortRef &child : arg.port.structural_children())
+            {
+                WiringArg child_arg;
+                child_arg.kind = WiringArg::Kind::TimeSeries;
+                child_arg.port = child;
+                tail.push_back(std::move(child_arg));
+            }
+            return true;
+        }
+
         /**
          * Map the call onto the candidate's declared parameters using the
          * Python calling rules: positional arguments fill parameters in
@@ -218,7 +252,7 @@ namespace hgraph
             for (std::size_t i = 0; i < positional; ++i)
             {
                 if (i < positional_limit) { filled[i] = args[i]; }
-                else { tail.push_back(args[i]); }
+                else if (!append_tail_arg(args[i], tail, why)) { return false; }
             }
 
             for (std::size_t i = positional; i < args.size(); ++i)
@@ -353,6 +387,11 @@ namespace hgraph
                 const bool          tail  = impl.variadic && i >= fixed_params;
                 const ParamPattern &param = impl.params[std::min(i, impl.params.size() - 1)];
                 const WiringArg    &arg   = args[i];
+
+                if (!tail && arg.from_variadic_tail)
+                {
+                    rank_adjustment += variadic_pack_fixed_input_penalty;
+                }
 
                 if (tail)
                 {

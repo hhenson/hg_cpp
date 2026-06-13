@@ -243,6 +243,26 @@ namespace
         }
     };
 
+    struct packed_varin_prefer_ : Operator<"packed_varin_prefer", In<"ts", TsVar<"S">>, Out<TS<Int>>>
+    {
+    };
+    struct packed_varin_prefer_tsl
+    {
+        static constexpr auto name = "packed_varin_prefer_tsl";
+        static Port<TS<Int>>  compose(Wiring &, Port<TSL<TS<Int>>>)
+        {
+            return {};
+        }
+    };
+    struct packed_varin_prefer_variadic
+    {
+        static constexpr auto name = "packed_varin_prefer_variadic";
+        static Port<TS<Int>>  compose(Wiring &, VarIn<"ts", TS<Int>>)
+        {
+            return {};
+        }
+    };
+
     struct constrained_ : Operator<"constrained", In<"in", TsVar<"S">>, Out<TsVar<"S">>>
     {
     };
@@ -509,6 +529,31 @@ TEST_CASE("operators: exact fixed graph overload ranks ahead of a variadic fallb
     auto [impl, map, call_args, call_kwargs] = OperatorRegistry::instance().resolve("variadic_rank", std::span<const WiringArg>{args});
     REQUIRE(impl != nullptr);
     CHECK(impl->label.find("variadic_rank_fixed") != std::string::npos);
+}
+
+TEST_CASE("operators: packed VarIn tails prefer variadic overloads over converted TSL overloads")
+{
+    register_graph_overload<packed_varin_prefer_, packed_varin_prefer_tsl>();
+    register_graph_overload<packed_varin_prefer_, packed_varin_prefer_variadic>();
+
+    const TSValueTypeMetaData *element = ts_type<TS<Int>>();
+    std::vector<WiringPortRef> children{
+        WiringPortRef::null_source(element),
+        WiringPortRef::null_source(element),
+    };
+
+    WiringArg packed;
+    packed.kind               = WiringArg::Kind::TimeSeries;
+    packed.from_variadic_tail = true;
+    packed.port = WiringPortRef::structural_source(TypeRegistry::instance().tsl(element, children.size()),
+                                                   std::move(children));
+
+    std::array<WiringArg, 1> args{std::move(packed)};
+    auto [impl, map, call_args, call_kwargs] =
+        OperatorRegistry::instance().resolve("packed_varin_prefer", std::span<const WiringArg>{args});
+    REQUIRE(impl != nullptr);
+    CHECK(impl->label.find("packed_varin_prefer_variadic") != std::string::npos);
+    CHECK(call_args.size() == 2);
 }
 
 TEST_CASE("operators: scalar variable constraints reject unsupported scalar types")

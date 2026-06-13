@@ -684,10 +684,13 @@ scalar auto-const promotion, and lets graph overloads write calls such as
 that packed-tail marker: ``reduce(func, args)`` is a raw variadic fold with no
 zero/default leaves, while ``reduce(func, args, zero)`` is the ordinary collection
 reduction with default leaf values. This is why ``merge(*ts) -> S`` can delegate
-to ``reduce`` without sharing a private fold helper. Pure variadic overloads whose
-output type is the tail type must still provide ``resolve_default_types`` from
-the call context because variadic tail matches intentionally do not bind type
-variables.
+to ``reduce`` without sharing a private fold helper. If a packed ``VarIn`` could
+match both a true variadic overload and a fixed ``TSL`` overload, the dispatcher
+expands it back into tail arguments for the variadic candidate and penalizes the
+fixed-``TSL`` conversion, so the variadic overload wins. Pure variadic overloads
+whose output type is the tail type must still provide ``resolve_default_types``
+from the call context because variadic tail matches intentionally do not bind
+type variables.
 
 Graph compose bodies should return the port produced by their inner wiring call.
 Do not wrap an existing port in a different ``Port<...>`` type to make the graph's
