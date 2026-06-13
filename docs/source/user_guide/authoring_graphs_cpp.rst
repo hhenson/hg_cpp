@@ -190,6 +190,71 @@ type, such as ``int / int -> float``. Use ``.as<Schema>()`` when a graph return 
 downstream API needs a typed ``Port<Schema>``.
 
 
+Packing node collection inputs
+------------------------------
+
+``wire<Node>`` can pack call-site ports into one tail collection input, mirroring
+the Python ``*args`` / ``**kwargs`` convenience. This is node wiring sugar only;
+graph and operator composition should use their normal variadic, reduce, and
+explicit collection APIs. The node opts into this conversion by declaring
+``Args`` or ``Kwargs``; plain ``TSL`` and ``TSB`` inputs keep their ordinary
+whole-input binding behavior.
+
+For an ``Args`` input, surplus positional ports are collected into a runtime
+``TSL``. ``Args<>`` defaults the element schema to ``TsVar<"args">`` and uses
+the internal size variable ``SIZE<"args_len">``:
+
+.. code-block:: cpp
+
+   struct SumTail
+   {
+       static void eval(In<"base", TS<Int>> base,
+                        In<"values", Args<>> values,
+                        Scalar<"offset", Int> offset,
+                        Out<TS<Int>> out);
+   };
+
+   auto out = wire<SumTail>(w, base, lhs, rhs, arg<"offset">(5_i));
+   // Equivalent collection input: values = TSL{lhs, rhs}; args_len = 2.
+
+Use ``Args<TS<Int>>`` when the node should restrict all positional arguments to
+one element schema.
+
+For a ``Kwargs`` input, ``Kwargs<>`` defaults the field-pack variable to
+``TsVar<"kwargs">`` and resolves as an unnamed runtime ``TSB``. Unknown keyword
+ports become fields on the bundle. Mixed positional ports are also accepted; they
+become fields named ``_1``, ``_2``, and so on:
+
+.. code-block:: cpp
+
+   struct AddKwargs
+   {
+       static void eval(In<"values", Kwargs<>> values,
+                        Out<TS<Int>> out)
+       {
+           auto lhs = values.field("lhs");
+           auto rhs = values.field("rhs");
+           out.set(lhs.value().checked_as<Int>() + rhs.value().checked_as<Int>());
+       }
+   };
+
+   auto by_name = wire<AddKwargs>(w, arg<"lhs">(lhs), arg<"rhs">(rhs));
+
+   struct FormatPair
+   {
+       static void eval(In<"values", Kwargs<>> values,
+                        Out<TS<Str>> out);
+   };
+
+   auto numbered = wire<FormatPair>(w, count, label);   // _1=count, _2=label
+
+Use a plain ``TSL`` or ``TSB`` input when the call site should supply the whole
+collection explicitly. A bare ``In<"value", TsVar<"A">>`` remains an ordinary
+generic input and is not treated as a collection pack target. If a scalar
+parameter follows a packed collection in the node signature, supply that scalar
+by name.
+
+
 Supported standard operator overloads
 -------------------------------------
 

@@ -123,12 +123,19 @@ namespace hgraph
 
         template <typename S> struct is_static_tsb_schema : std::false_type {};
         template <typename... Fields> struct is_static_tsb_schema<UnNamedTSB<Fields...>> : std::true_type {};
+        template <typename... Fields> struct is_static_tsb_schema<Kwargs<Fields...>> : std::true_type {};
         template <fixed_string Name, typename... Fields>
         struct is_static_tsb_schema<TSB<Name, Fields...>> : std::true_type {};
 
         template <typename S> struct static_tsb_schema_traits;
         template <typename... Fields>
         struct static_tsb_schema_traits<UnNamedTSB<Fields...>>
+        {
+            template <fixed_string FieldName>
+            using lookup = tsb_field_lookup<FieldName, Fields...>;
+        };
+        template <typename... Fields>
+        struct static_tsb_schema_traits<Kwargs<Fields...>>
         {
             template <fixed_string FieldName>
             using lookup = tsb_field_lookup<FieldName, Fields...>;
@@ -632,6 +639,21 @@ namespace hgraph
     };
 
     /**
+     * ``Args<C>`` is a node-authoring marker for call-site positional packing.
+     * At runtime it is the same view and metadata shape as ``TSL<C, SIZE<"args_len">>``.
+     */
+    template <fixed_string Name, typename TElementSchema, auto... TPolicies>
+    class In<Name, Args<TElementSchema>, TPolicies...>
+        : public In<Name, TSL<TElementSchema, SIZE<"args_len">>, TPolicies...>
+    {
+      public:
+        using base           = In<Name, TSL<TElementSchema, SIZE<"args_len">>, TPolicies...>;
+        using schema         = Args<TElementSchema>;
+        using element_schema = TElementSchema;
+        using base::base;
+    };
+
+    /**
      * Dict time-series input (``TSD<K, V>``): inherits ``TSDInputView`` and adds
      * typed key lookup. ``at(key)`` / ``operator[](key)`` return ``In<"", V>``.
      * Iteration helpers return typed child selectors while preserving ``ValueView``
@@ -789,6 +811,10 @@ namespace hgraph
         static constexpr auto validity   = static_node_detail::resolved_input_validity<TPolicies...>();
 
         explicit In(TSInputView view) noexcept : TSBInputView(std::move(view)) {}
+
+        using TSBInputView::at;
+        using TSBInputView::field;
+        using TSBInputView::operator[];
 
         template <fixed_string FieldName>
         [[nodiscard]] auto field() const

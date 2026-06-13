@@ -107,12 +107,24 @@ namespace hgraph
     template <fixed_string Name, std::size_t... TConstraints>
     inline constexpr SizeVar<Name, TConstraints...> SIZE{};
 
+    /** Time-series type variable used in generic schemas. Resolution happens at wiring time. */
+    template <fixed_string Name, typename... TConstraints>
+    struct TsVar;
+
     /** List time-series schema; equivalent to ``TSL[T, N?]``. Concrete ``N == 0`` is dynamic. */
     template <typename TElementSchema, auto FixedSize = 0>
     struct TSL
     {
         using element_schema             = TElementSchema;
         static constexpr auto fixed_size = FixedSize;
+    };
+
+    /** Node input marker for Python-style ``*args`` packing; resolves as ``TSL<T, SIZE<"args_len">>``. */
+    template <typename TElementSchema = TsVar<"args">>
+    struct Args
+    {
+        using element_schema             = TElementSchema;
+        static constexpr auto fixed_size = SIZE<"args_len">;
     };
 
     /**
@@ -165,6 +177,11 @@ namespace hgraph
     struct UnNamedTSB
     {};
 
+    /** Node input marker for Python-style ``**kwargs`` packing; ``Kwargs<>`` resolves as ``UnNamedTSB<TsVar<"kwargs">>``. */
+    template <typename... TFields>
+    struct Kwargs
+    {};
+
     /** Named time-series bundle; corresponds to ``tsb(name, fields)``. */
     template <fixed_string Name, typename... TFields>
     struct TSB
@@ -172,7 +189,6 @@ namespace hgraph
         static constexpr auto name_sv = Name;
     };
 
-    /** Time-series type variable used in generic schemas. Resolution happens at wiring time. */
     template <fixed_string Name, typename... TConstraints>
     struct TsVar
     {
@@ -394,6 +410,12 @@ namespace hgraph
         }
     };
 
+    template <typename TElementSchema>
+    struct schema_descriptor<Args<TElementSchema>>
+        : schema_descriptor<TSL<TElementSchema, SIZE<"args_len">>>
+    {
+    };
+
     template <typename TValue, std::size_t Period, std::size_t MinPeriod>
     struct schema_descriptor<TSW<TValue, Period, MinPeriod>>
     {
@@ -530,6 +552,14 @@ namespace hgraph
         }
     };
 
+    template <fixed_string VarName, typename... TConstraints>
+    struct schema_descriptor<UnNamedTSB<TsVar<VarName, TConstraints...>>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept { return false; }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta() noexcept { return nullptr; }
+    };
+
     template <fixed_string Name, typename... TFields>
     struct schema_descriptor<TSB<Name, TFields...>>
     {
@@ -554,6 +584,24 @@ namespace hgraph
                 return nullptr;
             }
         }
+    };
+
+    template <fixed_string Name, fixed_string VarName, typename... TConstraints>
+    struct schema_descriptor<TSB<Name, TsVar<VarName, TConstraints...>>>
+    {
+        [[nodiscard]] static constexpr bool is_concrete() noexcept { return false; }
+
+        [[nodiscard]] static const TSValueTypeMetaData *ts_meta() noexcept { return nullptr; }
+    };
+
+    template <typename... TFields>
+    struct schema_descriptor<Kwargs<TFields...>> : schema_descriptor<UnNamedTSB<TFields...>>
+    {
+    };
+
+    template <>
+    struct schema_descriptor<Kwargs<>> : schema_descriptor<UnNamedTSB<TsVar<"kwargs">>>
+    {
     };
 
     /** Descriptor for value-layer Bundle/UnNamedBundle. */

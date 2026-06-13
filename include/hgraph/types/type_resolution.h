@@ -180,6 +180,11 @@ namespace hgraph
         }
     };
 
+    template <typename C>
+    struct ts_resolver<Args<C>> : ts_resolver<TSL<C, SIZE<"args_len">>>
+    {
+    };
+
     template <typename V, std::size_t Period, std::size_t MinPeriod>
     struct ts_resolver<TSW<V, Period, MinPeriod>>
     {
@@ -212,6 +217,15 @@ namespace hgraph
         }
     };
 
+    template <fixed_string VarName, typename... C>
+    struct ts_resolver<UnNamedTSB<TsVar<VarName, C...>>>
+    {
+        [[nodiscard]] static const TSValueTypeMetaData *resolve(const ResolutionMap &m)
+        {
+            return m.ts(VarName.sv());
+        }
+    };
+
     template <fixed_string Name, typename... Fields>
     struct ts_resolver<TSB<Name, Fields...>>
     {
@@ -224,6 +238,25 @@ namespace hgraph
              ...);
             return TypeRegistry::instance().tsb(Name.sv(), fields);
         }
+    };
+
+    template <fixed_string Name, fixed_string VarName, typename... C>
+    struct ts_resolver<TSB<Name, TsVar<VarName, C...>>>
+    {
+        [[nodiscard]] static const TSValueTypeMetaData *resolve(const ResolutionMap &m)
+        {
+            return m.ts(VarName.sv());
+        }
+    };
+
+    template <typename... Fields>
+    struct ts_resolver<Kwargs<Fields...>> : ts_resolver<UnNamedTSB<Fields...>>
+    {
+    };
+
+    template <>
+    struct ts_resolver<Kwargs<>> : ts_resolver<UnNamedTSB<TsVar<"kwargs">>>
+    {
     };
 
     template <typename S>
@@ -334,6 +367,11 @@ namespace hgraph
         }
     };
 
+    template <typename C>
+    struct ts_unifier<Args<C>> : ts_unifier<TSL<C, SIZE<"args_len">>>
+    {
+    };
+
     template <typename K, typename V>
     struct ts_unifier<TSD<K, V>>
     {
@@ -367,6 +405,13 @@ namespace hgraph
 
     namespace type_resolution_detail
     {
+        template <fixed_string VarName>
+        void unify_tsb_field_pack(const TSValueTypeMetaData *c, ResolutionMap &m)
+        {
+            c = unify_dereference(c);
+            m.bind_ts(VarName.sv(), c != nullptr && c->kind == TSTypeKind::TSB ? c : nullptr);
+        }
+
         template <typename Field>
         void unify_tsb_field(const TSValueTypeMetaData *c, ResolutionMap &m)
         {
@@ -394,6 +439,15 @@ namespace hgraph
         }
     };
 
+    template <fixed_string VarName, typename... C>
+    struct ts_unifier<UnNamedTSB<TsVar<VarName, C...>>>
+    {
+        static void unify(const TSValueTypeMetaData *c, ResolutionMap &m)
+        {
+            type_resolution_detail::unify_tsb_field_pack<VarName>(c, m);
+        }
+    };
+
     template <fixed_string Name, typename... Fields>
     struct ts_unifier<TSB<Name, Fields...>>
     {
@@ -401,6 +455,25 @@ namespace hgraph
         {
             (type_resolution_detail::unify_tsb_field<Fields>(c, m), ...);
         }
+    };
+
+    template <fixed_string Name, fixed_string VarName, typename... C>
+    struct ts_unifier<TSB<Name, TsVar<VarName, C...>>>
+    {
+        static void unify(const TSValueTypeMetaData *c, ResolutionMap &m)
+        {
+            type_resolution_detail::unify_tsb_field_pack<VarName>(c, m);
+        }
+    };
+
+    template <typename... Fields>
+    struct ts_unifier<Kwargs<Fields...>> : ts_unifier<UnNamedTSB<Fields...>>
+    {
+    };
+
+    template <>
+    struct ts_unifier<Kwargs<>> : ts_unifier<UnNamedTSB<TsVar<"kwargs">>>
+    {
     };
 
     // -----------------------------------------------------------------

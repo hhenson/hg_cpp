@@ -720,6 +720,11 @@ namespace hgraph
         {
             using type = TSL<dereferenced_static_schema_t<TElementSchema>, FixedSize>;
         };
+        template <typename TElementSchema>
+        struct dereferenced_static_schema<Args<TElementSchema>>
+        {
+            using type = Args<dereferenced_static_schema_t<TElementSchema>>;
+        };
         template <fixed_string Name, typename TSchema>
         struct dereferenced_field
         {
@@ -735,6 +740,11 @@ namespace hgraph
         struct dereferenced_static_schema<UnNamedTSB<TFields...>>
         {
             using type = UnNamedTSB<typename dereferenced_static_field<TFields>::type...>;
+        };
+        template <typename... TFields>
+        struct dereferenced_static_schema<Kwargs<TFields...>>
+        {
+            using type = Kwargs<typename dereferenced_static_field<TFields>::type...>;
         };
         template <fixed_string Name, typename... TFields>
         struct dereferenced_static_schema<TSB<Name, TFields...>>
@@ -968,6 +978,12 @@ namespace hgraph
             }
         };
 
+        template <typename ElementSchema>
+        struct structural_arg_schema_infer<Args<ElementSchema>>
+            : structural_arg_schema_infer<TSL<ElementSchema, SIZE<"args_len">>>
+        {
+        };
+
         namespace structural_arg_detail
         {
             template <typename Field>
@@ -1043,6 +1059,48 @@ namespace hgraph
                 if (fields.empty()) { return nullptr; }
                 return TypeRegistry::instance().tsb(Name.sv(), fields);
             }
+        };
+
+        template <fixed_string VarName, typename... TConstraints>
+        struct structural_arg_schema_infer<UnNamedTSB<TsVar<VarName, TConstraints...>>>
+        {
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringStructuralSourceArg &) noexcept
+            {
+                return nullptr;
+            }
+
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringNamedStructuralSourceArg &arg)
+            {
+                auto fields = structural_arg_detail::inferred_named_tsb_fields(arg);
+                if (fields.empty()) { return nullptr; }
+                return TypeRegistry::instance().un_named_tsb(fields);
+            }
+        };
+
+        template <fixed_string Name, fixed_string VarName, typename... TConstraints>
+        struct structural_arg_schema_infer<TSB<Name, TsVar<VarName, TConstraints...>>>
+        {
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringStructuralSourceArg &) noexcept
+            {
+                return nullptr;
+            }
+
+            [[nodiscard]] static const TSValueTypeMetaData *infer(const WiringNamedStructuralSourceArg &arg)
+            {
+                auto fields = structural_arg_detail::inferred_named_tsb_fields(arg);
+                if (fields.empty()) { return nullptr; }
+                return TypeRegistry::instance().tsb(Name.sv(), fields);
+            }
+        };
+
+        template <typename... Fields>
+        struct structural_arg_schema_infer<Kwargs<Fields...>> : structural_arg_schema_infer<UnNamedTSB<Fields...>>
+        {
+        };
+
+        template <>
+        struct structural_arg_schema_infer<Kwargs<>> : structural_arg_schema_infer<UnNamedTSB<TsVar<"kwargs">>>
+        {
         };
 
         template <typename Schema>
@@ -1328,6 +1386,501 @@ namespace hgraph
                 return make_compose_arg<P>(w, call_args_detail::payload_at<arg_index>(args));
             }
         }
+
+        enum class node_collection_pack_kind : std::uint8_t
+        {
+            none,
+            tsl,
+            tsb,
+        };
+
+        template <typename TSchema>
+        struct node_collection_pack_kind_of
+            : std::integral_constant<node_collection_pack_kind, node_collection_pack_kind::none>
+        {
+        };
+        template <typename TElementSchema>
+        struct node_collection_pack_kind_of<Args<TElementSchema>>
+            : std::integral_constant<node_collection_pack_kind, node_collection_pack_kind::tsl>
+        {
+        };
+        template <typename... TFields>
+        struct node_collection_pack_kind_of<Kwargs<TFields...>>
+            : std::integral_constant<node_collection_pack_kind, node_collection_pack_kind::tsb>
+        {
+        };
+        template <typename TSchema>
+        struct node_collection_pack_kind_of<REF<TSchema>> : node_collection_pack_kind_of<TSchema>
+        {
+        };
+
+        template <typename P>
+        [[nodiscard]] consteval node_collection_pack_kind input_pack_kind()
+        {
+            if constexpr (static_node_detail::is_input_selector<P>::value)
+            {
+                return node_collection_pack_kind_of<typename in_param_schema<P>::type>::value;
+            }
+            else
+            {
+                return node_collection_pack_kind::none;
+            }
+        }
+
+        template <typename ParamsTuple, std::size_t... I>
+        [[nodiscard]] consteval std::size_t single_tail_collection_input_index(std::index_sequence<I...>)
+        {
+            std::size_t found      = call_args_detail::npos;
+            std::size_t found_count = 0;
+            bool        input_after = false;
+
+            (
+                [&] {
+                    using P = std::tuple_element_t<I, ParamsTuple>;
+                    if constexpr (static_node_detail::is_input_selector<P>::value)
+                    {
+                        constexpr node_collection_pack_kind kind = input_pack_kind<P>();
+                        if constexpr (kind != node_collection_pack_kind::none)
+                        {
+                            if (found_count == 0) { found = I; }
+                            ++found_count;
+                        }
+                        else if (found_count != 0)
+                        {
+                            input_after = true;
+                        }
+                    }
+                }(),
+                ...);
+
+            return found_count == 1 && !input_after ? found : call_args_detail::npos;
+        }
+
+        template <typename ParamsTuple>
+        [[nodiscard]] consteval std::size_t single_tail_collection_input_index()
+        {
+            return single_tail_collection_input_index<ParamsTuple>(
+                std::make_index_sequence<std::tuple_size_v<ParamsTuple>>{});
+        }
+
+        template <typename T>
+        struct port_static_schema
+        {
+            using type = void;
+        };
+        template <typename S>
+        struct port_static_schema<Port<S>>
+        {
+            using type = S;
+        };
+        template <fixed_string N, typename S>
+        struct port_static_schema<NamedPort<N, S>>
+        {
+            using type = S;
+        };
+
+        template <typename A>
+        [[nodiscard]] consteval node_collection_pack_kind port_pack_kind()
+        {
+            using Schema = typename port_static_schema<std::remove_cvref_t<A>>::type;
+            if constexpr (std::is_void_v<Schema>) { return node_collection_pack_kind::none; }
+            else { return node_collection_pack_kind_of<Schema>::value; }
+        }
+
+        template <std::size_t I, typename ArgsTuple, std::size_t... J>
+        [[nodiscard]] consteval std::size_t positional_ordinal_impl(std::index_sequence<J...>)
+        {
+            std::size_t ordinal = 0;
+            ((ordinal += call_args_detail::is_named_arg_v<std::tuple_element_t<J, ArgsTuple>> ? 0U : 1U), ...);
+            return ordinal;
+        }
+
+        template <std::size_t I, typename ArgsTuple>
+        [[nodiscard]] consteval std::size_t positional_ordinal()
+        {
+            return positional_ordinal_impl<I, ArgsTuple>(std::make_index_sequence<I>{});
+        }
+
+        template <typename ParamsTuple, typename Arg, std::size_t... I>
+        [[nodiscard]] consteval bool static_named_arg_matches_any_parameter(std::index_sequence<I...>)
+        {
+            using A = std::remove_cvref_t<Arg>;
+            if constexpr (!call_args_detail::is_static_named_arg_v<A>) { return false; }
+            else
+            {
+                return (false || ... || call_args_detail::static_named_arg_matches_parameter<I, ParamsTuple, A>());
+            }
+        }
+
+        template <typename ParamsTuple, typename Arg>
+        [[nodiscard]] consteval bool static_named_arg_matches_any_parameter()
+        {
+            return static_named_arg_matches_any_parameter<ParamsTuple, Arg>(
+                std::make_index_sequence<std::tuple_size_v<ParamsTuple>>{});
+        }
+
+        template <node_collection_pack_kind InputKind, typename A>
+        [[nodiscard]] consteval bool sole_port_candidate_is_direct_collection_input()
+        {
+            if constexpr (!is_port<std::remove_cvref_t<A>>::value) { return false; }
+            else if constexpr (is_erased_port<std::remove_cvref_t<A>>::value)
+            {
+                return true;
+            }
+            else
+            {
+                constexpr node_collection_pack_kind arg_kind = port_pack_kind<A>();
+                return arg_kind == InputKind;
+            }
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple, std::size_t... I>
+        [[nodiscard]] consteval std::size_t positional_port_pack_candidate_count(std::index_sequence<I...>)
+        {
+            std::size_t count = 0;
+            (
+                [&] {
+                    using A0 = std::remove_cvref_t<std::tuple_element_t<I, ArgsTuple>>;
+                    if constexpr (!call_args_detail::is_named_arg_v<A0>)
+                    {
+                        constexpr std::size_t ordinal = positional_ordinal<I, ArgsTuple>();
+                        if constexpr (ordinal >= PackIndex)
+                        {
+                            using A = call_args_detail::payload_t<A0>;
+                            if constexpr (is_port<A>::value) { ++count; }
+                        }
+                    }
+                }(),
+                ...);
+            return count;
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple, std::size_t... I>
+        [[nodiscard]] consteval bool sole_positional_port_candidate_is_direct(std::index_sequence<I...>)
+        {
+            constexpr auto input_kind = input_pack_kind<std::tuple_element_t<PackIndex, ParamsTuple>>();
+            bool           direct     = false;
+            (
+                [&] {
+                    using A0 = std::remove_cvref_t<std::tuple_element_t<I, ArgsTuple>>;
+                    if constexpr (!call_args_detail::is_named_arg_v<A0>)
+                    {
+                        constexpr std::size_t ordinal = positional_ordinal<I, ArgsTuple>();
+                        if constexpr (ordinal >= PackIndex)
+                        {
+                            using A = call_args_detail::payload_t<A0>;
+                            if constexpr (is_port<A>::value)
+                            {
+                                if constexpr (ordinal == PackIndex &&
+                                              sole_port_candidate_is_direct_collection_input<input_kind, A>())
+                                {
+                                    direct = true;
+                                }
+                            }
+                        }
+                    }
+                }(),
+                ...);
+            return direct;
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple, std::size_t... I>
+        [[nodiscard]] consteval bool has_named_collection_pack_fields(std::index_sequence<I...>)
+        {
+            constexpr auto input_kind = input_pack_kind<std::tuple_element_t<PackIndex, ParamsTuple>>();
+            if constexpr (input_kind != node_collection_pack_kind::tsb)
+            {
+                return false;
+            }
+            else
+            {
+                return (false || ... ||
+                        []<std::size_t ArgIndex>() consteval {
+                            using A0 = std::remove_cvref_t<std::tuple_element_t<ArgIndex, ArgsTuple>>;
+                            if constexpr (!call_args_detail::is_static_named_arg_v<A0>) { return false; }
+                            else if constexpr (static_named_arg_matches_any_parameter<ParamsTuple, A0>()) { return false; }
+                            else
+                            {
+                                using A = call_args_detail::payload_t<A0>;
+                                return is_port<A>::value;
+                            }
+                        }.template operator()<I>());
+            }
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple>
+        [[nodiscard]] consteval bool node_collection_pack_needed()
+        {
+            constexpr std::size_t arg_count = std::tuple_size_v<ArgsTuple>;
+            if constexpr (PackIndex == call_args_detail::npos) { return false; }
+            else if constexpr (has_named_collection_pack_fields<ParamsTuple, PackIndex, ArgsTuple>(
+                                   std::make_index_sequence<arg_count>{}))
+            {
+                return true;
+            }
+            else
+            {
+                constexpr std::size_t port_candidates =
+                    positional_port_pack_candidate_count<ParamsTuple, PackIndex, ArgsTuple>(
+                        std::make_index_sequence<arg_count>{});
+                if constexpr (port_candidates == 0) { return false; }
+                else if constexpr (port_candidates == 1)
+                {
+                    return !sole_positional_port_candidate_is_direct<ParamsTuple, PackIndex, ArgsTuple>(
+                        std::make_index_sequence<arg_count>{});
+                }
+                else
+                {
+                    return true;
+                }
+            }
+        }
+
+        [[nodiscard]] inline bool field_name_seen(std::span<const WiringNamedPortRef> fields, std::string_view name)
+        {
+            for (const WiringNamedPortRef &field : fields)
+            {
+                if (field.name == name) { return true; }
+            }
+            return false;
+        }
+
+        inline void append_unique_named_pack_field(std::vector<WiringNamedPortRef> &fields,
+                                                   std::string_view                 name,
+                                                   WiringPortRef                    source)
+        {
+            if (field_name_seen(std::span<const WiringNamedPortRef>{fields.data(), fields.size()}, name))
+            {
+                throw std::invalid_argument("wire<T>: packed TSB arguments contain a duplicate field '" +
+                                            std::string{name} + "'");
+            }
+            fields.emplace_back(name, std::move(source));
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple, std::size_t... I>
+        void validate_node_collection_pack_args(const ArgsTuple &args, std::index_sequence<I...>)
+        {
+            constexpr auto input_kind = input_pack_kind<std::tuple_element_t<PackIndex, ParamsTuple>>();
+            bool           seen_named = false;
+            bool           saw_packed = false;
+
+            (
+                [&] {
+                    using A0 = std::remove_cvref_t<std::tuple_element_t<I, ArgsTuple>>;
+                    const auto &argument = std::get<I>(args);
+                    if constexpr (call_args_detail::is_named_arg_v<A0>)
+                    {
+                        seen_named = true;
+                        if constexpr (!call_args_detail::is_static_named_arg_v<A0>)
+                        {
+                            throw std::invalid_argument(
+                                "wire<T>: collection argument packing requires arg<\"name\">(...) keyword wrappers");
+                        }
+                        else if constexpr (!static_named_arg_matches_any_parameter<ParamsTuple, A0>())
+                        {
+                            if constexpr (input_kind != node_collection_pack_kind::tsb)
+                            {
+                                throw std::invalid_argument("wire<T>: unexpected keyword argument '" +
+                                                            std::string{argument.name} + "'");
+                            }
+                            else
+                            {
+                                using A = call_args_detail::payload_t<A0>;
+                                if constexpr (!is_port<A>::value)
+                                {
+                                    throw std::invalid_argument(
+                                        "wire<T>: packed TSB keyword arguments must be time-series ports");
+                                }
+                                saw_packed = true;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (seen_named)
+                        {
+                            throw std::invalid_argument("wire<T>: positional argument follows a named argument");
+                        }
+
+                        constexpr std::size_t ordinal = positional_ordinal<I, std::remove_reference_t<ArgsTuple>>();
+                        if constexpr (ordinal >= PackIndex)
+                        {
+                            using A = call_args_detail::payload_t<A0>;
+                            if constexpr (is_port<A>::value)
+                            {
+                                saw_packed = true;
+                            }
+                            else if constexpr (is_structural_source_arg<A>::value)
+                            {
+                                if (saw_packed)
+                                {
+                                    throw std::invalid_argument(
+                                        "wire<T>: cannot combine an explicit collection input with packed arguments");
+                                }
+                            }
+                            else
+                            {
+                                throw std::invalid_argument(
+                                    "wire<T>: positional scalar arguments after packed collection inputs must be named");
+                            }
+                        }
+                    }
+                }(),
+                ...);
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple>
+        void validate_node_collection_pack_args(const ArgsTuple &args)
+        {
+            validate_node_collection_pack_args<ParamsTuple, PackIndex>(
+                args, std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<ArgsTuple>>>{});
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, std::size_t I, typename ArgsTuple>
+        void append_tsl_pack_child(std::vector<WiringPortRef> &children, const ArgsTuple &args)
+        {
+            using A0 = std::remove_cvref_t<std::tuple_element_t<I, std::remove_reference_t<ArgsTuple>>>;
+            if constexpr (!call_args_detail::is_named_arg_v<A0>)
+            {
+                constexpr std::size_t ordinal = positional_ordinal<I, std::remove_reference_t<ArgsTuple>>();
+                if constexpr (ordinal >= PackIndex)
+                {
+                    using A = call_args_detail::payload_t<A0>;
+                    if constexpr (is_port<A>::value)
+                    {
+                        children.push_back(call_args_detail::payload_at<I>(args).erased());
+                    }
+                }
+            }
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple, std::size_t... I>
+        [[nodiscard]] WiringStructuralSourceArg make_tsl_node_collection_arg(const ArgsTuple &args,
+                                                                             std::index_sequence<I...>)
+        {
+            std::vector<WiringPortRef> children;
+            children.reserve(sizeof...(I));
+            (append_tsl_pack_child<ParamsTuple, PackIndex, I>(children, args), ...);
+            return WiringStructuralSourceArg{std::move(children)};
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple>
+        [[nodiscard]] WiringStructuralSourceArg make_tsl_node_collection_arg(const ArgsTuple &args)
+        {
+            return make_tsl_node_collection_arg<ParamsTuple, PackIndex>(
+                args, std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<ArgsTuple>>>{});
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, std::size_t I, typename ArgsTuple>
+        void append_tsb_pack_field(std::vector<WiringNamedPortRef> &fields,
+                                   std::size_t                    &positional_field_count,
+                                   const ArgsTuple                 &args)
+        {
+            using A0 = std::remove_cvref_t<std::tuple_element_t<I, std::remove_reference_t<ArgsTuple>>>;
+            if constexpr (call_args_detail::is_named_arg_v<A0>)
+            {
+                if constexpr (call_args_detail::is_static_named_arg_v<A0> &&
+                              !static_named_arg_matches_any_parameter<ParamsTuple, A0>())
+                {
+                    using A = call_args_detail::payload_t<A0>;
+                    if constexpr (is_port<A>::value)
+                    {
+                        const auto &argument = std::get<I>(args);
+                        append_unique_named_pack_field(fields, argument.name, argument.value.erased());
+                    }
+                }
+            }
+            else
+            {
+                constexpr std::size_t ordinal = positional_ordinal<I, std::remove_reference_t<ArgsTuple>>();
+                if constexpr (ordinal >= PackIndex)
+                {
+                    using A = call_args_detail::payload_t<A0>;
+                    if constexpr (is_port<A>::value)
+                    {
+                        ++positional_field_count;
+                        append_unique_named_pack_field(fields, "_" + std::to_string(positional_field_count),
+                                                       call_args_detail::payload_at<I>(args).erased());
+                    }
+                }
+            }
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple, std::size_t... I>
+        [[nodiscard]] WiringNamedStructuralSourceArg make_tsb_node_collection_arg(const ArgsTuple &args,
+                                                                                  std::index_sequence<I...>)
+        {
+            std::vector<WiringNamedPortRef> fields;
+            fields.reserve(sizeof...(I));
+            std::size_t positional_field_count = 0;
+            (append_tsb_pack_field<ParamsTuple, PackIndex, I>(fields, positional_field_count, args), ...);
+            return WiringNamedStructuralSourceArg{std::move(fields)};
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple>
+        [[nodiscard]] WiringNamedStructuralSourceArg make_tsb_node_collection_arg(const ArgsTuple &args)
+        {
+            return make_tsb_node_collection_arg<ParamsTuple, PackIndex>(
+                args, std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<ArgsTuple>>>{});
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, std::size_t I, typename ArgsTuple>
+        [[nodiscard]] consteval bool node_collection_arg_passes_through()
+        {
+            using A0 = std::remove_cvref_t<std::tuple_element_t<I, ArgsTuple>>;
+            if constexpr (call_args_detail::is_named_arg_v<A0>)
+            {
+                if constexpr (call_args_detail::is_static_named_arg_v<A0> &&
+                              !static_named_arg_matches_any_parameter<ParamsTuple, A0>())
+                {
+                    constexpr auto input_kind = input_pack_kind<std::tuple_element_t<PackIndex, ParamsTuple>>();
+                    using A = call_args_detail::payload_t<A0>;
+                    if constexpr (input_kind == node_collection_pack_kind::tsb && is_port<A>::value)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            else
+            {
+                constexpr std::size_t ordinal = positional_ordinal<I, ArgsTuple>();
+                if constexpr (ordinal < PackIndex) { return true; }
+                else
+                {
+                    using A = call_args_detail::payload_t<A0>;
+                    return is_structural_source_arg<A>::value;
+                }
+            }
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, std::size_t I, typename ArgsTuple>
+        [[nodiscard]] auto node_collection_passthrough_piece(const ArgsTuple &args)
+        {
+            if constexpr (node_collection_arg_passes_through<ParamsTuple, PackIndex, I,
+                                                             std::remove_reference_t<ArgsTuple>>())
+            {
+                using A0 = std::remove_cvref_t<std::tuple_element_t<I, std::remove_reference_t<ArgsTuple>>>;
+                return std::tuple<A0>{std::get<I>(args)};
+            }
+            else
+            {
+                return std::tuple<>{};
+            }
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple, std::size_t... I>
+        [[nodiscard]] auto node_collection_passthrough_args(const ArgsTuple &args, std::index_sequence<I...>)
+        {
+            return std::tuple_cat(node_collection_passthrough_piece<ParamsTuple, PackIndex, I>(args)...);
+        }
+
+        template <typename ParamsTuple, std::size_t PackIndex, typename ArgsTuple>
+        [[nodiscard]] auto node_collection_passthrough_args(const ArgsTuple &args)
+        {
+            return node_collection_passthrough_args<ParamsTuple, PackIndex>(
+                args, std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<ArgsTuple>>>{});
+        }
     }  // namespace graph_wiring_detail
 
     template <typename Schema>
@@ -1345,75 +1898,10 @@ namespace hgraph
         return Port<OutSchema>{wiring_, ref_};
     }
 
-    /**
-     * Wire ``X`` into ``w``.
-     *
-     * - If ``X`` is a **node** (has ``eval``): add it with the given wiring
-     *   arguments — a ``Port`` for each ``In`` and a scalar value for each
-     *   ``Scalar``, **in eval-parameter order** — and return a typed ``Port`` to
-     *   its output (or ``void`` for a sink). The arguments are checked against the
-     *   node's parameters at compile time.
-     * - If ``X`` is a **sub-graph** (has ``compose``): inline its body into ``w``
-     *   (graphs flatten — no runtime node is produced) and return its output port.
-     *   The arguments follow the same rule as for a node — a ``Port`` for each
-     *   ``Port`` parameter and a scalar value for each ``Scalar`` parameter, **in
-     *   compose-parameter order** — and are checked at compile time.
-     */
-    template <typename X, typename OutSchema = void, typename... Args>
-    auto wire(Wiring &w, const Args &...args)
+    namespace graph_wiring_detail
     {
-        if constexpr (graph_wiring_detail::is_graph_def<X>)
-        {
-            // sub-graph: inline its body (flatten), forwarding ports through and
-            // wrapping scalar literals into the compose Scalar<> parameters.
-            using sig = StaticGraphSignature<X>;
-            static_assert(sizeof...(Args) <= sig::param_count(),
-                          "wire<G>: too many arguments for the sub-graph's Port + Scalar parameters");
-            auto arg_tuple    = std::forward_as_tuple(args...);
-            auto default_args = call_args_detail::default_args_for<X>();
-            call_args_detail::validate_call_args<typename sig::param_types>("wire<G>", arg_tuple, default_args);
-            return [&]<std::size_t... I>(std::index_sequence<I...>) {
-                return X::compose(w, graph_wiring_detail::make_bound_compose_arg<I, typename sig::param_types>(
-                                         w, arg_tuple, default_args)...);
-            }(std::make_index_sequence<sig::param_count()>{});
-        }
-        else if constexpr (std::is_base_of_v<operator_tag, X>)
-        {
-            // operator: erase the arguments and dispatch to the registry, which picks
-            // the most specific registered overload and wires it (see *Operators*).
-            OperatorWireResult result = operator_dispatch_detail::wire_operator_result<X, OutSchema>(w, args...);
-            if constexpr (X::has_output)
-            {
-                if (!result.has_output)
-                {
-                    throw std::logic_error("wire<Operator>: selected overload has no output");
-                }
-                if constexpr (!std::is_void_v<OutSchema>)
-                {
-                    const auto *expected = ts_type<OutSchema>();
-                    if (!graph_wiring_detail::input_accepts_output_schema(expected, result.output.erased().schema))
-                    {
-                        throw std::logic_error("wire<Operator, OutSchema>: selected overload output schema does not match");
-                    }
-                    return Port<OutSchema>{w, result.output.erased()};
-                }
-                else
-                {
-                    return result.output;
-                }
-            }
-            else
-            {
-                static_assert(std::is_void_v<OutSchema>,
-                              "wire<Operator, OutSchema>: an explicit output schema requires an output operator");
-                if (result.has_output)
-                {
-                    throw std::logic_error("wire<Operator>: selected overload unexpectedly produced an output");
-                }
-                return;
-            }
-        }
-        else
+        template <typename X, typename OutSchema = void, typename... Args>
+        auto wire_static_node_normal(Wiring &w, const Args &...args)
         {
             using signature   = StaticNodeSignature<X>;
             using wire_params = typename signature::wire_param_types;
@@ -1702,6 +2190,124 @@ namespace hgraph
                 {
                     return Port<typename signature::output_schema_type>{w, std::move(out)};
                 }
+            }
+        }
+
+        template <typename X, typename OutSchema, typename ParamsTuple, std::size_t PackIndex, typename... Args>
+        auto wire_static_node_collection_pack(Wiring &w, const Args &...args)
+        {
+            using PackParam = std::tuple_element_t<PackIndex, ParamsTuple>;
+            constexpr node_collection_pack_kind kind = input_pack_kind<PackParam>();
+
+            auto arg_tuple = std::forward_as_tuple(args...);
+            validate_node_collection_pack_args<ParamsTuple, PackIndex>(arg_tuple);
+            auto passthrough = node_collection_passthrough_args<ParamsTuple, PackIndex>(arg_tuple);
+
+            if constexpr (kind == node_collection_pack_kind::tsl)
+            {
+                auto packed = arg<PackParam::field_name>(
+                    make_tsl_node_collection_arg<ParamsTuple, PackIndex>(arg_tuple));
+                return std::apply(
+                    [&](const auto &...kept) {
+                        return wire_static_node_normal<X, OutSchema>(w, kept..., packed);
+                    },
+                    passthrough);
+            }
+            else
+            {
+                auto packed = arg<PackParam::field_name>(
+                    make_tsb_node_collection_arg<ParamsTuple, PackIndex>(arg_tuple));
+                return std::apply(
+                    [&](const auto &...kept) {
+                        return wire_static_node_normal<X, OutSchema>(w, kept..., packed);
+                    },
+                    passthrough);
+            }
+        }
+    }  // namespace graph_wiring_detail
+
+    /**
+     * Wire ``X`` into ``w``.
+     *
+     * - If ``X`` is a **node** (has ``eval``): add it with the given wiring
+     *   arguments — a ``Port`` for each ``In`` and a scalar value for each
+     *   ``Scalar``, **in eval-parameter order** — and return a typed ``Port`` to
+     *   its output (or ``void`` for a sink). The arguments are checked against the
+     *   node's parameters at compile time.
+     * - If ``X`` is a **sub-graph** (has ``compose``): inline its body into ``w``
+     *   (graphs flatten — no runtime node is produced) and return its output port.
+     *   The arguments follow the same rule as for a node — a ``Port`` for each
+     *   ``Port`` parameter and a scalar value for each ``Scalar`` parameter, **in
+     *   compose-parameter order** — and are checked at compile time.
+     */
+    template <typename X, typename OutSchema = void, typename... Args>
+    auto wire(Wiring &w, const Args &...args)
+    {
+        if constexpr (graph_wiring_detail::is_graph_def<X>)
+        {
+            // sub-graph: inline its body (flatten), forwarding ports through and
+            // wrapping scalar literals into the compose Scalar<> parameters.
+            using sig = StaticGraphSignature<X>;
+            static_assert(sizeof...(Args) <= sig::param_count(),
+                          "wire<G>: too many arguments for the sub-graph's Port + Scalar parameters");
+            auto arg_tuple    = std::forward_as_tuple(args...);
+            auto default_args = call_args_detail::default_args_for<X>();
+            call_args_detail::validate_call_args<typename sig::param_types>("wire<G>", arg_tuple, default_args);
+            return [&]<std::size_t... I>(std::index_sequence<I...>) {
+                return X::compose(w, graph_wiring_detail::make_bound_compose_arg<I, typename sig::param_types>(
+                                         w, arg_tuple, default_args)...);
+            }(std::make_index_sequence<sig::param_count()>{});
+        }
+        else if constexpr (std::is_base_of_v<operator_tag, X>)
+        {
+            // operator: erase the arguments and dispatch to the registry, which picks
+            // the most specific registered overload and wires it (see *Operators*).
+            OperatorWireResult result = operator_dispatch_detail::wire_operator_result<X, OutSchema>(w, args...);
+            if constexpr (X::has_output)
+            {
+                if (!result.has_output)
+                {
+                    throw std::logic_error("wire<Operator>: selected overload has no output");
+                }
+                if constexpr (!std::is_void_v<OutSchema>)
+                {
+                    const auto *expected = ts_type<OutSchema>();
+                    if (!graph_wiring_detail::input_accepts_output_schema(expected, result.output.erased().schema))
+                    {
+                        throw std::logic_error("wire<Operator, OutSchema>: selected overload output schema does not match");
+                    }
+                    return Port<OutSchema>{w, result.output.erased()};
+                }
+                else
+                {
+                    return result.output;
+                }
+            }
+            else
+            {
+                static_assert(std::is_void_v<OutSchema>,
+                              "wire<Operator, OutSchema>: an explicit output schema requires an output operator");
+                if (result.has_output)
+                {
+                    throw std::logic_error("wire<Operator>: selected overload unexpectedly produced an output");
+                }
+                return;
+            }
+        }
+        else
+        {
+            using wire_params = typename StaticNodeSignature<X>::wire_param_types;
+            constexpr std::size_t pack_index =
+                graph_wiring_detail::single_tail_collection_input_index<wire_params>();
+            using args_tuple = std::tuple<std::remove_cvref_t<Args>...>;
+            if constexpr (graph_wiring_detail::node_collection_pack_needed<wire_params, pack_index, args_tuple>())
+            {
+                return graph_wiring_detail::wire_static_node_collection_pack<X, OutSchema, wire_params, pack_index>(
+                    w, args...);
+            }
+            else
+            {
+                return graph_wiring_detail::wire_static_node_normal<X, OutSchema>(w, args...);
             }
         }
     }

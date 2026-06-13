@@ -4,6 +4,8 @@
 
 #include <hgraph/lib/std/std_nodes.h>
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/testing/check_output.h>
+#include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/mock_runtime.h>
 #include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/runtime/runtime.h>
@@ -15,6 +17,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <type_traits>
 #include <tuple>
 #include <utility>
@@ -541,6 +544,114 @@ namespace
         }
     };
 
+    struct PackedTslTailSum
+    {
+        static constexpr auto name = "packed_tsl_tail_sum";
+
+        static void eval(In<"base", TS<Int>> base,
+                         In<"values", Args<>> values,
+                         Scalar<"offset", Int> offset,
+                         Out<TS<Int>> out)
+        {
+            Int total = base.value() + offset.value();
+            for (std::size_t i = 0; i < values.size(); ++i)
+            {
+                auto child = values[i];
+                if (child.valid()) { total += child.value().checked_as<Int>(); }
+            }
+            out.set(total);
+        }
+    };
+
+    struct PackedTslTailGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "packed_tsl_tail_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> base, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            return wire<PackedTslTailSum>(w, base, lhs, rhs, arg<"offset">(Int{5})).template as<TS<Int>>();
+        }
+    };
+
+    struct PackedKwargsSum
+    {
+        static constexpr auto name = "packed_kwargs_sum";
+
+        static void eval(In<"values", Kwargs<>> values, Out<TS<Int>> out)
+        {
+            auto lhs = values.field("lhs");
+            auto rhs = values.field("rhs");
+            out.set(lhs.value().checked_as<Int>() + rhs.value().checked_as<Int>());
+        }
+    };
+
+    struct PackedKwargsGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "packed_kwargs_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            return wire<PackedKwargsSum>(w, arg<"lhs">(lhs), arg<"rhs">(rhs)).template as<TS<Int>>();
+        }
+    };
+
+    struct PackedNumberedFormat
+    {
+        static constexpr auto name = "packed_numbered_format";
+
+        static void eval(In<"values", Kwargs<>> values, Out<TS<Str>> out)
+        {
+            auto count = values.field("_1");
+            auto label = values.field("_2");
+            out.set(Str{std::to_string(count.value().checked_as<Int>()) + ":" +
+                        label.value().checked_as<Str>()});
+        }
+    };
+
+    struct PackedNumberedGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "packed_numbered_graph";
+
+        static Port<TS<Str>> compose(Wiring &w, Port<TS<Int>> count, Port<TS<Str>> label)
+        {
+            return wire<PackedNumberedFormat>(w, count, label).template as<TS<Str>>();
+        }
+    };
+
+    struct PackedGenericTsbSum
+    {
+        static constexpr auto name = "packed_generic_tsb_sum";
+
+        static void eval(In<"values", Kwargs<>> values, Out<TS<Int>> out)
+        {
+            auto lhs = values.field("lhs");
+            auto rhs = values.field("rhs");
+            out.set(lhs.value().checked_as<Int>() + rhs.value().checked_as<Int>());
+        }
+    };
+
+    struct PackedGenericTsbGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "packed_generic_tsb_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            return wire<PackedGenericTsbSum>(w, arg<"lhs">(lhs), arg<"rhs">(rhs)).template as<TS<Int>>();
+        }
+    };
+
+    static_assert(graph_wiring_detail::input_pack_kind<In<"values", Args<>>>() ==
+                  graph_wiring_detail::node_collection_pack_kind::tsl);
+    static_assert(graph_wiring_detail::input_pack_kind<In<"values", Args<TS<Int>>>>() ==
+                  graph_wiring_detail::node_collection_pack_kind::tsl);
+    static_assert(graph_wiring_detail::input_pack_kind<In<"values", Kwargs<>>>() ==
+                  graph_wiring_detail::node_collection_pack_kind::tsb);
+    static_assert(graph_wiring_detail::input_pack_kind<In<"values", TSL<TS<Int>, SIZE<"N">>>>() ==
+                  graph_wiring_detail::node_collection_pack_kind::none);
+    static_assert(graph_wiring_detail::input_pack_kind<
+                      In<"values", UnNamedTSB<Field<"lhs", TS<Int>>, Field<"rhs", TS<Int>>>>>() ==
+                  graph_wiring_detail::node_collection_pack_kind::none);
+
     using RecordedStateBundle = TSB<"RecordedStateBundle", Field<"last", TS<Int>>>;
 
     struct RecordablePreviousValue
@@ -1021,6 +1132,52 @@ TEST_CASE("graph wiring: partial named TSB initializer fills missing fields with
     REQUIRE(graph.node_count() == 2);
     REQUIRE(graph.node_at(1).output(MIN_ST).valid());
     CHECK(graph.node_at(1).output(MIN_ST).value().checked_as<Int>() == Int{41});
+}
+
+TEST_CASE("graph wiring: node call packs surplus positional ports into an Args input")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    CHECK_OUTPUT(testing::eval_node<PackedTslTailGraph>(testing::values<Int>(1, 2),
+                                                        testing::values<Int>(10, 20),
+                                                        testing::values<Int>(100, 200)),
+                 testing::values<Int>(116, 227));
+}
+
+TEST_CASE("graph wiring: node call packs unknown keyword ports into a Kwargs input")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    CHECK_OUTPUT(testing::eval_node<PackedKwargsGraph>(testing::values<Int>(1, 2),
+                                                       testing::values<Int>(10, 20)),
+                 testing::values<Int>(11, 22));
+}
+
+TEST_CASE("graph wiring: node call packs heterogeneous positional ports as numbered TSB fields")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+    (void)TypeRegistry::instance().register_scalar<Str>("str");
+
+    CHECK_OUTPUT(testing::eval_node<PackedNumberedGraph>(testing::values<Int>(3, 4),
+                                                         testing::values<Str>(Str{"a"}, Str{"b"})),
+                 testing::values<Str>(Str{"3:a"}, Str{"4:b"}));
+}
+
+TEST_CASE("graph wiring: node call packs kwargs into a default generic Kwargs input")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    CHECK_OUTPUT(testing::eval_node<PackedGenericTsbGraph>(testing::values<Int>(5, 6),
+                                                           testing::values<Int>(50, 60)),
+                 testing::values<Int>(55, 66));
 }
 
 TEST_CASE("graph wiring: recordable_state exposes the hidden recordable-state port")
