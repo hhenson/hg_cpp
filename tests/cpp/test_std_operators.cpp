@@ -526,6 +526,60 @@ TEST_CASE("std operators: str_ converts scalar time-series values to strings")
     CHECK_OUTPUT(eval_node<stdlib::str_>(values<Bool>(true, false)), values<Str>(Str{"true"}, Str{"false"}));
 }
 
+TEST_CASE("std operators: stream operators cover sampling filtering slicing and scalar analytics")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::sample>(values<Bool>(none, true, none, true),
+                                           values<Int>(1, 2, 3, 4, 5)),
+                 values<Int>(none, 2, none, 4, none));
+
+    CHECK_OUTPUT(eval_node<stdlib::filter_>(values<Bool>(true, false, false, true, true, none),
+                                            values<Int>(1, 2, 3, none, none, 4)),
+                 values<Int>(1, none, none, 3, none, 4));
+    CHECK_OUTPUT((eval_node<stdlib::filter_, TSS<Int>>(
+                     values<Bool>(true, false, none, true),
+                     values<Value>(set_delta<Int>({1}, {}),
+                                   set_delta<Int>({2}, {}),
+                                   set_delta<Int>({}, {1}),
+                                   set_delta<Int>({3}, {})))),
+                 values<Value>(set_delta<Int>({1}, {}),
+                               none,
+                               none,
+                               set_delta<Int>({2, 3}, {1})));
+    CHECK_OUTPUT((eval_node<stdlib::filter_, TSD<Int, TS<Int>>>(
+                     values<Bool>(true, false, none, true),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
+                                   dict_delta<Int, TS<Int>>({{1, 2}, {2, 2}}),
+                                   dict_delta<Int, TS<Int>>({}, {1}),
+                                   dict_delta<Int, TS<Int>>({{3, 3}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
+                               none,
+                               none,
+                               dict_delta<Int, TS<Int>>({{2, 2}, {3, 3}}, {1})));
+
+    CHECK_OUTPUT(eval_node<stdlib::take>(values<Int>(1, 2, 3, 4, 5), Int{3}),
+                 values<Int>(1, 2, 3, none, none));
+    CHECK_OUTPUT(eval_node<stdlib::drop>(values<Int>(1, 2, 3, 4, 5), Int{3}),
+                 values<Int>(none, none, none, 4, 5));
+    CHECK_OUTPUT(eval_node<stdlib::step>(values<Int>(1, 2, 3, 4, 5, 6, 7, 8), Int{2}),
+                 values<Int>(1, none, 3, none, 5, none, 7, none));
+    CHECK_OUTPUT(eval_node<stdlib::slice_>(values<Int>(0, 1, 2, 3, 4, 5, 6, 7, 8), Int{2}, Int{-1}, Int{2}),
+                 values<Int>(none, none, 2, none, 4, none, 6, none, 8));
+    CHECK_OUTPUT(eval_node<stdlib::slice_>(values<Int>(0, 1, 2, 3), Int{-1}, Int{-1}, Int{2}),
+                 values<Int>(none, none, none, none));
+
+    CHECK_OUTPUT(eval_node<stdlib::count>(values<Int>(3, none, 2, 1)), values<Int>(1, none, 2, 3));
+    CHECK_OUTPUT(eval_node<stdlib::dedup>(values<Int>(1, 2, 2, 3, 3, 3, 4)),
+                 values<Int>(1, 2, none, 3, none, none, 4));
+    CHECK_OUTPUT(eval_node<stdlib::diff>(values<Int>(1, 2, 4, 7)), values<Int>(none, 1, 2, 3));
+    CHECK_OUTPUT(eval_node<stdlib::diff>(values<Float>(1.0, 1.5, 3.0)), values<Float>(none, 0.5, 1.5));
+    CHECK_OUTPUT(eval_node<stdlib::clip>(values<Float>(-1.0, 0.5, 2.0), Float{0.0}, Float{1.0}),
+                 values<Float>(0.0, 0.5, 1.0));
+    CHECK_OUTPUT(eval_node<stdlib::ewma>(values<Float>(1.0, 2.0, 3.0, 4.0), Float{0.5}),
+                 values<Float>(1.0, 1.5, 2.25, 3.125));
+}
+
 TEST_CASE("std operators: date component operators extract day month year and explode")
 {
     stdlib::register_standard_operators();

@@ -34,7 +34,10 @@ chosen implementation is baked into the graph.
    in ``include/hgraph/lib/std/std_operators.h`` — covering scalar arithmetic,
    comparison, logical / bitwise, string operators (``match_`` / ``replace`` /
    ``substr`` / ``split`` / ``join`` / ``format_``), ``str_``, const / zero,
-   collection container basics and TSS set algebra, date / time-series-property operators, and simple IO sink overloads, including
+   collection container basics and TSS set algebra, stream basics
+   (``sample`` / ``filter_`` / ``take`` / ``drop`` / ``step`` / ``slice_`` /
+   ``dedup`` / ``diff`` / ``count`` / ``clip`` / ``ewma``),
+   date / time-series-property operators, and simple IO sink overloads, including
    homogeneous, mixed, heterogeneous-temporal, result-differs and optional-scalar
    (``DivideByZero`` policy) overloads — proven by
    ``tests/cpp/test_std_operators.cpp`` and the scalar / auto-const / ``requires`` /
@@ -563,7 +566,8 @@ container overloads in ``impl/container_impl.h``), ``const_`` / ``zero_`` /
 ``str_`` (``impl/conversion_impl.h``), date components and time-series
 properties (``impl/temporal_impl.h``) and ``debug_print`` / ``null_sink``
 (``impl/io_impl.h``), TSD ``keys_`` and TSS set algebra
-(``impl/collection_impl.h``), plus the current
+(``impl/collection_impl.h``), stream basics and scalar analytics
+(``impl/stream_impl.h``), plus the current
 higher-order subset (``reduce``, ``switch_`` and ``map_`` in
 ``impl/higher_order_impl.h``). Further families gain their
 ``impl/<family>_impl.h`` (and a registration call) as they land. The
@@ -723,7 +727,9 @@ Roadmap
    binary scalar ``min_`` / ``max_``, string ``contains_`` / ``len_`` / ``is_empty`` /
    ``getitem_`` plus ``match_`` / regex ``replace`` / ``substr`` / ``split`` /
    ``join`` / ``format_``, TSD ``keys_`` and TSS ``union_`` / ``intersection_`` /
-   ``difference_`` / ``symmetric_difference_``, ``str_``, date components /
+   ``difference_`` / ``symmetric_difference_``, stream ``sample`` / ``filter_`` /
+   ``take`` / ``drop`` / ``step`` / ``slice_`` / scalar ``dedup`` / numeric
+   ``diff`` / ``count`` / ``clip`` / ``ewma``, ``str_``, date components /
    ``explode(Date)``, time-series properties (``valid`` / ``modified`` /
    ``last_modified_*``), and optional
    wiring-time ``DivideByZero`` policy overloads (``Error`` / ``Nan`` / ``Inf`` /

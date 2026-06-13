@@ -8,9 +8,10 @@
  * provides the concrete overloads and a ``register_<family>_operators()`` function; this
  * header aggregates them into ``register_standard_operators``.
  *
- * Only a small set is implemented so far (scalar arithmetic / comparison / logical,
- * string basics, date components, ``const_`` / ``zero_`` / ``debug_print`` / ``null_sink``); further families gain an
- * ``impl/<family>_impl.h`` and a call below as their implementations land. See
+ * Only a subset is implemented so far (scalar arithmetic / comparison / logical,
+ * string, collection, stream basics, date components, ``const_`` / ``zero_`` /
+ * ``debug_print`` / ``null_sink``); further families gain an ``impl/<family>_impl.h``
+ * and a call below as their implementations land. See
  * ``docs/source/developer_guide/operators.rst``.
  */
 
@@ -22,6 +23,7 @@
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
 #include <hgraph/lib/std/operators/impl/io_impl.h>
 #include <hgraph/lib/std/operators/impl/logical_impl.h>
+#include <hgraph/lib/std/operators/impl/stream_impl.h>
 #include <hgraph/lib/std/operators/impl/string_impl.h>
 #include <hgraph/lib/std/operators/impl/temporal_impl.h>
 
@@ -42,6 +44,7 @@ namespace hgraph::stdlib
         register_collection_operators();
         register_higher_order_operators();
         register_io_operators();
+        register_stream_operators();
         register_string_operators();
         register_temporal_operators();
     }
