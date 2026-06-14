@@ -33,6 +33,21 @@ namespace hgraph::stdlib
 
     namespace higher_order_impl_detail
     {
+        inline void bind_graph_output(ResolutionMap &resolution,
+                                      const TSValueTypeMetaData *output,
+                                      std::string_view legacy_var = {})
+        {
+            if (output == nullptr) { return; }
+            if (!legacy_var.empty() && resolution.find_ts(legacy_var) == nullptr)
+            {
+                resolution.bind_ts(legacy_var, output);
+            }
+            if (resolution.find_ts("__graph_output") == nullptr)
+            {
+                resolution.bind_ts("__graph_output", output);
+            }
+        }
+
         struct lifted_reduce_tsl_node_tag
         {
         };
@@ -125,10 +140,10 @@ namespace hgraph::stdlib
             return kernel;
         }
 
-        [[nodiscard]] inline Port<void> wire_lifted_reduce_tsl(Wiring &w,
-                                                               const WiredFn &func,
-                                                               const LiftedKernel *kernel,
-                                                               const WiringPortRef &ts)
+        [[nodiscard]] inline WiringPortRef wire_lifted_reduce_tsl(Wiring &w,
+                                                                  const WiredFn &func,
+                                                                  const LiftedKernel *kernel,
+                                                                  const WiringPortRef &ts)
         {
             if (kernel == nullptr || !kernel->valid() || !kernel->has_identity())
             {
@@ -191,14 +206,14 @@ namespace hgraph::stdlib
                                            std::move(builder),
                                            std::span<const WiringPortRef>{inputs.data(), inputs.size()},
                                            Value{func});
-            return Port<void>{w, std::move(out)};
+            return out;
         }
 
         inline void resolve_lifted_reduce_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
         {
             const LiftedKernel *kernel = lifted_reduce_tsl_kernel(context);
             if (kernel == nullptr) { return; }
-            resolution.bind_ts("__graph_output", kernel->output_schema());
+            bind_graph_output(resolution, kernel->output_schema());
         }
 
         struct reduce_lifted_tsl
@@ -314,6 +329,19 @@ namespace hgraph::stdlib
             return operator_impl_detail::reduce_layout(w, combiner, std::move(elements));
         }
 
+        inline void resolve_reduce_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (resolution.find_ts("__graph_output") != nullptr ||
+                context.args.size() < 2 ||
+                context.args[1].kind != WiringArg::Kind::TimeSeries)
+            {
+                return;
+            }
+            const auto *schema = TypeRegistry::instance().dereference(context.args[1].port.schema);
+            if (schema == nullptr || schema->kind != TSTypeKind::TSL) { return; }
+            bind_graph_output(resolution, schema->element_ts(), "V");
+        }
+
         struct reduce_variadic_tsl
         {
             static constexpr auto name = "reduce_variadic_tsl";
@@ -323,10 +351,15 @@ namespace hgraph::stdlib
                 return reduce_ts_is_fixed_tsl(context, 2) && context.args[1].from_variadic_tail;
             }
 
-            static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            NamedPort<"ts", TSL<TsVar<"V">>> ts)
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                return Port<TsVar<"V">>{w, reduce_variadic_tsl_wire(w, func.value(), ts.erased())};
+                resolve_reduce_tsl_output(resolution, context);
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         NamedPort<"ts", TSL<TsVar<"V">>> ts)
+            {
+                return reduce_variadic_tsl_wire(w, func.value(), ts.erased());
             }
         };
 
@@ -346,7 +379,13 @@ namespace hgraph::stdlib
                 return reduce_ts_is_fixed_tsl(context, 2) && !context.args[1].from_variadic_tail;
             }
 
-            static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func, NamedPort<"ts", TSL<TsVar<"V">>> ts)
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_reduce_tsl_output(resolution, context);
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         NamedPort<"ts", TSL<TsVar<"V">>> ts)
             {
                 const TSValueTypeMetaData *element = ts.erased().schema->element_ts();
 
@@ -354,7 +393,7 @@ namespace hgraph::stdlib
                 const WiringPortRef            zero =
                     wire_operator(w, "zero", {zero_args.data(), zero_args.size()}, true, element).output.erased();
 
-                return Port<TsVar<"V">>{w, reduce_tsl_wire(w, func.value(), ts.erased(), zero)};
+                return reduce_tsl_wire(w, func.value(), ts.erased(), zero);
             }
         };
 
@@ -373,8 +412,14 @@ namespace hgraph::stdlib
                 return reduce_ts_is_fixed_tsl(context, 3);
             }
 
-            static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func, NamedPort<"ts", TSL<TsVar<"V">>> ts,
-                                            Scalar<"zero", ScalarVar<"Z">> zero_value)
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_reduce_tsl_output(resolution, context);
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         NamedPort<"ts", TSL<TsVar<"V">>> ts,
+                                         Scalar<"zero", ScalarVar<"Z">> zero_value)
             {
                 const TSValueTypeMetaData *element = ts.erased().schema->element_ts();
 
@@ -385,7 +430,7 @@ namespace hgraph::stdlib
                 const WiringPortRef zero =
                     wire_operator(w, "const", {&zero_arg, 1}, true, element).output.erased();
 
-                return Port<TsVar<"V">>{w, reduce_tsl_wire(w, func.value(), ts.erased(), zero)};
+                return reduce_tsl_wire(w, func.value(), ts.erased(), zero);
             }
         };
     }  // namespace higher_order_impl_detail
@@ -402,8 +447,8 @@ namespace hgraph::stdlib
          * whose outer inputs are ``[ts (TSD), zero (element)]`` and whose
          * forwarding output publishes the root aggregate.
          */
-        [[nodiscard]] inline Port<void> wire_reduce_tsd(Wiring &w, const Scalar<"func", WiredFn> &func,
-                                                        WiringPortRef ts, WiringPortRef zero)
+        [[nodiscard]] inline WiringPortRef wire_reduce_tsd(Wiring &w, const Scalar<"func", WiredFn> &func,
+                                                           WiringPortRef ts, WiringPortRef zero)
         {
             const WiredFn &combiner = func.value();
             if (!combiner.valid() || combiner.arity != 2 || !combiner.has_output)
@@ -467,7 +512,20 @@ namespace hgraph::stdlib
                         input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
                     return builder;
                 });
-            return Port<void>{w, std::move(out)};
+            return out;
+        }
+
+        inline void resolve_reduce_tsd_output(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (resolution.find_ts("__graph_output") != nullptr ||
+                context.args.size() < 2 ||
+                context.args[1].kind != WiringArg::Kind::TimeSeries)
+            {
+                return;
+            }
+            const auto *schema = TypeRegistry::instance().dereference(context.args[1].port.schema);
+            if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return; }
+            bind_graph_output(resolution, schema->element_ts(), "V");
         }
 
         [[nodiscard]] inline bool reduce_ts_is_tsd(OperatorCallContext context, std::size_t expected_args)
@@ -488,8 +546,13 @@ namespace hgraph::stdlib
                 return reduce_ts_is_tsd(context, 2);
             }
 
-            static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_reduce_tsd_output(resolution, context);
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
             {
                 const auto *element =
                     TypeRegistry::instance().dereference(ts.erased().schema)->element_ts();
@@ -498,8 +561,7 @@ namespace hgraph::stdlib
                 const WiringPortRef            zero =
                     wire_operator(w, "zero", {zero_args.data(), zero_args.size()}, true, element).output.erased();
 
-                auto out = wire_reduce_tsd(w, func, ts.erased(), zero);
-                return Port<TsVar<"V">>{w, out.erased()};
+                return wire_reduce_tsd(w, func, ts.erased(), zero);
             }
         };
 
@@ -513,9 +575,14 @@ namespace hgraph::stdlib
                 return reduce_ts_is_tsd(context, 3);
             }
 
-            static Port<TsVar<"V">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts,
-                                            Scalar<"zero", ScalarVar<"Z">> zero_value)
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_reduce_tsd_output(resolution, context);
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts,
+                                         Scalar<"zero", ScalarVar<"Z">> zero_value)
             {
                 const auto *element =
                     TypeRegistry::instance().dereference(ts.erased().schema)->element_ts();
@@ -527,8 +594,7 @@ namespace hgraph::stdlib
                 const WiringPortRef zero =
                     wire_operator(w, "const", {&zero_arg, 1}, true, element).output.erased();
 
-                auto out = wire_reduce_tsd(w, func, ts.erased(), zero);
-                return Port<TsVar<"V">>{w, out.erased()};
+                return wire_reduce_tsd(w, func, ts.erased(), zero);
             }
         };
 
@@ -598,9 +664,9 @@ namespace hgraph::stdlib
         }
 
         /** The shared switch wiring: compile every branch, then add one switch node. */
-        [[nodiscard]] inline Port<void> wire_switch(Wiring &w, WiringPortRef key, const SwitchCases &cases,
-                                                    std::vector<WiringPortRef> ts,
-                                                    std::vector<std::pair<std::string, WiringPortRef>> kwargs)
+        [[nodiscard]] inline WiringPortRef wire_switch(Wiring &w, WiringPortRef key, const SwitchCases &cases,
+                                                       std::vector<WiringPortRef> ts,
+                                                       std::vector<std::pair<std::string, WiringPortRef>> kwargs)
         {
             if (cases.cases.empty() && !cases.default_branch.has_value())
             {
@@ -678,7 +744,7 @@ namespace hgraph::stdlib
                         input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
                     return builder;
                 });
-            return Port<void>{w, std::move(out)};
+            return out;
         }
 
         /**
@@ -689,7 +755,7 @@ namespace hgraph::stdlib
          */
         inline void resolve_switch_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("O") != nullptr) { return; }
+            if (resolution.find_ts("__graph_output") != nullptr) { return; }
 
             const SwitchCases *cases = context.scalar_as<SwitchCases>("cases");
             if (cases == nullptr) { return; }
@@ -721,7 +787,7 @@ namespace hgraph::stdlib
                 (void)compile_switch_branch(*branch, key_schema, {slot_schemas.data(), slot_schemas.size()},
                                             positional_count, {named_slots.data(), named_slots.size()},
                                             output_schema);
-                if (output_schema != nullptr) { resolution.bind_ts("O", output_schema); }
+                bind_graph_output(resolution, output_schema, "O");
             }
             catch (...)
             {
@@ -739,15 +805,14 @@ namespace hgraph::stdlib
                 resolve_switch_output(resolution, context);
             }
 
-            static Port<TsVar<"O">> compose(Wiring &w, NamedPort<"key", TS<ScalarVar<"K">>> key,
-                                            Scalar<"cases", SwitchCases> cases, VarIn<"ts", TsVar<"TS">> ts,
-                                            VarKwIn<"kwargs"> kwargs)
+            static WiringPortRef compose(Wiring &w, NamedPort<"key", TS<ScalarVar<"K">>> key,
+                                         Scalar<"cases", SwitchCases> cases, VarIn<"ts", TsVar<"TS">> ts,
+                                         VarKwIn<"kwargs"> kwargs)
             {
-                auto out = wire_switch(w, key.erased(), cases.value(),
-                                       std::vector<WiringPortRef>{ts.begin(), ts.end()},
-                                       std::vector<std::pair<std::string, WiringPortRef>>{kwargs.begin(),
-                                                                                          kwargs.end()});
-                return Port<TsVar<"O">>{w, out.erased()};
+                return wire_switch(w, key.erased(), cases.value(),
+                                   std::vector<WiringPortRef>{ts.begin(), ts.end()},
+                                   std::vector<std::pair<std::string, WiringPortRef>>{kwargs.begin(),
+                                                                                      kwargs.end()});
             }
         };
     }  // namespace higher_order_impl_detail
@@ -928,10 +993,10 @@ namespace hgraph::stdlib
          * list (positional + keyword arguments already resolved onto the
          * function's parameters): compile the child template, add one map node.
          */
-        [[nodiscard]] inline Port<void> wire_map(Wiring &w, const Scalar<"func", WiredFn> &func,
-                                                 std::string_view key_arg,
-                                                 std::vector<WiringPortRef> ordered,
-                                                 std::optional<WiringPortRef> keys = std::nullopt)
+        [[nodiscard]] inline WiringPortRef wire_map(Wiring &w, const Scalar<"func", WiredFn> &func,
+                                                    std::string_view key_arg,
+                                                    std::vector<WiringPortRef> ordered,
+                                                    std::optional<WiringPortRef> keys = std::nullopt)
         {
             std::vector<const TSValueTypeMetaData *> ts_schemas;
             std::vector<std::uint8_t>                arg_tags;
@@ -1028,7 +1093,7 @@ namespace hgraph::stdlib
                         input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
                     return builder;
                 });
-            return Port<void>{w, std::move(out)};
+            return out;
         }
 
         struct OrderedMapSchemas
@@ -1089,7 +1154,7 @@ namespace hgraph::stdlib
         /** Bind the output var ``O`` for the resolver: ``TSD<K, OUT(func)>``. */
         inline void resolve_map_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("O") != nullptr) { return; }
+            if (resolution.find_ts("__graph_output") != nullptr) { return; }
 
             const WiredFn *func = context.scalar_as<WiredFn>("func");
             if (func == nullptr) { return; }
@@ -1101,7 +1166,7 @@ namespace hgraph::stdlib
                 const TSValueTypeMetaData *output_schema = nullptr;
                 (void)compile_map_child(*func, {ordered->schemas.data(), ordered->schemas.size()},
                                         {ordered->arg_tags.data(), ordered->arg_tags.size()}, output_schema);
-                if (output_schema != nullptr) { resolution.bind_ts("O", output_schema); }
+                bind_graph_output(resolution, output_schema, "O");
             }
             catch (...)
             {
@@ -1182,9 +1247,9 @@ namespace hgraph::stdlib
                 return {{"__key_arg__", Value{Str{"key"}}}};
             }
 
-            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            VarIn<"args", TsVar<"B">> positional,
-                                            Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         VarIn<"args", TsVar<"B">> positional,
+                                         Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
             {
                 const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
                 std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
@@ -1193,8 +1258,7 @@ namespace hgraph::stdlib
                                                                {pos.data(), pos.size()},
                                                                {named.data(), named.size()},
                                                                key_arg.value());
-                auto out = wire_map(w, func, key_arg.value(), std::move(bound.ordered), std::move(keys));
-                return Port<TsVar<"O">>{w, out.erased()};
+                return wire_map(w, func, key_arg.value(), std::move(bound.ordered), std::move(keys));
             }
         };
         /**
@@ -1294,10 +1358,10 @@ namespace hgraph::stdlib
                                        ordered->takes_key);
         }
 
-        [[nodiscard]] inline Port<void> wire_lifted_map_tsl(Wiring &w,
-                                                            const WiredFn &func,
-                                                            std::string_view key_arg,
-                                                            std::vector<WiringPortRef> ordered)
+        [[nodiscard]] inline WiringPortRef wire_lifted_map_tsl(Wiring &w,
+                                                               const WiredFn &func,
+                                                               std::string_view key_arg,
+                                                               std::vector<WiringPortRef> ordered)
         {
             std::vector<const TSValueTypeMetaData *> schemas;
             std::vector<std::uint8_t> arg_tags;
@@ -1396,11 +1460,11 @@ namespace hgraph::stdlib
                                            std::move(builder),
                                            std::span<const WiringPortRef>{ordered.data(), ordered.size()},
                                            Value{MapCallConfig{func, Str{key_arg}, arg_tags}});
-            return Port<void>{w, std::move(out)};
+            return out;
         }
 
-        [[nodiscard]] inline Port<void> wire_map_tsl(Wiring &w, const WiredFn &func, bool takes_key,
-                                                     std::vector<WiringPortRef> ordered)
+        [[nodiscard]] inline WiringPortRef wire_map_tsl(Wiring &w, const WiredFn &func, bool takes_key,
+                                                        std::vector<WiringPortRef> ordered)
         {
             auto &registry = TypeRegistry::instance();
 
@@ -1470,13 +1534,13 @@ namespace hgraph::stdlib
             }
 
             const auto *output_schema = registry.tsl(children.front().schema, size);
-            return Port<void>{w, WiringPortRef::structural_source(output_schema, std::move(children))};
+            return WiringPortRef::structural_source(output_schema, std::move(children));
         }
 
         /** Bind the output var ``O`` for the resolver: ``TSL<OUT(func), SIZE>``. */
         inline void resolve_map_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("O") != nullptr) { return; }
+            if (resolution.find_ts("__graph_output") != nullptr) { return; }
 
             const WiredFn *func = context.scalar_as<WiredFn>("func");
             if (func == nullptr) { return; }
@@ -1524,7 +1588,7 @@ namespace hgraph::stdlib
                 CompiledSubGraph compiled = func->compile({schemas.data(), schemas.size()});
                 if (compiled.output_schema != nullptr)
                 {
-                    resolution.bind_ts("O", registry.tsl(compiled.output_schema, size));
+                    bind_graph_output(resolution, registry.tsl(compiled.output_schema, size), "O");
                 }
             }
             catch (...)
@@ -1538,8 +1602,7 @@ namespace hgraph::stdlib
             auto plan = lifted_map_tsl_plan(context);
             if (plan.has_value() && plan->output_schema != nullptr)
             {
-                if (resolution.find_ts("O") == nullptr) { resolution.bind_ts("O", plan->output_schema); }
-                resolution.bind_ts("__graph_output", plan->output_schema);
+                bind_graph_output(resolution, plan->output_schema, "O");
             }
         }
 
@@ -1611,9 +1674,9 @@ namespace hgraph::stdlib
                 return {{"__key_arg__", Value{Str{"ndx"}}}};
             }
 
-            static Port<TsVar<"O">> compose(Wiring &w, Scalar<"func", WiredFn> func,
-                                            VarIn<"args", TsVar<"B">> positional,
-                                            Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         VarIn<"args", TsVar<"B">> positional,
+                                         Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
             {
                 const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
                 std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
@@ -1625,8 +1688,7 @@ namespace hgraph::stdlib
                                                                {pos.data(), pos.size()},
                                                                {named.data(), named.size()},
                                                                key_arg.value());
-                auto out = wire_map_tsl(w, func.value(), bound.takes_leading_key, std::move(bound.ordered));
-                return Port<TsVar<"O">>{w, out.erased()};
+                return wire_map_tsl(w, func.value(), bound.takes_leading_key, std::move(bound.ordered));
             }
         };
     }  // namespace higher_order_impl_detail

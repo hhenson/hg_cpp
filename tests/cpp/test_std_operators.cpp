@@ -164,6 +164,154 @@ namespace
         }
     };
 
+    using ContainerAccessBundle = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Str>>>;
+    using NumericTsbBundle      = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Float>>>;
+    using FloatTsbBundle        = UnNamedTSB<Field<"a", TS<Float>>, Field<"b", TS<Float>>>;
+    using IntTsbBundle          = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Int>>>;
+
+    struct MakeContainerAccessBundle
+    {
+        static constexpr auto name = "make_container_access_bundle";
+
+        static void eval(In<"a", TS<Int>> a, In<"b", TS<Str>> b, Out<ContainerAccessBundle> out)
+        {
+            out.field<"a">().set(a.value());
+            out.field<"b">().set(b.value());
+        }
+    };
+
+    struct StructuralTsbContainerAccessGraph
+    {
+        static constexpr auto name = "structural_tsb_container_access_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> a, Port<TS<Str>> b)
+        {
+            auto bundle     = stdlib::to_tsb<ContainerAccessBundle>(w, a, b);
+            auto a_by_name  = wire<stdlib::getitem_>(w, bundle, Str{"a"}).as<TS<Int>>();
+            auto b_by_index = wire<stdlib::getitem_>(w, bundle, Int{-1}).as<TS<Str>>();
+            auto b_len      = wire<stdlib::len_>(w, b_by_index).as<TS<Int>>();
+            return wire<stdlib::add_>(w, a_by_name, b_len).as<TS<Int>>();
+        }
+    };
+
+    struct PeeredTsbContainerAccessGraph
+    {
+        static constexpr auto name = "peered_tsb_container_access_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> a, Port<TS<Str>> b)
+        {
+            auto bundle     = wire<MakeContainerAccessBundle>(w, a, b);
+            auto a_by_index = wire<stdlib::getitem_>(w, bundle, Int{0}).as<TS<Int>>();
+            auto b_by_attr  = wire<stdlib::getattr_>(w, bundle, Str{"b"}).as<TS<Str>>();
+            auto b_len      = wire<stdlib::len_>(w, b_by_attr).as<TS<Int>>();
+            return wire<stdlib::add_>(w, a_by_index, b_len).as<TS<Int>>();
+        }
+    };
+
+    struct TsbContainerMetadataGraph
+    {
+        static constexpr auto name = "tsb_container_metadata_graph";
+
+        static Port<TS<Bool>> compose(Wiring &w, Port<TS<Int>> a, Port<TS<Str>> b)
+        {
+            auto bundle        = stdlib::to_tsb<ContainerAccessBundle>(w, a, b);
+            auto length        = wire<stdlib::len_>(w, bundle).as<TS<Int>>();
+            auto empty         = wire<stdlib::is_empty>(w, bundle).as<TS<Bool>>();
+            auto length_is_two = wire<stdlib::eq_>(w, length, Int{2}).as<TS<Bool>>();
+            auto not_empty     = wire<stdlib::not_>(w, empty).as<TS<Bool>>();
+            return wire<stdlib::and_>(w, length_is_two, not_empty).as<TS<Bool>>();
+        }
+    };
+
+    struct TsbAddGraph
+    {
+        static constexpr auto name = "tsb_add_graph";
+
+        static Port<NumericTsbBundle> compose(Wiring &w, Port<TS<Int>> a1, Port<TS<Float>> b1,
+                                              Port<TS<Int>> a2, Port<TS<Float>> b2)
+        {
+            auto lhs = stdlib::to_tsb<NumericTsbBundle>(w, a1, b1);
+            auto rhs = stdlib::to_tsb<NumericTsbBundle>(w, a2, b2);
+            return wire<stdlib::add_>(w, lhs, rhs).as<NumericTsbBundle>();
+        }
+    };
+
+    struct TsbDivGraph
+    {
+        static constexpr auto name = "tsb_div_graph";
+
+        static Port<FloatTsbBundle> compose(Wiring &w, Port<TS<Int>> a1, Port<TS<Float>> b1,
+                                            Port<TS<Int>> a2, Port<TS<Float>> b2)
+        {
+            auto lhs = stdlib::to_tsb<NumericTsbBundle>(w, a1, b1);
+            auto rhs = stdlib::to_tsb<NumericTsbBundle>(w, a2, b2);
+            return wire<stdlib::div_>(w, lhs, rhs).as<FloatTsbBundle>();
+        }
+    };
+
+    struct TsbUnaryGraph
+    {
+        static constexpr auto name = "tsb_unary_graph";
+
+        static Port<NumericTsbBundle> compose(Wiring &w, Port<TS<Int>> a, Port<TS<Float>> b)
+        {
+            auto ts = stdlib::to_tsb<NumericTsbBundle>(w, a, b);
+            return wire<stdlib::neg_>(w, ts).as<NumericTsbBundle>();
+        }
+    };
+
+    struct TsbBitwiseGraph
+    {
+        static constexpr auto name = "tsb_bitwise_graph";
+
+        static Port<IntTsbBundle> compose(Wiring &w, Port<TS<Int>> a1, Port<TS<Int>> b1,
+                                          Port<TS<Int>> a2, Port<TS<Int>> b2)
+        {
+            auto lhs = stdlib::to_tsb<IntTsbBundle>(w, a1, b1);
+            auto rhs = stdlib::to_tsb<IntTsbBundle>(w, a2, b2);
+            return wire<stdlib::bit_xor>(w, lhs, rhs).as<IntTsbBundle>();
+        }
+    };
+
+    struct TsbMeanGraph
+    {
+        static constexpr auto name = "tsb_mean_graph";
+
+        static Port<FloatTsbBundle> compose(Wiring &w, Port<TS<Int>> a1, Port<TS<Float>> b1,
+                                            Port<TS<Int>> a2, Port<TS<Float>> b2)
+        {
+            auto lhs = stdlib::to_tsb<NumericTsbBundle>(w, a1, b1);
+            auto rhs = stdlib::to_tsb<NumericTsbBundle>(w, a2, b2);
+            return wire<stdlib::mean>(w, lhs, rhs).as<FloatTsbBundle>();
+        }
+    };
+
+    struct TsbMinGraph
+    {
+        static constexpr auto name = "tsb_min_graph";
+
+        static Port<ContainerAccessBundle> compose(Wiring &w, Port<TS<Int>> a1, Port<TS<Str>> b1,
+                                                   Port<TS<Int>> a2, Port<TS<Str>> b2)
+        {
+            auto lhs = stdlib::to_tsb<ContainerAccessBundle>(w, a1, b1);
+            auto rhs = stdlib::to_tsb<ContainerAccessBundle>(w, a2, b2);
+            return wire<stdlib::min_>(w, lhs, rhs).as<ContainerAccessBundle>();
+        }
+    };
+
+    struct TsbMaxGraph
+    {
+        static constexpr auto name = "tsb_max_graph";
+
+        static Port<ContainerAccessBundle> compose(Wiring &w, Port<TS<Int>> a1, Port<TS<Str>> b1,
+                                                   Port<TS<Int>> a2, Port<TS<Str>> b2)
+        {
+            auto lhs = stdlib::to_tsb<ContainerAccessBundle>(w, a1, b1);
+            auto rhs = stdlib::to_tsb<ContainerAccessBundle>(w, a2, b2);
+            return wire<stdlib::max_>(w, lhs, rhs).as<ContainerAccessBundle>();
+        }
+    };
+
 }  // namespace
 
 TEST_CASE("std operators: add_ selects the int implementation for TS<Int> operands")
@@ -709,6 +857,70 @@ TEST_CASE("std operators: collection container operators support TSS TSD and fix
                                    list_delta<TS<Int>>({-1, 0, 1})),
                      values<Int>(2, 1))),
                  values<Int>(1, 0, -1, 2));
+}
+
+TEST_CASE("std operators: TSB container access projects structural and peered fields")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<StructuralTsbContainerAccessGraph>(values<Int>(1, 10),
+                                                              values<Str>(Str{"xy"}, Str{"abcd"})),
+                 values<Int>(3, 14));
+    CHECK_OUTPUT(eval_node<PeeredTsbContainerAccessGraph>(values<Int>(2, 20),
+                                                          values<Str>(Str{"abc"}, Str{"z"})),
+                 values<Int>(5, 21));
+}
+
+TEST_CASE("std operators: TSB len and is_empty are schema metadata")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<TsbContainerMetadataGraph>(values<Int>(1), values<Str>(Str{"x"})), values<Bool>(true));
+}
+
+TEST_CASE("std operators: TSB itemwise arithmetic maps each field through the scalar operators")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<TsbAddGraph>(values<Int>(1, 10),
+                                        values<Float>(2.5, 1.0),
+                                        values<Int>(3, 4),
+                                        values<Float>(4.5, 2.0)),
+                 values<Value>(tsb_delta<NumericTsbBundle>(Int{4}, Float{7.0}),
+                               tsb_delta<NumericTsbBundle>(Int{14}, Float{3.0})));
+    CHECK_OUTPUT(eval_node<TsbDivGraph>(values<Int>(8),
+                                        values<Float>(9.0),
+                                        values<Int>(4),
+                                        values<Float>(3.0)),
+                 values<Value>(tsb_delta<FloatTsbBundle>(Float{2.0}, Float{3.0})));
+    CHECK_OUTPUT(eval_node<TsbUnaryGraph>(values<Int>(3), values<Float>(-4.5)),
+                 values<Value>(tsb_delta<NumericTsbBundle>(Int{-3}, Float{4.5})));
+}
+
+TEST_CASE("std operators: TSB itemwise bitwise and analytics reuse field operator resolution")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<TsbBitwiseGraph>(values<Int>(7),
+                                            values<Int>(8),
+                                            values<Int>(5),
+                                            values<Int>(9)),
+                 values<Value>(tsb_delta<IntTsbBundle>(Int{2}, Int{1})));
+    CHECK_OUTPUT(eval_node<TsbMeanGraph>(values<Int>(7),
+                                         values<Float>(8.0),
+                                         values<Int>(5),
+                                         values<Float>(9.0)),
+                 values<Value>(tsb_delta<FloatTsbBundle>(Float{6.0}, Float{8.5})));
+    CHECK_OUTPUT(eval_node<TsbMinGraph>(values<Int>(7),
+                                        values<Str>(Str{"8"}),
+                                        values<Int>(5),
+                                        values<Str>(Str{"9"})),
+                 values<Value>(tsb_delta<ContainerAccessBundle>(Int{5}, Str{"8"})));
+    CHECK_OUTPUT(eval_node<TsbMaxGraph>(values<Int>(7),
+                                        values<Str>(Str{"8"}),
+                                        values<Int>(5),
+                                        values<Str>(Str{"9"})),
+                 values<Value>(tsb_delta<ContainerAccessBundle>(Int{7}, Str{"9"})));
 }
 
 TEST_CASE("std operators: str_ converts scalar time-series values to strings")

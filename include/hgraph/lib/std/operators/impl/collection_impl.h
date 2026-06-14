@@ -16,6 +16,7 @@
 #include <hgraph/lib/std/operators/arithmetic.h>
 #include <hgraph/lib/std/operators/collection.h>
 #include <hgraph/lib/std/operators/comparison.h>
+#include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
 #include <hgraph/lib/std/operators/logical.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -57,10 +58,18 @@ namespace hgraph::stdlib
         {
             static constexpr auto name = "keys_tsd";
 
-            static Port<TSS<ScalarVar<"K">>> compose(Wiring &w,
-                                                     NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                return Port<TSS<ScalarVar<"K">>>{w, subgraph_wiring_detail::tsd_key_set_ref(ts.erased())};
+                if (resolution.find_ts("__graph_output") != nullptr || context.args.size() != 1) { return; }
+                if (context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+                const auto *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
+                if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return; }
+                resolution.bind_ts("__graph_output", TypeRegistry::instance().tss(schema->key_type()));
+            }
+
+            static WiringPortRef compose(Wiring &, NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
+            {
+                return subgraph_wiring_detail::tsd_key_set_ref(ts.erased());
             }
         };
 
@@ -903,9 +912,12 @@ namespace hgraph::stdlib
 
         inline void resolve_output_to_first_arg(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("O") != nullptr) { return; }
+            if (resolution.find_ts("__graph_output") != nullptr) { return; }
             if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
-            resolution.bind_ts("O", TypeRegistry::instance().dereference(context.args[0].port.schema));
+            const TSValueTypeMetaData *output = TypeRegistry::instance().dereference(context.args[0].port.schema);
+            if (output == nullptr) { return; }
+            if (resolution.find_ts("O") == nullptr) { resolution.bind_ts("O", output); }
+            resolution.bind_ts("__graph_output", output);
         }
 
         /** ``union(*ts)`` — n-ary TSS union, folded pairwise at wiring time. */
@@ -923,7 +935,7 @@ namespace hgraph::stdlib
                 resolve_output_to_first_arg(resolution, context);
             }
 
-            static Port<TsVar<"O">> compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
+            static WiringPortRef compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
             {
                 if (ts.empty()) { throw std::invalid_argument("union: requires at least one input"); }
                 Port<void> acc{w, ts[0]};
@@ -931,7 +943,7 @@ namespace hgraph::stdlib
                 {
                     acc = wire<collection_impl_detail::union_tss_binary>(w, acc, Port<void>{w, ts[i]});
                 }
-                return Port<TsVar<"O">>{w, acc.erased()};
+                return acc.erased();
             }
         };
 
@@ -950,7 +962,7 @@ namespace hgraph::stdlib
                 resolve_output_to_first_arg(resolution, context);
             }
 
-            static Port<TsVar<"O">> compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
+            static WiringPortRef compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
             {
                 if (ts.empty()) { throw std::invalid_argument("intersection: requires at least one input"); }
                 Port<void> acc{w, ts[0]};
@@ -958,7 +970,7 @@ namespace hgraph::stdlib
                 {
                     acc = wire<collection_impl_detail::intersection_tss_binary>(w, acc, Port<void>{w, ts[i]});
                 }
-                return Port<TsVar<"O">>{w, acc.erased()};
+                return acc.erased();
             }
         };
 
@@ -977,14 +989,14 @@ namespace hgraph::stdlib
                 resolve_output_to_first_arg(resolution, context);
             }
 
-            static Port<TsVar<"O">> compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
+            static WiringPortRef compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
             {
                 if (ts.empty()) { throw std::invalid_argument("difference: requires at least one input"); }
-                if (ts.size() == 1) { return Port<TsVar<"O">>{w, ts[0]}; }
+                if (ts.size() == 1) { return ts[0]; }
                 if (ts.size() > 2) { throw std::invalid_argument("difference: more than two inputs is not supported"); }
                 Port<void> out = wire<collection_impl_detail::difference_tss_binary>(
                     w, Port<void>{w, ts[0]}, Port<void>{w, ts[1]});
-                return Port<TsVar<"O">>{w, out.erased()};
+                return out.erased();
             }
         };
 
@@ -1003,7 +1015,7 @@ namespace hgraph::stdlib
                 resolve_output_to_first_arg(resolution, context);
             }
 
-            static Port<TsVar<"O">> compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
+            static WiringPortRef compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
             {
                 if (ts.empty())
                 {
@@ -1015,7 +1027,7 @@ namespace hgraph::stdlib
                     acc = wire<collection_impl_detail::symmetric_difference_tss_binary>(w, acc,
                                                                                         Port<void>{w, ts[i]});
                 }
-                return Port<TsVar<"O">>{w, acc.erased()};
+                return acc.erased();
             }
         };
     }  // namespace collection_impl_detail
@@ -1044,6 +1056,7 @@ namespace hgraph::stdlib
         using tsl_itemwise_impl_detail::tsl_binary_map;
         using tsl_itemwise_impl_detail::tsl_lhs_broadcast_map;
         using tsl_itemwise_impl_detail::tsl_rhs_broadcast_map;
+        using tsb_itemwise_impl_detail::tsb_binary_map;
 
         register_graph_overload<keys_, collection_impl_detail::keys_tsd>();
         register_overload<not_, collection_impl_detail::not_tss>();
@@ -1085,6 +1098,7 @@ namespace hgraph::stdlib
         register_graph_overload<sum_, tsl_binary_map<add_>>();
         register_graph_overload<sum_, tsl_rhs_broadcast_map<add_>>();
         register_graph_overload<sum_, tsl_lhs_broadcast_map<add_>>();
+        register_graph_overload<sum_, tsb_binary_map<add_>>();
 
         register_numeric_binary_collection_overloads<mean, scalar_mean>();
         register_numeric_binary_collection_overloads<std_, scalar_std>();
@@ -1092,6 +1106,9 @@ namespace hgraph::stdlib
         register_numeric_binary_tsl_lifted_maps<mean, scalar_mean>();
         register_numeric_binary_tsl_lifted_maps<std_, scalar_std>();
         register_numeric_binary_tsl_lifted_maps<var_, scalar_var>();
+        register_graph_overload<mean, tsb_binary_map<mean>>();
+        register_graph_overload<std_, tsb_binary_map<std_>>();
+        register_graph_overload<var_, tsb_binary_map<var_>>();
 
         register_graph_overload<union_, collection_impl_detail::union_tss_fold>();
         register_graph_overload<intersection_, collection_impl_detail::intersection_tss_fold>();

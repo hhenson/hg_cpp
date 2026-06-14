@@ -586,6 +586,38 @@ namespace hgraph
         }
 
         /**
+         * Erased core of TSB field projection: project the ``index``-th field ref
+         * out of a TSB-shaped wiring source of any kind.
+         */
+        [[nodiscard]] inline WiringPortRef tsb_field_ref(const WiringPortRef &ts, std::size_t index,
+                                                         const TSValueTypeMetaData *field_schema)
+        {
+            switch (ts.source_kind())
+            {
+                case WiringPortRef::SourceKind::Peered:
+                {
+                    std::vector<std::size_t> path = ts.peered_path();
+                    path.push_back(index);
+                    return WiringPortRef::peered_source(ts.peered_node(), std::move(path), field_schema,
+                                                        ts.peered_output_kind());
+                }
+                case WiringPortRef::SourceKind::Structural:
+                    return ts.structural_children()[index];
+                case WiringPortRef::SourceKind::Boundary:
+                {
+                    std::vector<std::size_t> path = ts.boundary_path();
+                    path.push_back(index);
+                    return WiringPortRef::boundary_source(ts.boundary_arg_index(), std::move(path), field_schema);
+                }
+                case WiringPortRef::SourceKind::Null:
+                    return WiringPortRef::null_source(field_schema);
+                case WiringPortRef::SourceKind::Unbound:
+                    break;
+            }
+            throw std::logic_error("tsb_field: the TSB port is unbound");
+        }
+
+        /**
          * Project a TSD port's **key set** (``TSS[K]``) — a zero-copy view
          * over the same output, addressed at runtime via the
          * ``ts_key_set_path_component`` path sentinel. Usable on peered and

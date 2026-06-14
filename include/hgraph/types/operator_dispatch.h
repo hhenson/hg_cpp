@@ -406,8 +406,27 @@ namespace hgraph
         template <typename T> struct is_output_port : std::false_type {};
         template <typename S> struct is_output_port<Port<S>> : std::true_type {};
 
+        template <typename T> struct is_output_ref : std::false_type {};
+        template <> struct is_output_ref<WiringPortRef> : std::true_type {};
+
         template <typename T> struct output_port_schema { using type = void; };
         template <typename S> struct output_port_schema<Port<S>> { using type = S; };
+
+        template <typename Output>
+        [[nodiscard]] Port<void> erased_graph_output(Wiring &w, Output &&out)
+        {
+            using O = std::remove_cvref_t<Output>;
+            if constexpr (is_output_port<O>::value)
+            {
+                return Port<void>{w, std::forward<Output>(out).erased()};
+            }
+            else
+            {
+                static_assert(is_output_ref<O>::value,
+                              "operator graph compose output must be a Port or WiringPortRef");
+                return Port<void>{w, std::forward<Output>(out)};
+            }
+        }
 
         // Build the runtime parameter patterns (in eval order) for a C++ static-node implementation.
         template <typename Impl>
@@ -1207,10 +1226,12 @@ namespace hgraph
         impl.positional_params = layout::prefix_count + (layout::variadic ? 0 : layout::kwonly_count);
 
         using output_type = typename sig::output_type;
-        if constexpr (operator_dispatch_detail::is_output_port<output_type>::value)
+        using clean_output_type = std::remove_cvref_t<output_type>;
+        if constexpr (operator_dispatch_detail::is_output_port<clean_output_type>::value ||
+                      operator_dispatch_detail::is_output_ref<clean_output_type>::value)
         {
             impl.has_output = true;
-            using out_schema = typename operator_dispatch_detail::output_port_schema<output_type>::type;
+            using out_schema = typename operator_dispatch_detail::output_port_schema<clean_output_type>::type;
             if constexpr (!std::is_void_v<out_schema>)
             {
                 impl.output = to_pattern<out_schema>();
@@ -1268,7 +1289,8 @@ namespace hgraph
                                           operator_dispatch_detail::make_graph_arg<std::tuple_element_t<I, params_tuple>>(
                                               w, map, args[I])...,
                                           std::forward<decltype(rest)>(rest)...);
-                        return OperatorWireResult{true, Port<void>{w, out.erased()}};
+                        return OperatorWireResult{true,
+                                                  operator_dispatch_detail::erased_graph_output(w, std::move(out))};
                     }
                 };
 

@@ -4,6 +4,7 @@
 #include <hgraph/lib/std/lifted_kernels.h>
 #include <hgraph/lib/std/operators/comparison.h>   // eq_ / ne_ / lt_ / ...
 #include <hgraph/lib/std/operators/higher_order.h>
+#include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
 #include <hgraph/lib/std/operators/logical.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -104,6 +105,7 @@ namespace hgraph::stdlib
         using tsl_itemwise_impl_detail::tsl_binary_map;
         using tsl_itemwise_impl_detail::tsl_lhs_broadcast_map;
         using tsl_itemwise_impl_detail::tsl_rhs_broadcast_map;
+        using tsb_itemwise_impl_detail::tsb_binary_map;
 
         register_overload<eq_, lift<scalar_eq<Bool>>>();
         register_overload<eq_, lift<scalar_eq<Int>>>();
@@ -147,6 +149,7 @@ namespace hgraph::stdlib
         register_graph_overload<min_, tsl_binary_map<min_>>();
         register_graph_overload<min_, tsl_rhs_broadcast_map<min_>>();
         register_graph_overload<min_, tsl_lhs_broadcast_map<min_>>();
+        register_graph_overload<min_, tsb_binary_map<min_>>();
 
         register_overload<max_, lift<scalar_max<Int>, std::numeric_limits<Int>::lowest()>>();
         register_overload<max_, lift<scalar_max<Float>, -std::numeric_limits<Float>::infinity()>>();
@@ -159,6 +162,7 @@ namespace hgraph::stdlib
         register_graph_overload<max_, tsl_binary_map<max_>>();
         register_graph_overload<max_, tsl_rhs_broadcast_map<max_>>();
         register_graph_overload<max_, tsl_lhs_broadcast_map<max_>>();
+        register_graph_overload<max_, tsb_binary_map<max_>>();
     }
 }  // namespace hgraph::stdlib
 
