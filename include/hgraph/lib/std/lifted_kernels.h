@@ -273,7 +273,7 @@ namespace hgraph::stdlib
 
         [[nodiscard]] static T apply(const T &ts)
         {
-            return ts < T{0} ? T{-1} : ts > T{0} ? T{1} : T{0};
+            return ts < T{0} ? T{-1} : T{1};
         }
     };
 
@@ -451,6 +451,14 @@ namespace hgraph::stdlib
         static constexpr std::array<std::string_view, 1> parameter_names{"ts"};
 
         [[nodiscard]] static T apply(const T &ts) { return static_cast<T>(~ts); }
+    };
+
+    struct scalar_invert_bool
+    {
+        static constexpr const char *name = "scalar_invert_bool";
+        static constexpr std::array<std::string_view, 1> parameter_names{"ts"};
+
+        [[nodiscard]] static Int apply(Bool ts) { return ~static_cast<Int>(ts); }
     };
 
     template <typename T>

@@ -107,7 +107,7 @@ namespace hgraph::stdlib
     {
     };
 
-    /** ``sign`` — the sign (-1 / 0 / +1) of the time-series value. */
+    /** ``sign`` — Python-compatible numeric sign: ``-1`` for negative values, ``+1`` otherwise. */
     struct sign : Operator<"sign", In<"ts", TsVar<"S">>, Out<TsVar<"O">>>
     {
     };

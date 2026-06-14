@@ -30,6 +30,7 @@ namespace hgraph::stdlib
         register_truthy_binary_overloads<or_, scalar_or>();
 
         register_overload<invert_, lift<scalar_invert<Int>>>();
+        register_overload<invert_, lift<scalar_invert_bool>>();
         register_overload<bit_and, lift<scalar_bit_and<Int>>>();
         register_overload<bit_and, lift<scalar_bit_and<Bool>>>();
         register_overload<bit_or, lift<scalar_bit_or<Int>>>();

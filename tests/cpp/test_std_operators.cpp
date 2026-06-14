@@ -273,6 +273,18 @@ TEST_CASE("std operators: eq_ works for strings")
                  values<Bool>(true, false));
 }
 
+TEST_CASE("std operators: eq_ uses epsilon for float-involved comparisons")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::eq_>(values<Float>(1.0, 1.0), values<Float>(1.0 + 1e-11, 1.0 + 1e-5)),
+                 values<Bool>(true, false));
+    CHECK_OUTPUT(eval_node<stdlib::eq_>(values<Int>(1, 1), values<Float>(1.0 + 1e-11, 1.0 + 1e-5)),
+                 values<Bool>(true, false));
+    CHECK_OUTPUT(eval_node<stdlib::eq_>(values<Float>(1.0 + 1e-5), values<Int>(1), arg<"epsilon">(Float{1e-4})),
+                 values<Bool>(true));
+}
+
 TEST_CASE("std operators: zero_ emits the op-aware zero for standard scalar outputs")
 {
     stdlib::register_standard_operators();
@@ -356,13 +368,28 @@ TEST_CASE("std operators: pow_ is Float-valued for numeric operands")
     CHECK_OUTPUT(eval_node<stdlib::pow_>(values<Float>(4.0, 9.0), values<Float>(0.5, 0.5)), values<Float>(2.0, 3.0));
 }
 
+TEST_CASE("std operators: pow_ takes divide-by-zero policy for zero raised to a negative power")
+{
+    using DBZ = stdlib::DivideByZero;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::pow_>(values<Int>(0, 2), values<Int>(-1, 3), DBZ::Inf),
+                 values<Float>(std::numeric_limits<Float>::infinity(), 8.0));
+    CHECK_OUTPUT(eval_node<stdlib::pow_>(values<Int>(0, 2), values<Int>(-1, 3), DBZ::NoTick),
+                 values<Float>(none, 8.0));
+    CHECK_OUTPUT(eval_node<stdlib::pow_>(values<Int>(0), values<Int>(-1), DBZ::Zero), values<Float>(0.0));
+    CHECK_OUTPUT(eval_node<stdlib::pow_>(values<Int>(0), values<Int>(-1), DBZ::One), values<Float>(1.0));
+    REQUIRE_THROWS(eval_node<stdlib::pow_>(values<Int>(0), values<Int>(-1)));
+}
+
 TEST_CASE("std operators: unary numeric operators support neg pos abs sign and ln")
 {
     stdlib::register_standard_operators();
     CHECK_OUTPUT(eval_node<stdlib::neg_>(values<Int>(1, -2)), values<Int>(-1, 2));
     CHECK_OUTPUT(eval_node<stdlib::pos_>(values<Float>(-1.5, 2.5)), values<Float>(-1.5, 2.5));
     CHECK_OUTPUT(eval_node<stdlib::abs_>(values<Int>(-3, 4)), values<Int>(3, 4));
-    CHECK_OUTPUT(eval_node<stdlib::sign>(values<Int>(-3, 0, 4)), values<Int>(-1, 0, 1));
+    CHECK_OUTPUT(eval_node<stdlib::sign>(values<Int>(-3, 0, 4)), values<Int>(-1, 1, 1));
+    CHECK_OUTPUT(eval_node<stdlib::sign>(values<Float>(-3.5, -0.0, 4.25)), values<Float>(-1.0, 1.0, 1.0));
     CHECK_OUTPUT(eval_node<stdlib::ln>(values<Float>(1.0, std::numbers::e)), values<Float>(0.0, 1.0));
 }
 
@@ -377,6 +404,7 @@ TEST_CASE("std operators: logical and bitwise operators support standard scalars
     CHECK_OUTPUT(eval_node<stdlib::bit_or>(values<Bool>(true, false), values<Bool>(false, false)),
                  values<Bool>(true, false));
     CHECK_OUTPUT(eval_node<stdlib::invert_>(values<Int>(0, 1)), values<Int>(~Int{0}, ~Int{1}));
+    CHECK_OUTPUT(eval_node<stdlib::invert_>(values<Bool>(true, false)), values<Int>(-2, -1));
     CHECK_OUTPUT(eval_node<stdlib::lshift_>(values<Int>(1, 2), values<Int>(3, 2)), values<Int>(8, 8));
     CHECK_OUTPUT(eval_node<stdlib::rshift_>(values<Int>(8, 9), values<Int>(1, 2)), values<Int>(4, 2));
 }
