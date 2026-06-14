@@ -6,18 +6,22 @@
  * Implemented so far: ``keys_`` (TSD -> TSS of its keys) and TSS set algebra
  * (``union`` / ``intersection`` / ``difference`` / ``symmetric_difference``),
  * including the Python-compatible TSS/TSD operator aliases
- * (``|`` / ``&`` / ``-`` / ``^``).
+ * (``|`` / ``&`` / ``-`` / ``^``), plus basic TSS/TSD truth/equality
+ * overloads.
  * ``union`` is also what ``map_`` composes to derive its inferred ``__keys__``
  * lifecycle set, mirroring Python (``__keys__ = union(*key_sets)``).
  */
 
 #include <hgraph/lib/std/operators/arithmetic.h>
 #include <hgraph/lib/std/operators/collection.h>
+#include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/lib/std/operators/logical.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/static_node.h>
 
+#include <compare>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -51,6 +55,219 @@ namespace hgraph::stdlib
                                                      NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
             {
                 return Port<TSS<ScalarVar<"K">>>{w, subgraph_wiring_detail::tsd_key_set_ref(ts.erased())};
+            }
+        };
+
+        [[nodiscard]] inline bool tss_equal(const TSSInputView &lhs, const TSSInputView &rhs)
+        {
+            if (lhs.size() != rhs.size()) { return false; }
+            for (const ValueView &key : lhs.values())
+            {
+                if (!rhs.contains(key)) { return false; }
+            }
+            return true;
+        }
+
+        [[nodiscard]] inline bool tsd_equal(const TSDInputView &lhs, const TSDInputView &rhs)
+        {
+            if (lhs.size() != rhs.size()) { return false; }
+            for (const auto [key, lhs_child] : lhs.items())
+            {
+                TSInputView rhs_child = rhs.at(key);
+                if (!lhs_child.valid() || !rhs_child.valid() || !lhs_child.value().equals(rhs_child.value()))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        struct not_tss
+        {
+            static constexpr auto name = "not_tss";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSS<ScalarVar<"K">>, InputValidity::Unchecked> ts, Out<TS<Bool>> out)
+            {
+                out.set(ts.empty());
+            }
+        };
+
+        struct not_tsd
+        {
+            static constexpr auto name = "not_tsd";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+                             Out<TS<Bool>> out)
+            {
+                out.set(ts.empty());
+            }
+        };
+
+        struct and_tss
+        {
+            static constexpr auto name = "and_tss";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"lhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> rhs,
+                             Out<TS<Bool>> out)
+            {
+                out.set(!lhs.empty() && !rhs.empty());
+            }
+        };
+
+        struct or_tss
+        {
+            static constexpr auto name = "or_tss";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"lhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> rhs,
+                             Out<TS<Bool>> out)
+            {
+                out.set(!lhs.empty() || !rhs.empty());
+            }
+        };
+
+        struct eq_tss
+        {
+            static constexpr auto name = "eq_tss";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"lhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TSS<ScalarVar<"K">>, InputValidity::Unchecked> rhs,
+                             Out<TS<Bool>> out)
+            {
+                out.set(tss_equal(lhs, rhs));
+            }
+        };
+
+        struct eq_tsd
+        {
+            static constexpr auto name = "eq_tsd";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"lhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> rhs,
+                             Out<TS<Bool>> out)
+            {
+                out.set(tsd_equal(lhs, rhs));
+            }
+        };
+
+        struct min_tss_unary
+        {
+            static constexpr auto name = "min_tss_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSS<ScalarVar<"K">>, InputValidity::Unchecked> ts,
+                             Out<TS<ScalarVar<"K">>> out)
+            {
+                const TSSInputView &set = ts;
+                std::optional<Value> best;
+                for (const ValueView &key : set.values())
+                {
+                    if (!best.has_value() || key.compare(best->view()) == std::partial_ordering::less)
+                    {
+                        best.emplace(key);
+                    }
+                }
+                if (best.has_value()) { out.apply(best->view()); }
+            }
+        };
+
+        struct max_tss_unary
+        {
+            static constexpr auto name = "max_tss_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSS<ScalarVar<"K">>, InputValidity::Unchecked> ts,
+                             Out<TS<ScalarVar<"K">>> out)
+            {
+                const TSSInputView &set = ts;
+                std::optional<Value> best;
+                for (const ValueView &key : set.values())
+                {
+                    if (!best.has_value() || key.compare(best->view()) == std::partial_ordering::greater)
+                    {
+                        best.emplace(key);
+                    }
+                }
+                if (best.has_value()) { out.apply(best->view()); }
+            }
+        };
+
+        struct min_tsd_unary
+        {
+            static constexpr auto name = "min_tsd_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TS<ScalarVar<"V">>>, InputValidity::Unchecked> ts,
+                             Out<TS<ScalarVar<"V">>> out)
+            {
+                const TSDInputView &dict = ts;
+                std::optional<Value> best;
+                for (const TSInputView &child : dict.valid_values())
+                {
+                    const ValueView value = child.value();
+                    if (!best.has_value() || value.compare(best->view()) == std::partial_ordering::less)
+                    {
+                        best.emplace(value);
+                    }
+                }
+                if (best.has_value()) { out.apply(best->view()); }
+            }
+        };
+
+        struct max_tsd_unary
+        {
+            static constexpr auto name = "max_tsd_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TS<ScalarVar<"V">>>, InputValidity::Unchecked> ts,
+                             Out<TS<ScalarVar<"V">>> out)
+            {
+                const TSDInputView &dict = ts;
+                std::optional<Value> best;
+                for (const TSInputView &child : dict.valid_values())
+                {
+                    const ValueView value = child.value();
+                    if (!best.has_value() || value.compare(best->view()) == std::partial_ordering::greater)
+                    {
+                        best.emplace(value);
+                    }
+                }
+                if (best.has_value()) { out.apply(best->view()); }
+            }
+        };
+
+        template <typename T>
+        struct sum_tss_unary
+        {
+            static constexpr auto name = "sum_tss_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSS<T>, InputValidity::Unchecked> ts, Out<TS<T>> out)
+            {
+                T total{};
+                for (const T &key : ts.values()) { total += key; }
+                out.set(total);
+            }
+        };
+
+        template <typename T>
+        struct sum_tsd_unary
+        {
+            static constexpr auto name = "sum_tsd_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TS<T>>, InputValidity::Unchecked> ts, Out<TS<T>> out)
+            {
+                T total{};
+                for (const auto child : ts.valid_values()) { total += child.value(); }
+                out.set(total);
             }
         };
 
@@ -485,6 +702,21 @@ namespace hgraph::stdlib
     inline void register_collection_operators()
     {
         register_graph_overload<keys_, collection_impl_detail::keys_tsd>();
+        register_overload<not_, collection_impl_detail::not_tss>();
+        register_overload<not_, collection_impl_detail::not_tsd>();
+        register_overload<and_, collection_impl_detail::and_tss>();
+        register_overload<or_, collection_impl_detail::or_tss>();
+        register_overload<eq_, collection_impl_detail::eq_tss>();
+        register_overload<eq_, collection_impl_detail::eq_tsd>();
+        register_overload<min_, collection_impl_detail::min_tss_unary>();
+        register_overload<max_, collection_impl_detail::max_tss_unary>();
+        register_overload<min_, collection_impl_detail::min_tsd_unary>();
+        register_overload<max_, collection_impl_detail::max_tsd_unary>();
+        register_overload<sum_, collection_impl_detail::sum_tss_unary<Int>>();
+        register_overload<sum_, collection_impl_detail::sum_tss_unary<Float>>();
+        register_overload<sum_, collection_impl_detail::sum_tsd_unary<Int>>();
+        register_overload<sum_, collection_impl_detail::sum_tsd_unary<Float>>();
+
         register_graph_overload<union_, collection_impl_detail::union_tss_fold>();
         register_graph_overload<intersection_, collection_impl_detail::intersection_tss_fold>();
         register_graph_overload<difference_, collection_impl_detail::difference_tss_fold>();

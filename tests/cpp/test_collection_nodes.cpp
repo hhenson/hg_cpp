@@ -749,6 +749,119 @@ TEST_CASE("collections: TSD set operators reselect remaining values after overla
                                dict_delta<Int, TS<Int>>({{1, 20}})));
 }
 
+TEST_CASE("collections: TSS truthiness and equality mirror Python operators")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::not_, TSS<Int>>(
+                     values<Value>(set_delta<Int>({}, {}),
+                                   set_delta<Int>({1}, {}),
+                                   set_delta<Int>({}, {1})))),
+                 values<Bool>(true, false, true));
+
+    CHECK_OUTPUT((eval_node<stdlib::and_, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({}, {}),
+                                   set_delta<Int>({1}, {})),
+                     values<Value>(set_delta<Int>({1}, {}),
+                                   set_delta<Int>({2}, {})))),
+                 values<Bool>(false, true));
+
+    CHECK_OUTPUT((eval_node<stdlib::or_, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({}, {}),
+                                   set_delta<Int>({1}, {})),
+                     values<Value>(set_delta<Int>({1}, {}),
+                                   set_delta<Int>({2}, {})))),
+                 values<Bool>(true, true));
+
+    CHECK_OUTPUT((eval_node<stdlib::eq_, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({}, {}),
+                                   set_delta<Int>({1, 2}, {}),
+                                   set_delta<Int>({3}, {})),
+                     values<Value>(set_delta<Int>({}, {}),
+                                   set_delta<Int>({1}, {}),
+                                   set_delta<Int>({2, 3}, {})))),
+                 values<Bool>(true, false, true));
+}
+
+TEST_CASE("collections: TSD truthiness and equality mirror Python operators")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::not_, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({}),
+                                   dict_delta<Int, TS<Int>>({{1, 1}}),
+                                   dict_delta<Int, TS<Int>>({}, {1})))),
+                 values<Bool>(true, false, true));
+
+    CHECK_OUTPUT((eval_node<stdlib::eq_, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({}),
+                                   dict_delta<Int, TS<Int>>({{1, 1}}),
+                                   dict_delta<Int, TS<Int>>({{2, 2}}),
+                                   dict_delta<Int, TS<Int>>({{1, 10}})),
+                     values<Value>(dict_delta<Int, TS<Int>>({}),
+                                   dict_delta<Int, TS<Int>>({{2, 2}}),
+                                   dict_delta<Int, TS<Int>>({{1, 1}}),
+                                   none))),
+                 values<Bool>(true, false, true, false));
+}
+
+TEST_CASE("collections: TSS unary min max and sum reduce current values")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::min_, TSS<Int>>(
+                     values<Value>(set_delta<Int>({}, {}),
+                                   set_delta<Int>({1, 2, -1, 3}, {}),
+                                   set_delta<Int>({}, {-1})))),
+                 values<Int>(none, -1, 1));
+
+    CHECK_OUTPUT((eval_node<stdlib::max_, TSS<Int>>(
+                     values<Value>(set_delta<Int>({}, {}),
+                                   set_delta<Int>({1, 2, -1, 3}, {}),
+                                   set_delta<Int>({}, {3})))),
+                 values<Int>(none, 3, 2));
+
+    CHECK_OUTPUT((eval_node<stdlib::sum_, TSS<Int>>(
+                     values<Value>(set_delta<Int>({}, {}),
+                                   set_delta<Int>({1, 2, -1, 3}, {}),
+                                   set_delta<Int>({}, {-1})))),
+                 values<Int>(0, 5, 6));
+}
+
+TEST_CASE("collections: TSD unary min max and sum reduce valid child values")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::min_, TSD<Int, TS<Float>>>(
+                     values<Value>(dict_delta<Int, TS<Float>>({}),
+                                   dict_delta<Int, TS<Float>>({{3, 2.0}, {1, -1.0}}),
+                                   dict_delta<Int, TS<Float>>({{1, 4.0}}),
+                                   dict_delta<Int, TS<Float>>({}, {3})))),
+                 values<Float>(none, -1.0, 2.0, 4.0));
+
+    CHECK_OUTPUT((eval_node<stdlib::max_, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({}),
+                                   dict_delta<Int, TS<Int>>({{3, 2}, {100, -100}}),
+                                   dict_delta<Int, TS<Int>>({{100, 5}}),
+                                   dict_delta<Int, TS<Int>>({}, {100})))),
+                 values<Int>(none, 2, 5, 2));
+
+    CHECK_OUTPUT((eval_node<stdlib::sum_, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({}),
+                                   dict_delta<Int, TS<Int>>({{3, 2}, {1, 100}}),
+                                   dict_delta<Int, TS<Int>>({{1, -1}}),
+                                   dict_delta<Int, TS<Int>>({}, {3})))),
+                 values<Int>(0, 102, 1, -1));
+}
+
 TEST_CASE("collections: the TSD key-set view is read-only but reports the owner's mutations")
 {
     using namespace hgraph;
