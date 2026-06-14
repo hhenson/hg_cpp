@@ -639,6 +639,116 @@ TEST_CASE("collections: symmetric_difference folds across three inputs")
                  values<Value>(set_delta<Int>({1, 4}, {})));
 }
 
+TEST_CASE("collections: TSS bitwise and subtraction operators mirror set algebra")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::bit_or, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1, 2}, {}),
+                                   set_delta<Int>({}, {2}),
+                                   none),
+                     values<Value>(set_delta<Int>({2, 3}, {}),
+                                   none,
+                                   set_delta<Int>({}, {2})))),
+                 values<Value>(set_delta<Int>({1, 2, 3}, {}),
+                               none,
+                               set_delta<Int>({}, {2})));
+
+    CHECK_OUTPUT((eval_node<stdlib::bit_and, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1, 2, 3}, {}),
+                                   set_delta<Int>({}, {3}),
+                                   none),
+                     values<Value>(set_delta<Int>({2, 3, 4}, {}),
+                                   none,
+                                   set_delta<Int>({1}, {})))),
+                 values<Value>(set_delta<Int>({2, 3}, {}),
+                               set_delta<Int>({}, {3}),
+                               set_delta<Int>({1}, {})));
+
+    CHECK_OUTPUT((eval_node<stdlib::sub_, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1, 2, 3}, {}),
+                                   none,
+                                   set_delta<Int>({4}, {})),
+                     values<Value>(set_delta<Int>({2}, {}),
+                                   set_delta<Int>({3}, {}),
+                                   none))),
+                 values<Value>(set_delta<Int>({1, 3}, {}),
+                               set_delta<Int>({}, {3}),
+                               set_delta<Int>({4}, {})));
+
+    CHECK_OUTPUT((eval_node<stdlib::bit_xor, TSS<Int>, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1, 2}, {}),
+                                   none),
+                     values<Value>(set_delta<Int>({2, 3}, {}),
+                                   set_delta<Int>({}, {2})))),
+                 values<Value>(set_delta<Int>({1, 3}, {}),
+                               set_delta<Int>({2}, {})));
+}
+
+TEST_CASE("collections: TSD bitwise and subtraction operators mirror set algebra")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::sub_, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
+                                   dict_delta<Int, TS<Int>>({{2, 2}})),
+                     values<Value>(none,
+                                   dict_delta<Int, TS<Int>>({{3, 2}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
+                               dict_delta<Int, TS<Int>>({{2, 2}})));
+
+    CHECK_OUTPUT((eval_node<stdlib::bit_or, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
+                                   dict_delta<Int, TS<Int>>({{2, 2}})),
+                     values<Value>(dict_delta<Int, TS<Int>>({{2, 3}}),
+                                   dict_delta<Int, TS<Int>>({{3, 2}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 1}, {2, 3}}),
+                               dict_delta<Int, TS<Int>>({{2, 2}, {3, 2}})));
+
+    CHECK_OUTPUT((eval_node<stdlib::bit_and, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
+                                   dict_delta<Int, TS<Int>>({{2, 2}})),
+                     values<Value>(dict_delta<Int, TS<Int>>({{2, 3}}),
+                                   dict_delta<Int, TS<Int>>({{3, 2}})))),
+                 values<Value>(none,
+                               dict_delta<Int, TS<Int>>({{2, 2}})));
+
+    CHECK_OUTPUT((eval_node<stdlib::bit_xor, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
+                                   dict_delta<Int, TS<Int>>({{2, 2}})),
+                     values<Value>(dict_delta<Int, TS<Int>>({{2, 3}}),
+                                   dict_delta<Int, TS<Int>>({{3, 2}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 1}, {2, 3}}),
+                               dict_delta<Int, TS<Int>>({{3, 2}}, {2})));
+}
+
+TEST_CASE("collections: TSD set operators reselect remaining values after overlap changes")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::bit_or, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 10}}),
+                                   dict_delta<Int, TS<Int>>({}, {1})),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 20}}),
+                                   none))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 10}}),
+                               dict_delta<Int, TS<Int>>({{1, 20}})));
+
+    CHECK_OUTPUT((eval_node<stdlib::bit_xor, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 10}}),
+                                   dict_delta<Int, TS<Int>>({}, {1})),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 20}}),
+                                   none))),
+                 values<Value>(none,
+                               dict_delta<Int, TS<Int>>({{1, 20}})));
+}
+
 TEST_CASE("collections: the TSD key-set view is read-only but reports the owner's mutations")
 {
     using namespace hgraph;

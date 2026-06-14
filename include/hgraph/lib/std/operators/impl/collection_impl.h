@@ -4,12 +4,16 @@
 /**
  * Collection-operator implementations (catalogue: ``operators/collection.h``).
  * Implemented so far: ``keys_`` (TSD -> TSS of its keys) and TSS set algebra
- * (``union`` / ``intersection`` / ``difference`` / ``symmetric_difference``).
+ * (``union`` / ``intersection`` / ``difference`` / ``symmetric_difference``),
+ * including the Python-compatible TSS/TSD operator aliases
+ * (``|`` / ``&`` / ``-`` / ``^``).
  * ``union`` is also what ``map_`` composes to derive its inferred ``__keys__``
  * lifecycle set, mirroring Python (``__keys__ = union(*key_sets)``).
  */
 
+#include <hgraph/lib/std/operators/arithmetic.h>
 #include <hgraph/lib/std/operators/collection.h>
+#include <hgraph/lib/std/operators/logical.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/static_node.h>
@@ -171,6 +175,182 @@ namespace hgraph::stdlib
             }
         };
 
+        template <typename Keep>
+        inline void erase_tsd_keys_not_matching(TSDDataMutationView &mutation, const TSDOutputView &out, Keep keep)
+        {
+            std::vector<Value> removed;
+            for (const ValueView &key : out.keys())
+            {
+                if (!keep(key)) { removed.emplace_back(key); }
+            }
+            for (const Value &key : removed) { (void)mutation.erase(key.view()); }
+        }
+
+        inline void copy_tsd_child_if_changed(TSDDataMutationView &mutation, const TSDOutputView &out,
+                                              const ValueView &key, const TSInputView &source)
+        {
+            if (!source.valid()) { return; }
+
+            TSOutputView current = out.at(key);
+            if (current.valid() && current.value().equals(source.value())) { return; }
+            mutation.set(key, source.value());
+        }
+
+        inline bool tsd_key_has_modified_valid_child(const TSDInputView &tsd, const ValueView &key)
+        {
+            const std::size_t slot = tsd.find_slot(key);
+            return slot != TS_DATA_NO_CHILD_ID && tsd.slot_modified(slot) && tsd.at_slot(slot).valid();
+        }
+
+        struct difference_tsd_binary
+        {
+            static constexpr auto name = "difference_tsd";
+
+            static void eval(In<"lhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> rhs,
+                             Out<TSD<ScalarVar<"K">, TsVar<"V">>> out)
+            {
+                const TSDInputView  &lhs_dict = lhs;
+                const TSDInputView  &rhs_dict = rhs;
+                const TSDOutputView &out_dict = out;
+
+                auto mutation = out_dict.begin_mutation(out_dict.evaluation_time());
+                erase_tsd_keys_not_matching(mutation, out_dict, [&](const ValueView &key) {
+                    return lhs_dict.contains(key) && !rhs_dict.contains(key);
+                });
+
+                for (const auto [key, child] : lhs.modified_items())
+                {
+                    if (!rhs_dict.contains(key)) { copy_tsd_child_if_changed(mutation, out_dict, key, child); }
+                }
+                for (const ValueView &key : rhs.removed_keys())
+                {
+                    if (lhs_dict.contains(key))
+                    {
+                        copy_tsd_child_if_changed(mutation, out_dict, key, lhs_dict.at(key));
+                    }
+                }
+            }
+        };
+
+        struct intersection_tsd_binary
+        {
+            static constexpr auto name = "intersection_tsd";
+
+            static void eval(In<"lhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> rhs,
+                             Out<TSD<ScalarVar<"K">, TsVar<"V">>> out)
+            {
+                const TSDInputView  &lhs_dict = lhs;
+                const TSDInputView  &rhs_dict = rhs;
+                const TSDOutputView &out_dict = out;
+
+                auto mutation = out_dict.begin_mutation(out_dict.evaluation_time());
+                erase_tsd_keys_not_matching(mutation, out_dict, [&](const ValueView &key) {
+                    return lhs_dict.contains(key) && rhs_dict.contains(key);
+                });
+
+                for (const auto [key, child] : lhs.modified_items())
+                {
+                    if (rhs_dict.contains(key)) { copy_tsd_child_if_changed(mutation, out_dict, key, child); }
+                }
+                for (const ValueView &key : rhs.added_keys())
+                {
+                    if (lhs_dict.contains(key))
+                    {
+                        copy_tsd_child_if_changed(mutation, out_dict, key, lhs_dict.at(key));
+                    }
+                }
+            }
+        };
+
+        struct union_tsd_binary
+        {
+            static constexpr auto name = "union_tsd";
+
+            static void eval(In<"lhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> rhs,
+                             Out<TSD<ScalarVar<"K">, TsVar<"V">>> out)
+            {
+                const TSDInputView  &lhs_dict = lhs;
+                const TSDInputView  &rhs_dict = rhs;
+                const TSDOutputView &out_dict = out;
+
+                auto mutation = out_dict.begin_mutation(out_dict.evaluation_time());
+                erase_tsd_keys_not_matching(mutation, out_dict, [&](const ValueView &key) {
+                    return lhs_dict.contains(key) || rhs_dict.contains(key);
+                });
+
+                for (const auto [key, child] : lhs.modified_items())
+                {
+                    copy_tsd_child_if_changed(mutation, out_dict, key, child);
+                }
+                for (const auto [key, child] : rhs.modified_items())
+                {
+                    if (!tsd_key_has_modified_valid_child(lhs_dict, key))
+                    {
+                        copy_tsd_child_if_changed(mutation, out_dict, key, child);
+                    }
+                }
+                for (const ValueView &key : lhs.removed_keys())
+                {
+                    if (rhs_dict.contains(key))
+                    {
+                        copy_tsd_child_if_changed(mutation, out_dict, key, rhs_dict.at(key));
+                    }
+                }
+                for (const ValueView &key : rhs.removed_keys())
+                {
+                    if (lhs_dict.contains(key))
+                    {
+                        copy_tsd_child_if_changed(mutation, out_dict, key, lhs_dict.at(key));
+                    }
+                }
+            }
+        };
+
+        struct symmetric_difference_tsd_binary
+        {
+            static constexpr auto name = "symmetric_difference_tsd";
+
+            static void eval(In<"lhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> rhs,
+                             Out<TSD<ScalarVar<"K">, TsVar<"V">>> out)
+            {
+                const TSDInputView  &lhs_dict = lhs;
+                const TSDInputView  &rhs_dict = rhs;
+                const TSDOutputView &out_dict = out;
+
+                auto mutation = out_dict.begin_mutation(out_dict.evaluation_time());
+                erase_tsd_keys_not_matching(mutation, out_dict, [&](const ValueView &key) {
+                    return lhs_dict.contains(key) != rhs_dict.contains(key);
+                });
+
+                for (const auto [key, child] : lhs.modified_items())
+                {
+                    if (!rhs_dict.contains(key)) { copy_tsd_child_if_changed(mutation, out_dict, key, child); }
+                }
+                for (const auto [key, child] : rhs.modified_items())
+                {
+                    if (!lhs_dict.contains(key)) { copy_tsd_child_if_changed(mutation, out_dict, key, child); }
+                }
+                for (const ValueView &key : lhs.removed_keys())
+                {
+                    if (rhs_dict.contains(key))
+                    {
+                        copy_tsd_child_if_changed(mutation, out_dict, key, rhs_dict.at(key));
+                    }
+                }
+                for (const ValueView &key : rhs.removed_keys())
+                {
+                    if (lhs_dict.contains(key))
+                    {
+                        copy_tsd_child_if_changed(mutation, out_dict, key, lhs_dict.at(key));
+                    }
+                }
+            }
+        };
+
         [[nodiscard]] inline bool all_args_are_tss(OperatorCallContext context)
         {
             if (context.args.empty()) { return false; }
@@ -309,6 +489,16 @@ namespace hgraph::stdlib
         register_graph_overload<intersection_, collection_impl_detail::intersection_tss_fold>();
         register_graph_overload<difference_, collection_impl_detail::difference_tss_fold>();
         register_graph_overload<symmetric_difference_, collection_impl_detail::symmetric_difference_tss_fold>();
+
+        register_graph_overload<bit_or, collection_impl_detail::union_tss_fold>();
+        register_graph_overload<bit_and, collection_impl_detail::intersection_tss_fold>();
+        register_graph_overload<sub_, collection_impl_detail::difference_tss_fold>();
+        register_graph_overload<bit_xor, collection_impl_detail::symmetric_difference_tss_fold>();
+
+        register_overload<bit_or, collection_impl_detail::union_tsd_binary>();
+        register_overload<bit_and, collection_impl_detail::intersection_tsd_binary>();
+        register_overload<sub_, collection_impl_detail::difference_tsd_binary>();
+        register_overload<bit_xor, collection_impl_detail::symmetric_difference_tsd_binary>();
     }
 }  // namespace hgraph::stdlib
 
