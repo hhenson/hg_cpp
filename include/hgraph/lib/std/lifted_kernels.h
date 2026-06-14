@@ -396,6 +396,43 @@ namespace hgraph::stdlib
     };
 
     template <typename L, typename R = L>
+    struct scalar_mean
+    {
+        static constexpr const char *name = "scalar_mean";
+        static constexpr std::array<std::string_view, 2> parameter_names{"lhs", "rhs"};
+
+        [[nodiscard]] static Float apply(const L &lhs, const R &rhs)
+        {
+            return (static_cast<Float>(lhs) + static_cast<Float>(rhs)) / Float{2.0};
+        }
+    };
+
+    template <typename L, typename R = L>
+    struct scalar_var
+    {
+        static constexpr const char *name = "scalar_var";
+        static constexpr std::array<std::string_view, 2> parameter_names{"lhs", "rhs"};
+
+        [[nodiscard]] static Float apply(const L &lhs, const R &rhs)
+        {
+            const Float delta = static_cast<Float>(lhs) - static_cast<Float>(rhs);
+            return (delta * delta) / Float{2.0};
+        }
+    };
+
+    template <typename L, typename R = L>
+    struct scalar_std
+    {
+        static constexpr const char *name = "scalar_std";
+        static constexpr std::array<std::string_view, 2> parameter_names{"lhs", "rhs"};
+
+        [[nodiscard]] static Float apply(const L &lhs, const R &rhs)
+        {
+            return std::sqrt(scalar_var<L, R>::apply(lhs, rhs));
+        }
+    };
+
+    template <typename L, typename R = L>
     struct scalar_and
     {
         static constexpr const char *name = "scalar_and";

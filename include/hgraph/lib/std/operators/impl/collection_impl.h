@@ -12,11 +12,14 @@
  * lifecycle set, mirroring Python (``__keys__ = union(*key_sets)``).
  */
 
+#include <hgraph/lib/std/lifted_kernels.h>
 #include <hgraph/lib/std/operators/arithmetic.h>
 #include <hgraph/lib/std/operators/collection.h>
 #include <hgraph/lib/std/operators/comparison.h>
+#include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
 #include <hgraph/lib/std/operators/logical.h>
 #include <hgraph/types/operator_dispatch.h>
+#include <hgraph/types/lift.h>
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/static_node.h>
 
@@ -1017,8 +1020,31 @@ namespace hgraph::stdlib
         };
     }  // namespace collection_impl_detail
 
+    template <typename Operator, template <typename...> class Kernel>
+    inline void register_numeric_binary_collection_overloads()
+    {
+        register_overload<Operator, lift<Kernel<Int, Int>>>();
+        register_overload<Operator, lift<Kernel<Float, Float>>>();
+        register_overload<Operator, lift<Kernel<Int, Float>>>();
+        register_overload<Operator, lift<Kernel<Float, Int>>>();
+    }
+
+    template <typename Operator, template <typename...> class Kernel>
+    inline void register_numeric_binary_tsl_lifted_maps()
+    {
+        using tsl_itemwise_impl_detail::tsl_binary_lifted_map;
+        register_graph_overload<Operator, tsl_binary_lifted_map<lift<Kernel<Int, Int>>>>();
+        register_graph_overload<Operator, tsl_binary_lifted_map<lift<Kernel<Float, Float>>>>();
+        register_graph_overload<Operator, tsl_binary_lifted_map<lift<Kernel<Int, Float>>>>();
+        register_graph_overload<Operator, tsl_binary_lifted_map<lift<Kernel<Float, Int>>>>();
+    }
+
     inline void register_collection_operators()
     {
+        using tsl_itemwise_impl_detail::tsl_binary_map;
+        using tsl_itemwise_impl_detail::tsl_lhs_broadcast_map;
+        using tsl_itemwise_impl_detail::tsl_rhs_broadcast_map;
+
         register_graph_overload<keys_, collection_impl_detail::keys_tsd>();
         register_overload<not_, collection_impl_detail::not_tss>();
         register_overload<not_, collection_impl_detail::not_tsd>();
@@ -1056,6 +1082,16 @@ namespace hgraph::stdlib
         register_overload<std_, collection_impl_detail::std_tsl_unary<Float>>();
         register_overload<var_, collection_impl_detail::var_tsl_unary<Int>>();
         register_overload<var_, collection_impl_detail::var_tsl_unary<Float>>();
+        register_graph_overload<sum_, tsl_binary_map<add_>>();
+        register_graph_overload<sum_, tsl_rhs_broadcast_map<add_>>();
+        register_graph_overload<sum_, tsl_lhs_broadcast_map<add_>>();
+
+        register_numeric_binary_collection_overloads<mean, scalar_mean>();
+        register_numeric_binary_collection_overloads<std_, scalar_std>();
+        register_numeric_binary_collection_overloads<var_, scalar_var>();
+        register_numeric_binary_tsl_lifted_maps<mean, scalar_mean>();
+        register_numeric_binary_tsl_lifted_maps<std_, scalar_std>();
+        register_numeric_binary_tsl_lifted_maps<var_, scalar_var>();
 
         register_graph_overload<union_, collection_impl_detail::union_tss_fold>();
         register_graph_overload<intersection_, collection_impl_detail::intersection_tss_fold>();

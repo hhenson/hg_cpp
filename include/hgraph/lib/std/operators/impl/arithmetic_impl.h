@@ -3,6 +3,7 @@
 
 #include <hgraph/lib/std/lifted_kernels.h>
 #include <hgraph/lib/std/operators/arithmetic.h>   // add_ / sub_ / mul_ / div_ / DivideByZero
+#include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/lift.h>
 #include <hgraph/types/primitive_types.h>
@@ -315,6 +316,11 @@ namespace hgraph::stdlib
     /** Register the arithmetic operator overloads (``add_`` / ``sub_`` / ``div_``). */
     inline void register_arithmetic_operators()
     {
+        using tsl_itemwise_impl_detail::tsl_binary_map;
+        using tsl_itemwise_impl_detail::tsl_lhs_broadcast_map;
+        using tsl_itemwise_impl_detail::tsl_rhs_broadcast_map;
+        using tsl_itemwise_impl_detail::tsl_unary_map;
+
         // add_ — homogeneous numeric / temporal, mixed numeric, and heterogeneous temporal.
         register_overload<add_, lift<scalar_add<Int>>>();                                      // int + int -> int
         register_overload<add_, lift<scalar_add<Float>>>();                                    // float + float -> float
@@ -325,6 +331,9 @@ namespace hgraph::stdlib
         register_overload<add_, lift<scalar_add<DateTime, TimeDelta, DateTime>>>();            // DateTime + TimeDelta
         register_overload<add_, lift<scalar_add<TimeDelta, DateTime, DateTime>>>();            // TimeDelta + DateTime
         register_overload<add_, add_date_timedelta>();                                           // Date + TimeDelta -> Date
+        register_graph_overload<add_, tsl_binary_map<add_>>();
+        register_graph_overload<add_, tsl_rhs_broadcast_map<add_>>();
+        register_graph_overload<add_, tsl_lhs_broadcast_map<add_>>();
 
         // sub_ — note the result type that differs from the operands.
         register_overload<sub_, lift<scalar_sub<Int>>>();                                      // int - int -> int
@@ -335,6 +344,9 @@ namespace hgraph::stdlib
         register_overload<sub_, lift<scalar_sub<DateTime, TimeDelta, DateTime>>>();            // DateTime - TimeDelta
         register_overload<sub_, lift<scalar_sub<DateTime, DateTime, TimeDelta>>>();            // DateTime - DateTime -> TimeDelta
         register_overload<sub_, sub_dates>();                                                    // Date - Date -> TimeDelta
+        register_graph_overload<sub_, tsl_binary_map<sub_>>();
+        register_graph_overload<sub_, tsl_rhs_broadcast_map<sub_>>();
+        register_graph_overload<sub_, tsl_lhs_broadcast_map<sub_>>();
 
         // mul_ — numeric products and string repetition.
         register_overload<mul_, lift<scalar_mul<Int>>>();
@@ -343,6 +355,9 @@ namespace hgraph::stdlib
         register_overload<mul_, lift<scalar_mul<Float, Int, Float>>>();
         register_overload<mul_, repeat_string_right>();
         register_overload<mul_, repeat_string_left>();
+        register_graph_overload<mul_, tsl_binary_map<mul_>>();
+        register_graph_overload<mul_, tsl_rhs_broadcast_map<mul_>>();
+        register_graph_overload<mul_, tsl_lhs_broadcast_map<mul_>>();
 
         // div_ — the two-argument form defaults to DivideByZero::Error; the three-argument
         // form takes an explicit policy. Arity selects between them.
@@ -355,6 +370,9 @@ namespace hgraph::stdlib
         register_overload<div_, div_numbers<Int, Float>>();
         register_overload<div_, div_numbers<Float, Int>>();
         register_overload<div_, div_timedeltas>();                    // TimeDelta / TimeDelta -> Float
+        register_graph_overload<div_, tsl_binary_map<div_>>();
+        register_graph_overload<div_, tsl_rhs_broadcast_map<div_>>();
+        register_graph_overload<div_, tsl_lhs_broadcast_map<div_>>();
 
         // floordiv_ / mod_ — integer outputs for int operands, Float otherwise.
         register_overload<floordiv_, lift<scalar_floordiv<Int>>>();
@@ -365,6 +383,9 @@ namespace hgraph::stdlib
         register_overload<floordiv_, floordiv_numbers<Float, Float>>();
         register_overload<floordiv_, floordiv_numbers<Int, Float>>();
         register_overload<floordiv_, floordiv_numbers<Float, Int>>();
+        register_graph_overload<floordiv_, tsl_binary_map<floordiv_>>();
+        register_graph_overload<floordiv_, tsl_rhs_broadcast_map<floordiv_>>();
+        register_graph_overload<floordiv_, tsl_lhs_broadcast_map<floordiv_>>();
 
         register_overload<mod_, lift<scalar_mod<Int>>>();
         register_overload<mod_, lift<scalar_mod<Float>>>();
@@ -374,6 +395,9 @@ namespace hgraph::stdlib
         register_overload<mod_, mod_numbers<Float, Float>>();
         register_overload<mod_, mod_numbers<Int, Float>>();
         register_overload<mod_, mod_numbers<Float, Int>>();
+        register_graph_overload<mod_, tsl_binary_map<mod_>>();
+        register_graph_overload<mod_, tsl_rhs_broadcast_map<mod_>>();
+        register_graph_overload<mod_, tsl_lhs_broadcast_map<mod_>>();
 
         // divmod_ — mirrors floordiv_ / mod_ result typing.
         register_overload<divmod_, divmod_ints>();
@@ -390,16 +414,22 @@ namespace hgraph::stdlib
         register_overload<pow_, pow_numbers<Float, Float>>();
         register_overload<pow_, pow_numbers<Int, Float>>();
         register_overload<pow_, pow_numbers<Float, Int>>();
+        register_graph_overload<pow_, tsl_binary_map<pow_>>();
+        register_graph_overload<pow_, tsl_rhs_broadcast_map<pow_>>();
+        register_graph_overload<pow_, tsl_lhs_broadcast_map<pow_>>();
 
         register_overload<neg_, lift<scalar_neg<Int>>>();
         register_overload<neg_, lift<scalar_neg<Float>>>();
         register_overload<neg_, lift<scalar_neg<TimeDelta>>>();
+        register_graph_overload<neg_, tsl_unary_map<neg_>>();
         register_overload<pos_, lift<scalar_pos<Int>>>();
         register_overload<pos_, lift<scalar_pos<Float>>>();
         register_overload<pos_, lift<scalar_pos<TimeDelta>>>();
+        register_graph_overload<pos_, tsl_unary_map<pos_>>();
         register_overload<abs_, lift<scalar_abs<Int>>>();
         register_overload<abs_, lift<scalar_abs<Float>>>();
         register_overload<abs_, abs_timedelta>();
+        register_graph_overload<abs_, tsl_unary_map<abs_>>();
         register_overload<sign, lift<scalar_sign<Int>>>();
         register_overload<sign, lift<scalar_sign<Float>>>();
         register_overload<ln, lift<scalar_ln>>();

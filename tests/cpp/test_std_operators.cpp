@@ -393,6 +393,88 @@ TEST_CASE("std operators: unary numeric operators support neg pos abs sign and l
     CHECK_OUTPUT(eval_node<stdlib::ln>(values<Float>(1.0, std::numbers::e)), values<Float>(0.0, 1.0));
 }
 
+TEST_CASE("std operators: fixed TSL arithmetic maps elementwise")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::add_, TSL<TS<Int>, 4>, TSL<TS<Int>, 4>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {2, 2}, {3, 5}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 3}, {3, 6}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 3}, {3, 11}})));
+    CHECK_OUTPUT((eval_node<stdlib::sub_, TSL<TS<Int>, 2>, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 3}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, -1}, {1, -1}})));
+    CHECK_OUTPUT((eval_node<stdlib::mul_, TSL<TS<Int>, 2>, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 3}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 6}})));
+    CHECK_OUTPUT((eval_node<stdlib::div_, TSL<TS<Float>, 2>, TSL<TS<Float>, 2>>(
+                     values<Value>(list_delta<TS<Float>>({{0, 1.0}, {1, 2.0}})),
+                     values<Value>(list_delta<TS<Float>>({{0, 2.0}, {1, 1.0}})))),
+                 values<Value>(list_delta<TS<Float>>({{0, 0.5}, {1, 2.0}})));
+    CHECK_OUTPUT((eval_node<stdlib::floordiv_, TSL<TS<Int>, 3>, TSL<TS<Int>, 3>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 2}, {2, 100}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 2}, {2, 10}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 1}, {2, 10}})));
+    CHECK_OUTPUT((eval_node<stdlib::mod_, TSL<TS<Int>, 3>, TSL<TS<Int>, 3>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 2}, {2, 105}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 2}, {2, 10}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 0}, {2, 5}})));
+    CHECK_OUTPUT((eval_node<stdlib::pow_, TSL<TS<Int>, 3>, TSL<TS<Int>, 3>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 4}, {2, 5}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 0}, {2, 1}})))),
+                 values<Value>(list_delta<TS<Float>>({{0, 27.0}, {1, 1.0}, {2, 5.0}})));
+}
+
+TEST_CASE("std operators: fixed TSL arithmetic broadcasts scalar time-series")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::add_, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})), values<Int>(2))),
+                 values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 4}})));
+    CHECK_OUTPUT((eval_node<stdlib::sub_, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})), values<Int>(2))),
+                 values<Value>(list_delta<TS<Int>>({{0, -1}, {1, 0}})));
+    CHECK_OUTPUT((eval_node<stdlib::sub_, TSL<TS<Int>, 2>>(
+                     values<Int>(10), values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 9}, {1, 8}})));
+    CHECK_OUTPUT((eval_node<stdlib::mul_, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})), values<Int>(2))),
+                 values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 4}})));
+    CHECK_OUTPUT((eval_node<stdlib::div_, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})), values<Int>(2))),
+                 values<Value>(list_delta<TS<Float>>({{0, 0.5}, {1, 1.0}})));
+    CHECK_OUTPUT((eval_node<stdlib::floordiv_, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})), values<Int>(2))),
+                 values<Value>(list_delta<TS<Int>>({{0, 0}, {1, 1}})));
+    CHECK_OUTPUT((eval_node<stdlib::mod_, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 2}})), values<Int>(2))),
+                 values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 0}})));
+    CHECK_OUTPUT((eval_node<stdlib::pow_, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 2}})), values<Int>(2))),
+                 values<Value>(list_delta<TS<Float>>({{0, 9.0}, {1, 4.0}})));
+    CHECK_OUTPUT((eval_node<stdlib::div_, TSL<TS<Int>, 2>>(
+                     values<Int>(12), values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 4}})))),
+                 values<Value>(list_delta<TS<Float>>({{0, 4.0}, {1, 3.0}})));
+}
+
+TEST_CASE("std operators: fixed TSL unary arithmetic maps elementwise")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::neg_, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, -1}, {1, -2}})));
+    CHECK_OUTPUT((eval_node<stdlib::pos_, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, -2}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 1}, {1, -2}})));
+    CHECK_OUTPUT((eval_node<stdlib::abs_, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, -2}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})));
+}
+
 TEST_CASE("std operators: logical and bitwise operators support standard scalars")
 {
     stdlib::register_standard_operators();
@@ -407,6 +489,89 @@ TEST_CASE("std operators: logical and bitwise operators support standard scalars
     CHECK_OUTPUT(eval_node<stdlib::invert_>(values<Bool>(true, false)), values<Int>(-2, -1));
     CHECK_OUTPUT(eval_node<stdlib::lshift_>(values<Int>(1, 2), values<Int>(3, 2)), values<Int>(8, 8));
     CHECK_OUTPUT(eval_node<stdlib::rshift_>(values<Int>(8, 9), values<Int>(1, 2)), values<Int>(4, 2));
+}
+
+TEST_CASE("std operators: fixed TSL bitwise operators map elementwise")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::invert_, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, -2}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, -2}, {1, 1}})));
+    CHECK_OUTPUT((eval_node<stdlib::bit_and, TSL<TS<Int>, 3>, TSL<TS<Int>, 3>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 8}, {2, 7}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 9}, {2, 5}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 0}, {1, 8}, {2, 5}})));
+    CHECK_OUTPUT((eval_node<stdlib::bit_or, TSL<TS<Int>, 3>, TSL<TS<Int>, 3>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 8}, {2, 7}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 9}, {2, 5}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 9}, {2, 7}})));
+    CHECK_OUTPUT((eval_node<stdlib::bit_xor, TSL<TS<Int>, 3>, TSL<TS<Int>, 3>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 8}, {2, 7}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 9}, {2, 5}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 1}, {2, 2}})));
+    CHECK_OUTPUT((eval_node<stdlib::lshift_, TSL<TS<Int>, 3>, TSL<TS<Int>, 3>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 10}, {2, 8}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}, {2, 3}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 4}, {1, 40}, {2, 64}})));
+    CHECK_OUTPUT((eval_node<stdlib::rshift_, TSL<TS<Int>, 3>, TSL<TS<Int>, 3>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 10}, {2, 1024}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}, {2, 3}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}, {2, 128}})));
+    CHECK_OUTPUT((eval_node<stdlib::bit_and, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 6}})), values<Int>(2))),
+                 values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 2}})));
+    CHECK_OUTPUT((eval_node<stdlib::lshift_, TSL<TS<Int>, 2>>(
+                     values<Int>(1), values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 4}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 8}, {1, 16}})));
+}
+
+TEST_CASE("std operators: fixed TSL comparisons and extrema match Python contracts")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::eq_, TSL<TS<Int>, 2>, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 3}})))),
+                 values<Bool>(false));
+    CHECK_OUTPUT((eval_node<stdlib::eq_, TSL<TS<Float>, 2>, TSL<TS<Float>, 2>>(
+                     values<Value>(list_delta<TS<Float>>({{0, 1.0}, {1, 2.0}})),
+                     values<Value>(list_delta<TS<Float>>({{0, 1.0 + 1e-11}, {1, 2.0}})))),
+                 values<Bool>(true));
+    CHECK_OUTPUT((eval_node<stdlib::ne_, TSL<TS<Int>, 2>, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})))),
+                 values<Bool>(false));
+    CHECK_OUTPUT((eval_node<stdlib::min_, TSL<TS<Int>, 2>, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 3}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})));
+    CHECK_OUTPUT((eval_node<stdlib::max_, TSL<TS<Float>, 2>, TSL<TS<Float>, 2>>(
+                     values<Value>(list_delta<TS<Float>>({{0, 1.0}, {1, 2.0}})),
+                     values<Value>(list_delta<TS<Float>>({{0, 2.0}, {1, 3.0}})))),
+                 values<Value>(list_delta<TS<Float>>({{0, 2.0}, {1, 3.0}})));
+}
+
+TEST_CASE("std operators: fixed TSL binary analytics map elementwise")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::sum_, TSL<TS<Int>, 2>, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 3}})))),
+                 values<Value>(list_delta<TS<Int>>({{0, 3}, {1, 5}})));
+    CHECK_OUTPUT((eval_node<stdlib::mean, TSL<TS<Int>, 2>, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 3}})))),
+                 values<Value>(list_delta<TS<Float>>({{0, 1.5}, {1, 2.5}})));
+    CHECK_OUTPUT((eval_node<stdlib::var_, TSL<TS<Float>, 2>, TSL<TS<Float>, 2>>(
+                     values<Value>(list_delta<TS<Float>>({{0, 1.0}, {1, 2.0}})),
+                     values<Value>(list_delta<TS<Float>>({{0, 2.0}, {1, 3.0}})))),
+                 values<Value>(list_delta<TS<Float>>({{0, 0.5}, {1, 0.5}})));
+    CHECK_OUTPUT((eval_node<stdlib::std_, TSL<TS<Int>, 2>, TSL<TS<Int>, 2>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}})),
+                     values<Value>(list_delta<TS<Int>>({{0, 2}, {1, 3}})))),
+                 values<Value>(list_delta<TS<Float>>({{0, std::sqrt(0.5)}, {1, std::sqrt(0.5)}})));
 }
 
 TEST_CASE("std operators: string operators support replace substr and container basics")
