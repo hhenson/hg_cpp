@@ -951,6 +951,68 @@ TEST_CASE("collections: TSD unary mean std and variance reduce valid child value
                  values<Float>(0.0, 0.0, 0.5, 35.0 / 12.0));
 }
 
+TEST_CASE("collections: TSL unary min max and sum reduce valid child values")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::min_, TSL<TS<Int>, 5>>(
+                     values<Value>(list_delta<TS<Int>>({}),
+                                   list_delta<TS<Int>>({3, 5, 2, 8, 10}),
+                                   list_delta<TS<Int>>({{2, 20}})))),
+                 values<Int>(none, 2, 3));
+
+    CHECK_OUTPUT((eval_node<stdlib::max_, TSL<TS<Float>, 3>>(
+                     values<Value>(list_delta<TS<Float>>({}),
+                                   list_delta<TS<Float>>({1.5, -2.0, 4.0}),
+                                   list_delta<TS<Float>>({{2, 0.0}})))),
+                 values<Float>(none, 4.0, 1.5));
+
+    CHECK_OUTPUT((eval_node<stdlib::sum_, TSL<TS<Int>, 5>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}}),
+                                   list_delta<TS<Int>>({{2, 3}, {3, 4}, {4, 5}}),
+                                   list_delta<TS<Int>>({{0, 10}})))),
+                 values<Int>(3, 15, 24));
+}
+
+TEST_CASE("collections: TSL unary mean std and variance match Python analytics")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::mean, TSL<TS<Int>, 5>>(
+                     values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}}),
+                                   list_delta<TS<Int>>({{2, 3}, {3, 4}, {4, 5}}),
+                                   list_delta<TS<Int>>({{0, 10}})))),
+                 values<Float>(0.6, 3.0, 4.8));
+
+    const auto std_out = eval_node<stdlib::std_, TSL<TS<Int>, 5>>(
+        values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}}),
+                      list_delta<TS<Int>>({{2, 3}, {3, 4}, {4, 5}}),
+                      list_delta<TS<Int>>({{0, 10}})));
+    REQUIRE(std_out.size() == 3);
+    REQUIRE(std_out[0].has_value());
+    CHECK(std::abs(std_out[0]->view().checked_as<Float>() - std::sqrt(0.5)) < 1e-12);
+    REQUIRE(std_out[1].has_value());
+    CHECK(std::abs(std_out[1]->view().checked_as<Float>() - std::sqrt(2.5)) < 1e-12);
+    REQUIRE(std_out[2].has_value());
+    CHECK(std::abs(std_out[2]->view().checked_as<Float>() - std::sqrt(9.7)) < 1e-12);
+
+    const auto var_out = eval_node<stdlib::var_, TSL<TS<Int>, 5>>(
+        values<Value>(list_delta<TS<Int>>({{0, 1}, {1, 2}}),
+                      list_delta<TS<Int>>({{2, 3}, {3, 4}, {4, 5}}),
+                      list_delta<TS<Int>>({{0, 10}})));
+    REQUIRE(var_out.size() == 3);
+    REQUIRE(var_out[0].has_value());
+    CHECK(std::abs(var_out[0]->view().checked_as<Float>() - 0.5) < 1e-12);
+    REQUIRE(var_out[1].has_value());
+    CHECK(std::abs(var_out[1]->view().checked_as<Float>() - 2.5) < 1e-12);
+    REQUIRE(var_out[2].has_value());
+    CHECK(std::abs(var_out[2]->view().checked_as<Float>() - 9.7) < 1e-12);
+}
+
 TEST_CASE("collections: the TSD key-set view is read-only but reports the owner's mutations")
 {
     using namespace hgraph;

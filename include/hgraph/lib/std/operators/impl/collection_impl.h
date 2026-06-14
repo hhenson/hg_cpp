@@ -25,6 +25,7 @@
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -245,6 +246,52 @@ namespace hgraph::stdlib
             }
         };
 
+        struct min_tsl_unary
+        {
+            static constexpr auto name = "min_tsl_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSL<TS<ScalarVar<"V">>, SIZE<"N">>, InputValidity::Unchecked> ts,
+                             Out<TS<ScalarVar<"V">>> out)
+            {
+                std::optional<Value> best;
+                for (std::size_t i = 0; i < ts.size(); ++i)
+                {
+                    auto child = ts[i];
+                    if (!child.valid()) { continue; }
+                    const ValueView value = child.base().value();
+                    if (!best.has_value() || value.compare(best->view()) == std::partial_ordering::less)
+                    {
+                        best.emplace(value);
+                    }
+                }
+                if (best.has_value()) { out.apply(best->view()); }
+            }
+        };
+
+        struct max_tsl_unary
+        {
+            static constexpr auto name = "max_tsl_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSL<TS<ScalarVar<"V">>, SIZE<"N">>, InputValidity::Unchecked> ts,
+                             Out<TS<ScalarVar<"V">>> out)
+            {
+                std::optional<Value> best;
+                for (std::size_t i = 0; i < ts.size(); ++i)
+                {
+                    auto child = ts[i];
+                    if (!child.valid()) { continue; }
+                    const ValueView value = child.base().value();
+                    if (!best.has_value() || value.compare(best->view()) == std::partial_ordering::greater)
+                    {
+                        best.emplace(value);
+                    }
+                }
+                if (best.has_value()) { out.apply(best->view()); }
+            }
+        };
+
         template <typename T>
         struct sum_tss_unary
         {
@@ -256,6 +303,114 @@ namespace hgraph::stdlib
                 T total{};
                 for (const T &key : ts.values()) { total += key; }
                 out.set(total);
+            }
+        };
+
+        template <typename T, auto N>
+        [[nodiscard]] inline std::tuple<Float, std::size_t, std::size_t> tsl_sum_valid_and_size(
+            const In<"ts", TSL<TS<T>, N>, InputValidity::Unchecked> &ts)
+        {
+            Float       total       = 0.0;
+            std::size_t valid_count = 0;
+            const auto  size        = ts.size();
+            for (std::size_t i = 0; i < size; ++i)
+            {
+                auto child = ts[i];
+                if (!child.valid()) { continue; }
+                total += static_cast<Float>(child.value());
+                ++valid_count;
+            }
+            return {total, valid_count, size};
+        }
+
+        template <typename T>
+        struct sum_tsl_unary
+        {
+            static constexpr auto name = "sum_tsl_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSL<TS<T>, SIZE<"N">>, InputValidity::Unchecked> ts, Out<TS<T>> out)
+            {
+                T total{};
+                for (std::size_t i = 0; i < ts.size(); ++i)
+                {
+                    auto child = ts[i];
+                    if (child.valid()) { total += child.value(); }
+                }
+                out.set(total);
+            }
+        };
+
+        template <typename T>
+        struct mean_tsl_unary
+        {
+            static constexpr auto name = "mean_tsl_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSL<TS<T>, SIZE<"N">>, InputValidity::Unchecked> ts, Out<TS<Float>> out)
+            {
+                const auto [total, _, size] = tsl_sum_valid_and_size(ts);
+                static_cast<void>(_);
+                out.set(size == 0 ? std::numeric_limits<Float>::quiet_NaN()
+                                  : total / static_cast<Float>(size));
+            }
+        };
+
+        template <typename T>
+        struct var_tsl_unary
+        {
+            static constexpr auto name = "var_tsl_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSL<TS<T>, SIZE<"N">>, InputValidity::Unchecked> ts, Out<TS<Float>> out)
+            {
+                const auto [total, valid_count, _] = tsl_sum_valid_and_size(ts);
+                static_cast<void>(_);
+                if (valid_count <= 1)
+                {
+                    out.set(0.0);
+                    return;
+                }
+
+                const Float mean_value = total / static_cast<Float>(valid_count);
+                Float       sum_sq     = 0.0;
+                for (std::size_t i = 0; i < ts.size(); ++i)
+                {
+                    auto child = ts[i];
+                    if (!child.valid()) { continue; }
+                    const Float delta = static_cast<Float>(child.value()) - mean_value;
+                    sum_sq += delta * delta;
+                }
+                out.set(sum_sq / static_cast<Float>(valid_count - 1));
+            }
+        };
+
+        template <typename T>
+        struct std_tsl_unary
+        {
+            static constexpr auto name = "std_tsl_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSL<TS<T>, SIZE<"N">>, InputValidity::Unchecked> ts, Out<TS<Float>> out)
+            {
+                const auto [total, valid_count, _] = tsl_sum_valid_and_size(ts);
+                static_cast<void>(_);
+                if (valid_count <= 1)
+                {
+                    out.set(0.0);
+                    return;
+                }
+
+                const Float mean_value = total / static_cast<Float>(valid_count);
+                Float       sum_sq     = 0.0;
+                for (std::size_t i = 0; i < ts.size(); ++i)
+                {
+                    auto child = ts[i];
+                    if (!child.valid()) { continue; }
+                    const Float delta = static_cast<Float>(child.value()) - mean_value;
+                    sum_sq += delta * delta;
+                }
+                out.set(std::sqrt(sum_sq / static_cast<Float>(valid_count - 1)));
             }
         };
 
@@ -875,10 +1030,14 @@ namespace hgraph::stdlib
         register_overload<max_, collection_impl_detail::max_tss_unary>();
         register_overload<min_, collection_impl_detail::min_tsd_unary>();
         register_overload<max_, collection_impl_detail::max_tsd_unary>();
+        register_overload<min_, collection_impl_detail::min_tsl_unary>();
+        register_overload<max_, collection_impl_detail::max_tsl_unary>();
         register_overload<sum_, collection_impl_detail::sum_tss_unary<Int>>();
         register_overload<sum_, collection_impl_detail::sum_tss_unary<Float>>();
         register_overload<sum_, collection_impl_detail::sum_tsd_unary<Int>>();
         register_overload<sum_, collection_impl_detail::sum_tsd_unary<Float>>();
+        register_overload<sum_, collection_impl_detail::sum_tsl_unary<Int>>();
+        register_overload<sum_, collection_impl_detail::sum_tsl_unary<Float>>();
         register_overload<mean, collection_impl_detail::mean_tss_unary<Int>>();
         register_overload<mean, collection_impl_detail::mean_tss_unary<Float>>();
         register_overload<std_, collection_impl_detail::std_tss_unary<Int>>();
@@ -891,6 +1050,12 @@ namespace hgraph::stdlib
         register_overload<std_, collection_impl_detail::std_tsd_unary<Float>>();
         register_overload<var_, collection_impl_detail::var_tsd_unary<Int>>();
         register_overload<var_, collection_impl_detail::var_tsd_unary<Float>>();
+        register_overload<mean, collection_impl_detail::mean_tsl_unary<Int>>();
+        register_overload<mean, collection_impl_detail::mean_tsl_unary<Float>>();
+        register_overload<std_, collection_impl_detail::std_tsl_unary<Int>>();
+        register_overload<std_, collection_impl_detail::std_tsl_unary<Float>>();
+        register_overload<var_, collection_impl_detail::var_tsl_unary<Int>>();
+        register_overload<var_, collection_impl_detail::var_tsl_unary<Float>>();
 
         register_graph_overload<union_, collection_impl_detail::union_tss_fold>();
         register_graph_overload<intersection_, collection_impl_detail::intersection_tss_fold>();
