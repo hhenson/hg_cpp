@@ -21,6 +21,8 @@
 #include <hgraph/types/static_node.h>
 
 #include <compare>
+#include <cmath>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -258,6 +260,85 @@ namespace hgraph::stdlib
         };
 
         template <typename T>
+        [[nodiscard]] inline std::pair<Float, std::size_t> tss_sum_and_count(
+            const In<"ts", TSS<T>, InputValidity::Unchecked> &ts)
+        {
+            Float       total = 0.0;
+            std::size_t count = 0;
+            for (const T &key : ts.values())
+            {
+                total += static_cast<Float>(key);
+                ++count;
+            }
+            return {total, count};
+        }
+
+        template <typename T>
+        struct mean_tss_unary
+        {
+            static constexpr auto name = "mean_tss_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSS<T>, InputValidity::Unchecked> ts, Out<TS<Float>> out)
+            {
+                const auto [total, count] = tss_sum_and_count(ts);
+                out.set(count == 0 ? std::numeric_limits<Float>::quiet_NaN() : total / static_cast<Float>(count));
+            }
+        };
+
+        template <typename T>
+        struct var_tss_unary
+        {
+            static constexpr auto name = "var_tss_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSS<T>, InputValidity::Unchecked> ts, Out<TS<Float>> out)
+            {
+                const auto [total, count] = tss_sum_and_count(ts);
+                if (count <= 1)
+                {
+                    out.set(0.0);
+                    return;
+                }
+
+                const Float mean_value = total / static_cast<Float>(count);
+                Float       sum_sq     = 0.0;
+                for (const T &key : ts.values())
+                {
+                    const Float delta = static_cast<Float>(key) - mean_value;
+                    sum_sq += delta * delta;
+                }
+                out.set(sum_sq / static_cast<Float>(count - 1));
+            }
+        };
+
+        template <typename T>
+        struct std_tss_unary
+        {
+            static constexpr auto name = "std_tss_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSS<T>, InputValidity::Unchecked> ts, Out<TS<Float>> out)
+            {
+                const auto [total, count] = tss_sum_and_count(ts);
+                if (count <= 1)
+                {
+                    out.set(0.0);
+                    return;
+                }
+
+                const Float mean_value = total / static_cast<Float>(count);
+                Float       sum_sq     = 0.0;
+                for (const T &key : ts.values())
+                {
+                    const Float delta = static_cast<Float>(key) - mean_value;
+                    sum_sq += delta * delta;
+                }
+                out.set(std::sqrt(sum_sq / static_cast<Float>(count - 1)));
+            }
+        };
+
+        template <typename T>
         struct sum_tsd_unary
         {
             static constexpr auto name = "sum_tsd_unary";
@@ -268,6 +349,88 @@ namespace hgraph::stdlib
                 T total{};
                 for (const auto child : ts.valid_values()) { total += child.value(); }
                 out.set(total);
+            }
+        };
+
+        template <typename T>
+        [[nodiscard]] inline std::pair<Float, std::size_t> tsd_sum_and_count(
+            const In<"ts", TSD<ScalarVar<"K">, TS<T>>, InputValidity::Unchecked> &ts)
+        {
+            Float       total = 0.0;
+            std::size_t count = 0;
+            for (const auto child : ts.valid_values())
+            {
+                total += static_cast<Float>(child.value());
+                ++count;
+            }
+            return {total, count};
+        }
+
+        template <typename T>
+        struct mean_tsd_unary
+        {
+            static constexpr auto name = "mean_tsd_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TS<T>>, InputValidity::Unchecked> ts,
+                             Out<TS<Float>> out)
+            {
+                const auto [total, count] = tsd_sum_and_count(ts);
+                out.set(count == 0 ? std::numeric_limits<Float>::quiet_NaN() : total / static_cast<Float>(count));
+            }
+        };
+
+        template <typename T>
+        struct var_tsd_unary
+        {
+            static constexpr auto name = "var_tsd_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TS<T>>, InputValidity::Unchecked> ts,
+                             Out<TS<Float>> out)
+            {
+                const auto [total, count] = tsd_sum_and_count(ts);
+                if (count <= 1)
+                {
+                    out.set(0.0);
+                    return;
+                }
+
+                const Float mean_value = total / static_cast<Float>(count);
+                Float       sum_sq     = 0.0;
+                for (const auto child : ts.valid_values())
+                {
+                    const Float delta = static_cast<Float>(child.value()) - mean_value;
+                    sum_sq += delta * delta;
+                }
+                out.set(sum_sq / static_cast<Float>(count - 1));
+            }
+        };
+
+        template <typename T>
+        struct std_tsd_unary
+        {
+            static constexpr auto name = "std_tsd_unary";
+            static constexpr bool schedule_on_start = true;
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TS<T>>, InputValidity::Unchecked> ts,
+                             Out<TS<Float>> out)
+            {
+                const auto [total, count] = tsd_sum_and_count(ts);
+                if (count <= 1)
+                {
+                    out.set(0.0);
+                    return;
+                }
+
+                const Float mean_value = total / static_cast<Float>(count);
+                Float       sum_sq     = 0.0;
+                for (const auto child : ts.valid_values())
+                {
+                    const Float delta = static_cast<Float>(child.value()) - mean_value;
+                    sum_sq += delta * delta;
+                }
+                out.set(std::sqrt(sum_sq / static_cast<Float>(count - 1)));
             }
         };
 
@@ -716,6 +879,18 @@ namespace hgraph::stdlib
         register_overload<sum_, collection_impl_detail::sum_tss_unary<Float>>();
         register_overload<sum_, collection_impl_detail::sum_tsd_unary<Int>>();
         register_overload<sum_, collection_impl_detail::sum_tsd_unary<Float>>();
+        register_overload<mean, collection_impl_detail::mean_tss_unary<Int>>();
+        register_overload<mean, collection_impl_detail::mean_tss_unary<Float>>();
+        register_overload<std_, collection_impl_detail::std_tss_unary<Int>>();
+        register_overload<std_, collection_impl_detail::std_tss_unary<Float>>();
+        register_overload<var_, collection_impl_detail::var_tss_unary<Int>>();
+        register_overload<var_, collection_impl_detail::var_tss_unary<Float>>();
+        register_overload<mean, collection_impl_detail::mean_tsd_unary<Int>>();
+        register_overload<mean, collection_impl_detail::mean_tsd_unary<Float>>();
+        register_overload<std_, collection_impl_detail::std_tsd_unary<Int>>();
+        register_overload<std_, collection_impl_detail::std_tsd_unary<Float>>();
+        register_overload<var_, collection_impl_detail::var_tsd_unary<Int>>();
+        register_overload<var_, collection_impl_detail::var_tsd_unary<Float>>();
 
         register_graph_overload<union_, collection_impl_detail::union_tss_fold>();
         register_graph_overload<intersection_, collection_impl_detail::intersection_tss_fold>();

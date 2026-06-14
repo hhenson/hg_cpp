@@ -10,6 +10,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <cstdint>
 
 #include <optional>
@@ -834,6 +835,50 @@ TEST_CASE("collections: TSS unary min max and sum reduce current values")
                  values<Int>(0, 5, 6));
 }
 
+TEST_CASE("collections: TSS unary mean std and variance match Python analytics")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    const auto mean_out = eval_node<stdlib::mean, TSS<Int>>(
+        values<Value>(set_delta<Int>({}, {}),
+                      set_delta<Int>({1}, {}),
+                      set_delta<Int>({1, 2, -1, 3}, {}),
+                      set_delta<Int>({}, {-1})));
+    REQUIRE(mean_out.size() == 4);
+    REQUIRE(mean_out[0].has_value());
+    CHECK(std::isnan(mean_out[0]->view().checked_as<Float>()));
+    REQUIRE(mean_out[1].has_value());
+    CHECK(mean_out[1]->view().checked_as<Float>() == 1.0);
+    REQUIRE(mean_out[2].has_value());
+    CHECK(mean_out[2]->view().checked_as<Float>() == 1.25);
+    REQUIRE(mean_out[3].has_value());
+    CHECK(mean_out[3]->view().checked_as<Float>() == 2.0);
+
+    const auto std_out = eval_node<stdlib::std_, TSS<Int>>(
+        values<Value>(set_delta<Int>({}, {}),
+                      set_delta<Int>({1}, {}),
+                      set_delta<Int>({1, 2}, {}),
+                      set_delta<Int>({-1, 3}, {})));
+    REQUIRE(std_out.size() == 4);
+    REQUIRE(std_out[0].has_value());
+    CHECK(std_out[0]->view().checked_as<Float>() == 0.0);
+    REQUIRE(std_out[1].has_value());
+    CHECK(std_out[1]->view().checked_as<Float>() == 0.0);
+    REQUIRE(std_out[2].has_value());
+    CHECK(std::abs(std_out[2]->view().checked_as<Float>() - std::sqrt(0.5)) < 1e-12);
+    REQUIRE(std_out[3].has_value());
+    CHECK(std::abs(std_out[3]->view().checked_as<Float>() - std::sqrt(35.0 / 12.0)) < 1e-12);
+
+    CHECK_OUTPUT((eval_node<stdlib::var_, TSS<Int>>(
+                     values<Value>(set_delta<Int>({}, {}),
+                                   set_delta<Int>({1}, {}),
+                                   set_delta<Int>({1, 2}, {}),
+                                   set_delta<Int>({-1, 3}, {})))),
+                 values<Float>(0.0, 0.0, 0.5, 35.0 / 12.0));
+}
+
 TEST_CASE("collections: TSD unary min max and sum reduce valid child values")
 {
     using namespace hgraph;
@@ -860,6 +905,50 @@ TEST_CASE("collections: TSD unary min max and sum reduce valid child values")
                                    dict_delta<Int, TS<Int>>({{1, -1}}),
                                    dict_delta<Int, TS<Int>>({}, {3})))),
                  values<Int>(0, 102, 1, -1));
+}
+
+TEST_CASE("collections: TSD unary mean std and variance reduce valid child values")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    const auto mean_out = eval_node<stdlib::mean, TSD<Int, TS<Int>>>(
+        values<Value>(dict_delta<Int, TS<Int>>({}),
+                      dict_delta<Int, TS<Int>>({{3, 2}, {1, 10}}),
+                      dict_delta<Int, TS<Int>>({{1, -1}}),
+                      dict_delta<Int, TS<Int>>({}, {3})));
+    REQUIRE(mean_out.size() == 4);
+    REQUIRE(mean_out[0].has_value());
+    CHECK(std::isnan(mean_out[0]->view().checked_as<Float>()));
+    REQUIRE(mean_out[1].has_value());
+    CHECK(mean_out[1]->view().checked_as<Float>() == 6.0);
+    REQUIRE(mean_out[2].has_value());
+    CHECK(mean_out[2]->view().checked_as<Float>() == 0.5);
+    REQUIRE(mean_out[3].has_value());
+    CHECK(mean_out[3]->view().checked_as<Float>() == -1.0);
+
+    const auto std_out = eval_node<stdlib::std_, TSD<Int, TS<Int>>>(
+        values<Value>(dict_delta<Int, TS<Int>>({}),
+                      dict_delta<Int, TS<Int>>({{1, 1}}),
+                      dict_delta<Int, TS<Int>>({{2, 2}}),
+                      dict_delta<Int, TS<Int>>({{3, -1}, {4, 3}})));
+    REQUIRE(std_out.size() == 4);
+    REQUIRE(std_out[0].has_value());
+    CHECK(std_out[0]->view().checked_as<Float>() == 0.0);
+    REQUIRE(std_out[1].has_value());
+    CHECK(std_out[1]->view().checked_as<Float>() == 0.0);
+    REQUIRE(std_out[2].has_value());
+    CHECK(std::abs(std_out[2]->view().checked_as<Float>() - std::sqrt(0.5)) < 1e-12);
+    REQUIRE(std_out[3].has_value());
+    CHECK(std::abs(std_out[3]->view().checked_as<Float>() - std::sqrt(35.0 / 12.0)) < 1e-12);
+
+    CHECK_OUTPUT((eval_node<stdlib::var_, TSD<Int, TS<Int>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({}),
+                                   dict_delta<Int, TS<Int>>({{1, 1}}),
+                                   dict_delta<Int, TS<Int>>({{2, 2}}),
+                                   dict_delta<Int, TS<Int>>({{3, -1}, {4, 3}})))),
+                 values<Float>(0.0, 0.0, 0.5, 35.0 / 12.0));
 }
 
 TEST_CASE("collections: the TSD key-set view is read-only but reports the owner's mutations")
