@@ -3,7 +3,8 @@
 
 /**
  * Collection-operator implementations (catalogue: ``operators/collection.h``).
- * Implemented so far: ``keys_`` (TSD -> TSS of its keys) and TSS set algebra
+ * Implemented so far: ``keys_`` (TSD -> TSS of its keys), ``rekey`` /
+ * default-unique ``flip`` for TSDs, and TSS set algebra
  * (``union`` / ``intersection`` / ``difference`` / ``symmetric_difference``),
  * including the Python-compatible TSS/TSD operator aliases
  * (``|`` / ``&`` / ``-`` / ``^``), plus basic TSS/TSD truth/equality
@@ -24,6 +25,8 @@
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/static_node.h>
 
+#include <ankerl/unordered_dense.h>
+
 #include <compare>
 #include <cmath>
 #include <limits>
@@ -37,6 +40,23 @@ namespace hgraph::stdlib
 {
     namespace collection_impl_detail
     {
+        struct ValueKeyHash
+        {
+            [[nodiscard]] std::size_t operator()(const Value &value) const
+            {
+                return value.has_value() ? value.hash() : 0;
+            }
+        };
+
+        struct ValueKeyEqual
+        {
+            [[nodiscard]] bool operator()(const Value &lhs, const Value &rhs) const
+            {
+                if (lhs.has_value() != rhs.has_value()) { return false; }
+                return !lhs.has_value() || lhs.equals(rhs);
+            }
+        };
+
         inline void apply_tss_delta(TSSOutputView &out, const std::vector<Value> &removed,
                                     const std::vector<Value> &added)
         {
@@ -743,11 +763,130 @@ namespace hgraph::stdlib
             mutation.set(key, source.value());
         }
 
+        inline void copy_value_if_changed(TSDDataMutationView &mutation, const TSDOutputView &out,
+                                          const ValueView &key, const ValueView &value)
+        {
+            TSOutputView current = out.at(key);
+            if (current.valid() && current.value().equals(value)) { return; }
+            mutation.set(key, value);
+        }
+
         inline bool tsd_key_has_modified_valid_child(const TSDInputView &tsd, const ValueView &key)
         {
             const std::size_t slot = tsd.find_slot(key);
             return slot != TS_DATA_NO_CHILD_ID && tsd.slot_modified(slot) && tsd.at_slot(slot).valid();
         }
+
+        using FlippedPreviousIndex = ankerl::unordered_dense::map<Value, Value, ValueKeyHash, ValueKeyEqual>;
+
+        inline FlippedPreviousIndex build_flipped_previous_index(const TSDOutputView &out)
+        {
+            FlippedPreviousIndex previous;
+            previous.reserve(out.size());
+            for (const auto [flipped_key, source_key] : out.valid_items())
+            {
+                previous.insert_or_assign(Value{source_key.value()}, Value{flipped_key});
+            }
+            return previous;
+        }
+
+        struct rekey_tsd_scalar
+        {
+            static constexpr auto name = "rekey_tsd_scalar";
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+                             In<"new_keys", TSD<ScalarVar<"K">, TS<ScalarVar<"K1">>>, InputValidity::Unchecked> new_keys,
+                             RecordableState<TSD<ScalarVar<"K">, TS<ScalarVar<"K1">>>> previous,
+                             Out<TSD<ScalarVar<"K1">, TsVar<"V">>> out)
+            {
+                TSDOutputView          &out_dict = out;
+                TSDOutputView          &prev     = previous;
+                auto                    out_mutation = out_dict.begin_mutation(out_dict.evaluation_time());
+                auto                    prev_mutation = prev.begin_mutation(prev.evaluation_time());
+
+                for (const ValueView &source_key : ts.removed_keys())
+                {
+                    TSOutputView mapped_key = prev.at(source_key);
+                    if (mapped_key.valid()) { (void)out_mutation.erase(mapped_key.value()); }
+                }
+
+                for (const ValueView &source_key : new_keys.removed_keys())
+                {
+                    TSOutputView mapped_key = prev.at(source_key);
+                    if (mapped_key.valid()) { (void)out_mutation.erase(mapped_key.value()); }
+                    (void)prev_mutation.erase(source_key);
+                }
+
+                for (const auto [source_key, new_key] : new_keys.modified_items())
+                {
+                    if (!new_key.valid())
+                    {
+                        TSOutputView mapped_key = prev.at(source_key);
+                        if (mapped_key.valid()) { (void)out_mutation.erase(mapped_key.value()); }
+                        (void)prev_mutation.erase(source_key);
+                        continue;
+                    }
+
+                    const TSInputView &new_key_base = new_key.base();
+                    TSOutputView mapped_key = prev.at(source_key);
+                    if (mapped_key.valid() && !mapped_key.value().equals(new_key_base.value()))
+                    {
+                        (void)out_mutation.erase(mapped_key.value());
+                    }
+
+                    prev_mutation.set(source_key, new_key_base.value());
+                    TSInputView source = static_cast<const TSDInputView &>(ts).at(source_key);
+                    copy_tsd_child_if_changed(out_mutation, out_dict, new_key_base.value(), source);
+                }
+
+                for (const auto [source_key, source] : ts.modified_items())
+                {
+                    TSOutputView mapped_key = prev.at(source_key);
+                    if (mapped_key.valid())
+                    {
+                        copy_tsd_child_if_changed(out_mutation, out_dict, mapped_key.value(), source);
+                    }
+                }
+            }
+        };
+
+        struct flip_tsd_unique
+        {
+            static constexpr auto name = "flip_tsd_unique";
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TS<ScalarVar<"K1">>>, InputValidity::Unchecked> ts,
+                             Out<TSD<ScalarVar<"K1">, TS<ScalarVar<"K">>>> out)
+            {
+                TSDOutputView &out_dict = out;
+                auto           previous = build_flipped_previous_index(out_dict);
+                auto           out_mutation = out_dict.begin_mutation(out_dict.evaluation_time());
+
+                for (const ValueView &source_key : ts.removed_keys())
+                {
+                    auto old_value = previous.find(Value{source_key});
+                    if (old_value != previous.end()) { (void)out_mutation.erase(old_value->second.view()); }
+                }
+
+                for (const auto [source_key, value] : ts.modified_items())
+                {
+                    if (!value.valid())
+                    {
+                        auto old_value = previous.find(Value{source_key});
+                        if (old_value != previous.end()) { (void)out_mutation.erase(old_value->second.view()); }
+                        continue;
+                    }
+
+                    const TSInputView &value_base = value.base();
+                    auto old_value = previous.find(Value{source_key});
+                    if (old_value != previous.end() && !old_value->second.equals(value_base.value()))
+                    {
+                        (void)out_mutation.erase(old_value->second.view());
+                    }
+
+                    copy_value_if_changed(out_mutation, out_dict, value_base.value(), source_key);
+                }
+            }
+        };
 
         struct difference_tsd_binary
         {
@@ -1059,6 +1198,8 @@ namespace hgraph::stdlib
         using tsb_itemwise_impl_detail::tsb_binary_map;
 
         register_graph_overload<keys_, collection_impl_detail::keys_tsd>();
+        register_overload<rekey, collection_impl_detail::rekey_tsd_scalar>();
+        register_overload<flip, collection_impl_detail::flip_tsd_unique>();
         register_overload<not_, collection_impl_detail::not_tss>();
         register_overload<not_, collection_impl_detail::not_tsd>();
         register_overload<and_, collection_impl_detail::and_tss>();

@@ -560,6 +560,72 @@ TEST_CASE("collections: keys_ mirrors a TSD's key membership as a TSS")
                                set_delta<Str>({}, {"a"s})));
 }
 
+TEST_CASE("collections: rekey maps TSD values through scalar key time-series")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::rekey, TSD<Int, TS<Int>>, TSD<Int, TS<Str>>>(
+                     values<Value>(none,
+                                   dict_delta<Int, TS<Int>>({{1, 1}, {3, 3}}),
+                                   dict_delta<Int, TS<Int>>({{2, 2}}),
+                                   none,
+                                   dict_delta<Int, TS<Int>>({}, {2}),
+                                   dict_delta<Int, TS<Int>>({{2, 4}})),
+                     values<Value>(dict_delta<Int, TS<Str>>({{1, "a"s}, {2, "b"s}}),
+                                   none,
+                                   none,
+                                   dict_delta<Int, TS<Str>>({{1, "c"s}}),
+                                   none,
+                                   none))),
+                 values<Value>(none,
+                               dict_delta<Str, TS<Int>>({{"a"s, 1}}),
+                               dict_delta<Str, TS<Int>>({{"b"s, 2}}),
+                               dict_delta<Str, TS<Int>>({{"c"s, 1}}, {"a"s}),
+                               dict_delta<Str, TS<Int>>({}, {"b"s}),
+                               dict_delta<Str, TS<Int>>({{"b"s, 4}})));
+}
+
+TEST_CASE("collections: rekey removes output when scalar key mapping is removed")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::rekey, TSD<Int, TS<Int>>, TSD<Int, TS<Str>>>(
+                     values<Value>(none,
+                                   dict_delta<Int, TS<Int>>({{1, 1}}),
+                                   none,
+                                   none,
+                                   dict_delta<Int, TS<Int>>({{1, 2}})),
+                     values<Value>(dict_delta<Int, TS<Str>>({{1, "a"s}}),
+                                   none,
+                                   dict_delta<Int, TS<Str>>({}, {1}),
+                                   none,
+                                   none))),
+                 values<Value>(none,
+                               dict_delta<Str, TS<Int>>({{"a"s, 1}}),
+                               dict_delta<Str, TS<Int>>({}, {"a"s}),
+                               none,
+                               none));
+}
+
+TEST_CASE("collections: flip swaps TSD scalar values into keys")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::flip, TSD<Int, TS<Str>>>(
+                     values<Value>(dict_delta<Int, TS<Str>>({{1, "a"s}, {2, "b"s}}),
+                                   dict_delta<Int, TS<Str>>({{1, "c"s}}),
+                                   dict_delta<Int, TS<Str>>({}, {2})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+                               dict_delta<Str, TS<Int>>({{"c"s, 1}}, {"a"s}),
+                               dict_delta<Str, TS<Int>>({}, {"b"s})));
+}
+
 TEST_CASE("collections: union removes an element only when no input still holds it")
 {
     using namespace hgraph;
