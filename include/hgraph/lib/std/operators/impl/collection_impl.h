@@ -771,6 +771,29 @@ namespace hgraph::stdlib
             mutation.set(key, value);
         }
 
+        inline void set_nested_tsd_child(TSDDataMutationView &outer_mutation, DateTime evaluation_time,
+                                         const ValueView &outer_key, const ValueView &inner_key,
+                                         const TSInputView &source)
+        {
+            if (!source.valid()) { return; }
+
+            TSDataView       inner = outer_mutation.at(outer_key);
+            TSDDataView      inner_dict = inner.as_dict();
+            auto             inner_mutation = inner_dict.begin_mutation(evaluation_time);
+            TSDataView       current = inner_dict.at(inner_key);
+            if (current.valid() && current.value().equals(source.value())) { return; }
+            inner_mutation.set(inner_key, source.value());
+        }
+
+        inline void erase_nested_tsd_child(TSDDataMutationView &outer_mutation, DateTime evaluation_time,
+                                           const ValueView &outer_key, const ValueView &inner_key)
+        {
+            TSDataView       inner = outer_mutation.at(outer_key);
+            TSDDataView      inner_dict = inner.as_dict();
+            auto             inner_mutation = inner_dict.begin_mutation(evaluation_time);
+            (void)inner_mutation.erase(inner_key);
+        }
+
         inline bool tsd_key_has_modified_valid_child(const TSDInputView &tsd, const ValueView &key)
         {
             const std::size_t slot = tsd.find_slot(key);
@@ -884,6 +907,110 @@ namespace hgraph::stdlib
                     }
 
                     copy_value_if_changed(out_mutation, out_dict, value_base.value(), source_key);
+                }
+            }
+        };
+
+        struct partition_tsd_scalar
+        {
+            static constexpr auto name = "partition_tsd_scalar";
+
+            static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+                             In<"partitions", TSD<ScalarVar<"K">, TS<ScalarVar<"K1">>>,
+                                InputValidity::Unchecked> partitions,
+                             RecordableState<TSD<ScalarVar<"K">, TS<ScalarVar<"K1">>>> previous,
+                             Out<TSD<ScalarVar<"K1">, TSD<ScalarVar<"K">, TsVar<"V">>>> out)
+            {
+                TSDOutputView &out_dict = out;
+                TSDOutputView &prev     = previous;
+                const auto     evaluation_time = out_dict.evaluation_time();
+                auto           out_mutation = out_dict.begin_mutation(evaluation_time);
+                auto           prev_mutation = prev.begin_mutation(prev.evaluation_time());
+
+                for (const ValueView &source_key : ts.removed_keys())
+                {
+                    TSOutputView old_partition = prev.at(source_key);
+                    if (old_partition.valid())
+                    {
+                        erase_nested_tsd_child(out_mutation, evaluation_time, old_partition.value(), source_key);
+                    }
+                }
+
+                for (const ValueView &source_key : partitions.removed_keys())
+                {
+                    TSOutputView old_partition = prev.at(source_key);
+                    if (old_partition.valid())
+                    {
+                        erase_nested_tsd_child(out_mutation, evaluation_time, old_partition.value(), source_key);
+                    }
+                    (void)prev_mutation.erase(source_key);
+                }
+
+                for (const auto [source_key, partition] : partitions.modified_items())
+                {
+                    if (!partition.valid())
+                    {
+                        TSOutputView old_partition = prev.at(source_key);
+                        if (old_partition.valid())
+                        {
+                            erase_nested_tsd_child(out_mutation, evaluation_time, old_partition.value(), source_key);
+                        }
+                        (void)prev_mutation.erase(source_key);
+                        continue;
+                    }
+
+                    const TSInputView &partition_base = partition.base();
+                    TSOutputView       old_partition = prev.at(source_key);
+                    const bool         partition_changed =
+                        !old_partition.valid() || !old_partition.value().equals(partition_base.value());
+
+                    if (old_partition.valid() && partition_changed)
+                    {
+                        erase_nested_tsd_child(out_mutation, evaluation_time, old_partition.value(), source_key);
+                    }
+
+                    prev_mutation.set(source_key, partition_base.value());
+                    if (partition_changed)
+                    {
+                        TSInputView source = static_cast<const TSDInputView &>(ts).at(source_key);
+                        set_nested_tsd_child(out_mutation, evaluation_time, partition_base.value(), source_key, source);
+                    }
+                }
+
+                for (const auto [source_key, source] : ts.modified_items())
+                {
+                    TSOutputView partition = prev.at(source_key);
+                    if (partition.valid())
+                    {
+                        set_nested_tsd_child(out_mutation, evaluation_time, partition.value(), source_key, source);
+                    }
+                }
+            }
+        };
+
+        struct unpartition_tsd
+        {
+            static constexpr auto name = "unpartition_tsd";
+
+            static void eval(In<"ts", TSD<ScalarVar<"K1">, TSD<ScalarVar<"K">, TsVar<"V">>>,
+                                InputValidity::Unchecked> ts,
+                             Out<TSD<ScalarVar<"K">, TsVar<"V">>> out)
+            {
+                TSDOutputView &out_dict = out;
+                auto           out_mutation = out_dict.begin_mutation(out_dict.evaluation_time());
+
+                for (const auto [outer_key, inner] : ts.modified_items())
+                {
+                    static_cast<void>(outer_key);
+                    const TSDInputView &inner_dict = inner;
+                    for (const ValueView &inner_key : inner_dict.removed_keys())
+                    {
+                        (void)out_mutation.erase(inner_key);
+                    }
+                    for (const auto [inner_key, child] : inner_dict.modified_items())
+                    {
+                        copy_tsd_child_if_changed(out_mutation, out_dict, inner_key, child);
+                    }
                 }
             }
         };
@@ -1200,6 +1327,8 @@ namespace hgraph::stdlib
         register_graph_overload<keys_, collection_impl_detail::keys_tsd>();
         register_overload<rekey, collection_impl_detail::rekey_tsd_scalar>();
         register_overload<flip, collection_impl_detail::flip_tsd_unique>();
+        register_overload<partition, collection_impl_detail::partition_tsd_scalar>();
+        register_overload<unpartition, collection_impl_detail::unpartition_tsd>();
         register_overload<not_, collection_impl_detail::not_tss>();
         register_overload<not_, collection_impl_detail::not_tsd>();
         register_overload<and_, collection_impl_detail::and_tss>();

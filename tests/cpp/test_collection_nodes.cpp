@@ -626,6 +626,59 @@ TEST_CASE("collections: flip swaps TSD scalar values into keys")
                                dict_delta<Str, TS<Int>>({}, {"b"s})));
 }
 
+TEST_CASE("collections: partition splits a TSD by scalar partition keys")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::partition, TSD<Int, TS<Int>>, TSD<Int, TS<Str>>>(
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}, {3, 3}}),
+                                   dict_delta<Int, TS<Int>>({{1, 4}, {2, 5}, {3, 6}}),
+                                   dict_delta<Int, TS<Int>>({}, {1}),
+                                   none,
+                                   none),
+                     values<Value>(dict_delta<Int, TS<Str>>({{1, "odd"s}}),
+                                   dict_delta<Int, TS<Str>>({{2, "even"s}, {3, "odd"s}}),
+                                   none,
+                                   dict_delta<Int, TS<Str>>({}, {2}),
+                                   dict_delta<Int, TS<Str>>({{3, "prime"s}})))),
+                 values<Value>(
+                     dict_delta<Str, TSD<Int, TS<Int>>>({{"odd"s, dict_delta<Int, TS<Int>>({{1, 1}})}}),
+                     dict_delta<Str, TSD<Int, TS<Int>>>(
+                         {{"odd"s, dict_delta<Int, TS<Int>>({{1, 4}, {3, 6}})},
+                          {"even"s, dict_delta<Int, TS<Int>>({{2, 5}})}}),
+                     dict_delta<Str, TSD<Int, TS<Int>>>({{"odd"s, dict_delta<Int, TS<Int>>({}, {1})}}),
+                     dict_delta<Str, TSD<Int, TS<Int>>>({{"even"s, dict_delta<Int, TS<Int>>({}, {2})}}),
+                     dict_delta<Str, TSD<Int, TS<Int>>>(
+                         {{"prime"s, dict_delta<Int, TS<Int>>({{3, 6}})},
+                          {"odd"s, dict_delta<Int, TS<Int>>({}, {3})}})));
+}
+
+TEST_CASE("collections: unpartition flattens nested TSD inner deltas")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::unpartition, TSD<Str, TSD<Int, TS<Int>>>>(
+                     values<Value>(
+                         dict_delta<Str, TSD<Int, TS<Int>>>({{"odd"s, dict_delta<Int, TS<Int>>({{1, 1}})}}),
+                         dict_delta<Str, TSD<Int, TS<Int>>>(
+                             {{"odd"s, dict_delta<Int, TS<Int>>({{1, 4}, {3, 6}})},
+                              {"even"s, dict_delta<Int, TS<Int>>({{2, 5}})}}),
+                         dict_delta<Str, TSD<Int, TS<Int>>>({{"odd"s, dict_delta<Int, TS<Int>>({}, {1})}}),
+                         dict_delta<Str, TSD<Int, TS<Int>>>({{"even"s, dict_delta<Int, TS<Int>>({}, {2})}}),
+                         dict_delta<Str, TSD<Int, TS<Int>>>(
+                             {{"prime"s, dict_delta<Int, TS<Int>>({{3, 6}})},
+                              {"odd"s, dict_delta<Int, TS<Int>>({}, {3})}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 1}}),
+                               dict_delta<Int, TS<Int>>({{1, 4}, {3, 6}, {2, 5}}),
+                               dict_delta<Int, TS<Int>>({}, {1}),
+                               dict_delta<Int, TS<Int>>({}, {2}),
+                               dict_delta<Int, TS<Int>>({{3, 6}})));
+}
+
 TEST_CASE("collections: union removes an element only when no input still holds it")
 {
     using namespace hgraph;
