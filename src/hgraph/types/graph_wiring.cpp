@@ -434,6 +434,33 @@ namespace hgraph
                         std::move(scalars));
     }
 
+    WiringPortRef Wiring::add_unique_node(std::type_index def, NodeBuilder builder,
+                                          std::span<const WiringInputRef> inputs,
+                                          Value scalars)
+    {
+        static_cast<void>(def);
+
+        builder.scalars(std::move(scalars));
+
+        WiringInstance &instance = impl_->instances.emplace_back();
+        instance.builder         = std::move(builder);
+        instance.inputs.assign(inputs.begin(), inputs.end());
+
+        return WiringPortRef::peered_source(&instance, {}, output_schema_of(instance));
+    }
+
+    WiringPortRef Wiring::add_unique_node(std::type_index def, NodeBuilder builder,
+                                          std::span<const WiringPortRef> inputs,
+                                          Value scalars)
+    {
+        std::vector<WiringInputRef> input_refs;
+        input_refs.reserve(inputs.size());
+        for (const WiringPortRef &input : inputs) { input_refs.push_back(WiringInputRef{.source = input}); }
+        return add_unique_node(def, std::move(builder),
+                               std::span<const WiringInputRef>{input_refs.data(), input_refs.size()},
+                               std::move(scalars));
+    }
+
     WiringPortRef Wiring::add_node(std::type_index def, const WiringNodeSchema &schema,
                                    std::span<const WiringPortRef> inputs, Value scalars,
                                    std::function<NodeBuilder()> make_builder)

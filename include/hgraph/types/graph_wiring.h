@@ -345,6 +345,20 @@ namespace hgraph
                                Value scalars);
 
         /**
+         * Add a value-producing node without interning. Use this for nodes whose
+         * identity is their allocation site rather than their structural inputs,
+         * such as feedback sources.
+         */
+        WiringPortRef add_unique_node(std::type_index def, NodeBuilder builder,
+                                      std::span<const WiringInputRef> inputs,
+                                      Value scalars);
+
+        /** Convenience overload for ordinary positional unique-node inputs. */
+        WiringPortRef add_unique_node(std::type_index def, NodeBuilder builder,
+                                      std::span<const WiringPortRef> inputs,
+                                      Value scalars);
+
+        /**
          * Deferred-builder overload: intern by ``(def, schema, inputs, scalars)``
          * and call ``make_builder`` only when no interned instance exists. Use
          * when constructing the builder has a side effect or real cost that must

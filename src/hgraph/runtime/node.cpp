@@ -654,6 +654,20 @@ namespace hgraph
             return node_state(runtime, memory).view();
         }
 
+        void replace_state_impl(const void *context, void *memory, Value value)
+        {
+            const auto &runtime = runtime_context(context);
+            if (!runtime.layout.has_state()) { throw std::logic_error("Node has no state"); }
+            if (!value.has_value()) { throw std::invalid_argument("Node state replacement requires a value"); }
+
+            Value &state = node_state(runtime, memory);
+            if (state.schema() != value.schema())
+            {
+                throw std::invalid_argument("Node state replacement schema does not match the node state schema");
+            }
+            state = std::move(value);
+        }
+
         ValueView scalars_view_impl(const void *context, void *memory)
         {
             const auto &runtime = runtime_context(context);
@@ -890,6 +904,11 @@ namespace hgraph
             throw std::logic_error("NodeView::state requires a live node");
         }
 
+        void default_replace_state_impl(const void *, void *, Value)
+        {
+            throw std::logic_error("NodeView::replace_state requires a live node");
+        }
+
         ValueView default_scalars_view_impl(const void *, void *)
         {
             throw std::logic_error("NodeView::scalars requires a live node");
@@ -969,6 +988,7 @@ namespace hgraph
                 if (ops.input_view_impl == nullptr) { ops.input_view_impl = &input_view_impl; }
                 if (ops.output_view_impl == nullptr) { ops.output_view_impl = &output_view_impl; }
                 if (ops.state_view_impl == nullptr) { ops.state_view_impl = &state_view_impl; }
+                if (ops.replace_state_impl == nullptr) { ops.replace_state_impl = &replace_state_impl; }
                 if (ops.scalars_view_impl == nullptr) { ops.scalars_view_impl = &scalars_view_impl; }
                 if (ops.scheduler_state_impl == nullptr) { ops.scheduler_state_impl = &scheduler_state_impl; }
                 if (ops.global_state_view_impl == nullptr) { ops.global_state_view_impl = &global_state_view_impl; }
@@ -1018,6 +1038,7 @@ namespace hgraph
                 .input_view_impl = &default_input_view_impl,
                 .output_view_impl = &default_output_view_impl,
                 .state_view_impl = &default_state_view_impl,
+                .replace_state_impl = &default_replace_state_impl,
                 .scalars_view_impl = &default_scalars_view_impl,
                 .scheduler_state_impl = &default_scheduler_state_impl,
                 .global_state_view_impl = &default_global_state_view_impl,
@@ -1224,6 +1245,11 @@ namespace hgraph
     ValueView NodeView::state() const
     {
         return ops().state_view_impl(ops().context, data());
+    }
+
+    void NodeView::replace_state(Value value) const
+    {
+        ops().replace_state_impl(ops().context, data(), std::move(value));
     }
 
     ValueView NodeView::scalars() const

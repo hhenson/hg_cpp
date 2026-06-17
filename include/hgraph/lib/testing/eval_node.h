@@ -424,6 +424,51 @@ namespace hgraph::testing
 
         template <typename GraphT, typename... Args>
         [[nodiscard]] std::vector<std::optional<typename graph_output_element<GraphT>::type>>
+        eval_source_graph(Args &&...args)
+        {
+            using sig        = StaticGraphSignature<GraphT>;
+            using params     = typename sig::param_types;
+            using out_schema = typename graph_output_element<GraphT>::schema;
+            constexpr std::size_t arg_count = sizeof...(Args);
+
+            static_assert(sig::input_count() == 0,
+                          "eval_node<G>: source-style graph must not have time-series inputs");
+            static_assert(arg_count <= sig::param_count(),
+                          "eval_node<G>: too many arguments for the graph's Scalar parameters");
+            static_assert(!std::is_void_v<std::remove_cvref_t<typename sig::output_type>>,
+                          "eval_node<G>: the graph must return an output port");
+
+            Wiring w;
+            auto   all          = std::forward_as_tuple(std::forward<Args>(args)...);
+            auto   default_args = call_args_detail::default_args_for<GraphT>();
+            call_args_detail::validate_call_args<params>("eval_node<G>", all, default_args);
+
+            auto wire_arg = [&]<std::size_t I>() {
+                using P = std::remove_cvref_t<std::tuple_element_t<I, params>>;
+                static_assert(!graph_wiring_detail::is_port<P>::value,
+                              "eval_node<G>: source-style graph cannot have time-series inputs");
+                return graph_wiring_detail::make_scalar_param<P>(
+                    bound_payload_or_default_at<I, params>(all, default_args, "eval_node<G>"));
+            };
+
+            auto out_port = [&]<std::size_t... I>(std::index_sequence<I...>) {
+                return GraphT::compose(w, wire_arg.template operator()<I>()...);
+            }(std::make_index_sequence<sig::param_count()>{});
+
+            ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"});
+            GraphBuilder gb = std::move(w).finish();
+
+            GraphExecutorBuilder eb;
+            eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
+            GraphExecutorValue executor = eb.make_executor();
+            auto               view     = executor.view();
+            view.run();
+
+            return ts_harness<out_schema>::read(view.graph().global_state(), "eval_node::out");
+        }
+
+        template <typename GraphT, typename... Args>
+        [[nodiscard]] std::vector<std::optional<typename graph_output_element<GraphT>::type>>
         eval_input_graph(Args &&...args)
         {
             using sig    = StaticGraphSignature<GraphT>;
@@ -720,6 +765,21 @@ namespace hgraph::testing
         view.run();
 
         return get_recorded_deltas(view.graph().global_state(), "eval_node::out");
+    }
+
+    /**
+     * Evaluate a source-style graph — a struct with
+     * ``compose(Wiring &, Scalar...)`` that returns an output port. This is the
+     * graph counterpart of the source-node overload above.
+     */
+    template <typename GraphT, typename... Args>
+        requires(!std::derived_from<GraphT, operator_tag> &&
+                 eval_node_detail::is_graph<GraphT> &&
+                 StaticGraphSignature<GraphT>::input_count() == 0)
+    [[nodiscard]] std::vector<std::optional<typename eval_node_detail::graph_output_element<GraphT>::type>>
+    eval_node(Args &&...args)
+    {
+        return eval_node_detail::eval_source_graph<GraphT>(std::forward<Args>(args)...);
     }
 
     /**

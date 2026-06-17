@@ -123,6 +123,7 @@ namespace hgraph
         [[nodiscard]] TSOutputView (*output_view_impl)(const void *context, void *memory,
                                                        DateTime evaluation_time) = nullptr;
         [[nodiscard]] ValueView (*state_view_impl)(const void *context, void *memory) = nullptr;
+        void (*replace_state_impl)(const void *context, void *memory, Value value) = nullptr;
         [[nodiscard]] ValueView (*scalars_view_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] NodeSchedulerState *(*scheduler_state_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] GlobalStateView (*global_state_view_impl)(const void *context, void *memory) = nullptr;
@@ -215,6 +216,7 @@ namespace hgraph
         [[nodiscard]] TSInputView input(DateTime evaluation_time) const;
         [[nodiscard]] TSOutputView output(DateTime evaluation_time) const;
         [[nodiscard]] ValueView state() const;
+        void replace_state(Value value) const;
         [[nodiscard]] ValueView scalars() const;
         /** Borrow this node's persistent scheduler state (only valid when ``has_scheduler``). */
         [[nodiscard]] NodeSchedulerState &scheduler_state() const;
