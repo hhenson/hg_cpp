@@ -2,6 +2,7 @@
 #define HGRAPH_CPP_TS_DATA_BASE_VIEW_H
 
 #include <hgraph/types/time_series/ts_data/ops.h>
+#include <hgraph/types/time_series/endpoint_owner.h>
 #include <hgraph/types/utils/memory_utils.h>
 #include <hgraph/types/value/value_view.h>
 #include <hgraph/util/date_time.h>
@@ -14,6 +15,9 @@
 
 namespace hgraph
 {
+    class GraphView;
+    class NodeView;
+
     namespace detail
     {
         class TSOutputAlternativeStore;
@@ -165,7 +169,7 @@ namespace hgraph
         [[nodiscard]] const void *data() const noexcept;
 
         /** Parent link stored in this TSData node's tracking region. */
-        [[nodiscard]] const TSDataParentLink &parent_link() const;
+        [[nodiscard]] const TSParentLink &parent_link() const;
 
         /** Parent-relative id for this node, or ``TS_DATA_NO_CHILD_ID`` for roots. */
         [[nodiscard]] std::size_t child_id() const;
@@ -178,6 +182,15 @@ namespace hgraph
 
         /** Root TSData view reached by following parent links. */
         [[nodiscard]] TSDataView root_view() const;
+
+        /** Endpoint parent handle reached from this TSData view's root. */
+        [[nodiscard]] TSParentLink root_endpoint_owner() const noexcept;
+
+        /** Owning node for node-owned endpoint TSData, or an empty view when detached. */
+        [[nodiscard]] NodeView owner_node() const;
+
+        /** Owning graph for node-owned endpoint TSData, or an empty view when detached. */
+        [[nodiscard]] GraphView owner_graph() const;
 
         /** Writable memory pointer; throws unless the ops table allows mutation. */
         [[nodiscard]] void *mutable_data() const;
@@ -261,6 +274,7 @@ namespace hgraph
       private:
         friend class TSDataMutationView;
         friend class IndexedTSDataView;
+        friend class TSInput;
         friend class TSOutput;
         friend class TSInputView;
         friend class detail::TSOutputAlternativeStore;
@@ -274,7 +288,9 @@ namespace hgraph
         void require_live(const char *what) const;
         [[nodiscard]] TSDataTracking &mutable_tracking() const;
         void bind_parent(const TSDataView &parent, std::size_t child_id) const;
-        void bind_parent(TSDataParent &parent, std::size_t child_id) const;
+        void bind_parent(const NodeView &parent, TSEndpointOwnerPort port) const;
+        void bind_parent(TSInput &parent, std::size_t child_id) const;
+        void bind_parent(TSOutput &parent, std::size_t child_id) const;
 
         TSDataStorageRef<> storage_{};
     };

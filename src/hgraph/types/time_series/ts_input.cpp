@@ -2,6 +2,8 @@
 
 #include "ts_input/target_link_ops.h"
 
+#include <hgraph/runtime/graph.h>
+#include <hgraph/runtime/node.h>
 #include <hgraph/types/time_series/ts_input/detail.h>
 
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
@@ -1945,6 +1947,7 @@ namespace hgraph
           schema_(other.schema_),
           data_(other.data_)
     {
+        attach_root_parent();
     }
 
     TSInput &TSInput::operator=(const TSInput &other)
@@ -1954,6 +1957,7 @@ namespace hgraph
         schema_ = other.schema_;
         data_ = other.data_;
         active_root_.reset();
+        attach_root_parent();
         return *this;
     }
 
@@ -1963,6 +1967,7 @@ namespace hgraph
           data_(std::move(other.data_)),
           active_root_(std::move(other.active_root_))
     {
+        attach_root_parent();
     }
 
     TSInput &TSInput::operator=(TSInput &&other) noexcept
@@ -1973,6 +1978,7 @@ namespace hgraph
             schema_ = std::exchange(other.schema_, nullptr);
             data_ = std::move(other.data_);
             active_root_ = std::move(other.active_root_);
+            attach_root_parent();
         }
         return *this;
     }
@@ -1987,6 +1993,26 @@ namespace hgraph
     const TSValueTypeMetaData *TSInput::schema() const noexcept
     {
         return schema_;
+    }
+
+    NodeView TSInput::owner_node() const
+    {
+        return has_value() ? data_.view().owner_node() : NodeView{};
+    }
+
+    GraphView TSInput::owner_graph() const
+    {
+        return has_value() ? data_.view().owner_graph() : GraphView{};
+    }
+
+    void TSInput::bind_node_parent(const NodeView &node, TSEndpointOwnerPort port)
+    {
+        if (has_value()) { data_.view().bind_parent(node, port); }
+    }
+
+    void TSInput::clear_node_parent()
+    {
+        attach_root_parent();
     }
 
     TSInputView TSInput::view(Notifiable *scheduling_notifier, DateTime evaluation_time)
@@ -2005,7 +2031,17 @@ namespace hgraph
         const auto *binding = detail::input_data_binding_for(plan.endpoint_schema());
         if (binding == nullptr) { throw std::logic_error("TSInput could not resolve input data binding"); }
         data_ = TSData{*binding};
+        attach_root_parent();
         active_root_.reset();
+    }
+
+    void TSInput::attach_root_parent()
+    {
+        if (has_value()) { data_.view().bind_parent(*this, TS_DATA_NO_CHILD_ID); }
+    }
+
+    void TSInput::record_child_modified(std::size_t, DateTime)
+    {
     }
 
     void TSInput::make_active(std::vector<std::size_t> path, TSDataView observed, Notifiable *target_notifier)

@@ -45,6 +45,7 @@ add_executable(hgraph_unit_tests
     test_simulation_execution.cpp
     test_realtime_execution.cpp
     test_node_scheduler.cpp
+    test_endpoint_owner.cpp
     test_record_replay.cpp
     test_eval_node.cpp
     test_std_nodes.cpp

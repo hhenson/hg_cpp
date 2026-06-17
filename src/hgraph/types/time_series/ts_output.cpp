@@ -1,5 +1,7 @@
 #include <hgraph/types/time_series/ts_output.h>
 
+#include <hgraph/runtime/graph.h>
+#include <hgraph/runtime/node.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/time_series/endpoint_schema.h>
@@ -200,6 +202,26 @@ namespace hgraph
     void TSOutput::record_child_modified(std::size_t, DateTime)
     {
         dirty_ = true;
+    }
+
+    NodeView TSOutput::owner_node() const
+    {
+        return has_value() ? data_view().owner_node() : NodeView{};
+    }
+
+    GraphView TSOutput::owner_graph() const
+    {
+        return has_value() ? data_view().owner_graph() : GraphView{};
+    }
+
+    void TSOutput::bind_node_parent(const NodeView &node, TSEndpointOwnerPort port)
+    {
+        if (has_value()) { data_view().bind_parent(node, port); }
+    }
+
+    void TSOutput::clear_node_parent()
+    {
+        attach_root_parent();
     }
 
     TSOutputMutationView TSOutput::begin_mutation(DateTime evaluation_time)

@@ -2,11 +2,14 @@
 #define HGRAPH_CPP_ROOT_TS_OUTPUT_BASE_VIEW_H
 
 #include <hgraph/types/time_series/ts_data.h>
+#include <hgraph/types/time_series/endpoint_owner.h>
 #include <hgraph/util/date_time.h>
 #include <cstddef>
 
 namespace hgraph
 {
+    class GraphView;
+    class NodeView;
     class TSOutput;
     class TSOutputHandle;
     class TSOutputView;
@@ -81,6 +84,11 @@ namespace hgraph
 
         /** Evaluation time associated with delta/modified checks. */
         [[nodiscard]] DateTime evaluation_time() const noexcept;
+
+        /** Node owner for this output endpoint, if it is graph-attached. */
+        [[nodiscard]] NodeView owner_node() const;
+        [[nodiscard]] GraphView owner_graph() const;
+        [[nodiscard]] TSEndpointOwnerPort owner_port() const noexcept;
 
         /** Binding and schema for the borrowed TSData. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;

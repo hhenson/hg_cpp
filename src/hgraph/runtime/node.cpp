@@ -163,6 +163,62 @@ namespace hgraph
             return *MemoryUtils::cast<TSOutput>(node_component(memory, context.layout.recordable_state_offset));
         }
 
+        void bind_endpoint_owners(const NodeRuntimeContext &context,
+                                  void                     *memory,
+                                  GraphValue               *graph,
+                                  std::size_t               node_index)
+        {
+            NodeView node = graph != nullptr ? graph->view().node_at(node_index) : NodeView{};
+            if (context.layout.has_input())
+            {
+                auto &input = node_input(context, memory);
+                if (graph != nullptr)
+                {
+                    input.bind_node_parent(node, TSEndpointOwnerPort::Input);
+                }
+                else
+                {
+                    input.clear_node_parent();
+                }
+            }
+            if (context.layout.has_output())
+            {
+                auto &output = node_output(context, memory);
+                if (graph != nullptr)
+                {
+                    output.bind_node_parent(node, TSEndpointOwnerPort::Output);
+                }
+                else
+                {
+                    output.clear_node_parent();
+                }
+            }
+            if (context.layout.has_error_output())
+            {
+                auto &output = node_error_output(context, memory);
+                if (graph != nullptr)
+                {
+                    output.bind_node_parent(node, TSEndpointOwnerPort::ErrorOutput);
+                }
+                else
+                {
+                    output.clear_node_parent();
+                }
+            }
+            if (context.layout.has_recordable_state())
+            {
+                auto &output = node_recordable_state(context, memory);
+                if (graph != nullptr)
+                {
+                    output.bind_node_parent(node, TSEndpointOwnerPort::RecordableState);
+                }
+                else
+                {
+                    output.clear_node_parent();
+                }
+            }
+        }
+
         // Build a NodeError from the node's identity + the exception message and
         // write it to the node's error output for this cycle. Error capture is not
         // transactional: a node may already have written ordinary output before
@@ -508,9 +564,11 @@ namespace hgraph
 
         void attach_graph_impl(const void *context, void *memory, GraphValue *graph, std::size_t node_index)
         {
-            auto &state = node_storage(runtime_context(context), memory);
+            const auto &runtime = runtime_context(context);
+            auto       &state   = node_storage(runtime, memory);
             state.graph = graph;
             state.node_index = node_index;
+            bind_endpoint_owners(runtime, memory, graph, node_index);
         }
 
         GraphValue *graph_impl(const void *context, const void *memory) noexcept
@@ -983,6 +1041,29 @@ namespace hgraph
             return binding;
         }
     }  // namespace
+
+    void notify_node_endpoint_child_modified(const NodeTypeBinding *node_binding,
+                                             void                  *node_data,
+                                             TSEndpointOwnerPort    port,
+                                             DateTime               mutation_time)
+    {
+        if (node_binding == nullptr || node_data == nullptr) { return; }
+
+        const auto &runtime = runtime_context(node_binding->ops_ref().context);
+        switch (port)
+        {
+            case TSEndpointOwnerPort::Input: return;
+            case TSEndpointOwnerPort::Output:
+                node_output(runtime, node_data).record_child_modified(TS_DATA_NO_CHILD_ID, mutation_time);
+                return;
+            case TSEndpointOwnerPort::ErrorOutput:
+                node_error_output(runtime, node_data).record_child_modified(TS_DATA_NO_CHILD_ID, mutation_time);
+                return;
+            case TSEndpointOwnerPort::RecordableState:
+                node_recordable_state(runtime, node_data).record_child_modified(TS_DATA_NO_CHILD_ID, mutation_time);
+                return;
+        }
+    }
 
     const MemoryUtils::StoragePlan &node_storage_plan_for(
         const NodeTypeMetaData &schema,

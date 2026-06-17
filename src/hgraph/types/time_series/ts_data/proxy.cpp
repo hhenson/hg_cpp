@@ -1173,7 +1173,7 @@ namespace hgraph
 
         values_.construct_at(slot);
         auto target = TSDataView{element_binding_, values_.value_memory(slot)};
-        target.mutable_tracking().parent = TSDataParentLink{self_binding_, this, slot};
+        target.mutable_tracking().parent = TSParentLink{self_binding_, this, slot};
     }
 
     void TSDProxy::ensure_child_at_slot(std::size_t slot, DateTime modified_time)

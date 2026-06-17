@@ -2,6 +2,7 @@
 #define HGRAPH_CPP_ROOT_TS_INPUT_BASE_VIEW_H
 
 #include <hgraph/types/notifiable.h>
+#include <hgraph/types/time_series/endpoint_owner.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/time_series_reference.h>
 #include <cstddef>
@@ -10,6 +11,9 @@
 
 namespace hgraph
 {
+    class GraphView;
+    class NodeView;
+
     namespace detail
     {
         struct TSInputChildProjection;
@@ -47,6 +51,11 @@ namespace hgraph
 
         /** Evaluation time associated with delta/modified checks. */
         [[nodiscard]] DateTime evaluation_time() const noexcept;
+
+        /** Consuming node that owns this input endpoint, if it is graph-attached. */
+        [[nodiscard]] NodeView consumer_node() const;
+        [[nodiscard]] GraphView consumer_graph() const;
+        [[nodiscard]] TSEndpointOwnerPort owner_port() const noexcept;
 
         /** Binding and schema for the input-side TSData projection. */
         [[nodiscard]] const TSDataBinding *binding() const noexcept;

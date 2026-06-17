@@ -2,6 +2,7 @@
 #define HGRAPH_CPP_ROOT_TS_INPUT_H
 
 #include <hgraph/types/notifiable.h>
+#include <hgraph/types/time_series/endpoint_owner.h>
 #include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/time_series/ts_input/base_view.h>
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
@@ -105,7 +106,7 @@ namespace hgraph
      * The root is always a non-peered TSB; peered terminals inside that tree
      * borrow TSOutput TSData through input-side TargetLink storage.
      */
-    class TSInput
+    class TSInput : private TSDataParent
     {
       public:
         TSInput() noexcept;
@@ -118,6 +119,12 @@ namespace hgraph
 
         [[nodiscard]] bool has_value() const noexcept;
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
+
+        /** Node owner for this endpoint, if it is attached to a runtime graph. */
+        [[nodiscard]] NodeView owner_node() const;
+        [[nodiscard]] GraphView owner_graph() const;
+        void bind_node_parent(const NodeView &node, TSEndpointOwnerPort port);
+        void clear_node_parent();
 
         /**
          * Root input view.
@@ -138,10 +145,13 @@ namespace hgraph
         friend class TSDInputView;
         friend class TSWInputView;
         friend struct detail::TSInputViewOps;
+        friend struct TSParentLink;
 
         explicit TSInput(const TSInputConstructionPlan &plan);
 
         void rebuild_from_plan(const TSInputConstructionPlan &plan);
+        void attach_root_parent();
+        void record_child_modified(std::size_t child_id, DateTime mutation_time) override;
         void make_active(std::vector<std::size_t> path, TSDataView observed, Notifiable *target_notifier);
         void make_passive(const std::vector<std::size_t> &path);
         [[nodiscard]] bool active(const std::vector<std::size_t> &path) const noexcept;

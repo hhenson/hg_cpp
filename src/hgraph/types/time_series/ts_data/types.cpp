@@ -1,4 +1,9 @@
 #include <hgraph/types/time_series/ts_data.h>
+
+#include <hgraph/runtime/graph.h>
+#include <hgraph/runtime/node.h>
+#include <hgraph/types/time_series/ts_input.h>
+#include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/util/scope.h>
 
 #include <algorithm>
@@ -263,62 +268,133 @@ namespace hgraph
         return true;
     }
 
-    TSDataParentLinkKind TSDataParentLink::kind() const noexcept
+    TSParentLinkKind TSParentLink::kind() const noexcept
     {
         return parent_.enum_value();
     }
 
-    bool TSDataParentLink::has_parent() const noexcept
+    bool TSParentLink::has_parent() const noexcept
     {
         return has_ts_data_parent() || has_endpoint_parent();
     }
 
-    bool TSDataParentLink::has_ts_data_parent() const noexcept
+    bool TSParentLink::has_ts_data_parent() const noexcept
     {
-        return kind() == TSDataParentLinkKind::TSData && parent_.ptr() != nullptr && payload_.ts_data != nullptr;
+        return kind() == TSParentLinkKind::TSData && parent_.ptr() != nullptr && payload_.ts_data != nullptr;
     }
 
-    bool TSDataParentLink::has_endpoint_parent() const noexcept
+    bool TSParentLink::has_endpoint_parent() const noexcept
     {
-        return kind() == TSDataParentLinkKind::Endpoint && payload_.endpoint != nullptr;
+        return has_input_endpoint_parent() || has_output_endpoint_parent() || has_node_endpoint_parent();
     }
 
-    const TSDataBinding *TSDataParentLink::parent_binding() const noexcept
+    bool TSParentLink::has_input_endpoint_parent() const noexcept
     {
-        return has_ts_data_parent() ? parent_.ptr() : nullptr;
+        return kind() == TSParentLinkKind::InputEndpoint && payload_.input != nullptr;
     }
 
-    const void *TSDataParentLink::parent_data() const noexcept
+    bool TSParentLink::has_output_endpoint_parent() const noexcept
+    {
+        return kind() == TSParentLinkKind::OutputEndpoint && payload_.output != nullptr;
+    }
+
+    bool TSParentLink::has_node_endpoint_parent() const noexcept
+    {
+        return kind() == TSParentLinkKind::NodeEndpoint && parent_.ptr() != nullptr &&
+               payload_.node_data != nullptr;
+    }
+
+    const TSDataBinding *TSParentLink::parent_binding() const noexcept
+    {
+        return has_ts_data_parent() ? parent_.as<const TSDataBinding>() : nullptr;
+    }
+
+    const void *TSParentLink::parent_data() const noexcept
     {
         return has_ts_data_parent() ? payload_.ts_data : nullptr;
     }
 
-    TSDataParent *TSDataParentLink::parent_endpoint() const noexcept
+    TSDataParent *TSParentLink::parent_endpoint() const noexcept
     {
-        return has_endpoint_parent() ? payload_.endpoint : nullptr;
+        if (has_input_endpoint_parent()) { return static_cast<TSDataParent *>(payload_.input); }
+        if (has_output_endpoint_parent()) { return static_cast<TSDataParent *>(payload_.output); }
+        return nullptr;
     }
 
-    const TSDataTracking &TSDataParentLink::parent_tracking() const
+    TSInput *TSParentLink::parent_input() const noexcept
     {
-        if (!has_ts_data_parent()) { throw std::logic_error("TSDataParentLink requires a TSData parent"); }
+        return has_input_endpoint_parent() ? payload_.input : nullptr;
+    }
+
+    TSOutput *TSParentLink::parent_output() const noexcept
+    {
+        return has_output_endpoint_parent() ? payload_.output : nullptr;
+    }
+
+    const NodeTypeBinding *TSParentLink::parent_node_binding() const noexcept
+    {
+        return has_node_endpoint_parent() ? parent_.as<const NodeTypeBinding>() : nullptr;
+    }
+
+    void *TSParentLink::parent_node_data() const noexcept
+    {
+        return has_node_endpoint_parent() ? payload_.node_data : nullptr;
+    }
+
+    TSEndpointOwnerPort TSParentLink::port() const noexcept
+    {
+        if (has_node_endpoint_parent()) { return static_cast<TSEndpointOwnerPort>(child_id); }
+        if (has_input_endpoint_parent()) { return TSEndpointOwnerPort::Input; }
+        if (has_output_endpoint_parent()) { return TSEndpointOwnerPort::Output; }
+        return TSEndpointOwnerPort::Input;
+    }
+
+    bool TSParentLink::node_owned() const noexcept
+    {
+        return has_node_endpoint_parent();
+    }
+
+    NodeView TSParentLink::parent_node() const
+    {
+        if (!has_node_endpoint_parent()) { return NodeView{}; }
+        return NodeView{parent_node_binding(), parent_node_data()};
+    }
+
+    GraphView TSParentLink::parent_graph() const
+    {
+        auto node = parent_node();
+        return node.valid() ? node.graph() : GraphView{};
+    }
+
+    const TSDataTracking &TSParentLink::parent_tracking() const
+    {
+        if (!has_ts_data_parent()) { throw std::logic_error("TSParentLink requires a TSData parent"); }
         const auto *binding = parent_binding();
         const auto &table   = binding->ops_ref();
         return *table.tracking_impl(table.context, parent_data());
     }
 
-    TSDataTracking &TSDataParentLink::mutable_parent_tracking() const
+    TSDataTracking &TSParentLink::mutable_parent_tracking() const
     {
-        if (!has_ts_data_parent()) { throw std::logic_error("TSDataParentLink requires a TSData parent"); }
+        if (!has_ts_data_parent()) { throw std::logic_error("TSParentLink requires a TSData parent"); }
         const auto *binding = parent_binding();
         const auto &table   = binding->ops_ref();
         auto       *memory  = const_cast<void *>(parent_data());
         return *table.mutable_tracking_impl(table.context, memory);
     }
 
-    void TSDataParentLink::notify_child_modified(DateTime mutation_time) const
+    void TSParentLink::notify_child_modified(DateTime mutation_time) const
     {
         if (!has_ts_data_parent())
         {
+            if (has_node_endpoint_parent())
+            {
+                notify_node_endpoint_child_modified(parent_node_binding(),
+                                                    parent_node_data(),
+                                                    port(),
+                                                    mutation_time);
+                return;
+            }
             if (auto *endpoint = parent_endpoint(); endpoint != nullptr)
             {
                 endpoint->record_child_modified(child_id, mutation_time);
@@ -335,7 +411,7 @@ namespace hgraph
         if (state.record_modified(mutation_time)) { state.parent.notify_child_modified(mutation_time); }
     }
 
-    std::vector<std::size_t> TSDataParentLink::path_from_root() const
+    std::vector<std::size_t> TSParentLink::path_from_root() const
     {
         std::vector<std::size_t> reversed_path;
         auto                     current = *this;
@@ -351,7 +427,7 @@ namespace hgraph
         return reversed_path;
     }
 
-    TSDataView TSDataParentLink::root_view() const
+    TSDataView TSParentLink::root_view() const
     {
         if (!has_ts_data_parent()) { return TSDataView{}; }
 

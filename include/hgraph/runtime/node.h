@@ -4,6 +4,7 @@
 #include <hgraph/hgraph_export.h>
 #include <hgraph/runtime/evaluation_clock.h>
 #include <hgraph/runtime/global_state.h>
+#include <hgraph/runtime/node_fwd.h>
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/value_type_meta_data.h>
@@ -29,7 +30,6 @@ namespace hgraph
     class GraphView;
     class NodeBuilder;
     class NodeValue;
-    class NodeView;
     struct NodeSchedulerState;
     struct ResolutionMap;  // type_resolution.h — generic-node wiring resolution
 
@@ -136,9 +136,6 @@ namespace hgraph
         const void *extended_view_type_id{nullptr};
         const void *extended_view_context{nullptr};
     };
-
-    using NodeTypeBinding = TypeBinding<NodeTypeMetaData, NodeOps>;
-    using NodeStorageRef  = MemoryUtils::StorageRef<NodeTypeBinding>;
 
     /** User callbacks used by the first-pass native node builder. */
     struct HGRAPH_EXPORT NodeCallbacks

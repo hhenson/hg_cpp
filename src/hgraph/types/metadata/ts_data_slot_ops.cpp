@@ -1846,7 +1846,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 (void)source;
                 (void)modified_time;
                 throw std::logic_error(
-                    "TSD copy_value_from must be performed through TSDDataMutationView so child notifications use TSDataParentLink");
+                    "TSD copy_value_from must be performed through TSDDataMutationView so child notifications use TSParentLink");
             }
 
 #if HGRAPH_ENABLE_PYTHON_USER_NODES

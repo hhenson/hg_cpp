@@ -1,5 +1,10 @@
 #include <hgraph/types/time_series/ts_data.h>
 
+#include <hgraph/runtime/graph.h>
+#include <hgraph/runtime/node.h>
+#include <hgraph/types/time_series/ts_input.h>
+#include <hgraph/types/time_series/ts_output.h>
+
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -57,7 +62,7 @@ namespace hgraph
         return storage_.data();
     }
 
-    const TSDataParentLink &TSDataView::parent_link() const
+    const TSParentLink &TSDataView::parent_link() const
     {
         return tracking().parent;
     }
@@ -82,6 +87,31 @@ namespace hgraph
     {
         const auto &link = tracking().parent;
         return link.has_ts_data_parent() ? link.root_view() : borrowed_ref();
+    }
+
+    TSParentLink TSDataView::root_endpoint_owner() const noexcept
+    {
+        if (!valid()) { return {}; }
+
+        auto current = borrowed_ref();
+        for (std::size_t depth = 0; current.valid() && depth < 256; ++depth)
+        {
+            const auto &link = current.parent_link();
+            if (link.has_endpoint_parent()) { return link; }
+            if (!link.has_ts_data_parent()) { return {}; }
+            current = TSDataView{link.parent_binding(), link.parent_data()};
+        }
+        return {};
+    }
+
+    NodeView TSDataView::owner_node() const
+    {
+        return root_endpoint_owner().parent_node();
+    }
+
+    GraphView TSDataView::owner_graph() const
+    {
+        return root_endpoint_owner().parent_graph();
     }
 
     void *TSDataView::mutable_data() const
@@ -286,13 +316,26 @@ namespace hgraph
         {
             throw std::logic_error("TSDataView child requires mutable parent TSData ops");
         }
-        mutable_tracking().parent = TSDataParentLink{parent.binding(), parent.data(), child_id};
+        mutable_tracking().parent = TSParentLink{parent.binding(), parent.data(), child_id};
     }
 
-    void TSDataView::bind_parent(TSDataParent &parent, std::size_t child_id) const
+    void TSDataView::bind_parent(const NodeView &parent, TSEndpointOwnerPort port) const
     {
         if (!valid()) { throw std::logic_error("TSDataView child requires a live view"); }
-        mutable_tracking().parent = TSDataParentLink{parent, child_id};
+        if (!parent.valid()) { throw std::logic_error("TSDataView node endpoint requires a live node view"); }
+        mutable_tracking().parent = TSParentLink{parent.binding(), parent.data(), port};
+    }
+
+    void TSDataView::bind_parent(TSInput &parent, std::size_t child_id) const
+    {
+        if (!valid()) { throw std::logic_error("TSDataView child requires a live view"); }
+        mutable_tracking().parent = TSParentLink{parent, child_id};
+    }
+
+    void TSDataView::bind_parent(TSOutput &parent, std::size_t child_id) const
+    {
+        if (!valid()) { throw std::logic_error("TSDataView child requires a live view"); }
+        mutable_tracking().parent = TSParentLink{parent, child_id};
     }
 
     TSDataMutationView::TSDataMutationView(TSDataView view, DateTime evaluation_time)

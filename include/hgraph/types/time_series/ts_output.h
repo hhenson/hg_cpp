@@ -2,6 +2,7 @@
 #define HGRAPH_CPP_ROOT_TS_OUTPUT_H
 
 #include <hgraph/types/time_series/ts_data.h>
+#include <hgraph/types/time_series/endpoint_owner.h>
 #include <hgraph/types/time_series/ts_output/base_view.h>
 #include <hgraph/types/time_series/ts_output/bundle_view.h>
 #include <hgraph/types/time_series/ts_output/dict_view.h>
@@ -85,8 +86,19 @@ namespace hgraph
         /** Begin a root mutation scope. */
         [[nodiscard]] TSOutputMutationView begin_mutation(DateTime evaluation_time);
 
+        /** Node owner for this endpoint, if it is attached to a runtime graph. */
+        [[nodiscard]] NodeView owner_node() const;
+        [[nodiscard]] GraphView owner_graph() const;
+        void bind_node_parent(const NodeView &node, TSEndpointOwnerPort port);
+        void clear_node_parent();
+
       private:
         friend class TSOutputMutationView;
+        friend struct TSParentLink;
+        friend void notify_node_endpoint_child_modified(const NodeTypeBinding *node_binding,
+                                                        void                  *node_data,
+                                                        TSEndpointOwnerPort    port,
+                                                        DateTime               mutation_time);
 
         static const TSDataBinding &checked_binding_for(const TSValueTypeMetaData *schema);
         static const TSDataBinding &checked_binding_for(const TSEndpointSchema &endpoint_schema);

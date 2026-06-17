@@ -1,9 +1,11 @@
 #ifndef HGRAPH_CPP_TS_DATA_TYPES_H
 #define HGRAPH_CPP_TS_DATA_TYPES_H
 
+#include <hgraph/runtime/node_fwd.h>
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/metadata/type_binding.h>
 #include <hgraph/types/notifiable.h>
+#include <hgraph/types/time_series/endpoint_owner.h>
 #include <hgraph/types/value/value_ops.h>
 #include <hgraph/util/date_time.h>
 #include <hgraph/util/tagged_ptr.h>
@@ -17,8 +19,11 @@ namespace hgraph
     struct TSDataOps;
     using TSDataBinding = TypeBinding<TSValueTypeMetaData, TSDataOps>;
 
+    class GraphView;
     struct TSDataTracking;
     struct TSDataParent;
+    class TSInput;
+    class TSOutput;
     class TSDataView;
     class TSDataMutationView;
     class IndexedTSDataView;
@@ -48,34 +53,39 @@ namespace hgraph
         virtual void record_child_modified(std::size_t child_id, DateTime mutation_time) = 0;
     };
 
-    enum class TSDataParentLinkKind : std::uintptr_t
+    enum class TSParentLinkKind : std::uintptr_t
     {
-        None     = 0,
-        TSData   = 1,
-        Endpoint = 2,
+        None           = 0,
+        TSData         = 1,
+        InputEndpoint  = 2,
+        OutputEndpoint = 3,
+        NodeEndpoint   = 4,
     };
 
     /**
-     * Stable parent identity for one TSData node.
+     * Stable parent identity for one time-series node.
      *
-     * This is stored in the child node's value-owned tracking region. It does
-     * not point at transient view objects, so a child view may outlive the
-     * parent view that projected it. The representation is a compact tagged
-     * union: TSData parents use ``binding + data`` and endpoint parents use
-     * the same payload word for the endpoint pointer.
+     * This is stored in the child node's value-owned tracking region. It
+     * carries a type-erased handle plus a small tag that says which view type
+     * can interpret that handle. TSData and node parents both use the same
+     * binding + data pattern as the rest of the runtime.
      */
-    struct TSDataParentLink
+    struct TSParentLink
     {
-        using ParentIdentity = tagged_ptr<const TSDataBinding, 2, TSDataParentLinkKind>;
+        using ParentIdentity = tagged_void_ptr<3, TSParentLinkKind>;
 
         union ParentPayload
         {
-            const void   *ts_data;
-            TSDataParent *endpoint;
+            const void *ts_data;
+            void       *node_data;
+            TSInput    *input;
+            TSOutput   *output;
 
             constexpr ParentPayload() noexcept : ts_data(nullptr) {}
             constexpr explicit ParentPayload(const void *data) noexcept : ts_data(data) {}
-            constexpr explicit ParentPayload(TSDataParent *parent) noexcept : endpoint(parent) {}
+            constexpr explicit ParentPayload(void *data) noexcept : node_data(data) {}
+            constexpr explicit ParentPayload(TSInput *parent) noexcept : input(parent) {}
+            constexpr explicit ParentPayload(TSOutput *parent) noexcept : output(parent) {}
         };
 
       private:
@@ -85,25 +95,40 @@ namespace hgraph
       public:
         std::size_t child_id{TS_DATA_NO_CHILD_ID};
 
-        constexpr TSDataParentLink() noexcept = default;
-        constexpr TSDataParentLink(const TSDataBinding *binding,
-                                   const void          *data,
-                                   std::size_t          parent_child_id) noexcept
-            : parent_(binding, TSDataParentLinkKind::TSData),
+        constexpr TSParentLink() noexcept = default;
+        constexpr TSParentLink(const TSDataBinding *binding,
+                               const void          *data,
+                               std::size_t          parent_child_id) noexcept
+            : parent_(binding, TSParentLinkKind::TSData),
               payload_(data),
               child_id(parent_child_id)
         {
         }
-        constexpr TSDataParentLink(TSDataParent &endpoint,
-                                   std::size_t   parent_child_id = TS_DATA_NO_CHILD_ID) noexcept
-            : parent_(static_cast<const TSDataBinding *>(nullptr), TSDataParentLinkKind::Endpoint),
+        constexpr TSParentLink(const NodeTypeBinding *binding,
+                               void                  *data,
+                               TSEndpointOwnerPort    port) noexcept
+            : parent_(binding, TSParentLinkKind::NodeEndpoint),
+              payload_(data),
+              child_id(static_cast<std::size_t>(port))
+        {
+        }
+        constexpr TSParentLink(TSInput &endpoint,
+                               std::size_t parent_child_id = TS_DATA_NO_CHILD_ID) noexcept
+            : parent_(static_cast<const TSDataBinding *>(nullptr), TSParentLinkKind::InputEndpoint),
+              payload_(&endpoint),
+              child_id(parent_child_id)
+        {
+        }
+        constexpr TSParentLink(TSOutput &endpoint,
+                               std::size_t parent_child_id = TS_DATA_NO_CHILD_ID) noexcept
+            : parent_(static_cast<const TSDataBinding *>(nullptr), TSParentLinkKind::OutputEndpoint),
               payload_(&endpoint),
               child_id(parent_child_id)
         {
         }
 
         /** Parent kind encoded into the parent identity pointer. */
-        [[nodiscard]] TSDataParentLinkKind kind() const noexcept;
+        [[nodiscard]] TSParentLinkKind kind() const noexcept;
 
         /** True when this child has either a TSData parent or an endpoint parent. */
         [[nodiscard]] bool has_parent() const noexcept;
@@ -114,6 +139,15 @@ namespace hgraph
         /** True when this child bubbles directly to an endpoint parent. */
         [[nodiscard]] bool has_endpoint_parent() const noexcept;
 
+        /** True when this child bubbles directly to an input endpoint parent. */
+        [[nodiscard]] bool has_input_endpoint_parent() const noexcept;
+
+        /** True when this child bubbles directly to an output endpoint parent. */
+        [[nodiscard]] bool has_output_endpoint_parent() const noexcept;
+
+        /** True when this child bubbles directly to a node-owned endpoint parent. */
+        [[nodiscard]] bool has_node_endpoint_parent() const noexcept;
+
         /** Parent TSData binding, or null when this link does not target TSData. */
         [[nodiscard]] const TSDataBinding *parent_binding() const noexcept;
 
@@ -122,6 +156,30 @@ namespace hgraph
 
         /** Endpoint parent, or null when this link targets TSData or is empty. */
         [[nodiscard]] TSDataParent *parent_endpoint() const noexcept;
+
+        /** Input endpoint parent, or null when this link targets a different parent kind. */
+        [[nodiscard]] TSInput *parent_input() const noexcept;
+
+        /** Output endpoint parent, or null when this link targets a different parent kind. */
+        [[nodiscard]] TSOutput *parent_output() const noexcept;
+
+        /** Node binding for a node-owned endpoint parent, or null otherwise. */
+        [[nodiscard]] const NodeTypeBinding *parent_node_binding() const noexcept;
+
+        /** Node storage for a node-owned endpoint parent, or null otherwise. */
+        [[nodiscard]] void *parent_node_data() const noexcept;
+
+        /** Endpoint port for this endpoint parent, or Input for an empty/non-endpoint link. */
+        [[nodiscard]] TSEndpointOwnerPort port() const noexcept;
+
+        /** True when this parent link points at a runtime node allocation. */
+        [[nodiscard]] bool node_owned() const noexcept;
+
+        /** Node view for a node-owned endpoint parent, or an empty view otherwise. */
+        [[nodiscard]] NodeView parent_node() const;
+
+        /** Graph view for a node-owned endpoint parent, or an empty view otherwise. */
+        [[nodiscard]] GraphView parent_graph() const;
 
         /**
          * Record a child modification against the parent and bubble that
@@ -143,8 +201,8 @@ namespace hgraph
         [[nodiscard]] TSDataTracking &mutable_parent_tracking() const;
     };
 
-    static_assert(sizeof(TSDataParentLink) <= sizeof(void *) * 3,
-                  "TSDataParentLink should remain a compact three-word navigation handle");
+    static_assert(sizeof(TSParentLink) <= sizeof(void *) * 3,
+                  "TSParentLink should remain a compact three-word navigation handle");
 
     /**
      * Compact per-level observer set for TSData modification notifications.
@@ -236,7 +294,7 @@ namespace hgraph
         [[nodiscard]] bool record_modified(DateTime modified_time);
 
         DateTime last_modified_time{MIN_DT};
-        TSDataParentLink parent{};
+        TSParentLink parent{};
         TSDataObserverSet observers{};
     };
 

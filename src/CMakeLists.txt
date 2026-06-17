@@ -28,6 +28,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series/ts_data/storage.cpp
     hgraph/types/time_series/ts_data/types.cpp
     hgraph/types/time_series/ts_data/window_view.cpp
+    hgraph/types/time_series/endpoint_owner.cpp
     hgraph/types/time_series/endpoint_schema.cpp
     hgraph/types/time_series/ts_input/base_view.cpp
     hgraph/types/time_series/ts_input/bundle_view.cpp
@@ -70,6 +71,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/graph.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/nested_graph_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/node.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/node_fwd.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/push_source_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/nested_bindings.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/switch_node.h
@@ -112,6 +114,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/storage.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/types.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_data/window_view.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/endpoint_owner.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/endpoint_schema.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/typed_view.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series/ts_input/base_view.h

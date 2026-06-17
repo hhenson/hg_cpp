@@ -1,5 +1,7 @@
 #include <hgraph/types/time_series/ts_output/base_view.h>
 
+#include <hgraph/runtime/graph.h>
+#include <hgraph/runtime/node.h>
 #include <hgraph/types/time_series/ts_input/target_link.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/time_series/ts_output/view_common.h>
@@ -109,6 +111,23 @@ namespace hgraph
     DateTime TSOutputView::evaluation_time() const noexcept
     {
         return evaluation_time_;
+    }
+
+    NodeView TSOutputView::owner_node() const
+    {
+        return output_ != nullptr ? output_->owner_node() : NodeView{};
+    }
+
+    GraphView TSOutputView::owner_graph() const
+    {
+        return output_ != nullptr ? output_->owner_graph() : GraphView{};
+    }
+
+    TSEndpointOwnerPort TSOutputView::owner_port() const noexcept
+    {
+        if (output_ == nullptr || !output_->has_value()) { return TSEndpointOwnerPort::Output; }
+        const auto owner = output_->data_view().root_endpoint_owner();
+        return owner.node_owned() ? owner.port() : TSEndpointOwnerPort::Output;
     }
 
     const TSDataBinding *TSOutputView::binding() const noexcept
