@@ -80,11 +80,11 @@ namespace hgraph::stdlib
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (resolution.find_ts("__graph_output") != nullptr || context.args.size() != 1) { return; }
+                if (resolution.find_ts("__out__") != nullptr || context.args.size() != 1) { return; }
                 if (context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
                 const auto *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
                 if (schema == nullptr || schema->kind != TSTypeKind::TSD) { return; }
-                resolution.bind_ts("__graph_output", TypeRegistry::instance().tss(schema->key_type()));
+                resolution.bind_ts("__out__", TypeRegistry::instance().tss(schema->key_type()));
             }
 
             static WiringPortRef compose(Wiring &, NamedPort<"ts", TSD<ScalarVar<"K">, TsVar<"V">>> ts)
@@ -1178,12 +1178,12 @@ namespace hgraph::stdlib
 
         inline void resolve_output_to_first_arg(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__graph_output") != nullptr) { return; }
+            if (resolution.find_ts("__out__") != nullptr) { return; }
             if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
             const TSValueTypeMetaData *output = TypeRegistry::instance().dereference(context.args[0].port.schema);
             if (output == nullptr) { return; }
             if (resolution.find_ts("O") == nullptr) { resolution.bind_ts("O", output); }
-            resolution.bind_ts("__graph_output", output);
+            resolution.bind_ts("__out__", output);
         }
 
         /** ``union(*ts)`` — n-ary TSS union, folded pairwise at wiring time. */

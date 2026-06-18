@@ -58,7 +58,7 @@ namespace hgraph::stdlib
     };
 
     /** ``freeze`` — forward ``ts`` until ``predicate`` first holds, then passivate ``ts`` (stop forwarding). */
-    struct freeze : Operator<"freeze", In<"ts", TsVar<"S">>, Out<TsVar<"S">>>
+    struct freeze : Operator<"freeze", In<"predicate", TS<Bool>>, In<"ts", TsVar<"S">>, Out<TsVar<"S">>>
     {
     };
 

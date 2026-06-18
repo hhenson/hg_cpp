@@ -41,7 +41,7 @@ namespace hgraph::stdlib::tsl_itemwise_impl_detail
 
     inline void resolve_map_output_with_fn(ResolutionMap &resolution, OperatorCallContext context, WiredFn wired_fn)
     {
-        if (resolution.find_ts("__graph_output") != nullptr) { return; }
+        if (resolution.find_ts("__out__") != nullptr) { return; }
 
         std::vector<WiringArg> args;
         args.reserve(context.args.size() + 1);
@@ -61,7 +61,7 @@ namespace hgraph::stdlib::tsl_itemwise_impl_detail
                                                      true);
             return ts_pattern_resolve(resolved.impl->output, resolved.map);
         });
-        if (output != nullptr) { resolution.bind_ts("__graph_output", output); }
+        if (output != nullptr) { resolution.bind_ts("__out__", output); }
     }
 
     template <typename Op>

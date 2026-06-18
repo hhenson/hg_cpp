@@ -22,6 +22,7 @@
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_node.h>
+#include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/util/date_time.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -168,6 +169,9 @@ namespace
     using NumericTsbBundle      = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Float>>>;
     using FloatTsbBundle        = UnNamedTSB<Field<"a", TS<Float>>, Field<"b", TS<Float>>>;
     using IntTsbBundle          = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Int>>>;
+    using IfIntRefBundle        = UnNamedTSB<Field<"true", REF<TS<Int>>>, Field<"false", REF<TS<Int>>>>;
+    using RoutedIntRefList      = TSL<REF<TS<Int>>, 3>;
+    using IntTslPair            = TSL<TS<Int>, 2>;
 
     struct MakeContainerAccessBundle
     {
@@ -309,6 +313,59 @@ namespace
             auto lhs = stdlib::to_tsb<ContainerAccessBundle>(w, a1, b1);
             auto rhs = stdlib::to_tsb<ContainerAccessBundle>(w, a2, b2);
             return wire<stdlib::max_>(w, lhs, rhs).as<ContainerAccessBundle>();
+        }
+    };
+
+    struct RaceGraph
+    {
+        static constexpr auto name = "race_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            return wire<stdlib::race>(w, lhs, rhs).as<TS<Int>>();
+        }
+    };
+
+    struct IfTrueRouteGraph
+    {
+        static constexpr auto name = "if_true_route_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Bool>> condition, Port<TS<Int>> ts)
+        {
+            auto routed = wire<stdlib::if_, IfIntRefBundle>(w, condition, ts).as<IfIntRefBundle>();
+            return wire<stdlib::getitem_>(w, routed, Str{"true"}).as<TS<Int>>();
+        }
+    };
+
+    struct IfFalseRouteGraph
+    {
+        static constexpr auto name = "if_false_route_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Bool>> condition, Port<TS<Int>> ts)
+        {
+            auto routed = wire<stdlib::if_, IfIntRefBundle>(w, condition, ts).as<IfIntRefBundle>();
+            return wire<stdlib::getitem_>(w, routed, Str{"false"}).as<TS<Int>>();
+        }
+    };
+
+    struct RouteByIndexSlotTwoGraph
+    {
+        static constexpr auto name = "route_by_index_slot_two_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> index, Port<TS<Int>> ts)
+        {
+            auto routed = wire<stdlib::route_by_index, RoutedIntRefList>(w, index, ts).as<RoutedIntRefList>();
+            return tsl_element(routed, 2).as<TS<Int>>();
+        }
+    };
+
+    struct DynamicTslGetitemGraph
+    {
+        static constexpr auto name = "dynamic_tsl_getitem_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<IntTslPair> ts, Port<TS<Int>> key)
+        {
+            return wire<stdlib::getitem_>(w, ts, key).as<TS<Int>>();
         }
     };
 
@@ -845,11 +902,12 @@ TEST_CASE("std operators: collection container operators support TSS TSD and fix
                  values<Int>(2, none, none));
     CHECK_OUTPUT((eval_node<stdlib::len_, TSL<TS<Int>, 4>>(values<Value>(list_delta<TS<Int>>({1, 2, 3, 4})))),
                  values<Int>(4));
-    CHECK_OUTPUT((eval_node<stdlib::getitem_, TSL<TS<Int>, 2>>(values<Value>(list_delta<TS<Int>>({1, 2}),
-                                                                             list_delta<TS<Int>>({2, 3}),
-                                                                             list_delta<TS<Int>>({4, 5})),
-                                                               values<Int>(0))),
-                 values<Int>(1, 2, 4));
+    CHECK_OUTPUT(eval_node<DynamicTslGetitemGraph>(values<Value>(list_delta<TS<Int>>({1, 10}),
+                                                                  list_delta<TS<Int>>({2, 20}),
+                                                                  list_delta<TS<Int>>({3, 30}),
+                                                                  list_delta<TS<Int>>({4, 40})),
+                                                    values<Int>(0, none, 1, none)),
+                 values<Int>(1, 2, 30, 40));
     CHECK_OUTPUT((eval_node<stdlib::index_of, TSL<TS<Int>, 3>>(
                      values<Value>(list_delta<TS<Int>>({1, 2, 3}),
                                    none,
@@ -963,6 +1021,35 @@ TEST_CASE("std operators: stream operators cover sampling filtering slicing and 
                                none,
                                dict_delta<Int, TS<Int>>({{2, 2}, {3, 3}}, {1})));
 
+    CHECK_OUTPUT(eval_node<stdlib::lag>(values<Int>(1, 2, 3, 4), Int{1}),
+                 values<Int>(none, 1, 2, 3));
+    CHECK_OUTPUT(eval_node<stdlib::lag>(values<Int>(1, 2, 3, 4), Int{2}),
+                 values<Int>(none, none, 1, 2));
+    CHECK_OUTPUT((eval_node<stdlib::lag, TSS<Int>>(
+                     values<Value>(set_delta<Int>({1}, {}),
+                                   set_delta<Int>({2}, {}),
+                                   set_delta<Int>({3}, {})),
+                     Int{1})),
+                 values<Value>(none, set_delta<Int>({1}, {}), set_delta<Int>({2}, {})));
+
+    CHECK_OUTPUT(eval_node<stdlib::until_true>(values<Bool>(false, false, true, false)),
+                 values<Bool>(false, false, true, none));
+
+    CHECK_OUTPUT(eval_node<stdlib::freeze>(values<Bool>(false, false, true, false),
+                                           values<Int>(1, 2, 3, 4)),
+                 values<Int>(1, 2, 3, none));
+    CHECK_OUTPUT(eval_node<stdlib::gate>(values<Bool>(false, false, true, true),
+                                         values<Int>(1, 2, 3, none),
+                                         Int{8}),
+                 values<Int>(none, none, 1, 2, 3));
+    CHECK_OUTPUT(eval_node<stdlib::throttle>(values<Int>(1, 2, 3, 4, 5),
+                                             values<TimeDelta>(MIN_TD * 2,
+                                                               none,
+                                                               none,
+                                                               none,
+                                                               none)),
+                 values<Int>(1, none, 2, none, 4, none, 5));
+
     CHECK_OUTPUT(eval_node<stdlib::take>(values<Int>(1, 2, 3, 4, 5), Int{3}),
                  values<Int>(1, 2, 3, none, none));
     CHECK_OUTPUT(eval_node<stdlib::drop>(values<Int>(1, 2, 3, 4, 5), Int{3}),
@@ -983,6 +1070,52 @@ TEST_CASE("std operators: stream operators cover sampling filtering slicing and 
                  values<Float>(0.0, 0.5, 1.0));
     CHECK_OUTPUT(eval_node<stdlib::ewma>(values<Float>(1.0, 2.0, 3.0, 4.0), Float{0.5}),
                  values<Float>(1.0, 1.5, 2.25, 3.125));
+}
+
+TEST_CASE("std operators: schedule and resample are bounded by executor end time")
+{
+    stdlib::register_standard_operators();
+
+    {
+        Wiring w;
+        auto   ticks = wire<stdlib::schedule>(w, MIN_TD * 2);
+        wire<record>(w, ticks, Str{"schedule_out"});
+
+        GraphBuilder graph_builder = std::move(w).finish();
+        GraphExecutorBuilder executor_builder;
+        executor_builder.graph_builder(std::move(graph_builder))
+            .start_time(MIN_ST)
+            .end_time(MIN_ST + MIN_TD * 6);
+        GraphExecutorValue executor = executor_builder.make_executor();
+        auto               view     = executor.view();
+        view.run();
+
+        CHECK_OUTPUT(get_recorded_values<Bool>(view.graph().global_state(), "schedule_out"),
+                     values<Bool>(none, none, true, none, true));
+    }
+
+    {
+        Wiring w;
+        auto   ts  = wire<replay, TS<Int>>(w, Str{"resample_in"});
+        auto   out = wire<stdlib::resample>(w, ts, MIN_TD * 2);
+        wire<record>(w, out, Str{"resample_out"});
+
+        GraphBuilder graph_builder = std::move(w).finish();
+        set_replay_values<Int>(graph_builder.global_state(),
+                               "resample_in",
+                               values<Int>(1, none, 3));
+
+        GraphExecutorBuilder executor_builder;
+        executor_builder.graph_builder(std::move(graph_builder))
+            .start_time(MIN_ST)
+            .end_time(MIN_ST + MIN_TD * 6);
+        GraphExecutorValue executor = executor_builder.make_executor();
+        auto               view     = executor.view();
+        view.run();
+
+        CHECK_OUTPUT(get_recorded_values<Int>(view.graph().global_state(), "resample_out"),
+                     values<Int>(none, none, 3, none, 3));
+    }
 }
 
 TEST_CASE("std operators: control operators cover variadic booleans merge and selection")
@@ -1020,6 +1153,18 @@ TEST_CASE("std operators: control operators cover variadic booleans merge and se
                                           values<Int>(1, none, 4, none, none),
                                           values<Int>(none, 3, 5, none, none)),
                  values<Int>(1, 2, 4, none, 6));
+    CHECK_OUTPUT(eval_node<RaceGraph>(values<Int>(none, 1, 10, 11),
+                                      values<Int>(2, 3, 4, 5)),
+                 values<Int>(2, 3, 4, 5));
+    CHECK_OUTPUT(eval_node<IfTrueRouteGraph>(values<Bool>(true, true, false, false, true),
+                                             values<Int>(1, 2, 3, 4, 5)),
+                 values<Int>(1, 2, none, none, 5));
+    CHECK_OUTPUT(eval_node<IfFalseRouteGraph>(values<Bool>(true, true, false, false, true),
+                                              values<Int>(1, 2, 3, 4, 5)),
+                 values<Int>(none, none, 3, 4, none));
+    CHECK_OUTPUT(eval_node<RouteByIndexSlotTwoGraph>(values<Int>(0, 2, none, 1, 2),
+                                                     values<Int>(10, 20, 30, 40, 50)),
+                 values<Int>(none, 20, 30, none, 50));
 
     CHECK_OUTPUT(eval_node<stdlib::if_true>(values<Bool>(true, false, true)),
                  values<Bool>(true, none, true));

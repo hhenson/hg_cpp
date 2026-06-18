@@ -118,6 +118,8 @@ namespace hgraph
         [[nodiscard]] bool is_non_peered() const noexcept { return kind_ == Kind::NON_PEERED; }
         /** True when this PEERED reference carries a bound output handle. */
         [[nodiscard]] bool has_output() const noexcept;
+        /** True when the referenced output is currently valid, or a composite reference has at least one item. */
+        [[nodiscard]] bool is_valid(DateTime evaluation_time) const;
 
         /**
          * Schema describing the TS type this reference is pointed at — the

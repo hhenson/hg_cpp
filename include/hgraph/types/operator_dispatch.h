@@ -1238,7 +1238,7 @@ namespace hgraph
             }
             else
             {
-                impl.output = TypePattern::var("__graph_output");
+                impl.output = TypePattern::var("__out__");
             }
         }
 

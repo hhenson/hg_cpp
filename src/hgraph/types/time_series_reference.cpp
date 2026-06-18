@@ -2,6 +2,7 @@
 
 #include <hgraph/types/time_series/ts_input.h>
 
+#include <algorithm>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -191,6 +192,19 @@ namespace hgraph
     bool TimeSeriesReference::has_output() const noexcept
     {
         return kind_ == Kind::PEERED && storage_.target.bound();
+    }
+
+    bool TimeSeriesReference::is_valid(DateTime evaluation_time) const
+    {
+        switch (kind_)
+        {
+            case Kind::EMPTY: return false;
+            case Kind::PEERED: return storage_.target.view(evaluation_time).valid();
+            case Kind::NON_PEERED:
+                return std::ranges::any_of(storage_.items,
+                                           [](const TimeSeriesReference &item) { return !item.is_empty(); });
+        }
+        return false;
     }
 
     const TSOutputHandle &TimeSeriesReference::target_output() const

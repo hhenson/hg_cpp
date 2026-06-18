@@ -8,7 +8,9 @@
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/static_schema.h>
+#include <hgraph/types/time_series_reference.h>
 
+#include <limits>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -17,6 +19,28 @@ namespace hgraph::stdlib
 {
     namespace control_impl_detail
     {
+        inline constexpr std::size_t no_race_winner = std::numeric_limits<std::size_t>::max();
+
+        struct RaceState
+        {
+            std::vector<DateTime> first_valid_times{};
+            std::size_t           winner{no_race_winner};
+        };
+
+        inline void ensure_race_state_size(RaceState &state, std::size_t size)
+        {
+            if (state.first_valid_times.size() == size) { return; }
+            state.first_valid_times.assign(size, MAX_DT);
+            state.winner = no_race_winner;
+        }
+
+        [[nodiscard]] inline bool ref_input_valid(const TSInputView &input)
+        {
+            if (!input.valid()) { return false; }
+            const TimeSeriesReference ref = input.value().checked_as<TimeSeriesReference>();
+            return ref.is_valid(input.evaluation_time());
+        }
+
         struct merge_binary
         {
             static constexpr auto name = "merge_binary";
@@ -121,7 +145,7 @@ namespace hgraph::stdlib
             if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
             const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(context.args[0].port.schema);
             resolution.bind_ts("S", schema);
-            resolution.bind_ts("__graph_output", schema);
+            resolution.bind_ts("__out__", schema);
         }
 
         static auto compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
@@ -130,6 +154,20 @@ namespace hgraph::stdlib
             return wire<reduce_>(w, fn<control_impl_detail::merge_binary>(), ts);
         }
     };
+
+}  // namespace hgraph::stdlib
+
+namespace hgraph::static_schema_detail
+{
+    template <>
+    struct scalar_name<stdlib::control_impl_detail::RaceState>
+    {
+        static constexpr std::string_view value{"stdlib.race_state"};
+    };
+}  // namespace hgraph::static_schema_detail
+
+namespace hgraph::stdlib
+{
 
     struct all_graph_impl
     {
@@ -195,6 +233,142 @@ namespace hgraph::stdlib
         }
     };
 
+    //TODO: Re-review this as it seems more complicated that expected.
+    struct race_ref_impl
+    {
+        static void eval(In<"ts", TSL<REF<TsVar<"S">>, SIZE<"N">>, InputValidity::Unchecked> ts,
+                         State<control_impl_detail::RaceState> state,
+                         DateTime now,
+                         Out<REF<TsVar<"S">>> out)
+        {
+            auto current = state.get();
+            control_impl_detail::ensure_race_state_size(current, ts.size());
+
+            for (std::size_t i = 0; i < ts.size(); ++i)
+            {
+                const auto ref = ts[i];
+                if (control_impl_detail::ref_input_valid(ref.base()))
+                {
+                    if (current.first_valid_times[i] == MAX_DT) { current.first_valid_times[i] = now; }
+                }
+                else { current.first_valid_times[i] = MAX_DT; }
+            }
+
+            std::size_t winner     = control_impl_detail::no_race_winner;
+            DateTime    first_time = MAX_DT;
+            for (std::size_t i = 0; i < current.first_valid_times.size(); ++i)
+            {
+                const DateTime candidate = current.first_valid_times[i];
+                if (candidate < first_time)
+                {
+                    first_time = candidate;
+                    winner     = i;
+                }
+            }
+
+            if (winner != control_impl_detail::no_race_winner)
+            {
+                if (winner != current.winner || ts[winner].modified()) { out.set(ts[winner].value()); }
+                current.winner = winner;
+            }
+            else { current.winner = control_impl_detail::no_race_winner; }
+
+            state.set(std::move(current));
+        }
+    };
+
+    struct race_graph_impl
+    {
+        static constexpr auto name = "race";
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            if (context.args.empty()) { return false; }
+            auto       &registry = TypeRegistry::instance();
+            const auto *schema   = registry.dereference(context.args[0].port.schema);
+            if (schema == nullptr) { return false; }
+            for (const WiringArg &arg : context.args)
+            {
+                if (arg.kind != WiringArg::Kind::TimeSeries ||
+                    !time_series_schema_equivalent(schema, registry.dereference(arg.port.schema)))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+            auto       &registry = TypeRegistry::instance();
+            const auto *schema   = registry.dereference(context.args[0].port.schema);
+            resolution.bind_ts("S", schema);
+            resolution.bind_size("N", context.args.size());
+            resolution.bind_ts("__out__", registry.ref(schema));
+        }
+
+        static WiringPortRef compose(Wiring &w, VarIn<"ts", TsVar<"S">> ts)
+        {
+            if (ts.empty()) { throw std::invalid_argument("race requires at least one input"); }
+
+            auto       &registry   = TypeRegistry::instance();
+            const auto *target     = registry.dereference(ts[0].schema);
+            const auto *ref_schema = registry.ref(target);
+            std::vector<WiringPortRef> children;
+            children.reserve(ts.size());
+            for (const WiringPortRef &port : ts)
+            {
+                children.push_back(graph_wiring_detail::adapt_source_for_input(w, ref_schema, port));
+            }
+
+            WiringPortRef packed = WiringPortRef::structural_source(registry.tsl(ref_schema, ts.size()),
+                                                                    std::move(children));
+            return wire<race_ref_impl>(w, Port<void>{w, std::move(packed)}).erased();
+        }
+    };
+
+    struct if_ref_impl
+    {
+        using output_schema = UnNamedTSB<Field<"true", REF<TsVar<"S">>>, Field<"false", REF<TsVar<"S">>>>;
+
+        static void eval(In<"condition", TS<Bool>> condition,
+                         In<"ts", REF<TsVar<"S">>, InputValidity::Unchecked> ts,
+                         Out<output_schema> out)
+        {
+            const TimeSeriesReference empty = TimeSeriesReference::empty(ts.base().schema()->referenced_ts());
+            if (condition.value())
+            {
+                out.template field<"true">().set(ts.valid() ? ts.value() : empty);
+                out.template field<"false">().set(empty);
+            }
+            else
+            {
+                out.template field<"false">().set(ts.valid() ? ts.value() : empty);
+                out.template field<"true">().set(empty);
+            }
+        }
+    };
+
+    struct route_by_index_ref_impl
+    {
+        static void eval(In<"index", TS<Int>> index,
+                         In<"ts", REF<TsVar<"S">>, InputValidity::Unchecked> ts,
+                         Out<TSL<REF<TsVar<"S">>, SIZE<"N">>> out)
+        {
+            const TimeSeriesReference empty = TimeSeriesReference::empty(ts.base().schema()->referenced_ts());
+            const Int                 selected_index = index.value();
+            for (std::size_t i = 0; i < out.size(); ++i)
+            {
+                if (selected_index >= 0 && static_cast<std::size_t>(selected_index) == i && ts.valid())
+                {
+                    out[i].set(ts.value());
+                }
+                else { out[i].set(empty); }
+            }
+        }
+    };
+
     struct if_true_impl
     {
         static void eval(In<"condition", TS<Bool>> condition,
@@ -246,10 +420,14 @@ namespace hgraph::stdlib
     inline void register_control_operators()
     {
         register_graph_overload<merge, merge_graph_impl>();
+        register_graph_overload<race, race_graph_impl>();
         register_graph_overload<all_, all_graph_impl>();
         register_graph_overload<any_, any_graph_impl>();
         register_overload<all_, all_tsd_impl>();
         register_overload<any_, any_tsd_impl>();
+        register_overload<race, race_ref_impl>();
+        register_overload<if_, if_ref_impl>();
+        register_overload<route_by_index, route_by_index_ref_impl>();
         register_overload<if_true, if_true_impl>();
         register_overload<if_then_else, if_then_else_impl>();
         register_overload<if_cmp, if_cmp_impl>();

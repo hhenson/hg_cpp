@@ -161,11 +161,11 @@ namespace hgraph::stdlib::tsb_itemwise_impl_detail
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__graph_output") != nullptr || context.args.size() != 1) { return; }
+            if (resolution.find_ts("__out__") != nullptr || context.args.size() != 1) { return; }
             const TSValueTypeMetaData *schema = direct_tsb_schema(context.args[0]);
             if (schema == nullptr) { return; }
             const TSValueTypeMetaData *output = resolve_unary_output_schema<Op>(*schema);
-            if (output != nullptr) { resolution.bind_ts("__graph_output", output); }
+            if (output != nullptr) { resolution.bind_ts("__out__", output); }
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
@@ -188,12 +188,12 @@ namespace hgraph::stdlib::tsb_itemwise_impl_detail
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__graph_output") != nullptr || context.args.size() != 2) { return; }
+            if (resolution.find_ts("__out__") != nullptr || context.args.size() != 2) { return; }
             const TSValueTypeMetaData *lhs = direct_tsb_schema(context.args[0]);
             const TSValueTypeMetaData *rhs = direct_tsb_schema(context.args[1]);
             if (lhs == nullptr || rhs == nullptr) { return; }
             const TSValueTypeMetaData *output = resolve_binary_output_schema<Op>(*lhs, *rhs);
-            if (output != nullptr) { resolution.bind_ts("__graph_output", output); }
+            if (output != nullptr) { resolution.bind_ts("__out__", output); }
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)

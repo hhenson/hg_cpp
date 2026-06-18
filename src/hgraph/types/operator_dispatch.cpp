@@ -106,8 +106,9 @@ namespace hgraph
                     }
                     return true;
                 case TypePattern::Kind::REF:
-                    return concrete->kind == TSTypeKind::REF &&
-                           input_ts_pattern_match(pattern.children[0], concrete->referenced_ts(), map);
+                    return input_ts_pattern_match(pattern.children[0],
+                                                  concrete->kind == TSTypeKind::REF ? concrete->referenced_ts() : concrete,
+                                                  map);
                 case TypePattern::Kind::Var:
                 case TypePattern::Kind::TS:
                 case TypePattern::Kind::TSS:

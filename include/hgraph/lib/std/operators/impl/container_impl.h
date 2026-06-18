@@ -47,6 +47,13 @@ namespace hgraph::stdlib
             return schema != nullptr && schema->kind == TSTypeKind::TSB ? schema : nullptr;
         }
 
+        [[nodiscard]] inline const TSValueTypeMetaData *direct_tsl_schema(const WiringArg &arg) noexcept
+        {
+            if (arg.kind != WiringArg::Kind::TimeSeries) { return nullptr; }
+            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(arg.port.schema);
+            return schema != nullptr && schema->kind == TSTypeKind::TSL ? schema : nullptr;
+        }
+
         [[nodiscard]] inline std::optional<std::size_t> find_tsb_field_index(const TSValueTypeMetaData &schema,
                                                                              std::string_view name) noexcept
         {
@@ -200,14 +207,27 @@ namespace hgraph::stdlib
         }
     };
 
-    struct getitem_tsl
+    struct getitem_tsl_by_index
     {
-        static void eval(In<"ts", TSL<TS<ScalarVar<"T">>, SIZE<"N">>, InputValidity::Unchecked> ts,
-                         In<"key", TS<Int>> key, Out<TS<ScalarVar<"T">>> out)
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
         {
-            const std::size_t index = container_impl_detail::normalize_item_index(key.value(), ts.size(), "TSL");
-            auto              item  = ts[index];
-            if (item.valid()) { out.apply(item.base().value()); }
+            if (context.args.size() != 2) { return false; }
+            const TSValueTypeMetaData *schema = container_impl_detail::direct_tsl_schema(context.args[0]);
+            if (schema == nullptr) { return false; }
+
+            // Fixed-size scalar indexing is a structural wiring projection
+            // (tsl_element). Only non-fixed TSLs should promote a scalar key
+            // into the dynamic time-series index path.
+            if (context.args[1].kind == WiringArg::Kind::Scalar && schema->fixed_size() != 0) { return false; }
+            return true;
+        }
+
+        static void eval(In<"ts", TSL<TsVar<"E">, SIZE<"N">>, InputActivity::Passive, InputValidity::Unchecked> ts,
+                         In<"key", TS<Int>> key, Out<REF<TsVar<"E">>> out)
+        {
+            const std::size_t          index =
+                container_impl_detail::normalize_item_index(key.value(), ts.size(), "TSL");
+            out.set(ts[index].base().reference());
         }
     };
 
@@ -236,7 +256,7 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__graph_output") != nullptr) { return; }
+            if (resolution.find_ts("__out__") != nullptr) { return; }
             if (context.args.size() != 2) { return; }
 
             const TSValueTypeMetaData *schema = container_impl_detail::direct_tsb_schema(context.args[0]);
@@ -244,7 +264,7 @@ namespace hgraph::stdlib
             if (schema == nullptr || key == nullptr) { return; }
 
             const TSValueTypeMetaData *field_schema = container_impl_detail::tsb_field_schema(*schema, *key);
-            if (field_schema != nullptr) { resolution.bind_ts("__graph_output", field_schema); }
+            if (field_schema != nullptr) { resolution.bind_ts("__out__", field_schema); }
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
@@ -270,7 +290,7 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__graph_output") != nullptr) { return; }
+            if (resolution.find_ts("__out__") != nullptr) { return; }
             if (context.args.size() != 2) { return; }
 
             const TSValueTypeMetaData *schema = container_impl_detail::direct_tsb_schema(context.args[0]);
@@ -278,7 +298,7 @@ namespace hgraph::stdlib
             if (schema == nullptr || key == nullptr) { return; }
 
             const TSValueTypeMetaData *field_schema = container_impl_detail::tsb_field_schema(*schema, *key);
-            if (field_schema != nullptr) { resolution.bind_ts("__graph_output", field_schema); }
+            if (field_schema != nullptr) { resolution.bind_ts("__out__", field_schema); }
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
@@ -304,7 +324,7 @@ namespace hgraph::stdlib
 
         static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__graph_output") != nullptr) { return; }
+            if (resolution.find_ts("__out__") != nullptr) { return; }
             if (context.args.size() != 2) { return; }
 
             const TSValueTypeMetaData *schema = container_impl_detail::direct_tsb_schema(context.args[0]);
@@ -312,7 +332,7 @@ namespace hgraph::stdlib
             if (schema == nullptr || attr == nullptr) { return; }
 
             const TSValueTypeMetaData *field_schema = container_impl_detail::tsb_field_schema(*schema, *attr);
-            if (field_schema != nullptr) { resolution.bind_ts("__graph_output", field_schema); }
+            if (field_schema != nullptr) { resolution.bind_ts("__out__", field_schema); }
         }
 
         static bool requires_(const ResolutionMap &, OperatorCallContext context)
@@ -382,7 +402,7 @@ namespace hgraph::stdlib
         register_overload<contains_, contains_tss_subset>();
         register_overload<contains_, contains_tsd_key>();
 
-        register_overload<getitem_, getitem_tsl>();
+        register_overload<getitem_, getitem_tsl_by_index>();
         register_overload<index_of, index_of_tsl>();
 
         register_graph_overload<getitem_, getitem_tsb_by_name>();

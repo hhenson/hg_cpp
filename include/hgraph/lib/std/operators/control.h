@@ -31,7 +31,7 @@ namespace hgraph::stdlib
     };
 
     /** ``race`` — forward the first *valid* of the inputs, falling through as they invalidate. */
-    struct race : Operator<"race", In<"ts", TsVar<"S">>, Out<TsVar<"S">>>
+    struct race : Operator<"race", VarIn<"ts", TsVar<"S">>, Out<TsVar<"S">>>
     {
     };
 

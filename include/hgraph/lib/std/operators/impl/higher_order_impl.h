@@ -42,9 +42,9 @@ namespace hgraph::stdlib
             {
                 resolution.bind_ts(legacy_var, output);
             }
-            if (resolution.find_ts("__graph_output") == nullptr)
+            if (resolution.find_ts("__out__") == nullptr)
             {
-                resolution.bind_ts("__graph_output", output);
+                resolution.bind_ts("__out__", output);
             }
         }
 
@@ -331,7 +331,7 @@ namespace hgraph::stdlib
 
         inline void resolve_reduce_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__graph_output") != nullptr ||
+            if (resolution.find_ts("__out__") != nullptr ||
                 context.args.size() < 2 ||
                 context.args[1].kind != WiringArg::Kind::TimeSeries)
             {
@@ -517,7 +517,7 @@ namespace hgraph::stdlib
 
         inline void resolve_reduce_tsd_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__graph_output") != nullptr ||
+            if (resolution.find_ts("__out__") != nullptr ||
                 context.args.size() < 2 ||
                 context.args[1].kind != WiringArg::Kind::TimeSeries)
             {
@@ -755,7 +755,7 @@ namespace hgraph::stdlib
          */
         inline void resolve_switch_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__graph_output") != nullptr) { return; }
+            if (resolution.find_ts("__out__") != nullptr) { return; }
 
             const SwitchCases *cases = context.scalar_as<SwitchCases>("cases");
             if (cases == nullptr) { return; }
@@ -1154,7 +1154,7 @@ namespace hgraph::stdlib
         /** Bind the output var ``O`` for the resolver: ``TSD<K, OUT(func)>``. */
         inline void resolve_map_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__graph_output") != nullptr) { return; }
+            if (resolution.find_ts("__out__") != nullptr) { return; }
 
             const WiredFn *func = context.scalar_as<WiredFn>("func");
             if (func == nullptr) { return; }
@@ -1540,7 +1540,7 @@ namespace hgraph::stdlib
         /** Bind the output var ``O`` for the resolver: ``TSL<OUT(func), SIZE>``. */
         inline void resolve_map_tsl_output(ResolutionMap &resolution, OperatorCallContext context)
         {
-            if (resolution.find_ts("__graph_output") != nullptr) { return; }
+            if (resolution.find_ts("__out__") != nullptr) { return; }
 
             const WiredFn *func = context.scalar_as<WiredFn>("func");
             if (func == nullptr) { return; }
