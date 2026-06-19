@@ -253,7 +253,6 @@ namespace hgraph::ts_data_plan_factory_detail
                 .mutable_value_memory_impl = &fixed_mutable_value_memory,
                 .delta_memory_impl         = &fixed_delta_memory,
                 .mutable_delta_memory_impl = &fixed_mutable_delta_memory,
-                .cleanup_delta_impl        = &fixed_cleanup_delta,
                 .copy_value_from_impl      = &fixed_copy_value_from,
                 .empty_delta_impl          = schema->kind == TSTypeKind::TSB ? &ts_data_detail::empty_delta_tsb
                                                                              : &ts_data_detail::empty_delta_tsl,
@@ -409,21 +408,6 @@ namespace hgraph::ts_data_plan_factory_detail
             return true;
         }
 
-        static void fixed_cleanup_delta(const void *context, void *memory, DateTime modified_time)
-        {
-            const auto *state = ctx(context);
-            for (std::size_t index = 0; index < state->element_count(); ++index)
-            {
-                const auto *child = state->element_binding(index);
-                const auto &ops   = child_ops(*child);
-                void       *data  = child_data(state, memory, index);
-                const auto *child_tracking = ops.tracking_impl(ops.context, data);
-                if (child_tracking != nullptr && child_tracking->last_modified_time == modified_time)
-                {
-                    ops.cleanup_delta_impl(ops.context, data, modified_time);
-                }
-            }
-        }
 
         [[nodiscard]] static const void *fixed_value_memory(const void *context, const void *memory) noexcept
         {

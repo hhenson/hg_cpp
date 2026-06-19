@@ -241,13 +241,6 @@ namespace hgraph
         /** True when this node and all required descendants are valid. */
         [[nodiscard]] bool all_valid() const;
 
-        /**
-         * Clear transient delta state for this node and modified descendants.
-         *
-         * ``modified_time`` is normally the root node's last modified time.
-         * Branches whose tracking timestamp differs are skipped.
-         */
-        void cleanup_delta(DateTime modified_time) const;
         [[nodiscard]] TSSDataView as_set() &;
         [[nodiscard]] TSSDataView as_set() const &;
         void as_set() && = delete;

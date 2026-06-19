@@ -730,22 +730,6 @@ namespace hgraph
         [[nodiscard]] const void *input_delta_memory(const void *, const void *memory) noexcept { return memory; }
         [[nodiscard]] void *input_mutable_delta_memory(const void *, void *memory) noexcept { return memory; }
 
-        void input_cleanup_delta(const void *context, void *memory, DateTime modified_time)
-        {
-            const auto *state = static_cast<const InputBindingContext *>(context);
-            for (std::size_t index = 0; index < state->children.size(); ++index)
-            {
-                const auto *binding = input_element_binding(context, memory, index);
-                const auto *data    = input_element_memory(context, memory, index);
-                if (binding == nullptr || data == nullptr) { continue; }
-                const auto &ops = binding->ops_ref();
-                const auto *tracking = ops.tracking_impl(ops.context, data);
-                if (tracking != nullptr && tracking->last_modified_time == modified_time)
-                {
-                    ops.cleanup_delta_impl(ops.context, const_cast<void *>(data), modified_time);
-                }
-            }
-        }
 
         [[nodiscard]] std::size_t input_indexed_size(const void *context, const void *) noexcept
         {
@@ -1651,7 +1635,6 @@ namespace hgraph
                 .mutable_value_memory_impl = &input_mutable_value_memory,
                 .delta_memory_impl = &input_delta_memory,
                 .mutable_delta_memory_impl = &input_mutable_delta_memory,
-                .cleanup_delta_impl = &input_cleanup_delta,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                 .to_python_impl = &input_to_python,
                 .delta_to_python_impl = &input_delta_to_python,

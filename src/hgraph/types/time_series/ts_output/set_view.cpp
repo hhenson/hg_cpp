@@ -28,10 +28,26 @@ namespace hgraph
     bool TSSOutputView::contains(const ValueView &key) const { return data_view().contains(key); }
     std::size_t TSSOutputView::find_slot(const ValueView &key) const { return data_view().find_slot(key); }
     Range<ValueView> TSSOutputView::values() const { return data_view().values(); }
-    Range<ValueView> TSSOutputView::added() const { return data_view().added(); }
-    Range<ValueView> TSSOutputView::removed() const { return data_view().removed(); }
-    Range<ValueView> TSSOutputView::added_values() const { return data_view().added_values(); }
-    Range<ValueView> TSSOutputView::removed_values() const { return data_view().removed_values(); }
+    Range<ValueView> TSSOutputView::added() const
+    {
+        if (!modified()) { return detail::empty_output_range<ValueView>(); }
+        return data_view().added();
+    }
+    Range<ValueView> TSSOutputView::removed() const
+    {
+        if (!modified()) { return detail::empty_output_range<ValueView>(); }
+        return data_view().removed();
+    }
+    Range<ValueView> TSSOutputView::added_values() const
+    {
+        if (!modified()) { return detail::empty_output_range<ValueView>(); }
+        return data_view().added_values();
+    }
+    Range<ValueView> TSSOutputView::removed_values() const
+    {
+        if (!modified()) { return detail::empty_output_range<ValueView>(); }
+        return data_view().removed_values();
+    }
     Range<ValueView>::iterator TSSOutputView::begin() const { return data_view().begin(); }
     Range<ValueView>::iterator TSSOutputView::end() const { return data_view().end(); }
     TSSDataMutationView TSSOutputView::begin_mutation(DateTime evaluation_time) const

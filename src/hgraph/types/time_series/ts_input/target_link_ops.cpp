@@ -102,8 +102,6 @@ namespace hgraph::detail
             return target.delta_value(evaluation_time).data();
         }
 
-        void target_link_cleanup_delta(const void *, void *, DateTime) {}
-
         [[nodiscard]] TSDataView target_link_target_view(const void *context, const void *memory)
         {
             const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
@@ -716,7 +714,6 @@ namespace hgraph::detail
                 .all_valid_impl            = &target_link_all_valid,
                 .value_memory_impl         = &target_link_value_memory,
                 .delta_memory_impl         = &target_link_delta_memory,
-                .cleanup_delta_impl        = &target_link_cleanup_delta,
                 .copy_value_from_impl      = &target_link_copy_value_from,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                 .to_python_impl            = &target_link_to_python,

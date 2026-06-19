@@ -155,10 +155,15 @@ namespace hgraph
                                                      .projector = &tsd_input_project_item};
     }
 
-    Range<ValueView> TSDInputView::added_keys() const { return data_view().added_keys(); }
+    Range<ValueView> TSDInputView::added_keys() const
+    {
+        if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        return data_view().added_keys();
+    }
 
     Range<TSInputView> TSDInputView::added_values() const
     {
+        if (!modified()) { return detail::empty_input_range<TSInputView>(); }
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = slot_capacity(),
                                   .predicate = &tsd_input_added_slot,
                                   .projector = &tsd_input_project_value};
@@ -166,6 +171,7 @@ namespace hgraph
 
     KeyValueRange<ValueView, TSInputView> TSDInputView::added_items() const
     {
+        if (!modified()) { return detail::empty_input_kv_range<ValueView, TSInputView>(); }
         return KeyValueRange<ValueView, TSInputView>{.context = this,
                                                      .memory = nullptr,
                                                      .limit = slot_capacity(),
@@ -173,10 +179,15 @@ namespace hgraph
                                                      .projector = &tsd_input_project_item};
     }
 
-    Range<ValueView> TSDInputView::removed_keys() const { return data_view().removed_keys(); }
+    Range<ValueView> TSDInputView::removed_keys() const
+    {
+        if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        return data_view().removed_keys();
+    }
 
     Range<TSInputView> TSDInputView::removed_values() const
     {
+        if (!modified()) { return detail::empty_input_range<TSInputView>(); }
         return Range<TSInputView>{.context = this, .memory = nullptr, .limit = slot_capacity(),
                                   .predicate = &tsd_input_removed_slot,
                                   .projector = &tsd_input_project_value};
@@ -184,6 +195,7 @@ namespace hgraph
 
     KeyValueRange<ValueView, TSInputView> TSDInputView::removed_items() const
     {
+        if (!modified()) { return detail::empty_input_kv_range<ValueView, TSInputView>(); }
         return KeyValueRange<ValueView, TSInputView>{.context = this,
                                                      .memory = nullptr,
                                                      .limit = slot_capacity(),

@@ -717,11 +717,7 @@ namespace hgraph
                 auto &scheduled = graph_schedule(runtime, graph.data(), index);
                 if (scheduled == evaluation_time)
                 {
-                    // Do NOT stamp ``scheduled`` here. The loop visits each index
-                    // once; a node that ran keeps its (now past) scheduled time
-                    // and is excluded from the next-evaluation-time rule below
-                    // (``> evaluation_time``). MIN_DT is the never-modified
-                    // sentinel and must not be overloaded as a schedule reset.
+                    // post-eval MIN_DT stamp removed (see lazy-cleanup invariant)
                     state.evaluation_cursor = index;
                     graph_node_view(runtime, graph.data(), index).evaluate(state.evaluation_time);
                 }
@@ -729,21 +725,6 @@ namespace hgraph
                 {
                     if (scheduled < state.next_scheduled_time) { state.next_scheduled_time = scheduled; }
                 }
-            }
-
-            // FIXME(lazy-cleanup): delta cleanup is meant to be LAZY (None in a
-            // later cycle via ``delta_value``'s ``last_modified == t`` gate;
-            // collections physically reset at the next mutation via the slot
-            // store's ``prepare_delta``). This eager end-of-cycle sweep is a
-            // band-aid that must go — but removing it currently exposes a latent
-            // nested-TSD bug: a child whose only change was a *prior* cycle still
-            // reports ``slot_modified`` and leaks an empty delta into the parent's
-            // later-cycle delta (see test_collection_nodes "partition"). Fix that
-            // (lazily reset the parent's per-slot modified state) and the
-            // vestigial ``TSOutput::dirty_`` flag, then delete this sweep.
-            for (std::size_t index = 0; index < runtime.layout.node_count; ++index)
-            {
-                graph_node_view(runtime, graph.data(), index).cleanup_delta();
             }
 
             if constexpr (std::is_same_v<Storage, NestedGraphRuntimeStorage>)

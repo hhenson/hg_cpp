@@ -56,21 +56,6 @@ namespace hgraph
         [[nodiscard]] TSDataView data_view();
         [[nodiscard]] TSDataView data_view() const;
 
-        /** True after this output has been modified and before cleanup runs. */
-        [[nodiscard]] bool dirty() const noexcept;
-
-        /**
-         * Clear transient delta state for the current dirty root.
-         *
-         * Nodes call this from their post-evaluation cleanup hook. The cleanup
-         * walks only branches whose modification time matches the root's last
-         * modified time.
-         */
-        void cleanup_delta();
-
-        /** Clear the dirty flag without touching TSData delta state. */
-        void clear_dirty() noexcept;
-
         /** Register / remove an observer at the root TSData level. */
         void subscribe(Notifiable *observer);
         void unsubscribe(Notifiable *observer);
@@ -108,7 +93,6 @@ namespace hgraph
         void record_child_modified(std::size_t child_id, DateTime mutation_time) override;
 
         TSData                                      data_{};
-        bool                                        dirty_{false};
         mutable std::unique_ptr<detail::TSOutputAlternativeStore> alternatives_{};
     };
 }  // namespace hgraph

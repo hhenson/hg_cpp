@@ -76,9 +76,6 @@ namespace hgraph
                   const void          *builder_context,
                   DateTime        modified_time);
 
-        /** Clear transient delta state on constructed proxy values. */
-        void cleanup_delta(DateTime modified_time);
-
         [[nodiscard]] TSDataView source_view() const noexcept;
         [[nodiscard]] TSDDataView source_dict() const;
         [[nodiscard]] TSDataView source_child_at_slot(std::size_t slot) const;

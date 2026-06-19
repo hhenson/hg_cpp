@@ -163,7 +163,6 @@ namespace hgraph
                     .mutable_value_memory_impl = &mutable_value_memory,
                     .delta_memory_impl         = &delta_memory,
                     .mutable_delta_memory_impl = &mutable_delta_memory,
-                    .cleanup_delta_impl        = &cleanup_delta,
                     .record_child_modified_impl = &record_child_modified,
                     .empty_delta_impl          = &ts_data_detail::empty_delta_tss,
                     .capture_delta_impl        = &ts_data_detail::capture_delta_tss,
@@ -485,11 +484,6 @@ namespace hgraph
             [[nodiscard]] static void *mutable_delta_memory(const void *, void *memory) noexcept
             {
                 return memory;
-            }
-
-            static void cleanup_delta(const void *, void *memory, DateTime modified_time)
-            {
-                proxy_storage(memory).cleanup_delta(modified_time);
             }
 
             static void record_child_modified(const void *, void *memory, std::size_t child_id,
@@ -1031,30 +1025,6 @@ namespace hgraph
         }
 
         if (touched) { mark_modified(modified_time); }
-    }
-
-    void TSDProxy::cleanup_delta(DateTime modified_time)
-    {
-        if (element_binding_ == nullptr) { return; }
-
-        const auto &child_ops = element_binding_->ops_ref();
-        for (std::size_t slot = 0; slot < values_.slot_capacity(); ++slot)
-        {
-            if (!values_.has_slot(slot)) { continue; }
-            void       *child_memory = values_.value_memory(slot);
-            const auto *child_state  = child_ops.tracking_impl(child_ops.context, child_memory);
-            if (child_state != nullptr && child_state->last_modified_time == modified_time)
-            {
-                child_ops.cleanup_delta_impl(child_ops.context, child_memory, modified_time);
-            }
-        }
-
-        auto dict = source_dict();
-        for (std::size_t slot = 0; slot < values_.slot_capacity(); ++slot)
-        {
-            if (!dict.slot_occupied(slot)) { values_.destroy_at(slot); }
-        }
-        values_.clear_all_updated();
     }
 
     TSDataView TSDProxy::source_view() const noexcept

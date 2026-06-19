@@ -1267,3 +1267,40 @@ live values, and over the per-slot delta masks for the current tick:
 ``added`` / ``removed`` for TSS-shaped key storage and ``modified`` for
 TSD value changes. This matters for adaptors and analytics paths that
 consume large keyed time-series in bulk.
+
+Delta Visibility and Lazy Cleanup
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A delta is **only visible in the cycle the structure was modified**. This is
+the same rule as the atomic ``delta_value(t)`` gate (it returns a typed-null
+view unless ``last_modified_time == evaluation_time``), applied uniformly to
+*every* delta surface: ``delta_value``, and the keyed ``added`` / ``removed`` /
+``modified`` keys / values / items.
+
+The split of responsibility is deliberate:
+
+- The data-layer ``TSDDataView`` / ``TSSDataView`` ``added()`` / ``removed()``
+  (which take no time argument) expose the **raw** physical key/slot bitsets.
+  The data-layer ``modified_*`` accessors take an explicit ``evaluation_time``
+  and already gate on it.
+- The endpoint views (``TSDInputView`` / ``TSDOutputView`` /
+  ``TSSInputView`` / ``TSSOutputView``) gate **all** of their delta accessors on
+  ``modified()`` (the structure's ``last_modified_time == evaluation_time``).
+  A structure that was not modified this cycle therefore reports an empty
+  ``added`` / ``removed`` / ``modified`` set even though the underlying bitsets
+  still physically hold the previous cycle's values. This is what consumers
+  (operators, nested-graph forwarding, mesh sibling reads) must see, and it
+  removes any need for an eager reset of the delta before the next mutation.
+
+There is **no end-of-cycle cleanup sweep**. Physical reclamation is lazy and
+happens on the structure's **next mutation**: the slot-store ``prepare_delta``
+resets a collection's ``added`` / ``removed`` / ``modified`` bitsets and erases
+pending-removed keys the first time it is touched at a new ``delta_time_``
+(the ``delta_time_ != t`` guard, which is also the per-collection optimisation
+that skips re-clearing a delta already reset at ``t``). Because reads are
+cycle-gated, a stale delta is never observable in the window between the cycle
+it was produced and the producer's next mutation, so no eager reclamation pass
+is required. There is deliberately **no** ``cleanup_delta`` ops entry on
+``TSDataView`` / ``TSOutput`` / ``NodeView`` and **no** ``TSOutput::dirty_``
+flag: the earlier eager-sweep apparatus has been removed in favour of this
+read-gated, mutation-driven model.

@@ -88,20 +88,6 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
             }
 
-            void cleanup_delta(DateTime modified_time)
-            {
-                const auto &child_ops = element_binding().ops_ref();
-                for (std::size_t index = 0; index < elements_.size(); ++index)
-                {
-                    void       *child = child_memory(index);
-                    const auto *child_tracking = child_ops.tracking_impl(child_ops.context, child);
-                    if (child_tracking != nullptr && child_tracking->last_modified_time == modified_time)
-                    {
-                        child_ops.cleanup_delta_impl(child_ops.context, child, modified_time);
-                    }
-                }
-            }
-
           private:
             const TSDataBinding              *element_binding_{nullptr};
             TSDataTracking                    tracking_{};
@@ -268,7 +254,6 @@ namespace hgraph::ts_data_plan_factory_detail
                     .mutable_value_memory_impl = &dynamic_mutable_value_memory,
                     .delta_memory_impl         = &dynamic_delta_memory,
                     .mutable_delta_memory_impl = &dynamic_mutable_delta_memory,
-                    .cleanup_delta_impl        = &dynamic_cleanup_delta,
                     .copy_value_from_impl      = &dynamic_copy_value_from,
                     .empty_delta_impl          = &ts_data_detail::empty_delta_tsl,
                     .capture_delta_impl        = &ts_data_detail::capture_delta_tsl,
@@ -389,11 +374,6 @@ namespace hgraph::ts_data_plan_factory_detail
             [[nodiscard]] static void *dynamic_mutable_delta_memory(const void *, void *memory) noexcept
             {
                 return memory;
-            }
-
-            static void dynamic_cleanup_delta(const void *, void *memory, DateTime modified_time)
-            {
-                storage(memory).cleanup_delta(modified_time);
             }
 
             [[nodiscard]] static ValueView child_value_view(const DynamicTSLContext *state,

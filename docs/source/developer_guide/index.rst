@@ -14,6 +14,7 @@ The developer guide describes the internal design of the C++ implementation. The
    graph_wiring
    nested_graphs
    error_handling
+   mesh
    operators
    python_integration
    testing

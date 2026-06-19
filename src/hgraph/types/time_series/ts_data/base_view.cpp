@@ -221,14 +221,6 @@ namespace hgraph
         return table.all_valid_impl(table.context, data());
     }
 
-    void TSDataView::cleanup_delta(DateTime modified_time) const
-    {
-        if (modified_time == MIN_DT || tracking().last_modified_time != modified_time) { return; }
-
-        const auto &table = ops();
-        table.cleanup_delta_impl(table.context, mutable_data(), modified_time);
-    }
-
     TSSDataView TSDataView::as_set() &
     {
         return TSSDataView{borrowed_ref()};

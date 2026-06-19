@@ -59,8 +59,6 @@ namespace hgraph::ts_data_detail
 
     void noop_reset_delta(const void *, void *) {}
 
-    void noop_cleanup_delta(const void *, void *, DateTime) {}
-
     void noop_record_child_modified(const void *, void *, std::size_t, DateTime) {}
 
     bool missing_copy_value_from(const void *, void *, const ValueView &, DateTime)

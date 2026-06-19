@@ -49,7 +49,6 @@ namespace hgraph
         if (this != &other)
         {
             data_ = other.data_;
-            dirty_ = false;
             alternatives_.reset();
             attach_root_parent();
         }
@@ -57,8 +56,7 @@ namespace hgraph
     }
 
     TSOutput::TSOutput(TSOutput &&other) noexcept
-        : data_(std::move(other.data_)),
-          dirty_(std::exchange(other.dirty_, false))
+        : data_(std::move(other.data_))
     {
         other.alternatives_.reset();
         attach_root_parent();
@@ -69,7 +67,6 @@ namespace hgraph
         if (this != &other)
         {
             data_ = std::move(other.data_);
-            dirty_ = std::exchange(other.dirty_, false);
             alternatives_.reset();
             other.alternatives_.reset();
             attach_root_parent();
@@ -100,26 +97,6 @@ namespace hgraph
     TSDataView TSOutput::data_view() const
     {
         return data_.view();
-    }
-
-    bool TSOutput::dirty() const noexcept
-    {
-        return dirty_;
-    }
-
-    void TSOutput::cleanup_delta()
-    {
-        if (!dirty_) { return; }
-
-        auto root = data_view();
-        const auto modified_time = root.last_modified_time();
-        root.cleanup_delta(modified_time);
-        dirty_ = false;
-    }
-
-    void TSOutput::clear_dirty() noexcept
-    {
-        dirty_ = false;
     }
 
     void TSOutput::subscribe(Notifiable *observer)
@@ -201,7 +178,8 @@ namespace hgraph
 
     void TSOutput::record_child_modified(std::size_t, DateTime)
     {
-        dirty_ = true;
+        // Root outputs have no parent to notify and no eager delta state to mark;
+        // delta visibility is read-gated and reclamation is lazy (next mutation).
     }
 
     NodeView TSOutput::owner_node() const

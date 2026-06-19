@@ -847,14 +847,6 @@ namespace hgraph
             }
         }
 
-        void cleanup_delta_impl(const void *context, const NodeView &view)
-        {
-            const auto &runtime = runtime_context(context);
-            if (runtime.layout.has_output()) { node_output(runtime, view.data()).cleanup_delta(); }
-            if (runtime.layout.has_error_output()) { node_error_output(runtime, view.data()).cleanup_delta(); }
-            if (runtime.layout.has_recordable_state()) { node_recordable_state(runtime, view.data()).cleanup_delta(); }
-        }
-
         void default_attach_graph_impl(const void *, void *, GraphValue *, std::size_t) {}
         GraphValue *default_graph_impl(const void *, const void *) noexcept { return nullptr; }
         std::size_t default_node_index_impl(const void *, const void *) noexcept { return 0; }
@@ -874,11 +866,6 @@ namespace hgraph
         void default_evaluate_impl(const void *, const NodeView &, DateTime)
         {
             throw std::logic_error("NodeView::evaluate requires a live node");
-        }
-
-        void default_cleanup_delta_impl(const void *, const NodeView &)
-        {
-            throw std::logic_error("NodeView::cleanup_delta requires a live node");
         }
 
         bool default_has_input_impl(const void *, const void *) noexcept { return false; }
@@ -974,7 +961,6 @@ namespace hgraph
                 if (ops.start_impl == nullptr) { ops.start_impl = &start_impl; }
                 if (ops.stop_impl == nullptr) { ops.stop_impl = &stop_impl; }
                 if (ops.evaluate_impl == nullptr) { ops.evaluate_impl = &evaluate_impl; }
-                if (ops.cleanup_delta_impl == nullptr) { ops.cleanup_delta_impl = &cleanup_delta_impl; }
                 if (ops.has_input_impl == nullptr) { ops.has_input_impl = &has_input_impl; }
                 if (ops.has_output_impl == nullptr) { ops.has_output_impl = &has_output_impl; }
                 if (ops.has_state_impl == nullptr) { ops.has_state_impl = &has_state_impl; }
@@ -1027,7 +1013,6 @@ namespace hgraph
                 .start_impl = &default_start_impl,
                 .stop_impl = &default_stop_impl,
                 .evaluate_impl = &default_evaluate_impl,
-                .cleanup_delta_impl = &default_cleanup_delta_impl,
                 .has_input_impl = &default_has_input_impl,
                 .has_output_impl = &default_has_output_impl,
                 .has_state_impl = &default_has_state_impl,
@@ -1293,7 +1278,6 @@ namespace hgraph
     {
         ops().evaluate_impl(ops().context, *this, evaluation_time);
     }
-    void NodeView::cleanup_delta() const { ops().cleanup_delta_impl(ops().context, *this); }
     const NodeOps &NodeView::ops() const
     {
         return storage_.binding()->ops_ref();

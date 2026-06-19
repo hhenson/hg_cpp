@@ -31,10 +31,26 @@ namespace hgraph
     bool TSSInputView::contains(const ValueView &key) const { return data_view().contains(key); }
     std::size_t TSSInputView::find_slot(const ValueView &key) const { return data_view().find_slot(key); }
     Range<ValueView> TSSInputView::values() const { return data_view().values(); }
-    Range<ValueView> TSSInputView::added() const { return data_view().added(); }
-    Range<ValueView> TSSInputView::removed() const { return data_view().removed(); }
-    Range<ValueView> TSSInputView::added_values() const { return data_view().added_values(); }
-    Range<ValueView> TSSInputView::removed_values() const { return data_view().removed_values(); }
+    Range<ValueView> TSSInputView::added() const
+    {
+        if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        return data_view().added();
+    }
+    Range<ValueView> TSSInputView::removed() const
+    {
+        if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        return data_view().removed();
+    }
+    Range<ValueView> TSSInputView::added_values() const
+    {
+        if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        return data_view().added_values();
+    }
+    Range<ValueView> TSSInputView::removed_values() const
+    {
+        if (!modified()) { return detail::empty_input_range<ValueView>(); }
+        return data_view().removed_values();
+    }
     Range<ValueView>::iterator TSSInputView::begin() const { return data_view().begin(); }
     Range<ValueView>::iterator TSSInputView::end() const { return data_view().end(); }
 

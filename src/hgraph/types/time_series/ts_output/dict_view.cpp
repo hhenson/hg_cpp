@@ -139,10 +139,15 @@ namespace hgraph
                                                       .projector = &tsd_output_project_item};
     }
 
-    Range<ValueView> TSDOutputView::added_keys() const { return data_view().added_keys(); }
+    Range<ValueView> TSDOutputView::added_keys() const
+    {
+        if (!modified()) { return detail::empty_output_range<ValueView>(); }
+        return data_view().added_keys();
+    }
 
     Range<TSOutputView> TSDOutputView::added_values() const
     {
+        if (!modified()) { return detail::empty_output_range<TSOutputView>(); }
         return Range<TSOutputView>{.context = this, .memory = nullptr, .limit = slot_capacity(),
                                    .predicate = &tsd_output_added_slot,
                                    .projector = &tsd_output_project_value};
@@ -150,6 +155,7 @@ namespace hgraph
 
     KeyValueRange<ValueView, TSOutputView> TSDOutputView::added_items() const
     {
+        if (!modified()) { return detail::empty_output_kv_range<ValueView, TSOutputView>(); }
         return KeyValueRange<ValueView, TSOutputView>{.context = this,
                                                       .memory = nullptr,
                                                       .limit = slot_capacity(),
@@ -157,10 +163,15 @@ namespace hgraph
                                                       .projector = &tsd_output_project_item};
     }
 
-    Range<ValueView> TSDOutputView::removed_keys() const { return data_view().removed_keys(); }
+    Range<ValueView> TSDOutputView::removed_keys() const
+    {
+        if (!modified()) { return detail::empty_output_range<ValueView>(); }
+        return data_view().removed_keys();
+    }
 
     Range<TSOutputView> TSDOutputView::removed_values() const
     {
+        if (!modified()) { return detail::empty_output_range<TSOutputView>(); }
         return Range<TSOutputView>{.context = this, .memory = nullptr, .limit = slot_capacity(),
                                    .predicate = &tsd_output_removed_slot,
                                    .projector = &tsd_output_project_value};
@@ -168,6 +179,7 @@ namespace hgraph
 
     KeyValueRange<ValueView, TSOutputView> TSDOutputView::removed_items() const
     {
+        if (!modified()) { return detail::empty_output_kv_range<ValueView, TSOutputView>(); }
         return KeyValueRange<ValueView, TSOutputView>{.context = this,
                                                       .memory = nullptr,
                                                       .limit = slot_capacity(),
