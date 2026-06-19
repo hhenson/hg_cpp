@@ -122,7 +122,6 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     TSOutput output{*ts_int};
     REQUIRE(output.has_value());
     REQUIRE(output.schema() == ts_int);
-    REQUIRE_FALSE(output.dirty());
 
     const auto t1 = MIN_ST;
     const auto t2 = t1 + TimeDelta{1};
@@ -144,7 +143,6 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
         REQUIRE(mutation.current_mutation_time() == t1);
         REQUIRE(mutation.copy_value_from(forty_two.view()));
         REQUIRE(mutation.modified());
-        REQUIRE(output.dirty());
     }
 
     auto modified = output.view(t1);
@@ -156,9 +154,6 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     REQUIRE(modified.value().checked_as<std::int32_t>() == 42);
     REQUIRE(modified.delta_value().checked_as<std::int32_t>() == 42);
     REQUIRE_FALSE(output.view(t2).delta_value().has_value());
-
-    output.cleanup_delta();
-    REQUIRE_FALSE(output.dirty());
 }
 
 TEST_CASE("TSOutputHandle stores output identity without evaluation time")
@@ -237,7 +232,7 @@ TEST_CASE("TSOutput REF stores TimeSeriesReference as value and delta")
     REQUIRE(delta == reference);
 }
 
-TEST_CASE("TSOutput dirty cleanup finalizes slot deltas")
+TEST_CASE("TSOutput slot deltas are reclaimed lazily on the next mutation")
 {
     using namespace hgraph;
 
@@ -253,44 +248,35 @@ TEST_CASE("TSOutput dirty cleanup finalizes slot deltas")
     const auto t2 = t1 + TimeDelta{1};
     Value      one{1};
 
+    // There is no eager cleanup: after adding at t1 the add delta stays physically
+    // present (the data-layer accessor is raw) until the next mutation reclaims it.
     {
         auto mutation = set.begin_mutation(t1);
         REQUIRE(mutation.add(one.view()));
     }
-
-    REQUIRE(output.dirty());
     REQUIRE(range_count(set.added()) == 1);
-    output.cleanup_delta();
-    REQUIRE_FALSE(output.dirty());
-    REQUIRE(range_count(set.added()) == 0);
     REQUIRE(set.contains(one.view()));
 
+    // The next mutation (at t2) reclaims the t1 add delta via prepare_delta, then
+    // records its own removal — no explicit cleanup call required.
     {
         auto mutation = set.begin_mutation(t2);
         REQUIRE(mutation.remove(one.view()));
     }
-
-    REQUIRE(output.dirty());
+    REQUIRE(range_count(set.added()) == 0);
     REQUIRE(range_count(set.removed()) == 1);
-    output.cleanup_delta();
-    REQUIRE_FALSE(output.dirty());
-    REQUIRE(range_count(set.removed()) == 0);
     REQUIRE_FALSE(set.contains(one.view()));
 
+    // Same-cycle add+remove cancels structurally; the next mutation reclaims it.
     const auto t3 = t2 + TimeDelta{1};
     {
         auto mutation = set.begin_mutation(t3);
         REQUIRE(mutation.add(one.view()));
         REQUIRE(mutation.remove(one.view()));
     }
-
-    REQUIRE(output.dirty());
     REQUIRE(output.view(t3).modified());
     REQUIRE(output.view(t3).valid());
-    REQUIRE(range_count(set.added()) == 0);
     REQUIRE(range_count(set.removed()) == 0);
-    output.cleanup_delta();
-    REQUIRE_FALSE(output.dirty());
     REQUIRE_THROWS_AS(output.begin_mutation(MIN_DT), std::invalid_argument);
 }
 
@@ -315,8 +301,6 @@ TEST_CASE("TSOutput root parent is reattached after copy and move")
         auto mutation = source.begin_mutation(t1);
         REQUIRE(mutation.copy_value_from(one.view()));
     }
-    REQUIRE(source.dirty());
-    source.cleanup_delta();
 
     TSOutput copied{source};
     REQUIRE(copied.data_view().has_parent());
@@ -324,9 +308,7 @@ TEST_CASE("TSOutput root parent is reattached after copy and move")
         auto mutation = copied.begin_mutation(t2);
         REQUIRE(mutation.copy_value_from(two.view()));
     }
-    REQUIRE(copied.dirty());
-    REQUIRE_FALSE(source.dirty());
-    copied.cleanup_delta();
+    REQUIRE(copied.view(t2).modified());
 
     TSOutput moved{std::move(copied)};
     REQUIRE(moved.data_view().has_parent());
@@ -334,7 +316,7 @@ TEST_CASE("TSOutput root parent is reattached after copy and move")
         auto mutation = moved.begin_mutation(t3);
         REQUIRE(mutation.copy_value_from(three.view()));
     }
-    REQUIRE(moved.dirty());
+    REQUIRE(moved.view(t3).modified());
 }
 
 TEST_CASE("TSOutputView all_valid recurses through fixed bundle children")
@@ -361,8 +343,6 @@ TEST_CASE("TSOutputView all_valid recurses through fixed bundle children")
         auto mutation = a.begin_mutation(t1);
         REQUIRE(mutation.copy_value_from(one.view()));
     }
-
-    REQUIRE(output.dirty());
 
     auto partially_valid = output.view(t1);
     REQUIRE(partially_valid.valid());
@@ -420,7 +400,6 @@ TEST_CASE("TSData observers notify at the modified level and bubble to parents")
         REQUIRE(mutation.copy_value_from(one.view()));
     }
 
-    REQUIRE(output.dirty());
     CHECK(root_observer.notified == std::vector<DateTime>{t1});
     CHECK(a_observer.notified == std::vector<DateTime>{t1});
     CHECK(a_second_observer.notified == std::vector<DateTime>{t1});

@@ -249,11 +249,11 @@ TEST_CASE("GraphValue wires node views and evaluates scheduled notifications")
     REQUIRE(source_output.modified());
     REQUIRE(compute_output.modified());
 
-    // Graph-level cleanup runs after the cycle; scalar modification time is
-    // retained while transient dirty flags are cleared on the owning outputs.
-    REQUIRE_FALSE(graph_view.node_at(0).output(t1).output()->dirty());
-    REQUIRE_FALSE(graph_view.node_at(1).output(t1).output()->dirty());
-
+    // Delta cleanup is lazy: there is NO end-of-cycle sweep. The deltas produced this
+    // cycle remain readable (modified() stays true at t1) until the producer's next
+    // mutation, which is exactly what cross-graph / nested / mesh reads depend on. The
+    // delta accessors are read-gated on modified(), so a stale delta is never observable
+    // in the window before that next mutation reclaims it (slot-store prepare_delta).
     const auto t2 = t1 + TimeDelta{1};
     graph_view.evaluate(t2);
     REQUIRE(graph_view.evaluation_time() == t2);
