@@ -96,14 +96,30 @@ namespace hgraph
         using CompileThunk = CompiledSubGraph (*)(std::span<const TSValueTypeMetaData *const>);
         using ParamNamesThunk = std::span<const std::string_view> (*)();
 
+        using OutputSchemaThunk = const TSValueTypeMetaData *(*)();
+
         WireThunk             wire_fn{nullptr};
         CompileThunk          compile_fn{nullptr};
         ParamNamesThunk       param_names_fn{nullptr};
+        OutputSchemaThunk     output_schema_fn{nullptr};
         const std::type_info *identity{nullptr};
         std::string_view      operator_name{};
         const LiftedKernel   *lifted{nullptr};
         std::size_t           arity{0};
         bool                  has_output{false};
+
+        /**
+         * The function's statically-known time-series output schema, or ``nullptr``
+         * when it is not concretely known ahead of compilation (an operator with a
+         * type-var output) or the function has no output. Sub-graphs and nodes carry
+         * a concrete output type from their signature; ``mesh_`` uses this to learn
+         * its element type before compiling the child (so an in-body ``mesh_(func)[k]``
+         * has a type without a self-referential compile).
+         */
+        [[nodiscard]] const TSValueTypeMetaData *output_schema() const
+        {
+            return output_schema_fn != nullptr ? output_schema_fn() : nullptr;
+        }
 
         /**
          * The function's time-series parameter names, in order (empty string =
@@ -398,6 +414,25 @@ namespace hgraph
             }();
             return {names.data(), names.size()};
         }
+
+        // The statically-known output schema of X: concrete for sub-graphs (the
+        // compose return Port's schema) and nodes (the Out<S> selector); nullptr for
+        // operators (a type-var output is only known after resolution) and for X
+        // without an output.
+        template <typename X>
+        [[nodiscard]] const TSValueTypeMetaData *output_schema_thunk()
+        {
+            if constexpr (!has_output_of<X>()) { return nullptr; }
+            else if constexpr (std::is_base_of_v<operator_tag, X>) { return nullptr; }
+            else if constexpr (graph_wiring_detail::is_graph_def<X>)
+            {
+                using OutS = typename graph_wiring_detail::port_static_schema<
+                    typename StaticGraphSignature<X>::output_type>::type;
+                if constexpr (std::is_void_v<OutS>) { return nullptr; }
+                else { return schema_descriptor<OutS>::ts_meta(); }
+            }
+            else { return StaticNodeSignature<X>::output_schema(); }
+        }
     }  // namespace wired_fn_detail
 
     /** Erase the operator marker / node / sub-graph ``X`` into a ``WiredFn`` value. */
@@ -405,9 +440,10 @@ namespace hgraph
     [[nodiscard]] WiredFn fn()
     {
         return WiredFn{
-            .wire_fn        = &wired_fn_detail::wire_thunk<X>,
-            .compile_fn     = &wired_fn_detail::compile_thunk<X>,
-            .param_names_fn = &wired_fn_detail::param_names_thunk<X>,
+            .wire_fn          = &wired_fn_detail::wire_thunk<X>,
+            .compile_fn       = &wired_fn_detail::compile_thunk<X>,
+            .param_names_fn   = &wired_fn_detail::param_names_thunk<X>,
+            .output_schema_fn = &wired_fn_detail::output_schema_thunk<X>,
             .identity       = &typeid(X),
             .operator_name  = [] {
                 if constexpr (std::is_base_of_v<operator_tag, X>) { return std::string_view{X::name}; }

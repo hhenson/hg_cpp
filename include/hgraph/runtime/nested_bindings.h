@@ -3,10 +3,13 @@
 
 #include <hgraph/runtime/graph.h>
 #include <hgraph/types/time_series/ts_input.h>
+#include <hgraph/types/time_series/ts_input/detail.h>
 #include <hgraph/types/time_series/ts_output.h>
 
 #include <cstddef>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace hgraph
@@ -65,6 +68,55 @@ namespace hgraph
                 default:
                     throw std::invalid_argument(
                         "Nested graph path can only traverse indexed time-series structures");
+            }
+        }
+        return view;
+    }
+
+    /**
+     * Walk an output endpoint path intended to be a forwarding target. Unlike
+     * normal output projection, peered children are returned as the raw
+     * TargetLink storage so callers can bind or clear the forwarding target.
+     */
+    [[nodiscard]] inline TSOutputView walk_forwarding_target_path(
+        TSOutputView view,
+        const std::vector<std::size_t> &path)
+    {
+        for (const std::size_t component : path)
+        {
+            const auto *schema = view.schema();
+            if (schema == nullptr)
+            {
+                throw std::logic_error("Nested graph forwarding target path requires a typed output view");
+            }
+            switch (schema->kind)
+            {
+                case TSTypeKind::TSB:
+                case TSTypeKind::TSL:
+                {
+                    auto projection = detail::input_child_projection(view.data_view(), component);
+                    TSDataView child = projection.target_link.valid() ? std::move(projection.target_link)
+                                                                      : std::move(projection.visible);
+                    if (!child.valid())
+                    {
+                        throw std::logic_error("Nested graph forwarding target path projection failed");
+                    }
+                    view = TSOutputView{view.output(), child, view.evaluation_time()};
+                    break;
+                }
+                case TSTypeKind::TSD:
+                {
+                    if (component == ts_key_set_path_component)
+                    {
+                        view = view.as_dict().key_set();
+                        break;
+                    }
+                    throw std::invalid_argument(
+                        "Nested graph forwarding target path through a TSD addresses only its key set");
+                }
+                default:
+                    throw std::invalid_argument(
+                        "Nested graph forwarding target path can only traverse indexed time-series structures");
             }
         }
         return view;

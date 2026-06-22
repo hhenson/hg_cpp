@@ -206,6 +206,22 @@ namespace hgraph::stdlib
                            Out<TsVar<"O">>>
     {
     };
+
+    /**
+     * ``mesh_(func, *args, **kwargs)`` — like ``map_`` over a ``TSD``, but the
+     * per-key instances may read each other's outputs (``mesh_(func)[k]``),
+     * create instances on demand, and evaluate in dependency-rank order within a
+     * cycle. The instantiation call surface mirrors ``map_``; cross-instance
+     * access (``mesh_(func)[k]`` / ``mesh_("name")[k]``) is a separate wiring
+     * entry. See the developer guide *Mesh*.
+     */
+    struct mesh_ : Operator<"mesh_",
+                            Scalar<"func", WiredFn>,
+                            VarIn<"args", TsVar<"A">>,
+                            VarKwIn<"kwargs">,
+                            Out<TsVar<"O">>>
+    {
+    };
 }  // namespace hgraph::stdlib
 
 namespace hgraph::static_schema_detail

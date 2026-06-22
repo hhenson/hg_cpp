@@ -1,15 +1,19 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <hgraph/lib/testing/check_output.h>
+#include <hgraph/lib/testing/mock_runtime.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/lib/testing/runtime_support.h>
+#include <hgraph/runtime/nested_bindings.h>
 #include <hgraph/runtime/node_error.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/subgraph_wiring.h>
 
+#include <array>
 #include <stdexcept>
 #include <string>
+#include <typeindex>
 
 using namespace std::string_literals;
 
@@ -65,6 +69,60 @@ namespace
     {
         static constexpr auto name = "sink_or_throw_g";
         static void           compose(Wiring &w, Port<TS<Int>> x) { wire<SinkOrThrow>(w, x); }
+    };
+
+    struct PauseOnceTag
+    {
+    };
+
+    bool pause_once_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+    {
+        const Int count = view.state().checked_as<Int>();
+        if (count == Int{0})
+        {
+            view.replace_state(Value{Int{1}});
+            return false;
+        }
+
+        auto root = view.input(evaluation_time);
+        auto bundle = root.as_bundle();
+        auto input = bundle[0];
+        testing::set_output_value(view, evaluation_time, input.value().checked_as<Int>() * Int{2});
+        return true;
+    }
+
+    NodeBuilder pause_once_node_builder()
+    {
+        const auto *ts_int = ts_type<TS<Int>>();
+
+        NodeTypeMetaData meta;
+        meta.display_name  = "pause_once";
+        meta.input_schema  = TypeRegistry::instance().un_named_tsb({{"x", ts_int}});
+        meta.output_schema = ts_int;
+        meta.state_schema  = ts_int->value_schema;
+
+        NodeTypeDescriptor descriptor;
+        descriptor.schema = std::move(meta);
+        descriptor.callbacks.start = [](const NodeView &view, DateTime) {
+            view.replace_state(Value{Int{0}});
+        };
+        descriptor.ops.evaluate_impl = &pause_once_evaluate_impl;
+        return NodeBuilder::from_descriptor(std::move(descriptor));
+    }
+
+    struct PauseOnceG
+    {
+        static constexpr auto name = "pause_once_g";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> x)
+        {
+            const std::array<WiringPortRef, 1> inputs{x.erased()};
+            WiringPortRef out = w.add_node(std::type_index(typeid(PauseOnceTag)),
+                                           pause_once_node_builder(),
+                                           std::span<const WiringPortRef>{inputs.data(), inputs.size()},
+                                           Value{});
+            return Port<TS<Int>>{w, std::move(out)};
+        }
     };
 
     // Extracts the ``error_msg`` field out of a TS<NodeError> as a string.
@@ -164,6 +222,17 @@ namespace
             auto x   = wire<testing::replay, TS<Int>>(w, Str{"x"});
             auto err = try_except_<SinkOrThrowG>(w, x).as<TS<NodeError>>();
             wire<testing::record>(w, wire<ErrorMsgOf>(w, err), Str{"err"});
+        }
+    };
+
+    struct TryExceptPauseGraph
+    {
+        static constexpr auto name = "try_except_pause_graph";
+        static void           compose(Wiring &w)
+        {
+            auto x      = wire<testing::replay, TS<Int>>(w, Str{"x"});
+            auto result = try_except_<PauseOnceG>(w, x).as<TryIntResult>();
+            wire<testing::record>(w, wire<TryOutValue>(w, result), Str{"out"});
         }
     };
 }  // namespace
@@ -274,4 +343,38 @@ TEST_CASE("error handling: try_except over a sink sub-graph yields just the erro
     const auto        &gs = ex.view().graph().global_state();
 
     CHECK_OUTPUT(get_recorded_values<Str>(gs, "err"), values<Str>(none, "sink negative"s));
+}
+
+TEST_CASE("error handling: try_except propagates child graph pauses")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+
+    GraphBuilder gb = build_graph<TryExceptPauseGraph>();
+    set_replay_values<Int>(gb.global_state(), "x", values<Int>(5));
+
+    MockRootGraph root{gb, MIN_ST, MAX_ET};
+    auto          graph = root.graph();
+    graph.start(MIN_ST);
+
+    NodeView try_node;
+    for (std::size_t index = 0; index < graph.node_count(); ++index)
+    {
+        auto node = graph.node_at(index);
+        if (node.is<SingleNestedGraphNodeView>())
+        {
+            try_node = std::move(node);
+            break;
+        }
+    }
+    REQUIRE(try_node.valid());
+    auto forwarded_out = walk_forwarding_target_path(try_node.output(MIN_ST), {1});
+    CHECK(forwarded_out.forwarding());
+    CHECK(forwarded_out.forwarding_bound());
+
+    CHECK_FALSE(graph.evaluate(MIN_ST));
+    CHECK(graph.evaluate(MIN_ST));
+    graph.stop();
+
+    CHECK_OUTPUT(get_recorded_values<Int>(graph.global_state(), "out"), values<Int>(10));
 }

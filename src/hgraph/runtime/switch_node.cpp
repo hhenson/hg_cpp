@@ -104,9 +104,11 @@ namespace hgraph
             storage.active_spec = nullptr;
         }
 
-        void switch_evaluate(const NodeView &view, DateTime evaluation_time)
+        // Single active child: propagate its pause directly. On resume, re-binding is
+        // idempotent and the active child resumes from its own cursor.
+        bool switch_evaluate(const NodeView &view, DateTime evaluation_time)
         {
-            if (!view.started()) { return; }
+            if (!view.started()) { return true; }
 
             auto        switch_view = view.as<SwitchNodeView>();
             const auto &context = *static_cast<const SwitchNodeContext *>(switch_view.internal_context());
@@ -159,13 +161,14 @@ namespace hgraph
                 const SingleNestedGraphNodeSpec &spec = *storage.active_spec;
                 bind_branch_inputs(view, spec, storage.active.view(), evaluation_time);
                 bind_branch_output(view, spec, storage.active.view(), evaluation_time);
-                storage.active.view().evaluate(evaluation_time);
+                return storage.active.view().evaluate(evaluation_time);
             }
+            return true;
         }
 
-        void switch_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        bool switch_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
         {
-            switch_evaluate(view, evaluation_time);
+            return switch_evaluate(view, evaluation_time);
         }
 
         void switch_node_stop(const NodeView &view, DateTime)

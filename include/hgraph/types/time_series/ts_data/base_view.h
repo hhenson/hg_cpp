@@ -17,10 +17,13 @@ namespace hgraph
 {
     class GraphView;
     class NodeView;
+    class TSDataView;
 
     namespace detail
     {
         class TSOutputAlternativeStore;
+        struct TSInputChildProjection;
+        [[nodiscard]] TSInputChildProjection input_child_projection(const TSDataView &parent, std::size_t index);
     }
 
     template <typename DataOps = TSDataOps>
@@ -271,6 +274,9 @@ namespace hgraph
         friend class TSOutput;
         friend class TSInputView;
         friend class detail::TSOutputAlternativeStore;
+        friend detail::TSInputChildProjection detail::input_child_projection(
+            const TSDataView &parent,
+            std::size_t index);
         friend class TSDProxy;
         friend class TSDDataView;
         friend class TSDDataMutationView;

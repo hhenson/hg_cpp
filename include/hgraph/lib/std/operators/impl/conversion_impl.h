@@ -196,11 +196,25 @@ namespace hgraph::stdlib
         }
     };
 
+    /**
+     * ``nothing`` implementation — a generic source of the requested output type that
+     * **never ticks** (no inputs, not scheduled on start, ``eval`` never runs, so the
+     * output stays perpetually invalid). Used as the rebindable placeholder for the
+     * ``mesh_subscribe`` value input.
+     */
+    struct nothing_source
+    {
+        static constexpr auto name = "nothing";
+
+        static void eval(Out<TsVar<"O">> out) { static_cast<void>(out); }  // never ticks
+    };
+
     /** Register the conversion / utility operator overloads. */
     inline void register_conversion_operators()
     {
         register_overload<const_, const_source>();    // const(value)         -> tick at start
         register_overload<const_, const_delayed>();   // const(value, delay)  -> tick at start + delay
+        register_overload<nothing, nothing_source>(); // nothing              -> never ticks
 
         register_graph_overload<zero_, zero_int>();
         register_graph_overload<zero_, zero_float>();

@@ -789,9 +789,9 @@ namespace hgraph
             deactivate.complete();
         }
 
-        void evaluate_impl(const void *context, const NodeView &view, DateTime evaluation_time)
+        bool evaluate_impl(const void *context, const NodeView &view, DateTime evaluation_time)
         {
-            if (!view.started()) { return; }
+            if (!view.started()) { return true; }
 
             // Graph scheduling is the activation gate. Node eval only enforces
             // lifecycle/validity policy, then lets node-specific code decide any
@@ -814,18 +814,14 @@ namespace hgraph
                     const bool capture = schema != nullptr && schema->captures_errors && runtime.layout.has_error_output();
                     if (capture)
                     {
-                        try
-                        {
-                            callbacks(context).evaluate(view, evaluation_time);
-                        }
-                        catch (const std::exception &error)
-                        {
-                            write_node_error(runtime, view, evaluation_time, error.what());
-                        }
-                        catch (...)
-                        {
-                            write_node_error(runtime, view, evaluation_time, "unknown error");
-                        }
+                        static_cast<void>(fallback_on_exception(false,
+                                                               [&] {
+                                                                   callbacks(context).evaluate(view, evaluation_time);
+                                                                   return true;
+                                                               },
+                                                               [&](const char *error) {
+                                                                   write_node_error(runtime, view, evaluation_time, error);
+                                                               }));
                     }
                     else { callbacks(context).evaluate(view, evaluation_time); }
                 }
@@ -845,6 +841,7 @@ namespace hgraph
                     graph.schedule_node(view.node_index(), sched.next_scheduled_time());
                 }
             }
+            return true;
         }
 
         void default_attach_graph_impl(const void *, void *, GraphValue *, std::size_t) {}
@@ -863,7 +860,7 @@ namespace hgraph
             throw std::logic_error("NodeView::stop requires a live node");
         }
 
-        void default_evaluate_impl(const void *, const NodeView &, DateTime)
+        bool default_evaluate_impl(const void *, const NodeView &, DateTime)
         {
             throw std::logic_error("NodeView::evaluate requires a live node");
         }
@@ -1274,9 +1271,9 @@ namespace hgraph
 
     void NodeView::start(DateTime evaluation_time) const { ops().start_impl(ops().context, *this, evaluation_time); }
     void NodeView::stop(DateTime evaluation_time) const { ops().stop_impl(ops().context, *this, evaluation_time); }
-    void NodeView::evaluate(DateTime evaluation_time) const
+    bool NodeView::evaluate(DateTime evaluation_time) const
     {
-        ops().evaluate_impl(ops().context, *this, evaluation_time);
+        return ops().evaluate_impl(ops().context, *this, evaluation_time);
     }
     const NodeOps &NodeView::ops() const
     {

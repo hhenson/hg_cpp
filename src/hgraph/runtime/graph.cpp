@@ -520,7 +520,7 @@ namespace hgraph
             throw std::logic_error("GraphView::stop requires a live graph");
         }
 
-        void default_evaluate_impl(const void *, const GraphView &, DateTime)
+        bool default_evaluate_impl(const void *, const GraphView &, DateTime)
         {
             throw std::logic_error("GraphView::evaluate requires a live graph");
         }
@@ -670,56 +670,73 @@ namespace hgraph
         }
 
         template <typename Storage>
-        void evaluate_impl(const void *context, const GraphView &graph, DateTime evaluation_time)
+        bool evaluate_impl(const void *context, const GraphView &graph, DateTime evaluation_time)
         {
             const auto &runtime = graph_context(context);
             auto       &state = graph_header<Storage>(runtime, graph.data());
             if (!state.started) { throw std::logic_error("Graph must be started before evaluation"); }
 
+            // The node loop drives state.evaluation_cursor (the node_id) directly so a pause
+            // can resume mid-cycle. When a node returns false it has requested a pause: the
+            // cursor is already sitting on that node, we return false, and the next evaluate
+            // at the same time continues from there WITHOUT redoing the per-cycle setup
+            // (next_scheduled accumulation / push-source pass). A completed cycle resets the
+            // cursor to 0. (A cursor of 0 or the initial invalid sentinel means "fresh".)
+            const bool resuming = state.evaluation_cursor != 0 && state.evaluation_cursor != invalid_cursor;
+
             state.evaluation_time = evaluation_time;
-            state.cycle_wall_start = current_wall_time();
-            state.next_scheduled_time = MAX_DT;
             state.evaluating = true;
-            state.evaluation_cursor = invalid_cursor;
-            auto reset = make_scope_exit([&] noexcept {
-                state.evaluating = false;
-                state.evaluation_cursor = invalid_cursor;
-            });
+            auto reset = make_scope_exit([&] noexcept { state.evaluating = false; });
 
             std::size_t first_normal_node = 0;
             if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
             {
                 first_normal_node = graph.schema()->push_source_nodes_end;
-                if (first_normal_node > 0)
+            }
+
+            if (!resuming)
+            {
+                state.cycle_wall_start = current_wall_time();
+                state.next_scheduled_time = MAX_DT;
+
+                if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
                 {
-                    PushQueueEngineView push_queue = graph.root().executor().push_queue_engine();
-                    const bool push_update_pending = push_queue.reset_push_update_pending();
-                    for (std::size_t index = 0; index < first_normal_node; ++index)
+                    if (first_normal_node > 0)
                     {
-                        auto &scheduled = graph_schedule(runtime, graph.data(), index);
-                        const bool scheduled_now = scheduled == evaluation_time;
-                        if (push_update_pending || scheduled_now)
+                        PushQueueEngineView push_queue = graph.root().executor().push_queue_engine();
+                        const bool push_update_pending = push_queue.reset_push_update_pending();
+                        for (std::size_t index = 0; index < first_normal_node; ++index)
                         {
-                            if (scheduled_now) { scheduled = MIN_DT; }
-                            state.evaluation_cursor = index;
-                            graph_node_view(runtime, graph.data(), index).evaluate(evaluation_time);
-                        }
-                        if (scheduled > evaluation_time && scheduled < state.next_scheduled_time)
-                        {
-                            state.next_scheduled_time = scheduled;
+                            auto &scheduled = graph_schedule(runtime, graph.data(), index);
+                            const bool scheduled_now = scheduled == evaluation_time;
+                            if (push_update_pending || scheduled_now)
+                            {
+                                if (scheduled_now) { scheduled = MIN_DT; }
+                                state.evaluation_cursor = index;
+                                graph_node_view(runtime, graph.data(), index).evaluate(evaluation_time);
+                            }
+                            if (scheduled > evaluation_time && scheduled < state.next_scheduled_time)
+                            {
+                                state.next_scheduled_time = scheduled;
+                            }
                         }
                     }
                 }
+                state.evaluation_cursor = first_normal_node;
             }
 
-            for (std::size_t index = first_normal_node; index < runtime.layout.node_count; ++index)
+            for (; state.evaluation_cursor < runtime.layout.node_count; ++state.evaluation_cursor)
             {
-                auto &scheduled = graph_schedule(runtime, graph.data(), index);
+                auto &scheduled = graph_schedule(runtime, graph.data(), state.evaluation_cursor);
                 if (scheduled == evaluation_time)
                 {
                     // post-eval MIN_DT stamp removed (see lazy-cleanup invariant)
-                    state.evaluation_cursor = index;
-                    graph_node_view(runtime, graph.data(), index).evaluate(state.evaluation_time);
+                    if (!graph_node_view(runtime, graph.data(), state.evaluation_cursor).evaluate(state.evaluation_time))
+                    {
+                        // Pause requested: hold the cursor on this node and propagate upward
+                        // (the enclosing mesh node resolves the dependency and resumes us).
+                        return false;
+                    }
                 }
                 else if (scheduled > evaluation_time)
                 {
@@ -727,10 +744,13 @@ namespace hgraph
                 }
             }
 
+            state.evaluation_cursor = 0;  // completed: reset the cursor
+
             if constexpr (std::is_same_v<Storage, NestedGraphRuntimeStorage>)
             {
                 propagate_nested_parent_schedule(graph_header<NestedGraphRuntimeStorage>(runtime, graph.data()));
             }
+            return true;
         }
 
         struct GraphRuntimeRegistry
@@ -970,7 +990,7 @@ namespace hgraph
 
     void GraphView::start(DateTime start_time) const { ops().start_impl(ops().context, *this, start_time); }
     void GraphView::stop() const { ops().stop_impl(ops().context, *this); }
-    void GraphView::evaluate(DateTime evaluation_time) const { ops().evaluate_impl(ops().context, *this, evaluation_time); }
+    bool GraphView::evaluate(DateTime evaluation_time) const { return ops().evaluate_impl(ops().context, *this, evaluation_time); }
     void GraphView::schedule_node(std::size_t node_index, DateTime when) const
     {
         ops().schedule_node_impl(ops().context, *this, node_index, when);

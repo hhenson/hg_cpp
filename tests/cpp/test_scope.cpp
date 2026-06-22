@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <stdexcept>
+#include <string>
 
 TEST_CASE("fallback_on_exception returns the callable result on success")
 {
@@ -17,6 +18,36 @@ TEST_CASE("fallback_on_exception returns the fallback on failure")
     });
 
     REQUIRE(result == 7);
+}
+
+TEST_CASE("fallback_on_exception reports std exception messages")
+{
+    std::string message;
+    const auto  result = hgraph::fallback_on_exception(7,
+                                                       []() -> int {
+                                                           throw std::runtime_error("boom");
+                                                       },
+                                                       [&](const char *error) {
+                                                           message = error;
+                                                       });
+
+    REQUIRE(result == 7);
+    REQUIRE(message == "boom");
+}
+
+TEST_CASE("fallback_on_exception reports unknown exceptions")
+{
+    std::string message;
+    const auto  result = hgraph::fallback_on_exception(7,
+                                                       []() -> int {
+                                                           throw 1;
+                                                       },
+                                                       [&](const char *error) {
+                                                           message = error;
+                                                       });
+
+    REQUIRE(result == 7);
+    REQUIRE(message == "unknown error");
 }
 
 TEST_CASE("scope_exit propagates cleanup exceptions by default")

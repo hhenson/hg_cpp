@@ -52,9 +52,90 @@ namespace hgraph
             return view.as<SingleNestedGraphNodeView>();
         }
 
-        void single_nested_graph_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        [[nodiscard]] const TSValueTypeMetaData *nested_output_child_schema(const TSValueTypeMetaData &schema,
+                                                                            std::size_t index)
         {
-            single_nested_graph_evaluate(view, evaluation_time);
+            switch (schema.kind)
+            {
+                case TSTypeKind::TSB:
+                    if (index >= schema.field_count())
+                    {
+                        throw std::out_of_range("single_nested_graph_node output target path is out of range for TSB");
+                    }
+                    return schema.fields()[index].type;
+
+                case TSTypeKind::TSL:
+                    if (schema.fixed_size() == 0)
+                    {
+                        throw std::invalid_argument(
+                            "single_nested_graph_node output target path requires fixed-size TSL prefixes");
+                    }
+                    if (index >= schema.fixed_size())
+                    {
+                        throw std::out_of_range("single_nested_graph_node output target path is out of range for TSL");
+                    }
+                    return schema.element_ts();
+
+                default:
+                    throw std::invalid_argument(
+                        "single_nested_graph_node output target path can only traverse TSB or fixed-size TSL");
+            }
+        }
+
+        [[nodiscard]] std::size_t nested_output_child_count(const TSValueTypeMetaData &schema)
+        {
+            switch (schema.kind)
+            {
+                case TSTypeKind::TSB:
+                    return schema.field_count();
+
+                case TSTypeKind::TSL:
+                    if (schema.fixed_size() == 0)
+                    {
+                        throw std::invalid_argument(
+                            "single_nested_graph_node output target path requires fixed-size TSL prefixes");
+                    }
+                    return schema.fixed_size();
+
+                default:
+                    throw std::invalid_argument(
+                        "single_nested_graph_node output target path can only traverse TSB or fixed-size TSL");
+            }
+        }
+
+        [[nodiscard]] TSEndpointSchema nested_output_endpoint_schema_for(
+            const TSValueTypeMetaData *schema,
+            const std::vector<std::size_t> &target_path,
+            std::size_t depth = 0)
+        {
+            if (schema == nullptr)
+            {
+                throw std::invalid_argument("single_nested_graph_node output binding requires an output schema");
+            }
+            if (depth == target_path.size()) { return TSEndpointSchema::peered(schema); }
+
+            const auto selected = target_path[depth];
+            const auto count    = nested_output_child_count(*schema);
+            if (selected >= count)
+            {
+                throw std::out_of_range("single_nested_graph_node output target path is out of range");
+            }
+
+            std::vector<TSEndpointSchema> children;
+            children.reserve(count);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                const auto *child_schema = nested_output_child_schema(*schema, index);
+                children.push_back(index == selected
+                                       ? nested_output_endpoint_schema_for(child_schema, target_path, depth + 1)
+                                       : TSEndpointSchema::owned(child_schema));
+            }
+            return TSEndpointSchema::non_peered(schema, std::move(children));
+        }
+
+        bool single_nested_graph_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        {
+            return single_nested_graph_evaluate(view, evaluation_time);
         }
 
     }  // namespace
@@ -123,12 +204,8 @@ namespace hgraph
             {
                 throw std::invalid_argument("single_nested_graph_node output binding requires an output schema");
             }
-            if (!spec.output_binding->target_path.empty())
-            {
-                throw std::invalid_argument(
-                    "single_nested_graph_node currently supports forwarding only at the output root");
-            }
-            meta.output_endpoint_schema = TSEndpointSchema::peered(meta.output_schema);
+            meta.output_endpoint_schema =
+                nested_output_endpoint_schema_for(meta.output_schema, spec.output_binding->target_path);
         }
         meta.node_kind = NodeKind::Nested;
 
@@ -191,19 +268,19 @@ namespace hgraph
         }
     }
 
-    void single_nested_graph_evaluate(const NodeView &view, DateTime evaluation_time)
+    bool single_nested_graph_evaluate(const NodeView &view, DateTime evaluation_time)
     {
-        if (!view.started()) { return; }
+        if (!view.started()) { return true; }
 
         auto nested = checked_nested_view(view);
         nested.ensure_child_graph();
         // Re-bind boundaries each cycle: an upstream REF/forwarding output may have
         // re-pointed since the last evaluation. The bind_* helpers skip the rebind
         // when the endpoint already references the same output, so this is cheap when
-        // the wiring is stable.
+        // the wiring is stable (and idempotent on a pause/resume re-entry).
         single_nested_graph_bind_inputs(nested, evaluation_time);
         single_nested_graph_bind_output(nested, evaluation_time);
-        nested.child_graph().evaluate(evaluation_time);
+        return nested.child_graph().evaluate(evaluation_time);
     }
 
     void single_nested_graph_bind_inputs(const SingleNestedGraphNodeView &nested,
@@ -232,7 +309,7 @@ namespace hgraph
         const auto &binding = nested.context().spec.output_binding;
         if (!binding.has_value()) { return; }
 
-        auto target = walk_ts_path(nested.node().output(evaluation_time), binding->target_path);
+        auto target = walk_forwarding_target_path(nested.node().output(evaluation_time), binding->target_path);
 
         if (binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
         {
@@ -262,7 +339,7 @@ namespace hgraph
         const auto &binding = nested.context().spec.output_binding;
         if (!binding.has_value()) { return; }
 
-        auto target = walk_ts_path(nested.node().output(evaluation_time), binding->target_path);
+        auto target = walk_forwarding_target_path(nested.node().output(evaluation_time), binding->target_path);
         if (target.forwarding_bound()) { target.clear_forwarding_target(); }
     }
 

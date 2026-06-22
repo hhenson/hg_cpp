@@ -21,6 +21,7 @@ namespace hgraph
     {
         Peered,
         NonPeered,
+        Owned,
     };
 
     /**
@@ -30,7 +31,8 @@ namespace hgraph
      * endpoint annotation records how runtime endpoint state is constructed for
      * each level of that schema: a non-peered collection prefix or a peered
      * terminal. Once traversal reaches a peered node, that entire subtree is
-     * associated with one output peering.
+     * associated with one output peering. An owned terminal uses ordinary local
+     * TSData storage for the whole remaining subtree.
      */
     class TSEndpointSchema
     {
@@ -39,6 +41,9 @@ namespace hgraph
 
         /** Peered terminal for ``schema``; no child annotation is needed. */
         [[nodiscard]] static TSEndpointSchema peered(const TSValueTypeMetaData *schema);
+
+        /** Owned terminal for ``schema``; ordinary TSData storage is used. */
+        [[nodiscard]] static TSEndpointSchema owned(const TSValueTypeMetaData *schema);
 
         /**
          * Non-peered TSB or fixed-size TSL prefix with explicit child
@@ -71,6 +76,7 @@ namespace hgraph
         [[nodiscard]] const TSValueTypeMetaData *schema() const noexcept;
         [[nodiscard]] bool is_peered() const noexcept;
         [[nodiscard]] bool is_non_peered() const noexcept;
+        [[nodiscard]] bool is_owned() const noexcept;
 
         [[nodiscard]] std::size_t child_count() const noexcept;
         [[nodiscard]] const TSEndpointSchema &child(std::size_t index) const;

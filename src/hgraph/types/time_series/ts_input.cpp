@@ -74,6 +74,10 @@ namespace hgraph
                 }
             }
 
+            if (endpoint_schema.is_owned())
+            {
+                throw std::invalid_argument("TSInput endpoint annotation cannot use owned terminals");
+            }
             if (endpoint_schema.is_peered()) { return; }
             if (schema->kind != TSTypeKind::TSB && schema->kind != TSTypeKind::TSL)
             {
@@ -435,6 +439,15 @@ namespace hgraph
         [[nodiscard]] const MemoryUtils::StoragePlan &input_storage_plan(const TSEndpointSchema &endpoint_schema)
         {
             if (endpoint_schema.is_peered()) { return MemoryUtils::plan_for<detail::TSInputTargetLinkStorage>(); }
+            if (endpoint_schema.is_owned())
+            {
+                const auto *binding = regular_ts_data_binding_for(endpoint_schema.schema());
+                if (binding == nullptr)
+                {
+                    throw std::logic_error("TSInput owned endpoint storage requires a regular TSData binding");
+                }
+                return binding->checked_plan();
+            }
 
             const auto *schema = endpoint_schema.schema();
             auto        builder = MemoryUtils::named_tuple();
@@ -448,13 +461,16 @@ namespace hgraph
             return builder.build();
         }
 
+        // TODO: Review this code to see how it is used, if it is stored, we need to review the memory footprint
         struct InputChild
         {
             const TSValueTypeMetaData *schema{nullptr};
             const TSDataBinding       *input_binding{nullptr};
             const TSDataBinding       *regular_binding{nullptr};
             const ValueTypeBinding    *regular_value_binding{nullptr};
+            std::size_t                data_offset{0};
             bool                       target_link{false};
+            bool                       direct_child_memory{false};
         };
 
         struct InputBundleDeltaSurface
@@ -686,7 +702,10 @@ namespace hgraph
             const auto *state = static_cast<const InputBindingContext *>(context);
             if (index >= state->children.size()) { return nullptr; }
             const auto &child = state->children[index];
-            if (!child.target_link) { return memory; }
+            if (!child.target_link)
+            {
+                return child.direct_child_memory && memory != nullptr ? advance(memory, child.data_offset) : memory;
+            }
             const auto *link = child_target_storage(child, memory);
             return link != nullptr && link->bound() ? link->target_output().data_view().data() : nullptr;
         }
@@ -1486,6 +1505,7 @@ namespace hgraph
             {
                 return make_target_link_binding(endpoint_schema, root_plan, storage_offset);
             }
+            if (endpoint_schema.is_owned()) { return regular_ts_data_binding_for(endpoint_schema.schema()); }
 
             const auto key = binding_cache_key(endpoint_schema, root_plan, storage_offset);
             std::lock_guard lock{input_binding_context_cache_mutex()};
@@ -1518,7 +1538,9 @@ namespace hgraph
                     .input_binding = child_binding,
                     .regular_binding = regular_ts_data_binding_for(child_schema.schema()),
                     .regular_value_binding = regular_value_binding_for(child_schema.schema()),
+                    .data_offset = child_offset,
                     .target_link = child_schema.is_peered(),
+                    .direct_child_memory = child_schema.is_owned(),
                 });
                 if (list_delta != nullptr)
                 {
@@ -1741,7 +1763,7 @@ namespace hgraph
             const auto &child = context->children[index];
             if (child.target_link)
             {
-                TSDataView link{child.input_binding, parent.data()};
+                TSDataView link{child.input_binding, parent.data(), parent, index};
                 const auto *storage = ::hgraph::target_storage(link);
                 if (storage != nullptr && storage->bound())
                 {
@@ -1751,7 +1773,8 @@ namespace hgraph
                                               std::move(link)};
             }
 
-            return TSInputChildProjection{TSDataView{child.input_binding, parent.data()}, {}};
+            return TSInputChildProjection{
+                TSDataView{child.input_binding, input_element_memory(context, parent.data(), index)}, {}};
         }
 
         void TSInputSchedulingNotifier::notify(DateTime modified_time)

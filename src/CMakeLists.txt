@@ -9,6 +9,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/runtime/push_source_node.cpp
     hgraph/runtime/switch_node.cpp
     hgraph/runtime/map_node.cpp
+    hgraph/runtime/mesh_node.cpp
     hgraph/runtime/reduce_node.cpp
     hgraph/runtime/try_except_node.cpp
     hgraph/types/metadata/type_registry.cpp

@@ -84,6 +84,25 @@ namespace hgraph {
     }
 
     /**
+     * Run ``f`` and return its result. If ``f`` throws, call ``on_error`` with
+     * either the ``std::exception::what()`` message or ``"unknown error"``,
+     * suppress the exception, and return ``fallback``.
+     */
+    template <typename Result, typename F, typename OnError>
+    [[nodiscard]] Result fallback_on_exception(Result fallback, F &&f, OnError &&on_error)
+    {
+        try {
+            return std::forward<F>(f)();
+        } catch (const std::exception &error) {
+            std::forward<OnError>(on_error)(error.what());
+            return fallback;
+        } catch (...) {
+            std::forward<OnError>(on_error)("unknown error");
+            return fallback;
+        }
+    }
+
+    /**
      * Single-use cleanup guard that distinguishes normal completion from
      * exception unwinding.
      *

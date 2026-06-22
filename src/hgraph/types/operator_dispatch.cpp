@@ -529,7 +529,30 @@ namespace hgraph
         overloads_[impl.name].push_back(std::move(impl));
     }
 
-    void OperatorRegistry::reset() noexcept { overloads_.clear(); }
+    void OperatorRegistry::reset() noexcept
+    {
+        overloads_.clear();
+        mesh_scopes_.clear();
+    }
+
+    void OperatorRegistry::push_mesh_scope(const TSValueTypeMetaData *element_schema, std::string name)
+    {
+        mesh_scopes_.push_back(MeshScope{.element_schema = element_schema, .name = std::move(name)});
+    }
+
+    void OperatorRegistry::pop_mesh_scope() noexcept
+    {
+        if (!mesh_scopes_.empty()) { mesh_scopes_.pop_back(); }
+    }
+
+    const TSValueTypeMetaData *OperatorRegistry::resolve_mesh_scope(std::string_view name) const noexcept
+    {
+        for (auto it = mesh_scopes_.rbegin(); it != mesh_scopes_.rend(); ++it)
+        {
+            if (name.empty() || it->name == name) { return it->element_schema; }
+        }
+        return nullptr;
+    }
 
     ResolvedOperatorCall OperatorRegistry::resolve(
         std::string_view name,

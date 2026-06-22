@@ -443,9 +443,8 @@ namespace hgraph
         const bool  has_out      = child_output != nullptr;
 
         // Output schema: TSB{exception, out} for a value sub-graph, else a bare
-        // TS<NodeError> for a sink. The output is owned: the try_except node
-        // writes ``exception`` on a catch and copies the child output into
-        // ``out`` on success (see try_except_node.cpp).
+        // TS<NodeError> for a sink. For value sub-graphs, ``exception`` is owned
+        // local storage and ``out`` forwards the child graph output.
         const TSValueTypeMetaData *output_schema = error_ts;
         std::size_t                out_index     = 0;
         if (has_out)
@@ -474,8 +473,8 @@ namespace hgraph
                 spec.graph_builder  = std::move(plan.compiled.graph_builder);
                 spec.input_bindings = std::move(plan.compiled.input_bindings);
                 // Record the child terminal + the bundle's ``out`` field index so
-                // the node can copy the child output in on a successful cycle
-                // (sink sub-graphs have no output to copy).
+                // the nested output binder can forward the child output directly
+                // (sink sub-graphs have no output to forward).
                 if (has_out && plan.compiled.output_binding.has_value())
                 {
                     spec.output_binding              = plan.compiled.output_binding;

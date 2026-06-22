@@ -1,14 +1,17 @@
 #ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_HIGHER_ORDER_IMPL_H
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_HIGHER_ORDER_IMPL_H
 
+#include <hgraph/lib/std/operators/conversion.h>  // nothing (placeholder for the mesh_subscribe value input)
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/std/operators/impl/reduce_layout.h>
 #include <hgraph/runtime/map_node.h>
+#include <hgraph/runtime/mesh_node.h>
 #include <hgraph/runtime/reduce_node.h>
 #include <hgraph/runtime/switch_node.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/subgraph_wiring.h>
 #include <hgraph/types/wired_fn.h>
+#include <hgraph/util/scope.h>
 
 #include <array>
 #include <cstddef>
@@ -822,6 +825,9 @@ namespace hgraph::stdlib
         struct map_node_tag
         {
         };
+        struct mesh_node_tag
+        {
+        };
         struct lifted_map_tsl_node_tag
         {
         };
@@ -1096,6 +1102,183 @@ namespace hgraph::stdlib
             return out;
         }
 
+        // The mesh wiring-time scope (the enclosing mesh a mesh_(func)[k] resolves to)
+        // lives on the global wiring singleton ``OperatorRegistry`` — see its
+        // push_mesh_scope / pop_mesh_scope / resolve_mesh_scope. wire_mesh pushes it
+        // around the child compile; the child compiles in a fresh Wiring, so the scope
+        // cannot live on a Wiring instance (and the build is single-threaded, so it is a
+        // plain global, not a thread-local).
+        struct mesh_subscribe_node_tag
+        {
+        };
+
+        /**
+         * ``mesh_`` wiring. Mirrors ``wire_map``: compile the child, derive the key set
+         * (``__keys__`` or the union of multiplexed key sets), then add one mesh
+         * node. The mesh node owns the same ``TSD<K, OUT>`` output as ``map_``; with
+         * no internal ``mesh_(func)[k]`` requests it is observably ``map_``. The
+         * spec additionally always carries a per-instance ``TS<K>`` key output
+         * (read by the self-context once cross-instance access lands).
+         */
+        [[nodiscard]] inline WiringPortRef wire_mesh(Wiring &w, const Scalar<"func", WiredFn> &func,
+                                                     std::string_view key_arg,
+                                                     std::vector<WiringPortRef> ordered,
+                                                     std::optional<WiringPortRef> keys = std::nullopt)
+        {
+            std::vector<const TSValueTypeMetaData *> ts_schemas;
+            std::vector<std::uint8_t>                arg_tags;
+            ts_schemas.reserve(ordered.size());
+            arg_tags.reserve(ordered.size());
+            for (const WiringPortRef &port : ordered)
+            {
+                ts_schemas.push_back(port.schema);
+                arg_tags.push_back(static_cast<std::uint8_t>(port.arg_tag));
+            }
+
+            // The element type is statically known from the function signature; push it
+            // as the mesh scope so a mesh_(func)[k] in the body resolves to this mesh.
+            const TSValueTypeMetaData *element_schema = func.value().output_schema();
+            if (element_schema == nullptr)
+            {
+                throw std::invalid_argument(
+                    "mesh_: 'func' must have a statically-known output type (an operator with a "
+                    "type-var output cannot be a mesh function)");
+            }
+
+            const TSValueTypeMetaData *output_schema = nullptr;
+            MapNodeSpec                map_spec;
+            {
+                OperatorRegistry::instance().push_mesh_scope(element_schema, std::string{});
+                auto pop = make_scope_exit([] noexcept { OperatorRegistry::instance().pop_mesh_scope(); });
+                map_spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
+                                             {arg_tags.data(), arg_tags.size()}, output_schema);
+            }
+
+            auto &registry = TypeRegistry::instance();
+
+            // Key-set derivation — identical to map_ (explicit __keys__, else the
+            // union of the multiplexed dict key sets).
+            if (!keys.has_value())
+            {
+                std::vector<WiringArg> key_set_args;
+                key_set_args.reserve(map_spec.multiplexed_inputs.size());
+                for (const std::size_t mux_index : map_spec.multiplexed_inputs)
+                {
+                    if (static_cast<WiringPortRef::ArgTag>(arg_tags[mux_index]) == WiringPortRef::ArgTag::NoKey)
+                    {
+                        continue;
+                    }
+                    WiringArg key_set_arg;
+                    key_set_arg.kind = WiringArg::Kind::TimeSeries;
+                    key_set_arg.port = subgraph_wiring_detail::tsd_key_set_ref(ordered[mux_index]);
+                    key_set_args.push_back(std::move(key_set_arg));
+                }
+                if (key_set_args.empty())
+                {
+                    throw std::invalid_argument(
+                        "mesh_: every multiplexed input is no_key — supply an explicit '__keys__'");
+                }
+                if (key_set_args.size() == 1) { keys = key_set_args.front().port; }
+                else
+                {
+                    keys = wire_operator(w, "union", {key_set_args.data(), key_set_args.size()}, true)
+                               .output.erased();
+                }
+            }
+            if (registry.dereference(keys->schema) != registry.tss(output_schema->key_type()))
+            {
+                throw std::invalid_argument("mesh_: '__keys__' must be a TSS of the mapped key type");
+            }
+
+            // Transcribe the map child spec into a mesh spec (a superset).
+            MeshNodeSpec spec;
+            spec.child              = std::move(map_spec.child);
+            spec.args               = std::move(map_spec.args);
+            spec.multiplexed_inputs = std::move(map_spec.multiplexed_inputs);
+            spec.keys_input_index   = ordered.size();
+            // Every mesh instance owns a TS<K> key output (the self-context / a sibling
+            // mesh_subscribe reads it), independent of whether func takes a key.
+            spec.key_output_schema  = registry.ts(output_schema->key_type());
+            spec.self_input_index   = std::nullopt;  // Increment 1: no cross-instance access
+
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+            fields.reserve(ts_schemas.size() + 1);
+            for (std::size_t i = 0; i < ts_schemas.size(); ++i)
+            {
+                fields.emplace_back(std::to_string(i), ts_schemas[i]);
+            }
+            fields.emplace_back("__keys__", keys->schema);
+            const auto *input_schema = registry.un_named_tsb(fields);
+
+            std::vector<WiringPortRef> inputs = std::move(ordered);
+            inputs.push_back(std::move(*keys));
+
+            WiringNodeSchema node_schema;
+            node_schema.input  = input_schema;
+            node_schema.output = output_schema;
+
+            (void)scalar_descriptor<MapCallConfig>::value_meta();
+            WiringPortRef out = w.add_node(
+                std::type_index(typeid(mesh_node_tag)), node_schema,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()},
+                Value{MapCallConfig{func.value(), Str{key_arg}, arg_tags}},
+                [&]() {
+                    NodeTypeMetaData meta;
+                    meta.display_name  = "mesh_";
+                    meta.input_schema  = input_schema;
+                    meta.output_schema = output_schema;
+
+                    NodeBuilder builder = mesh_node(std::move(meta), std::move(spec));
+                    builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                        input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                    return builder;
+                });
+            return out;
+        }
+
+        // ``mesh_(func)[k]`` access — wires a mesh_subscribe node that reads the sibling
+        // instance ``[k]``. The output type comes from the enclosing mesh scope (resolved
+        // innermost, or by name). The node takes ``item`` (the requested key) and returns
+        // the mesh element type; at runtime it forwards ``self[item]``, pausing until that
+        // sibling has produced its result this cycle.
+        [[nodiscard]] inline WiringPortRef mesh_ref_erased(Wiring &w, const WiringPortRef &key,
+                                                           const WiringPortRef &value_placeholder,
+                                                           std::string_view name = {})
+        {
+            const TSValueTypeMetaData *out_schema = OperatorRegistry::instance().resolve_mesh_scope(name);
+            if (out_schema == nullptr)
+            {
+                throw std::logic_error(
+                    "mesh_(func)[k] used outside a mesh scope (no enclosing mesh is being wired)");
+            }
+
+            // {item, value}: ``item`` is the requested key (wired); ``value`` starts at a
+            // never-ticking ``nothing<OUT>`` placeholder and is rebound at runtime to
+            // self[item] (forwards it and makes the node reactive to the sibling's ticks).
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields{
+                {"item", key.schema}, {"value", out_schema}};
+            const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
+
+            WiringNodeSchema node_schema;
+            node_schema.input  = input_schema;
+            node_schema.output = out_schema;
+
+            std::array<WiringPortRef, 2> inputs{key, value_placeholder};
+            return w.add_node(
+                std::type_index(typeid(mesh_subscribe_node_tag)), node_schema,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()}, Value{},
+                [&]() {
+                    NodeTypeMetaData meta;
+                    meta.display_name  = "mesh_subscribe";
+                    meta.input_schema  = input_schema;
+                    meta.output_schema = out_schema;
+                    NodeBuilder builder = mesh_subscribe_node(std::move(meta));
+                    builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                        input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                    return builder;
+                });
+        }
+
         struct OrderedMapSchemas
         {
             std::vector<const TSValueTypeMetaData *> schemas{};
@@ -1259,6 +1442,74 @@ namespace hgraph::stdlib
                                                                {named.data(), named.size()},
                                                                key_arg.value());
                 return wire_map(w, func, key_arg.value(), std::move(bound.ordered), std::move(keys));
+            }
+        };
+
+        /**
+         * ``mesh_(func, *args, **kwargs)`` over TSDs (Increment 1 — peer
+         * instantiation). Same call shape as ``map_impl_tsd``; lowers to a mesh
+         * node via ``wire_mesh``. With no cross-instance ``mesh_(func)[k]``
+         * requests this is observably ``map_``.
+         */
+        // mesh output resolution: TSD<K, OUT> where OUT is the function's statically
+        // known output schema. Unlike map_, this does NOT compile the child — a
+        // mesh_(func)[k] in the body needs the mesh scope (only pushed by wire_mesh),
+        // so compiling here would fail. func->output_schema() gives OUT directly.
+        inline void resolve_mesh_output(ResolutionMap &resolution, OperatorCallContext context)
+        {
+            if (resolution.find_ts("__out__") != nullptr) { return; }
+            const WiredFn *func = context.scalar_as<WiredFn>("func");
+            if (func == nullptr) { return; }
+            const TSValueTypeMetaData *element = func->output_schema();
+            if (element == nullptr) { return; }
+            auto ordered = ordered_map_schemas(context, "key");
+            if (!ordered.has_value()) { return; }
+            try
+            {
+                const MapArgClassification classified =
+                    classify_map_args({ordered->schemas.data(), ordered->schemas.size()},
+                                      {ordered->arg_tags.data(), ordered->arg_tags.size()});
+                const auto *output_schema = TypeRegistry::instance().tsd(classified.key_meta, element);
+                bind_graph_output(resolution, output_schema, "O");
+            }
+            catch (...)
+            {
+                // Leave unresolved; the real wiring path reports the error.
+            }
+        }
+
+        struct mesh_impl_tsd
+        {
+            static constexpr auto name = "mesh_impl";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                const auto *collection = first_map_collection(context);
+                return collection != nullptr && collection->kind == TSTypeKind::TSD;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                resolve_mesh_output(resolution, context);
+            }
+
+            static std::vector<std::pair<std::string_view, Value>> defaults()
+            {
+                return {{"__key_arg__", Value{Str{"key"}}}};
+            }
+
+            static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
+                                         VarIn<"args", TsVar<"B">> positional,
+                                         Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
+            {
+                const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
+                std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
+                std::optional<WiringPortRef> keys = split_keys_kwarg(named);
+                auto bound = bind_wired_fn_args<WiringPortRef>("mesh_", func.value(),
+                                                               {pos.data(), pos.size()},
+                                                               {named.data(), named.size()},
+                                                               key_arg.value());
+                return wire_mesh(w, func, key_arg.value(), std::move(bound.ordered), std::move(keys));
             }
         };
         /**
@@ -1693,6 +1944,23 @@ namespace hgraph::stdlib
         };
     }  // namespace higher_order_impl_detail
 
+    /**
+     * ``mesh_(func)[k]`` cross-instance access, called inside a mesh function (or a
+     * sub-graph wired within the mesh's scope). Returns the result of the sibling
+     * instance for key ``k``, creating it on demand and recording a dependency so the
+     * mesh evaluates it first (same cycle, via pause/resume). ``OutS`` is the mesh
+     * element type; ``name`` optionally selects an enclosing named mesh.
+     */
+    template <typename OutS, typename KeyPort>
+    [[nodiscard]] Port<OutS> mesh_ref(Wiring &w, KeyPort key, std::string_view name = {})
+    {
+        // A never-ticking placeholder seeds the dynamic ``value`` input; mesh_subscribe
+        // rebinds it to the sibling output (self[item]) at runtime.
+        Port<OutS> placeholder = wire<nothing, OutS>(w);
+        return Port<OutS>{
+            w, higher_order_impl_detail::mesh_ref_erased(w, key.erased(), placeholder.erased(), name)};
+    }
+
     inline void register_higher_order_operators()
     {
         register_graph_overload<reduce_, higher_order_impl_detail::reduce_variadic_tsl>();
@@ -1707,6 +1975,8 @@ namespace hgraph::stdlib
         register_graph_overload<map_, higher_order_impl_detail::map_impl_tsd>();
         register_graph_overload<map_, higher_order_impl_detail::map_lifted_tsl>();
         register_graph_overload<map_, higher_order_impl_detail::map_impl_tsl>();
+
+        register_graph_overload<mesh_, higher_order_impl_detail::mesh_impl_tsd>();
     }
 }  // namespace hgraph::stdlib
 

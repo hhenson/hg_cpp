@@ -358,6 +358,27 @@ namespace hgraph::detail
             throw std::invalid_argument("TSOutput from-REF cannot apply a non-peered reference to a peered leaf");
         }
 
+        void unbind_from_ref_owned(const TSDataView &, const TSEndpointSchema &, DateTime)
+        {
+            throw std::invalid_argument("TSOutput from-REF cannot target an owned endpoint leaf");
+        }
+
+        void apply_output_to_from_ref_owned(const TSDataView &,
+                                            const TSEndpointSchema &,
+                                            const TSOutputView &,
+                                            DateTime)
+        {
+            throw std::invalid_argument("TSOutput from-REF cannot target an owned endpoint leaf");
+        }
+
+        void apply_non_peered_reference_to_owned_from_ref_data(const TSDataView &,
+                                                              const TSEndpointSchema &,
+                                                              const TimeSeriesReference &,
+                                                              DateTime)
+        {
+            throw std::invalid_argument("TSOutput from-REF cannot target an owned endpoint leaf");
+        }
+
         void apply_non_peered_reference_to_non_peered_from_ref_data(
             const TSDataView &target,
             const TSEndpointSchema &endpoint_schema,
@@ -378,7 +399,7 @@ namespace hgraph::detail
 
         [[nodiscard]] const FromRefRoleOps &from_ref_role_ops_for(TSEndpointRole role) noexcept
         {
-            static const std::array<FromRefRoleOps, 2> table{{
+            static const std::array<FromRefRoleOps, 3> table{{
                 {
                     &unbind_from_ref_peered,
                     &apply_output_to_from_ref_peered,
@@ -388,6 +409,11 @@ namespace hgraph::detail
                     &unbind_from_ref_non_peered,
                     &apply_output_to_from_ref_non_peered,
                     &apply_non_peered_reference_to_non_peered_from_ref_data,
+                },
+                {
+                    &unbind_from_ref_owned,
+                    &apply_output_to_from_ref_owned,
+                    &apply_non_peered_reference_to_owned_from_ref_data,
                 },
             }};
 

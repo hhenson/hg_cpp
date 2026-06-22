@@ -15,11 +15,9 @@ namespace hgraph
      * ``NodeError`` to the ``exception`` field instead and the graph continues.
      *
      * ``meta.output_schema`` is either a ``TSB`` with fields ``exception``
-     * (``TS<NodeError>``) and ``out`` (the wrapped graph output) — for which the
-     * caller must pre-set ``meta.output_endpoint_schema`` to the matching
-     * partial (``non_peered``) schema and ``spec.output_binding->target_path``
-     * to the ``out`` field index — or, for a **sink** sub-graph, a bare
-     * ``TS<NodeError>`` with no ``output_binding``.
+     * (``TS<NodeError>``) and ``out`` (the wrapped graph output) — for which
+     * ``spec.output_binding->target_path`` names the ``out`` field — or, for a
+     * **sink** sub-graph, a bare ``TS<NodeError>`` with no ``output_binding``.
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder try_except_node(
         NodeTypeMetaData meta,

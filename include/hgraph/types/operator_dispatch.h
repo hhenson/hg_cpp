@@ -287,8 +287,28 @@ namespace hgraph
 
         void reset() noexcept;
 
+        /**
+         * Mesh wiring scope — the enclosing mesh that a ``mesh_(func)[k]`` in the body
+         * resolves to. ``wire_mesh`` pushes ``(element type, optional name)`` around the
+         * child compile and pops after. The child compiles in a *fresh* ``Wiring``, so
+         * the scope lives here in the global wiring singleton rather than on a ``Wiring``
+         * instance (the build is single-threaded; no thread-locals). ``resolve_mesh_scope``
+         * returns the innermost scope's element schema (or the innermost matching ``name``),
+         * or ``nullptr`` when there is no enclosing mesh.
+         */
+        void push_mesh_scope(const TSValueTypeMetaData *element_schema, std::string name);
+        void pop_mesh_scope() noexcept;
+        [[nodiscard]] const TSValueTypeMetaData *resolve_mesh_scope(std::string_view name) const noexcept;
+
       private:
+        struct MeshScope
+        {
+            const TSValueTypeMetaData *element_schema{nullptr};
+            std::string                name{};
+        };
+
         std::unordered_map<std::string, std::vector<OperatorImpl>> overloads_{};
+        std::vector<MeshScope>                                     mesh_scopes_{};
     };
 
     namespace operator_dispatch_detail

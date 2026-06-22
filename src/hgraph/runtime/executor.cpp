@@ -344,7 +344,12 @@ namespace hgraph
                 {
                     break;
                 }
-                graph.evaluate(evaluation_time);
+                if (!graph.evaluate(evaluation_time))
+                {
+                    // The root graph has no enclosing mesh to resolve a pause; a false here
+                    // means a pausing node (e.g. a mesh_subscribe) escaped its mesh scope.
+                    throw std::logic_error("root graph evaluation paused with no resolver");
+                }
             }
 
             stop_graph.complete();

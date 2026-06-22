@@ -72,9 +72,9 @@ namespace hgraph
         bool propagate_child_schedule{true};
         // When set, the descriptor records ``spec.output_binding`` for the
         // owning node to consult but does NOT set up output forwarding (the node
-        // owns its output and writes it from its own callbacks — e.g. try_except
-        // copies the child output into a bundle field). The default-forwarding
-        // helpers (``single_nested_graph_bind_output``) are then not used.
+        // owns its output and writes it from its own callbacks). The
+        // default-forwarding helpers (``single_nested_graph_bind_output``) are
+        // then not used.
         bool manage_output_externally{false};
     };
 
@@ -132,7 +132,9 @@ namespace hgraph
 
     HGRAPH_EXPORT void single_nested_graph_start(const NodeView &view, DateTime evaluation_time);
     HGRAPH_EXPORT void single_nested_graph_stop(const NodeView &view, DateTime evaluation_time);
-    HGRAPH_EXPORT void single_nested_graph_evaluate(const NodeView &view, DateTime evaluation_time);
+    /// Evaluates the single child graph; returns false if the child paused (the pause
+    /// propagates to the caller, which re-evaluates to resume — re-binding is idempotent).
+    HGRAPH_EXPORT bool single_nested_graph_evaluate(const NodeView &view, DateTime evaluation_time);
     HGRAPH_EXPORT void single_nested_graph_bind_inputs(const SingleNestedGraphNodeView &nested,
                                                        DateTime evaluation_time);
     HGRAPH_EXPORT void single_nested_graph_bind_output(const SingleNestedGraphNodeView &nested,

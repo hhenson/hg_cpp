@@ -107,7 +107,10 @@ namespace hgraph
         [[nodiscard]] bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
         void (*start_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
         void (*stop_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
-        void (*evaluate_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
+        // Returns true when the node completed its evaluation, false when the node
+        // requested a pause (it must be re-evaluated to resume — see the pause/resume
+        // protocol in the execution-layer docs). Ordinary nodes always return true.
+        bool (*evaluate_impl)(const void *context, const NodeView &view, DateTime evaluation_time) = nullptr;
 
         [[nodiscard]] bool (*has_input_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] bool (*has_output_impl)(const void *context, const void *memory) noexcept = nullptr;
@@ -246,7 +249,8 @@ namespace hgraph
 
         void start(DateTime evaluation_time) const;
         void stop(DateTime evaluation_time) const;
-        void evaluate(DateTime evaluation_time) const;
+        /// Returns true if the node completed, false if it requested a pause.
+        bool evaluate(DateTime evaluation_time) const;
 
       private:
         [[nodiscard]] const NodeOps &ops() const;
