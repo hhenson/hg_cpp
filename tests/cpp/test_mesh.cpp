@@ -1,0 +1,167 @@
+// The ``mesh_`` higher-order operator (lib/std/operators/higher_order.h).
+//
+// mesh_ is like map_ over a TSD, but per-key instances may read each other's
+// outputs (mesh_(func)[k]), create instances on demand, and evaluate in
+// dependency-rank order within a cycle. See *Mesh*.
+//
+// Increment 1 — peer instantiation: a mesh with no cross-instance access is
+// observably identical to map_ (same keyed children, same TSD<K, OUT> output).
+
+#include <hgraph/lib/std/operators/impl/higher_order_impl.h>  // mesh_ref (mesh_(func)[k])
+#include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/std/value_util.h>
+#include <hgraph/lib/testing/check_output.h>
+#include <hgraph/lib/testing/eval_node.h>
+#include <hgraph/types/static_node.h>
+#include <hgraph/types/wired_fn.h>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <string>
+
+namespace
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    using namespace std::string_literals;
+
+    struct AddOneG
+    {
+        static constexpr auto name = "mesh_add_one_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> ts)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (ts + Int{1}).as<TS<Int>>();
+        }
+    };
+
+    // A key-consuming function (first parameter named "key", the Python rule).
+    struct AddKeyG
+    {
+        static constexpr auto name = "mesh_add_key_g";
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"key", TS<Int>> key, Port<TS<Int>> ts)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (key + ts).as<TS<Int>>();
+        }
+    };
+
+    // A cross-instance chain: instance ``key`` depends on instance ``link`` (the
+    // per-key value of the multiplexed ``link`` TSD) and returns ``key + result(link)``.
+    // Keys with no link entry have an invalid ``link`` element, so mesh_(func)[link]
+    // stays invalid and default(.., 0) supplies the base. Exercises on-demand creation
+    // (the base key is created from inside another instance), dependency ranking, and
+    // same-cycle pause/resume.
+    struct ChainFn
+    {
+        static constexpr auto name = "mesh_chain_fn";
+        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"key", TS<Int>> key, Port<TS<Int>> link)
+        {
+            using namespace hgraph::stdlib::syntax;
+            Port<TS<Int>> dep  = stdlib::mesh_ref<TS<Int>>(w, link);
+            Port<TS<Int>> zero = wire<stdlib::const_, TS<Int>>(w, Int{0});
+            Port<TS<Int>> base = wire<stdlib::default_>(w, dep, zero).as<TS<Int>>();
+            return (key + base).as<TS<Int>>();
+        }
+    };
+
+    // result = val + result(link). With a changing ``val`` this exercises cross-cycle
+    // re-propagation: when an instance's output ticks, its dependents (subscribed to
+    // self[link] via the dynamic value input) re-evaluate the same cycle, in rank order.
+    struct ExprFn
+    {
+        static constexpr auto name = "mesh_expr_fn";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> val, Port<TS<Int>> link)
+        {
+            using namespace hgraph::stdlib::syntax;
+            Port<TS<Int>> dep  = stdlib::mesh_ref<TS<Int>>(w, link);
+            Port<TS<Int>> zero = wire<stdlib::const_, TS<Int>>(w, Int{0});
+            Port<TS<Int>> base = wire<stdlib::default_>(w, dep, zero).as<TS<Int>>();
+            return (val + base).as<TS<Int>>();
+        }
+    };
+}  // namespace
+
+TEST_CASE("mesh_: with no cross-instance access a mesh is observably map_")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Str, TS<Int>>>(
+                     fn<AddOneG>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 10}}),
+                                   dict_delta<Str, TS<Int>>({}, {"b"s})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}, {"b"s, 3}}),
+                               dict_delta<Str, TS<Int>>({{"a"s, 11}}),
+                               dict_delta<Str, TS<Int>>({}, {"b"s})));
+}
+
+TEST_CASE("mesh_: a peer-instantiation func may consume the key")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // key + value, no cross-instance references: identical to map_ with a key arg.
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Int, TS<Int>>>(
+                     fn<AddKeyG>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 11}, {2, 22}})));
+}
+
+TEST_CASE("mesh_: cross-instance access settles a dependency chain in one cycle")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // link = {1:0, 2:1, 3:2}: __keys__ derives {1,2,3}; key 0 is created on demand as
+    // the base (no link entry → default 0). result[k] = k + result[link[k]]:
+    //   0: 0;  1: 1 + result[0]=0 -> 1;  2: 2 + result[1]=1 -> 3;  3: 3 + result[2]=3 -> 6.
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Int, TS<Int>>>(
+                     fn<ChainFn>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 0}, {2, 1}, {3, 2}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{0, 0}, {1, 1}, {2, 3}, {3, 6}})));
+}
+
+TEST_CASE("mesh_: a dependency cycle is a runtime error")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // link = {1:2, 2:1}: instance 1 depends on 2 and 2 depends on 1 — a cycle.
+    REQUIRE_THROWS((eval_node<stdlib::mesh_, TSD<Int, TS<Int>>>(
+        fn<ChainFn>(), values<Value>(dict_delta<Int, TS<Int>>({{1, 2}, {2, 1}})))));
+}
+
+TEST_CASE("mesh_: removing a key tears its instance down")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // Cycle 1: link={1:0, 2:1} -> keys {1,2} + on-demand base 0 -> {0:0, 1:1, 2:3}.
+    // Cycle 2: remove key 2 from the key set; 2 has no dependents, so it is removed.
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Int, TS<Int>>>(
+                     fn<ChainFn>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 0}, {2, 1}}),
+                                   dict_delta<Int, TS<Int>>({}, {2})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{0, 0}, {1, 1}, {2, 3}}),
+                               dict_delta<Int, TS<Int>>({}, {2})));
+}
+
+TEST_CASE("mesh_: a changed input re-propagates through the dependency graph")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // val gives each key's base; link = {2:1, 3:2} chains 3 -> 2 -> 1. Cycle 1 settles
+    // {1:10, 2:10, 3:10}. Cycle 2 changes only val[1]=20; the tick re-propagates the
+    // SAME cycle to 2 and 3 via the dynamic value subscription -> {1:20, 2:20, 3:20}.
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
+                     fn<ExprFn>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 0}, {3, 0}}),
+                                   dict_delta<Int, TS<Int>>({{1, 20}})),
+                     values<Value>(dict_delta<Int, TS<Int>>({{2, 1}, {3, 2}}),
+                                   dict_delta<Int, TS<Int>>({})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 10}, {3, 10}}),
+                               dict_delta<Int, TS<Int>>({{1, 20}, {2, 20}, {3, 20}})));
+}

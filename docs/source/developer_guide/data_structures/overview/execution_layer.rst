@@ -28,6 +28,42 @@ Current implementation
     receive ``evaluation_time`` explicitly, and "next scheduled time" is the
     minimum over the graph's per-node schedule entries.
 
+Pause / resume (the cursor protocol)
+------------------------------------
+
+Evaluation can **pause** mid-cycle and **resume** later in the same cycle. This is
+the substrate the ``mesh_`` engine is built on: a ``mesh_(func)[k]`` node that
+needs the not-yet-computed result of sibling instance ``k`` pauses its instance,
+lets the mesh evaluate ``k`` (in dependency-rank order), then resumes the instance
+so the ``[k]`` read succeeds — all within one engine cycle.
+
+The protocol is a single boolean threaded through the eval API plus one cursor:
+
+- **Node eval returns ``bool``** (``NodeOps::evaluate_impl`` / ``NodeView::evaluate``):
+  ``true`` = completed, ``false`` = *the node requested a pause* and must be
+  re-evaluated to make progress. Ordinary nodes always return ``true``; this
+  boolean **is** the C++ pause-request API (a later Python frontend gets an
+  equivalent hook). On a pause the node has arranged for its own re-trigger
+  (e.g. the mesh records the dependency and creates/evaluates it).
+- **Graph eval returns ``bool``** (``GraphOps::evaluate_impl`` /
+  ``GraphView::evaluate``) and carries a **cursor in graph state** — the existing
+  ``evaluation_cursor`` (the node_id), now the loop counter itself rather than a
+  local. When a node returns ``false`` the cursor is already sitting on it, so the
+  graph returns ``false`` immediately. The next ``evaluate`` at the same time sees
+  a non-zero cursor, **skips the per-cycle setup** (``next_scheduled_time`` reset,
+  push-source pass) and resumes the node loop at the cursor — re-running the paused
+  node and continuing. A completed cycle resets the cursor to ``0``. No extra state
+  variable is introduced.
+- **Nested handlers propagate** (``single_nested_graph``, and ``map_`` / ``switch_``
+  / ``reduce_`` / ``mesh_``): each forwards a child's ``false`` upward, recording
+  what it was evaluating so a resume re-drives the same child. Re-binding on resume
+  is idempotent. The **mesh node is the pause boundary**: it *resolves* a paused
+  instance instead of propagating, and returns ``true`` to its own graph once the
+  instance set has settled. Everything between a ``mesh_(func)[k]`` and its mesh
+  just relays the pause.
+- **The root graph never pauses** (a pausing node only exists inside a mesh scope),
+  so ``GraphExecutorView::run()`` treats a ``false`` from the root as a logic error.
+
 Alternative design: a separate engine and clock
 ------------------------------------------------
 

@@ -32,11 +32,11 @@ output is an owned ``TSD<K, OUT>`` keyed by ``K``. The standard return is that
 Instances from keys
 ~~~~~~~~~~~~~~~~~~~~
 
-The set of *externally requested* keys is the union of the multiplexed ``TSD``
-key sets and any explicit ``__keys__`` ``TSS[K]`` (exactly ``map_``'s key
-derivation). Each externally requested key has one instance of ``func``. With no
-cross-instance dependencies a mesh is **observably identical to** ``map_``: each
-instance computes from its own per-key inputs and writes ``output[key]``.
+The *requested key set* is the union of the multiplexed ``TSD`` key sets and any
+explicit ``__keys__`` ``TSS[K]`` (exactly ``map_``'s key derivation). Each key in
+that set has one instance of ``func``. With no cross-instance dependencies a mesh
+is **observably identical to** ``map_``: each instance computes from its own
+per-key inputs and writes ``output[key]``.
 
 Cross-instance access and on-demand creation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -69,8 +69,8 @@ targets — see *The mesh evaluation engine* below.)
 Removal and reference counting
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-An instance is kept alive while it is **either** externally requested (in the
-key set) **or** depended upon by at least one live instance. It is destroyed
+An instance is kept alive while it is **either** in the requested key set **or**
+depended upon by at least one live instance. It is destroyed
 (graph stopped, output element removed) only when **both** are false. A key
 removed from the key set whose only remaining users are internal dependents
 stays alive; once those dependents drop it, it is removed.
@@ -92,18 +92,21 @@ stack pushed while the mesh and its sub-graphs are wired and popped afterwards).
 A consumer in the same graph as the mesh references it directly; a deeper
 consumer references it through the scoped context.
 
-The three request kinds
-~~~~~~~~~~~~~~~~~~~~~~~~~
+The two request kinds
+~~~~~~~~~~~~~~~~~~~~~~~
 
 1. **Peer instantiation.** ``mesh_(func, keys/inputs…)`` with no cross-instance
    references — equals ``map_``.
-2. **External request** — a ``mesh_(func)[k]`` used in the enclosing graph,
-   outside any instance. The requested key joins the live key set and the
-   requester reads the result; with no inter-instance dependencies this is
-   ``map_`` plus a key union.
-3. **Internal request** — a ``mesh_(func)[k]`` inside an instance. Establishes a
+2. **Internal request** — a ``mesh_(func)[k]`` inside an instance. Establishes a
    runtime dependency (requester instance → key ``k``) and may create ``k`` on
    demand.
+
+A ``mesh_(func)[k]`` in the *enclosing* graph that requests a key not already in
+the key set — an "external request" / dynamic external access — is **not
+supported** (see *Deferrals*): with no inter-instance dependency it reduces to
+``map_`` plus a key union, and the Python reference does not support it either.
+Code in the enclosing graph reads the mesh's owned ``TSD`` output as an ordinary
+consumer (keys are seeded only through ``__keys__`` / the multiplexed inputs).
 
 Worked examples (the conformance tests)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -137,8 +140,8 @@ Mesh ranking is **two independent problems**; conflating them is the trap.
 - **Runtime (dynamic):** the order the mesh evaluates its **instances** within a
   cycle, from dependencies discovered as it runs.
 
-Peer and external requests are entirely the static problem; only internal
-requests need the dynamic engine.
+Peer instantiation is entirely the static problem; only internal requests need
+the dynamic engine.
 
 Wiring layer
 ~~~~~~~~~~~~
@@ -149,25 +152,25 @@ Wiring layer
   unchanged from ``map_`` (see :doc:`nested_graphs`). Mesh adds a ``MeshSelf``
   source (the instance's view of the mesh's own output) and the dependency
   engine.
-- **Mesh-context stack (scope).** A wiring-time stack keyed by
-  ``(element type, optional name)`` with a scope marker for the sub-graph compile
-  in progress. ``mesh_(func)`` / ``mesh_("name")`` resolves the nearest enclosing
-  entry; out-of-scope lookups error. Pushed before compiling the mesh child and
-  popped after, so an outer/sibling graph cannot see an inner mesh.
+- **Mesh-context scope.** A wiring-time stack of ``(element type, optional name)``
+  entries on the **global wiring singleton** (``OperatorRegistry`` —
+  ``push_mesh_scope`` / ``pop_mesh_scope`` / ``resolve_mesh_scope``), *not* on a
+  ``Wiring`` instance: the mesh child compiles in a fresh ``Wiring``, so the scope must
+  be reachable across instances. (The build is single-threaded, so this is a plain
+  global, never a thread-local.) ``mesh_(func)`` / ``mesh_("name")`` resolves the
+  nearest enclosing entry; out-of-scope lookups error. Pushed before compiling the mesh
+  child and popped after, so an outer/sibling graph cannot see an inner mesh.
 - **Request classification.** A ``mesh_(...)[k]`` *inside* the child being
   compiled is an **internal** request → wires a ``mesh_subscribe`` node and is
   marked rank-sensitive (known at compile time). A ``mesh_(...)[k]`` in the
-  enclosing scope is an **external** request → wired as a context client: the
-  key feeds a **hidden key set** ``union``-ed with the supplied key set, and the
-  requester is statically ranked **below** the mesh node.
-- **Keys / inputs vs results split.** The mesh node's outer inputs separate the
-  *key-producing* side (``__keys__`` + the hidden external-request key set,
-  union-ed) from the *result-consuming* side, so external requesters rank after
-  the mesh and the equivalence to ``map_`` (case 1/2) is structural.
+  enclosing scope is not a request at all — it is an ordinary read of the mesh's
+  ``TSD`` output (external key injection is unsupported; see *Deferrals*). Keys
+  are seeded solely from ``__keys__`` / the multiplexed inputs (``map_``'s
+  derivation), so the ``map_`` equivalence of case 1 is structural.
 - **Static rank of the mesh node.** The mesh output must be available to its
   consumers: the context publish/capture sits one rank above the mesh node and
-  context clients rank below it (the reference's ``max_context_rank`` +
-  ``register_context_client``).
+  context clients (consumers reading the output through the scope) rank below it
+  (the reference's ``max_context_rank`` + ``register_context_client``).
 
 Runtime layer
 ~~~~~~~~~~~~~
@@ -192,7 +195,10 @@ internal nodes keep their own scheduler.
 evaluation engine folds into ops in this runtime, the **mesh node is the
 evaluation engine for its instances**: on its own evaluate it drives instance
 evaluations in dependency order, and an instance's evaluation is **resumable**.
-The model:
+This rests on the generic **pause/resume cursor protocol** in the execution
+layer (see :doc:`data_structures/overview/execution_layer` — node/graph eval
+returns a ``bool``, the graph holds a node-id cursor, nested handlers relay a
+pause, and the mesh node is the pause *boundary* that resolves it). The model:
 
 - Instance evaluation proceeds node-by-node (the instance's own due/rank order).
   When a ``mesh_subscribe`` node finds its dependency **not yet satisfied this
@@ -265,18 +271,49 @@ output. Both are internal sources, not outer inputs.
 Remove (refcount per *Removal* above): stop child, erase element, drop edges,
 destroy entry. On node stop: stop all instances, clear the output.
 
-Delta from the first-cut implementation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Implementation status
+~~~~~~~~~~~~~~~~~~~~~~~
 
-The runtime core already built (``runtime/mesh_node.{h,cpp}``) uses the Python
-reference's integer-rank + re-rank + scan-by-rank scheme with **multi-cycle
-settlement**. This design **supersedes** that runtime ordering with the
-dependency-graph + **pause/resume** engine above (same-cycle settlement,
-same-cycle cycle detection, iterative/stack-bounded), and adds the wiring-time
-context stack, scoping, request classification and static client ranking (the
-wiring layer, not yet built). The ``Value``-keyed stable instance store,
-on-demand creation, refcount removal, self-context binding and the
-``mesh_subscribe`` node carry over.
+The pause/resume engine is **implemented** (``runtime/mesh_node.{h,cpp}`` +
+``lib/std/operators/impl/higher_order_impl.h``), replacing the original first-cut
+multi-cycle-settle ordering:
+
+- **Pause/resume substrate** (execution layer): node and graph ``evaluate`` return
+  ``bool``; the graph holds a node-id **cursor** (``evaluation_cursor``) to resume
+  mid-cycle (see :doc:`data_structures/overview/execution_layer`). The mesh node is
+  the pause **boundary**.
+- **``mesh_subscribe``** is a custom-ops bool node with inputs ``{item, value}``:
+  ``item`` is the requested key (wired); ``value`` starts at a never-ticking
+  ``nothing<OUT>`` placeholder and is rebound at runtime to ``self[item]``. It resolves
+  the enclosing mesh via the ``parent_node()`` walk for ``self`` (the mesh ``TSD``
+  output) and ``my_key`` (the mesh's ``current_eval_key``), registers the dependency,
+  and **pauses** (returns ``false``) until the target has settled this cycle, then
+  forwards ``self[item]``. The ``value`` rebind makes the node **reactive**: a later
+  tick of the sibling reschedules it (cross-cycle re-propagation).
+- **Resolver** (``mesh_evaluate``): a rank-ordered **settle loop** — evaluate due /
+  paused instances by ascending rank, re-scanning until none pauses. ``add_dependency``
+  creates the target on demand (same cycle, ranked below the requester) and ``re_rank``
+  keeps the requester above it; a cycle is a runtime error.
+- **Wiring**: the ``mesh_`` operator (``wire_mesh``, peer instantiation = ``map_``),
+  the wiring-time **mesh-context stack** (pushed around the child compile), and
+  ``mesh_(func)[k]`` access via ``mesh_ref<OUT>(w, key)`` (resolves the scope, wires a
+  ``mesh_subscribe``). ``WiredFn::output_schema()`` supplies the element type up front
+  so the body's ``mesh_(func)[k]`` has a type without a self-referential compile.
+
+The ``Value``-keyed stable instance store, refcount removal, and the dependency graph
+carry over from the first cut. **Validated** end-to-end by ``tests/cpp/test_mesh.cpp``
+(ASAN/UBSAN-clean): peer instantiation = ``map_`` (plain + key-consuming); a
+cross-instance dependency **chain** with on-demand base creation settling in one cycle;
+**re-propagation** of a changed input through the dependency graph (reactivity); a
+dependency **cycle** raising a runtime error; and **removal** tearing an unreferenced
+instance down.
+
+**Remaining** (see *Deferrals*): ``switch_`` *inside* a mesh instance (the recursive
+``fib`` shape) — the branch output forwards into the switch output which forwards into
+the mesh element, a multi-level forwarding chain not yet supported; ``contains_`` over
+the mesh key set (needs a key-set access primitive alongside ``mesh_ref``); and named
+meshes (``mesh_("name")`` — the wiring-context stack already matches by name; the
+``mesh_`` operator does not yet carry a name to push).
 
 
 Alternatives considered
@@ -311,8 +348,28 @@ Files
 Deferrals
 ---------
 
+- **External requests / dynamic external mesh access** — a ``mesh_(func)[k]`` in
+  the enclosing graph that injects a key not already in the key set. Reviewed and
+  dropped: with no inter-instance dependency it is ``map_`` plus a key union, and
+  the Python reference does not support it. The enclosing graph reads the mesh
+  output as an ordinary ``TSD`` consumer; keys are seeded only via ``__keys__`` /
+  the multiplexed inputs.
 - ``TSL`` meshes (Python rejects them too).
 - Per-instance error capture (``TSD<K, TS<NodeError>>``).
 - The intra-instance "bipartite split" (re-ranking only the result-consuming
   part of an instance) is **subsumed** by pause/resume at the node boundary; no
   separate static split is planned.
+- **``switch_`` inside a mesh instance** (the recursive ``fib`` shape, where the
+  base case gates the recursion). The pause propagates through ``switch_`` (its
+  single-active-child evaluate returns the child's bool), but the *output* path is a
+  multi-level forwarding chain — branch terminal → switch output → instance terminal
+  → mesh element — which is not yet supported (a forwarding output whose source is
+  itself a forwarding output). Needs forwarding-output chaining (or switch to
+  materialise its output) before recursive ``fib`` over the mesh works.
+- **``contains_`` over the mesh key set** — an instance inspecting the mesh's own key
+  set. Needs a key-set access primitive (the mesh ``TSD`` output's ``key_set()``)
+  exposed alongside ``mesh_ref``.
+- **Named meshes** (``mesh_("name")``) for nested-mesh disambiguation. The
+  wiring scope already resolves by name (``OperatorRegistry::resolve_mesh_scope``); the
+  remaining piece is the ``mesh_`` operator carrying a name to push and ``mesh_ref``
+  taking it through.

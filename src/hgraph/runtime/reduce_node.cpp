@@ -389,9 +389,11 @@ namespace hgraph
             rollback.release();
         }
 
-        void reduce_evaluate(const NodeView &view, DateTime evaluation_time)
+        // Returns true (completed). reduce_ evaluates a tree of combiner children;
+        // per-child pause propagation is not yet wired (see the pause/resume roadmap).
+        bool reduce_evaluate(const NodeView &view, DateTime evaluation_time)
         {
-            if (!view.started()) { return; }
+            if (!view.started()) { return true; }
 
             auto        reduce_view = view.as<ReduceNodeView>();
             const auto &context     = *static_cast<const ReduceNodeContext *>(reduce_view.internal_context());
@@ -439,11 +441,12 @@ namespace hgraph
                 if (entry == nullptr || !entry->graph.has_value()) { continue; }
                 entry->graph.view().evaluate(evaluation_time);
             }
+            return true;
         }
 
-        void reduce_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        bool reduce_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
         {
-            reduce_evaluate(view, evaluation_time);
+            return reduce_evaluate(view, evaluation_time);
         }
 
         void reduce_node_stop(const NodeView &view, DateTime)

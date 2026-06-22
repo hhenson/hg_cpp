@@ -1,0 +1,581 @@
+#include <hgraph/runtime/mesh_node.h>
+
+#include <hgraph/runtime/nested_bindings.h>
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/util/date_time.h>
+#include <hgraph/util/scope.h>
+
+#include "mapped_child_bindings.h"
+
+#include <ankerl/unordered_dense.h>
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace hgraph
+{
+    namespace
+    {
+        constexpr std::string_view mesh_storage_field_name{"mesh"};
+
+        struct ValueKeyHash
+        {
+            using is_transparent = void;
+            [[nodiscard]] std::size_t operator()(const Value &v) const noexcept { return v.hash(); }
+            [[nodiscard]] std::size_t operator()(const ValueView &v) const noexcept { return v.hash(); }
+        };
+
+        struct ValueKeyEqual
+        {
+            using is_transparent = void;
+            [[nodiscard]] bool operator()(const Value &a, const Value &b) const noexcept { return a.equals(b); }
+            [[nodiscard]] bool operator()(const Value &a, const ValueView &b) const noexcept { return a.equals(b); }
+            [[nodiscard]] bool operator()(const ValueView &a, const Value &b) const noexcept { return b.equals(a); }
+        };
+
+        using ValueSet = ankerl::unordered_dense::set<Value, ValueKeyHash, ValueKeyEqual>;
+
+        // One mesh instance. Declaration order is load-bearing (reverse
+        // destruction): the child graph (a subscriber to key_output) tears down
+        // before the key output it observes.
+        struct MeshEntry
+        {
+            explicit MeshEntry(Value key_) : key(std::move(key_)) {}
+
+            Value                   key{};
+            std::optional<TSOutput> key_output{};
+            GraphValue              graph{};
+            int                     rank{0};
+            // Pause/resume settle state, per cycle:
+            bool                    paused{false};       // paused this cycle, awaiting a dependency
+            DateTime                settled_time{MIN_DT};// completed (no pause) at this evaluation time
+        };
+
+        struct MeshNodeStorage
+        {
+            MeshNodeStorage()                                   = default;
+            MeshNodeStorage(const MeshNodeStorage &)            = delete;
+            MeshNodeStorage &operator=(const MeshNodeStorage &) = delete;
+            MeshNodeStorage(MeshNodeStorage &&)                 = delete;
+            MeshNodeStorage &operator=(MeshNodeStorage &&)      = delete;
+
+            ~MeshNodeStorage() { stop_all_noexcept(); }
+
+            // Value-keyed, pointer-stable instances (a superset of __keys__: it
+            // also holds on-demand instances created from inside other instances).
+            ankerl::unordered_dense::map<Value, std::unique_ptr<MeshEntry>, ValueKeyHash, ValueKeyEqual> instances{};
+            // depends_on -> set of keys that depend on it (reverse edges).
+            ankerl::unordered_dense::map<Value, ValueSet, ValueKeyHash, ValueKeyEqual> dependents{};
+
+            std::vector<Value>          graphs_to_remove{};  // lost a dependent; remove if unreferenced
+            int                         max_rank{0};
+            bool                        primed{false};
+            // The instance whose child graph is currently being evaluated; a
+            // mesh_subscribe inside it reads this as its "my_key" (the requester).
+            Value                       current_eval_key{};
+
+            void stop_all_noexcept() noexcept
+            {
+                for (auto &[key, entry] : instances)
+                {
+                    if (entry && entry->graph.has_value())
+                    {
+                        static_cast<void>(fallback_on_exception(false, [&] {
+                            entry->graph.view().stop();
+                            return true;
+                        }));
+                    }
+                }
+                instances.clear();
+            }
+
+            [[nodiscard]] std::size_t active_count() const noexcept { return instances.size(); }
+
+            [[nodiscard]] MeshEntry *find(const ValueView &key) noexcept
+            {
+                auto it = instances.find(key);
+                return it == instances.end() ? nullptr : it->second.get();
+            }
+        };
+
+        struct MeshNodeContext
+        {
+            MeshNodeSpec spec{};
+            std::size_t  storage_offset{0};
+        };
+
+        // Program-lifetime, intentionally-leaked context storage.
+        [[nodiscard]] std::vector<std::unique_ptr<MeshNodeContext>> &mesh_node_contexts() noexcept
+        {
+            static auto *contexts = new std::vector<std::unique_ptr<MeshNodeContext>>;
+            return *contexts;
+        }
+
+        [[nodiscard]] const MeshNodeContext &register_mesh_node_context(MeshNodeSpec spec, std::size_t storage_offset)
+        {
+            auto context = std::make_unique<MeshNodeContext>(MeshNodeContext{
+                .spec           = std::move(spec),
+                .storage_offset = storage_offset,
+            });
+            const auto *result = context.get();
+            mesh_node_contexts().push_back(std::move(context));
+            return *result;
+        }
+
+        MeshNodeStorage &storage_of(const NodeView &view, const MeshNodeContext &context)
+        {
+            return *MemoryUtils::cast<MeshNodeStorage>(MemoryUtils::advance(view.data(), context.storage_offset));
+        }
+
+        // ---- instance lifecycle ----
+
+        MeshEntry &create_instance(const NodeView &view, const MeshNodeContext &context, MeshNodeStorage &storage,
+                                   const ValueView &key_view, int rank, DateTime evaluation_time)
+        {
+            const MeshNodeSpec &spec = context.spec;
+
+            auto  owned  = std::make_unique<MeshEntry>(Value{key_view});
+            auto &entry  = *owned;
+            entry.rank   = rank;
+            entry.paused = true;  // force a first evaluation this cycle (settle loop)
+
+            auto output          = view.output(evaluation_time);
+            auto output_dict     = output.as_dict();
+            auto output_mutation = output_dict.begin_mutation(evaluation_time);
+
+            auto rollback = UnwindCleanupGuard([&] {
+                if (entry.graph.has_value() && entry.graph.view().started()) { entry.graph.view().stop(); }
+                (void)output_mutation.erase(entry.key.view());
+            });
+
+            entry.graph = spec.child.graph_builder.make_nested_graph(NodeStorageRef{view.binding(), view.data()});
+            if (spec.key_output_schema != nullptr)
+            {
+                entry.key_output.emplace(*spec.key_output_schema);
+                auto mutation = entry.key_output->view(evaluation_time).begin_mutation(evaluation_time);
+                if (!mutation.copy_value_from(key_view))
+                {
+                    throw std::logic_error("mesh_: failed to write the key value into the per-key output");
+                }
+            }
+
+            (void)output_mutation[key_view];
+
+            std::optional<runtime_detail::MappedChildSourceOverride> self_source;
+            if (spec.self_input_index.has_value())
+            {
+                self_source = runtime_detail::MappedChildSourceOverride{
+                    .source_index = *spec.self_input_index,
+                    .source       = view.output(evaluation_time).handle(),
+                };
+            }
+            const TSOutputView key_source = entry.key_output.has_value()
+                                                ? entry.key_output->view(evaluation_time)
+                                                : TSOutputView{};
+            runtime_detail::bind_mapped_child_inputs(view, entry.graph.view(), evaluation_time,
+                                                     spec.child, spec.args, entry.key.view(),
+                                                     key_source, std::move(self_source));
+            runtime_detail::bind_mapped_child_output(view, entry.graph.view(), evaluation_time,
+                                                     spec.child.output_binding, entry.key.view());
+            entry.graph.view().start(evaluation_time);
+            rollback.release();
+
+            storage.max_rank = std::max(storage.max_rank, rank);
+            auto [it, inserted] = storage.instances.emplace(Value{key_view}, std::move(owned));
+            (void)inserted;
+            return *it->second;
+        }
+
+        void remove_instance(const NodeView &view, MeshNodeStorage &storage, const ValueView &key_view,
+                             DateTime evaluation_time)
+        {
+            auto it = storage.instances.find(key_view);
+            if (it == storage.instances.end()) { return; }
+
+            if (it->second->graph.has_value()) { it->second->graph.view().stop(); }
+
+            auto output          = view.output(evaluation_time);
+            auto output_dict     = output.as_dict();
+            auto output_mutation = output_dict.begin_mutation(evaluation_time);
+            (void)output_mutation.erase(key_view);
+
+            storage.instances.erase(it);
+        }
+
+        // ---- ranking ----
+
+        [[nodiscard]] bool keys_contains(const NodeView &view, const MeshNodeContext &context,
+                                         const ValueView &key, DateTime evaluation_time)
+        {
+            auto keys_input = walk_ts_path(view.input(evaluation_time).borrowed_ref(),
+                                           std::vector<std::size_t>{context.spec.keys_input_index});
+            if (!keys_input.valid()) { return false; }
+            return keys_input.as_set().contains(key);
+        }
+
+        void re_rank(MeshNodeStorage &storage, const ValueView &key, const ValueView &depends_on,
+                     std::vector<Value> &stack)
+        {
+            MeshEntry *key_entry = storage.find(key);
+            MeshEntry *dep_entry = storage.find(depends_on);
+            if (key_entry == nullptr || dep_entry == nullptr) { return; }
+            if (key_entry->rank > dep_entry->rank) { return; }
+
+            key_entry->rank  = dep_entry->rank + 1;
+            storage.max_rank = std::max(storage.max_rank, key_entry->rank);
+
+            stack.push_back(Value{key});
+            // Re-rank everything that depends on ``key``.
+            if (auto it = storage.dependents.find(key); it != storage.dependents.end())
+            {
+                for (const Value &dependent : it->second)
+                {
+                    const bool on_stack = std::any_of(stack.begin(), stack.end(),
+                                                      [&](const Value &s) { return s.equals(dependent); });
+                    if (on_stack)
+                    {
+                        throw std::runtime_error("mesh_ has a dependency cycle");
+                    }
+                    re_rank(storage, dependent.view(), key, stack);
+                }
+            }
+            stack.pop_back();
+        }
+
+        // ---- evaluation ----
+
+        // The mesh node is the pause BOUNDARY: it resolves its instances' pauses
+        // internally (the settle loop) and always completes, so it returns true.
+        bool mesh_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.started()) { return true; }
+
+            auto        mesh_view = view.as<MeshNodeView>();
+            const auto &context   = *static_cast<const MeshNodeContext *>(mesh_view.internal_context());
+            auto       &storage   = storage_of(view, context);
+            const auto &spec      = context.spec;
+
+            auto root_input  = view.input(evaluation_time);
+            auto keys_input  = walk_ts_path(root_input.borrowed_ref(),
+                                            std::vector<std::size_t>{spec.keys_input_index});
+
+            // 1. __keys__ key-set membership drives instance create/remove.
+            if (keys_input.valid())
+            {
+                auto key_set = keys_input.as_set();
+                if (!storage.primed)
+                {
+                    for (const ValueView &k : key_set.values())
+                    {
+                        if (storage.find(k) == nullptr)
+                        {
+                            create_instance(view, context, storage, k, storage.max_rank, evaluation_time);
+                        }
+                    }
+                    storage.primed = true;
+                }
+                else if (keys_input.modified())
+                {
+                    for (const ValueView &k : key_set.added())
+                    {
+                        if (storage.find(k) == nullptr)
+                        {
+                            create_instance(view, context, storage, k, storage.max_rank, evaluation_time);
+                        }
+                    }
+                    for (const ValueView &k : key_set.removed())
+                    {
+                        auto it = storage.dependents.find(k);
+                        const bool has_dependents = it != storage.dependents.end() && !it->second.empty();
+                        if (!has_dependents) { remove_instance(view, storage, k, evaluation_time); }
+                    }
+                }
+            }
+
+            // 2. Removals queued because a dependent went away (remove_dependency).
+            if (!storage.graphs_to_remove.empty())
+            {
+                std::vector<Value> to_remove;
+                to_remove.swap(storage.graphs_to_remove);
+                for (const Value &k : to_remove)
+                {
+                    auto       it             = storage.dependents.find(k);
+                    const bool has_dependents = it != storage.dependents.end() && !it->second.empty();
+                    if (!has_dependents && !keys_contains(view, context, k.view(), evaluation_time))
+                    {
+                        remove_instance(view, storage, k.view(), evaluation_time);
+                    }
+                }
+            }
+
+            // 3. Settle loop (pause/resume). Evaluate instances in dependency-rank order,
+            //    re-scanning until none pauses. A pause has, via add_dependency, created
+            //    and/or ranked the missing dependency below the requester; a later pass
+            //    evaluates that dependency first and then resumes the paused instance —
+            //    so the whole transitive closure settles within this cycle.
+            DateTime    next_time = MAX_DT;
+            bool        progress  = true;
+            std::size_t guard     = 0;
+            while (progress)
+            {
+                progress = false;
+
+                // Snapshot keys by rank: add_dependency can create instances mid-pass,
+                // so we must not hold an iterator into instances across an evaluate().
+                std::vector<std::pair<int, Value>> order;
+                order.reserve(storage.instances.size());
+                for (auto &[k, entry] : storage.instances)
+                {
+                    if (entry) { order.emplace_back(entry->rank, k); }
+                }
+                std::sort(order.begin(), order.end(),
+                          [](const auto &a, const auto &b) { return a.first < b.first; });
+
+                for (const auto &ranked : order)
+                {
+                    MeshEntry *entry = storage.find(ranked.second.view());
+                    if (entry == nullptr || !entry->graph.has_value()) { continue; }
+                    if (entry->settled_time == evaluation_time) { continue; }  // already done this cycle
+
+                    auto       child = entry->graph.view();
+                    const bool due   = child.next_scheduled_time() <= evaluation_time;
+                    if (!due && !entry->paused) { continue; }
+
+                    storage.current_eval_key = entry->key;
+                    entry->paused            = false;
+                    if (child.evaluate(evaluation_time)) { entry->settled_time = evaluation_time; }
+                    else { entry->paused = true; }  // a dependency was created / ranked; re-scan
+                    progress = true;
+
+                    if (const DateTime next = child.next_scheduled_time();
+                        next != MAX_DT && next > evaluation_time)
+                    {
+                        next_time = std::min(next_time, next);
+                    }
+                }
+
+                if (++guard > storage.instances.size() + 64)
+                {
+                    throw std::runtime_error("mesh_ failed to settle within the cycle");
+                }
+            }
+            storage.current_eval_key = Value{};
+
+            if (next_time < MAX_DT) { view.graph().schedule_node(view.node_index(), next_time); }
+            return true;
+        }
+
+        // ---- mesh_subscribe node (inside an instance: mesh_(func)[item]) ----
+        //
+        // Simplified shape: the only wired input is ``item`` (the requested key). The
+        // mesh's own TSD output (``self``) and the requester's key (``my_key``) come
+        // from the enclosing mesh node via the ``parent_node()`` walk at runtime, not
+        // from boundary inputs. The node "takes a key and returns the element type":
+        // it forwards ``self[item]`` to its output, pausing (returning false) until the
+        // dependency is created, ranked below the requester, and evaluated this cycle.
+        constexpr std::size_t subscribe_item_field  = 0;  // TS<K> (active) — the requested key
+        constexpr std::size_t subscribe_value_field = 1;  // OUT — seeded with nothing<OUT>, rebound at
+                                                          // runtime to self[item] (reads it + makes us
+                                                          // reactive to the sibling's ticks)
+
+        [[nodiscard]] std::optional<MeshNodeView> resolve_mesh_node(const NodeView &view)
+        {
+            GraphView graph = view.graph();
+            while (graph.is_nested())
+            {
+                NodeView parent = graph.as_nested().parent_node();
+                if (parent.is<MeshNodeView>()) { return parent.as<MeshNodeView>(); }
+                if (!parent.valid()) { break; }
+                graph = parent.graph();
+            }
+            return std::nullopt;
+        }
+
+        bool mesh_subscribe_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.started()) { return true; }
+
+            auto input   = view.input(evaluation_time);
+            auto bundle  = input.as_bundle();
+            auto item_in = bundle.at(subscribe_item_field);
+            if (!item_in.valid()) { return true; }  // no key requested yet
+
+            std::optional<MeshNodeView> mesh = resolve_mesh_node(view);
+            if (!mesh.has_value())
+            {
+                throw std::logic_error("mesh_subscribe: not evaluated inside a mesh instance");
+            }
+
+            const Value my_key = mesh->current_key();
+            const Value item{item_in.value()};
+            if (!my_key.has_value()) { return true; }  // not inside an instance eval (defensive)
+
+            // Register the dependency (creating / ranking the target on demand). If the
+            // target is not yet available this cycle, PAUSE: the mesh resolves it in rank
+            // order and re-evaluates this instance to resume from here.
+            if (!mesh->add_dependency(my_key.view(), item.view())) { return false; }
+
+            // Available — (re)bind our dynamic ``value`` input to self[item] so we forward
+            // it AND become reactive to its future ticks (a sibling tick reschedules us via
+            // the input notification). Binding is idempotent when already pointed at it.
+            auto self = mesh->node().output(evaluation_time);
+            auto dict = self.as_dict();
+            if (dict.contains(item.view()))
+            {
+                bind_input_to_source(bundle.at(subscribe_value_field), dict.at(item.view()));
+            }
+
+            auto value_in = bundle.at(subscribe_value_field);
+            if (value_in.valid())
+            {
+                auto mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
+                (void)mutation.copy_value_from(value_in.value());
+            }
+            return true;
+        }
+
+        void mesh_node_stop(const NodeView &view, DateTime evaluation_time)
+        {
+            auto  mesh_view = view.as<MeshNodeView>();
+            auto &storage   = storage_of(view, *static_cast<const MeshNodeContext *>(mesh_view.internal_context()));
+
+            auto output          = view.output(evaluation_time);
+            auto output_dict     = output.as_dict();
+            auto output_mutation = output_dict.begin_mutation(evaluation_time);
+
+            storage.stop_all_noexcept();
+            output_mutation.clear();
+            storage.primed = false;
+        }
+    }  // namespace
+
+    // ---- MeshNodeView ----
+
+    const void *MeshNodeView::node_view_type_id() noexcept
+    {
+        static const char token{};
+        return &token;
+    }
+
+    MeshNodeView MeshNodeView::from_node(NodeView view, const void *context)
+    {
+        if (context == nullptr) { throw std::logic_error("MeshNodeView requires a typed view context"); }
+        const auto &typed_context = *static_cast<const MeshNodeContext *>(context);
+        void       *storage = MemoryUtils::advance(view.data(), typed_context.storage_offset);
+        return MeshNodeView{std::move(view), context, storage};
+    }
+
+    const NodeView &MeshNodeView::node() const noexcept { return view_; }
+
+    std::size_t MeshNodeView::active_count() const noexcept
+    {
+        return MemoryUtils::cast<MeshNodeStorage>(storage_)->active_count();
+    }
+
+    Value MeshNodeView::current_key() const
+    {
+        return MemoryUtils::cast<MeshNodeStorage>(storage_)->current_eval_key;
+    }
+
+    bool MeshNodeView::add_dependency(const ValueView &key, const ValueView &depends_on) const
+    {
+        if (key.equals(depends_on)) { throw std::runtime_error("mesh_ has a dependency cycle"); }
+
+        auto          &storage = *MemoryUtils::cast<MeshNodeStorage>(storage_);
+        const auto    &context = *static_cast<const MeshNodeContext *>(context_);
+        const DateTime t       = view_.graph().evaluation_time();
+
+        storage.dependents[Value{depends_on}].insert(Value{key});
+
+        MeshEntry *key_entry = storage.find(key);
+        if (key_entry == nullptr) { return false; }  // defensive: we should be evaluating it
+
+        MeshEntry *dep_entry = storage.find(depends_on);
+        if (dep_entry == nullptr)
+        {
+            // Create the dependency on demand, same cycle, ranked below the requester;
+            // the resolver evaluates it first (lower rank) and then resumes us.
+            create_instance(view_, context, storage, depends_on, 0, t);
+            std::vector<Value> stack;
+            re_rank(storage, key, depends_on, stack);
+            return false;
+        }
+
+        if (key_entry->rank <= dep_entry->rank)
+        {
+            // The requester must outrank its dependency; re-rank and re-evaluate in order.
+            std::vector<Value> stack;
+            re_rank(storage, key, depends_on, stack);
+            return false;
+        }
+
+        // The dependency exists and is ranked below us: available iff it produced its
+        // result this cycle (otherwise pause so the resolver evaluates it first).
+        return dep_entry->settled_time == t;
+    }
+
+    void MeshNodeView::remove_dependency(const ValueView &key, const ValueView &depends_on) const
+    {
+        auto &storage = *MemoryUtils::cast<MeshNodeStorage>(storage_);
+        auto  it      = storage.dependents.find(depends_on);
+        if (it == storage.dependents.end()) { return; }
+        it->second.erase(Value{key});
+        if (it->second.empty())
+        {
+            storage.graphs_to_remove.push_back(Value{depends_on});
+            view_.graph().schedule_node(view_.node_index(), view_.graph().evaluation_time() + MIN_TD);
+        }
+    }
+
+    MeshNodeView::MeshNodeView(NodeView view, const void *context, void *storage) noexcept
+        : view_(std::move(view)),
+          context_(context),
+          storage_(storage)
+    {
+    }
+
+    NodeBuilder mesh_node(NodeTypeMetaData meta, MeshNodeSpec spec)
+    {
+        meta.node_kind    = NodeKind::Nested;
+        meta.valid_inputs = std::vector<std::size_t>{};
+
+        NodeTypeDescriptor descriptor;
+        descriptor.schema = std::move(meta);
+
+        const std::array fields{NodeStorageField{
+            .name = mesh_storage_field_name,
+            .plan = &MemoryUtils::plan_for<MeshNodeStorage>(),
+        }};
+        // The mesh field destroys BEFORE the owned TSD output: instance children
+        // forward into it (and read it as their self-context).
+        descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, {}, fields);
+
+        const auto &context = register_mesh_node_context(
+            std::move(spec), descriptor.storage_plan->component(mesh_storage_field_name).offset);
+
+        descriptor.callbacks.stop            = &mesh_node_stop;
+        descriptor.ops.evaluate_impl         = &mesh_evaluate_impl;
+        descriptor.ops.extended_view_type_id = MeshNodeView::node_view_type_id();
+        descriptor.ops.extended_view_context = &context;
+
+        return NodeBuilder::from_descriptor(std::move(descriptor));
+    }
+
+    NodeBuilder mesh_subscribe_node(NodeTypeMetaData meta)
+    {
+        meta.node_kind = NodeKind::Compute;
+
+        NodeTypeDescriptor descriptor;
+        descriptor.schema            = std::move(meta);
+        descriptor.ops.evaluate_impl = &mesh_subscribe_evaluate_impl;
+        return NodeBuilder::from_descriptor(std::move(descriptor));
+    }
+}  // namespace hgraph

@@ -4,6 +4,8 @@
 #include <hgraph/types/utils/value_slot_store.h>
 #include <hgraph/util/scope.h>
 
+#include "mapped_child_bindings.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -168,11 +170,6 @@ namespace hgraph
             return *result;
         }
 
-        [[nodiscard]] std::vector<std::size_t> path_suffix(const std::vector<std::size_t> &path)
-        {
-            return std::vector<std::size_t>{path.begin() + 1, path.end()};
-        }
-
         [[nodiscard]] TSOutputHandle effective_output_handle(TSOutputView source)
         {
             if (!source.bound()) { return {}; }
@@ -238,84 +235,6 @@ namespace hgraph
             }
         }
 
-        /**
-         * Bind (or re-bind) one entry's child boundary inputs for its key. A
-         * multiplexed source whose dict does not currently hold the key leaves
-         * that child input UNBOUND — invalid until the key appears there (the
-         * Python phantom-element behaviour under the union key rule).
-         */
-        void bind_entry(const NodeView &view, const MapNodeContext &context, MapKeyEntry &entry,
-                        DateTime evaluation_time)
-        {
-            const MapNodeSpec &spec = context.spec;
-            if (spec.child.input_bindings.empty()) { return; }
-
-            auto root_input = view.input(evaluation_time);
-            auto child = entry.graph.view();
-
-            for (const NestedGraphInputBinding &binding : spec.child.input_bindings)
-            {
-                const MapArgSource &arg = spec.args.at(binding.source_path[0]);
-
-                TSOutputView source{};
-                switch (arg.kind)
-                {
-                    case MapArgSourceKind::Key:
-                        source = entry.key_output->view(evaluation_time);
-                        break;
-                    case MapArgSourceKind::Element:
-                    {
-                        auto mux_source = walk_ts_path(root_input.borrowed_ref(),
-                                                       std::vector<std::size_t>{arg.outer_index})
-                                              .bound_output();
-                        if (mux_source.bound())
-                        {
-                            auto dict = mux_source.as_dict();
-                            if (dict.contains(entry.key.view()))
-                            {
-                                source = walk_ts_path(dict.at(entry.key.view()), path_suffix(binding.source_path));
-                            }
-                        }
-                        break;
-                    }
-                    case MapArgSourceKind::OuterInput:
-                    {
-                        std::vector<std::size_t> outer_path = path_suffix(binding.source_path);
-                        outer_path.insert(outer_path.begin(), arg.outer_index);
-                        source = walk_source_to_output(root_input.borrowed_ref(), outer_path);
-                        break;
-                    }
-                }
-
-                auto target = walk_ts_path(child.node_at(binding.target.node).input(evaluation_time),
-                                           binding.target.path);
-                bind_input_to_source(std::move(target), source);
-            }
-        }
-
-        /**
-         * Bind the child's terminal **forwarding** output onto the parent's
-         * TSD element for this key — the child node then writes the parent's
-         * storage directly (no copy). Bound ONCE at entry creation: elements
-         * live in stable slot storage and exist exactly as long as the entry.
-         */
-        void bind_entry_output(const NodeView &view, const MapNodeContext &context, MapKeyEntry &entry,
-                               DateTime evaluation_time)
-        {
-            const auto &output_binding = context.spec.child.output_binding;
-            if (!output_binding.has_value()) { return; }
-
-            auto output = view.output(evaluation_time);
-            auto dict   = output.as_dict();
-            if (!dict.contains(entry.key.view())) { return; }
-            auto element = dict.at(entry.key.view());
-
-            auto child_terminal = walk_ts_path(
-                entry.graph.view().node_at(output_binding->source.node).output(evaluation_time),
-                output_binding->source.path);
-            bind_forwarding_output_to_source(child_terminal, element);
-        }
-
         void create_entry_at_slot(const NodeView &view, const MapNodeContext &context, MapNodeStorage &storage,
                                   TSDDataMutationView &output_mutation, const TSSInputView &keys_set,
                                   std::size_t slot, DateTime evaluation_time)
@@ -348,8 +267,13 @@ namespace hgraph
             // entry's lifetime).
             (void)output_mutation[key_view];
 
-            bind_entry(view, context, entry, evaluation_time);
-            bind_entry_output(view, context, entry, evaluation_time);
+            const TSOutputView key_source = entry.key_output.has_value()
+                                                ? entry.key_output->view(evaluation_time)
+                                                : TSOutputView{};
+            runtime_detail::bind_mapped_child_inputs(view, entry.graph.view(), evaluation_time,
+                                                     spec.child, spec.args, entry.key.view(), key_source);
+            runtime_detail::bind_mapped_child_output(view, entry.graph.view(), evaluation_time,
+                                                     spec.child.output_binding, entry.key.view());
             entry.graph.view().start(evaluation_time);
             rollback.release();
         }
@@ -368,9 +292,12 @@ namespace hgraph
             }
         }
 
-        void map_evaluate(const NodeView &view, DateTime evaluation_time)
+        // Returns true (completed). map_ evaluates multiple keyed children; per-child
+        // pause propagation (a mesh nested inside a map child) is not yet wired, so a
+        // child pause is not surfaced here — see the nested-graphs pause/resume roadmap.
+        bool map_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
         {
-            if (!view.started()) { return; }
+            if (!view.started()) { return true; }
 
             auto        map_view = view.as<MapNodeView>();
             const auto &context  = *static_cast<const MapNodeContext *>(map_view.internal_context());
@@ -460,7 +387,14 @@ namespace hgraph
                 if (entry == nullptr || !entry->graph.has_value()) { continue; }
 
                 auto child = entry->graph.view();
-                if (bindings_need_refresh) { bind_entry(view, context, *entry, evaluation_time); }
+                if (bindings_need_refresh)
+                {
+                    const TSOutputView key_source = entry->key_output.has_value()
+                                                        ? entry->key_output->view(evaluation_time)
+                                                        : TSOutputView{};
+                    runtime_detail::bind_mapped_child_inputs(view, child, evaluation_time, spec.child,
+                                                             spec.args, entry->key.view(), key_source);
+                }
 
                 if (child.next_scheduled_time() <= evaluation_time) { child.evaluate(evaluation_time); }
                 if (const DateTime next = child.next_scheduled_time(); next != MAX_DT && next > evaluation_time)
@@ -468,11 +402,7 @@ namespace hgraph
                     view.graph().schedule_node(view.node_index(), next);
                 }
             }
-        }
-
-        void map_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
-        {
-            map_evaluate(view, evaluation_time);
+            return true;
         }
 
         void map_node_stop(const NodeView &view, DateTime evaluation_time)
