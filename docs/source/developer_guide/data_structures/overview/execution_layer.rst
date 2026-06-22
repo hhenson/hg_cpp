@@ -54,13 +54,18 @@ The protocol is a single boolean threaded through the eval API plus one cursor:
   push-source pass) and resumes the node loop at the cursor — re-running the paused
   node and continuing. A completed cycle resets the cursor to ``0``. No extra state
   variable is introduced.
-- **Nested handlers propagate** (``single_nested_graph``, and ``map_`` / ``switch_``
-  / ``reduce_`` / ``mesh_``): each forwards a child's ``false`` upward, recording
-  what it was evaluating so a resume re-drives the same child. Re-binding on resume
-  is idempotent. The **mesh node is the pause boundary**: it *resolves* a paused
-  instance instead of propagating, and returns ``true`` to its own graph once the
-  instance set has settled. Everything between a ``mesh_(func)[k]`` and its mesh
-  just relays the pause.
+- **Nested handlers propagate** (``single_nested_graph``, ``switch_``, ``map_``,
+  ``reduce_``): each forwards a child's ``false`` upward, recording what it was
+  evaluating so a resume re-drives the same child. ``single_nested`` / ``switch_``
+  have a single active child, so they just relay its bool (its own graph cursor does
+  the rest); ``map_`` / ``reduce_`` evaluate many children, so they hold a **per-child
+  cursor** in node storage (``map_``: the entry slot; ``reduce_``: the combiner
+  position) — on resume they skip the per-cycle setup (key reconciliation / structure
+  rebuild) and continue the child loop from that cursor, resetting it on completion.
+  Re-binding on resume is idempotent. The **mesh node is the pause boundary**: it
+  *resolves* a paused instance instead of propagating, returning ``true`` to its own
+  graph once the instance set has settled. Everything between a ``mesh_(func)[k]`` and
+  its mesh just relays the pause.
 - **The root graph never pauses** (a pausing node only exists inside a mesh scope),
   so ``GraphExecutorView::run()`` treats a ``false`` from the root as a logic error.
 

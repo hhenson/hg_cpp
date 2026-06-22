@@ -46,6 +46,34 @@ namespace
         }
     };
 
+    // A mesh whose instance graph contains a map_: each instance maps mesh_(F)[peer]
+    // over its per-key ``group`` (a TSD of peer keys) and sums the resolved siblings.
+    // The map child pauses on mesh_ref, so the MAP must propagate the pause (its per-child
+    // cursor) up to the mesh, which resolves the sibling and resumes. result = base +
+    // sum(siblings); an empty group sums to default 0.
+    struct MapInMeshG
+    {
+        static constexpr auto name = "mesh_map_in_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> peer)
+        {
+            return stdlib::mesh_ref<TS<Int>>(w, peer);
+        }
+    };
+    struct MapInMeshF
+    {
+        static constexpr auto name = "mesh_map_in_f";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> base, Port<TSD<Str, TS<Int>>> group)
+        {
+            using namespace hgraph::stdlib::syntax;
+            Port<TSD<Str, TS<Int>>> mapped = wire<stdlib::map_>(w, fn<MapInMeshG>(), group)
+                                                 .as<TSD<Str, TS<Int>>>();
+            Port<TS<Int>> total = wire<stdlib::sum_>(w, mapped).as<TS<Int>>();
+            Port<TS<Int>> zero  = wire<stdlib::const_, TS<Int>>(w, Int{0});
+            Port<TS<Int>> base_total = wire<stdlib::default_>(w, total, zero).as<TS<Int>>();
+            return (base + base_total).as<TS<Int>>();
+        }
+    };
+
     // A cross-instance chain: instance ``key`` depends on instance ``link`` (the
     // per-key value of the multiplexed ``link`` TSD) and returns ``key + result(link)``.
     // Keys with no link entry have an invalid ``link`` element, so mesh_(func)[link]
@@ -121,6 +149,26 @@ TEST_CASE("mesh_: cross-instance access settles a dependency chain in one cycle"
                      fn<ChainFn>(),
                      values<Value>(dict_delta<Int, TS<Int>>({{1, 0}, {2, 1}, {3, 2}})))),
                  values<Value>(dict_delta<Int, TS<Int>>({{0, 0}, {1, 1}, {2, 3}, {3, 6}})));
+}
+
+TEST_CASE("mesh_: a map_ inside a mesh instance propagates child pause/resume")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // base = {1:1, 2:2, 3:3}; group chains 3 -> 2 -> 1 (1 depends on nothing).
+    // result[k] = base[k] + sum(mesh[peers]):
+    //   1: 1 + 0;  2: 2 + result[1]=1 -> 3;  3: 3 + result[2]=3 -> 6.
+    // The per-instance map child reads mesh_(F)[peer] and pauses; the map node propagates
+    // that pause (its slot cursor) so the mesh resolves the sibling and resumes.
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Int, TS<Int>>, TSD<Int, TSD<Str, TS<Int>>>>(
+                     fn<MapInMeshF>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 1}, {2, 2}, {3, 3}})),
+                     values<Value>(dict_delta<Int, TSD<Str, TS<Int>>>(
+                         {{1, dict_delta<Str, TS<Int>>({})},
+                          {2, dict_delta<Str, TS<Int>>({{"p"s, 1}})},
+                          {3, dict_delta<Str, TS<Int>>({{"p"s, 2}})}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 1}, {2, 3}, {3, 6}})));
 }
 
 TEST_CASE("mesh_: a dependency cycle is a runtime error")

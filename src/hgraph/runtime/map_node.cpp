@@ -67,6 +67,12 @@ namespace hgraph
             bool                        observing_keys{false};
             bool primed{false};
 
+            // Pause/resume cursor: the entry slot a child paused on, or ``npos`` when not
+            // mid-pause. On resume the per-key reconciliation (setup) is skipped and the
+            // child loop continues from this slot; reset to ``npos`` on completion.
+            static constexpr std::size_t npos = static_cast<std::size_t>(-1);
+            std::size_t                  resume_slot{npos};
+
             [[nodiscard]] std::size_t active_count() const noexcept
             {
                 return entries.constructed.count();
@@ -292,17 +298,14 @@ namespace hgraph
             }
         }
 
-        // Returns true (completed). map_ evaluates multiple keyed children; per-child
-        // pause propagation (a mesh nested inside a map child) is not yet wired, so a
-        // child pause is not surfaced here — see the nested-graphs pause/resume roadmap.
-        bool map_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        // Per-key lifecycle reconciliation (the cycle "setup"): re-point source handles,
+        // create/remove children from the __keys__ set. Returns whether surviving children
+        // need their inputs re-bound. Skipped on a pause/resume re-entry (the key set does
+        // not change mid-cycle).
+        [[nodiscard]] bool map_reconcile_keys(const NodeView &view, const MapNodeContext &context,
+                                              MapNodeStorage &storage, DateTime evaluation_time)
         {
-            if (!view.started()) { return true; }
-
-            auto        map_view = view.as<MapNodeView>();
-            const auto &context  = *static_cast<const MapNodeContext *>(map_view.internal_context());
-            auto       &storage  = *MemoryUtils::cast<MapNodeStorage>(map_view.internal_storage());
-            const auto &spec     = context.spec;
+            const auto &spec       = context.spec;
             const auto  keys_index = *spec.keys_input_index;
 
             auto root_input = view.input(evaluation_time);
@@ -375,13 +378,32 @@ namespace hgraph
                     }
                 }
             }
+            return bindings_need_refresh;
+        }
 
-            // Evaluate due children: their terminal forwarding outputs write the
-            // parent's TSD elements directly, so there is no post-evaluation
-            // collection step. A child evaluation propagates its own next
-            // scheduled time back to this node; children left unevaluated still
-            // pull their pending schedule up.
-            for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
+        // Evaluates the keyed children, supporting pause/resume: a child that pauses (a
+        // mesh nested in the child needs a sibling) propagates the pause — we save the slot
+        // cursor and return false so the enclosing mesh resolves the dependency and
+        // re-evaluates us. On resume the key reconciliation is skipped and the loop
+        // continues from the saved slot; completion resets the cursor.
+        bool map_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.started()) { return true; }
+
+            auto        map_view = view.as<MapNodeView>();
+            const auto &context  = *static_cast<const MapNodeContext *>(map_view.internal_context());
+            auto       &storage  = *MemoryUtils::cast<MapNodeStorage>(map_view.internal_storage());
+            const auto &spec     = context.spec;
+
+            const bool resuming = storage.resume_slot != MapNodeStorage::npos;
+            const bool bindings_need_refresh =
+                resuming ? false : map_reconcile_keys(view, context, storage, evaluation_time);
+
+            // Due children write their TSD elements directly via their terminal forwarding
+            // outputs (no post-evaluation collection). A child evaluation propagates its own
+            // next scheduled time back to this node; unevaluated children pull theirs up.
+            const std::size_t start_slot = resuming ? storage.resume_slot : 0;
+            for (std::size_t slot = start_slot; slot < storage.entries.slot_capacity(); ++slot)
             {
                 auto *entry = storage.entries.try_value<MapKeyEntry>(slot);
                 if (entry == nullptr || !entry->graph.has_value()) { continue; }
@@ -396,12 +418,21 @@ namespace hgraph
                                                              spec.args, entry->key.view(), key_source);
                 }
 
-                if (child.next_scheduled_time() <= evaluation_time) { child.evaluate(evaluation_time); }
+                const bool resume_this = resuming && slot == storage.resume_slot;
+                if (child.next_scheduled_time() <= evaluation_time || resume_this)
+                {
+                    if (!child.evaluate(evaluation_time))
+                    {
+                        storage.resume_slot = slot;  // pause here; resume from this slot
+                        return false;
+                    }
+                }
                 if (const DateTime next = child.next_scheduled_time(); next != MAX_DT && next > evaluation_time)
                 {
                     view.graph().schedule_node(view.node_index(), next);
                 }
             }
+            storage.resume_slot = MapNodeStorage::npos;  // completed the cycle
             return true;
         }
 

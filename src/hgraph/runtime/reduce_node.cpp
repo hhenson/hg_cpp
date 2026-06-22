@@ -73,6 +73,12 @@ namespace hgraph
 
             bool primed{false};
             bool published{false};
+
+            // Pause/resume cursor: the combiner position a child paused on (+1 so 0 is a
+            // clean "not mid-pause" sentinel), or 0 when not resuming. On resume the
+            // structure reconciliation is skipped and the descending combiner loop
+            // continues from this position; reset to 0 on completion.
+            std::size_t resume_position_plus_one{0};
         };
 
         struct ReduceNodeContext
@@ -389,16 +395,12 @@ namespace hgraph
             rollback.release();
         }
 
-        // Returns true (completed). reduce_ evaluates a tree of combiner children;
-        // per-child pause propagation is not yet wired (see the pause/resume roadmap).
-        bool reduce_evaluate(const NodeView &view, DateTime evaluation_time)
+        // Reconcile the leaf state + rebuild the combiner tree for this cycle (the
+        // "setup"). Skipped on a pause/resume re-entry (the structure does not change
+        // mid-cycle).
+        void reduce_reconcile(const NodeView &view, const ReduceNodeContext &context,
+                              ReduceNodeStorage &storage, DateTime evaluation_time)
         {
-            if (!view.started()) { return true; }
-
-            auto        reduce_view = view.as<ReduceNodeView>();
-            const auto &context     = *static_cast<const ReduceNodeContext *>(reduce_view.internal_context());
-            auto       &storage     = *MemoryUtils::cast<ReduceNodeStorage>(reduce_view.internal_storage());
-
             auto root_input = view.input(evaluation_time);
             auto tsd_input  = walk_ts_path(root_input.borrowed_ref(), std::vector<std::size_t>{0});
 
@@ -426,21 +428,41 @@ namespace hgraph
             {
                 rebuild_structure(view, context, storage, evaluation_time);
             }
+        }
 
-            // Evaluate combiners deepest-first (descending heap index): a leaf
-            // tick notifies its combiner directly; that combiner's output tick
-            // notifies its parent (lower index, processed later), so the
-            // cascade settles in one pass. Evaluation is unconditional, like
-            // the other nested operators: a same-cycle notification lands in
-            // the child's schedule array but not its cached next time, and an
-            // idle child evaluate is a cheap scan. The nested evaluator
-            // propagates any future schedule back to this node.
-            for (std::size_t position = storage.combiners.size(); position-- > 0;)
+        // Evaluates the combiner tree, supporting pause/resume. A combiner that pauses (a
+        // mesh nested in the reduce function needs a sibling) propagates the pause: save the
+        // descending-position cursor and return false so the enclosing mesh resolves it and
+        // re-evaluates us. On resume the reconciliation is skipped and the descending loop
+        // continues from the saved position; completion resets the cursor.
+        bool reduce_evaluate(const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.started()) { return true; }
+
+            auto        reduce_view = view.as<ReduceNodeView>();
+            const auto &context     = *static_cast<const ReduceNodeContext *>(reduce_view.internal_context());
+            auto       &storage     = *MemoryUtils::cast<ReduceNodeStorage>(reduce_view.internal_storage());
+
+            const bool resuming = storage.resume_position_plus_one != 0;
+            if (!resuming) { reduce_reconcile(view, context, storage, evaluation_time); }
+
+            // Evaluate combiners deepest-first (descending heap index): a leaf tick notifies
+            // its combiner directly; that combiner's output tick notifies its parent (lower
+            // index, processed later), so the cascade settles in one pass. Evaluation is
+            // unconditional (an idle child evaluate is a cheap scan). On resume, continue
+            // from the saved position downward (positions above it already ran this cycle).
+            const std::size_t start = resuming ? storage.resume_position_plus_one : storage.combiners.size();
+            for (std::size_t position = start; position-- > 0;)
             {
                 const auto &entry = storage.combiners[position];
                 if (entry == nullptr || !entry->graph.has_value()) { continue; }
-                entry->graph.view().evaluate(evaluation_time);
+                if (!entry->graph.view().evaluate(evaluation_time))
+                {
+                    storage.resume_position_plus_one = position + 1;  // resume from this position
+                    return false;
+                }
             }
+            storage.resume_position_plus_one = 0;  // completed the cycle
             return true;
         }
 

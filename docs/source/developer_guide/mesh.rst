@@ -305,8 +305,10 @@ carry over from the first cut. **Validated** end-to-end by ``tests/cpp/test_mesh
 (ASAN/UBSAN-clean): peer instantiation = ``map_`` (plain + key-consuming); a
 cross-instance dependency **chain** with on-demand base creation settling in one cycle;
 **re-propagation** of a changed input through the dependency graph (reactivity); a
-dependency **cycle** raising a runtime error; and **removal** tearing an unreferenced
-instance down.
+**``map_`` nested inside a mesh instance** whose child pauses on ``mesh_(F)[peer]`` —
+the map propagates the pause through its per-child cursor and the mesh resolves + resumes
+(also exercises ``map_`` / ``reduce_`` pause/resume); a dependency **cycle** raising a
+runtime error; and **removal** tearing an unreferenced instance down.
 
 **Remaining** (see *Deferrals*): ``switch_`` *inside* a mesh instance (the recursive
 ``fib`` shape) — the branch output forwards into the switch output which forwards into
