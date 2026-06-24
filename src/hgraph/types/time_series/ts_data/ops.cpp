@@ -1,4 +1,4 @@
-#include <hgraph/types/time_series/ts_data/ops.h>
+#include <hgraph/types/time_series/ts_data.h>
 
 #include <hgraph/types/value/value.h>
 
@@ -172,6 +172,29 @@ namespace hgraph::ts_data_detail
     void *missing_mutable_indexed_element_memory(const void *, void *, std::size_t)
     {
         missing_ts_data_op("mutable indexed element memory");
+    }
+
+    bool noop_clear_collection(const TSDataView &, DateTime) noexcept
+    {
+        return false;
+    }
+
+    bool clear_tss_collection(const TSDataView &view, DateTime modified_time)
+    {
+        if (!view.valid()) { return false; }
+        auto set      = view.as_set();
+        auto mutation = set.begin_mutation(modified_time);
+        mutation.clear();
+        return true;
+    }
+
+    bool clear_tsd_collection(const TSDataView &view, DateTime modified_time)
+    {
+        if (!view.valid()) { return false; }
+        auto dict     = view.as_dict();
+        auto mutation = dict.begin_mutation(modified_time);
+        mutation.clear();
+        return true;
     }
 
     std::size_t missing_slot_size(const void *, const void *)

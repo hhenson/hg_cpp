@@ -246,6 +246,13 @@ namespace hgraph
         return data_.begin_mutation(evaluation_time);
     }
 
+    TSOutputView TSOutputView::indexed_child_at(std::size_t index) const
+    {
+        auto child = evaluation_time_ == MIN_DT ? data_.indexed_child_at(index)
+                                                : data_.ensure_indexed_child_at(index);
+        return TSOutputView{output_, child, evaluation_time_};
+    }
+
     TSSOutputView TSOutputView::as_set() &
     {
         return TSSOutputView{borrowed_ref()};

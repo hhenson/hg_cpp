@@ -400,69 +400,59 @@ namespace hgraph::detail
             return target_link_set_range(context, memory, &target_link_set_slot_removed);
         }
 
-        [[nodiscard]] SlotTSDataMutationResult target_link_insert_key(const void *context, void *memory,
-                                                                      const ValueView &key,
-                                                                      DateTime modified_time)
+        [[nodiscard]] SlotTSDataMutationResult target_link_set_insert_key(const void *context, void *memory,
+                                                                          const ValueView &key,
+                                                                          DateTime modified_time)
         {
             auto target = target_link_target_view(context, memory);
             if (!target.valid()) { return {}; }
 
-            const auto *schema = target.schema();
-            if (schema == nullptr) { return {}; }
-
-            switch (schema->kind)
-            {
-                case TSTypeKind::TSS:
-                {
-                    auto set      = target.as_set();
-                    auto mutation = set.begin_mutation(modified_time);
-                    const bool changed = mutation.add(key);
-                    return SlotTSDataMutationResult{.slot = set.find_slot(key), .changed = changed};
-                }
-                case TSTypeKind::TSD:
-                {
-                    auto dict = target.as_dict();
-                    const bool existed = dict.contains(key);
-                    auto mutation = dict.begin_mutation(modified_time);
-                    (void)mutation.at(key);
-                    return SlotTSDataMutationResult{.slot = dict.find_slot(key), .changed = !existed};
-                }
-                default:
-                    throw std::logic_error("TSInput target-link set mutation requires a TSS or TSD target");
-            }
+            auto set      = target.as_set();
+            auto mutation = set.begin_mutation(modified_time);
+            const bool changed = mutation.add(key);
+            return SlotTSDataMutationResult{.slot = set.find_slot(key), .changed = changed};
         }
 
-        [[nodiscard]] SlotTSDataMutationResult target_link_remove_key(const void *context, void *memory,
-                                                                      const ValueView &key,
-                                                                      DateTime modified_time)
+        [[nodiscard]] SlotTSDataMutationResult target_link_dict_insert_key(const void *context, void *memory,
+                                                                           const ValueView &key,
+                                                                           DateTime modified_time)
         {
             auto target = target_link_target_view(context, memory);
             if (!target.valid()) { return {}; }
 
-            const auto *schema = target.schema();
-            if (schema == nullptr) { return {}; }
+            auto dict = target.as_dict();
+            const bool existed = dict.contains(key);
+            auto mutation = dict.begin_mutation(modified_time);
+            (void)mutation.at(key);
+            return SlotTSDataMutationResult{.slot = dict.find_slot(key), .changed = !existed};
+        }
 
-            switch (schema->kind)
-            {
-                case TSTypeKind::TSS:
-                {
-                    auto set = target.as_set();
-                    const std::size_t slot = set.find_slot(key);
-                    auto mutation = set.begin_mutation(modified_time);
-                    const bool changed = mutation.remove(key);
-                    return SlotTSDataMutationResult{.slot = slot, .changed = changed};
-                }
-                case TSTypeKind::TSD:
-                {
-                    auto dict = target.as_dict();
-                    const std::size_t slot = dict.find_slot(key);
-                    auto mutation = dict.begin_mutation(modified_time);
-                    const bool changed = mutation.erase(key);
-                    return SlotTSDataMutationResult{.slot = slot, .changed = changed};
-                }
-                default:
-                    throw std::logic_error("TSInput target-link set mutation requires a TSS or TSD target");
-            }
+        [[nodiscard]] SlotTSDataMutationResult target_link_set_remove_key(const void *context, void *memory,
+                                                                          const ValueView &key,
+                                                                          DateTime modified_time)
+        {
+            auto target = target_link_target_view(context, memory);
+            if (!target.valid()) { return {}; }
+
+            auto set = target.as_set();
+            const std::size_t slot = set.find_slot(key);
+            auto mutation = set.begin_mutation(modified_time);
+            const bool changed = mutation.remove(key);
+            return SlotTSDataMutationResult{.slot = slot, .changed = changed};
+        }
+
+        [[nodiscard]] SlotTSDataMutationResult target_link_dict_remove_key(const void *context, void *memory,
+                                                                           const ValueView &key,
+                                                                           DateTime modified_time)
+        {
+            auto target = target_link_target_view(context, memory);
+            if (!target.valid()) { return {}; }
+
+            auto dict = target.as_dict();
+            const std::size_t slot = dict.find_slot(key);
+            auto mutation = dict.begin_mutation(modified_time);
+            const bool changed = mutation.erase(key);
+            return SlotTSDataMutationResult{.slot = slot, .changed = changed};
         }
 
         [[nodiscard]] bool target_link_touch_slots(const void *context, void *memory, DateTime modified_time)
@@ -470,26 +460,14 @@ namespace hgraph::detail
             auto target = target_link_target_view(context, memory);
             if (!target.valid()) { return false; }
 
-            const auto *schema = target.schema();
-            if (schema == nullptr) { return false; }
-
-            switch (schema->kind)
+            const auto &ops = static_cast<const TSSDataOps &>(target.ops());
+            const bool touched = ops.touch_impl(ops.context, target.mutable_data(), modified_time);
+            if (touched)
             {
-                case TSTypeKind::TSS:
-                case TSTypeKind::TSD:
-                {
-                    const auto &ops = static_cast<const TSSDataOps &>(target.ops());
-                    const bool touched = ops.touch_impl(ops.context, target.mutable_data(), modified_time);
-                    if (touched)
-                    {
-                        auto mutation = target.begin_mutation(modified_time);
-                        mutation.mark_modified();
-                    }
-                    return touched;
-                }
-                default:
-                    throw std::logic_error("TSInput target-link set mutation requires a TSS or TSD target");
+                auto mutation = target.begin_mutation(modified_time);
+                mutation.mark_modified();
             }
+            return touched;
         }
 
         void target_link_reserve_slots(const void *context, void *memory, std::size_t capacity)
@@ -497,20 +475,8 @@ namespace hgraph::detail
             auto target = target_link_target_view(context, memory);
             if (!target.valid()) { return; }
 
-            const auto *schema = target.schema();
-            if (schema == nullptr) { return; }
-            switch (schema->kind)
-            {
-                case TSTypeKind::TSS:
-                case TSTypeKind::TSD:
-                {
-                    const auto &ops = static_cast<const TSSDataOps &>(target.ops());
-                    ops.reserve_impl(ops.context, target.mutable_data(), capacity);
-                    break;
-                }
-                default:
-                    throw std::logic_error("TSInput target-link set reserve requires a TSS or TSD target");
-            }
+            const auto &ops = static_cast<const TSSDataOps &>(target.ops());
+            ops.reserve_impl(ops.context, target.mutable_data(), capacity);
         }
 
         void target_link_subscribe_slot_observer(const void *, void *, SlotObserver *)
@@ -813,7 +779,10 @@ namespace hgraph::detail
             };
         }
 
-        void configure_target_link_set_ops(TSSDataOps &ops)
+        void configure_target_link_set_ops(
+            TSSDataOps &ops,
+            SlotTSDataMutationResult (*insert_key)(const void *, void *, const ValueView &, DateTime),
+            SlotTSDataMutationResult (*remove_key)(const void *, void *, const ValueView &, DateTime))
         {
             ops.size_impl                      = &target_link_set_size;
             ops.slot_capacity_impl             = &target_link_set_slot_capacity;
@@ -827,8 +796,8 @@ namespace hgraph::detail
             ops.make_values_range_impl         = &target_link_set_live_range;
             ops.make_added_values_range_impl   = &target_link_set_added_range;
             ops.make_removed_values_range_impl = &target_link_set_removed_range;
-            ops.insert_key_impl                = &target_link_insert_key;
-            ops.remove_key_impl                = &target_link_remove_key;
+            ops.insert_key_impl                = insert_key;
+            ops.remove_key_impl                = remove_key;
             ops.touch_impl                     = &target_link_touch_slots;
             ops.reserve_impl                   = &target_link_reserve_slots;
             ops.subscribe_slot_observer_impl   = &target_link_subscribe_slot_observer;
@@ -876,7 +845,8 @@ namespace hgraph::detail
             context->layout.tracking_offset = storage_offset;
             context->ops = TSSDataOps{};
             static_cast<TSDataOps &>(context->ops) = target_link_base_ops(*context);
-            configure_target_link_set_ops(context->ops);
+            static_cast<TSDataOps &>(context->ops).clear_collection_impl = &ts_data_detail::clear_tss_collection;
+            configure_target_link_set_ops(context->ops, &target_link_set_insert_key, &target_link_set_remove_key);
             context->slot_access = &target_link_set_access;
             context->active_layout = &context->layout;
             context->active_ops = &context->ops;
@@ -899,7 +869,9 @@ namespace hgraph::detail
 
             context->dict_ops = TSDDataOps{};
             static_cast<TSDataOps &>(context->dict_ops) = target_link_base_ops(*context);
-            configure_target_link_set_ops(context->dict_ops);
+            static_cast<TSDataOps &>(context->dict_ops).clear_collection_impl = &ts_data_detail::clear_tsd_collection;
+            configure_target_link_set_ops(context->dict_ops, &target_link_dict_insert_key,
+                                          &target_link_dict_remove_key);
             context->dict_ops.child_at_slot_impl = &target_link_dict_child_at_slot;
             context->dict_ops.slot_modified_impl = &target_link_dict_slot_modified;
             context->dict_ops.make_ts_values_range_impl = &target_link_dict_values_range;
@@ -918,8 +890,10 @@ namespace hgraph::detail
             context->key_set_ops = TSSDataOps{};
             TSDataOps key_set_base_ops = target_link_base_ops(*context);
             key_set_base_ops.kind = TSTypeKind::TSS;
+            key_set_base_ops.clear_collection_impl = &ts_data_detail::clear_tss_collection;
             static_cast<TSDataOps &>(context->key_set_ops) = key_set_base_ops;
-            configure_target_link_set_ops(context->key_set_ops);
+            configure_target_link_set_ops(context->key_set_ops, &target_link_dict_insert_key,
+                                          &target_link_dict_remove_key);
             const auto *key_set_schema = TypeRegistry::instance().tss(schema.key_type());
             if (key_set_schema == nullptr)
             {
@@ -946,6 +920,13 @@ namespace hgraph::detail
             context->layout.tracking_offset = storage_offset;
             context->ops = IndexedTSDataOps{};
             static_cast<TSDataOps &>(context->ops) = target_link_base_ops(*context);
+            static_cast<TSDataOps &>(context->ops).indexed_child_count_impl = &target_link_indexed_size;
+            static_cast<TSDataOps &>(context->ops).indexed_child_binding_impl = &target_link_indexed_element_binding;
+            static_cast<TSDataOps &>(context->ops).indexed_child_memory_impl = &target_link_indexed_element_memory;
+            static_cast<TSDataOps &>(context->ops).mutable_indexed_child_memory_impl =
+                &target_link_indexed_mutable_element_memory;
+            static_cast<TSDataOps &>(context->ops).indexed_child_growth =
+                schema.kind == TSTypeKind::TSL && schema.fixed_size() == 0;
             context->ops.size_impl = &target_link_indexed_size;
             context->ops.element_binding_impl = &target_link_indexed_element_binding;
             context->ops.element_memory_impl = &target_link_indexed_element_memory;

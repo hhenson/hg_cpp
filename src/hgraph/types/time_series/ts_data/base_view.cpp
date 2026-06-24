@@ -221,6 +221,54 @@ namespace hgraph
         return table.all_valid_impl(table.context, data());
     }
 
+    std::size_t TSDataView::indexed_child_count() const
+    {
+        const auto &table = ops();
+        return table.indexed_child_count_impl(table.context, data());
+    }
+
+    TSDataView TSDataView::indexed_child_at(std::size_t index) const
+    {
+        const auto &table = ops();
+        if (index >= table.indexed_child_count_impl(table.context, data()))
+        {
+            throw std::out_of_range("TSDataView::indexed_child_at index out of range");
+        }
+
+        const auto *element_binding = table.indexed_child_binding_impl(table.context, data(), index);
+        if (element_binding == nullptr)
+        {
+            throw std::logic_error("TSDataView::indexed_child_at element binding is not resolved");
+        }
+
+        const auto *element_memory = table.indexed_child_memory_impl(table.context, data(), index);
+        if (element_memory == nullptr) { return TSDataView{element_binding, element_memory}; }
+
+        auto parent = borrowed_ref();
+        if (!parent.ops().allows_mutation) { return TSDataView{element_binding, element_memory}; }
+        return TSDataView{element_binding, element_memory, parent, index};
+    }
+
+    TSDataView TSDataView::ensure_indexed_child_at(std::size_t index) const
+    {
+        const auto &table = ops();
+        if (index >= table.indexed_child_count_impl(table.context, data()))
+        {
+            if (!table.indexed_child_growth)
+            {
+                throw std::out_of_range("TSDataView::ensure_indexed_child_at index out of range");
+            }
+            static_cast<void>(table.mutable_indexed_child_memory_impl(table.context, mutable_data(), index));
+        }
+        return indexed_child_at(index);
+    }
+
+    bool TSDataView::clear_collection(DateTime modified_time) const
+    {
+        const auto &table = ops();
+        return table.clear_collection_impl(borrowed_ref(), modified_time);
+    }
+
     TSSDataView TSDataView::as_set() &
     {
         return TSSDataView{borrowed_ref()};

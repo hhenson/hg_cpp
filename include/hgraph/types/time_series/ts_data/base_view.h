@@ -244,6 +244,14 @@ namespace hgraph
         /** True when this node and all required descendants are valid. */
         [[nodiscard]] bool all_valid() const;
 
+        /** Shape-erased indexed child projection for TSB/TSL-like data. */
+        [[nodiscard]] std::size_t indexed_child_count() const;
+        [[nodiscard]] TSDataView indexed_child_at(std::size_t index) const;
+        [[nodiscard]] TSDataView ensure_indexed_child_at(std::size_t index) const;
+
+        /** Clear collection-shaped TSData; returns false for non-collection shapes. */
+        [[nodiscard]] bool clear_collection(DateTime modified_time) const;
+
         [[nodiscard]] TSSDataView as_set() &;
         [[nodiscard]] TSSDataView as_set() const &;
         void as_set() && = delete;

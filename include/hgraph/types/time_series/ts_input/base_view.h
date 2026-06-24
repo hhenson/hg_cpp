@@ -104,6 +104,9 @@ namespace hgraph
         void make_passive();
         [[nodiscard]] bool active() const;
 
+        /** Shape-erased indexed child projection for TSB/TSL-like inputs. */
+        [[nodiscard]] TSInputView indexed_child_at(std::size_t index) const;
+
         [[nodiscard]] TSSInputView as_set() &;
         [[nodiscard]] TSSInputView as_set() const &;
         void as_set() && = delete;

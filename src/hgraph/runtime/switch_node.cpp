@@ -69,28 +69,7 @@ namespace hgraph
             TSOutputView target = resolve_forwarding_source(output.borrowed_ref());
             if (!target.bound() || target.forwarding() || !target.valid()) { return; }
 
-            const auto *schema = target.schema();
-            if (schema == nullptr) { return; }
-
-            switch (schema->kind)
-            {
-                case TSTypeKind::TSD:
-                {
-                    auto dict     = target.as_dict();
-                    auto mutation = dict.begin_mutation(evaluation_time);
-                    mutation.clear();
-                    break;
-                }
-                case TSTypeKind::TSS:
-                {
-                    auto set      = target.as_set();
-                    auto mutation = set.begin_mutation(evaluation_time);
-                    mutation.clear();
-                    break;
-                }
-                default:
-                    break;
-            }
+            static_cast<void>(target.data_view().clear_collection(evaluation_time));
         }
 
         void copy_source_to_switch_output(const NodeView &view, const NestedGraphOutputBinding &binding,

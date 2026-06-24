@@ -45,6 +45,9 @@ namespace hgraph
         [[nodiscard]] const TSDataBinding *missing_indexed_element_binding(const void *, const void *, std::size_t);
         [[nodiscard]] const void *missing_indexed_element_memory(const void *, const void *, std::size_t);
         [[nodiscard]] void *missing_mutable_indexed_element_memory(const void *, void *, std::size_t);
+        [[nodiscard]] bool noop_clear_collection(const TSDataView &, DateTime) noexcept;
+        [[nodiscard]] bool clear_tss_collection(const TSDataView &, DateTime);
+        [[nodiscard]] bool clear_tsd_collection(const TSDataView &, DateTime);
         [[nodiscard]] std::size_t missing_slot_size(const void *, const void *);
         [[nodiscard]] std::size_t missing_slot_capacity(const void *, const void *);
         [[nodiscard]] bool missing_slot_predicate(const void *, const void *, std::size_t);
@@ -137,6 +140,23 @@ namespace hgraph
                                       const ValueView &delta) = &ts_data_detail::missing_delta_has_effect;
         void (*apply_delta_impl)(const TSOutputView &out, const ValueView &delta) =
             &ts_data_detail::missing_apply_delta;
+        bool (*clear_collection_impl)(const TSDataView &view,
+                                      DateTime modified_time) = &ts_data_detail::noop_clear_collection;
+        std::size_t (*indexed_child_count_impl)(const void *context,
+                                                const void *memory) = &ts_data_detail::missing_indexed_size;
+        const TSDataBinding *(*indexed_child_binding_impl)(
+            const void *context,
+            const void *memory,
+            std::size_t index) = &ts_data_detail::missing_indexed_element_binding;
+        const void *(*indexed_child_memory_impl)(
+            const void *context,
+            const void *memory,
+            std::size_t index) = &ts_data_detail::missing_indexed_element_memory;
+        void *(*mutable_indexed_child_memory_impl)(
+            const void *context,
+            void *memory,
+            std::size_t index) = &ts_data_detail::missing_mutable_indexed_element_memory;
+        bool indexed_child_growth{false};
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         bool (*from_python_impl)(const void *context, void *memory, nb::handle source,
                                  DateTime modified_time) = &ts_data_detail::missing_from_python;

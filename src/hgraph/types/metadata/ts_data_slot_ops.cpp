@@ -665,6 +665,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     .capture_delta_impl        = &ts_data_detail::capture_delta_tss,
                     .delta_has_effect_impl     = &ts_data_detail::delta_has_effect_tss,
                     .apply_delta_impl          = &ts_data_detail::apply_delta_tss,
+                    .clear_collection_impl     = &ts_data_detail::clear_tss_collection,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                     .from_python_impl          = &tss_from_python,
                     .to_python_impl            = &tss_to_python,
@@ -1468,6 +1469,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 base_ops.capture_delta_impl = &ts_data_detail::capture_delta_tsd;
                 base_ops.delta_has_effect_impl = &ts_data_detail::delta_has_effect_tsd;
                 base_ops.apply_delta_impl = &ts_data_detail::apply_delta_tsd;
+                base_ops.clear_collection_impl = &ts_data_detail::clear_tsd_collection;
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                 base_ops.from_python_impl = &tsd_from_python;
                 base_ops.to_python_impl = &tsd_to_python;

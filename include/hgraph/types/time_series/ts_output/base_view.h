@@ -128,6 +128,9 @@ namespace hgraph
         /** Begin a mutation through this output endpoint view. */
         [[nodiscard]] TSDataMutationView begin_mutation(DateTime evaluation_time) const;
 
+        /** Shape-erased indexed child projection for TSB/TSL-like outputs. */
+        [[nodiscard]] TSOutputView indexed_child_at(std::size_t index) const;
+
         /** Shape-specific projections for root TSData. */
         [[nodiscard]] TSSOutputView as_set() &;
         [[nodiscard]] TSSOutputView as_set() const &;

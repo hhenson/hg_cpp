@@ -27,35 +27,13 @@ namespace hgraph
         {
             for (const std::size_t component : path)
             {
-                const auto *schema = view.schema();
-                if (schema == nullptr) { throw std::logic_error("Graph output path requires a typed output view"); }
-                switch (schema->kind)
+                if (view.schema() == nullptr) { throw std::logic_error("Graph output path requires a typed output view"); }
+                if (component == ts_key_set_path_component)
                 {
-                    case TSTypeKind::TSB:
-                    {
-                        auto bundle = view.as_bundle();
-                        view = bundle[component];
-                        break;
-                    }
-                    case TSTypeKind::TSL:
-                    {
-                        auto list = view.as_list();
-                        view = list[component];
-                        break;
-                    }
-                    case TSTypeKind::TSD:
-                    {
-                        if (component != ts_key_set_path_component)
-                        {
-                            throw std::invalid_argument(
-                                "Graph output path through a TSD addresses only its key set");
-                        }
-                        view = view.as_dict().key_set();
-                        break;
-                    }
-                    default:
-                        throw std::invalid_argument("Graph output path can only traverse indexed time-series structures");
+                    view = view.as_dict().key_set();
+                    continue;
                 }
+                view = view.indexed_child_at(component);
             }
             return view;
         }
@@ -80,25 +58,12 @@ namespace hgraph
         {
             for (const std::size_t component : path)
             {
-                const auto *schema = view.schema();
-                if (schema == nullptr) { throw std::logic_error("Graph input path requires a typed input view"); }
-                switch (schema->kind)
+                if (view.schema() == nullptr) { throw std::logic_error("Graph input path requires a typed input view"); }
+                if (component == ts_key_set_path_component)
                 {
-                    case TSTypeKind::TSB:
-                    {
-                        auto bundle = view.as_bundle();
-                        view = bundle[component];
-                        break;
-                    }
-                    case TSTypeKind::TSL:
-                    {
-                        auto list = view.as_list();
-                        view = list[component];
-                        break;
-                    }
-                    default:
-                        throw std::invalid_argument("Graph input path can only traverse indexed time-series structures");
+                    throw std::invalid_argument("Graph input path cannot address a TSD key set");
                 }
+                view = view.indexed_child_at(component);
             }
             return view;
         }

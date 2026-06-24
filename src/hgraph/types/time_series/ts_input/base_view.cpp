@@ -370,6 +370,16 @@ namespace hgraph
         return detail::input_view_ops().active(*this);
     }
 
+    TSInputView TSInputView::indexed_child_at(std::size_t index) const
+    {
+        if (is_target_position())
+        {
+            auto child = data_view().indexed_child_at(index);
+            return child_from_target(std::move(child), index);
+        }
+        return child_from_input(index);
+    }
+
     TSSInputView TSInputView::as_set() &
     {
         return TSSInputView{borrowed_ref()};

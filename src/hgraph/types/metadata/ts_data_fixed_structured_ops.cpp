@@ -259,9 +259,13 @@ namespace hgraph::ts_data_plan_factory_detail
                 .capture_delta_impl        = schema->kind == TSTypeKind::TSB ? &ts_data_detail::capture_delta_tsb
                                                                              : &ts_data_detail::capture_delta_tsl,
                 .delta_has_effect_impl     = schema->kind == TSTypeKind::TSB ? &ts_data_detail::delta_has_effect_tsb
-                                                                             : &ts_data_detail::delta_has_effect_tsl,
+                                                                              : &ts_data_detail::delta_has_effect_tsl,
                 .apply_delta_impl          = schema->kind == TSTypeKind::TSB ? &ts_data_detail::apply_delta_tsb
-                                                                             : &ts_data_detail::apply_delta_tsl,
+                                                                              : &ts_data_detail::apply_delta_tsl,
+                .indexed_child_count_impl  = &fixed_indexed_size,
+                .indexed_child_binding_impl = &fixed_indexed_element_binding,
+                .indexed_child_memory_impl = &fixed_indexed_element_memory,
+                .mutable_indexed_child_memory_impl = &fixed_mutable_indexed_element_memory,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                 .from_python_impl          = &fixed_from_python,
                 .to_python_impl            = &fixed_to_python,
