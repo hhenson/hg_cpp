@@ -7,7 +7,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <vector>
 
 namespace hgraph
@@ -22,9 +21,6 @@ namespace hgraph
      * boundary args, the child terminal forwarding into the owned ``TSD``
      * element). Beyond ``map_`` it carries:
      *
-     * - a **self-context**: each instance's ``self`` boundary input is bound to
-     *   the mesh's own ``TSD`` output (``self_input_index``), so a
-     *   ``mesh_subscribe`` node inside the instance can read a sibling output;
      * - a **per-instance key** output (``key_output_schema`` is always set);
      * - a **dependency graph + ranks** maintained at runtime (see ``mesh.rst``).
      *
@@ -42,12 +38,6 @@ namespace hgraph
         std::size_t keys_input_index{0};
         /** ``TS<K>`` schema for the entry-owned key outputs (always present). */
         const TSValueTypeMetaData *key_output_schema{nullptr};
-        /**
-         * Boundary-arg ordinal of the instance's ``self`` input (the mesh's own
-         * ``TSD<K, OUT>`` output, injected so the instance can read siblings).
-         * ``nullopt`` when the inner graph never references the mesh.
-         */
-        std::optional<std::size_t> self_input_index{};
     };
 
     /**
@@ -99,13 +89,12 @@ namespace hgraph
 
     /**
      * Build the ``mesh_subscribe`` node — wired inside a mesh instance for
-     * ``mesh_(func)[item]``. Its input is a ``TSB`` ``{self: TSD<K,OUT>
-     * (passive), my_key: TS<K> (passive), item: TS<K> (active), value: OUT
-     * (dynamic)}`` and its output is ``OUT``. On evaluation it locates the mesh
-     * node (``parent_node()`` walk), registers ``add_dependency(my_key, item)``
-     * (creating ``item`` on demand), and once available dynamically binds
-     * ``value`` to the sibling element ``self[item]`` and forwards it. See
-     * *Mesh*.
+     * ``mesh_(func)[item]``. Its input is a ``TSB`` ``{item: TS<K>, value:
+     * OUT}``, where ``value`` is a dynamic scheduling link seeded by
+     * ``nothing<OUT>``. On evaluation it locates the mesh node
+     * (``parent_node()`` walk), registers ``add_dependency(my_key, item)``
+     * (creating ``item`` on demand), and publishes a forwarding output bound to
+     * the sibling element ``self[item]``. See *Mesh*.
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder mesh_subscribe_node(NodeTypeMetaData meta);
 }  // namespace hgraph

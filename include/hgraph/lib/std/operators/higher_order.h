@@ -212,8 +212,8 @@ namespace hgraph::stdlib
      * per-key instances may read each other's outputs (``mesh_(func)[k]``),
      * create instances on demand, and evaluate in dependency-rank order within a
      * cycle. The instantiation call surface mirrors ``map_``; cross-instance
-     * access (``mesh_(func)[k]`` / ``mesh_("name")[k]``) is a separate wiring
-     * entry. See the developer guide *Mesh*.
+     * access uses ``mesh_ref<OUT>(w, key)`` inside the mesh body. See the
+     * developer guide *Mesh*.
      */
     struct mesh_ : Operator<"mesh_",
                             Scalar<"func", WiredFn>,

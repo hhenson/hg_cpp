@@ -1291,10 +1291,10 @@ namespace hgraph::stdlib
             spec.args               = std::move(map_spec.args);
             spec.multiplexed_inputs = std::move(map_spec.multiplexed_inputs);
             spec.keys_input_index   = ordered.size();
-            // Every mesh instance owns a TS<K> key output (the self-context / a sibling
-            // mesh_subscribe reads it), independent of whether func takes a key.
+            // Every mesh instance owns a TS<K> key output, independent of whether
+            // func takes a key. mesh_subscribe reads the current requester key from
+            // the enclosing mesh evaluation context.
             spec.key_output_schema  = registry.ts(output_schema->key_type());
-            spec.self_input_index   = std::nullopt;  // Increment 1: no cross-instance access
 
             std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
             fields.reserve(ts_schemas.size() + 1);
@@ -1541,10 +1541,9 @@ namespace hgraph::stdlib
         };
 
         /**
-         * ``mesh_(func, *args, **kwargs)`` over TSDs (Increment 1 — peer
-         * instantiation). Same call shape as ``map_impl_tsd``; lowers to a mesh
-         * node via ``wire_mesh``. With no cross-instance ``mesh_(func)[k]``
-         * requests this is observably ``map_``.
+         * ``mesh_(func, *args, **kwargs)`` over TSDs. Same call shape as
+         * ``map_impl_tsd``; lowers to a mesh node via ``wire_mesh``. With no
+         * cross-instance ``mesh_(func)[k]`` requests this is observably ``map_``.
          */
         // mesh output resolution: TSD<K, OUT> where OUT is the function's statically
         // known output schema. Unlike map_, this does NOT compile the child — a

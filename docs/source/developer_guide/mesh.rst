@@ -41,8 +41,8 @@ per-key inputs and writes ``output[key]``.
 Cross-instance access and on-demand creation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Inside ``func`` (or any graph wired within the mesh's scope) ``mesh_(func)[k]``
-(or ``mesh_("name")[k]``) reads the result of the instance for key ``k``:
+Inside ``func`` (or any graph wired within the mesh's scope) a mesh reference
+(``mesh_ref<OUT>(w, k)`` in C++) reads the result of the instance for key ``k``:
 
 - if an instance for ``k`` already exists, the reference reads its output;
 - if not, the instance for ``k`` is **created on demand** and the requesting
@@ -86,9 +86,9 @@ Scoping / visibility
 ~~~~~~~~~~~~~~~~~~~~~~
 
 A mesh is visible to **the graph it is wired in and that graph's sub-graphs, and
-to nothing else**. A ``mesh_(...)`` / ``mesh_("name")`` lookup outside that scope
-resolves to no mesh (an error). This matches the reference (a wiring-time context
-stack pushed while the mesh and its sub-graphs are wired and popped afterwards).
+to nothing else**. A mesh reference outside that scope resolves to no mesh (an
+error). This matches the reference (a wiring-time context stack pushed while the
+mesh and its sub-graphs are wired and popped afterwards).
 A consumer in the same graph as the mesh references it directly; a deeper
 consumer references it through the scoped context.
 
@@ -149,17 +149,16 @@ Wiring layer
 - **Reuse of ``map_``.** Child compilation (``compile_subgraph``), per-key child
   input binding (``MapArgSource``: key / element / broadcast), and the child
   terminal **forwarding** output into the owned ``TSD`` element are taken
-  unchanged from ``map_`` (see :doc:`nested_graphs`). Mesh adds a ``MeshSelf``
-  source (the instance's view of the mesh's own output) and the dependency
-  engine.
+  unchanged from ``map_`` (see :doc:`nested_graphs`). Mesh adds a dependency
+  engine and a scoped ``mesh_subscribe`` node that forwards sibling outputs.
 - **Mesh-context scope.** A wiring-time stack of ``(element type, optional name)``
   entries on the **global wiring singleton** (``OperatorRegistry`` —
   ``push_mesh_scope`` / ``pop_mesh_scope`` / ``resolve_mesh_scope``), *not* on a
   ``Wiring`` instance: the mesh child compiles in a fresh ``Wiring``, so the scope must
   be reachable across instances. (The build is single-threaded, so this is a plain
-  global, never a thread-local.) ``mesh_(func)`` / ``mesh_("name")`` resolves the
-  nearest enclosing entry; out-of-scope lookups error. Pushed before compiling the mesh
-  child and popped after, so an outer/sibling graph cannot see an inner mesh.
+  global, never a thread-local.) ``mesh_ref`` resolves the nearest enclosing
+  entry; out-of-scope lookups error. Pushed before compiling the mesh child and
+  popped after, so an outer/sibling graph cannot see an inner mesh.
 - **Request classification.** A ``mesh_(...)[k]`` *inside* the child being
   compiled is an **internal** request → wires a ``mesh_subscribe`` node and is
   marked rank-sensitive (known at compile time). A ``mesh_(...)[k]`` in the
@@ -251,25 +250,20 @@ cached edges and each ``mesh_subscribe`` finds its result already present. Pause
 arise only when a **new** dependency (or a changed dependency key) is discovered.
 
 **The ``mesh_subscribe`` node.** Wired inside an instance for ``mesh_(func)[k]``.
-Inputs: ``self`` (the mesh's ``TSD<K,OUT>`` output, passive — used to locate the
-sibling element), ``my_key`` (this instance's ``TS<K>``, passive), ``item``
-(``TS<K>``, active — the dependency key) and a dynamic ``value`` input. It
-reaches the mesh node via the ``NestedGraphView::parent_node()`` walk (skipping
-intermediate nested graphs), and on evaluation: registers the dependency
-``(my_key → item)``; if unsatisfied, requests a pause; once satisfied,
-**dynamically binds** ``value`` to the sibling element ``self[item]`` (the same
-``bind_input_to_source`` ``map_`` uses for per-key elements, so it is active
-precisely on that element) and forwards it. No REF-input dereferencing and no
-data-object back-pointer.
-
-**Self-context binding.** Each instance's ``self`` boundary input is bound by the
-mesh to its own ``TSD`` output (``MeshSelf``); ``my_key`` to the entry's key
-output. Both are internal sources, not outer inputs.
+Inputs: ``item`` (``TS<K>``, active — the dependency key) and a dynamic ``value``
+input seeded by ``nothing<OUT>``. It reaches the mesh node via the
+``NestedGraphView::parent_node()`` walk (skipping intermediate nested graphs),
+reads ``my_key`` from the mesh's current evaluation context, and on evaluation:
+registers the dependency ``(my_key -> item)``; if unsatisfied, requests a pause;
+once satisfied, binds ``value`` to the sibling element and publishes a
+forwarding output to that same element. The forwarding output is what consumers
+read; ``value`` keeps the subscription node reactive to sibling ticks. No
+REF-input dereferencing and no data-object back-pointer.
 
 **Lifecycle.** Create: build child, write key output, instantiate
-``output[key]``, bind inputs (incl. ``MeshSelf``) + the forwarding output, start.
-Remove (refcount per *Removal* above): stop child, erase element, drop edges,
-destroy entry. On node stop: stop all instances, clear the output.
+``output[key]``, bind inputs + the forwarding output, start. Remove (refcount per
+*Removal* above): stop child, erase element, drop edges, destroy entry. On node
+stop: stop all instances, clear the output and dependency state.
 
 Implementation status
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -284,12 +278,13 @@ multi-cycle-settle ordering:
   the pause **boundary**.
 - **``mesh_subscribe``** is a custom-ops bool node with inputs ``{item, value}``:
   ``item`` is the requested key (wired); ``value`` starts at a never-ticking
-  ``nothing<OUT>`` placeholder and is rebound at runtime to ``self[item]``. It resolves
-  the enclosing mesh via the ``parent_node()`` walk for ``self`` (the mesh ``TSD``
-  output) and ``my_key`` (the mesh's ``current_eval_key``), registers the dependency,
-  and **pauses** (returns ``false``) until the target has settled this cycle, then
-  forwards ``self[item]``. The ``value`` rebind makes the node **reactive**: a later
-  tick of the sibling reschedules it (cross-cycle re-propagation).
+  ``nothing<OUT>`` placeholder and is rebound at runtime to the sibling element.
+  It resolves the enclosing mesh via the ``parent_node()`` walk, reads ``my_key``
+  from the mesh's ``current_eval_key``, registers the dependency, and **pauses**
+  (returns ``false``) until the target has settled this cycle, then publishes a
+  forwarding output bound to ``self[item]``. The ``value`` rebind keeps the node
+  reactive: a later tick of the sibling reschedules it (cross-cycle
+  re-propagation).
 - **Resolver** (``mesh_evaluate``): a rank-ordered **settle loop** — evaluate due /
   paused instances by ascending rank, re-scanning until none pauses. ``add_dependency``
   creates the target on demand (same cycle, ranked below the requester) and ``re_rank``
@@ -302,19 +297,17 @@ multi-cycle-settle ordering:
 
 The ``Value``-keyed stable instance store, refcount removal, and the dependency graph
 carry over from the first cut. **Validated** end-to-end by ``tests/cpp/test_mesh.cpp``
-(ASAN/UBSAN-clean): peer instantiation = ``map_`` (plain + key-consuming); a
-cross-instance dependency **chain** with on-demand base creation settling in one cycle;
-**re-propagation** of a changed input through the dependency graph (reactivity); a
-**``map_`` nested inside a mesh instance** whose child pauses on ``mesh_(F)[peer]`` —
-the map propagates the pause through its per-child cursor and the mesh resolves + resumes
-(also exercises ``map_`` / ``reduce_`` pause/resume); a dependency **cycle** raising a
-runtime error; and **removal** tearing an unreferenced instance down.
+(ASAN/UBSAN-clean): peer instantiation = ``map_`` (plain + key-consuming);
+``switch_`` inside a mesh instance; a cross-instance dependency **chain** with
+on-demand base creation settling in one cycle; **re-propagation** of a changed
+input through the dependency graph (reactivity); a **``map_`` nested inside a
+mesh instance** whose child pauses on ``mesh_(F)[peer]``; dependency retargeting,
+invalid requests, and removal of orphaned on-demand instances; and a dependency
+**cycle** raising a runtime error.
 
-**Remaining** (see *Deferrals*): ``switch_`` *inside* a mesh instance (the recursive
-``fib`` shape) — the branch output forwards into the switch output which forwards into
-the mesh element, a multi-level forwarding chain not yet supported; ``contains_`` over
-the mesh key set (needs a key-set access primitive alongside ``mesh_ref``); and named
-meshes (``mesh_("name")`` — the wiring-context stack already matches by name; the
+**Remaining** (see *Deferrals*): ``contains_`` over the mesh key set (needs a
+key-set access primitive alongside ``mesh_ref``); and named meshes
+(``mesh_("name")`` — the wiring-context stack already matches by name; the
 ``mesh_`` operator does not yet carry a name to push).
 
 

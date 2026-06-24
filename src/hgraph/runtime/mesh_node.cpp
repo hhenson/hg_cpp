@@ -25,6 +25,7 @@ namespace hgraph
     namespace
     {
         constexpr std::string_view mesh_storage_field_name{"mesh"};
+        constexpr std::string_view mesh_subscribe_storage_field_name{"mesh_subscribe"};
 
         struct ValueKeyHash
         {
@@ -95,6 +96,11 @@ namespace hgraph
                     }
                 }
                 instances.clear();
+                dependents.clear();
+                graphs_to_remove.clear();
+                max_rank = 0;
+                primed = false;
+                current_eval_key = Value{};
             }
 
             [[nodiscard]] std::size_t active_count() const noexcept { return instances.size(); }
@@ -110,6 +116,19 @@ namespace hgraph
         {
             MeshNodeSpec spec{};
             std::size_t  storage_offset{0};
+        };
+
+        struct MeshSubscribeStorage
+        {
+            Value requester{};
+            Value dependency{};
+            bool  has_dependency{false};
+            bool  owns_output_binding{false};
+        };
+
+        struct MeshSubscribeContext
+        {
+            std::size_t storage_offset{0};
         };
 
         // Program-lifetime, intentionally-leaked context storage.
@@ -130,12 +149,91 @@ namespace hgraph
             return *result;
         }
 
+        [[nodiscard]] std::vector<std::unique_ptr<MeshSubscribeContext>> &mesh_subscribe_contexts() noexcept
+        {
+            static auto *contexts = new std::vector<std::unique_ptr<MeshSubscribeContext>>;
+            return *contexts;
+        }
+
+        [[nodiscard]] const MeshSubscribeContext &register_mesh_subscribe_context(std::size_t storage_offset)
+        {
+            auto context = std::make_unique<MeshSubscribeContext>(MeshSubscribeContext{
+                .storage_offset = storage_offset,
+            });
+            const auto *result = context.get();
+            mesh_subscribe_contexts().push_back(std::move(context));
+            return *result;
+        }
+
         MeshNodeStorage &storage_of(const NodeView &view, const MeshNodeContext &context)
         {
             return *MemoryUtils::cast<MeshNodeStorage>(MemoryUtils::advance(view.data(), context.storage_offset));
         }
 
+        const MeshSubscribeContext &mesh_subscribe_context_of(const NodeView &view)
+        {
+            const NodeTypeBinding *binding = view.binding();
+            if (binding == nullptr)
+            {
+                throw std::logic_error("mesh_subscribe: node has no binding");
+            }
+            const void *context = binding->ops_ref().extended_view_context;
+            if (context == nullptr)
+            {
+                throw std::logic_error("mesh_subscribe: missing typed storage context");
+            }
+            return *static_cast<const MeshSubscribeContext *>(context);
+        }
+
+        MeshSubscribeStorage &mesh_subscribe_storage_of(const NodeView &view)
+        {
+            const auto &context = mesh_subscribe_context_of(view);
+            return *MemoryUtils::cast<MeshSubscribeStorage>(MemoryUtils::advance(view.data(), context.storage_offset));
+        }
+
+        void queue_graph_removal(MeshNodeStorage &storage, const ValueView &key)
+        {
+            storage.graphs_to_remove.emplace_back(key);
+        }
+
+        void remove_requester_edges(MeshNodeStorage &storage, const ValueView &requester)
+        {
+            for (auto it = storage.dependents.begin(); it != storage.dependents.end();)
+            {
+                it->second.erase(Value{requester});
+                if (it->second.empty())
+                {
+                    queue_graph_removal(storage, it->first.view());
+                    it = storage.dependents.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+
         // ---- instance lifecycle ----
+
+        void bind_instance_inputs(const NodeView &view, const MeshNodeContext &context, MeshEntry &entry,
+                                  DateTime evaluation_time)
+        {
+            const MeshNodeSpec &spec = context.spec;
+            const TSOutputView key_source = entry.key_output.has_value()
+                                                ? entry.key_output->view(evaluation_time)
+                                                : TSOutputView{};
+            runtime_detail::bind_mapped_child_inputs(view, entry.graph.view(), evaluation_time,
+                                                     spec.child, spec.args, entry.key.view(),
+                                                     key_source, std::nullopt);
+        }
+
+        void bind_instance_output(const NodeView &view, const MeshNodeContext &context, MeshEntry &entry,
+                                  DateTime evaluation_time)
+        {
+            const MeshNodeSpec &spec = context.spec;
+            runtime_detail::bind_mapped_child_output(view, entry.graph.view(), evaluation_time,
+                                                     spec.child.output_binding, entry.key.view());
+        }
 
         MeshEntry &create_instance(const NodeView &view, const MeshNodeContext &context, MeshNodeStorage &storage,
                                    const ValueView &key_view, int rank, DateTime evaluation_time)
@@ -169,22 +267,8 @@ namespace hgraph
 
             (void)output_mutation[key_view];
 
-            std::optional<runtime_detail::MappedChildSourceOverride> self_source;
-            if (spec.self_input_index.has_value())
-            {
-                self_source = runtime_detail::MappedChildSourceOverride{
-                    .source_index = *spec.self_input_index,
-                    .source       = view.output(evaluation_time).handle(),
-                };
-            }
-            const TSOutputView key_source = entry.key_output.has_value()
-                                                ? entry.key_output->view(evaluation_time)
-                                                : TSOutputView{};
-            runtime_detail::bind_mapped_child_inputs(view, entry.graph.view(), evaluation_time,
-                                                     spec.child, spec.args, entry.key.view(),
-                                                     key_source, std::move(self_source));
-            runtime_detail::bind_mapped_child_output(view, entry.graph.view(), evaluation_time,
-                                                     spec.child.output_binding, entry.key.view());
+            bind_instance_inputs(view, context, entry, evaluation_time);
+            bind_instance_output(view, context, entry, evaluation_time);
             entry.graph.view().start(evaluation_time);
             rollback.release();
 
@@ -207,6 +291,12 @@ namespace hgraph
             auto output_mutation = output_dict.begin_mutation(evaluation_time);
             (void)output_mutation.erase(key_view);
 
+            remove_requester_edges(storage, key_view);
+            if (auto dep_it = storage.dependents.find(key_view);
+                dep_it != storage.dependents.end() && dep_it->second.empty())
+            {
+                storage.dependents.erase(dep_it);
+            }
             storage.instances.erase(it);
         }
 
@@ -219,6 +309,24 @@ namespace hgraph
                                            std::vector<std::size_t>{context.spec.keys_input_index});
             if (!keys_input.valid()) { return false; }
             return keys_input.as_set().contains(key);
+        }
+
+        void process_graphs_to_remove(const NodeView &view, const MeshNodeContext &context,
+                                      MeshNodeStorage &storage, DateTime evaluation_time)
+        {
+            if (storage.graphs_to_remove.empty()) { return; }
+
+            std::vector<Value> to_remove;
+            to_remove.swap(storage.graphs_to_remove);
+            for (const Value &k : to_remove)
+            {
+                auto       it             = storage.dependents.find(k);
+                const bool has_dependents = it != storage.dependents.end() && !it->second.empty();
+                if (!has_dependents && !keys_contains(view, context, k.view(), evaluation_time))
+                {
+                    remove_instance(view, storage, k.view(), evaluation_time);
+                }
+            }
         }
 
         void re_rank(MeshNodeStorage &storage, const ValueView &key, const ValueView &depends_on,
@@ -301,20 +409,7 @@ namespace hgraph
             }
 
             // 2. Removals queued because a dependent went away (remove_dependency).
-            if (!storage.graphs_to_remove.empty())
-            {
-                std::vector<Value> to_remove;
-                to_remove.swap(storage.graphs_to_remove);
-                for (const Value &k : to_remove)
-                {
-                    auto       it             = storage.dependents.find(k);
-                    const bool has_dependents = it != storage.dependents.end() && !it->second.empty();
-                    if (!has_dependents && !keys_contains(view, context, k.view(), evaluation_time))
-                    {
-                        remove_instance(view, storage, k.view(), evaluation_time);
-                    }
-                }
-            }
+            process_graphs_to_remove(view, context, storage, evaluation_time);
 
             // 3. Settle loop (pause/resume). Evaluate instances in dependency-rank order,
             //    re-scanning until none pauses. A pause has, via add_dependency, created
@@ -345,8 +440,16 @@ namespace hgraph
                     if (entry == nullptr || !entry->graph.has_value()) { continue; }
                     if (entry->settled_time == evaluation_time) { continue; }  // already done this cycle
 
-                    auto       child = entry->graph.view();
-                    const bool due   = child.next_scheduled_time() <= evaluation_time;
+                    bind_instance_inputs(view, context, *entry, evaluation_time);
+                    bind_instance_output(view, context, *entry, evaluation_time);
+
+                    auto           child      = entry->graph.view();
+                    const DateTime child_next = child.next_scheduled_time();
+                    if (child_next != MAX_DT && child_next > evaluation_time)
+                    {
+                        next_time = std::min(next_time, child_next);
+                    }
+                    const bool due = child_next <= evaluation_time;
                     if (!due && !entry->paused) { continue; }
 
                     storage.current_eval_key = entry->key;
@@ -368,6 +471,7 @@ namespace hgraph
                 }
             }
             storage.current_eval_key = Value{};
+            process_graphs_to_remove(view, context, storage, evaluation_time);
 
             if (next_time < MAX_DT) { view.graph().schedule_node(view.node_index(), next_time); }
             return true;
@@ -399,6 +503,122 @@ namespace hgraph
             return std::nullopt;
         }
 
+        void forget_subscribe_dependency(MeshSubscribeStorage &storage) noexcept
+        {
+            storage.requester           = Value{};
+            storage.dependency          = Value{};
+            storage.has_dependency      = false;
+        }
+
+        void remove_subscribe_dependency(const NodeView &view, MeshSubscribeStorage &storage)
+        {
+            if (!storage.has_dependency) { return; }
+            if (std::optional<MeshNodeView> mesh = resolve_mesh_node(view); mesh.has_value())
+            {
+                mesh->remove_dependency(storage.requester.view(), storage.dependency.view());
+            }
+            forget_subscribe_dependency(storage);
+        }
+
+        void unbind_subscribe_value_input(const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.has_input()) { return; }
+            auto input  = view.input(evaluation_time);
+            auto bundle = input.as_bundle();
+            auto value  = bundle.at(subscribe_value_field);
+            if (value.is_bindable() && value.bound()) { value.unbind_output(); }
+        }
+
+        void passivate_subscribe_value_input(const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.has_input()) { return; }
+            auto input  = view.input(evaluation_time);
+            auto bundle = input.as_bundle();
+            auto value  = bundle.at(subscribe_value_field);
+            if (value.active()) { value.make_passive(); }
+        }
+
+        void clear_subscribe_output(const NodeView &view, MeshSubscribeStorage &storage,
+                                    DateTime evaluation_time)
+        {
+            if (!view.has_output()) { return; }
+            auto output = view.output(evaluation_time);
+            if (output.forwarding() && storage.owns_output_binding && output.forwarding_bound())
+            {
+                output.clear_forwarding_target();
+            }
+            storage.owns_output_binding = false;
+        }
+
+        void clear_subscribe_runtime_links(const NodeView &view, MeshSubscribeStorage &storage,
+                                           DateTime evaluation_time)
+        {
+            unbind_subscribe_value_input(view, evaluation_time);
+            clear_subscribe_output(view, storage, evaluation_time);
+        }
+
+        [[nodiscard]] bool same_subscribe_dependency(const MeshSubscribeStorage &storage,
+                                                     const ValueView &requester,
+                                                     const ValueView &dependency)
+        {
+            return storage.has_dependency &&
+                   storage.requester.has_value() &&
+                   storage.dependency.has_value() &&
+                   storage.requester.equals(requester) &&
+                   storage.dependency.equals(dependency);
+        }
+
+        void copy_source_to_external_subscribe_target(const NodeView &view, const TSOutputView &source,
+                                                      DateTime evaluation_time)
+        {
+            if (!source.bound() || !source.valid()) { return; }
+
+            auto output = view.output(evaluation_time);
+            auto target = resolve_forwarding_source(output.borrowed_ref());
+            if (!target.bound() || target.forwarding()) { return; }
+
+            auto mutation = target.begin_mutation(evaluation_time);
+            (void)mutation.copy_value_from(source.value());
+        }
+
+        void publish_subscribe_source(const NodeView &view, MeshSubscribeStorage &storage,
+                                      const TSOutputView &source, DateTime evaluation_time)
+        {
+            auto output = view.output(evaluation_time);
+            if (!output.forwarding())
+            {
+                if (source.bound() && source.valid())
+                {
+                    auto mutation = output.begin_mutation(evaluation_time);
+                    (void)mutation.copy_value_from(source.value());
+                }
+                return;
+            }
+
+            if (!storage.owns_output_binding && output.forwarding_bound())
+            {
+                copy_source_to_external_subscribe_target(view, source, evaluation_time);
+                return;
+            }
+
+            const TSOutputHandle before = output.forwarding_target();
+            if (source.bound())
+            {
+                bind_forwarding_output_to_source(output, source);
+                storage.owns_output_binding = output.forwarding_bound();
+            }
+            else if (output.forwarding_bound())
+            {
+                output.clear_forwarding_target();
+                storage.owns_output_binding = false;
+            }
+
+            if (source.bound() && source.valid() && !output.forwarding_target().same_as(before))
+            {
+                output.begin_mutation(evaluation_time).mark_modified();
+            }
+        }
+
         bool mesh_subscribe_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
         {
             if (!view.started()) { return true; }
@@ -406,7 +626,13 @@ namespace hgraph
             auto input   = view.input(evaluation_time);
             auto bundle  = input.as_bundle();
             auto item_in = bundle.at(subscribe_item_field);
-            if (!item_in.valid()) { return true; }  // no key requested yet
+            auto &storage = mesh_subscribe_storage_of(view);
+            if (!item_in.valid())
+            {
+                remove_subscribe_dependency(view, storage);
+                clear_subscribe_runtime_links(view, storage, evaluation_time);
+                return true;
+            }
 
             std::optional<MeshNodeView> mesh = resolve_mesh_node(view);
             if (!mesh.has_value())
@@ -416,7 +642,21 @@ namespace hgraph
 
             const Value my_key = mesh->current_key();
             const Value item{item_in.value()};
-            if (!my_key.has_value()) { return true; }  // not inside an instance eval (defensive)
+            if (!my_key.has_value())
+            {
+                remove_subscribe_dependency(view, storage);
+                clear_subscribe_runtime_links(view, storage, evaluation_time);
+                return true;
+            }
+
+            if (!same_subscribe_dependency(storage, my_key.view(), item.view()))
+            {
+                remove_subscribe_dependency(view, storage);
+                clear_subscribe_runtime_links(view, storage, evaluation_time);
+                storage.requester      = my_key;
+                storage.dependency     = item;
+                storage.has_dependency = true;
+            }
 
             // Register the dependency (creating / ranking the target on demand). If the
             // target is not yet available this cycle, PAUSE: the mesh resolves it in rank
@@ -430,16 +670,23 @@ namespace hgraph
             auto dict = self.as_dict();
             if (dict.contains(item.view()))
             {
-                bind_input_to_source(bundle.at(subscribe_value_field), dict.at(item.view()));
+                auto source = dict.at(item.view());
+                bind_input_to_source(bundle.at(subscribe_value_field), source);
+                publish_subscribe_source(view, storage, source, evaluation_time);
             }
-
-            auto value_in = bundle.at(subscribe_value_field);
-            if (value_in.valid())
+            else
             {
-                auto mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
-                (void)mutation.copy_value_from(value_in.value());
+                clear_subscribe_runtime_links(view, storage, evaluation_time);
             }
             return true;
+        }
+
+        void mesh_subscribe_stop(const NodeView &view, DateTime evaluation_time)
+        {
+            auto &storage = mesh_subscribe_storage_of(view);
+            remove_subscribe_dependency(view, storage);
+            passivate_subscribe_value_input(view, evaluation_time);
+            storage.owns_output_binding = false;
         }
 
         void mesh_node_stop(const NodeView &view, DateTime evaluation_time)
@@ -453,7 +700,6 @@ namespace hgraph
 
             storage.stop_all_noexcept();
             output_mutation.clear();
-            storage.primed = false;
         }
     }  // namespace
 
@@ -530,8 +776,8 @@ namespace hgraph
         it->second.erase(Value{key});
         if (it->second.empty())
         {
-            storage.graphs_to_remove.push_back(Value{depends_on});
-            view_.graph().schedule_node(view_.node_index(), view_.graph().evaluation_time() + MIN_TD);
+            queue_graph_removal(storage, depends_on);
+            storage.dependents.erase(it);
         }
     }
 
@@ -571,11 +817,24 @@ namespace hgraph
 
     NodeBuilder mesh_subscribe_node(NodeTypeMetaData meta)
     {
-        meta.node_kind = NodeKind::Compute;
+        meta.node_kind              = NodeKind::Compute;
+        meta.output_endpoint_schema = TSEndpointSchema::peered(meta.output_schema);
 
         NodeTypeDescriptor descriptor;
-        descriptor.schema            = std::move(meta);
-        descriptor.ops.evaluate_impl = &mesh_subscribe_evaluate_impl;
+        descriptor.schema = std::move(meta);
+
+        const std::array fields{NodeStorageField{
+            .name = mesh_subscribe_storage_field_name,
+            .plan = &MemoryUtils::plan_for<MeshSubscribeStorage>(),
+        }};
+        descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
+
+        const auto &context = register_mesh_subscribe_context(
+            descriptor.storage_plan->component(mesh_subscribe_storage_field_name).offset);
+
+        descriptor.callbacks.stop             = &mesh_subscribe_stop;
+        descriptor.ops.evaluate_impl          = &mesh_subscribe_evaluate_impl;
+        descriptor.ops.extended_view_context  = &context;
         return NodeBuilder::from_descriptor(std::move(descriptor));
     }
 }  // namespace hgraph

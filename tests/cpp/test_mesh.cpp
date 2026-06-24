@@ -4,8 +4,8 @@
 // outputs (mesh_(func)[k]), create instances on demand, and evaluate in
 // dependency-rank order within a cycle. See *Mesh*.
 //
-// Increment 1 — peer instantiation: a mesh with no cross-instance access is
-// observably identical to map_ (same keyed children, same TSD<K, OUT> output).
+// With no cross-instance access, mesh_ is observably identical to map_ (same
+// keyed children, same TSD<K, OUT> output).
 
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>  // mesh_ref (mesh_(func)[k])
 #include <hgraph/lib/std/std_operators.h>
@@ -240,6 +240,59 @@ TEST_CASE("mesh_: removing a key tears its instance down")
                                    dict_delta<Int, TS<Int>>({}, {2})))),
                  values<Value>(dict_delta<Int, TS<Int>>({{0, 0}, {1, 1}, {2, 3}}),
                                dict_delta<Int, TS<Int>>({}, {2})));
+}
+
+TEST_CASE("mesh_: retargeting a dependency removes the old on-demand instance")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // Cycle 1: key 2 depends on on-demand key 1 -> {1:1, 2:3}.
+    // Cycle 2: key 2 retargets to on-demand key 0. The old 2->1 edge is
+    // retracted, so key 1 is removed in the same mesh evaluation.
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Int, TS<Int>>>(
+                     fn<ChainFn>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{2, 1}}),
+                                   dict_delta<Int, TS<Int>>({{2, 0}})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 1}, {2, 3}}),
+                               dict_delta<Int, TS<Int>>({{0, 0}, {2, 2}}, {1})));
+}
+
+TEST_CASE("mesh_: removing the last requester removes on-demand dependencies")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // Cycle 1: link={1:0, 2:1} -> on-demand base 0 plus requested keys 1 and 2.
+    // Cycle 2: key 2 is removed; key 1 still depends on on-demand key 0.
+    // Cycle 3: key 1 is removed; its outgoing 1->0 edge is retracted, so 0 is
+    // no longer kept alive by the reverse dependency table.
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Int, TS<Int>>>(
+                     fn<ChainFn>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 0}, {2, 1}}),
+                                   dict_delta<Int, TS<Int>>({}, {2}),
+                                   dict_delta<Int, TS<Int>>({}, {1})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{0, 0}, {1, 1}, {2, 3}}),
+                               dict_delta<Int, TS<Int>>({}, {2}),
+                               dict_delta<Int, TS<Int>>({}, {0, 1})));
+}
+
+TEST_CASE("mesh_: an invalid requested key stops forwarding the old dependency")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    // key 2 initially reads key 1. Removing link[2] while key 2 evaluates makes
+    // the requested peer invalid; mesh_ref should clear its forwarding link, so
+    // the old dependency is not forwarded as a stale key-2 tick.
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Int, TS<Int>>, TSD<Int, TS<Int>>>(
+                     fn<ExprFn>(),
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 2}}),
+                                   dict_delta<Int, TS<Int>>({{2, 3}})),
+                     values<Value>(dict_delta<Int, TS<Int>>({{2, 1}}),
+                                   dict_delta<Int, TS<Int>>({}, {2})))),
+                 values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 12}}),
+                               none));
 }
 
 TEST_CASE("mesh_: a changed input re-propagates through the dependency graph")
