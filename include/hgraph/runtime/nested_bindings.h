@@ -145,6 +145,40 @@ namespace hgraph
         if (!current.handle().same_as(source.handle())) { target.bind_output(source); }
     }
 
+    /**
+     * Resolve a source through any already-bound forwarding-output chain.
+     *
+     * If a keyed parent has re-homed a nested terminal (for example a switch
+     * node that is the terminal of a map_/mesh_ child), binding through the
+     * intermediate target link would leave the writer one hop too high. Follow
+     * the chain when it is already bound so the child terminal writes the
+     * ultimate real storage directly.
+     */
+    [[nodiscard]] inline TSOutputView resolve_forwarding_source(TSOutputView source)
+    {
+        std::vector<TSOutputHandle> seen;
+        while (source.bound() && source.forwarding())
+        {
+            const TSOutputHandle current = source.handle();
+            bool already_seen = false;
+            for (const TSOutputHandle &candidate : seen)
+            {
+                if (candidate.same_as(current))
+                {
+                    already_seen = true;
+                    break;
+                }
+            }
+            if (already_seen) { break; }
+            seen.push_back(current);
+
+            TSOutputHandle target = source.forwarding_target();
+            if (!target.bound()) { break; }
+            source = target.view(source.evaluation_time());
+        }
+        return source;
+    }
+
     /** Re-point a forwarding output endpoint at ``source`` (no-op when already there). */
     inline void bind_forwarding_output_to_source(const TSOutputView &target, const TSOutputView &source)
     {
@@ -153,8 +187,15 @@ namespace hgraph
             throw std::logic_error("Nested graph output binding target must be a forwarding output endpoint");
         }
 
+        TSOutputView resolved_source = resolve_forwarding_source(source.borrowed_ref());
+        if (!resolved_source.bound())
+        {
+            if (target.forwarding_bound()) { target.clear_forwarding_target(); }
+            return;
+        }
+
         const auto current = target.forwarding_target();
-        if (!current.same_as(source.handle())) { target.bind_forwarding_target(source); }
+        if (!current.same_as(resolved_source.handle())) { target.bind_forwarding_target(resolved_source); }
     }
     /**
      * Resolve a binding source path from an outer INPUT root to the bound

@@ -63,9 +63,9 @@ namespace hgraph
      * tick with ``reload_on_ticked``) the active child is stopped and retired
      * for at least one outer evaluation cycle, the branch for the new key
      * (else the default branch, else a runtime error) is built, bound and
-     * started, and the forwarding output **re-points** — sampling the new
-     * branch's output at the switch time (the sampled-runtime contract; a
-     * deliberate divergence from Python's ``value = None`` reset).
+     * started. Branch terminal outputs are forwarding endpoints bound into the
+     * switch output, so the active branch writes the switch-owned storage (or an
+     * enclosing map_/mesh_ element when the switch terminal is re-homed there).
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder switch_node(NodeTypeMetaData meta, SwitchNodeSpec spec);
 }  // namespace hgraph

@@ -605,6 +605,89 @@ namespace hgraph::stdlib
         {
         };
 
+        [[nodiscard]] inline const TSValueTypeMetaData *switch_branch_output_child_schema(
+            const TSValueTypeMetaData &schema,
+            std::size_t index)
+        {
+            switch (schema.kind)
+            {
+                case TSTypeKind::TSB:
+                    if (index >= schema.field_count())
+                    {
+                        throw std::out_of_range("switch_: branch output source path is out of range for TSB");
+                    }
+                    return schema.fields()[index].type;
+
+                case TSTypeKind::TSL:
+                    if (schema.fixed_size() == 0)
+                    {
+                        throw std::invalid_argument(
+                            "switch_: branch output source path requires fixed-size TSL prefixes");
+                    }
+                    if (index >= schema.fixed_size())
+                    {
+                        throw std::out_of_range("switch_: branch output source path is out of range for TSL");
+                    }
+                    return schema.element_ts();
+
+                default:
+                    throw std::invalid_argument(
+                        "switch_: branch output source path can only traverse TSB or fixed-size TSL");
+            }
+        }
+
+        [[nodiscard]] inline std::size_t switch_branch_output_child_count(
+            const TSValueTypeMetaData &schema)
+        {
+            switch (schema.kind)
+            {
+                case TSTypeKind::TSB:
+                    return schema.field_count();
+
+                case TSTypeKind::TSL:
+                    if (schema.fixed_size() == 0)
+                    {
+                        throw std::invalid_argument(
+                            "switch_: branch output source path requires fixed-size TSL prefixes");
+                    }
+                    return schema.fixed_size();
+
+                default:
+                    throw std::invalid_argument(
+                        "switch_: branch output source path can only traverse TSB or fixed-size TSL");
+            }
+        }
+
+        [[nodiscard]] inline TSEndpointSchema switch_branch_output_endpoint_schema_for(
+            const TSValueTypeMetaData *schema,
+            const std::vector<std::size_t> &source_path,
+            std::size_t depth = 0)
+        {
+            if (schema == nullptr)
+            {
+                throw std::invalid_argument("switch_: branch output binding requires an output schema");
+            }
+            if (depth == source_path.size()) { return TSEndpointSchema::peered(schema); }
+
+            const auto selected = source_path[depth];
+            const auto count    = switch_branch_output_child_count(*schema);
+            if (selected >= count)
+            {
+                throw std::out_of_range("switch_: branch output source path is out of range");
+            }
+
+            std::vector<TSEndpointSchema> children;
+            children.reserve(count);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                const auto *child_schema = switch_branch_output_child_schema(*schema, index);
+                children.push_back(index == selected
+                                       ? switch_branch_output_endpoint_schema_for(child_schema, source_path, depth + 1)
+                                       : TSEndpointSchema::owned(child_schema));
+            }
+            return TSEndpointSchema::non_peered(schema, std::move(children));
+        }
+
         /**
          * Compile one branch over the outer time-series slots. ``named_slots``
          * are the keyword arguments as ``(name, outer slot)`` pairs — resolved
@@ -652,6 +735,18 @@ namespace hgraph::stdlib
             spec.graph_builder  = std::move(compiled.graph_builder);
             spec.input_bindings = std::move(compiled.input_bindings);
             spec.output_binding = compiled.output_binding;
+            if (spec.output_binding.has_value() &&
+                spec.output_binding->kind == NestedGraphOutputBinding::Kind::ChildOutput)
+            {
+                const NestedGraphEndpoint &source = spec.output_binding->source;
+                NodeBuilder &terminal = spec.graph_builder.node_at(source.node);
+                const NodeTypeMetaData *terminal_meta = terminal.binding().type_meta;
+                terminal.output_endpoint(
+                    switch_branch_output_endpoint_schema_for(terminal_meta != nullptr
+                                                                 ? terminal_meta->output_schema
+                                                                 : nullptr,
+                                                             source.path));
+            }
 
             // Re-target boundary ordinals onto the outer input root: ordinal 0
             // is the key when the branch consumes it; every other parameter

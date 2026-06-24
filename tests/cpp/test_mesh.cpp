@@ -46,6 +46,40 @@ namespace
         }
     };
 
+    struct SwitchDoubleG
+    {
+        static constexpr auto name = "mesh_switch_double_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> value)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (value * Int{2}).as<TS<Int>>();
+        }
+    };
+
+    struct SwitchNegateG
+    {
+        static constexpr auto name = "mesh_switch_negate_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> value)
+        {
+            using namespace hgraph::stdlib::syntax;
+            return (value * Int{-1}).as<TS<Int>>();
+        }
+    };
+
+    struct SwitchInMeshG
+    {
+        static constexpr auto name = "switch_in_mesh_g";
+        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Str>> mode, Port<TS<Int>> value)
+        {
+            return wire<stdlib::switch_>(
+                       w, mode,
+                       stdlib::switch_cases({{Value{Str{"double"}}, fn<SwitchDoubleG>()},
+                                             {Value{Str{"negate"}}, fn<SwitchNegateG>()}}),
+                       value)
+                .as<TS<Int>>();
+        }
+    };
+
     // A mesh whose instance graph contains a map_: each instance maps mesh_(F)[peer]
     // over its per-key ``group`` (a TSD of peer keys) and sums the resolved siblings.
     // The map child pauses on mesh_ref, so the MAP must propagate the pause (its per-child
@@ -135,6 +169,18 @@ TEST_CASE("mesh_: a peer-instantiation func may consume the key")
                      fn<AddKeyG>(),
                      values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}})))),
                  values<Value>(dict_delta<Int, TS<Int>>({{1, 11}, {2, 22}})));
+}
+
+TEST_CASE("mesh_: a switch_ terminal writes through to the mesh element")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Str, TS<Str>>, TSD<Str, TS<Int>>>(
+                     fn<SwitchInMeshG>(),
+                     values<Value>(dict_delta<Str, TS<Str>>({{"a"s, "double"s}, {"b"s, "negate"s}})),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 3}, {"b"s, 4}})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 6}, {"b"s, -4}})));
 }
 
 TEST_CASE("mesh_: cross-instance access settles a dependency chain in one cycle")

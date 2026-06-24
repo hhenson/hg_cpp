@@ -400,26 +400,117 @@ namespace hgraph::detail
             return target_link_set_range(context, memory, &target_link_set_slot_removed);
         }
 
-        [[nodiscard]] SlotTSDataMutationResult target_link_insert_key(const void *, void *, const ValueView &,
-                                                                      DateTime)
+        [[nodiscard]] SlotTSDataMutationResult target_link_insert_key(const void *context, void *memory,
+                                                                      const ValueView &key,
+                                                                      DateTime modified_time)
         {
-            throw std::logic_error("TSInput target-link set mutation is not supported");
+            auto target = target_link_target_view(context, memory);
+            if (!target.valid()) { return {}; }
+
+            const auto *schema = target.schema();
+            if (schema == nullptr) { return {}; }
+
+            switch (schema->kind)
+            {
+                case TSTypeKind::TSS:
+                {
+                    auto set      = target.as_set();
+                    auto mutation = set.begin_mutation(modified_time);
+                    const bool changed = mutation.add(key);
+                    return SlotTSDataMutationResult{.slot = set.find_slot(key), .changed = changed};
+                }
+                case TSTypeKind::TSD:
+                {
+                    auto dict = target.as_dict();
+                    const bool existed = dict.contains(key);
+                    auto mutation = dict.begin_mutation(modified_time);
+                    (void)mutation.at(key);
+                    return SlotTSDataMutationResult{.slot = dict.find_slot(key), .changed = !existed};
+                }
+                default:
+                    throw std::logic_error("TSInput target-link set mutation requires a TSS or TSD target");
+            }
         }
 
-        [[nodiscard]] SlotTSDataMutationResult target_link_remove_key(const void *, void *, const ValueView &,
-                                                                      DateTime)
+        [[nodiscard]] SlotTSDataMutationResult target_link_remove_key(const void *context, void *memory,
+                                                                      const ValueView &key,
+                                                                      DateTime modified_time)
         {
-            throw std::logic_error("TSInput target-link set mutation is not supported");
+            auto target = target_link_target_view(context, memory);
+            if (!target.valid()) { return {}; }
+
+            const auto *schema = target.schema();
+            if (schema == nullptr) { return {}; }
+
+            switch (schema->kind)
+            {
+                case TSTypeKind::TSS:
+                {
+                    auto set = target.as_set();
+                    const std::size_t slot = set.find_slot(key);
+                    auto mutation = set.begin_mutation(modified_time);
+                    const bool changed = mutation.remove(key);
+                    return SlotTSDataMutationResult{.slot = slot, .changed = changed};
+                }
+                case TSTypeKind::TSD:
+                {
+                    auto dict = target.as_dict();
+                    const std::size_t slot = dict.find_slot(key);
+                    auto mutation = dict.begin_mutation(modified_time);
+                    const bool changed = mutation.erase(key);
+                    return SlotTSDataMutationResult{.slot = slot, .changed = changed};
+                }
+                default:
+                    throw std::logic_error("TSInput target-link set mutation requires a TSS or TSD target");
+            }
         }
 
-        [[nodiscard]] bool target_link_touch_slots(const void *, void *, DateTime)
+        [[nodiscard]] bool target_link_touch_slots(const void *context, void *memory, DateTime modified_time)
         {
-            throw std::logic_error("TSInput target-link set mutation is not supported");
+            auto target = target_link_target_view(context, memory);
+            if (!target.valid()) { return false; }
+
+            const auto *schema = target.schema();
+            if (schema == nullptr) { return false; }
+
+            switch (schema->kind)
+            {
+                case TSTypeKind::TSS:
+                case TSTypeKind::TSD:
+                {
+                    const auto &ops = static_cast<const TSSDataOps &>(target.ops());
+                    const bool touched = ops.touch_impl(ops.context, target.mutable_data(), modified_time);
+                    if (touched)
+                    {
+                        auto mutation = target.begin_mutation(modified_time);
+                        mutation.mark_modified();
+                    }
+                    return touched;
+                }
+                default:
+                    throw std::logic_error("TSInput target-link set mutation requires a TSS or TSD target");
+            }
         }
 
-        void target_link_reserve_slots(const void *, void *, std::size_t)
+        void target_link_reserve_slots(const void *context, void *memory, std::size_t capacity)
         {
-            throw std::logic_error("TSInput target-link set reserve is not supported");
+            auto target = target_link_target_view(context, memory);
+            if (!target.valid()) { return; }
+
+            const auto *schema = target.schema();
+            if (schema == nullptr) { return; }
+            switch (schema->kind)
+            {
+                case TSTypeKind::TSS:
+                case TSTypeKind::TSD:
+                {
+                    const auto &ops = static_cast<const TSSDataOps &>(target.ops());
+                    ops.reserve_impl(ops.context, target.mutable_data(), capacity);
+                    break;
+                }
+                default:
+                    throw std::logic_error("TSInput target-link set reserve requires a TSS or TSD target");
+            }
         }
 
         void target_link_subscribe_slot_observer(const void *, void *, SlotObserver *)
