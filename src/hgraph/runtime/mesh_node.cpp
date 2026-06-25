@@ -568,37 +568,13 @@ namespace hgraph
                    storage.dependency.equals(dependency);
         }
 
-        void copy_source_to_external_subscribe_target(const NodeView &view, const TSOutputView &source,
-                                                      DateTime evaluation_time)
-        {
-            if (!source.bound() || !source.valid()) { return; }
-
-            auto output = view.output(evaluation_time);
-            auto target = resolve_forwarding_source(output.borrowed_ref());
-            if (!target.bound() || target.forwarding()) { return; }
-
-            auto mutation = target.begin_mutation(evaluation_time);
-            (void)mutation.copy_value_from(source.value());
-        }
-
         void publish_subscribe_source(const NodeView &view, MeshSubscribeStorage &storage,
                                       const TSOutputView &source, DateTime evaluation_time)
         {
             auto output = view.output(evaluation_time);
             if (!output.forwarding())
             {
-                if (source.bound() && source.valid())
-                {
-                    auto mutation = output.begin_mutation(evaluation_time);
-                    (void)mutation.copy_value_from(source.value());
-                }
-                return;
-            }
-
-            if (!storage.owns_output_binding && output.forwarding_bound())
-            {
-                copy_source_to_external_subscribe_target(view, source, evaluation_time);
-                return;
+                throw std::logic_error("mesh_subscribe output must be a forwarding endpoint");
             }
 
             const TSOutputHandle before = output.forwarding_target();

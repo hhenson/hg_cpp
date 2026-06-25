@@ -1069,8 +1069,22 @@ namespace hgraph::stdlib
             // the parent's owned TSD output, and the child's terminal node
             // WRITES THROUGH to it — its output is re-homed as a forwarding
             // endpoint that the map node points at the parent element. No copy.
-            spec.child.graph_builder.node_at(spec.child.output_binding->source.node)
-                .output_endpoint(TSEndpointSchema::peered(out));
+            NodeBuilder &terminal =
+                spec.child.graph_builder.node_at(spec.child.output_binding->source.node);
+            const TSEndpointSchema &terminal_override = terminal.output_endpoint();
+            const NodeTypeMetaData *terminal_meta = terminal.binding().type_meta;
+            const TSEndpointSchema &terminal_declared =
+                terminal_meta != nullptr ? terminal_meta->output_endpoint_schema : terminal_override;
+            const TSEndpointSchema &terminal_endpoint =
+                !terminal_override.empty() ? terminal_override : terminal_declared;
+            if (!terminal_endpoint.empty() && terminal_endpoint.is_peered())
+            {
+                spec.output_binding_mode = MapOutputBindingMode::OutputElementForwardsToChildTerminal;
+            }
+            else
+            {
+                terminal.output_endpoint(TSEndpointSchema::peered(out));
+            }
 
             spec.args.reserve(func.arity);
             if (takes_key) { spec.args.push_back(MapArgSource{.kind = MapArgSourceKind::Key}); }

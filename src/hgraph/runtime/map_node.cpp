@@ -223,21 +223,33 @@ namespace hgraph
             return status;
         }
 
-        void remove_entry_at_slot(MapNodeStorage &storage, TSDDataMutationView &output_mutation, std::size_t slot)
+        void clear_entry_output_binding(const NodeView &view, const MapNodeContext &context,
+                                        const MapKeyEntry &entry, DateTime evaluation_time)
+        {
+            runtime_detail::clear_mapped_output_element_binding(
+                view, evaluation_time, entry.key.view(), context.spec.output_binding_mode);
+        }
+
+        void remove_entry_at_slot(const NodeView &view, const MapNodeContext &context,
+                                  MapNodeStorage &storage, TSDDataMutationView &output_mutation,
+                                  std::size_t slot, DateTime evaluation_time)
         {
             auto *entry = storage.entries.try_value<MapKeyEntry>(slot);
             if (entry == nullptr) { return; }
 
+            clear_entry_output_binding(view, context, *entry, evaluation_time);
             if (entry->graph.has_value()) { entry->graph.view().stop(); }
             (void)output_mutation.erase(entry->key.view());
             storage.entries.destroy_at(slot);
         }
 
-        void remove_all_entries(MapNodeStorage &storage, TSDDataMutationView &output_mutation)
+        void remove_all_entries(const NodeView &view, const MapNodeContext &context,
+                                MapNodeStorage &storage, TSDDataMutationView &output_mutation,
+                                DateTime evaluation_time)
         {
             for (std::size_t slot = 0; slot < storage.entries.slot_capacity(); ++slot)
             {
-                remove_entry_at_slot(storage, output_mutation, slot);
+                remove_entry_at_slot(view, context, storage, output_mutation, slot, evaluation_time);
             }
         }
 
@@ -252,6 +264,7 @@ namespace hgraph
             storage.entries.reserve_to(std::max(storage.entries.slot_capacity(), slot + 1));
             auto &entry = storage.entries.construct_at<MapKeyEntry>(slot, Value{key_view});
             auto rollback = UnwindCleanupGuard([&] {
+                clear_entry_output_binding(view, context, entry, evaluation_time);
                 if (entry.graph.has_value() && entry.graph.view().started()) { entry.graph.view().stop(); }
                 (void)output_mutation.erase(entry.key.view());
                 storage.entries.destroy_at(slot);
@@ -279,7 +292,8 @@ namespace hgraph
             runtime_detail::bind_mapped_child_inputs(view, entry.graph.view(), evaluation_time,
                                                      spec.child, spec.args, entry.key.view(), key_source);
             runtime_detail::bind_mapped_child_output(view, entry.graph.view(), evaluation_time,
-                                                     spec.child.output_binding, entry.key.view());
+                                                     spec.child.output_binding, entry.key.view(),
+                                                     spec.output_binding_mode);
             entry.graph.view().start(evaluation_time);
             rollback.release();
         }
@@ -337,7 +351,7 @@ namespace hgraph
                 auto output          = view.output(evaluation_time);
                 auto output_dict     = output.as_dict();
                 auto output_mutation = output_dict.begin_mutation(evaluation_time);
-                remove_all_entries(storage, output_mutation);
+                remove_all_entries(view, context, storage, output_mutation, evaluation_time);
                 output_mutation.clear();
                 storage.primed = false;
             }
@@ -352,7 +366,7 @@ namespace hgraph
                     auto output          = view.output(evaluation_time);
                     auto output_dict     = output.as_dict();
                     auto output_mutation = output_dict.begin_mutation(evaluation_time);
-                    remove_all_entries(storage, output_mutation);
+                    remove_all_entries(view, context, storage, output_mutation, evaluation_time);
                     output_mutation.clear();
                     create_live_key_entries(view, context, storage, output_mutation, key_set, evaluation_time);
                     storage.primed = true;
@@ -365,7 +379,10 @@ namespace hgraph
 
                     for (std::size_t slot = 0; slot < key_set.slot_capacity(); ++slot)
                     {
-                        if (key_set.slot_removed(slot)) { remove_entry_at_slot(storage, output_mutation, slot); }
+                        if (key_set.slot_removed(slot))
+                        {
+                            remove_entry_at_slot(view, context, storage, output_mutation, slot, evaluation_time);
+                        }
                     }
 
                     for (std::size_t slot = 0; slot < key_set.slot_capacity(); ++slot)
@@ -444,7 +461,8 @@ namespace hgraph
             auto output          = view.output(evaluation_time);
             auto output_dict     = output.as_dict();
             auto output_mutation = output_dict.begin_mutation(evaluation_time);
-            remove_all_entries(storage, output_mutation);
+            const auto &context  = *static_cast<const MapNodeContext *>(map_view.internal_context());
+            remove_all_entries(view, context, storage, output_mutation, evaluation_time);
             output_mutation.clear();
             storage.unsubscribe_keys_noexcept();
             storage.primed = false;
@@ -640,6 +658,17 @@ namespace hgraph
 
         meta.node_kind = NodeKind::Nested;
         meta.valid_inputs = std::vector<std::size_t>{};
+        if (spec.output_binding_mode == MapOutputBindingMode::OutputElementForwardsToChildTerminal)
+        {
+            if (meta.output_schema == nullptr || meta.output_schema->kind != TSTypeKind::TSD ||
+                meta.output_schema->element_ts() == nullptr)
+            {
+                throw std::invalid_argument("map_node forwarding-element output requires a TSD output schema");
+            }
+            meta.output_endpoint_schema = TSEndpointSchema::non_peered_dict(
+                meta.output_schema,
+                TSEndpointSchema::peered(meta.output_schema->element_ts()));
+        }
 
         NodeTypeDescriptor descriptor;
         descriptor.schema = std::move(meta);

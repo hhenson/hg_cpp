@@ -1,4 +1,5 @@
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/time_series_reference.h>
 #include <hgraph/types/value/value.h>
@@ -195,6 +196,55 @@ TEST_CASE("TSOutputHandle stores output identity without evaluation time")
 
     handle.reset();
     REQUIRE_FALSE(handle.bound());
+}
+
+TEST_CASE("TSOutput non-peered TSD can hold forwarding value slots")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *int_meta = registry.register_scalar<std::int32_t>("int32");
+    const auto *str_meta = registry.register_scalar<std::string>("string");
+    const auto *ts_int   = registry.ts(int_meta);
+    const auto *tsd_int  = registry.tsd(str_meta, ts_int);
+
+    TSOutput source{*ts_int};
+    TSOutput forwarding_dict{
+        TSEndpointSchema::non_peered_dict(tsd_int, TSEndpointSchema::peered(ts_int))};
+
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + TimeDelta{1};
+    Value      key{std::string{"a"}};
+    Value      one{1};
+    Value      two{2};
+
+    {
+        auto mutation = source.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(one.view()));
+    }
+    {
+        auto dict_view = forwarding_dict.view(t1);
+        auto mutation = dict_view.as_dict().begin_mutation(t1);
+        auto element  = mutation.at(key.view());
+        REQUIRE(element.valid());
+    }
+
+    auto dict_at_t1 = forwarding_dict.view(t1);
+    auto element = dict_at_t1.as_dict().at(key.view());
+    REQUIRE(element.forwarding());
+    element.bind_forwarding_target(source.view(t1));
+    REQUIRE(element.valid());
+    REQUIRE(element.value().checked_as<std::int32_t>() == 1);
+
+    {
+        auto mutation = source.begin_mutation(t2);
+        REQUIRE(mutation.copy_value_from(two.view()));
+    }
+
+    auto dict_at_t2 = forwarding_dict.view(t2);
+    auto after = dict_at_t2.as_dict().at(key.view());
+    REQUIRE(after.valid());
+    REQUIRE(after.value().checked_as<std::int32_t>() == 2);
 }
 
 TEST_CASE("TSOutput REF stores TimeSeriesReference as value and delta")

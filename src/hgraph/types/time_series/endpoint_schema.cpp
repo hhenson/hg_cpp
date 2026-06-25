@@ -32,8 +32,16 @@ namespace hgraph
                     }
                     return schema.element_ts();
 
+                case TSTypeKind::TSD:
+                    if (index != 0)
+                    {
+                        throw std::out_of_range("TSEndpointSchema child index is out of range for TSD");
+                    }
+                    return schema.element_ts();
+
                 default:
-                    throw std::invalid_argument("TSEndpointSchema non-peered annotations require TSB or fixed TSL");
+                    throw std::invalid_argument(
+                        "TSEndpointSchema non-peered annotations require TSB, fixed TSL, or TSD");
             }
         }
 
@@ -52,8 +60,12 @@ namespace hgraph
                     }
                     return schema.fixed_size();
 
+                case TSTypeKind::TSD:
+                    return 1;
+
                 default:
-                    throw std::invalid_argument("TSEndpointSchema non-peered annotations require TSB or fixed TSL");
+                    throw std::invalid_argument(
+                        "TSEndpointSchema non-peered annotations require TSB, fixed TSL, or TSD");
             }
         }
 
@@ -174,6 +186,22 @@ namespace hgraph
             throw std::invalid_argument("TSEndpointSchema list element annotation schema does not match the TSL element");
         }
         return non_peered(schema, std::vector<TSEndpointSchema>(size, element));
+    }
+
+    TSEndpointSchema TSEndpointSchema::non_peered_dict(
+        const TSValueTypeMetaData *schema,
+        const TSEndpointSchema    &element)
+    {
+        validate_schema(schema, "TSEndpointSchema::non_peered_dict requires a schema");
+        if (schema->kind != TSTypeKind::TSD)
+        {
+            throw std::invalid_argument("TSEndpointSchema::non_peered_dict requires a TSD schema");
+        }
+        if (!time_series_schema_equivalent(schema->element_ts(), element.schema()))
+        {
+            throw std::invalid_argument("TSEndpointSchema dict element annotation schema does not match the TSD element");
+        }
+        return non_peered(schema, std::vector<TSEndpointSchema>{element});
     }
 
     bool TSEndpointSchema::empty() const noexcept

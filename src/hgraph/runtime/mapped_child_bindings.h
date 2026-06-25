@@ -100,7 +100,8 @@ namespace hgraph::runtime_detail
         const GraphView &child,
         DateTime evaluation_time,
         const std::optional<NestedGraphOutputBinding> &output_binding,
-        const ValueView &key)
+        const ValueView &key,
+        MapOutputBindingMode mode = MapOutputBindingMode::ChildTerminalWritesElement)
     {
         if (!output_binding.has_value()) { return; }
 
@@ -112,7 +113,31 @@ namespace hgraph::runtime_detail
         auto child_terminal = walk_ts_path(
             child.node_at(output_binding->source.node).output(evaluation_time),
             output_binding->source.path);
-        bind_forwarding_output_to_source(child_terminal, element);
+        switch (mode)
+        {
+            case MapOutputBindingMode::ChildTerminalWritesElement:
+                bind_forwarding_output_to_source(child_terminal, element);
+                break;
+            case MapOutputBindingMode::OutputElementForwardsToChildTerminal:
+                bind_forwarding_output_to_source(element, child_terminal);
+                break;
+        }
+    }
+
+    inline void clear_mapped_output_element_binding(
+        const NodeView &parent,
+        DateTime evaluation_time,
+        const ValueView &key,
+        MapOutputBindingMode mode)
+    {
+        if (mode != MapOutputBindingMode::OutputElementForwardsToChildTerminal) { return; }
+
+        auto output = parent.output(evaluation_time);
+        auto dict   = output.as_dict();
+        if (!dict.contains(key)) { return; }
+
+        auto element = dict.at(key);
+        if (element.forwarding() && element.forwarding_bound()) { element.clear_forwarding_target(); }
     }
 }  // namespace hgraph::runtime_detail
 

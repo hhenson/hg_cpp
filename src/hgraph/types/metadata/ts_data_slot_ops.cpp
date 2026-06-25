@@ -3,6 +3,7 @@
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
+#include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/utils/key_slot_store.h>
 #include <hgraph/types/utils/value_slot_store.h>
 #include <hgraph/types/value/specialized_views.h>
@@ -486,10 +487,38 @@ namespace hgraph::ts_data_plan_factory_detail
             const MemoryUtils::StoragePlan              *root_plan{nullptr};
         };
 
+        struct TSDSlotPlanKey
+        {
+            const TSValueTypeMetaData *schema{nullptr};
+            const TSDataBinding       *element_binding{nullptr};
+
+            [[nodiscard]] bool operator==(const TSDSlotPlanKey &) const noexcept = default;
+        };
+
+        struct TSDSlotPlanKeyHash
+        {
+            [[nodiscard]] std::size_t operator()(const TSDSlotPlanKey &key) const noexcept
+            {
+                auto seed = std::hash<const TSValueTypeMetaData *>{}(key.schema);
+                return combine_hash(seed, std::hash<const TSDataBinding *>{}(key.element_binding));
+            }
+        };
+
         [[nodiscard]] std::unordered_map<const TSValueTypeMetaData *, std::unique_ptr<SlotPlanEntry>> &
         slot_plan_entries() noexcept
         {
             static std::unordered_map<const TSValueTypeMetaData *, std::unique_ptr<SlotPlanEntry>> entries;
+            return entries;
+        }
+
+        [[nodiscard]] std::unordered_map<TSDSlotPlanKey,
+                                         std::unique_ptr<SlotPlanEntry>,
+                                         TSDSlotPlanKeyHash> &
+        custom_tsd_slot_plan_entries() noexcept
+        {
+            static std::unordered_map<TSDSlotPlanKey,
+                                      std::unique_ptr<SlotPlanEntry>,
+                                      TSDSlotPlanKeyHash> entries;
             return entries;
         }
 
@@ -2596,6 +2625,31 @@ namespace hgraph::ts_data_plan_factory_detail
             if (binding == nullptr) { throw std::logic_error("TSD element TSData binding is not resolved"); }
             return *binding;
         }
+
+        [[nodiscard]] std::unique_ptr<SlotPlanEntry> make_tsd_slot_plan_entry(
+            const ValueTypeBinding &key_binding,
+            const TSDataBinding    &element_binding)
+        {
+            auto entry = std::make_unique<SlotPlanEntry>();
+            entry->tsd_context = TSDStoragePlanContext{.key_binding = &key_binding,
+                                                       .element_binding = &element_binding};
+            entry->storage_plan = std::make_unique<MemoryUtils::StoragePlan>(MemoryUtils::StoragePlan{
+                .layout                       = MemoryUtils::layout_for<TSDSlotStorage>(),
+                .lifecycle                    = {.construct      = &tsd_storage_construct,
+                                                 .destroy        = &slot_storage_destroy<TSDSlotStorage>,
+                                                 .copy_construct = nullptr,
+                                                 .move_construct = nullptr,
+                                                 .copy_assign    = nullptr,
+                                                 .move_assign    = nullptr},
+                .lifecycle_context            = &entry->tsd_context,
+                .composite_kind_tag           = MemoryUtils::CompositeKind::None,
+                .trivially_destructible       = false,
+                .trivially_copyable           = false,
+                .trivially_move_constructible = false,
+            });
+            entry->root_plan = entry->storage_plan.get();
+            return entry;
+        }
     } // namespace
 
     [[nodiscard]] bool is_slot_ts_data(const TSValueTypeMetaData &schema) noexcept
@@ -2648,27 +2702,41 @@ namespace hgraph::ts_data_plan_factory_detail
         else
         {
             const auto &element_binding = element_binding_for(schema);
-            entry->tsd_context = TSDStoragePlanContext{.key_binding = &key_binding,
-                                                       .element_binding = &element_binding};
-            entry->storage_plan = std::make_unique<MemoryUtils::StoragePlan>(MemoryUtils::StoragePlan{
-                .layout                       = MemoryUtils::layout_for<TSDSlotStorage>(),
-                .lifecycle                    = {.construct      = &tsd_storage_construct,
-                                                 .destroy        = &slot_storage_destroy<TSDSlotStorage>,
-                                                 .copy_construct = nullptr,
-                                                 .move_construct = nullptr,
-                                                 .copy_assign    = nullptr,
-                                                 .move_assign    = nullptr},
-                .lifecycle_context            = &entry->tsd_context,
-                .composite_kind_tag           = MemoryUtils::CompositeKind::None,
-                .trivially_destructible       = false,
-                .trivially_copyable           = false,
-                .trivially_move_constructible = false,
-            });
+            entry = make_tsd_slot_plan_entry(key_binding, element_binding);
         }
 
         entry->root_plan = entry->storage_plan.get();
         const auto *result = entry->root_plan;
         entries.emplace(&schema, std::move(entry));
+        return result;
+    }
+
+    [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_tsd_plan(
+        const TSValueTypeMetaData &schema,
+        const TSDataBinding       &element_binding)
+    {
+        if (!is_slot_ts_data(schema) || schema.kind != TSTypeKind::TSD)
+        {
+            throw std::logic_error("TSDataPlanFactory: custom slot TSD storage requires a TSD schema");
+        }
+        if (!time_series_schema_equivalent(schema.element_ts(), element_binding.type_meta))
+        {
+            throw std::logic_error("TSDataPlanFactory: custom slot TSD element binding has the wrong schema");
+        }
+
+        const auto &canonical_element = element_binding_for(schema);
+        if (&element_binding == &canonical_element) { return synthesise_slot_plan(schema); }
+
+        const auto &key_binding = key_binding_for(schema);
+        const TSDSlotPlanKey key{&schema, &element_binding};
+
+        std::lock_guard<std::recursive_mutex> lock(slot_plan_mutex());
+        auto &entries = custom_tsd_slot_plan_entries();
+        if (const auto it = entries.find(key); it != entries.end()) { return it->second->root_plan; }
+
+        auto entry = make_tsd_slot_plan_entry(key_binding, element_binding);
+        const auto *result = entry->root_plan;
+        entries.emplace(key, std::move(entry));
         return result;
     }
 
@@ -2706,6 +2774,35 @@ namespace hgraph::ts_data_plan_factory_detail
         return result->ops_ref();
     }
 
+    [[nodiscard]] const TSDataOps &slot_tsd_ts_data_ops(const TSValueTypeMetaData      &schema,
+                                                        const MemoryUtils::StoragePlan &plan,
+                                                        std::size_t storage_offset,
+                                                        const TSDataBinding            &element_binding)
+    {
+        if (schema.kind != TSTypeKind::TSD)
+        {
+            throw std::logic_error("slot TSD ops require a TSD schema");
+        }
+        if (storage_offset != 0)
+        {
+            throw std::logic_error("slot TSD currently expects the storage object at the root");
+        }
+        if (!time_series_schema_equivalent(schema.element_ts(), element_binding.type_meta))
+        {
+            throw std::logic_error("slot TSD element binding has the wrong schema");
+        }
+
+        std::lock_guard<std::recursive_mutex> lock(slot_context_mutex());
+        auto                &contexts = slot_contexts();
+        const SlotContextKey key{&schema, &plan, storage_offset};
+        if (const auto it = contexts.find(key); it != contexts.end()) { return it->second->ops_ref(); }
+
+        auto context = std::make_unique<TSDContext>(schema, plan, key_binding_for(schema), element_binding);
+        auto *result = context.get();
+        contexts.emplace(key, std::move(context));
+        return result->ops_ref();
+    }
+
     void clear_slot_ts_data_contexts() noexcept
     {
         {
@@ -2715,6 +2812,7 @@ namespace hgraph::ts_data_plan_factory_detail
         {
             std::lock_guard<std::recursive_mutex> lock(slot_plan_mutex());
             slot_plan_entries().clear();
+            custom_tsd_slot_plan_entries().clear();
         }
     }
 } // namespace hgraph::ts_data_plan_factory_detail

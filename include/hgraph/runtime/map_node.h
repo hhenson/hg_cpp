@@ -20,6 +20,14 @@ namespace hgraph
         OuterInput,  ///< an outer (broadcast) input, bound whole
     };
 
+    enum class MapOutputBindingMode : std::uint8_t
+    {
+        /** Child terminal writes through to the map output element. */
+        ChildTerminalWritesElement,
+        /** Map output element forwards through the child terminal's existing forwarding source. */
+        OutputElementForwardsToChildTerminal,
+    };
+
     struct HGRAPH_EXPORT MapArgSource
     {
         MapArgSourceKind kind{MapArgSourceKind::OuterInput};
@@ -51,6 +59,8 @@ namespace hgraph
         std::optional<std::size_t> keys_input_index{};
         /** ``TS<K>`` for the entry-owned key outputs (when any arg sources ``Key``). */
         const TSValueTypeMetaData *key_output_schema{nullptr};
+        /** Direction used when connecting the child terminal to the map output element. */
+        MapOutputBindingMode output_binding_mode{MapOutputBindingMode::ChildTerminalWritesElement};
     };
 
     /** Typed extension view exposed by ``map_node`` (runtime inspection surface). */

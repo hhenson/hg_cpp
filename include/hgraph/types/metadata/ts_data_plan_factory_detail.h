@@ -29,6 +29,9 @@ namespace hgraph::ts_data_plan_factory_detail
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_dynamic_list_plan(const TSValueTypeMetaData &schema);
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_window_plan(const TSValueTypeMetaData &schema);
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_plan(const TSValueTypeMetaData &schema);
+    [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_slot_tsd_plan(
+        const TSValueTypeMetaData &schema,
+        const TSDataBinding       &element_binding);
 
     [[nodiscard]] const TSDataBinding *embedded_ts_data_binding(const TSValueTypeMetaData      &schema,
                                                                 const MemoryUtils::StoragePlan &root_plan,
@@ -53,6 +56,10 @@ namespace hgraph::ts_data_plan_factory_detail
     [[nodiscard]] const TSDataOps &slot_ts_data_ops(const TSValueTypeMetaData      &schema,
                                                     const MemoryUtils::StoragePlan &plan,
                                                     std::size_t storage_offset);
+    [[nodiscard]] const TSDataOps &slot_tsd_ts_data_ops(const TSValueTypeMetaData      &schema,
+                                                        const MemoryUtils::StoragePlan &plan,
+                                                        std::size_t storage_offset,
+                                                        const TSDataBinding            &element_binding);
 
     void clear_fixed_ts_data_contexts() noexcept;
     void clear_dynamic_list_ts_data_contexts() noexcept;

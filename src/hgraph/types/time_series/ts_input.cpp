@@ -7,6 +7,7 @@
 #include <hgraph/types/time_series/ts_input/detail.h>
 
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
+#include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/container_ops.h>
@@ -79,6 +80,15 @@ namespace hgraph
                 throw std::invalid_argument("TSInput endpoint annotation cannot use owned terminals");
             }
             if (endpoint_schema.is_peered()) { return; }
+            if (schema->kind == TSTypeKind::TSD)
+            {
+                if (endpoint_schema.child_count() != 1)
+                {
+                    throw std::invalid_argument("TSInput non-peered TSD prefixes require one element annotation");
+                }
+                validate_input_endpoint_schema(endpoint_schema.child(0), false);
+                return;
+            }
             if (schema->kind != TSTypeKind::TSB && schema->kind != TSTypeKind::TSL)
             {
                 throw std::invalid_argument("TSInput non-peered prefixes require TSB or fixed-size TSL schemas");
@@ -403,6 +413,7 @@ namespace hgraph
         }
 
         [[nodiscard]] const MemoryUtils::StoragePlan &input_storage_plan(const TSEndpointSchema &endpoint_schema);
+        [[nodiscard]] const TSDataBinding *input_data_binding_for(const TSEndpointSchema &endpoint_schema);
         [[nodiscard]] const TSDataBinding *input_data_binding_for(const TSEndpointSchema         &endpoint_schema,
                                                                   const MemoryUtils::StoragePlan &root_plan,
                                                                   std::size_t storage_offset);
@@ -450,6 +461,26 @@ namespace hgraph
             }
 
             const auto *schema = endpoint_schema.schema();
+            if (schema != nullptr && schema->kind == TSTypeKind::TSD)
+            {
+                if (endpoint_schema.child_count() != 1)
+                {
+                    throw std::logic_error("TSInput non-peered TSD storage requires one element annotation");
+                }
+                const auto *element_binding = input_data_binding_for(endpoint_schema.child(0));
+                if (element_binding == nullptr)
+                {
+                    throw std::logic_error("TSInput non-peered TSD element binding is not resolved");
+                }
+                const auto *plan =
+                    ts_data_plan_factory_detail::synthesise_slot_tsd_plan(*schema, *element_binding);
+                if (plan == nullptr)
+                {
+                    throw std::logic_error("TSInput non-peered TSD storage plan is not resolved");
+                }
+                return *plan;
+            }
+
             auto        builder = MemoryUtils::named_tuple();
             builder.reserve(endpoint_schema.children().size() + 1);
             for (std::size_t index = 0; index < endpoint_schema.children().size(); ++index)
@@ -1506,6 +1537,33 @@ namespace hgraph
                 return make_target_link_binding(endpoint_schema, root_plan, storage_offset);
             }
             if (endpoint_schema.is_owned()) { return regular_ts_data_binding_for(endpoint_schema.schema()); }
+
+            const auto *schema = endpoint_schema.schema();
+            if (schema != nullptr && schema->kind == TSTypeKind::TSD)
+            {
+                if (endpoint_schema.child_count() != 1)
+                {
+                    throw std::logic_error("TSInput non-peered TSD binding requires one element annotation");
+                }
+                if (storage_offset != 0)
+                {
+                    throw std::logic_error("TSInput non-peered TSD binding currently requires root storage");
+                }
+                const auto *element_binding = input_data_binding_for(endpoint_schema.child(0));
+                if (element_binding == nullptr)
+                {
+                    throw std::logic_error("TSInput non-peered TSD element binding is not resolved");
+                }
+                const auto *expected_plan =
+                    ts_data_plan_factory_detail::synthesise_slot_tsd_plan(*schema, *element_binding);
+                if (expected_plan == nullptr || expected_plan != &root_plan)
+                {
+                    throw std::logic_error("TSInput non-peered TSD binding received the wrong storage plan");
+                }
+                const auto &ops = ts_data_plan_factory_detail::slot_tsd_ts_data_ops(
+                    *schema, root_plan, storage_offset, *element_binding);
+                return &TSDataBinding::intern(*schema, root_plan, ops);
+            }
 
             const auto key = binding_cache_key(endpoint_schema, root_plan, storage_offset);
             std::lock_guard lock{input_binding_context_cache_mutex()};

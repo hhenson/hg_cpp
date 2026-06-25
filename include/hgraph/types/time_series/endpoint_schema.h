@@ -46,7 +46,7 @@ namespace hgraph
         [[nodiscard]] static TSEndpointSchema owned(const TSValueTypeMetaData *schema);
 
         /**
-         * Non-peered TSB or fixed-size TSL prefix with explicit child
+         * Non-peered TSB, fixed-size TSL, or dynamic TSD prefix with explicit child
          * endpoint annotations.
          *
          * TSB children are ordered by field index. Fixed TSL children are
@@ -56,8 +56,10 @@ namespace hgraph
          * while another index with the same element schema may remain
          * non-peered and expose deeper peered descendants.
          *
-         * Use ``non_peered_list`` when every fixed TSL index has the same
-         * endpoint annotation.
+         * A dynamic TSD has one child annotation: the endpoint topology used
+         * for every value slot. Use ``non_peered_list`` when every fixed TSL
+         * index has the same endpoint annotation and ``non_peered_dict`` for
+         * a dynamic TSD.
          */
         [[nodiscard]] static TSEndpointSchema non_peered(
             const TSValueTypeMetaData       *schema,
@@ -68,6 +70,11 @@ namespace hgraph
          * element annotation.
          */
         [[nodiscard]] static TSEndpointSchema non_peered_list(
+            const TSValueTypeMetaData *schema,
+            const TSEndpointSchema    &element);
+
+        /** Non-peered dynamic TSD prefix with one endpoint annotation for every value slot. */
+        [[nodiscard]] static TSEndpointSchema non_peered_dict(
             const TSValueTypeMetaData *schema,
             const TSEndpointSchema    &element);
 
