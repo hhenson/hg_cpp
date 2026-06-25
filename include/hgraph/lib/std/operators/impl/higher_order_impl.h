@@ -752,11 +752,31 @@ namespace hgraph::stdlib
             // is the key when the branch consumes it; every other parameter
             // maps through its resolved outer slot (+1 past the key input).
             const std::size_t offset = bound_slots.takes_leading_key ? 1 : 0;
+            const auto retarget_boundary_path = [&](std::vector<std::size_t> &path) {
+                if (path.empty())
+                {
+                    throw std::logic_error("switch_: boundary binding path is empty");
+                }
+                const std::size_t ordinal = path[0];
+                if (bound_slots.takes_leading_key && ordinal == 0)
+                {
+                    path[0] = 0;
+                    return;
+                }
+                if (ordinal < offset || ordinal - offset >= bound_slots.ordered.size())
+                {
+                    throw std::logic_error("switch_: boundary binding ordinal is not mapped to an outer input");
+                }
+                path[0] = 1 + bound_slots.ordered[ordinal - offset];
+            };
             for (NestedGraphInputBinding &binding : spec.input_bindings)
             {
-                const std::size_t ordinal = binding.source_path[0];
-                if (bound_slots.takes_leading_key && ordinal == 0) { binding.source_path[0] = 0; }
-                else { binding.source_path[0] = 1 + bound_slots.ordered[ordinal - offset]; }
+                retarget_boundary_path(binding.source_path);
+            }
+            if (spec.output_binding.has_value() &&
+                spec.output_binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
+            {
+                retarget_boundary_path(spec.output_binding->parent_source_path);
             }
             return spec;
         }

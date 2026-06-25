@@ -48,6 +48,12 @@ namespace
         }
     };
 
+    struct PassThrough
+    {
+        static constexpr auto name = "pass_through";
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts) { return ts; }
+    };
+
     // A key-consuming branch: the first parameter is named "key".
     struct AddKey
     {
@@ -119,6 +125,19 @@ TEST_CASE("switch_: an unmatched key falls through to the default branch")
                      stdlib::switch_cases({{Value{Str{"a"}}, fn<Doubler>()}}, fn<Negator>()),
                      values<Int>(3, none)),
                  values<Int>(6, -3));
+}
+
+TEST_CASE("switch_: a branch may return a parent input directly")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<stdlib::switch_>(
+                     values<Str>(Str{"id"}, none, Str{"double"}, Str{"id"}, none),
+                     stdlib::switch_cases({{Value{Str{"id"}}, fn<PassThrough>()},
+                                           {Value{Str{"double"}}, fn<Doubler>()}}),
+                     values<Int>(3, 4, none, 5, 6)),
+                 values<Int>(3, 4, 8, 5, 6));
 }
 
 TEST_CASE("switch_: a branch may consume the key as its first argument (mixed arities)")

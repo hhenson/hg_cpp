@@ -3,6 +3,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -16,10 +17,16 @@ namespace hgraph
 
         struct SwitchNodeStorage
         {
+            // The switch output may be re-homed by an enclosing map_/mesh_.
+            // This backing output is used only when the switch owns its target.
+            std::optional<TSOutput>          backing_output{};
             GraphValue                       active{};
             std::vector<GraphValue>          retired{};
             Value                            active_key{};
             const SingleNestedGraphNodeSpec *active_spec{nullptr};
+            // Last forwarding target installed by switch_ itself; any other
+            // current target is externally owned and must be preserved.
+            TSOutputHandle                   owned_output_target{};
         };
 
         struct SwitchNodeContext
@@ -64,26 +71,69 @@ namespace hgraph
             }
         }
 
-        void clear_collection_output_if_valid(const TSOutputView &output, DateTime evaluation_time)
+        void ensure_backing_output(SwitchNodeStorage &storage, const TSValueTypeMetaData *schema)
         {
-            TSOutputView target = resolve_forwarding_source(output.borrowed_ref());
-            if (!target.bound() || target.forwarding() || !target.valid()) { return; }
-
-            static_cast<void>(target.data_view().clear_collection(evaluation_time));
+            if (schema == nullptr) { return; }
+            if (!storage.backing_output.has_value()) { storage.backing_output.emplace(*schema); }
         }
 
-        void copy_source_to_switch_output(const NodeView &view, const NestedGraphOutputBinding &binding,
+        [[nodiscard]] TSOutputView backing_output_view(SwitchNodeStorage &storage,
+                                                       const NodeView &view,
+                                                       DateTime evaluation_time)
+        {
+            const NodeTypeMetaData *schema = view.schema();
+            ensure_backing_output(storage, schema != nullptr ? schema->output_schema : nullptr);
+            return storage.backing_output.has_value()
+                       ? storage.backing_output->view(evaluation_time)
+                       : TSOutputView{};
+        }
+
+        void clear_collection_output_if_valid(const TSOutputView &output, DateTime evaluation_time)
+        {
+            if (!output.bound() || output.forwarding() || !output.valid()) { return; }
+
+            static_cast<void>(output.data_view().clear_collection(evaluation_time));
+        }
+
+        [[nodiscard]] TSOutputView switch_output_forwarding_view(const NodeView &view,
+                                                                 const NestedGraphOutputBinding &binding,
+                                                                 DateTime evaluation_time)
+        {
+            auto output = walk_forwarding_target_path(view.output(evaluation_time), binding.target_path);
+            if (!output.forwarding())
+            {
+                throw std::logic_error("switch_ output must be a forwarding endpoint");
+            }
+            return output;
+        }
+
+        void bind_switch_output_to_source(const NodeView &view, SwitchNodeStorage &storage,
+                                          const NestedGraphOutputBinding &binding,
                                           const TSOutputView &source, DateTime evaluation_time)
         {
-            auto output = walk_ts_path(view.output(evaluation_time), binding.target_path);
-            if (!source.bound() || !source.valid())
+            auto output = switch_output_forwarding_view(view, binding, evaluation_time);
+            bind_forwarding_output_to_source(output, source);
+            storage.owned_output_target = output.forwarding_target();
+        }
+
+        void bind_switch_output_to_backing(const NodeView &view, SwitchNodeStorage &storage,
+                                           const NestedGraphOutputBinding &binding,
+                                           DateTime evaluation_time)
+        {
+            auto output = switch_output_forwarding_view(view, binding, evaluation_time);
+            auto current = output.forwarding_target();
+            if (current.bound() && !current.same_as(storage.owned_output_target))
             {
-                clear_collection_output_if_valid(output, evaluation_time);
+                // An enclosing map_/mesh_ already bound this switch terminal to
+                // its element; branch terminals should resolve through it.
+                storage.owned_output_target.reset();
                 return;
             }
 
-            auto mutation = output.begin_mutation(evaluation_time);
-            (void)mutation.copy_value_from(source.value());
+            auto backing = backing_output_view(storage, view, evaluation_time);
+            if (!backing.bound()) { return; }
+            bind_forwarding_output_to_source(output, backing);
+            storage.owned_output_target = output.forwarding_target();
         }
 
         void bind_branch_output(const NodeView &view, const SingleNestedGraphNodeSpec &spec, GraphView child,
@@ -91,16 +141,21 @@ namespace hgraph
         {
             if (!spec.output_binding.has_value()) { return; }
 
+            auto &storage = *MemoryUtils::cast<SwitchNodeStorage>(
+                view.as<SwitchNodeView>().internal_storage());
+
             const NestedGraphOutputBinding &binding = *spec.output_binding;
-            auto switch_output = walk_ts_path(view.output(evaluation_time), binding.target_path);
 
             if (binding.kind == NestedGraphOutputBinding::Kind::ParentInput)
             {
                 auto root_input = view.input(evaluation_time);
                 auto source     = walk_source_to_output(root_input.borrowed_ref(), binding.parent_source_path);
-                copy_source_to_switch_output(view, binding, source, evaluation_time);
+                bind_switch_output_to_source(view, storage, binding, source, evaluation_time);
                 return;
             }
+
+            bind_switch_output_to_backing(view, storage, binding, evaluation_time);
+            auto switch_output = walk_ts_path(view.output(evaluation_time), binding.target_path);
 
             auto branch_terminal = walk_ts_path(child.node_at(binding.source.node).output(evaluation_time),
                                                 binding.source.path);
@@ -113,10 +168,11 @@ namespace hgraph
             if (!spec.output_binding.has_value()) { return; }
 
             const NestedGraphOutputBinding &binding = *spec.output_binding;
+            auto switch_view = view.as<SwitchNodeView>();
+            auto &storage = *MemoryUtils::cast<SwitchNodeStorage>(switch_view.internal_storage());
+
             if (binding.kind == NestedGraphOutputBinding::Kind::ChildOutput)
             {
-                auto switch_view = view.as<SwitchNodeView>();
-                auto &storage = *MemoryUtils::cast<SwitchNodeStorage>(switch_view.internal_storage());
                 if (storage.active.has_value())
                 {
                     auto branch_terminal = walk_ts_path(
@@ -126,8 +182,11 @@ namespace hgraph
                 }
             }
 
-            auto output = walk_ts_path(view.output(evaluation_time), binding.target_path);
-            clear_collection_output_if_valid(output, evaluation_time);
+            if (storage.backing_output.has_value())
+            {
+                clear_collection_output_if_valid(storage.backing_output->view(evaluation_time),
+                                                 evaluation_time);
+            }
         }
 
         [[nodiscard]] const SingleNestedGraphNodeSpec *select_branch(const SwitchNodeContext &context,
@@ -292,6 +351,10 @@ namespace hgraph
         if (spec.default_branch.has_value()) { validate_branch(*spec.default_branch); }
 
         meta.node_kind = NodeKind::Nested;
+        if (meta.output_schema != nullptr)
+        {
+            meta.output_endpoint_schema = TSEndpointSchema::peered(meta.output_schema);
+        }
 
         NodeTypeDescriptor descriptor;
         descriptor.schema = std::move(meta);
@@ -300,7 +363,9 @@ namespace hgraph
             .name = switch_storage_field_name,
             .plan = &MemoryUtils::plan_for<SwitchNodeStorage>(),
         }};
-        descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, {}, fields);
+        // The node output target-link may point into SwitchNodeStorage::backing_output,
+        // so the output must be destroyed before this storage field.
+        descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
         const auto &context = register_switch_node_context(
             std::move(spec), descriptor.storage_plan->component(switch_storage_field_name).offset);
