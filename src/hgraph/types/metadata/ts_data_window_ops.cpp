@@ -155,6 +155,20 @@ namespace hgraph::ts_data_plan_factory_detail
                 ++size_;
             }
 
+            void append_move(const ValueView &source, DateTime modified_time)
+            {
+                validate_source(source);
+                if (capacity_ == 0) { throw std::logic_error("TSW storage has no capacity"); }
+                if (size_ >= capacity_)
+                {
+                    throw std::logic_error("TSW storage append requires available capacity");
+                }
+
+                const auto physical = (head_ + size_) % capacity_;
+                move_construct_slot(physical, const_cast<void *>(source.data()), modified_time);
+                ++size_;
+            }
+
             void overwrite_oldest(const ValueView &source, DateTime modified_time)
             {
                 validate_source(source);
@@ -244,6 +258,16 @@ namespace hgraph::ts_data_plan_factory_detail
             void copy_construct_slot(std::size_t physical, const void *source, DateTime modified_time)
             {
                 copy_construct_slot(physical, source, &modified_time);
+            }
+
+            void move_construct_slot(std::size_t physical, void *source, DateTime modified_time)
+            {
+                element_binding().move_construct_at(value_slot(physical), source);
+                auto rollback_value = make_scope_exit([&]() noexcept {
+                    element_binding().destroy_at(value_slot(physical));
+                });
+                time_binding().copy_construct_at(time_slot(physical), &modified_time);
+                rollback_value.release();
             }
 
             void copy_construct_slot(std::size_t physical, const void *source, const void *time_source)
@@ -444,6 +468,21 @@ namespace hgraph::ts_data_plan_factory_detail
                 }
             }
 
+            void move_from_value(Value &&source, DateTime modified_time)
+            {
+                const IndexedValueView source_values = checked_source_values(source.view());
+                if (source_values.size() > period_)
+                {
+                    throw std::length_error("TSW fixed window source exceeds the configured period");
+                }
+
+                clear();
+                for (std::size_t index = 0; index < source_values.size(); ++index)
+                {
+                    append_move(source_values.at(index), modified_time);
+                }
+            }
+
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
             void copy_from_python(nb::handle source, DateTime modified_time)
             {
@@ -501,6 +540,18 @@ namespace hgraph::ts_data_plan_factory_detail
                 for (std::size_t index = 0; index < source_values.size(); ++index)
                 {
                     push(source_values.at(index), modified_time);
+                }
+            }
+
+            void move_from_value(Value &&source, DateTime modified_time)
+            {
+                const IndexedValueView source_values = checked_source_values(source.view());
+
+                clear();
+                ensure_capacity(source_values.size());
+                for (std::size_t index = 0; index < source_values.size(); ++index)
+                {
+                    append_move(source_values.at(index), modified_time);
                 }
             }
 
@@ -722,6 +773,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     .delta_memory_impl         = &window_delta_memory,
                     .mutable_delta_memory_impl = &window_mutable_delta_memory,
                     .copy_value_from_impl      = &window_copy_value_from,
+                    .move_value_from_impl      = &window_move_value_from,
                     .empty_delta_impl          = &ts_data_detail::empty_delta_atomic,
                     .capture_delta_impl        = &ts_data_detail::capture_delta_tsw,
                     .delta_has_effect_impl     = &ts_data_detail::delta_has_effect_atomic,
@@ -865,6 +917,38 @@ namespace hgraph::ts_data_plan_factory_detail
                 const bool newly_modified =
                     window_tracking(context, memory)->last_modified_time != modified_time;
                 storage<Storage>(window_mutable_value_memory(context, memory)).copy_from_value(source, modified_time);
+                return newly_modified;
+            }
+
+            [[nodiscard]] static bool window_move_value_from(const void *context, void *memory,
+                                                             Value &&source,
+                                                             DateTime modified_time)
+            {
+                if (memory == nullptr)
+                {
+                    throw std::logic_error("TSW move requires live storage");
+                }
+                if (!source.has_value())
+                {
+                    throw std::invalid_argument("TSW move requires a live source value");
+                }
+                if (modified_time == MIN_DT)
+                {
+                    throw std::invalid_argument("TSW move requires a concrete evaluation time");
+                }
+
+                const auto *state = ctx(context);
+                const auto *source_schema = source.schema();
+                if (source_schema == nullptr || source_schema->kind != ValueTypeKind::List ||
+                    source_schema->element_type != state->schema->value_type)
+                {
+                    throw std::invalid_argument("TSW move requires a list source with the window element schema");
+                }
+
+                const bool newly_modified =
+                    window_tracking(context, memory)->last_modified_time != modified_time;
+                storage<Storage>(window_mutable_value_memory(context, memory))
+                    .move_from_value(std::move(source), modified_time);
                 return newly_modified;
             }
 

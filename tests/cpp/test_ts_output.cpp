@@ -162,13 +162,24 @@ namespace
     {
         std::int32_t value{0};
 
+        static inline std::size_t copy_construct_count{0};
+        static inline std::size_t move_construct_count{0};
         static inline std::size_t copy_assign_count{0};
         static inline std::size_t move_assign_count{0};
 
         MoveTrackedScalar() = default;
         explicit MoveTrackedScalar(std::int32_t v) : value{v} {}
-        MoveTrackedScalar(const MoveTrackedScalar &) = default;
-        MoveTrackedScalar(MoveTrackedScalar &&) noexcept = default;
+
+        MoveTrackedScalar(const MoveTrackedScalar &other) : value(other.value)
+        {
+            ++copy_construct_count;
+        }
+
+        MoveTrackedScalar(MoveTrackedScalar &&other) noexcept : value(other.value)
+        {
+            other.value = 0;
+            ++move_construct_count;
+        }
 
         MoveTrackedScalar &operator=(const MoveTrackedScalar &other)
         {
@@ -199,6 +210,8 @@ namespace
 
         static void reset_counts() noexcept
         {
+            copy_construct_count = 0;
+            move_construct_count = 0;
             copy_assign_count = 0;
             move_assign_count = 0;
         }
@@ -360,6 +373,46 @@ TEST_CASE("TSOutput dynamic TSL move mutation moves owned child fields")
     REQUIRE(value.at(2).checked_as<MoveTrackedScalar>().value == 30);
     REQUIRE(MoveTrackedScalar::copy_assign_count == 0);
     REQUIRE(MoveTrackedScalar::move_assign_count == 3);
+}
+
+TEST_CASE("TSOutput TSW move mutation moves owned list elements")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *meta     = registry.register_scalar<MoveTrackedScalar>("MoveTrackedScalar");
+    const auto *tsw_meta = registry.tsw(meta, 3, 1);
+    const auto *binding  = ValuePlanFactory::instance().binding_for(meta);
+    REQUIRE(binding != nullptr);
+
+    ListBuilder builder{*binding};
+    builder.push_back(MoveTrackedScalar{10});
+    builder.push_back(MoveTrackedScalar{20});
+    builder.push_back(MoveTrackedScalar{30});
+    Value source = builder.build();
+
+    TSOutput output{*tsw_meta};
+    const auto t1 = MIN_ST;
+
+    MoveTrackedScalar::reset_counts();
+    {
+        auto mutation = output.begin_mutation(t1);
+        REQUIRE(mutation.move_value_from(std::move(source)));
+        REQUIRE(mutation.modified());
+    }
+
+    auto output_view = output.view(t1);
+    auto window = output_view.as_window();
+    REQUIRE(window.size() == 3);
+    REQUIRE(window.time_at(0) == t1);
+    REQUIRE(window.time_at(1) == t1);
+    REQUIRE(window.time_at(2) == t1);
+    REQUIRE(window.at(0).checked_as<MoveTrackedScalar>().value == 10);
+    REQUIRE(window.at(1).checked_as<MoveTrackedScalar>().value == 20);
+    REQUIRE(window.at(2).checked_as<MoveTrackedScalar>().value == 30);
+    REQUIRE(MoveTrackedScalar::copy_construct_count == 0);
+    REQUIRE(MoveTrackedScalar::move_construct_count == 3);
+    REQUIRE(MoveTrackedScalar::copy_assign_count == 0);
 }
 
 TEST_CASE("TSOutput TSS move mutation moves owned keys without removal copies")
