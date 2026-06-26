@@ -517,8 +517,8 @@ current code wins:
   current milestone needs are implemented: direct input binding (exists,
   incl. leaf-wise for structural boundary args), root output forwarding
   (exists), ``alias_parent_input`` pass-through (exists, the ``ParentInput``
-  output-binding kind), key-value injection (with ``switch_``/``map_``), and a
-  tactical copy-merge for ``map_`` output (see below). Everything else
+  output-binding kind), key-value injection (with ``switch_``/``map_``), and
+  keyed write-through forwarding for ``map_`` output. Everything else
   (context import/export, REF adaptation across the boundary, recordable-state
   pass-through) is rejected explicitly at wiring time until designed here.
 - **Sampled semantics on rebind.** Per the sampled-runtime contract, when

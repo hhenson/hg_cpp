@@ -14,6 +14,40 @@
 
 namespace
 {
+    struct MoveCountingScalar
+    {
+        inline static int copy_constructs{0};
+        inline static int copy_assigns{0};
+
+        int value{0};
+
+        MoveCountingScalar() = default;
+        explicit MoveCountingScalar(int value_)
+            : value(value_)
+        {
+        }
+        MoveCountingScalar(const MoveCountingScalar &other)
+            : value(other.value)
+        {
+            ++copy_constructs;
+        }
+        MoveCountingScalar(MoveCountingScalar &&) noexcept = default;
+
+        MoveCountingScalar &operator=(const MoveCountingScalar &other)
+        {
+            value = other.value;
+            ++copy_assigns;
+            return *this;
+        }
+        MoveCountingScalar &operator=(MoveCountingScalar &&) noexcept = default;
+    };
+
+    void reset_move_counting_scalar_counts()
+    {
+        MoveCountingScalar::copy_constructs = 0;
+        MoveCountingScalar::copy_assigns    = 0;
+    }
+
     hgraph::NodeBuilder source_node(const hgraph::TSValueTypeMetaData *ts_int, std::int32_t value)
     {
         hgraph::NodeTypeMetaData schema;
@@ -133,6 +167,39 @@ TEST_CASE("NodeValue exposes a type-erased view over node storage")
     REQUIRE(output.valid());
     REQUIRE(output.modified());
     REQUIRE(output.value().checked_as<std::int32_t>() == 41);
+}
+
+TEST_CASE("testing set_output_value moves owned scalar values")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *value_meta = registry.register_scalar<MoveCountingScalar>("MoveCountingScalar");
+    const auto *ts_value = registry.ts(value_meta);
+
+    NodeTypeMetaData schema;
+    schema.display_name = "move_counting_source";
+    schema.output_schema = ts_value;
+    schema.node_kind = NodeKind::PullSource;
+    schema.schedule_on_start = true;
+
+    NodeCallbacks callbacks;
+    callbacks.evaluate = [](const NodeView &view, DateTime evaluation_time) {
+        testing::set_output_value(view, evaluation_time, MoveCountingScalar{17});
+    };
+
+    NodeValue node = NodeBuilder::native(std::move(schema), std::move(callbacks)).make_node();
+    const auto t1 = MIN_ST;
+
+    reset_move_counting_scalar_counts();
+    auto view = node.view();
+    view.start(t1);
+    view.evaluate(t1);
+
+    const auto &output_value = node.view().output(t1).value().checked_as<MoveCountingScalar>();
+    REQUIRE(output_value.value == 17);
+    REQUIRE(MoveCountingScalar::copy_constructs == 0);
+    REQUIRE(MoveCountingScalar::copy_assigns == 0);
 }
 
 TEST_CASE("NodeValue state is read-write value storage")

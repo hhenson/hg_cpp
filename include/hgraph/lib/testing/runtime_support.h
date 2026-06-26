@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -23,7 +24,7 @@ namespace hgraph::testing
         return std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now());
     }
 
-    /** Copy an already-erased value view into a node output for the current evaluation cycle. */
+    /** Copy an already-erased borrowed value view into a node output for the current evaluation cycle. */
     inline void set_output_value(const NodeView &view, DateTime evaluation_time, ValueView value)
     {
         auto mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
@@ -33,12 +34,30 @@ namespace hgraph::testing
         }
     }
 
-    /** Convenience overload for scalar / owned values. */
-    template <typename T>
+    /** Move an owned erased value into a node output for the current evaluation cycle. */
+    inline void set_output_value(const NodeView &view, DateTime evaluation_time, Value &&value)
+    {
+        auto mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
+        if (!mutation.move_value_from(std::move(value)))
+        {
+            throw std::logic_error("testing::set_output_value failed to move value into output");
+        }
+    }
+
+    /** Copy a borrowed owning value into a node output for the current evaluation cycle. */
+    inline void set_output_value(const NodeView &view, DateTime evaluation_time, const Value &value)
+    {
+        set_output_value(view, evaluation_time, value.view());
+    }
+
+    /** Convenience overload for scalar values. */
+    template <typename T,
+              typename = std::enable_if_t<!std::is_same_v<std::remove_cvref_t<T>, Value> &&
+                                          !std::is_same_v<std::remove_cvref_t<T>, ValueView>>>
     inline void set_output_value(const NodeView &view, DateTime evaluation_time, T &&value)
     {
         Value wrapped{std::forward<T>(value)};
-        set_output_value(view, evaluation_time, wrapped.view());
+        set_output_value(view, evaluation_time, std::move(wrapped));
     }
 
     /** Standard one-field input bundle schema used by test sinks. */
