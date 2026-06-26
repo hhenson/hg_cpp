@@ -349,6 +349,9 @@ namespace hgraph
         /** Copy a value-layer view into this TSData node using the binding's type-erased copy op. */
         [[nodiscard]] bool copy_value_from(const ValueView &source);
 
+        /** Move an owned value into this TSData node using the binding's type-erased move op. */
+        [[nodiscard]] bool move_value_from(Value &&source);
+
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
         /** Apply a Python object through the TSData binding's type-erased conversion op. */
         [[nodiscard]] bool from_python(nb::handle source);

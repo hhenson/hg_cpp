@@ -92,6 +92,52 @@ namespace
             observed.subscribe(replacement);
         }
     };
+
+    struct MoveTrackedScalar
+    {
+        std::int32_t value{0};
+
+        static inline std::size_t copy_assign_count{0};
+        static inline std::size_t move_assign_count{0};
+
+        MoveTrackedScalar() = default;
+        explicit MoveTrackedScalar(std::int32_t v) : value{v} {}
+        MoveTrackedScalar(const MoveTrackedScalar &) = default;
+        MoveTrackedScalar(MoveTrackedScalar &&) noexcept = default;
+
+        MoveTrackedScalar &operator=(const MoveTrackedScalar &other)
+        {
+            value = other.value;
+            ++copy_assign_count;
+            return *this;
+        }
+
+        MoveTrackedScalar &operator=(MoveTrackedScalar &&other) noexcept
+        {
+            value = other.value;
+            other.value = 0;
+            ++move_assign_count;
+            return *this;
+        }
+
+        [[nodiscard]] friend bool operator==(const MoveTrackedScalar &lhs,
+                                             const MoveTrackedScalar &rhs) noexcept
+        {
+            return lhs.value == rhs.value;
+        }
+
+        [[nodiscard]] friend bool operator<(const MoveTrackedScalar &lhs,
+                                            const MoveTrackedScalar &rhs) noexcept
+        {
+            return lhs.value < rhs.value;
+        }
+
+        static void reset_counts() noexcept
+        {
+            copy_assign_count = 0;
+            move_assign_count = 0;
+        }
+    };
 }
 
 TEST_CASE("TSOutput owns root TSData and exposes TS validity")
@@ -155,6 +201,31 @@ TEST_CASE("TSOutput owns root TSData and exposes TS validity")
     REQUIRE(modified.value().checked_as<std::int32_t>() == 42);
     REQUIRE(modified.delta_value().checked_as<std::int32_t>() == 42);
     REQUIRE_FALSE(output.view(t2).delta_value().has_value());
+}
+
+TEST_CASE("TSOutput move mutation moves an owned value without copy assignment")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *meta     = registry.register_scalar<MoveTrackedScalar>("MoveTrackedScalar");
+    const auto *ts_meta  = registry.ts(meta);
+
+    TSOutput output{*ts_meta};
+    const auto t1 = MIN_ST;
+
+    Value source{MoveTrackedScalar{42}};
+    MoveTrackedScalar::reset_counts();
+    {
+        auto mutation = output.begin_mutation(t1);
+        REQUIRE(mutation.move_value_from(std::move(source)));
+        REQUIRE(mutation.modified());
+    }
+
+    REQUIRE(MoveTrackedScalar::copy_assign_count == 0);
+    REQUIRE(MoveTrackedScalar::move_assign_count == 1);
+    REQUIRE(output.view(t1).value().checked_as<MoveTrackedScalar>().value == 42);
+    REQUIRE(output.view(t1).delta_value().checked_as<MoveTrackedScalar>().value == 42);
 }
 
 TEST_CASE("TSOutputHandle stores output identity without evaluation time")

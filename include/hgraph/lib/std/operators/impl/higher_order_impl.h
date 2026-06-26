@@ -195,9 +195,9 @@ namespace hgraph::stdlib
 
                 auto output = view.output(evaluation_time);
                 auto mutation = output.begin_mutation(evaluation_time);
-                if (!mutation.copy_value_from(accumulator.view()))
+                if (!mutation.move_value_from(std::move(accumulator)))
                 {
-                    throw std::logic_error("reduce: lifted fast path failed to copy the result");
+                    throw std::logic_error("reduce: lifted fast path failed to move the result");
                 }
             };
 
@@ -1892,9 +1892,9 @@ namespace hgraph::stdlib
                         Value result = kernel->eval(std::span<const ValueView>{values.data(), values.size()});
                         auto output_item = output[i];
                         auto mutation = output_item.begin_mutation(evaluation_time);
-                        if (!mutation.copy_value_from(result.view()))
+                        if (!mutation.move_value_from(std::move(result)))
                         {
-                            throw std::logic_error("map_: lifted TSL fast path failed to copy an element result");
+                            throw std::logic_error("map_: lifted TSL fast path failed to move an element result");
                         }
                     }
                 };

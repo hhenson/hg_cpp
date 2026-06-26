@@ -379,11 +379,12 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   not child existence. An invalid or unbound ``__keys__`` source stops all
   children and clears the owned output.
 - **Per-key state** lives in node storage as a ``ValueSlotStore`` indexed by
-  the current ``__keys__`` slot id. Each constructed slot owns the copied key
-  ``Value``, an optional per-key ``TS<K>`` output, and the child ``GraphValue``.
-  The owned key is used for output erasure across removals and re-points. Entry
-  member order is load-bearing: the child graph (subscriber) tears down before
-  the key output it observes.
+  the current ``__keys__`` slot id. Each constructed slot owns the key
+  ``Value``, an optional per-key ``TS<K>`` source output that reads that
+  owned key directly, and the child ``GraphValue``. The owned key is used for
+  output erasure across removals and re-points. Entry member order is
+  load-bearing: the child graph (subscriber) tears down before the key source
+  it observes.
 - **Child boundary args** are sourced per ordinal (``MapArgSource``): the
   **element** binds to the parent TSD input's bound output child *at the
   entry's key*; if that key is absent from a multiplexed TSD, the child input
@@ -391,8 +392,7 @@ of its multiplexed ``TSD`` input(s) — an operator like the rest of the family
   first parameter is NAMED ``key`` — ``ndx`` on TSL maps; the Python rule,
   applied per branch on ``switch_`` too; ``arg<"__key_arg__">(Str{…})``
   renames it, ``""`` disables — arity detection is gone) binds to an
-  entry-owned
-  ``TS<K>`` output written once at creation; **broadcast** args bind whole to
+  entry-owned read-only ``TS<K>`` key source; **broadcast** args bind whole to
   the corresponding outer input. Any outer input re-point refreshes the
   existing child bindings through the shared ``nested_bindings`` helpers.
 - **Output (write-through, no copy)**: the output is an *owned*

@@ -5,6 +5,7 @@
 #include <hgraph/util/scope.h>
 
 #include "mapped_child_bindings.h"
+#include "mapped_key_source.h"
 
 #include <algorithm>
 #include <array>
@@ -30,12 +31,12 @@ namespace hgraph
             }
 
             // Declaration order is load-bearing: members destroy in reverse, and
-            // the child graph's inputs are subscribed to ``key_output`` — the
-            // graph (the subscriber) must tear down BEFORE the output it
+            // the child graph's inputs are subscribed to ``key_source`` — the
+            // graph (the subscriber) must tear down BEFORE the source it
             // observes.
-            Value                   key{};
-            std::optional<TSOutput> key_output{};
-            GraphValue              graph{};
+            Value                          key{};
+            runtime_detail::MappedKeySource key_source{};
+            GraphValue                     graph{};
         };
 
         struct MapNodeStorage final : SlotObserver
@@ -273,12 +274,7 @@ namespace hgraph
             entry.graph = spec.child.graph_builder.make_nested_graph(NodeStorageRef{view.binding(), view.data()});
             if (spec.key_output_schema != nullptr)
             {
-                entry.key_output.emplace(*spec.key_output_schema);
-                auto mutation = entry.key_output->view(evaluation_time).begin_mutation(evaluation_time);
-                if (!mutation.copy_value_from(key_view))
-                {
-                    throw std::logic_error("map_: failed to write the key value into the per-key output");
-                }
+                entry.key_source.bind(*spec.key_output_schema, entry.key, evaluation_time);
             }
 
             // Instantiate the key's element in the owned TSD output and attach
@@ -286,8 +282,8 @@ namespace hgraph
             // entry's lifetime).
             (void)output_mutation[key_view];
 
-            const TSOutputView key_source = entry.key_output.has_value()
-                                                ? entry.key_output->view(evaluation_time)
+            const TSOutputView key_source = entry.key_source.bound()
+                                                ? entry.key_source.view(evaluation_time)
                                                 : TSOutputView{};
             runtime_detail::bind_mapped_child_inputs(view, entry.graph.view(), evaluation_time,
                                                      spec.child, spec.args, entry.key.view(), key_source);
@@ -429,8 +425,8 @@ namespace hgraph
                 auto child = entry->graph.view();
                 if (bindings_need_refresh)
                 {
-                    const TSOutputView key_source = entry->key_output.has_value()
-                                                        ? entry->key_output->view(evaluation_time)
+                    const TSOutputView key_source = entry->key_source.bound()
+                                                        ? entry->key_source.view(evaluation_time)
                                                         : TSOutputView{};
                     runtime_detail::bind_mapped_child_inputs(view, child, evaluation_time, spec.child,
                                                              spec.args, entry->key.view(), key_source);

@@ -45,6 +45,9 @@ namespace hgraph
         /** Copy a value-layer view into the root TSData. */
         [[nodiscard]] bool copy_value_from(const ValueView &source);
 
+        /** Move an owned value into the root TSData. */
+        [[nodiscard]] bool move_value_from(Value &&source);
+
       private:
         static TSDataMutationView begin_root_mutation(TSOutput &output, DateTime evaluation_time);
 

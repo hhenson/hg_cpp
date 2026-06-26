@@ -186,13 +186,14 @@ Runtime layer
 
 **Stable instance store.** Instances live in a ``Value``-keyed, pointer-stable
 store (the set of instances is a *superset* of ``__keys__`` — it also holds
-on-demand instances). Each entry owns: the key ``Value``, a ``TS<K>`` key output
-(the per-instance key, always present), the child ``GraphValue``, and the
-instance's place in the dependency graph. Stable addressing means create/remove
-never renumbers anything. Declaration/destruction order: the child graph
-(a subscriber to the key output and to the mesh self-output) tears down before
-those outputs, and the whole instance store tears down before the owned ``TSD``
-output (children forward into it).
+on-demand instances). Each entry owns: the key ``Value``, a read-only ``TS<K>``
+key source output over that owned key (the per-instance key, always present),
+the child ``GraphValue``, and the instance's place in the dependency graph.
+Stable addressing means create/remove never renumbers anything.
+Declaration/destruction order: the child graph (a subscriber to the key source
+and to the mesh self-output) tears down before those outputs, and the whole
+instance store tears down before the owned ``TSD`` output (children forward
+into it).
 
 **Dependency graph.** A lightweight bidirectional graph over instances — edges
 *dependent → dependency* and the reverse — accumulated from ``mesh_subscribe``
@@ -270,7 +271,7 @@ forwarding output to that same element. The forwarding output is what consumers
 read; ``value`` keeps the subscription node reactive to sibling ticks. No
 REF-input dereferencing and no data-object back-pointer.
 
-**Lifecycle.** Create: build child, write key output, instantiate
+**Lifecycle.** Create: build child, bind the key source, instantiate
 ``output[key]``, bind inputs + the forwarding output, start. Remove (refcount per
 *Removal* above): stop child, erase element, drop edges, destroy entry. On node
 stop: stop all instances, clear the output and dependency state.

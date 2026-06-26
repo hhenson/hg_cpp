@@ -62,4 +62,9 @@ namespace hgraph
         return mutation_.copy_value_from(source);
     }
 
+    bool TSOutputMutationView::move_value_from(Value &&source)
+    {
+        return mutation_.move_value_from(std::move(source));
+    }
+
 }  // namespace hgraph

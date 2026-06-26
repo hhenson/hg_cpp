@@ -1,6 +1,7 @@
 #include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
 
 #include <hgraph/types/utils/intern_table.h>
+#include <hgraph/types/value/value.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -38,6 +39,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 .delta_memory_impl         = &atomic_delta_memory,
                 .mutable_delta_memory_impl = &atomic_mutable_delta_memory,
                 .copy_value_from_impl      = &atomic_copy_value_from,
+                .move_value_from_impl      = &atomic_move_value_from,
                 .empty_delta_impl          = kind == TSTypeKind::REF ? &ts_data_detail::missing_empty_delta
                                                                      : &ts_data_detail::empty_delta_atomic,
                 .capture_delta_impl        = kind == TSTypeKind::SIGNAL ? &ts_data_detail::capture_delta_signal
@@ -128,6 +130,15 @@ namespace hgraph::ts_data_plan_factory_detail
             plan.copy_assign(dst, src);
         }
 
+        static void move_assign_required(const MemoryUtils::StoragePlan &plan, void *dst, void *src)
+        {
+            if (!plan.can_move_assign())
+            {
+                throw std::logic_error("TSData atomic assignment requires move-assignable value storage");
+            }
+            plan.move_assign(dst, src);
+        }
+
         [[nodiscard]] static bool atomic_copy_value_from(const void *context, void *memory, const ValueView &source,
                                                          DateTime modified_time)
         {
@@ -155,6 +166,38 @@ namespace hgraph::ts_data_plan_factory_detail
 
             const auto &value_plan = layout->value_binding->checked_plan();
             copy_assign_required(value_plan, atomic_mutable_value_memory(context, memory), source.data());
+            return first_for_time;
+        }
+
+        [[nodiscard]] static bool atomic_move_value_from(const void *context, void *memory, Value &&source,
+                                                         DateTime modified_time)
+        {
+            if (memory == nullptr)
+            {
+                throw std::logic_error("TSData atomic move requires live TSData memory");
+            }
+            if (!source.has_value())
+            {
+                throw std::invalid_argument("TSData atomic move requires a live source value");
+            }
+            if (modified_time == MIN_DT)
+            {
+                throw std::invalid_argument("TSData atomic move requires a concrete evaluation time");
+            }
+
+            const auto *layout = atomic_layout(context);
+            if (source.binding() != layout->value_binding)
+            {
+                throw std::invalid_argument("TSData atomic move requires the bound value schema and plan");
+            }
+
+            const auto *tracking       = atomic_tracking(context, memory);
+            const bool  first_for_time = tracking->last_modified_time != modified_time;
+
+            const auto &value_plan = layout->value_binding->checked_plan();
+            move_assign_required(value_plan,
+                                 atomic_mutable_value_memory(context, memory),
+                                 const_cast<void *>(source.view().data()));
             return first_for_time;
         }
 

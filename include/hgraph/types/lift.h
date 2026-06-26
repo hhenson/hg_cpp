@@ -355,9 +355,9 @@ namespace hgraph
 
             Value result = k.eval(std::span<const ValueView>{values.data(), values.size()});
             auto  mutation = output.begin_mutation(evaluation_time);
-            if (!mutation.copy_value_from(result.view()))
+            if (!mutation.move_value_from(std::move(result)))
             {
-                throw std::logic_error("lifted node failed to copy the result into its output");
+                throw std::logic_error("lifted node failed to move the result into its output");
             }
         }
 

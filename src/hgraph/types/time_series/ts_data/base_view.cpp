@@ -4,6 +4,7 @@
 #include <hgraph/runtime/node.h>
 #include <hgraph/types/time_series/ts_input.h>
 #include <hgraph/types/time_series/ts_output.h>
+#include <hgraph/types/value/value.h>
 
 #include <stdexcept>
 #include <string>
@@ -442,6 +443,26 @@ namespace hgraph
         const auto &table   = current.ops();
         const bool newly_modified =
             table.copy_value_from_impl(table.context, current.mutable_data(), source, mutation_time_);
+        if (newly_modified)
+        {
+            // The modification may already be recorded for this cycle — e.g.
+            // the storage was structurally created earlier in the same dict
+            // mutation (which marks it), or a write-through forwarding link
+            // landed on pre-marked storage. Recording is idempotent; parents
+            // are notified only by the first recording.
+            if (record_modified_local()) { notify_parent_modified(); }
+        }
+        return newly_modified;
+    }
+
+    bool TSDataMutationView::move_value_from(Value &&source)
+    {
+        require_active_mutation();
+
+        auto        current = view();
+        const auto &table   = current.ops();
+        const bool newly_modified =
+            table.move_value_from_impl(table.context, current.mutable_data(), std::move(source), mutation_time_);
         if (newly_modified)
         {
             // The modification may already be recorded for this cycle — e.g.

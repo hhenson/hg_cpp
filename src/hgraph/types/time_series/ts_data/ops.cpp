@@ -66,6 +66,11 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("copy value");
     }
 
+    bool missing_move_value_from(const void *, void *, Value &&, DateTime)
+    {
+        missing_ts_data_op("move value");
+    }
+
     Value missing_empty_delta(const TSDataBinding &)
     {
         missing_ts_data_op("empty delta");

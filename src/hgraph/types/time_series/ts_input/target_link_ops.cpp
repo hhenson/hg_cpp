@@ -1,6 +1,7 @@
 #include "target_link_ops.h"
 
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/value/value.h>
 
 #include <array>
 #include <stdexcept>
@@ -758,6 +759,19 @@ namespace hgraph::detail
             return mutation.copy_value_from(value);
         }
 
+        [[nodiscard]] bool target_link_move_value_from(const void *context, void *memory, Value &&value,
+                                                       DateTime modified_time)
+        {
+            const auto *link = target_link_storage_at(*static_cast<const TSInputTargetLinkContext *>(context), memory);
+            if (link == nullptr || !link->target_output().bound())
+            {
+                throw std::logic_error("TSInput target-link write-through requires a bound target output");
+            }
+            auto target_view = link->target_output().view(modified_time);
+            auto mutation    = target_view.begin_mutation(modified_time);
+            return mutation.move_value_from(std::move(value));
+        }
+
         [[nodiscard]] TSDataOps target_link_base_ops(TSInputTargetLinkContext &context)
         {
             return TSDataOps{
@@ -772,6 +786,7 @@ namespace hgraph::detail
                 .value_memory_impl         = &target_link_value_memory,
                 .delta_memory_impl         = &target_link_delta_memory,
                 .copy_value_from_impl      = &target_link_copy_value_from,
+                .move_value_from_impl      = &target_link_move_value_from,
 #if HGRAPH_ENABLE_PYTHON_USER_NODES
                 .to_python_impl            = &target_link_to_python,
                 .delta_to_python_impl      = &target_link_delta_to_python,
