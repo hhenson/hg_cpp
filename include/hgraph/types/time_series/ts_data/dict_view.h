@@ -9,6 +9,8 @@
 
 namespace hgraph
 {
+    class Value;
+
     /** Read view over dictionary-shaped TSData. */
     class TSDDataView
     {
@@ -149,6 +151,9 @@ namespace hgraph
 
         /** Replace the dictionary from a value-layer map view. */
         [[nodiscard]] bool copy_value_from(const ValueView &source);
+
+        /** Replace the dictionary from an owned value-layer map without copying keys or child values. */
+        [[nodiscard]] bool move_value_from(Value &&source);
 
       private:
         [[nodiscard]] TSDataView at_slot(std::size_t slot);

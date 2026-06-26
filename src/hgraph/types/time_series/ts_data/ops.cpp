@@ -252,9 +252,19 @@ namespace hgraph::ts_data_detail
         missing_ts_data_op("key insertion");
     }
 
+    SlotTSDataMutationResult missing_insert_key_move(const void *, void *, const ValueView &, DateTime)
+    {
+        missing_ts_data_op("key move insertion");
+    }
+
     SlotTSDataMutationResult missing_remove_key(const void *, void *, const ValueView &, DateTime)
     {
         missing_ts_data_op("key removal");
+    }
+
+    SlotTSDataMutationResult missing_remove_slot(const void *, void *, std::size_t, DateTime)
+    {
+        missing_ts_data_op("slot removal");
     }
 
     bool missing_touch_slots(const void *, void *, DateTime)

@@ -409,6 +409,62 @@ TEST_CASE("TSOutput TSS move mutation moves owned keys without removal copies")
     REQUIRE(TSSMoveTrackedKey::move_construct_count == 1);
 }
 
+TEST_CASE("TSOutput TSD move mutation moves keys and child values without removal copies")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *key_meta = registry.register_scalar<TSSMoveTrackedKey>("TSSMoveTrackedKey");
+    const auto *value_meta = registry.register_scalar<MoveTrackedScalar>("MoveTrackedScalar");
+    const auto *ts_value = registry.ts(value_meta);
+    const auto *tsd_meta = registry.tsd(key_meta, ts_value);
+    const auto *key_binding = ValuePlanFactory::instance().binding_for(key_meta);
+    const auto *value_binding = ValuePlanFactory::instance().binding_for(value_meta);
+    REQUIRE(key_binding != nullptr);
+    REQUIRE(value_binding != nullptr);
+
+    MapBuilder initial_builder{*key_binding, *value_binding};
+    initial_builder.set_item(TSSMoveTrackedKey{10}, MoveTrackedScalar{1});
+    initial_builder.set_item(TSSMoveTrackedKey{99}, MoveTrackedScalar{99});
+    Value initial = initial_builder.build();
+
+    MapBuilder source_builder{*key_binding, *value_binding};
+    source_builder.set_item(TSSMoveTrackedKey{10}, MoveTrackedScalar{100});
+    source_builder.set_item(TSSMoveTrackedKey{20}, MoveTrackedScalar{200});
+    Value source = source_builder.build();
+
+    TSOutput output{*tsd_meta};
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + TimeDelta{1};
+    {
+        auto output_view = output.view(t1);
+        auto dict = output_view.as_dict();
+        auto mutation = dict.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(initial.view()));
+    }
+
+    TSSMoveTrackedKey::reset_counts();
+    MoveTrackedScalar::reset_counts();
+    {
+        auto mutation = output.begin_mutation(t2);
+        REQUIRE(mutation.move_value_from(std::move(source)));
+        REQUIRE(mutation.modified());
+    }
+
+    Value key10{TSSMoveTrackedKey{10}};
+    Value key20{TSSMoveTrackedKey{20}};
+    Value key99{TSSMoveTrackedKey{99}};
+    auto  value = output.view(t2).value().as_map();
+    REQUIRE(value.size() == 2);
+    REQUIRE(value.at(key10.view()).checked_as<MoveTrackedScalar>().value == 100);
+    REQUIRE(value.at(key20.view()).checked_as<MoveTrackedScalar>().value == 200);
+    REQUIRE_FALSE(value.contains(key99.view()));
+    REQUIRE(TSSMoveTrackedKey::copy_construct_count == 0);
+    REQUIRE(TSSMoveTrackedKey::move_construct_count == 1);
+    REQUIRE(MoveTrackedScalar::copy_assign_count == 0);
+    REQUIRE(MoveTrackedScalar::move_assign_count == 2);
+}
+
 TEST_CASE("TSOutputHandle stores output identity without evaluation time")
 {
     using namespace hgraph;

@@ -451,6 +451,71 @@ namespace hgraph
         return newly_touched;
     }
 
+    bool TSDDataMutationView::move_value_from(Value &&source)
+    {
+        if (!source.has_value())
+        {
+            throw std::invalid_argument("TSDDataMutationView::move_value_from requires a live source");
+        }
+        if (source.schema() != layout().value_binding->type_meta)
+        {
+            throw std::invalid_argument("TSDDataMutationView::move_value_from requires the map value schema");
+        }
+
+        auto       source_map = source.as_map();
+        const auto &child_ops = layout().element_binding->ops_ref();
+        if (child_ops.move_value_from_impl == &ts_data_detail::missing_move_value_from)
+        {
+            throw std::logic_error("TSDDataMutationView::move_value_from requires movable child TSData");
+        }
+        for (const auto [key, value] : source_map.items())
+        {
+            if (!key.valid() || !value.valid())
+            {
+                throw std::invalid_argument("TSDDataMutationView::move_value_from requires live source entries");
+            }
+        }
+
+        std::vector<std::size_t> removals;
+        for (std::size_t slot = 0; slot < slot_capacity(); ++slot)
+        {
+            if (!slot_live(slot)) { continue; }
+            auto key = key_at_slot(slot);
+            if (!source_map.contains(key)) { removals.push_back(slot); }
+        }
+
+        const bool newly_touched = !modified(current_mutation_time());
+        touch();
+
+        const auto &ops = dict_ops();
+        for (const auto [key, value] : source_map.items())
+        {
+            const auto result = ops.insert_key_move_impl(
+                ops.context,
+                mutation_.mutable_data(),
+                key,
+                current_mutation_time());
+            apply_slot_mutation_result(mutation_, result);
+
+            auto child = at_slot(result.slot);
+            auto child_mutation = child.begin_mutation(current_mutation_time());
+            auto source_child = Value::reference(*value.binding(), const_cast<void *>(value.data()));
+            static_cast<void>(child_mutation.move_value_from(std::move(source_child)));
+        }
+
+        for (const auto slot : removals)
+        {
+            const auto result = ops.remove_slot_impl(
+                ops.context,
+                mutation_.mutable_data(),
+                slot,
+                current_mutation_time());
+            apply_slot_mutation_result(mutation_, result);
+        }
+
+        return newly_touched;
+    }
+
     TSDataView TSDDataMutationView::at_slot(std::size_t slot)
     {
         const auto &ops = dict_ops();

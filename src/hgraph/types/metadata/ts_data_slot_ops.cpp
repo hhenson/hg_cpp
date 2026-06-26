@@ -780,7 +780,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 set_ops.make_added_values_range_impl   = &tss_added_keys_range;
                 set_ops.make_removed_values_range_impl = &tss_removed_keys_range;
                 set_ops.insert_key_impl                = &tss_insert_key;
+                set_ops.insert_key_move_impl           = &tss_insert_key_move;
                 set_ops.remove_key_impl                = &tss_remove_key;
+                set_ops.remove_slot_impl               = &tss_remove_slot;
                 set_ops.touch_impl                     = &tss_touch;
                 set_ops.reserve_impl                   = &tss_reserve;
                 set_ops.subscribe_slot_observer_impl   = &tss_subscribe_slot_observer;
@@ -1215,11 +1217,25 @@ namespace hgraph::ts_data_plan_factory_detail
                 return storage<Storage>(memory).insert_key(key, modified_time);
             }
 
+            [[nodiscard]] static SlotTSDataMutationResult tss_insert_key_move(const void *, void *memory,
+                                                                              const ValueView &key,
+                                                                              DateTime modified_time)
+            {
+                return storage<Storage>(memory).insert_key_move(key, modified_time);
+            }
+
             [[nodiscard]] static SlotTSDataMutationResult tss_remove_key(const void *, void *memory,
                                                                          const ValueView &key,
                                                                          DateTime modified_time)
             {
                 return storage<Storage>(memory).remove_key(key, modified_time);
+            }
+
+            [[nodiscard]] static SlotTSDataMutationResult tss_remove_slot(const void *, void *memory,
+                                                                          std::size_t slot,
+                                                                          DateTime modified_time)
+            {
+                return storage<Storage>(memory).remove_slot(slot, modified_time);
             }
 
             [[nodiscard]] static bool tss_touch(const void *, void *memory, DateTime modified_time)
@@ -1729,7 +1745,9 @@ namespace hgraph::ts_data_plan_factory_detail
                     ks.from_python_impl          = read_only_base.from_python_impl;
 #endif
                     key_set_ts_ops.insert_key_impl = read_only_set.insert_key_impl;
+                    key_set_ts_ops.insert_key_move_impl = read_only_set.insert_key_move_impl;
                     key_set_ts_ops.remove_key_impl = read_only_set.remove_key_impl;
+                    key_set_ts_ops.remove_slot_impl = read_only_set.remove_slot_impl;
                     key_set_ts_ops.touch_impl      = read_only_set.touch_impl;
                 }
                 key_set_ts_binding = &TSDataBinding::intern(*TypeRegistry::instance().tss(schema_.key_type()),

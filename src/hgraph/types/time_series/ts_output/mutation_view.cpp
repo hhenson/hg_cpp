@@ -1,5 +1,6 @@
 #include <hgraph/types/time_series/ts_output/mutation_view.h>
 
+#include <hgraph/types/time_series/ts_data/dict_view.h>
 #include <hgraph/types/time_series/ts_output/view_common.h>
 
 #include <utility>
@@ -64,6 +65,13 @@ namespace hgraph
 
     bool TSOutputMutationView::move_value_from(Value &&source)
     {
+        auto root = mutation_.view();
+        if (const auto *schema = root.schema(); schema != nullptr && schema->kind == TSTypeKind::TSD)
+        {
+            auto dict = root.as_dict();
+            auto dict_mutation = dict.begin_mutation(current_mutation_time());
+            return dict_mutation.move_value_from(std::move(source));
+        }
         return mutation_.move_value_from(std::move(source));
     }
 

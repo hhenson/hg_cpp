@@ -60,8 +60,12 @@ namespace hgraph
         [[nodiscard]] Range<TSDataView> missing_ts_data_range(const void *, const void *);
         [[nodiscard]] SlotTSDataMutationResult missing_insert_key(const void *, void *, const ValueView &,
                                                                   DateTime);
+        [[nodiscard]] SlotTSDataMutationResult missing_insert_key_move(const void *, void *, const ValueView &,
+                                                                       DateTime);
         [[nodiscard]] SlotTSDataMutationResult missing_remove_key(const void *, void *, const ValueView &,
                                                                   DateTime);
+        [[nodiscard]] SlotTSDataMutationResult missing_remove_slot(const void *, void *, std::size_t,
+                                                                   DateTime);
         [[nodiscard]] bool missing_touch_slots(const void *, void *, DateTime);
         void missing_reserve_slots(const void *, void *, std::size_t);
         void missing_subscribe_slot_observer(const void *, void *, SlotObserver *);
@@ -198,8 +202,13 @@ namespace hgraph
                                                            const void *memory) = &ts_data_detail::missing_value_range;
         SlotTSDataMutationResult (*insert_key_impl)(const void *context, void *memory, const ValueView &key,
                                                     DateTime modified_time) = &ts_data_detail::missing_insert_key;
+        SlotTSDataMutationResult (*insert_key_move_impl)(const void *context, void *memory, const ValueView &key,
+                                                         DateTime modified_time) =
+            &ts_data_detail::missing_insert_key_move;
         SlotTSDataMutationResult (*remove_key_impl)(const void *context, void *memory, const ValueView &key,
                                                     DateTime modified_time) = &ts_data_detail::missing_remove_key;
+        SlotTSDataMutationResult (*remove_slot_impl)(const void *context, void *memory, std::size_t slot,
+                                                     DateTime modified_time) = &ts_data_detail::missing_remove_slot;
         bool (*touch_impl)(const void *context, void *memory,
                            DateTime modified_time) = &ts_data_detail::missing_touch_slots;
         void (*reserve_impl)(const void *context, void *memory,
