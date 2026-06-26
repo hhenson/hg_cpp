@@ -351,7 +351,7 @@ namespace hgraph
                             if constexpr (static_node_detail::is_scalar_selector<P>::value)
                             {
                                 Value field = graph_wiring_detail::make_scalar_field<P>(std::get<I>(arg_tuple));
-                                bundle.set(P::field_name.sv(), field.view());
+                                bundle.set(P::field_name.sv(), std::move(field));
                             }
                         }(),
                         ...);

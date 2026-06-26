@@ -665,8 +665,8 @@ namespace hgraph
     // they are themselves immutable containers (``Set`` / ``Map`` / …):
     // ``MutableIndexedValueView::at`` begin-mutates each field, which an
     // immutable field refuses. Instead each field is set by a whole-value
-    // ``copy_assign`` at its layout offset, over the default-constructed
-    // field. This is how the canonical delta bundles
+    // ``copy_assign`` / ``move_assign`` at its layout offset, over the
+    // default-constructed field. This is how the canonical delta bundles
     // (``Bundle{added: Set<T>, removed: Set<T>}`` for ``TSS``, the per-field
     // delta bundle for ``TSB``) are constructed for tests/wiring so they
     // match the runtime ``delta_value_schema`` exactly.
@@ -693,6 +693,22 @@ namespace hgraph
 
         /** Set the named field ``name`` to a copy of ``field``. */
         BundleBuilder &set(std::string_view name, const ValueView &field) { return set(index_of(name), field); }
+
+        /** Set field ``index`` by moving an owned ``field`` value into the bundle. */
+        BundleBuilder &set(std::size_t index, Value &&field)
+        {
+            ensure_not_built();
+            if (!field.has_value())
+            {
+                throw std::invalid_argument("BundleBuilder::set(Value&&) requires a live field value");
+            }
+            const auto &comp = component(index);
+            comp.plan->move_assign(field_memory(comp.offset), const_cast<void *>(field.view().data()));
+            return *this;
+        }
+
+        /** Set the named field ``name`` by moving an owned ``field`` value into the bundle. */
+        BundleBuilder &set(std::string_view name, Value &&field) { return set(index_of(name), std::move(field)); }
 
         [[nodiscard]] std::size_t size() const noexcept { return state().component_count; }
 

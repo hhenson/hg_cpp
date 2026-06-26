@@ -651,7 +651,7 @@ namespace hgraph
                                     throw std::logic_error("operator scalar argument could not be coerced to the "
                                                            "resolved scalar schema");
                                 }
-                                bundle.set(P::field_name.sv(), coerced->view());
+                                bundle.set(P::field_name.sv(), std::move(*coerced));
                             }
                         }(),
                         ...);
@@ -689,7 +689,7 @@ namespace hgraph
             const auto *binding =
                 ValuePlanFactory::instance().binding_for(StaticNodeSignature<operator_auto_const>::scalar_schema(map));
             BundleBuilder bundle{*binding};
-            bundle.set("value", coerced->view());
+            bundle.set("value", std::move(*coerced));
 
             NodeBuilder builder;
             builder.implementation<operator_auto_const>(map);

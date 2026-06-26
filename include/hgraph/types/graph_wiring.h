@@ -2071,13 +2071,13 @@ namespace hgraph
                                     {
                                         Value field = graph_wiring_detail::make_scalar_field<P>(
                                             call_args_detail::payload_at<arg_index>(arg_tuple));
-                                        bundle.set(P::field_name.sv(), field.view());
+                                        bundle.set(P::field_name.sv(), std::move(field));
                                     }
                                     else if constexpr (default_index != call_args_detail::npos)
                                     {
                                         Value field = graph_wiring_detail::make_scalar_field<P>(
                                             call_args_detail::payload_at<default_index>(default_args));
-                                        bundle.set(P::field_name.sv(), field.view());
+                                        bundle.set(P::field_name.sv(), std::move(field));
                                     }
                                 }
                             }(),

@@ -188,8 +188,8 @@ namespace hgraph
         for (const auto &e : removed) { (void)removed_set.insert(e); }
 
         BundleBuilder bundle{*bundle_binding};
-        bundle.set("added", added_set.build().view());
-        bundle.set("removed", removed_set.build().view());
+        bundle.set("added", added_set.build());
+        bundle.set("removed", removed_set.build());
         return bundle.build();
     }
 
@@ -254,8 +254,8 @@ namespace hgraph
             }
 
             BundleBuilder bundle{*bundle_binding};
-            bundle.set("removed", removed_set.build().view());
-            bundle.set("modified", modified_map.build().view());
+            bundle.set("removed", removed_set.build());
+            bundle.set("modified", modified_map.build());
             return bundle.build();
         }
 
@@ -287,7 +287,7 @@ namespace hgraph
             if constexpr (!is_scalar_ts<C>::value)
             {
                 Value empty = empty_delta_builder<C>::build();
-                builder.set(index, empty.view());
+                builder.set(index, std::move(empty));
             }
         }
 
@@ -316,14 +316,21 @@ namespace hgraph
                 using V = delta_input_t<C>;
                 static_assert(std::is_convertible_v<A, V>, "tsb_delta: field scalar delta has the wrong value type");
                 V     value = static_cast<V>(std::forward<Arg>(arg));
-                Value delta{value};
-                builder.set(index, delta.view());
+                Value delta{std::move(value)};
+                builder.set(index, std::move(delta));
             }
             else
             {
                 static_assert(requires(const A &value) { value.view(); },
                               "tsb_delta: container field delta must be a Value-like object");
-                builder.set(index, std::forward<Arg>(arg).view());
+                if constexpr (std::is_same_v<A, Value>)
+                {
+                    builder.set(index, std::forward<Arg>(arg));
+                }
+                else
+                {
+                    builder.set(index, std::forward<Arg>(arg).view());
+                }
             }
         }
 

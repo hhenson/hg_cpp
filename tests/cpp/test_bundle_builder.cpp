@@ -1,12 +1,13 @@
 // Tests for BundleBuilder — assembling a compact (immutable) Bundle Value from
-// prebuilt field Values via whole-value copy-assign at the field offsets. This is
-// the construction path for the canonical delta bundles (e.g. the TSS delta
-// Bundle{added: Set<T>, removed: Set<T>}), which have immutable container fields
-// that cannot be populated through begin_mutation.
+// prebuilt field Values via whole-value copy/move-assign at the field offsets.
+// This is the construction path for the canonical delta bundles (e.g. the TSS
+// delta Bundle{added: Set<T>, removed: Set<T>}), which have immutable container
+// fields that cannot be populated through begin_mutation.
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <utility>
 
 #include <hgraph/lib/std/value_util.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -17,6 +18,40 @@
 namespace
 {
     using namespace hgraph;
+
+    struct BundleMoveCountingScalar
+    {
+        inline static int copy_constructs{0};
+        inline static int copy_assigns{0};
+
+        int value{0};
+
+        BundleMoveCountingScalar() = default;
+        explicit BundleMoveCountingScalar(int value_)
+            : value(value_)
+        {
+        }
+        BundleMoveCountingScalar(const BundleMoveCountingScalar &other)
+            : value(other.value)
+        {
+            ++copy_constructs;
+        }
+        BundleMoveCountingScalar(BundleMoveCountingScalar &&) noexcept = default;
+
+        BundleMoveCountingScalar &operator=(const BundleMoveCountingScalar &other)
+        {
+            value = other.value;
+            ++copy_assigns;
+            return *this;
+        }
+        BundleMoveCountingScalar &operator=(BundleMoveCountingScalar &&) noexcept = default;
+    };
+
+    void reset_bundle_move_counting_scalar_counts()
+    {
+        BundleMoveCountingScalar::copy_constructs = 0;
+        BundleMoveCountingScalar::copy_assigns    = 0;
+    }
 
     // Build the canonical TSS-delta bundle: Bundle{added: Set<std::int32_t>, removed: Set<std::int32_t>}.
     Value make_delta_bundle(std::initializer_list<std::int32_t> added, std::initializer_list<std::int32_t> removed)
@@ -50,6 +85,29 @@ TEST_CASE("BundleBuilder: assembles a Bundle{Set,Set} and reads its fields back"
     CHECK(added.contains(Value{std::int32_t{1}}.view()));
     CHECK(added.contains(Value{std::int32_t{2}}.view()));
     CHECK(view.field("removed").as_set().size() == 0);
+}
+
+TEST_CASE("BundleBuilder: moves owned field values")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *field_meta = registry.register_scalar<BundleMoveCountingScalar>("BundleMoveCountingScalar");
+    const auto *bundle_schema = registry.un_named_bundle({{"field", field_meta}});
+    const auto *bundle_binding = ValuePlanFactory::instance().binding_for(bundle_schema);
+    REQUIRE(bundle_binding != nullptr);
+
+    BundleBuilder builder{*bundle_binding};
+    Value         field{BundleMoveCountingScalar{13}};
+
+    reset_bundle_move_counting_scalar_counts();
+    builder.set("field", std::move(field));
+    Value bundle = builder.build();
+
+    const auto &stored = bundle.view().as_bundle().field("field").checked_as<BundleMoveCountingScalar>();
+    REQUIRE(stored.value == 13);
+    REQUIRE(BundleMoveCountingScalar::copy_constructs == 0);
+    REQUIRE(BundleMoveCountingScalar::copy_assigns == 0);
 }
 
 TEST_CASE("BundleBuilder: equality is content-based and order-independent (Value::equals)")

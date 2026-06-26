@@ -41,8 +41,7 @@ namespace hgraph
 
         BundleBuilder builder{*binding};
         const auto    set_field = [&](std::string_view name, const std::string &text) {
-            Value field{text};
-            builder.set(name, field.view());
+            builder.set(name, Value{text});
         };
         set_field("signature_name", fields.signature_name);
         set_field("label", fields.label);

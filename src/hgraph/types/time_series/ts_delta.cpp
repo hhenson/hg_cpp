@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace hgraph
@@ -64,7 +65,7 @@ namespace hgraph
                 const TSDataBinding &child_binding = ts_binding_for(child_schema, "empty_delta_tsb");
                 const auto          &child_ops     = child_binding.ops_ref();
                 Value                empty         = child_ops.empty_delta_impl(child_binding);
-                builder.set(index, empty.view());
+                builder.set(index, std::move(empty));
             }
         }
 
@@ -299,8 +300,8 @@ namespace hgraph
             SetBuilder    added{elem_binding};
             SetBuilder    removed{elem_binding};
             BundleBuilder bundle{binding_for(schema->delta_value_schema, "empty_delta_tss")};
-            bundle.set("added", added.build().view());
-            bundle.set("removed", removed.build().view());
+            bundle.set("added", added.build());
+            bundle.set("removed", removed.build());
             return bundle.build();
         }
 
@@ -318,8 +319,8 @@ namespace hgraph
             SetBuilder    removed{key_binding};
             MapBuilder    modified{key_binding, delta_binding};
             BundleBuilder bundle{binding_for(schema->delta_value_schema, "empty_delta_tsd")};
-            bundle.set("removed", removed.build().view());
-            bundle.set("modified", modified.build().view());
+            bundle.set("removed", removed.build());
+            bundle.set("modified", modified.build());
             return bundle.build();
         }
 
@@ -380,8 +381,8 @@ namespace hgraph
             for (const auto &e : set.removed()) { (void)removed.insert_copy(e.data()); }
 
             BundleBuilder bundle{binding_for(bundle_meta, "capture_delta")};
-            bundle.set("added", added.build().view());
-            bundle.set("removed", removed.build().view());
+            bundle.set("added", added.build());
+            bundle.set("removed", removed.build());
             return bundle.build();
         }
 
@@ -406,8 +407,8 @@ namespace hgraph
             }
 
             BundleBuilder bundle{bundle_binding};
-            bundle.set("removed", removed.build().view());
-            bundle.set("modified", modified.build().view());
+            bundle.set("removed", removed.build());
+            bundle.set("modified", modified.build());
             return bundle.build();
         }
 
@@ -443,8 +444,8 @@ namespace hgraph
             {
                 auto child = bundle.at(index);
                 if (!child.modified()) { continue; }
-                const Value child_delta = capture_delta(child);
-                builder.set(index, child_delta.view());
+                Value child_delta = capture_delta(child);
+                builder.set(index, std::move(child_delta));
             }
             return builder.build();
         }
