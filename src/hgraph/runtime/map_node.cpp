@@ -292,7 +292,8 @@ namespace hgraph
             runtime_detail::bind_mapped_child_inputs(view, entry.graph.view(), evaluation_time,
                                                      spec.child, spec.args, entry.key.view(), key_source);
             runtime_detail::bind_mapped_child_output(view, entry.graph.view(), evaluation_time,
-                                                     spec.child.output_binding, entry.key.view(),
+                                                     spec.child.output_binding, spec.args, entry.key.view(),
+                                                     key_source,
                                                      spec.output_binding_mode);
             entry.graph.view().start(evaluation_time);
             rollback.release();
@@ -433,6 +434,10 @@ namespace hgraph
                                                         : TSOutputView{};
                     runtime_detail::bind_mapped_child_inputs(view, child, evaluation_time, spec.child,
                                                              spec.args, entry->key.view(), key_source);
+                    runtime_detail::bind_mapped_child_output(view, child, evaluation_time,
+                                                             spec.child.output_binding, spec.args,
+                                                             entry->key.view(), key_source,
+                                                             spec.output_binding_mode);
                 }
 
                 const bool resume_this = resuming && slot == storage.resume_slot;
@@ -542,38 +547,14 @@ namespace hgraph
 
             const std::size_t child_node_count = spec.child.graph_builder.node_count();
             const auto       &output_binding   = *spec.child.output_binding;
-            if (output_binding.kind != NestedGraphOutputBinding::Kind::ChildOutput)
-            {
-                throw std::invalid_argument(
-                    "map_node requires the child graph output to be a real child output, not a parent-input alias");
-            }
             if (!output_binding.target_path.empty())
             {
                 throw std::invalid_argument("map_node child output binding must target the map element root");
             }
-            if (output_binding.source.node >= child_node_count)
-            {
-                throw std::invalid_argument("map_node child output source node is out of range");
-            }
 
             bool key_source_seen = false;
             bool element_source_seen = false;
-            for (const NestedGraphInputBinding &binding : spec.child.input_bindings)
-            {
-                if (binding.source_path.empty())
-                {
-                    throw std::invalid_argument("map_node child input binding requires a boundary argument ordinal");
-                }
-                if (binding.source_path[0] >= spec.args.size())
-                {
-                    throw std::invalid_argument("map_node child input binding source ordinal is out of range");
-                }
-                if (binding.target.node >= child_node_count)
-                {
-                    throw std::invalid_argument("map_node child input target node is out of range");
-                }
-
-                const MapArgSource &arg = spec.args[binding.source_path[0]];
+            auto mark_source_arg = [&](const MapArgSource &arg) {
                 switch (arg.kind)
                 {
                     case MapArgSourceKind::Key:
@@ -599,6 +580,57 @@ namespace hgraph
                         }
                         break;
                 }
+            };
+
+            switch (output_binding.kind)
+            {
+                case NestedGraphOutputBinding::Kind::ChildOutput:
+                    if (output_binding.source.node >= child_node_count)
+                    {
+                        throw std::invalid_argument("map_node child output source node is out of range");
+                    }
+                    if (spec.output_binding_mode == MapOutputBindingMode::OutputElementForwardsToParentSource)
+                    {
+                        throw std::invalid_argument(
+                            "map_node child output binding cannot use parent-source forwarding mode");
+                    }
+                    break;
+
+                case NestedGraphOutputBinding::Kind::ParentInput:
+                    if (output_binding.parent_source_path.empty())
+                    {
+                        throw std::invalid_argument("map_node parent-input output binding requires a source ordinal");
+                    }
+                    if (output_binding.parent_source_path[0] >= spec.args.size())
+                    {
+                        throw std::invalid_argument("map_node parent-input output source ordinal is out of range");
+                    }
+                    if (spec.output_binding_mode != MapOutputBindingMode::OutputElementForwardsToParentSource)
+                    {
+                        throw std::invalid_argument(
+                            "map_node parent-input output binding requires parent-source forwarding mode");
+                    }
+                    mark_source_arg(spec.args[output_binding.parent_source_path[0]]);
+                    break;
+            }
+
+            for (const NestedGraphInputBinding &binding : spec.child.input_bindings)
+            {
+                if (binding.source_path.empty())
+                {
+                    throw std::invalid_argument("map_node child input binding requires a boundary argument ordinal");
+                }
+                if (binding.source_path[0] >= spec.args.size())
+                {
+                    throw std::invalid_argument("map_node child input binding source ordinal is out of range");
+                }
+                if (binding.target.node >= child_node_count)
+                {
+                    throw std::invalid_argument("map_node child input target node is out of range");
+                }
+
+                const MapArgSource &arg = spec.args[binding.source_path[0]];
+                mark_source_arg(arg);
             }
             if (!element_source_seen)
             {
@@ -658,7 +690,7 @@ namespace hgraph
 
         meta.node_kind = NodeKind::Nested;
         meta.valid_inputs = std::vector<std::size_t>{};
-        if (spec.output_binding_mode == MapOutputBindingMode::OutputElementForwardsToChildTerminal)
+        if (spec.output_binding_mode != MapOutputBindingMode::ChildTerminalWritesElement)
         {
             if (meta.output_schema == nullptr || meta.output_schema->kind != TSTypeKind::TSD ||
                 meta.output_schema->element_ts() == nullptr)

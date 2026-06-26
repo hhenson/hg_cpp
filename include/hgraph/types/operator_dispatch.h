@@ -296,14 +296,18 @@ namespace hgraph
          * returns the innermost scope's element schema (or the innermost matching ``name``),
          * or ``nullptr`` when there is no enclosing mesh.
          */
-        void push_mesh_scope(const TSValueTypeMetaData *element_schema, std::string name);
+        void push_mesh_scope(const TSValueTypeMetaData *element_schema,
+                             const ValueTypeMetaData *key_type,
+                             std::string name);
         void pop_mesh_scope() noexcept;
         [[nodiscard]] const TSValueTypeMetaData *resolve_mesh_scope(std::string_view name) const noexcept;
+        [[nodiscard]] const ValueTypeMetaData *resolve_mesh_key_scope(std::string_view name) const noexcept;
 
       private:
         struct MeshScope
         {
             const TSValueTypeMetaData *element_schema{nullptr};
+            const ValueTypeMetaData   *key_type{nullptr};
             std::string                name{};
         };
 

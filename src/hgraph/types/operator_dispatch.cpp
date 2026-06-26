@@ -535,9 +535,15 @@ namespace hgraph
         mesh_scopes_.clear();
     }
 
-    void OperatorRegistry::push_mesh_scope(const TSValueTypeMetaData *element_schema, std::string name)
+    void OperatorRegistry::push_mesh_scope(const TSValueTypeMetaData *element_schema,
+                                           const ValueTypeMetaData *key_type,
+                                           std::string name)
     {
-        mesh_scopes_.push_back(MeshScope{.element_schema = element_schema, .name = std::move(name)});
+        mesh_scopes_.push_back(MeshScope{
+            .element_schema = element_schema,
+            .key_type       = key_type,
+            .name           = std::move(name),
+        });
     }
 
     void OperatorRegistry::pop_mesh_scope() noexcept
@@ -550,6 +556,15 @@ namespace hgraph
         for (auto it = mesh_scopes_.rbegin(); it != mesh_scopes_.rend(); ++it)
         {
             if (name.empty() || it->name == name) { return it->element_schema; }
+        }
+        return nullptr;
+    }
+
+    const ValueTypeMetaData *OperatorRegistry::resolve_mesh_key_scope(std::string_view name) const noexcept
+    {
+        for (auto it = mesh_scopes_.rbegin(); it != mesh_scopes_.rend(); ++it)
+        {
+            if (name.empty() || it->name == name) { return it->key_type; }
         }
         return nullptr;
     }

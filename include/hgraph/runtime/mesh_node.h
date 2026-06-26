@@ -38,6 +38,8 @@ namespace hgraph
         std::size_t keys_input_index{0};
         /** ``TS<K>`` schema for the entry-owned key outputs (always present). */
         const TSValueTypeMetaData *key_output_schema{nullptr};
+        /** Direction used when connecting the child output to the mesh output element. */
+        MapOutputBindingMode output_binding_mode{MapOutputBindingMode::ChildTerminalWritesElement};
     };
 
     /**
@@ -97,6 +99,12 @@ namespace hgraph
      * the sibling element ``self[item]``. See *Mesh*.
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder mesh_subscribe_node(NodeTypeMetaData meta);
+
+    /**
+     * Build the ``mesh_key_set`` node — wired inside a mesh instance to expose
+     * the enclosing mesh's key set as a forwarding ``TSS<K>`` output.
+     */
+    [[nodiscard]] HGRAPH_EXPORT NodeBuilder mesh_key_set_node(NodeTypeMetaData meta);
 }  // namespace hgraph
 
 #endif  // HGRAPH_RUNTIME_MESH_NODE_H

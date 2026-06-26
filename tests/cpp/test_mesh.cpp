@@ -46,6 +46,60 @@ namespace
         }
     };
 
+    struct IdentityG
+    {
+        static constexpr auto name = "mesh_identity_g";
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts) { return ts; }
+    };
+
+    struct ContainsNamedMeshKeysG
+    {
+        static constexpr auto name = "mesh_contains_named_keys_g";
+        static Port<TS<Bool>> compose(Wiring &w, Port<TS<Str>> probe)
+        {
+            auto keys = stdlib::mesh_keys_ref<Str>(w, "named_mesh");
+            return wire<stdlib::contains_>(w, keys, probe).as<TS<Bool>>();
+        }
+    };
+
+    struct ConstABKeys
+    {
+        static constexpr auto name = "mesh_const_ab_keys";
+        static Port<TSS<Str>> compose(Wiring &w)
+        {
+            return wire<stdlib::const_, TSS<Str>>(w,
+                                                  stdlib::make_set<Str>({Str{"a"}, Str{"b"}}));
+        }
+    };
+
+    struct NeverKeysNode
+    {
+        static constexpr auto name = "mesh_never_keys";
+        static void eval(Out<TSS<Str>>) {}
+    };
+
+    struct NoKeys
+    {
+        static constexpr auto name = "mesh_no_keys";
+        static Port<TSS<Str>> compose(Wiring &w) { return wire<NeverKeysNode>(w); }
+    };
+
+    struct MeshInvalidKeysGraph
+    {
+        static constexpr auto             name = "mesh_invalid_keys_graph";
+        static Port<TSD<Str, TS<Int>>> compose(Wiring &w, Port<TSD<Str, TS<Int>>> source,
+                                               Port<TS<Str>> select)
+        {
+            auto keys = wire<stdlib::switch_>(
+                            w, select,
+                            stdlib::switch_cases({{Value{Str{"ab"}}, fn<ConstABKeys>()},
+                                                   {Value{Str{"none"}}, fn<NoKeys>()}}))
+                            .as<TSS<Str>>();
+            return wire<stdlib::mesh_>(w, fn<AddOneG>(), source, arg<"__keys__">(keys))
+                .as<TSD<Str, TS<Int>>>();
+        }
+    };
+
     struct SwitchDoubleG
     {
         static constexpr auto name = "mesh_switch_double_g";
@@ -181,6 +235,45 @@ TEST_CASE("mesh_: a switch_ terminal writes through to the mesh element")
                      values<Value>(dict_delta<Str, TS<Str>>({{"a"s, "double"s}, {"b"s, "negate"s}})),
                      values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 3}, {"b"s, 4}})))),
                  values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 6}, {"b"s, -4}})));
+}
+
+TEST_CASE("mesh_: a pass-through child output forwards the mapped element")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Str, TS<Int>>>(
+                     fn<IdentityG>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 10}}),
+                                   dict_delta<Str, TS<Int>>({}, {"b"s})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+                               dict_delta<Str, TS<Int>>({{"a"s, 10}}),
+                               dict_delta<Str, TS<Int>>({}, {"b"s})));
+}
+
+TEST_CASE("mesh_: invalid explicit keys clear children and output")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<MeshInvalidKeysGraph>(
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}), none),
+                     values<Str>(Str{"ab"}, Str{"none"}))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 2}, {"b"s, 3}}),
+                               dict_delta<Str, TS<Int>>({}, {"a"s, "b"s})));
+}
+
+TEST_CASE("mesh_: named key-set access forwards the mesh output key set")
+{
+    using namespace hgraph;
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT((eval_node<stdlib::mesh_, TSD<Str, TS<Str>>>(
+                     fn<ContainsNamedMeshKeysG>(),
+                     values<Value>(dict_delta<Str, TS<Str>>({{"a"s, "b"s}, {"b"s, "x"s}})),
+                     arg<"__name__">(Str{"named_mesh"}))),
+                 values<Value>(dict_delta<Str, TS<Bool>>({{"a"s, true}, {"b"s, false}})));
 }
 
 TEST_CASE("mesh_: cross-instance access settles a dependency chain in one cycle")

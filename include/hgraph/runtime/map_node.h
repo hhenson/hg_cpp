@@ -26,6 +26,8 @@ namespace hgraph
         ChildTerminalWritesElement,
         /** Map output element forwards through the child terminal's existing forwarding source. */
         OutputElementForwardsToChildTerminal,
+        /** Map output element forwards through the child's returned parent-input source. */
+        OutputElementForwardsToParentSource,
     };
 
     struct HGRAPH_EXPORT MapArgSource

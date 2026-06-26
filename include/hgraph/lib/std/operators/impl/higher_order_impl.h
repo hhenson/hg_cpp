@@ -1057,13 +1057,14 @@ namespace hgraph::stdlib
             {
                 throw std::invalid_argument("map_: 'func' must produce an output (sink maps are not supported yet)");
             }
-            if (!compiled.output_binding.has_value() ||
-                compiled.output_binding->kind != NestedGraphOutputBinding::Kind::ChildOutput ||
+            if (!compiled.output_binding.has_value())
+            {
+                throw std::invalid_argument("map_: the function output must bind to a nested output source");
+            }
+            if (compiled.output_binding->kind == NestedGraphOutputBinding::Kind::ChildOutput &&
                 !compiled.output_binding->source.path.empty())
             {
-                throw std::invalid_argument(
-                    "map_: the function output must be a whole node output (pass-through and sub-path outputs "
-                    "are not supported yet)");
+                throw std::invalid_argument("map_: the function output must be a whole node output");
             }
             const auto *out = compiled.output_schema;
             if (registry.dereference(out) != out)
@@ -1085,25 +1086,32 @@ namespace hgraph::stdlib
             spec.child.output_binding = compiled.output_binding;
             spec.key_output_schema    = takes_key ? key_ts : nullptr;
 
-            // The design intent: every key has a REAL element instantiated in
-            // the parent's owned TSD output, and the child's terminal node
-            // WRITES THROUGH to it — its output is re-homed as a forwarding
-            // endpoint that the map node points at the parent element. No copy.
-            NodeBuilder &terminal =
-                spec.child.graph_builder.node_at(spec.child.output_binding->source.node);
-            const TSEndpointSchema &terminal_override = terminal.output_endpoint();
-            const NodeTypeMetaData *terminal_meta = terminal.binding().type_meta;
-            const TSEndpointSchema &terminal_declared =
-                terminal_meta != nullptr ? terminal_meta->output_endpoint_schema : terminal_override;
-            const TSEndpointSchema &terminal_endpoint =
-                !terminal_override.empty() ? terminal_override : terminal_declared;
-            if (!terminal_endpoint.empty() && terminal_endpoint.is_peered())
+            if (spec.child.output_binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
             {
-                spec.output_binding_mode = MapOutputBindingMode::OutputElementForwardsToChildTerminal;
+                spec.output_binding_mode = MapOutputBindingMode::OutputElementForwardsToParentSource;
             }
             else
             {
-                terminal.output_endpoint(TSEndpointSchema::peered(out));
+                // The design intent: every key has a REAL element instantiated in
+                // the parent's owned TSD output, and the child's terminal node
+                // WRITES THROUGH to it — its output is re-homed as a forwarding
+                // endpoint that the map node points at the parent element. No copy.
+                NodeBuilder &terminal =
+                    spec.child.graph_builder.node_at(spec.child.output_binding->source.node);
+                const TSEndpointSchema &terminal_override = terminal.output_endpoint();
+                const NodeTypeMetaData *terminal_meta = terminal.binding().type_meta;
+                const TSEndpointSchema &terminal_declared =
+                    terminal_meta != nullptr ? terminal_meta->output_endpoint_schema : terminal_override;
+                const TSEndpointSchema &terminal_endpoint =
+                    !terminal_override.empty() ? terminal_override : terminal_declared;
+                if (!terminal_endpoint.empty() && terminal_endpoint.is_peered())
+                {
+                    spec.output_binding_mode = MapOutputBindingMode::OutputElementForwardsToChildTerminal;
+                }
+                else
+                {
+                    terminal.output_endpoint(TSEndpointSchema::peered(out));
+                }
             }
 
             spec.args.reserve(func.arity);
@@ -1216,7 +1224,7 @@ namespace hgraph::stdlib
             WiringPortRef out = w.add_node(
                 std::type_index(typeid(map_node_tag)), node_schema,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()},
-                Value{MapCallConfig{func.value(), Str{key_arg}, arg_tags}},
+                Value{MapCallConfig{func.value(), Str{key_arg}, Str{}, arg_tags}},
                 [&]() {
                     NodeTypeMetaData meta;
                     meta.display_name  = "map_";
@@ -1241,6 +1249,10 @@ namespace hgraph::stdlib
         {
         };
 
+        struct mesh_key_set_node_tag
+        {
+        };
+
         /**
          * ``mesh_`` wiring. Mirrors ``wire_map``: compile the child, derive the key set
          * (``__keys__`` or the union of multiplexed key sets), then add one mesh
@@ -1251,6 +1263,7 @@ namespace hgraph::stdlib
          */
         [[nodiscard]] inline WiringPortRef wire_mesh(Wiring &w, const Scalar<"func", WiredFn> &func,
                                                      std::string_view key_arg,
+                                                     std::string_view mesh_name,
                                                      std::vector<WiringPortRef> ordered,
                                                      std::optional<WiringPortRef> keys = std::nullopt)
         {
@@ -1273,11 +1286,15 @@ namespace hgraph::stdlib
                     "mesh_: 'func' must have a statically-known output type (an operator with a "
                     "type-var output cannot be a mesh function)");
             }
+            const MapArgClassification classified =
+                classify_map_args({ts_schemas.data(), ts_schemas.size()},
+                                  {arg_tags.data(), arg_tags.size()});
 
             const TSValueTypeMetaData *output_schema = nullptr;
             MapNodeSpec                map_spec;
             {
-                OperatorRegistry::instance().push_mesh_scope(element_schema, std::string{});
+                OperatorRegistry::instance().push_mesh_scope(
+                    element_schema, classified.key_meta, std::string{mesh_name});
                 auto pop = make_scope_exit([] noexcept { OperatorRegistry::instance().pop_mesh_scope(); });
                 map_spec = compile_map_child(func.value(), {ts_schemas.data(), ts_schemas.size()},
                                              {arg_tags.data(), arg_tags.size()}, output_schema);
@@ -1325,6 +1342,7 @@ namespace hgraph::stdlib
             spec.args               = std::move(map_spec.args);
             spec.multiplexed_inputs = std::move(map_spec.multiplexed_inputs);
             spec.keys_input_index   = ordered.size();
+            spec.output_binding_mode = map_spec.output_binding_mode;
             // Every mesh instance owns a TS<K> key output, independent of whether
             // func takes a key. mesh_subscribe reads the current requester key from
             // the enclosing mesh evaluation context.
@@ -1350,7 +1368,7 @@ namespace hgraph::stdlib
             WiringPortRef out = w.add_node(
                 std::type_index(typeid(mesh_node_tag)), node_schema,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()},
-                Value{MapCallConfig{func.value(), Str{key_arg}, arg_tags}},
+                Value{MapCallConfig{func.value(), Str{key_arg}, Str{mesh_name}, arg_tags}},
                 [&]() {
                     NodeTypeMetaData meta;
                     meta.display_name  = "mesh_";
@@ -1402,6 +1420,54 @@ namespace hgraph::stdlib
                     meta.input_schema  = input_schema;
                     meta.output_schema = out_schema;
                     NodeBuilder builder = mesh_subscribe_node(std::move(meta));
+                    builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                        input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                    return builder;
+                });
+        }
+
+        // ``mesh_keys_ref`` access — wires a node that forwards the enclosing mesh's
+        // live output key set (``self.key_set()``) without copying it.
+        [[nodiscard]] inline WiringPortRef mesh_key_set_ref_erased(
+            Wiring &w,
+            const WiringPortRef &value_placeholder,
+            const ValueTypeMetaData *expected_key_type,
+            std::string_view name = {})
+        {
+            const ValueTypeMetaData *key_type = OperatorRegistry::instance().resolve_mesh_key_scope(name);
+            if (key_type == nullptr)
+            {
+                throw std::logic_error(
+                    "mesh_keys_ref used outside a mesh scope (no enclosing mesh is being wired)");
+            }
+            if (expected_key_type != nullptr && key_type != expected_key_type)
+            {
+                throw std::invalid_argument("mesh_keys_ref key type does not match the enclosing mesh key type");
+            }
+
+            const auto *out_schema = TypeRegistry::instance().tss(key_type);
+            if (TypeRegistry::instance().dereference(value_placeholder.schema) != out_schema)
+            {
+                throw std::invalid_argument("mesh_keys_ref placeholder schema does not match the mesh key set");
+            }
+
+            std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields{{"value", out_schema}};
+            const auto *input_schema = TypeRegistry::instance().un_named_tsb(fields);
+
+            WiringNodeSchema node_schema;
+            node_schema.input  = input_schema;
+            node_schema.output = out_schema;
+
+            std::array<WiringPortRef, 1> inputs{value_placeholder};
+            return w.add_node(
+                std::type_index(typeid(mesh_key_set_node_tag)), node_schema,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()}, Value{Str{name}},
+                [&]() {
+                    NodeTypeMetaData meta;
+                    meta.display_name  = "mesh_key_set";
+                    meta.input_schema  = input_schema;
+                    meta.output_schema = out_schema;
+                    NodeBuilder builder = mesh_key_set_node(std::move(meta));
                     builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                         input_schema, std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
                     return builder;
@@ -1623,12 +1689,14 @@ namespace hgraph::stdlib
 
             static std::vector<std::pair<std::string_view, Value>> defaults()
             {
-                return {{"__key_arg__", Value{Str{"key"}}}};
+                return {{"__key_arg__", Value{Str{"key"}}}, {"__name__", Value{Str{""}}}};
             }
 
             static WiringPortRef compose(Wiring &w, Scalar<"func", WiredFn> func,
                                          VarIn<"args", TsVar<"B">> positional,
-                                         Scalar<"__key_arg__", Str> key_arg, VarKwIn<"kwargs"> kwargs)
+                                         Scalar<"__key_arg__", Str> key_arg,
+                                         Scalar<"__name__", Str> mesh_name,
+                                         VarKwIn<"kwargs"> kwargs)
             {
                 const std::vector<WiringPortRef> pos{positional.begin(), positional.end()};
                 std::vector<std::pair<std::string, WiringPortRef>> named{kwargs.begin(), kwargs.end()};
@@ -1637,7 +1705,8 @@ namespace hgraph::stdlib
                                                                {pos.data(), pos.size()},
                                                                {named.data(), named.size()},
                                                                key_arg.value());
-                return wire_mesh(w, func, key_arg.value(), std::move(bound.ordered), std::move(keys));
+                return wire_mesh(w, func, key_arg.value(), mesh_name.value(),
+                                 std::move(bound.ordered), std::move(keys));
             }
         };
         /**
@@ -1838,7 +1907,7 @@ namespace hgraph::stdlib
             WiringPortRef out = w.add_node(std::type_index(typeid(lifted_map_tsl_node_tag)),
                                            std::move(builder),
                                            std::span<const WiringPortRef>{ordered.data(), ordered.size()},
-                                           Value{MapCallConfig{func, Str{key_arg}, arg_tags}});
+                                           Value{MapCallConfig{func, Str{key_arg}, Str{}, arg_tags}});
             return out;
         }
 
@@ -2087,6 +2156,21 @@ namespace hgraph::stdlib
         Port<OutS> placeholder = wire<nothing, OutS>(w);
         return Port<OutS>{
             w, higher_order_impl_detail::mesh_ref_erased(w, key.erased(), placeholder.erased(), name)};
+    }
+
+    /**
+     * ``mesh_keys_ref<K>(w)`` cross-instance key-set access, called inside a mesh
+     * function. Returns the enclosing mesh output key set as ``TSS<K>`` by
+     * forwarding to ``self.key_set()``; no value copy is performed. ``name``
+     * optionally selects an enclosing named mesh.
+     */
+    template <typename KeyT>
+    [[nodiscard]] Port<TSS<KeyT>> mesh_keys_ref(Wiring &w, std::string_view name = {})
+    {
+        Port<TSS<KeyT>> placeholder = wire<nothing, TSS<KeyT>>(w);
+        return Port<TSS<KeyT>>{
+            w, higher_order_impl_detail::mesh_key_set_ref_erased(
+                   w, placeholder.erased(), scalar_descriptor<KeyT>::value_meta(), name)};
     }
 
     inline void register_higher_order_operators()

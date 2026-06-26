@@ -349,14 +349,19 @@ TEST_CASE("map_: unnamed arity-plus-one function does not consume the key")
                       OperatorResolutionError);
 }
 
-TEST_CASE("map_: a pass-through child output is rejected at wiring time")
+TEST_CASE("map_: a pass-through child output forwards the mapped element")
 {
     using namespace hgraph;
     stdlib::register_standard_operators();
 
-    REQUIRE_THROWS((eval_node<stdlib::map_, TSD<Str, TS<Int>>>(
-        fn<IdentityG>(),
-        values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}})))));
+    CHECK_OUTPUT((eval_node<stdlib::map_, TSD<Str, TS<Int>>>(
+                     fn<IdentityG>(),
+                     values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+                                   dict_delta<Str, TS<Int>>({{"a"s, 10}}),
+                                   dict_delta<Str, TS<Int>>({}, {"b"s})))),
+                 values<Value>(dict_delta<Str, TS<Int>>({{"a"s, 1}, {"b"s, 2}}),
+                               dict_delta<Str, TS<Int>>({{"a"s, 10}}),
+                               dict_delta<Str, TS<Int>>({}, {"b"s})));
 }
 
 // ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@ namespace hgraph
     {
         constexpr std::string_view mesh_storage_field_name{"mesh"};
         constexpr std::string_view mesh_subscribe_storage_field_name{"mesh_subscribe"};
+        constexpr std::string_view mesh_key_set_storage_field_name{"mesh_key_set"};
 
         struct ValueKeyHash
         {
@@ -131,6 +132,16 @@ namespace hgraph
             std::size_t storage_offset{0};
         };
 
+        struct MeshKeySetStorage
+        {
+            bool owns_output_binding{false};
+        };
+
+        struct MeshKeySetContext
+        {
+            std::size_t storage_offset{0};
+        };
+
         // Program-lifetime, intentionally-leaked context storage.
         [[nodiscard]] std::vector<std::unique_ptr<MeshNodeContext>> &mesh_node_contexts() noexcept
         {
@@ -165,6 +176,22 @@ namespace hgraph
             return *result;
         }
 
+        [[nodiscard]] std::vector<std::unique_ptr<MeshKeySetContext>> &mesh_key_set_contexts() noexcept
+        {
+            static auto *contexts = new std::vector<std::unique_ptr<MeshKeySetContext>>;
+            return *contexts;
+        }
+
+        [[nodiscard]] const MeshKeySetContext &register_mesh_key_set_context(std::size_t storage_offset)
+        {
+            auto context = std::make_unique<MeshKeySetContext>(MeshKeySetContext{
+                .storage_offset = storage_offset,
+            });
+            const auto *result = context.get();
+            mesh_key_set_contexts().push_back(std::move(context));
+            return *result;
+        }
+
         MeshNodeStorage &storage_of(const NodeView &view, const MeshNodeContext &context)
         {
             return *MemoryUtils::cast<MeshNodeStorage>(MemoryUtils::advance(view.data(), context.storage_offset));
@@ -189,6 +216,27 @@ namespace hgraph
         {
             const auto &context = mesh_subscribe_context_of(view);
             return *MemoryUtils::cast<MeshSubscribeStorage>(MemoryUtils::advance(view.data(), context.storage_offset));
+        }
+
+        const MeshKeySetContext &mesh_key_set_context_of(const NodeView &view)
+        {
+            const NodeTypeBinding *binding = view.binding();
+            if (binding == nullptr)
+            {
+                throw std::logic_error("mesh_key_set: node has no binding");
+            }
+            const void *context = binding->ops_ref().extended_view_context;
+            if (context == nullptr)
+            {
+                throw std::logic_error("mesh_key_set: missing typed storage context");
+            }
+            return *static_cast<const MeshKeySetContext *>(context);
+        }
+
+        MeshKeySetStorage &mesh_key_set_storage_of(const NodeView &view)
+        {
+            const auto &context = mesh_key_set_context_of(view);
+            return *MemoryUtils::cast<MeshKeySetStorage>(MemoryUtils::advance(view.data(), context.storage_offset));
         }
 
         void queue_graph_removal(MeshNodeStorage &storage, const ValueView &key)
@@ -231,8 +279,45 @@ namespace hgraph
                                   DateTime evaluation_time)
         {
             const MeshNodeSpec &spec = context.spec;
+            const TSOutputView key_source = entry.key_output.has_value()
+                                                ? entry.key_output->view(evaluation_time)
+                                                : TSOutputView{};
             runtime_detail::bind_mapped_child_output(view, entry.graph.view(), evaluation_time,
-                                                     spec.child.output_binding, entry.key.view());
+                                                     spec.child.output_binding, spec.args, entry.key.view(),
+                                                     key_source, spec.output_binding_mode);
+        }
+
+        void clear_instance_output_binding(const NodeView &view, const MeshNodeContext &context,
+                                           const MeshEntry &entry, DateTime evaluation_time)
+        {
+            runtime_detail::clear_mapped_output_element_binding(
+                view, evaluation_time, entry.key.view(), context.spec.output_binding_mode);
+        }
+
+        void stop_and_clear_all_instances(const NodeView &view, const MeshNodeContext &context,
+                                          MeshNodeStorage &storage, DateTime evaluation_time) noexcept
+        {
+            for (auto &[key, entry] : storage.instances)
+            {
+                if (!entry) { continue; }
+                static_cast<void>(fallback_on_exception(false, [&] {
+                    clear_instance_output_binding(view, context, *entry, evaluation_time);
+                    return true;
+                }));
+                if (entry->graph.has_value())
+                {
+                    static_cast<void>(fallback_on_exception(false, [&] {
+                        entry->graph.view().stop();
+                        return true;
+                    }));
+                }
+            }
+            storage.instances.clear();
+            storage.dependents.clear();
+            storage.graphs_to_remove.clear();
+            storage.max_rank = 0;
+            storage.primed = false;
+            storage.current_eval_key = Value{};
         }
 
         MeshEntry &create_instance(const NodeView &view, const MeshNodeContext &context, MeshNodeStorage &storage,
@@ -250,6 +335,7 @@ namespace hgraph
             auto output_mutation = output_dict.begin_mutation(evaluation_time);
 
             auto rollback = UnwindCleanupGuard([&] {
+                clear_instance_output_binding(view, context, entry, evaluation_time);
                 if (entry.graph.has_value() && entry.graph.view().started()) { entry.graph.view().stop(); }
                 (void)output_mutation.erase(entry.key.view());
             });
@@ -278,12 +364,13 @@ namespace hgraph
             return *it->second;
         }
 
-        void remove_instance(const NodeView &view, MeshNodeStorage &storage, const ValueView &key_view,
-                             DateTime evaluation_time)
+        void remove_instance(const NodeView &view, const MeshNodeContext &context, MeshNodeStorage &storage,
+                             const ValueView &key_view, DateTime evaluation_time)
         {
             auto it = storage.instances.find(key_view);
             if (it == storage.instances.end()) { return; }
 
+            clear_instance_output_binding(view, context, *it->second, evaluation_time);
             if (it->second->graph.has_value()) { it->second->graph.view().stop(); }
 
             auto output          = view.output(evaluation_time);
@@ -324,7 +411,7 @@ namespace hgraph
                 const bool has_dependents = it != storage.dependents.end() && !it->second.empty();
                 if (!has_dependents && !keys_contains(view, context, k.view(), evaluation_time))
                 {
-                    remove_instance(view, storage, k.view(), evaluation_time);
+                    remove_instance(view, context, storage, k.view(), evaluation_time);
                 }
             }
         }
@@ -376,7 +463,16 @@ namespace hgraph
                                             std::vector<std::size_t>{spec.keys_input_index});
 
             // 1. __keys__ key-set membership drives instance create/remove.
-            if (keys_input.valid())
+            if (!keys_input.valid())
+            {
+                auto output          = view.output(evaluation_time);
+                auto output_dict     = output.as_dict();
+                auto output_mutation = output_dict.begin_mutation(evaluation_time);
+                stop_and_clear_all_instances(view, context, storage, evaluation_time);
+                output_mutation.clear();
+                return true;
+            }
+
             {
                 auto key_set = keys_input.as_set();
                 if (!storage.primed)
@@ -403,7 +499,7 @@ namespace hgraph
                     {
                         auto it = storage.dependents.find(k);
                         const bool has_dependents = it != storage.dependents.end() && !it->second.empty();
-                        if (!has_dependents) { remove_instance(view, storage, k, evaluation_time); }
+                        if (!has_dependents) { remove_instance(view, context, storage, k, evaluation_time); }
                     }
                 }
             }
@@ -489,6 +585,8 @@ namespace hgraph
         constexpr std::size_t subscribe_value_field = 1;  // OUT — seeded with nothing<OUT>, rebound at
                                                           // runtime to self[item] (reads it + makes us
                                                           // reactive to the sibling's ticks)
+        constexpr std::size_t key_set_value_field   = 0;  // TSS<K> seeded with nothing<TSS<K>>, rebound to
+                                                          // self.key_set() for scheduling.
 
         [[nodiscard]] std::optional<MeshNodeView> resolve_mesh_node(const NodeView &view)
         {
@@ -595,6 +693,62 @@ namespace hgraph
             }
         }
 
+        void passivate_key_set_value_input(const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.has_input()) { return; }
+            auto input  = view.input(evaluation_time);
+            auto bundle = input.as_bundle();
+            auto value  = bundle.at(key_set_value_field);
+            if (value.active()) { value.make_passive(); }
+        }
+
+        void publish_key_set_source(const NodeView &view, MeshKeySetStorage &storage,
+                                    const TSOutputView &source, DateTime evaluation_time)
+        {
+            auto output = view.output(evaluation_time);
+            if (!output.forwarding())
+            {
+                throw std::logic_error("mesh_key_set output must be a forwarding endpoint");
+            }
+
+            const TSOutputHandle before = output.forwarding_target();
+            if (source.bound())
+            {
+                bind_forwarding_output_to_source(output, source);
+                storage.owns_output_binding = output.forwarding_bound();
+            }
+            else if (output.forwarding_bound())
+            {
+                output.clear_forwarding_target();
+                storage.owns_output_binding = false;
+            }
+
+            if (source.bound() && source.valid() && !output.forwarding_target().same_as(before))
+            {
+                output.begin_mutation(evaluation_time).mark_modified();
+            }
+        }
+
+        bool mesh_key_set_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
+        {
+            if (!view.started()) { return true; }
+
+            auto &storage = mesh_key_set_storage_of(view);
+            std::optional<MeshNodeView> mesh = resolve_mesh_node(view);
+            if (!mesh.has_value())
+            {
+                throw std::logic_error("mesh_key_set: not evaluated inside a mesh instance");
+            }
+
+            auto input  = view.input(evaluation_time);
+            auto bundle = input.as_bundle();
+            auto self   = mesh->node().output(evaluation_time);
+            auto source = self.as_dict().key_set();
+            bind_input_to_source(bundle.at(key_set_value_field), source);
+            publish_key_set_source(view, storage, source, evaluation_time);
+            return true;
+        }
+
         bool mesh_subscribe_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
         {
             if (!view.started()) { return true; }
@@ -665,6 +819,13 @@ namespace hgraph
             storage.owns_output_binding = false;
         }
 
+        void mesh_key_set_stop(const NodeView &view, DateTime evaluation_time)
+        {
+            auto &storage = mesh_key_set_storage_of(view);
+            passivate_key_set_value_input(view, evaluation_time);
+            storage.owns_output_binding = false;
+        }
+
         void mesh_node_stop(const NodeView &view, DateTime evaluation_time)
         {
             auto  mesh_view = view.as<MeshNodeView>();
@@ -674,7 +835,8 @@ namespace hgraph
             auto output_dict     = output.as_dict();
             auto output_mutation = output_dict.begin_mutation(evaluation_time);
 
-            storage.stop_all_noexcept();
+            stop_and_clear_all_instances(view, *static_cast<const MeshNodeContext *>(mesh_view.internal_context()),
+                                         storage, evaluation_time);
             output_mutation.clear();
         }
     }  // namespace
@@ -768,6 +930,17 @@ namespace hgraph
     {
         meta.node_kind    = NodeKind::Nested;
         meta.valid_inputs = std::vector<std::size_t>{};
+        if (spec.output_binding_mode != MapOutputBindingMode::ChildTerminalWritesElement)
+        {
+            if (meta.output_schema == nullptr || meta.output_schema->kind != TSTypeKind::TSD ||
+                meta.output_schema->element_ts() == nullptr)
+            {
+                throw std::invalid_argument("mesh_node forwarding-element output requires a TSD output schema");
+            }
+            meta.output_endpoint_schema = TSEndpointSchema::non_peered_dict(
+                meta.output_schema,
+                TSEndpointSchema::peered(meta.output_schema->element_ts()));
+        }
 
         NodeTypeDescriptor descriptor;
         descriptor.schema = std::move(meta);
@@ -810,6 +983,30 @@ namespace hgraph
 
         descriptor.callbacks.stop             = &mesh_subscribe_stop;
         descriptor.ops.evaluate_impl          = &mesh_subscribe_evaluate_impl;
+        descriptor.ops.extended_view_context  = &context;
+        return NodeBuilder::from_descriptor(std::move(descriptor));
+    }
+
+    NodeBuilder mesh_key_set_node(NodeTypeMetaData meta)
+    {
+        meta.node_kind              = NodeKind::Compute;
+        meta.schedule_on_start      = true;
+        meta.output_endpoint_schema = TSEndpointSchema::peered(meta.output_schema);
+
+        NodeTypeDescriptor descriptor;
+        descriptor.schema = std::move(meta);
+
+        const std::array fields{NodeStorageField{
+            .name = mesh_key_set_storage_field_name,
+            .plan = &MemoryUtils::plan_for<MeshKeySetStorage>(),
+        }};
+        descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
+
+        const auto &context = register_mesh_key_set_context(
+            descriptor.storage_plan->component(mesh_key_set_storage_field_name).offset);
+
+        descriptor.callbacks.stop             = &mesh_key_set_stop;
+        descriptor.ops.evaluate_impl          = &mesh_key_set_evaluate_impl;
         descriptor.ops.extended_view_context  = &context;
         return NodeBuilder::from_descriptor(std::move(descriptor));
     }

@@ -191,11 +191,13 @@ namespace hgraph::stdlib
     {
         WiredFn                   func{};
         Str                       key_arg{};
+        Str                       mesh_name{};
         std::vector<std::uint8_t> arg_tags{};
 
         [[nodiscard]] bool operator==(const MapCallConfig &other) const
         {
-            return func == other.func && key_arg == other.key_arg && arg_tags == other.arg_tags;
+            return func == other.func && key_arg == other.key_arg &&
+                   mesh_name == other.mesh_name && arg_tags == other.arg_tags;
         }
     };
 
@@ -246,6 +248,7 @@ struct std::hash<hgraph::stdlib::MapCallConfig>
         std::size_t h       = std::hash<hgraph::WiredFn>{}(config.func);
         const auto  combine = [&h](std::size_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); };
         combine(std::hash<std::string>{}(config.key_arg));
+        combine(std::hash<std::string>{}(config.mesh_name));
         for (const std::uint8_t tag : config.arg_tags) { combine(tag); }
         return h;
     }

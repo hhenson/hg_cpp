@@ -100,7 +100,9 @@ namespace hgraph::runtime_detail
         const GraphView &child,
         DateTime evaluation_time,
         const std::optional<NestedGraphOutputBinding> &output_binding,
+        std::span<const MapArgSource> args,
         const ValueView &key,
+        const TSOutputView &key_source,
         MapOutputBindingMode mode = MapOutputBindingMode::ChildTerminalWritesElement)
     {
         if (!output_binding.has_value()) { return; }
@@ -109,6 +111,29 @@ namespace hgraph::runtime_detail
         auto dict   = output.as_dict();
         if (!dict.contains(key)) { return; }
         auto element = dict.at(key);
+
+        if (output_binding->kind == NestedGraphOutputBinding::Kind::ParentInput)
+        {
+            if (mode != MapOutputBindingMode::OutputElementForwardsToParentSource)
+            {
+                throw std::logic_error("mapped child parent-input output requires a forwarding map output element");
+            }
+            if (output_binding->parent_source_path.empty())
+            {
+                throw std::logic_error("mapped child parent-input output requires a source ordinal");
+            }
+            const std::size_t source_index = output_binding->parent_source_path[0];
+            if (source_index >= args.size())
+            {
+                throw std::out_of_range("mapped child output binding source ordinal is out of range");
+            }
+
+            auto root_input = parent.input(evaluation_time);
+            auto source = mapped_child_input_source(root_input.borrowed_ref(), args[source_index], key,
+                                                    key_source, output_binding->parent_source_path);
+            bind_forwarding_output_to_source(element, source);
+            return;
+        }
 
         auto child_terminal = walk_ts_path(
             child.node_at(output_binding->source.node).output(evaluation_time),
@@ -121,6 +146,8 @@ namespace hgraph::runtime_detail
             case MapOutputBindingMode::OutputElementForwardsToChildTerminal:
                 bind_forwarding_output_to_source(element, child_terminal);
                 break;
+            case MapOutputBindingMode::OutputElementForwardsToParentSource:
+                throw std::logic_error("mapped child child-output binding cannot use parent-source mode");
         }
     }
 
@@ -130,7 +157,7 @@ namespace hgraph::runtime_detail
         const ValueView &key,
         MapOutputBindingMode mode)
     {
-        if (mode != MapOutputBindingMode::OutputElementForwardsToChildTerminal) { return; }
+        if (mode == MapOutputBindingMode::ChildTerminalWritesElement) { return; }
 
         auto output = parent.output(evaluation_time);
         auto dict   = output.as_dict();
