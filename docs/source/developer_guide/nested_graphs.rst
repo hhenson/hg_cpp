@@ -497,6 +497,49 @@ Tests: ``tests/cpp/test_map.cpp``. ASAN/UBSAN-verified (keyed
 create/destroy churn).
 
 
+``mesh_``
+---------
+
+``mesh_(func, *args, **kwargs)`` has the same external call shape and
+output model as ``map_`` over ``TSD`` inputs, but child instances may read
+other instances' outputs by key from inside ``func`` via
+``mesh_ref<OUT>(w, key)``. A mesh therefore owns one requested child graph
+per live ``__keys__`` key, plus any on-demand child graph created because
+another instance requested it.
+
+- **Key and output ownership follow ``map_``.** Explicit or inferred
+  ``__keys__: TSS<K>`` drives requested instance create/remove. Each instance
+  owns its key value and key-source output. The mesh node owns the outer
+  ``TSD<K, OUT>`` output; child terminals are forwarding outputs bound to
+  real elements in that owned TSD, so branch/map/switch terminals inside the
+  instance write through to the mesh element rather than copying values.
+- **Cross-instance reads are runtime forwarding nodes.** ``mesh_ref`` wires a
+  ``mesh_subscribe`` node in the child graph. At evaluation time it resolves
+  the enclosing mesh, registers ``requester -> dependency``, binds its hidden
+  value input to ``self[dependency]`` for future scheduling, and forwards the
+  dependency element to its own output. If the dependency is not settled yet,
+  the node pauses; the enclosing mesh is the pause boundary.
+- **The settle loop is dependency-ranked.** A dependency request can create an
+  on-demand instance and re-rank dependents so dependencies evaluate before
+  requesters. The mesh scans instances by rank until no child pauses, allowing
+  transitive chains to settle in one parent cycle. Cycles are runtime errors.
+- **On-demand lifetime is reference-driven.** Requested keys are kept by
+  ``__keys__`` membership. On-demand keys are kept only while they have
+  dependents. Retargeting or removing a requester retracts its old dependency
+  edge and removes now-unreferenced on-demand instances in the same mesh
+  evaluation.
+- **Mesh key-set access is forwarding too.** ``mesh_keys_ref<K>(w[, name])``
+  wires a ``mesh_key_set`` node that forwards the enclosing mesh output's
+  ``TSD`` key-set projection. Named meshes use the same wiring-time mesh
+  scope as ``mesh_ref``.
+- **Limitations match the current kernel.** ``mesh_`` is a TSD runtime
+  operator; dynamic-TSL meshes are not implemented. The output restrictions
+  mirror ``map_`` because the mesh output is an owned TSD whose elements are
+  real storage targets.
+
+Tests: ``tests/cpp/test_mesh.cpp``.
+
+
 Reconciliation with the 2603 RFC
 --------------------------------
 
@@ -517,8 +560,9 @@ current code wins:
   current milestone needs are implemented: direct input binding (exists,
   incl. leaf-wise for structural boundary args), root output forwarding
   (exists), ``alias_parent_input`` pass-through (exists, the ``ParentInput``
-  output-binding kind), key-value injection (with ``switch_``/``map_``), and
-  keyed write-through forwarding for ``map_`` output. Everything else
+  output-binding kind), key-value injection (with ``switch_``/``map_`` /
+  ``mesh_``), and keyed write-through forwarding for ``map_`` / ``mesh_``
+  output. Everything else
   (context import/export, REF adaptation across the boundary, recordable-state
   pass-through) is rejected explicitly at wiring time until designed here.
 - **Sampled semantics on rebind.** Per the sampled-runtime contract, when
@@ -527,10 +571,11 @@ current code wins:
   through active input bind/rebind notification, not by bypassing normal graph
   scheduling or forcing eval directly. We deliberately diverge from Python's
   ``value = None`` reset.
-- **No slab payload stores yet.** ``map_`` will use
-  ``unordered_dense::map<Value, std::unique_ptr<PerKeyState>>`` — pointer-stable
-  per-key state (a relocated live ``GraphValue`` would break notifier
-  subscriptions). The RFC's ``StablePayloadStore`` is a recorded refinement.
+- **No slab payload stores yet.** ``map_`` uses a key-slot-aligned
+  ``ValueSlotStore`` for pointer-stable per-key state; ``mesh_`` uses an
+  ``unordered_dense::map<Value, std::unique_ptr<MeshEntry>>`` because
+  on-demand keys are not limited to the current ``__keys__`` slot layout.
+  The RFC's ``StablePayloadStore`` remains a recorded refinement.
 
 
 Roadmap (this milestone)
@@ -560,8 +605,11 @@ Roadmap (this milestone)
    the 2603 design ported/reconciled first, then the runtime kernel —
    alias leaves, minimal combiner tree, zero as the empty result only.
    ASAN/UBSAN-verified.
+7. **Done — ``mesh_`` over ``TSD``** (see its section above): map-compatible
+   output ownership plus cross-instance forwarding, on-demand instance
+   creation, dependency ranking, cycle detection, and key-set forwarding.
 
-Non-goals for the milestone: ``mesh_``, services/contexts,
+Non-goals for the milestone: services/contexts,
 push sources inside nested graphs, TSD link-children aliasing,
 non-associative reduce, dynamic-TSL reduction, graph-level generic
 (``TsVar``) sub-graphs. (Explicit ``__keys__`` and the ``pass_through`` /
