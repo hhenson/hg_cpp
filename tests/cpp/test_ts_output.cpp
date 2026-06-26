@@ -11,10 +11,73 @@
 
 #include <cstdint>
 
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <vector>
+
+struct TSSMoveTrackedKey
+{
+    std::int32_t value{0};
+
+    static inline std::size_t copy_construct_count{0};
+    static inline std::size_t move_construct_count{0};
+
+    TSSMoveTrackedKey() = default;
+    explicit TSSMoveTrackedKey(std::int32_t v) : value{v} {}
+
+    TSSMoveTrackedKey(const TSSMoveTrackedKey &other) : value(other.value)
+    {
+        ++copy_construct_count;
+    }
+
+    TSSMoveTrackedKey(TSSMoveTrackedKey &&other) noexcept : value(other.value)
+    {
+        other.value = 0;
+        ++move_construct_count;
+    }
+
+    TSSMoveTrackedKey &operator=(const TSSMoveTrackedKey &other)
+    {
+        value = other.value;
+        return *this;
+    }
+
+    TSSMoveTrackedKey &operator=(TSSMoveTrackedKey &&other) noexcept
+    {
+        value = other.value;
+        other.value = 0;
+        return *this;
+    }
+
+    [[nodiscard]] friend bool operator==(const TSSMoveTrackedKey &lhs,
+                                         const TSSMoveTrackedKey &rhs) noexcept
+    {
+        return lhs.value == rhs.value;
+    }
+
+    [[nodiscard]] friend bool operator<(const TSSMoveTrackedKey &lhs,
+                                        const TSSMoveTrackedKey &rhs) noexcept
+    {
+        return lhs.value < rhs.value;
+    }
+
+    static void reset_counts() noexcept
+    {
+        copy_construct_count = 0;
+        move_construct_count = 0;
+    }
+};
+
+template <>
+struct std::hash<TSSMoveTrackedKey>
+{
+    [[nodiscard]] std::size_t operator()(const TSSMoveTrackedKey &key) const noexcept
+    {
+        return std::hash<std::int32_t>{}(key.value);
+    }
+};
 
 namespace
 {
@@ -297,6 +360,53 @@ TEST_CASE("TSOutput dynamic TSL move mutation moves owned child fields")
     REQUIRE(value.at(2).checked_as<MoveTrackedScalar>().value == 30);
     REQUIRE(MoveTrackedScalar::copy_assign_count == 0);
     REQUIRE(MoveTrackedScalar::move_assign_count == 3);
+}
+
+TEST_CASE("TSOutput TSS move mutation moves owned keys without removal copies")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *meta     = registry.register_scalar<TSSMoveTrackedKey>("TSSMoveTrackedKey");
+    const auto *tss_meta = registry.tss(meta);
+    const auto *binding  = ValuePlanFactory::instance().binding_for(meta);
+    REQUIRE(binding != nullptr);
+
+    SetBuilder initial_builder{*binding};
+    initial_builder.insert(TSSMoveTrackedKey{10});
+    initial_builder.insert(TSSMoveTrackedKey{99});
+    Value initial = initial_builder.build();
+
+    SetBuilder source_builder{*binding};
+    source_builder.insert(TSSMoveTrackedKey{10});
+    source_builder.insert(TSSMoveTrackedKey{20});
+    Value source = source_builder.build();
+
+    TSOutput output{*tss_meta};
+    const auto t1 = MIN_ST;
+    const auto t2 = t1 + TimeDelta{1};
+    {
+        auto mutation = output.begin_mutation(t1);
+        REQUIRE(mutation.copy_value_from(initial.view()));
+    }
+
+    TSSMoveTrackedKey::reset_counts();
+    {
+        auto mutation = output.begin_mutation(t2);
+        REQUIRE(mutation.move_value_from(std::move(source)));
+        REQUIRE(mutation.modified());
+    }
+
+    Value key10{TSSMoveTrackedKey{10}};
+    Value key20{TSSMoveTrackedKey{20}};
+    Value key99{TSSMoveTrackedKey{99}};
+    auto  value = output.view(t2).value().as_set();
+    REQUIRE(value.size() == 2);
+    REQUIRE(value.contains(key10.view()));
+    REQUIRE(value.contains(key20.view()));
+    REQUIRE_FALSE(value.contains(key99.view()));
+    REQUIRE(TSSMoveTrackedKey::copy_construct_count == 0);
+    REQUIRE(TSSMoveTrackedKey::move_construct_count == 1);
 }
 
 TEST_CASE("TSOutputHandle stores output identity without evaluation time")

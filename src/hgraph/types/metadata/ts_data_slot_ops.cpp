@@ -131,6 +131,20 @@ namespace hgraph::ts_data_plan_factory_detail
                 return mutation_result(result.slot);
             }
 
+            [[nodiscard]] SlotTSDataMutationResult insert_key_move(const ValueView &key, DateTime modified_time)
+            {
+                validate_mutation_key(key, modified_time);
+                prepare_delta(modified_time);
+
+                const auto result = keys_.insert_move(const_cast<void *>(key.data()));
+                ensure_delta_capacity();
+                if (!result.inserted) { return {.slot = result.slot, .changed = false}; }
+
+                if (slot_removed(result.slot)) { removed_.reset(result.slot); }
+                else { added_.set(result.slot); }
+                return mutation_result(result.slot);
+            }
+
             [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_key(key, modified_time);
@@ -138,6 +152,23 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 const auto slot = keys_.find_slot(key.data());
                 if (slot == KeySlotStore::npos) { return {.slot = TS_DATA_NO_CHILD_ID, .changed = false}; }
+                if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
+
+                ensure_delta_capacity();
+                if (slot_added(slot)) { added_.reset(slot); }
+                else { removed_.set(slot); }
+                return mutation_result(slot);
+            }
+
+            [[nodiscard]] SlotTSDataMutationResult remove_slot(std::size_t slot, DateTime modified_time)
+            {
+                validate_mutation_time(modified_time);
+                prepare_delta(modified_time);
+
+                if (slot == KeySlotStore::npos || !keys_.slot_live(slot))
+                {
+                    return {.slot = slot, .changed = false};
+                }
                 if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
 
                 ensure_delta_capacity();
@@ -316,6 +347,21 @@ namespace hgraph::ts_data_plan_factory_detail
                 return mutation_result(result.slot);
             }
 
+            [[nodiscard]] SlotTSDataMutationResult insert_key_move(const ValueView &key, DateTime modified_time)
+            {
+                validate_mutation_key(key, modified_time);
+                prepare_delta(modified_time);
+
+                const auto result = keys_.insert_move(const_cast<void *>(key.data()));
+                ensure_delta_capacity();
+                if (!result.inserted) { return {.slot = result.slot, .changed = false}; }
+
+                if (slot_removed(result.slot)) { removed_.reset(result.slot); }
+                else { added_.set(result.slot); }
+                (void)key_set_tracking_.record_modified(modified_time);
+                return mutation_result(result.slot);
+            }
+
             [[nodiscard]] SlotTSDataMutationResult remove_key(const ValueView &key, DateTime modified_time)
             {
                 validate_mutation_key(key, modified_time);
@@ -323,6 +369,25 @@ namespace hgraph::ts_data_plan_factory_detail
 
                 const auto slot = keys_.find_slot(key.data());
                 if (slot == KeySlotStore::npos) { return {.slot = TS_DATA_NO_CHILD_ID, .changed = false}; }
+                if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
+
+                ensure_delta_capacity();
+                if (slot_added(slot)) { added_.reset(slot); }
+                else { removed_.set(slot); }
+                modified_.reset(slot);
+                (void)key_set_tracking_.record_modified(modified_time);
+                return mutation_result(slot);
+            }
+
+            [[nodiscard]] SlotTSDataMutationResult remove_slot(std::size_t slot, DateTime modified_time)
+            {
+                validate_mutation_time(modified_time);
+                prepare_delta(modified_time);
+
+                if (slot == KeySlotStore::npos || !keys_.slot_live(slot))
+                {
+                    return {.slot = slot, .changed = false};
+                }
                 if (!keys_.remove_slot(slot)) { return {.slot = slot, .changed = false}; }
 
                 ensure_delta_capacity();
@@ -690,6 +755,7 @@ namespace hgraph::ts_data_plan_factory_detail
                     .mutable_delta_memory_impl = &tss_mutable_delta_memory,
                     .reset_delta_impl          = &tss_reset_delta,
                     .copy_value_from_impl      = &tss_copy_value_from,
+                    .move_value_from_impl      = &tss_move_value_from,
                     .empty_delta_impl          = &ts_data_detail::empty_delta_tss,
                     .capture_delta_impl        = &ts_data_detail::capture_delta_tss,
                     .delta_has_effect_impl     = &ts_data_detail::delta_has_effect_tss,
@@ -961,6 +1027,44 @@ namespace hgraph::ts_data_plan_factory_detail
                 for (const auto &key : removals)
                 {
                     static_cast<void>(target.remove_key(key.view(), modified_time));
+                }
+                return newly_touched;
+            }
+
+            [[nodiscard]] static bool tss_move_value_from(const void *context, void *memory, Value &&source,
+                                                          DateTime modified_time)
+            {
+                if (memory == nullptr) { throw std::logic_error("TSS move requires live storage"); }
+                if (!source.has_value()) { throw std::invalid_argument("TSS move requires a live source value"); }
+                if (modified_time == MIN_DT)
+                {
+                    throw std::invalid_argument("TSS move requires a concrete evaluation time");
+                }
+                if (source.schema() != ctx(context)->schema->value_schema)
+                {
+                    throw std::invalid_argument("TSS move requires the set value schema");
+                }
+
+                auto       &target     = storage<Storage>(memory);
+                auto        source_set = source.as_set();
+                const auto *state      = ctx(context);
+
+                std::vector<std::size_t> removal_slots;
+                for (std::size_t slot = 0; slot < target.slot_capacity(); ++slot)
+                {
+                    if (!target.slot_live(slot)) { continue; }
+                    ValueView key{state->set_layout.key_binding, target.key_at_slot(slot)};
+                    if (!source_set.contains(key)) { removal_slots.push_back(slot); }
+                }
+
+                const bool newly_touched = target.touch(modified_time);
+                for (const auto key : source_set.values())
+                {
+                    static_cast<void>(target.insert_key_move(key, modified_time));
+                }
+                for (const auto slot : removal_slots)
+                {
+                    static_cast<void>(target.remove_slot(slot, modified_time));
                 }
                 return newly_touched;
             }

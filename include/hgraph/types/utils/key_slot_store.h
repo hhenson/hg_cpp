@@ -367,7 +367,7 @@ namespace hgraph
         [[nodiscard]] InsertResult insert(const void *key) {
             if (key == nullptr) { throw std::invalid_argument("KeySlotStore insert requires a non-null key"); }
 
-            if (const size_t existing = find_stored_slot(key); existing != npos) {
+            if (const size_t existing = find_stored_slot(static_cast<const void *>(key)); existing != npos) {
                 if (slot_live(existing)) { return {.slot = existing, .inserted = false}; }
 
                 live.set(existing);
@@ -384,6 +384,46 @@ namespace hgraph
 
             auto rollback_slot = ::hgraph::make_scope_exit([&]() noexcept { m_free_slots.push_back(slot); });
             m_key_plan->copy_construct(key_storage.slot_data(slot), key);
+            rollback_slot.release();
+
+            constructed.set(slot);
+            live.set(slot);
+            ++m_size;
+            m_index->insert(slot);
+            observers.notify_insert(slot);
+            return {.slot = slot, .inserted = true};
+        }
+
+        /**
+         * Move-insert a key if it is not already live.
+         *
+         * Lookup is performed before the move. If an equivalent key already
+         * exists, the source is left untouched and the existing slot is
+         * returned. New slots are move-constructed from ``key``.
+         */
+        [[nodiscard]] InsertResult insert_move(void *key) {
+            if (key == nullptr) { throw std::invalid_argument("KeySlotStore move insert requires a non-null key"); }
+
+            if (const size_t existing = find_stored_slot(static_cast<const void *>(key)); existing != npos) {
+                if (slot_live(existing)) { return {.slot = existing, .inserted = false}; }
+
+                live.set(existing);
+                --m_pending_erase_count;
+                ++m_size;
+                observers.notify_insert(existing);
+                return {.slot = existing, .inserted = true};
+            }
+
+            if (!m_key_plan->can_move_construct()) {
+                throw std::logic_error("KeySlotStore move insert requires move-constructible keys");
+            }
+            if (m_free_slots.empty()) { reserve_to(std::max<size_t>(m_size + 1, std::max<size_t>(8, slot_capacity() * 2))); }
+
+            const size_t slot = m_free_slots.back();
+            m_free_slots.pop_back();
+
+            auto rollback_slot = ::hgraph::make_scope_exit([&]() noexcept { m_free_slots.push_back(slot); });
+            m_key_plan->move_construct(key_storage.slot_data(slot), key);
             rollback_slot.release();
 
             constructed.set(slot);
