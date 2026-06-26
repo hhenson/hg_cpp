@@ -263,6 +263,42 @@ TEST_CASE("TSOutput fixed TSB move mutation moves owned child fields")
     REQUIRE(MoveTrackedScalar::move_assign_count == 2);
 }
 
+TEST_CASE("TSOutput dynamic TSL move mutation moves owned child fields")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *meta     = registry.register_scalar<MoveTrackedScalar>("MoveTrackedScalar");
+    const auto *ts_meta  = registry.ts(meta);
+    const auto *tsl_meta = registry.tsl(ts_meta, 0);
+    const auto *binding  = ValuePlanFactory::instance().binding_for(meta);
+    REQUIRE(binding != nullptr);
+
+    ListBuilder builder{*binding};
+    builder.push_back(MoveTrackedScalar{10});
+    builder.push_back(MoveTrackedScalar{20});
+    builder.push_back(MoveTrackedScalar{30});
+    Value source = builder.build();
+
+    TSOutput output{*tsl_meta};
+    const auto t1 = MIN_ST;
+
+    MoveTrackedScalar::reset_counts();
+    {
+        auto mutation = output.begin_mutation(t1);
+        REQUIRE(mutation.move_value_from(std::move(source)));
+        REQUIRE(mutation.modified());
+    }
+
+    auto value = output.view(t1).value().as_list();
+    REQUIRE(value.size() == 3);
+    REQUIRE(value.at(0).checked_as<MoveTrackedScalar>().value == 10);
+    REQUIRE(value.at(1).checked_as<MoveTrackedScalar>().value == 20);
+    REQUIRE(value.at(2).checked_as<MoveTrackedScalar>().value == 30);
+    REQUIRE(MoveTrackedScalar::copy_assign_count == 0);
+    REQUIRE(MoveTrackedScalar::move_assign_count == 3);
+}
+
 TEST_CASE("TSOutputHandle stores output identity without evaluation time")
 {
     using namespace hgraph;
