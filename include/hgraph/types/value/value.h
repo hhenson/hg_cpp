@@ -122,6 +122,19 @@ namespace hgraph
         Value &operator=(Value &&) noexcept = default;
         ~Value() = default;
 
+        /**
+         * Build a non-owning handle around externally owned mutable value
+         * memory. This is for internal erased APIs that accept ``Value&&``
+         * when the caller owns a larger parent value and needs to move one
+         * child field out of that parent without first copying the child.
+         */
+        [[nodiscard]] static Value reference(const ValueTypeBinding &binding, void *data) noexcept
+        {
+            Value value;
+            value.storage_ = storage_type::reference(binding, data);
+            return value;
+        }
+
         /** True when storage is allocated and a value has been constructed in it. */
         [[nodiscard]] bool has_value() const noexcept { return storage_.has_value(); }
 

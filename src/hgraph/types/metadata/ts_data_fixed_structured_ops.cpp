@@ -254,6 +254,7 @@ namespace hgraph::ts_data_plan_factory_detail
                 .delta_memory_impl         = &fixed_delta_memory,
                 .mutable_delta_memory_impl = &fixed_mutable_delta_memory,
                 .copy_value_from_impl      = &fixed_copy_value_from,
+                .move_value_from_impl      = &fixed_move_value_from,
                 .empty_delta_impl          = schema->kind == TSTypeKind::TSB ? &ts_data_detail::empty_delta_tsb
                                                                              : &ts_data_detail::empty_delta_tsl,
                 .capture_delta_impl        = schema->kind == TSTypeKind::TSB ? &ts_data_detail::capture_delta_tsb
@@ -1356,6 +1357,71 @@ namespace hgraph::ts_data_plan_factory_detail
                 const auto &ops   = child_ops(*child);
                 void       *data  = child_data(state, memory, index);
                 if (ops.copy_value_from_impl(ops.context, data, source_values.at(index), modified_time))
+                {
+                    auto *tracking = ops.mutable_tracking_impl(ops.context, data);
+                    if (tracking == nullptr) { throw std::logic_error("fixed TSData child has no tracking record"); }
+                    if (!tracking->record_modified(modified_time))
+                    {
+                        throw std::logic_error("fixed TSData child reported a duplicate modification");
+                    }
+                    newly_modified = true;
+                }
+            }
+            return newly_modified;
+        }
+
+        [[nodiscard]] static bool fixed_move_value_from(const void *context, void *memory, Value &&source,
+                                                        DateTime modified_time)
+        {
+            if (memory == nullptr)
+            {
+                throw std::logic_error("fixed TSData move requires live memory");
+            }
+            if (!source.has_value())
+            {
+                throw std::invalid_argument("fixed TSData move requires a live source value");
+            }
+            if (modified_time == MIN_DT)
+            {
+                throw std::invalid_argument("fixed TSData move requires a concrete evaluation time");
+            }
+
+            const auto *state = ctx(context);
+            if (source.schema() != state->schema->value_schema)
+            {
+                throw std::invalid_argument("fixed TSData move requires the parent value schema");
+            }
+            const auto source_values = source.as_indexed_view();
+            if (source_values.size() != state->element_count())
+            {
+                throw std::invalid_argument("fixed TSData move source has the wrong child count");
+            }
+
+            for (std::size_t index = 0; index < state->element_count(); ++index)
+            {
+                const auto &ops = child_ops(*state->element_binding(index));
+                if (ops.move_value_from_impl == &ts_data_detail::missing_move_value_from)
+                {
+                    throw std::logic_error(
+                        "fixed TSData move requires every child to support move_value_from");
+                }
+                auto source_value = source_values.at(index);
+                if (!source_value.valid())
+                {
+                    throw std::invalid_argument("fixed TSData move requires live child source values");
+                }
+            }
+
+            bool newly_modified = false;
+            for (std::size_t index = 0; index < state->element_count(); ++index)
+            {
+                const auto *child = state->element_binding(index);
+                const auto &ops   = child_ops(*child);
+                void       *data  = child_data(state, memory, index);
+                auto        source_value = source_values.at(index);
+                auto        source_child = Value::reference(*source_value.binding(),
+                                                            const_cast<void *>(source_value.data()));
+                if (ops.move_value_from_impl(ops.context, data, std::move(source_child), modified_time))
                 {
                     auto *tracking = ops.mutable_tracking_impl(ops.context, data);
                     if (tracking == nullptr) { throw std::logic_error("fixed TSData child has no tracking record"); }

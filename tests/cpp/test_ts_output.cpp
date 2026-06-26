@@ -1,8 +1,10 @@
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/time_series/endpoint_schema.h>
 #include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/types/time_series_reference.h>
 #include <hgraph/types/value/value.h>
+#include <hgraph/types/value/value_builder.h>
 #include <hgraph/util/date_time.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -226,6 +228,39 @@ TEST_CASE("TSOutput move mutation moves an owned value without copy assignment")
     REQUIRE(MoveTrackedScalar::move_assign_count == 1);
     REQUIRE(output.view(t1).value().checked_as<MoveTrackedScalar>().value == 42);
     REQUIRE(output.view(t1).delta_value().checked_as<MoveTrackedScalar>().value == 42);
+}
+
+TEST_CASE("TSOutput fixed TSB move mutation moves owned child fields")
+{
+    using namespace hgraph;
+
+    auto       &registry = TypeRegistry::instance();
+    const auto *meta     = registry.register_scalar<MoveTrackedScalar>("MoveTrackedScalar");
+    const auto *ts_meta  = registry.ts(meta);
+    const auto *tsb_meta = registry.tsb("MoveTrackedBundle", {{"a", ts_meta}, {"b", ts_meta}});
+    const auto *binding  = ValuePlanFactory::instance().binding_for(tsb_meta->value_schema);
+    REQUIRE(binding != nullptr);
+
+    BundleBuilder builder{*binding};
+    builder.set("a", Value{MoveTrackedScalar{10}});
+    builder.set("b", Value{MoveTrackedScalar{20}});
+    Value source = builder.build();
+
+    TSOutput output{*tsb_meta};
+    const auto t1 = MIN_ST;
+
+    MoveTrackedScalar::reset_counts();
+    {
+        auto mutation = output.begin_mutation(t1);
+        REQUIRE(mutation.move_value_from(std::move(source)));
+        REQUIRE(mutation.modified());
+    }
+
+    auto value = output.view(t1).value().as_bundle();
+    REQUIRE(value.at("a").checked_as<MoveTrackedScalar>().value == 10);
+    REQUIRE(value.at("b").checked_as<MoveTrackedScalar>().value == 20);
+    REQUIRE(MoveTrackedScalar::copy_assign_count == 0);
+    REQUIRE(MoveTrackedScalar::move_assign_count == 2);
 }
 
 TEST_CASE("TSOutputHandle stores output identity without evaluation time")
