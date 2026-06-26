@@ -557,9 +557,9 @@ namespace hgraph::detail
             auto reference = Value{TSOutputAlternativeStore::peered_reference_as(target_schema.referenced_ts(),
                                                                                  source_view.handle())};
             auto mutation = target.begin_mutation(modified_time);
-            if (!mutation.copy_value_from(reference.view()))
+            if (!mutation.move_value_from(std::move(reference)))
             {
-                throw std::logic_error("TSOutput to-REF alternative could not copy reference value");
+                throw std::logic_error("TSOutput to-REF alternative could not move reference value");
             }
         }
 

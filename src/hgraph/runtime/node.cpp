@@ -237,7 +237,7 @@ namespace hgraph
             Value error_value = make_node_error_value(fields);
             auto  output      = node_error_output(context, view.data()).view(evaluation_time);
             auto  mutation    = output.begin_mutation(evaluation_time);
-            (void)mutation.copy_value_from(error_value.view());
+            (void)mutation.move_value_from(std::move(error_value));
         }
 
         [[nodiscard]] const NodeCallbacks &callbacks(const void *context)

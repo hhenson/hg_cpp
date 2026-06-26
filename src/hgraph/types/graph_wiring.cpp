@@ -174,9 +174,9 @@ namespace hgraph
             Value reference{ts.reference()};
             auto  output   = view.output(evaluation_time);
             auto  mutation = output.begin_mutation(evaluation_time);
-            if (!mutation.copy_value_from(reference.view()))
+            if (!mutation.move_value_from(std::move(reference)))
             {
-                throw std::logic_error("structural REF node failed to copy the reference value");
+                throw std::logic_error("structural REF node failed to move the reference value");
             }
         }
 

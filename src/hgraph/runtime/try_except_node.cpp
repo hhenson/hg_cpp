@@ -34,12 +34,12 @@ namespace hgraph
                 auto bundle   = output.as_bundle();
                 auto target   = bundle.field("exception");
                 auto mutation = target.begin_mutation(evaluation_time);
-                (void)mutation.copy_value_from(error_value.view());
+                (void)mutation.move_value_from(std::move(error_value));
             }
             else
             {
                 auto mutation = output.begin_mutation(evaluation_time);
-                (void)mutation.copy_value_from(error_value.view());
+                (void)mutation.move_value_from(std::move(error_value));
             }
         }
 

@@ -115,19 +115,14 @@ reusing the same storage and child-graph binding model").
 - **Output shape.** The node output is a ``TSB`` with fields ``exception``
   (``TS[NodeError]``) and ``out`` (the wrapped graph's output) — Python's
   ``TryExceptResult``. A **sink** sub-graph (no output) yields just
-  ``TS[NodeError]``. The output is **owned** (not forwarded): the node writes
-  both fields from its own callbacks (the descriptor's
-  ``manage_output_externally`` option records the child-terminal binding without
-  setting up forwarding).
+  ``TS[NodeError]``. The ``exception`` field is owned by the wrapper; ``out``
+  is a forwarding endpoint bound to the child terminal.
 - **Catch.** The node's evaluate binds inputs, then runs
-  ``child_graph().evaluate(t)`` under a try/catch. On a normal cycle it **copies
-  the child terminal output** (located via the recorded
-  ``NestedGraphOutputBinding``) into the ``out`` field when the child ticked; on
-  an exception it writes a ``NodeError`` to ``exception`` instead. The child
-  graph is **kept** across an exception (Python parity) and the graph continues.
-  The copy is a tactical whole-value merge (mirroring ``map_``'s first-cut
-  output merge); zero-copy sub-path forwarding into the ``out`` field is a
-  recorded refinement.
+  ``child_graph().evaluate(t)`` under a try/catch. On a normal cycle the
+  recorded ``NestedGraphOutputBinding`` keeps ``out`` forwarded to the child
+  terminal; on an exception it moves a freshly built ``NodeError`` into
+  ``exception`` instead. The child graph is **kept** across an exception
+  (Python parity) and the graph continues.
 - **Scheduling / lifecycle** delegate to the shared nested helpers
   (``single_nested_graph_bind_inputs`` / ``…_propagate_schedule``); start/stop
   reuse the substrate (custom start/evaluate skip the forwarding bind).
@@ -164,6 +159,4 @@ Deferred (recorded, not yet built):
 - ``__trace_back_depth__`` / ``__capture_values__`` knobs and richer
   ``stack_trace`` / ``activation_back_trace`` content;
 - error capture on custom-ops nodes (nested/map/switch) via their own evaluate;
-- zero-copy forwarding of the child output into the ``out`` field (currently a
-  tactical whole-value copy);
 - child-graph reset/rebuild policy after an exception (currently kept as-is).
