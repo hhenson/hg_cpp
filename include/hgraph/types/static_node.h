@@ -899,9 +899,9 @@ namespace hgraph
         {
             Value wrapped{std::forward<U>(value)};
             auto  mutation = TSOutputView::begin_mutation(evaluation_time());
-            if (!mutation.copy_value_from(wrapped.view()))
+            if (!mutation.move_value_from(std::move(wrapped)))
             {
-                throw std::logic_error("Out<TS<T>>::set failed to copy the value into the output");
+                throw std::logic_error("Out<TS<T>>::set failed to move the value into the output");
             }
         }
 
@@ -929,9 +929,9 @@ namespace hgraph
         {
             Value value{true};
             auto  mutation = TSOutputView::begin_mutation(evaluation_time());
-            if (!mutation.copy_value_from(value.view()))
+            if (!mutation.move_value_from(std::move(value)))
             {
-                throw std::logic_error("Out<SIGNAL>::tick failed to copy the signal tick");
+                throw std::logic_error("Out<SIGNAL>::tick failed to move the signal tick");
             }
         }
 
@@ -959,7 +959,7 @@ namespace hgraph
         {
             TimeSeriesReference typed_reference = normalize(reference);
             Value               wrapped{std::move(typed_reference)};
-            copy_reference_value(wrapped.view());
+            move_reference_value(std::move(wrapped));
         }
 
         void apply(const ValueView &value) const
@@ -979,6 +979,15 @@ namespace hgraph
             if (!mutation.copy_value_from(value))
             {
                 throw std::logic_error("Out<REF<S>>::apply failed to copy the reference into the output");
+            }
+        }
+
+        void move_reference_value(Value &&value) const
+        {
+            auto mutation = TSOutputView::begin_mutation(evaluation_time());
+            if (!mutation.move_value_from(std::move(value)))
+            {
+                throw std::logic_error("Out<REF<S>>::set failed to move the reference into the output");
             }
         }
 
