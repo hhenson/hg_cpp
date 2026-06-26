@@ -333,8 +333,8 @@ ts…)``).
   all.
 - **Runtime** (``runtime/switch_node.{h,cpp}``, on the shared
   ``nested_bindings`` helpers): at most one live child in node storage. On a
-  key change (or any key tick with ``reload_on_ticked`` — runtime-supported,
-  not yet exposed by the operator) the active child is stopped and retired,
+  key change (or any key tick with ``reload_on_ticked`` exposed as
+  ``switch_cases(...).reload()``) the active child is stopped and retired,
   the new branch (else the default, else a runtime error) is built, bound and
   started, and the forwarding output **re-points**. Retired branches are kept
   alive for at least one outer evaluation cycle so downstream consumers that
