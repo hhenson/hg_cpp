@@ -53,6 +53,11 @@ Inside ``func`` (or any graph wired within the mesh's scope) a mesh reference
 ``k`` is an ordinary ``TS[K]`` value computed at runtime (dynamic keys); a single
 requester may reference different keys over time.
 
+An instance may also inspect the enclosing mesh's live output key set with
+``mesh_keys_ref<K>(w[, name])``. This is a forwarding reference to the mesh
+``TSD`` output's ``key_set()`` projection, not a copied set value, so ordinary
+operators such as ``contains_`` and ``len_`` observe the mesh key set directly.
+
 Same-cycle settlement
 ~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -91,6 +96,11 @@ error). This matches the reference (a wiring-time context stack pushed while the
 mesh and its sub-graphs are wired and popped afterwards).
 A consumer in the same graph as the mesh references it directly; a deeper
 consumer references it through the scoped context.
+
+Nested meshes may be named with ``arg<"__name__">(Str{"name"})``. ``mesh_ref``
+and ``mesh_keys_ref`` accept the same optional name and resolve the innermost
+matching mesh scope, which disambiguates nested meshes without changing runtime
+graph structure.
 
 The two request kinds
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -292,8 +302,10 @@ multi-cycle-settle ordering:
 - **Wiring**: the ``mesh_`` operator (``wire_mesh``, peer instantiation = ``map_``),
   the wiring-time **mesh-context stack** (pushed around the child compile), and
   ``mesh_(func)[k]`` access via ``mesh_ref<OUT>(w, key)`` (resolves the scope, wires a
-  ``mesh_subscribe``). ``WiredFn::output_schema()`` supplies the element type up front
-  so the body's ``mesh_(func)[k]`` has a type without a self-referential compile.
+  ``mesh_subscribe``). ``mesh_keys_ref<K>(w, name)`` resolves the same scope and
+  wires a forwarding key-set view. ``WiredFn::output_schema()`` supplies the element
+  type up front so the body's ``mesh_(func)[k]`` has a type without a
+  self-referential compile.
 
 The ``Value``-keyed stable instance store, refcount removal, and the dependency graph
 carry over from the first cut. **Validated** end-to-end by ``tests/cpp/test_mesh.cpp``
@@ -302,13 +314,11 @@ carry over from the first cut. **Validated** end-to-end by ``tests/cpp/test_mesh
 on-demand base creation settling in one cycle; **re-propagation** of a changed
 input through the dependency graph (reactivity); a **``map_`` nested inside a
 mesh instance** whose child pauses on ``mesh_(F)[peer]``; dependency retargeting,
-invalid requests, and removal of orphaned on-demand instances; and a dependency
-**cycle** raising a runtime error.
+invalid requests, removal of orphaned on-demand instances, named mesh key-set
+access through ``contains_``; and a dependency **cycle** raising a runtime error.
 
-**Remaining** (see *Deferrals*): ``contains_`` over the mesh key set (needs a
-key-set access primitive alongside ``mesh_ref``); and named meshes
-(``mesh_("name")`` — the wiring-context stack already matches by name; the
-``mesh_`` operator does not yet carry a name to push).
+**Remaining** (see *Deferrals*): external dynamic requests, ``TSL`` meshes, and
+per-instance error capture.
 
 
 Alternatives considered
@@ -331,9 +341,9 @@ Files
 -----
 
 - ``include/hgraph/runtime/mesh_node.{h}`` / ``src/…/mesh_node.cpp`` — the mesh
-  runtime node, the dependency graph, the pause/resume engine, and
-  ``MeshNodeView::add_dependency``/``remove_dependency``; the ``mesh_subscribe``
-  node.
+  runtime node, the dependency graph, the pause/resume engine,
+  ``MeshNodeView::add_dependency``/``remove_dependency``, the ``mesh_subscribe``
+  node, and the forwarding ``mesh_key_set`` node.
 - ``include/hgraph/types/subgraph_wiring.h`` (or a dedicated mesh wiring header)
   — the mesh-context stack, request classification, the ``mesh_<G>`` entry and
   ``mesh_(...)[k]`` access.
@@ -354,17 +364,3 @@ Deferrals
 - The intra-instance "bipartite split" (re-ranking only the result-consuming
   part of an instance) is **subsumed** by pause/resume at the node boundary; no
   separate static split is planned.
-- **``switch_`` inside a mesh instance** (the recursive ``fib`` shape, where the
-  base case gates the recursion). The pause propagates through ``switch_`` (its
-  single-active-child evaluate returns the child's bool), but the *output* path is a
-  multi-level forwarding chain — branch terminal → switch output → instance terminal
-  → mesh element — which is not yet supported (a forwarding output whose source is
-  itself a forwarding output). Needs forwarding-output chaining (or switch to
-  materialise its output) before recursive ``fib`` over the mesh works.
-- **``contains_`` over the mesh key set** — an instance inspecting the mesh's own key
-  set. Needs a key-set access primitive (the mesh ``TSD`` output's ``key_set()``)
-  exposed alongside ``mesh_ref``.
-- **Named meshes** (``mesh_("name")``) for nested-mesh disambiguation. The
-  wiring scope already resolves by name (``OperatorRegistry::resolve_mesh_scope``); the
-  remaining piece is the ``mesh_`` operator carrying a name to push and ``mesh_ref``
-  taking it through.
