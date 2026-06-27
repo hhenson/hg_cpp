@@ -48,6 +48,7 @@ add_executable(hgraph_unit_tests
     test_endpoint_owner.cpp
     test_feedback.cpp
     test_context_node.cpp
+    test_shared_output_node.cpp
     test_record_replay.cpp
     test_eval_node.cpp
     test_std_nodes.cpp
