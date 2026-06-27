@@ -3,6 +3,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/runtime/executor.cpp
     hgraph/runtime/feedback_node.cpp
     hgraph/runtime/graph.cpp
+    hgraph/runtime/context_node.cpp
     hgraph/runtime/nested_graph_node.cpp
     hgraph/runtime/node.cpp
     hgraph/runtime/node_error.cpp
@@ -72,6 +73,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/executor.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/feedback_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/graph.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/context_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/nested_graph_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/node_fwd.h
