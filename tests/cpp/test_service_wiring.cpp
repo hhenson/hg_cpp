@@ -18,6 +18,29 @@ namespace
         using value_schema = TS<Int>;
     };
 
+    struct ReferencePricesService
+    {
+        static constexpr std::string_view name{"reference_prices"};
+        using output_schema = TSD<Int, TS<Int>>;
+    };
+
+    struct ReferencePricesImplNode
+    {
+        static constexpr auto name              = "reference_prices_impl_node";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Out<TSD<Int, TS<Int>>> out)
+        {
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            Value key_7{Int{7}};
+            Value price_7{Int{70}};
+            Value key_8{Int{8}};
+            Value price_8{Int{80}};
+            mutation.set(key_7.view(), price_7.view());
+            mutation.set(key_8.view(), price_8.view());
+        }
+    };
+
     struct PricesImplNode
     {
         static constexpr auto name = "prices_impl_node";
@@ -48,6 +71,28 @@ namespace
         }
     };
 
+    struct ReferencePricesImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "reference_prices_impl";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w)
+        {
+            return wire<ReferencePricesImplNode>(w).as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct ReferencePriceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "reference_price_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
+        {
+            service::register_reference_service<ReferencePricesService, ReferencePricesImpl>(w);
+            auto prices = service::reference_service<ReferencePricesService>(w);
+            return wire<stdlib::getitem_>(w, prices, instrument).as<TS<Int>>();
+        }
+    };
+
     struct PriceClientGraph
     {
         [[maybe_unused]] static constexpr auto name = "price_client_graph";
@@ -71,6 +116,14 @@ namespace
         }
     };
 }  // namespace
+
+TEST_CASE("service wiring: reference service client reads implementation output by reference")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<ReferencePriceClientGraph>(values<Int>(7, none, 8)),
+                 values<Int>(70, none, 80));
+}
 
 TEST_CASE("service wiring: subscription client reads implementation output by reference")
 {
