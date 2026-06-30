@@ -705,7 +705,13 @@ namespace hgraph::detail
 
         ~RefLinkAlternativeState() noexcept
         {
-            unsubscribe_source();
+            if (!source.bound()) { return; }
+            // Teardown may outlive the source observer registration; rebind keeps strict cleanup.
+            static_cast<void>(fallback_on_exception(false, [&] {
+                auto view = source.data_view();
+                if (view.valid() && view.tracking().observers.contains(&notifier)) { view.unsubscribe(&notifier); }
+                return true;
+            }));
         }
 
         const TSValueTypeMetaData *requested_schema{nullptr};

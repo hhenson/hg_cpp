@@ -21,6 +21,22 @@ namespace hgraph::detail
                 make_scope_exit<true>([&] { node.observed.data_view().unsubscribe(&notifier); });
         }
 
+        void unsubscribe_handle_noexcept(TSOutputHandle &observed, Notifiable *observer) noexcept
+        {
+            if (!observed.bound()) { return; }
+            // Destruction can run after the observed output has already cleared observers;
+            // normal unbind() remains strict for graph operation.
+            if (observer != nullptr)
+            {
+                static_cast<void>(fallback_on_exception(false, [&] {
+                    auto view = observed.data_view();
+                    if (view.valid() && view.tracking().observers.contains(observer)) { view.unsubscribe(observer); }
+                    return true;
+                }));
+            }
+            observed.reset();
+        }
+
         void unsubscribe_tree(TSInputTargetActiveNode &node,
                               TSInputTargetLinkState::SchedulingNotifier &notifier) noexcept
         {
@@ -28,6 +44,16 @@ namespace hgraph::detail
             for (auto &[slot, child] : node.children)
             {
                 if (child) { unsubscribe_tree(*child, notifier); }
+            }
+        }
+
+        void unsubscribe_tree_noexcept(TSInputTargetActiveNode &node,
+                                       TSInputTargetLinkState::SchedulingNotifier &notifier) noexcept
+        {
+            unsubscribe_handle_noexcept(node.observed, &notifier);
+            for (auto &[slot, child] : node.children)
+            {
+                if (child) { unsubscribe_tree_noexcept(*child, notifier); }
             }
         }
 
@@ -323,7 +349,8 @@ namespace hgraph::detail
 
     void TSInputTargetLinkStorage::unbind_noexcept() noexcept
     {
-        [[maybe_unused]] auto cleanup = make_scope_exit<true>([this] { unbind(); });
+        if (state_.active_root_node) { unsubscribe_tree_noexcept(*state_.active_root_node, state_.scheduling_notifier); }
+        unsubscribe_handle_noexcept(state_.target, &state_);
     }
 
     void TSInputTargetLinkStorage::record_target_modified(DateTime modified_time)

@@ -172,6 +172,7 @@ namespace
     using IfIntRefBundle        = UnNamedTSB<Field<"true", REF<TS<Int>>>, Field<"false", REF<TS<Int>>>>;
     using RoutedIntRefList      = TSL<REF<TS<Int>>, 3>;
     using IntTslPair            = TSL<TS<Int>, 2>;
+    using IntTsd                = TSD<Int, TS<Int>>;
 
     struct MakeContainerAccessBundle
     {
@@ -364,6 +365,16 @@ namespace
         static constexpr auto name = "dynamic_tsl_getitem_graph";
 
         static Port<TS<Int>> compose(Wiring &w, Port<IntTslPair> ts, Port<TS<Int>> key)
+        {
+            return wire<stdlib::getitem_>(w, ts, key).as<TS<Int>>();
+        }
+    };
+
+    struct DynamicTsdGetitemGraph
+    {
+        static constexpr auto name = "dynamic_tsd_getitem_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<IntTsd> ts, Port<TS<Int>> key)
         {
             return wire<stdlib::getitem_>(w, ts, key).as<TS<Int>>();
         }
@@ -908,6 +919,14 @@ TEST_CASE("std operators: collection container operators support TSS TSD and fix
                                                                   list_delta<TS<Int>>({4, 40})),
                                                     values<Int>(0, none, 1, none)),
                  values<Int>(1, 2, 30, 40));
+    CHECK_OUTPUT(eval_node<DynamicTsdGetitemGraph>(
+                     values<Value>(dict_delta<Int, TS<Int>>({{1, 10}, {2, 20}}),
+                                   dict_delta<Int, TS<Int>>({{1, 11}}),
+                                   dict_delta<Int, TS<Int>>({}, {1}),
+                                   dict_delta<Int, TS<Int>>({{1, 12}}),
+                                   dict_delta<Int, TS<Int>>({{2, 22}})),
+                     values<Int>(1, none, none, none, 2)),
+                 values<Int>(10, 11, none, 12, 22));
     CHECK_OUTPUT((eval_node<stdlib::index_of, TSL<TS<Int>, 3>>(
                      values<Value>(list_delta<TS<Int>>({1, 2, 3}),
                                    none,

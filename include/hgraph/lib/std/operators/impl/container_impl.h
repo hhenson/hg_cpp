@@ -54,6 +54,13 @@ namespace hgraph::stdlib
             return schema != nullptr && schema->kind == TSTypeKind::TSL ? schema : nullptr;
         }
 
+        [[nodiscard]] inline const TSValueTypeMetaData *direct_tsd_schema(const WiringArg &arg) noexcept
+        {
+            if (arg.kind != WiringArg::Kind::TimeSeries) { return nullptr; }
+            const TSValueTypeMetaData *schema = TypeRegistry::instance().dereference(arg.port.schema);
+            return schema != nullptr && schema->kind == TSTypeKind::TSD ? schema : nullptr;
+        }
+
         [[nodiscard]] inline std::optional<std::size_t> find_tsb_field_index(const TSValueTypeMetaData &schema,
                                                                              std::string_view name) noexcept
         {
@@ -231,6 +238,32 @@ namespace hgraph::stdlib
         }
     };
 
+    struct getitem_tsd_by_key
+    {
+        static bool requires_(const ResolutionMap &, OperatorCallContext context)
+        {
+            return context.args.size() == 2 &&
+                   container_impl_detail::direct_tsd_schema(context.args[0]) != nullptr;
+        }
+
+        static void eval(In<"ts", TSD<ScalarVar<"K">, TsVar<"V">>, InputValidity::Unchecked> ts,
+                         In<"key", TS<ScalarVar<"K">>> key, Out<REF<TsVar<"V">>> out)
+        {
+            const auto *schema = TypeRegistry::instance().dereference(ts.base().schema());
+            const auto *target = schema != nullptr ? schema->element_ts() : nullptr;
+
+            TimeSeriesReference reference{target};
+            const auto         &dict = static_cast<const TSDInputView &>(ts);
+            const std::size_t   slot = dict.find_slot(key.base().value());
+            if (slot != TS_DATA_NO_CHILD_ID) { reference = ts.at_slot(slot).base().reference(); }
+
+            if (!out.valid() || !(out.value().checked_as<TimeSeriesReference>() == reference))
+            {
+                out.set(reference);
+            }
+        }
+    };
+
     struct index_of_tsl
     {
         static void eval(In<"ts", TSL<TS<ScalarVar<"T">>, SIZE<"N">>, InputValidity::Unchecked> ts,
@@ -403,6 +436,7 @@ namespace hgraph::stdlib
         register_overload<contains_, contains_tsd_key>();
 
         register_overload<getitem_, getitem_tsl_by_index>();
+        register_overload<getitem_, getitem_tsd_by_key>();
         register_overload<index_of, index_of_tsl>();
 
         register_graph_overload<getitem_, getitem_tsb_by_name>();
