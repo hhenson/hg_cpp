@@ -58,6 +58,20 @@ namespace
         }
     };
 
+    struct ReferencePricesPathImplNode
+    {
+        static constexpr auto name              = "reference_prices_path_impl_node";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Scalar<"path", Str> path, Out<TSD<Int, TS<Int>>> out)
+        {
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            Value key{Int{7}};
+            Value price{path.value() == "premium" ? Int{777} : Int{70}};
+            mutation.set(key.view(), price.view());
+        }
+    };
+
     struct PricesImplNode
     {
         static constexpr auto name = "prices_impl_node";
@@ -73,6 +87,28 @@ namespace
             {
                 Value key_value{key};
                 Value price{key * Int{10}};
+                mutation.set(key_value.view(), price.view());
+            }
+        }
+    };
+
+    struct PricesPathImplNode
+    {
+        static constexpr auto name = "prices_path_impl_node";
+
+        static void eval(Scalar<"path", Str> path,
+                         In<"keys", TSS<Int>, InputValidity::Unchecked> keys,
+                         Out<TSD<Int, TS<Int>>> out)
+        {
+            if (!keys.valid()) { return; }
+
+            const Int multiplier = path.value() == "premium" ? Int{100} : Int{10};
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            for (Int removed : keys.removed()) { static_cast<void>(mutation.erase(Value{removed}.view())); }
+            for (Int key : keys.values())
+            {
+                Value key_value{key};
+                Value price{key * multiplier};
                 mutation.set(key_value.view(), price.view());
             }
         }
@@ -105,6 +141,19 @@ namespace
         static Port<TSD<Int, TS<Int>>> compose(Wiring &w)
         {
             return wire<ReferencePricesAltImplNode>(w).as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct ReferencePricePathInjectionGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "reference_price_path_injection_graph";
+
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            service::register_reference_service<ReferencePricesService, ReferencePricesPathImplNode>(
+                w, service::path("premium"));
+            auto prices = service::reference_service<ReferencePricesService>(w, service::path("premium"));
+            return wire<stdlib::getitem_>(w, prices, Int{7}).as<TS<Int>>();
         }
     };
 
@@ -152,8 +201,8 @@ namespace
 
         static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
         {
-            service::register_subscription_service<PricesService, PricesImpl>(w, service::path("live"));
-            auto prices = service::subscription_service<PricesService>(w, service::path("live"));
+            service::register_subscription_service<PricesService, PricesPathImplNode>(w, service::path("premium"));
+            auto prices = service::subscription_service<PricesService>(w, service::path("premium"));
             return prices(instrument);
         }
     };
@@ -187,6 +236,13 @@ TEST_CASE("service wiring: reference service paths keep shared outputs separate"
                  values<Int>(700, none, 800));
 }
 
+TEST_CASE("service wiring: reference implementation can receive the service path scalar")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<ReferencePricePathInjectionGraph>(), values<Int>(777));
+}
+
 TEST_CASE("service wiring: subscription client reads implementation output by reference")
 {
     hgraph::stdlib::register_standard_operators();
@@ -200,7 +256,7 @@ TEST_CASE("service wiring: subscription service supports explicit paths")
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<PathPriceClientGraph>(values<Int>(7, none, 8)),
-                 values<Int>(none, 70, none, 80));
+                 values<Int>(none, 700, none, 800));
 }
 
 TEST_CASE("service wiring: implementation registration is separate from client use")

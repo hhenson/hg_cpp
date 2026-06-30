@@ -9,6 +9,7 @@
 #include <hgraph/types/static_schema.h>
 
 #include <array>
+#include <concepts>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -81,6 +82,141 @@ namespace hgraph::service
 
         template <typename Service>
         using output_schema_t = TSD<key_type_t<Service>, value_schema_t<Service>>;
+
+        template <typename T>
+        concept graph_implementation = requires { &T::compose; };
+
+        template <typename T>
+        concept node_implementation = requires { &T::eval; };
+
+        template <typename Impl, bool IsGraph = graph_implementation<Impl>, bool IsNode = node_implementation<Impl>>
+        struct implementation_params
+        {
+            using type = std::tuple<>;
+        };
+
+        template <typename Impl>
+        struct implementation_params<Impl, true, false>
+        {
+            using type = typename StaticGraphSignature<Impl>::param_types;
+        };
+
+        template <typename Impl>
+        struct implementation_params<Impl, false, true>
+        {
+            using type = typename StaticNodeSignature<Impl>::wire_param_types;
+        };
+
+        template <typename Impl>
+        using implementation_params_t = typename implementation_params<Impl>::type;
+
+        template <typename T>
+        struct is_path_scalar : std::false_type
+        {
+        };
+
+        template <fixed_string Name, typename T>
+        struct is_path_scalar<Scalar<Name, T>>
+            : std::bool_constant<Name.sv() == std::string_view{"path"} && std::same_as<T, Str>>
+        {
+        };
+
+        template <typename T>
+        struct is_service_input_param : std::false_type
+        {
+        };
+
+        template <fixed_string Name, typename S, auto... Policies>
+        struct is_service_input_param<In<Name, S, Policies...>> : std::true_type
+        {
+        };
+
+        template <fixed_string Name, typename S>
+        struct is_service_input_param<NamedPort<Name, S>> : std::true_type
+        {
+        };
+
+        template <typename S>
+        struct is_service_input_param<Port<S>> : std::true_type
+        {
+        };
+
+        template <typename Params, std::size_t I, bool Done>
+        struct first_service_input_param_impl;
+
+        template <typename Params, std::size_t I, bool Found>
+        struct first_service_input_param_choice;
+
+        template <typename Params, std::size_t I>
+        struct first_service_input_param_impl<Params, I, true>
+        {
+            using type = void;
+        };
+
+        template <typename Params, std::size_t I>
+        struct first_service_input_param_impl<Params, I, false>
+        {
+            using candidate = std::tuple_element_t<I, Params>;
+            using type = typename first_service_input_param_choice<
+                Params, I, is_service_input_param<candidate>::value>::type;
+        };
+
+        template <typename Params, std::size_t I>
+        struct first_service_input_param_choice<Params, I, true>
+        {
+            using type = std::tuple_element_t<I, Params>;
+        };
+
+        template <typename Params, std::size_t I>
+        struct first_service_input_param_choice<Params, I, false>
+        {
+            using type = typename first_service_input_param_impl<
+                Params, I + 1, (I + 1 >= std::tuple_size_v<Params>)>::type;
+        };
+
+        template <typename Params>
+        using first_service_input_param =
+            first_service_input_param_impl<Params, 0, (std::tuple_size_v<Params> == 0)>;
+
+        template <typename Params, std::size_t... I>
+        [[nodiscard]] consteval bool has_path_scalar(std::index_sequence<I...>)
+        {
+            return (false || ... || is_path_scalar<std::tuple_element_t<I, Params>>::value);
+        }
+
+        template <typename Impl>
+        [[nodiscard]] consteval bool implementation_accepts_path()
+        {
+            using params = implementation_params_t<Impl>;
+            return has_path_scalar<params>(std::make_index_sequence<std::tuple_size_v<params>>{});
+        }
+
+        template <typename Impl, typename OutputSchema, typename... Args>
+        [[nodiscard]] Port<OutputSchema> wire_service_impl(Wiring &w, const ServicePath &user_path, const Args &...args)
+        {
+            if constexpr (implementation_accepts_path<Impl>())
+            {
+                return wire<Impl>(w, args..., arg<"path">(Str{user_path.value})).template as<OutputSchema>();
+            }
+            else
+            {
+                return wire<Impl>(w, args...).template as<OutputSchema>();
+            }
+        }
+
+        template <typename Impl, typename PortT>
+        [[nodiscard]] auto service_input_arg(const PortT &port)
+        {
+            using input_param = typename first_service_input_param<implementation_params_t<Impl>>::type;
+            if constexpr (!std::is_void_v<input_param> && requires { input_param::field_name; })
+            {
+                return arg<input_param::field_name>(port);
+            }
+            else
+            {
+                return port;
+            }
+        }
 
         template <typename Service>
         [[nodiscard]] std::string service_name(std::string_view error_prefix)
@@ -349,7 +485,7 @@ namespace hgraph::service
         using output_schema = detail::reference_output_schema_t<Service>;
 
         auto shared_output = detail::reference_shared_output_source<Service>(w, user_path);
-        auto output        = wire<Impl>(w, args...).template as<output_schema>();
+        auto output        = detail::wire_service_impl<Impl, output_schema>(w, user_path, args...);
         detail::capture_reference_service_output<Service, Impl>(w, output, shared_output, user_path);
     }
 
@@ -418,7 +554,8 @@ namespace hgraph::service
 
         auto subscriptions = detail::subscription_source<Service>(w, user_path);
         auto shared_output = detail::shared_output_source<Service>(w, user_path);
-        auto output        = wire<Impl>(w, subscriptions, args...).template as<output_schema>();
+        auto output = detail::wire_service_impl<Impl, output_schema>(
+            w, user_path, detail::service_input_arg<Impl>(subscriptions), args...);
         detail::capture_service_output<Service, Impl>(w, output, shared_output, user_path);
     }
 
