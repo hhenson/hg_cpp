@@ -1,6 +1,10 @@
 #include <hgraph/runtime/shared_output_node.h>
 
+#include <hgraph/runtime/graph.h>
 #include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/time_series/ts_input/bundle_view.h>
+#include <hgraph/types/time_series/ts_input/base_view.h>
+#include <hgraph/types/time_series/ts_output/base_view.h>
 #include <hgraph/types/time_series_reference.h>
 
 #include <deque>
@@ -55,6 +59,40 @@ namespace hgraph
             }
             return reference;
         }
+
+        void capture_shared_output_reference(
+            const SharedOutputConfig &config,
+            const NodeView &view,
+            DateTime evaluation_time,
+            DateTime schedule_time)
+        {
+            auto input = view.input(evaluation_time);
+            auto bundle = input.as_bundle();
+            auto reference = normalize_shared_output_reference(config, TimeSeriesReference{bundle[0]});
+
+            TSOutputView source_output = bundle[1].bound_output();
+            NodeView     source_node   = source_output.owner_node();
+            if (!source_node.valid())
+            {
+                throw std::logic_error("shared output capture could not recover the shared output source node");
+            }
+            if (!source_node.has_state())
+            {
+                throw std::logic_error("shared output capture target node has no reference state");
+            }
+
+            const auto &previous = source_node.state().checked_as<TimeSeriesReference>();
+            if (previous == reference) { return; }
+
+            source_node.replace_state(Value{std::move(reference)});
+
+            GraphValue *graph = source_node.graph_value();
+            if (graph == nullptr)
+            {
+                throw std::logic_error("shared output source node is not attached to a graph");
+            }
+            graph->schedule_node(source_node.node_index(), schedule_time);
+        }
     }  // namespace
 
     std::string output_key(std::string_view path)
@@ -63,80 +101,73 @@ namespace hgraph
         return std::string{path};
     }
 
-    std::string output_subscriber_key(std::string_view path)
-    {
-        std::string key = output_key(path);
-        key.append("_subscriber");
-        return key;
-    }
-
-    NodeBuilder make_shared_output_capture_node(std::string path, const TSValueTypeMetaData &target_schema)
-    {
-        const auto *config = &register_shared_output_config(output_key(path), target_schema, true);
-        auto       &registry = TypeRegistry::instance();
-        (void)registry.ref(&target_schema);
-
-        NodeTypeMetaData schema;
-        schema.display_name      = "shared_output_capture";
-        schema.input_schema      = registry.un_named_tsb({{"ts", &target_schema}});
-        schema.node_kind         = NodeKind::Sink;
-        schema.uses_global_state = true;
-        schema.active_inputs     = std::vector<std::size_t>{};
-        schema.valid_inputs      = std::vector<std::size_t>{};
-
-        NodeCallbacks callbacks;
-        callbacks.start = [config](const NodeView &view, DateTime evaluation_time) {
-            auto input = view.input(evaluation_time);
-            auto bundle = input.as_bundle();
-            Value value{normalize_shared_output_reference(*config, TimeSeriesReference{bundle[0]})};
-            view.global_state().set(config->key, value);
-        };
-        callbacks.stop = [config](const NodeView &view, DateTime) {
-            (void)view.global_state().erase(config->key);
-        };
-
-        NodeBuilder builder = NodeBuilder::native(std::move(schema), std::move(callbacks));
-        builder.label("shared_output_capture");
-        return builder;
-    }
-
-    NodeBuilder make_shared_output_stub_source_node(
+    NodeBuilder make_shared_output_source_node(
         std::string path,
         const TSValueTypeMetaData &target_schema,
         bool strict)
     {
         const auto *config = &register_shared_output_config(output_key(path), target_schema, strict);
         auto       &registry = TypeRegistry::instance();
+        const auto *output_schema = registry.ref(&target_schema);
 
         NodeTypeMetaData schema;
-        schema.display_name      = "shared_output_stub";
-        schema.output_schema     = registry.ref(&target_schema);
+        schema.display_name      = "shared_output_source";
+        schema.output_schema     = output_schema;
+        schema.state_schema      = output_schema->value_schema;
         schema.node_kind         = NodeKind::PullSource;
-        schema.uses_global_state = true;
         schema.schedule_on_start = true;
 
         NodeCallbacks callbacks;
         callbacks.evaluate = [config](const NodeView &view, DateTime evaluation_time) {
-            ValueView stored = view.global_state().get(config->key);
-            if (!stored.valid())
+            const auto &reference = view.state().checked_as<TimeSeriesReference>();
+            if (reference.is_empty() && reference.target_schema() == nullptr)
             {
-                if (config->strict)
-                {
-                    throw std::runtime_error("missing shared output: " + config->key);
-                }
+                if (config->strict) { throw std::runtime_error("missing shared output: " + config->key); }
                 return;
             }
 
-            Value reference{normalize_shared_output_reference(*config, stored.checked_as<TimeSeriesReference>())};
+            Value value{normalize_shared_output_reference(*config, reference)};
             auto  mutation = view.output(evaluation_time).begin_mutation(evaluation_time);
-            if (!mutation.move_value_from(std::move(reference)))
+            if (!mutation.move_value_from(std::move(value)))
             {
-                throw std::logic_error("shared output stub failed to publish the captured reference");
+                throw std::logic_error("shared output source failed to publish the captured reference");
             }
+        };
+        callbacks.stop = [](const NodeView &view, DateTime) {
+            view.replace_state(Value{TimeSeriesReference{}});
         };
 
         NodeBuilder builder = NodeBuilder::native(std::move(schema), std::move(callbacks));
-        builder.label("shared_output_stub");
+        builder.label(std::string{"shared_output_source:"} + config->key);
+        return builder;
+    }
+
+    NodeBuilder make_shared_output_capture_node(std::string path, const TSValueTypeMetaData &target_schema)
+    {
+        const auto *config = &register_shared_output_config(output_key(path), target_schema, true);
+        auto       &registry  = TypeRegistry::instance();
+        const auto *ref_schema = registry.ref(&target_schema);
+
+        NodeTypeMetaData schema;
+        schema.display_name      = "shared_output_capture";
+        schema.input_schema      = registry.un_named_tsb({
+            {"ts", &target_schema},
+            {"shared_output", ref_schema},
+        });
+        schema.node_kind         = NodeKind::Sink;
+        schema.active_inputs     = std::vector<std::size_t>{0};
+        schema.valid_inputs      = std::vector<std::size_t>{};
+
+        NodeCallbacks callbacks;
+        callbacks.start = [config](const NodeView &view, DateTime evaluation_time) {
+            capture_shared_output_reference(*config, view, evaluation_time, evaluation_time);
+        };
+        callbacks.evaluate = [config](const NodeView &view, DateTime evaluation_time) {
+            capture_shared_output_reference(*config, view, evaluation_time, evaluation_time + MIN_TD);
+        };
+
+        NodeBuilder builder = NodeBuilder::native(std::move(schema), std::move(callbacks));
+        builder.label(std::string{"shared_output_capture:"} + config->key);
         return builder;
     }
 }  // namespace hgraph

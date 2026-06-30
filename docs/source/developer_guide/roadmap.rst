@@ -43,6 +43,25 @@ Planned work:
 - Build concrete adaptor families only after the common runtime model is
   established.
 
+Boundary design decisions:
+
+- Runtime boundary outputs follow the normal graph rule: every non-sink node
+  owns its output, and nested or adaptor-specific machinery forwards into that
+  output instead of copying values between outputs.
+- Shared outputs use a feedback-style source/capture pair. The source is a
+  pull-source node that owns a ``REF<T>`` output and graph-local REF state. The
+  capture node is a sink that captures the producer reference and writes that
+  reference into the paired source node state.
+- Shared outputs do not use global-state subscribers or shared ownership for
+  graph-local state. Consumers bind to the source node output and are woken by
+  ordinary output notification.
+- Capture during ``start`` schedules the paired source for the current engine
+  time. Capture during graph evaluation schedules the source for
+  ``evaluation_time + MIN_TD`` so a source that has already passed in rank order
+  is observed on the next engine cycle.
+- The source clears its captured reference on ``stop``. A restarted graph must
+  republish through capture before the source can produce a live shared output.
+
 Priority 2: Graph and Higher-Order Completeness
 -----------------------------------------------
 
