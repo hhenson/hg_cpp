@@ -41,6 +41,23 @@ namespace
         }
     };
 
+    struct ReferencePricesAltImplNode
+    {
+        static constexpr auto name              = "reference_prices_alt_impl_node";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Out<TSD<Int, TS<Int>>> out)
+        {
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            Value key_7{Int{7}};
+            Value price_7{Int{700}};
+            Value key_8{Int{8}};
+            Value price_8{Int{800}};
+            mutation.set(key_7.view(), price_7.view());
+            mutation.set(key_8.view(), price_8.view());
+        }
+    };
+
     struct PricesImplNode
     {
         static constexpr auto name = "prices_impl_node";
@@ -81,6 +98,16 @@ namespace
         }
     };
 
+    struct ReferencePricesAltImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "reference_prices_alt_impl";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w)
+        {
+            return wire<ReferencePricesAltImplNode>(w).as<TSD<Int, TS<Int>>>();
+        }
+    };
+
     struct ReferencePriceClientGraph
     {
         [[maybe_unused]] static constexpr auto name = "reference_price_client_graph";
@@ -93,6 +120,21 @@ namespace
         }
     };
 
+    struct ReferencePricePathClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "reference_price_path_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
+        {
+            service::register_reference_service<ReferencePricesService, ReferencePricesImpl>(
+                w, service::path("primary"));
+            service::register_reference_service<ReferencePricesService, ReferencePricesAltImpl>(
+                w, service::path("secondary"));
+            auto prices = service::reference_service<ReferencePricesService>(w, service::path("secondary"));
+            return wire<stdlib::getitem_>(w, prices, instrument).as<TS<Int>>();
+        }
+    };
+
     struct PriceClientGraph
     {
         [[maybe_unused]] static constexpr auto name = "price_client_graph";
@@ -100,6 +142,18 @@ namespace
         static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
         {
             auto prices = service::subscription_service_impl<PricesService, PricesImpl>(w);
+            return prices(instrument);
+        }
+    };
+
+    struct PathPriceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "path_price_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
+        {
+            service::register_subscription_service<PricesService, PricesImpl>(w, service::path("live"));
+            auto prices = service::subscription_service<PricesService>(w, service::path("live"));
             return prices(instrument);
         }
     };
@@ -125,11 +179,27 @@ TEST_CASE("service wiring: reference service client reads implementation output 
                  values<Int>(70, none, 80));
 }
 
+TEST_CASE("service wiring: reference service paths keep shared outputs separate")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<ReferencePricePathClientGraph>(values<Int>(7, none, 8)),
+                 values<Int>(700, none, 800));
+}
+
 TEST_CASE("service wiring: subscription client reads implementation output by reference")
 {
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<PriceClientGraph>(values<Int>(7, none, 8)),
+                 values<Int>(none, 70, none, 80));
+}
+
+TEST_CASE("service wiring: subscription service supports explicit paths")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<PathPriceClientGraph>(values<Int>(7, none, 8)),
                  values<Int>(none, 70, none, 80));
 }
 

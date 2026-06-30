@@ -18,6 +18,17 @@
 
 namespace hgraph::service
 {
+    struct ServicePath
+    {
+        std::string value{};
+    };
+
+    [[nodiscard]] inline ServicePath path(std::string_view value)
+    {
+        if (value.empty()) { throw std::invalid_argument("service path must not be empty"); }
+        return ServicePath{std::string{value}};
+    }
+
     /**
      * C++ service wiring.
      *
@@ -42,6 +53,9 @@ namespace hgraph::service
      *
      *    register_reference_service<Accounts, StaticAccounts>(w);
      *    auto accounts = reference_service<Accounts>(w);
+     *
+     * Use ``service::path("name")`` as the first argument after ``w`` to bind
+     * or call a non-default service path.
      *
      * Subscription services add a key stream:
      *
@@ -69,51 +83,83 @@ namespace hgraph::service
         using output_schema_t = TSD<key_type_t<Service>, value_schema_t<Service>>;
 
         template <typename Service>
-        [[nodiscard]] std::string service_base_path(std::string_view prefix, std::string_view error_prefix)
+        [[nodiscard]] std::string service_name(std::string_view error_prefix)
         {
             std::string_view name{Service::name};
             if (name.empty())
             {
                 throw std::invalid_argument(std::string{error_prefix} + " service name must not be empty");
             }
+            return std::string{name};
+        }
 
+        template <typename Service>
+        [[nodiscard]] ServicePath default_service_path()
+        {
+            if constexpr (requires { std::string_view{Service::default_path}; })
+            {
+                return path(std::string_view{Service::default_path});
+            }
+            else
+            {
+                std::string user_path = service_name<Service>("default");
+                user_path.append("_default");
+                return ServicePath{std::move(user_path)};
+            }
+        }
+
+        template <typename Service>
+        [[nodiscard]] std::string service_full_path(std::string_view prefix,
+                                                    std::string_view error_prefix,
+                                                    const ServicePath &user_path)
+        {
+            const std::string name = service_name<Service>(error_prefix);
+            if (user_path.value.starts_with(prefix)) { return user_path.value; }
             std::string path{prefix};
+            path.append(user_path.value);
+            path.push_back('/');
             path.append(name);
             return path;
         }
 
         template <typename Service>
-        [[nodiscard]] std::string reference_base_path()
+        [[nodiscard]] std::string reference_base_path(const ServicePath &user_path)
         {
-            return service_base_path<Service>("ref_svc://", "reference");
+            return service_full_path<Service>("ref_svc://", "reference", user_path);
         }
 
         template <typename Service>
-        [[nodiscard]] std::string subscription_base_path()
+        [[nodiscard]] std::string subscription_base_path(const ServicePath &user_path)
         {
-            return service_base_path<Service>("subs_svc://", "subscription");
+            return service_full_path<Service>("subs_svc://", "subscription", user_path);
         }
 
         template <typename Service>
-        [[nodiscard]] std::string reference_output_path()
+        [[nodiscard]] std::string reference_output_path(const ServicePath &user_path)
         {
-            return reference_base_path<Service>();
+            return reference_base_path<Service>(user_path);
         }
 
         template <typename Service>
-        [[nodiscard]] std::string subscriptions_path()
+        [[nodiscard]] std::string subscriptions_path(const ServicePath &user_path)
         {
-            std::string path = subscription_base_path<Service>();
+            std::string path = subscription_base_path<Service>(user_path);
             path.append("/subs");
             return path;
         }
 
         template <typename Service>
-        [[nodiscard]] std::string output_path()
+        [[nodiscard]] std::string output_path(const ServicePath &user_path)
         {
-            std::string path = subscription_base_path<Service>();
+            std::string path = subscription_base_path<Service>(user_path);
             path.append("/out");
             return path;
+        }
+
+        [[nodiscard]] inline Value path_key_value(const std::string &full_path)
+        {
+            // Used only by Wiring's intern key; service source nodes do not carry path scalars at runtime.
+            return Value{Str{full_path}};
         }
 
         template <typename Service>
@@ -147,12 +193,15 @@ namespace hgraph::service
         };
 
         template <typename Service>
-        [[nodiscard]] Port<REF<reference_output_schema_t<Service>>> reference_shared_output_source(Wiring &w)
+        [[nodiscard]] Port<REF<reference_output_schema_t<Service>>> reference_shared_output_source(
+            Wiring &w,
+            const ServicePath &user_path)
         {
             using output_schema = reference_output_schema_t<Service>;
             static_assert(schema_descriptor<output_schema>::is_concrete(),
                           "reference service output schema must be concrete");
 
+            std::string full_path = reference_output_path<Service>(user_path);
             const auto *target_meta = schema_descriptor<output_schema>::ts_meta();
             const auto *ref_meta    = schema_descriptor<REF<output_schema>>::ts_meta();
 
@@ -162,19 +211,21 @@ namespace hgraph::service
 
             WiringPortRef port = w.add_node(
                 std::type_index(typeid(reference_output_source_marker<Service>)), schema,
-                std::span<const WiringPortRef>{}, Value{}, [path = reference_output_path<Service>(), target_meta]() {
+                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                [path = std::move(full_path), target_meta]() {
                     return make_shared_output_source_node(path, *target_meta);
                 });
             return Port<REF<output_schema>>{w, std::move(port)};
         }
 
         template <typename Service>
-        [[nodiscard]] Port<TSS<key_type_t<Service>>> subscription_source(Wiring &w)
+        [[nodiscard]] Port<TSS<key_type_t<Service>>> subscription_source(Wiring &w, const ServicePath &user_path)
         {
             using key_type = key_type_t<Service>;
             static_assert(scalar_descriptor<key_type>::is_concrete(),
                           "subscription service key_type must be a concrete scalar type");
 
+            std::string full_path = subscriptions_path<Service>(user_path);
             const auto *key_meta = scalar_descriptor<key_type>::value_meta();
             const auto *out_meta = schema_descriptor<TSS<key_type>>::ts_meta();
 
@@ -183,19 +234,22 @@ namespace hgraph::service
 
             WiringPortRef port = w.add_node(
                 std::type_index(typeid(subscription_source_marker<Service>)), schema,
-                std::span<const WiringPortRef>{}, Value{}, [path = subscriptions_path<Service>(), key_meta]() {
+                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                [path = std::move(full_path), key_meta]() {
                     return make_subscription_key_source_node(path, *key_meta);
                 });
             return Port<TSS<key_type>>{w, std::move(port)};
         }
 
         template <typename Service>
-        [[nodiscard]] Port<REF<output_schema_t<Service>>> shared_output_source(Wiring &w)
+        [[nodiscard]] Port<REF<output_schema_t<Service>>> shared_output_source(Wiring &w,
+                                                                               const ServicePath &user_path)
         {
             using output_schema = output_schema_t<Service>;
             static_assert(schema_descriptor<output_schema>::is_concrete(),
                           "subscription service output schema must be concrete");
 
+            std::string full_path = output_path<Service>(user_path);
             const auto *target_meta = schema_descriptor<output_schema>::ts_meta();
             const auto *ref_meta    = schema_descriptor<REF<output_schema>>::ts_meta();
 
@@ -205,7 +259,8 @@ namespace hgraph::service
 
             WiringPortRef port = w.add_node(
                 std::type_index(typeid(shared_output_source_marker<Service>)), schema,
-                std::span<const WiringPortRef>{}, Value{}, [path = output_path<Service>(), target_meta]() {
+                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                [path = std::move(full_path), target_meta]() {
                     return make_shared_output_source_node(path, *target_meta);
                 });
             return Port<REF<output_schema>>{w, std::move(port)};
@@ -214,13 +269,14 @@ namespace hgraph::service
         template <typename Service>
         void capture_subscription_key(Wiring &w,
                                       Port<TS<key_type_t<Service>>> key,
-                                      Port<TSS<key_type_t<Service>>> subscriptions)
+                                      Port<TSS<key_type_t<Service>>> subscriptions,
+                                      const ServicePath &user_path)
         {
             using key_type = key_type_t<Service>;
 
             std::array<WiringPortRef, 2> inputs{key.erased(), subscriptions.erased()};
             NodeBuilder builder = make_subscription_key_capture_node(
-                subscriptions_path<Service>(), *scalar_descriptor<key_type>::value_meta());
+                subscriptions_path<Service>(user_path), *scalar_descriptor<key_type>::value_meta());
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
@@ -234,13 +290,14 @@ namespace hgraph::service
         template <typename Service, typename Impl>
         void capture_reference_service_output(Wiring &w,
                                               Port<reference_output_schema_t<Service>> output,
-                                              Port<REF<reference_output_schema_t<Service>>> shared_output)
+                                              Port<REF<reference_output_schema_t<Service>>> shared_output,
+                                              const ServicePath &user_path)
         {
             using output_schema = reference_output_schema_t<Service>;
 
             std::array<WiringPortRef, 2> inputs{output.erased(), shared_output.erased()};
             NodeBuilder builder = make_shared_output_capture_node(
-                reference_output_path<Service>(), *schema_descriptor<output_schema>::ts_meta());
+                reference_output_path<Service>(user_path), *schema_descriptor<output_schema>::ts_meta());
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
@@ -254,13 +311,14 @@ namespace hgraph::service
         template <typename Service, typename Impl>
         void capture_service_output(Wiring &w,
                                     Port<output_schema_t<Service>> output,
-                                    Port<REF<output_schema_t<Service>>> shared_output)
+                                    Port<REF<output_schema_t<Service>>> shared_output,
+                                    const ServicePath &user_path)
         {
             using output_schema = output_schema_t<Service>;
 
             std::array<WiringPortRef, 2> inputs{output.erased(), shared_output.erased()};
             NodeBuilder builder = make_shared_output_capture_node(
-                output_path<Service>(), *schema_descriptor<output_schema>::ts_meta());
+                output_path<Service>(user_path), *schema_descriptor<output_schema>::ts_meta());
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
@@ -273,20 +331,32 @@ namespace hgraph::service
     }  // namespace detail
 
     template <typename Service>
-    [[nodiscard]] Port<typename Service::output_schema> reference_service(Wiring &w)
+    [[nodiscard]] Port<typename Service::output_schema> reference_service(Wiring &w, ServicePath user_path)
     {
         using output_schema = detail::reference_output_schema_t<Service>;
-        return detail::reference_shared_output_source<Service>(w).template as<output_schema>();
+        return detail::reference_shared_output_source<Service>(w, user_path).template as<output_schema>();
+    }
+
+    template <typename Service>
+    [[nodiscard]] Port<typename Service::output_schema> reference_service(Wiring &w)
+    {
+        return reference_service<Service>(w, detail::default_service_path<Service>());
+    }
+
+    template <typename Service, typename Impl, typename... Args>
+    void register_reference_service(Wiring &w, ServicePath user_path, const Args &...args)
+    {
+        using output_schema = detail::reference_output_schema_t<Service>;
+
+        auto shared_output = detail::reference_shared_output_source<Service>(w, user_path);
+        auto output        = wire<Impl>(w, args...).template as<output_schema>();
+        detail::capture_reference_service_output<Service, Impl>(w, output, shared_output, user_path);
     }
 
     template <typename Service, typename Impl, typename... Args>
     void register_reference_service(Wiring &w, const Args &...args)
     {
-        using output_schema = detail::reference_output_schema_t<Service>;
-
-        auto shared_output = detail::reference_shared_output_source<Service>(w);
-        auto output        = wire<Impl>(w, args...).template as<output_schema>();
-        detail::capture_reference_service_output<Service, Impl>(w, output, shared_output);
+        register_reference_service<Service, Impl>(w, detail::default_service_path<Service>(), args...);
     }
 
     template <typename Service>
@@ -300,10 +370,12 @@ namespace hgraph::service
         SubscriptionService() noexcept = default;
         SubscriptionService(Wiring &w,
                             Port<TSS<key_type>> subscriptions,
-                            Port<REF<output_schema>> output) noexcept
+                            Port<REF<output_schema>> output,
+                            ServicePath user_path) noexcept
             : wiring_(&w),
               subscriptions_(std::move(subscriptions)),
-              output_(std::move(output))
+              output_(std::move(output)),
+              path_(std::move(user_path))
         {
         }
 
@@ -313,7 +385,7 @@ namespace hgraph::service
         [[nodiscard]] Port<value_schema> operator()(Port<TS<key_type>> key) const
         {
             if (wiring_ == nullptr) { throw std::logic_error("subscription service handle is not bound"); }
-            detail::capture_subscription_key<Service>(*wiring_, key, subscriptions_);
+            detail::capture_subscription_key<Service>(*wiring_, key, subscriptions_, path_);
             return wire<stdlib::getitem_>(*wiring_, output_.template as<output_schema>(), key)
                 .template as<value_schema>();
         }
@@ -322,32 +394,53 @@ namespace hgraph::service
         Wiring                  *wiring_{nullptr};
         Port<TSS<key_type>>      subscriptions_{};
         Port<REF<output_schema>> output_{};
+        ServicePath              path_{};
     };
+
+    template <typename Service>
+    [[nodiscard]] SubscriptionService<Service> subscription_service(Wiring &w, ServicePath user_path)
+    {
+        auto subscriptions = detail::subscription_source<Service>(w, user_path);
+        auto shared_output = detail::shared_output_source<Service>(w, user_path);
+        return SubscriptionService<Service>{w, subscriptions, shared_output, std::move(user_path)};
+    }
 
     template <typename Service>
     [[nodiscard]] SubscriptionService<Service> subscription_service(Wiring &w)
     {
-        auto subscriptions = detail::subscription_source<Service>(w);
-        auto shared_output = detail::shared_output_source<Service>(w);
-        return SubscriptionService<Service>{w, subscriptions, shared_output};
+        return subscription_service<Service>(w, detail::default_service_path<Service>());
+    }
+
+    template <typename Service, typename Impl, typename... Args>
+    void register_subscription_service(Wiring &w, ServicePath user_path, const Args &...args)
+    {
+        using output_schema = detail::output_schema_t<Service>;
+
+        auto subscriptions = detail::subscription_source<Service>(w, user_path);
+        auto shared_output = detail::shared_output_source<Service>(w, user_path);
+        auto output        = wire<Impl>(w, subscriptions, args...).template as<output_schema>();
+        detail::capture_service_output<Service, Impl>(w, output, shared_output, user_path);
     }
 
     template <typename Service, typename Impl, typename... Args>
     void register_subscription_service(Wiring &w, const Args &...args)
     {
-        using output_schema = detail::output_schema_t<Service>;
+        register_subscription_service<Service, Impl>(w, detail::default_service_path<Service>(), args...);
+    }
 
-        auto subscriptions = detail::subscription_source<Service>(w);
-        auto shared_output = detail::shared_output_source<Service>(w);
-        auto output        = wire<Impl>(w, subscriptions, args...).template as<output_schema>();
-        detail::capture_service_output<Service, Impl>(w, output, shared_output);
+    template <typename Service, typename Impl, typename... Args>
+    [[nodiscard]] SubscriptionService<Service> subscription_service_impl(Wiring &w,
+                                                                         ServicePath user_path,
+                                                                         const Args &...args)
+    {
+        register_subscription_service<Service, Impl>(w, user_path, args...);
+        return subscription_service<Service>(w, std::move(user_path));
     }
 
     template <typename Service, typename Impl, typename... Args>
     [[nodiscard]] SubscriptionService<Service> subscription_service_impl(Wiring &w, const Args &...args)
     {
-        register_subscription_service<Service, Impl>(w, args...);
-        return subscription_service<Service>(w);
+        return subscription_service_impl<Service, Impl>(w, detail::default_service_path<Service>(), args...);
     }
 }  // namespace hgraph::service
 
