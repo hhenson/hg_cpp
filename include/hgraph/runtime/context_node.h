@@ -9,7 +9,7 @@
 namespace hgraph
 {
     /**
-     * Build the global-state key used for a captured context output.
+     * Build the canonical key used for a captured context output.
      *
      * ``scope`` identifies the graph scope that owns the captured output, and
      * ``path`` identifies the context value within that scope. The Python runtime
@@ -20,8 +20,19 @@ namespace hgraph
                                                                std::string_view path);
 
     /**
-     * Build a sink node that captures an input time-series reference into the
-     * root graph's ``GlobalState`` during ``start`` and erases it during ``stop``.
+     * Build the pull-source node that owns a captured context ``REF<target_schema>``
+     * output.
+     *
+     * A paired capture node writes the current context reference into this source
+     * node's graph-local state and schedules it. Consumers bind to this source
+     * output and are woken by ordinary output notifications.
+     */
+    [[nodiscard]] HGRAPH_EXPORT NodeBuilder make_context_source_node(std::string key,
+                                                                     const TSValueTypeMetaData &target_schema);
+
+    /**
+     * Build a sink node that captures an input time-series reference and writes
+     * it into a paired context source node.
      *
      * Runtime builder example:
      *
@@ -30,32 +41,16 @@ namespace hgraph
      *    auto key = context_output_key("root", "price");
      *    GraphBuilder gb;
      *    gb.add_node(price_source);
+     *    gb.add_node(make_context_source_node(key, *ts_price));
      *    gb.add_node(make_context_capture_node(key, *ts_price));
-     *    gb.add_edge(GraphEdge{.source_node = 0, .target_node = 1, .target_path = {0}});
+     *    gb.add_edge(GraphEdge{.source_node = 0, .target_node = 2, .target_path = {0}});
+     *    gb.add_edge(GraphEdge{.source_node = 1, .target_node = 2, .target_path = {1}});
      *
      * This is an internal graph primitive. User-facing context wiring still
      * needs an approved C++ API.
      */
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder make_context_capture_node(std::string key,
                                                                       const TSValueTypeMetaData &target_schema);
-
-    /**
-     * Build a pull-source node that reads a captured context reference from
-     * ``GlobalState`` and publishes it as ``REF<target_schema>``.
-     *
-     * Runtime builder example:
-     *
-     * .. code-block:: cpp
-     *
-     *    auto key = context_output_key("root", "price");
-     *    auto stub = make_context_stub_source_node(key, *ts_price);
-     *    gb.add_node(std::move(stub));
-     *
-     * The node publishes the reference token only; consumers bind through that
-     * reference to the original output, so the referenced value is not copied.
-     */
-    [[nodiscard]] HGRAPH_EXPORT NodeBuilder make_context_stub_source_node(std::string key,
-                                                                          const TSValueTypeMetaData &target_schema);
 }  // namespace hgraph
 
 #endif  // HGRAPH_RUNTIME_CONTEXT_NODE_H

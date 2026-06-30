@@ -61,6 +61,9 @@ Boundary design decisions:
   is observed on the next engine cycle.
 - The source clears its captured reference on ``stop``. A restarted graph must
   republish through capture before the source can produce a live shared output.
+- Context capture/lookup uses the same source/capture runtime primitive. Context
+  keys remain wiring-time identifiers for scope resolution; they are not runtime
+  ``GlobalState`` storage locations for copied reference values.
 
 Priority 2: Graph and Higher-Order Completeness
 -----------------------------------------------
