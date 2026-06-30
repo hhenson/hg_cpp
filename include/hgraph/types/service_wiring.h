@@ -31,12 +31,13 @@ namespace hgraph::service
      *        using value_schema = TS<Int>;
      *    };
      *
-     * ``subscription_service_impl<Prices, Impl>(w)`` wires ``Impl`` with a
+     * ``register_subscription_service<Prices, Impl>(w)`` wires ``Impl`` with a
      * ``TSS<key_type>`` subscription input and captures its
-     * ``TSD<key_type, value_schema>`` output as a shared reference. Calling the
-     * returned handle with a key port records that client's subscription and
-     * returns the selected service value by reference; no service value is copied
-     * by the wiring layer.
+     * ``TSD<key_type, value_schema>`` output as a shared reference.
+     * ``subscription_service<Prices>(w)`` returns the client handle. Calling the
+     * handle with a key port records that client's subscription and returns the
+     * selected service value by reference; no service value is copied by the
+     * wiring layer.
      */
 
     namespace detail
@@ -216,8 +217,16 @@ namespace hgraph::service
         Port<REF<output_schema>> output_{};
     };
 
+    template <typename Service>
+    [[nodiscard]] SubscriptionService<Service> subscription_service(Wiring &w)
+    {
+        auto subscriptions = detail::subscription_source<Service>(w);
+        auto shared_output = detail::shared_output_source<Service>(w);
+        return SubscriptionService<Service>{w, subscriptions, shared_output};
+    }
+
     template <typename Service, typename Impl, typename... Args>
-    [[nodiscard]] SubscriptionService<Service> subscription_service_impl(Wiring &w, const Args &...args)
+    void register_subscription_service(Wiring &w, const Args &...args)
     {
         using output_schema = detail::output_schema_t<Service>;
 
@@ -225,7 +234,13 @@ namespace hgraph::service
         auto shared_output = detail::shared_output_source<Service>(w);
         auto output        = wire<Impl>(w, subscriptions, args...).template as<output_schema>();
         detail::capture_service_output<Service, Impl>(w, output, shared_output);
-        return SubscriptionService<Service>{w, subscriptions, shared_output};
+    }
+
+    template <typename Service, typename Impl, typename... Args>
+    [[nodiscard]] SubscriptionService<Service> subscription_service_impl(Wiring &w, const Args &...args)
+    {
+        register_subscription_service<Service, Impl>(w, args...);
+        return subscription_service<Service>(w);
     }
 }  // namespace hgraph::service
 

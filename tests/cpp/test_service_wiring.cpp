@@ -40,7 +40,7 @@ namespace
 
     struct PricesImpl
     {
-        static constexpr auto name = "prices_impl";
+        [[maybe_unused]] static constexpr auto name = "prices_impl";
 
         static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TSS<Int>> keys)
         {
@@ -50,11 +50,23 @@ namespace
 
     struct PriceClientGraph
     {
-        static constexpr auto name = "price_client_graph";
+        [[maybe_unused]] static constexpr auto name = "price_client_graph";
 
         static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
         {
             auto prices = service::subscription_service_impl<PricesService, PricesImpl>(w);
+            return prices(instrument);
+        }
+    };
+
+    struct RegisteredPriceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "registered_price_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
+        {
+            service::register_subscription_service<PricesService, PricesImpl>(w);
+            auto prices = service::subscription_service<PricesService>(w);
             return prices(instrument);
         }
     };
@@ -65,5 +77,13 @@ TEST_CASE("service wiring: subscription client reads implementation output by re
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<PriceClientGraph>(values<Int>(7, none, 8)),
+                 values<Int>(none, 70, none, 80));
+}
+
+TEST_CASE("service wiring: implementation registration is separate from client use")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<RegisteredPriceClientGraph>(values<Int>(7, none, 8)),
                  values<Int>(none, 70, none, 80));
 }
