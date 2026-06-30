@@ -64,6 +64,10 @@ Boundary design decisions:
 - Context capture/lookup uses the same source/capture runtime primitive. Context
   keys remain wiring-time identifiers for scope resolution; they are not runtime
   ``GlobalState`` storage locations for copied reference values.
+- Subscription services collect keys through a source/capture pair. The service
+  source owns a ``TSS<K>`` output and graph-local reference counts; capture sinks
+  enqueue add/remove intents and schedule the source. The source mutates only
+  its own output, so client key changes do not copy values between outputs.
 
 Priority 2: Graph and Higher-Order Completeness
 -----------------------------------------------
