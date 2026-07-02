@@ -202,18 +202,36 @@ authoritative). `mesh_` over TSD executes (on-demand instances via
 `mesh_subscribe`/`mesh_ref`, dependency ranking + cycle detection;
 `runtime/mesh_node.*`, `tests/cpp/test_mesh.cpp`; dynamic-TSL mesh still deferred).
 All three service flavours execute end-to-end with path-aware addressing —
-`reference_service` (client reads the impl output by REF), `subscription_service`
-(TSS key set via source/capture, ref-counted), `request_reply_service`
-(`TSD<int,request>` cumulative request dictionary) — `types/service_wiring.h`,
-`runtime/service_node.*`, `tests/cpp/test_service_wiring.cpp`; impl registration
-(`register_*_service<Service,Impl>`) is separate from client wiring. Shared outputs
+reference (client reads the impl output by REF), subscription (TSS key set via
+source/capture, ref-counted), request/reply (`TSD<int,request>` cumulative request
+dictionary) — `types/service_wiring.h`, `runtime/service_node.*`,
+`tests/cpp/test_service_wiring.cpp`. Service descriptors are **flavour-tagged by
+their schema aliases** (`output_schema` / `key_type`+`value_schema` /
+`request_schema`+`response_schema`, mutually exclusive, concept-checked); clients
+consume through the ordinary **`wire<Service>(w[, service::path(…)][, port])`**
+verb (path first) via a `wire_customization` extension point; impl registration
+(`register_*_service<Service,Impl>`) is separate from client wiring. **Impl side:**
+an impl is an ordinary node/graph (first TS param = flavour input, output captured;
+optional `Scalar<"path",Str>` receives the path); one graph can implement several
+interfaces via `register_services<Impl, Services…>` + `impl_input<S>`/`impl_output<S>`.
+**Adaptor foundations landed** (first pass): descriptors derive from
+`adaptor::interface` (+ `input_schema`/`output_schema`; omit one for sink/source-only),
+`register_adaptor(s)`, client `wire<Interface>(w[, path][, in])`, impl-side
+`from_graph<I>`/`to_graph<I>` (`types/adaptor_wiring.h`, `test_adaptor_wiring.cpp`;
+built on the shared-output substrate). **Service adaptors** (per-client keyed
+exchange): `service_adaptor::interface`; impl sees `TSD<Int, input_schema>` via
+`from_graph` and replies keyed by the same client id via `to_graph`. Paths may be
+scalar-qualified (`path("p", arg<"k">(v))`), descriptors may set `default_path`,
+service descriptors may be templates (instantiations bind as concrete interfaces),
+and duplicate registrations on one path throw at build time. Shared outputs
 (`runtime/shared_output_node.*`) and the context **runtime primitive**
 (`runtime/context_node.*` — the user-facing context wiring API still needs approval)
 use the same feedback-style source/capture model. Real-time wall-clock scheduler
 alarms landed (`NodeScheduler(..., on_wall_clock=true)`, real-time executors only).
 TSW (tick-based windows) also executes end-to-end; duration-based windows have
 registry+runtime ops but no compile-time marker yet. Remaining at the boundary:
-adaptors, `@component`, graph-level context capture/lookup + nested import/export.
+request/reply + subscription adaptor flows and concrete adaptor families,
+`@component`, graph-level context capture/lookup + nested import/export.
 
 **Error handling — DONE** (design record:
 `docs/source/developer_guide/error_handling.rst`, authoritative). `NodeError` is a

@@ -43,6 +43,18 @@ Landed (design record: :doc:`services`):
   next scheduled tick before resetting the delta state.
 - Shared outputs (``runtime/shared_output_node.*``) and the context
   source/capture **runtime primitive** (``runtime/context_node.*``).
+- Adaptor foundations for source, sink, and duplex flows:
+  ``adaptor::interface`` descriptors, ``register_adaptor``/``register_adaptors``,
+  client ``wire<Interface>``, implementation-side ``from_graph``/``to_graph``
+  (``types/adaptor_wiring.h``, ``tests/cpp/test_adaptor_wiring.cpp``).
+- **Service adaptors** (the request/reply adaptor flow): per-client keyed
+  exchange via ``service_adaptor::interface`` + ``from_graph``/``to_graph``
+  over ``TSD<Int, schema>``.
+- Multi-interface implementations: ``register_services<Impl, Services…>`` with
+  ``impl_input``/``impl_output``.
+- Scalar-qualified paths (``path("p", arg<"k">(v))``), per-descriptor
+  ``default_path``, template service descriptors, and build-time rejection of
+  duplicate registrations.
 - Real-time wall-clock scheduler alarms
   (``NodeScheduler(..., on_wall_clock=true)``).
 
@@ -51,8 +63,7 @@ Planned work:
 - The user-facing context wiring surface: graph-level context capture/lookup
   and nested graph context import/export (the runtime primitive above exists;
   the C++ API still needs approval).
-- Define adaptor foundations for source, sink, request/reply, and subscription
-  flows.
+- Subscription adaptor flows (request/reply landed as service adaptors).
 - Integrate remaining adaptor external events with the scheduler and real-time
   executor.
 - Define lifecycle ownership for external resources.

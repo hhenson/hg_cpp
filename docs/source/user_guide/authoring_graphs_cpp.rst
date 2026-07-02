@@ -812,8 +812,9 @@ Services
 
 Services share one implementation across many client call sites, addressed by
 an optional path (design record: developer guide *Services, shared outputs and
-contexts*). Declare the service as a struct — the aliases pick the flavour —
-then register an implementation and consume it:
+contexts*). Declare the service as a struct — the aliases it declares are its
+**flavour tag** (exactly one set, checked at compile time) — register an
+implementation, and consume it with the **ordinary ``wire<>`` verb**:
 
 .. code-block:: cpp
 
@@ -826,16 +827,121 @@ then register an implementation and consume it:
 
    // inside a compose body:
    service::register_request_reply_service<AddOneService, AddOneImplNode>(w);
-   auto reply = service::request_reply_service<AddOneService>(w, request);
+   auto reply = wire<AddOneService>(w, request);
 
 A **reference service** (``output_schema``) publishes one output that clients
-read by reference; a **subscription service** (``key_type`` + ``value_schema``)
-collects the union of client-subscribed keys into the implementation and
-returns the keyed responses; a **request/reply service** (``request_schema`` +
-``response_schema``) gives each client a private keyed request/response pair.
-``service::path("…")`` addresses independent instances of the same service;
+read by reference — consume with ``wire<S>(w)``; a **subscription service**
+(``key_type`` + ``value_schema``) collects the union of client-subscribed keys
+into the implementation and returns the keyed responses — consume with
+``wire<S>(w, key)``; a **request/reply service** (``request_schema`` +
+``response_schema``) gives each client a private keyed request/response pair —
+consume with ``wire<S>(w, request)``. ``service::path("…")`` addresses
+independent instances of the same service and is always the **first** argument
+after ``w`` (e.g. ``wire<S>(w, service::path("premium"), request)``);
 registration and consumption are separate, so a library can consume a service
 its host application registers.
+
+Paths may be **qualified with scalar arguments** —
+``service::path("prices", arg<"tier">(Str{"premium"}))`` — and each distinct
+argument set is an independent service instance (the implementation's
+``Scalar<"path", Str>`` receives the full qualified string). A descriptor may
+set ``static constexpr std::string_view default_path`` to change its default.
+Registering two implementations on the **same** path is rejected at build time
+(``std::invalid_argument``). Service descriptors may also be **templates** —
+each instantiation (``TemplateAddService<Int>``) binds as its own concrete
+interface; use a qualified path to keep instantiations apart.
+
+The **implementation** is itself an ordinary node or graph: a subscription
+implementation receives the subscribed key set (``TSS<key_type>``) and returns
+``TSD<key_type, value_schema>``; a request/reply implementation receives the
+request dictionary (``TSD<Int, request_schema>``, keyed by a stable per-client
+request id) and must reply keyed by the **same id**. Both inputs start invalid
+(no clients yet), so implementations declare them ``InputValidity::Unchecked``
+and guard. One graph can implement **several services at once** —
+``service::register_services<Impl, Services…>(w, path)`` with
+``service::impl_input<S>(w, path)`` / ``service::impl_output<S>(w, path, port)``
+inside its ``compose``. The full contracts and worked examples are in the
+developer guide's *Services, adaptors, shared outputs and contexts* page.
+
+
+Adaptors
+--------
+
+An adaptor is the boundary to the outside world: one implementation owns the
+external interaction and client graphs exchange time-series with it through an
+interface. The descriptor derives from ``adaptor::interface`` and declares
+``input_schema`` (what clients send) and/or ``output_schema`` (what clients
+receive) — omit one for a sink-only or source-only adaptor. Clients use the
+ordinary ``wire<>`` verb; the implementation is a graph that reaches the
+client-facing boundary with ``adaptor::from_graph`` / ``adaptor::to_graph``:
+
+.. code-block:: cpp
+
+   struct LoopbackAdaptor : adaptor::interface
+   {
+       static constexpr std::string_view name{"loopback"};
+       using input_schema  = TS<Int>;
+       using output_schema = TS<Int>;
+   };
+
+   struct LoopbackAdaptorImpl
+   {
+       static void compose(Wiring &w)
+       {
+           auto input  = adaptor::from_graph<LoopbackAdaptor>(w);  // what clients sent
+           auto output = wire<EchoNode>(w, input);
+           adaptor::to_graph<LoopbackAdaptor>(w, output);          // what clients receive
+       }
+   };
+
+   // consuming graph:
+   adaptor::register_adaptor<LoopbackAdaptor, LoopbackAdaptorImpl>(w);
+   auto out = wire<LoopbackAdaptor>(w, some_input);
+
+``adaptor::path("…")`` (first argument after ``w``) addresses independent
+instances and supports the same **scalar-qualified** form as service paths
+(``adaptor::path("typed", arg<"side">(Str{"primary"}))``); an implementation
+may take ``Scalar<"path", Str>`` to receive its registered path, and one
+implementation can serve multiple interfaces via
+``adaptor::register_adaptors<Impl, Interfaces…>(w, path)``. Duplicate
+registrations on one path are rejected at build time. External-world
+machinery — push sources for real-time events, connection lifecycle — belongs
+inside the adaptor implementation, never in client graphs.
+
+A plain adaptor gives every client the **same merged stream**. When each client
+needs its **own reply** (request/reply over an adaptor), use a **service
+adaptor** instead: derive the descriptor from ``service_adaptor::interface``.
+Clients still call ``wire<Interface>(w[, path], input)`` and each receives its
+own output; the implementation sees all client inputs as a dictionary keyed by
+a stable per-client id and must reply keyed by the **same id** (the same
+contract as a request/reply service implementation):
+
+.. code-block:: cpp
+
+   struct AddTwentyServiceAdaptor : service_adaptor::interface
+   {
+       static constexpr std::string_view name{"add_twenty_adaptor"};
+       using input_schema  = TS<Int>;
+       using output_schema = TS<Int>;
+   };
+
+   struct AddTwentyServiceAdaptorImpl
+   {
+       static void compose(Wiring &w, Scalar<"path", Str> path)
+       {
+           const auto custom   = service_adaptor::path(path.value());
+           auto       requests = service_adaptor::from_graph<AddTwentyServiceAdaptor>(w, custom);
+           // requests: Port<TSD<Int, TS<Int>>> — every client's input, keyed by client id
+           auto replies = wire<AddTwentyServiceAdaptorImplNode>(w, requests).as<TSD<Int, TS<Int>>>();
+           service_adaptor::to_graph<AddTwentyServiceAdaptor>(w, custom, replies);
+       }
+   };
+
+   // consuming graph:
+   const auto custom = service_adaptor::path("multi_client");
+   service_adaptor::register_service_adaptor<AddTwentyServiceAdaptor,
+                                             AddTwentyServiceAdaptorImpl>(w, custom);
+   auto reply = wire<AddTwentyServiceAdaptor>(w, custom, request);
 
 
 Running a graph
@@ -981,5 +1087,15 @@ C++ ↔ Python cheat sheet
      - ``feedback(TS[...], init)``; ``fb(port)`` / ``fb()``
    * - ``exception_time_series(port)`` / ``try_except_<G>(w, ...)``
      - ``exception_time_series(ts)`` / ``try_except(g, ...)``
-   * - ``service::register_*_service<S, Impl>(w)`` + ``service::*_service<S>(w, ...)``
+   * - ``service::register_*_service<S, Impl>(w)`` + ``wire<S>(w, ...)``
      - ``@service_impl`` / ``register_service`` + calling the service
+   * - ``service::impl_input<S>(w)`` / ``service::impl_output<S>(w, port)``
+     - the impl function's service parameters / return
+   * - ``adaptor::register_adaptor<I, Impl>(w)`` + ``wire<I>(w, in)``
+     - ``@adaptor`` / ``@adaptor_impl`` + calling the adaptor
+   * - ``adaptor::from_graph<I>(w)`` / ``adaptor::to_graph<I>(w, port)``
+     - ``adaptor.from_graph`` / ``adaptor.to_graph``
+   * - ``service_adaptor::interface`` + ``register_service_adaptor<I, Impl>(w)``
+     - ``@service_adaptor`` / ``@service_adaptor_impl``
+   * - ``service::path("p", arg<"k">(v))`` (scalar-qualified path)
+     - path with typed parameters
