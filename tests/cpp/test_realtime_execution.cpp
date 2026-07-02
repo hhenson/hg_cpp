@@ -1,11 +1,13 @@
 #include <hgraph/lib/testing/runtime_support.h>
 #include <hgraph/runtime/runtime.h>
+#include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/static_node.h>
 #include <hgraph/types/value/value.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -74,6 +76,42 @@ namespace
 
         return NodeBuilder::native(std::move(schema), std::move(callbacks));
     }
+
+    struct WallClockScheduledSource
+    {
+        static constexpr auto name = "wall_clock_scheduled_source";
+
+        static void start(Scalar<"delay", TimeDelta> delay,
+                          NodeScheduler sched,
+                          EvaluationClockView clock,
+                          GlobalStateView gs)
+        {
+            const DateTime target = std::max(sched.now(), clock.now()) + delay.value();
+            gs.set("wall_target", Value{target});
+            sched.schedule(target, "wall", /*on_wall_clock=*/true);
+        }
+
+        static void eval(Scalar<"delay", TimeDelta>,
+                         DateTime evaluation_time,
+                         EvaluationClockView clock,
+                         GlobalStateView gs,
+                         Out<TS<Int>> out)
+        {
+            gs.set("wall_evaluation_time", Value{evaluation_time});
+            gs.set("wall_now", Value{clock.now()});
+            out.set(Int{1});
+        }
+    };
+
+    struct WallClockScheduledGraph
+    {
+        static constexpr auto name = "wall_clock_scheduled_graph";
+
+        static void compose(Wiring &w, Scalar<"delay", TimeDelta> delay)
+        {
+            wire<WallClockScheduledSource>(w, delay);
+        }
+    };
 }  // namespace
 
 TEST_CASE("real-time executor waits for the future scheduled time")
@@ -114,6 +152,40 @@ TEST_CASE("real-time executor waits for the future scheduled time")
     CHECK(observed_clock_evaluation_time == observed_evaluation_time);
     CHECK(observed_clock_now >= observed_clock_evaluation_time);
     CHECK(hgraph::testing::wall_now() >= target_time);
+}
+
+TEST_CASE("real-time NodeScheduler supports wall-clock alarms")
+{
+    using namespace hgraph;
+
+    constexpr TimeDelta delay{20'000};
+
+    GraphBuilder graph_builder = build_graph<WallClockScheduledGraph>(delay);
+
+    const DateTime start_time = hgraph::testing::wall_now();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(graph_builder))
+        .mode(GraphExecutorMode::RealTime)
+        .start_time(start_time)
+        .end_time(start_time + TimeDelta{1'000'000});
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    auto               view     = executor.view();
+
+    view.run();
+
+    auto graph = view.graph();
+    REQUIRE(graph.node_count() == 1);
+
+    const DateTime target          = graph.global_state().get_as<DateTime>("wall_target");
+    const DateTime evaluation_time = graph.global_state().get_as<DateTime>("wall_evaluation_time");
+    const DateTime wall_now        = graph.global_state().get_as<DateTime>("wall_now");
+
+    CHECK(evaluation_time == target);
+    CHECK(wall_now >= evaluation_time);
+    CHECK(hgraph::testing::wall_now() >= target);
+    CHECK(graph.node_at(0).output(evaluation_time).value().checked_as<Int>() == Int{1});
 }
 
 TEST_CASE("real-time executor stop request wakes a sleeping executor")

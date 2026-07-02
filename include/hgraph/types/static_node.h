@@ -2,6 +2,7 @@
 #define HGRAPH_CPP_ROOT_STATIC_NODE_H
 
 #include <hgraph/runtime/graph.h>
+#include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/node.h>
 #include <hgraph/runtime/node_scheduler.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
@@ -1684,8 +1685,11 @@ namespace hgraph
                 // ``started()`` is false while the node's ``start`` hook runs, which
                 // is what lets a source schedule its first evaluation at the start
                 // time (schedule(now())); during ``eval`` it is true (future only).
+                auto       executor            = view.graph().executor();
+                const bool supports_wall_clock = executor.valid() &&
+                                                 executor.schema()->mode == GraphExecutorMode::RealTime;
                 return NodeScheduler{view.scheduler_state(), view.graph_value(), view.node_index(), evaluation_time,
-                                     view.started()};
+                                     view.started(), view.evaluation_clock(), supports_wall_clock};
             }
         };
 

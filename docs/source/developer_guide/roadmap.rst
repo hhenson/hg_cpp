@@ -41,7 +41,8 @@ Planned work:
   capture sinks update a source-owned request-delta state for
   ``TSD<int, request_schema>`` and the source emits the cumulative delta on its
   next scheduled tick before resetting the delta state.
-- Integrate external events with the scheduler and real-time executor.
+- Integrate remaining adaptor external events with the scheduler and real-time
+  executor.
 - Define lifecycle ownership for external resources.
 - Support data-catalogue-style publish/subscribe as a graph feature.
 - Build concrete adaptor families only after the common runtime model is
@@ -79,6 +80,10 @@ Boundary design decisions:
   that delta in one mutation when scheduled and then resets it. Multiple
   captures can update before the source emits, so the final request delta is
   cumulative.
+- Real-time wall-clock scheduler alarms use the normal graph schedule queue:
+  ``NodeScheduler(..., on_wall_clock=true)`` is enabled only for real-time graph
+  executors, where engine time is wall-clock-aligned. Simulation rejects
+  wall-clock alarms because simulated time cannot be advanced by host time.
 
 Priority 2: Graph and Higher-Order Completeness
 -----------------------------------------------
