@@ -17,6 +17,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <span>
 #include <string>
@@ -280,6 +281,121 @@ namespace hgraph
         explicit WiringNamedStructuralSourceArg(std::vector<WiringNamedPortRef> refs) : fields(std::move(refs)) {}
     };
 
+    namespace wiring_path_detail
+    {
+        template <typename>
+        inline constexpr bool always_false_v = false;
+
+        inline void append_escaped_path_component(std::string &out, std::string_view value)
+        {
+            constexpr char hex[] = "0123456789ABCDEF";
+            for (unsigned char c : value)
+            {
+                const bool plain = (c >= 'a' && c <= 'z') ||
+                                   (c >= 'A' && c <= 'Z') ||
+                                   (c >= '0' && c <= '9') ||
+                                   c == '_' || c == '-' || c == '.';
+                if (plain)
+                {
+                    out.push_back(static_cast<char>(c));
+                }
+                else
+                {
+                    out.push_back('%');
+                    out.push_back(hex[c >> 4U]);
+                    out.push_back(hex[c & 0x0FU]);
+                }
+            }
+        }
+
+        template <typename T>
+        void append_scalar_path_value(std::string &out, const T &value)
+        {
+            using V = std::remove_cvref_t<T>;
+            if constexpr (std::same_as<V, Str>)
+            {
+                append_escaped_path_component(out, value);
+            }
+            else if constexpr (std::same_as<V, std::string_view>)
+            {
+                append_escaped_path_component(out, value);
+            }
+            else if constexpr (std::same_as<V, const char *>)
+            {
+                append_escaped_path_component(out, value != nullptr ? std::string_view{value} : std::string_view{});
+            }
+            else if constexpr (std::same_as<V, char *>)
+            {
+                append_escaped_path_component(out, value != nullptr ? std::string_view{value} : std::string_view{});
+            }
+            else if constexpr (std::same_as<V, Bool>)
+            {
+                out.append(value ? "true" : "false");
+            }
+            else if constexpr (std::integral<V>)
+            {
+                out.append(std::to_string(value));
+            }
+            else if constexpr (std::floating_point<V>)
+            {
+                std::ostringstream stream;
+                stream << value;
+                append_escaped_path_component(out, stream.str());
+            }
+            else
+            {
+                static_assert(always_false_v<V>,
+                              "service/adaptor path scalars must be named primitive scalar values");
+            }
+        }
+
+        template <typename Arg>
+        void append_scalar_path_segment(std::string &out, std::size_t index, const Arg &argument)
+        {
+            using A = std::remove_cvref_t<Arg>;
+            if constexpr (call_args_detail::is_named_arg_v<A>)
+            {
+                if constexpr (call_args_detail::is_static_named_arg_v<A>)
+                {
+                    append_escaped_path_component(out, A::field_name.sv());
+                }
+                else
+                {
+                    append_escaped_path_component(out, argument.name);
+                }
+                out.push_back('=');
+                append_scalar_path_value(out, argument.value);
+            }
+            else
+            {
+                out.push_back('$');
+                out.append(std::to_string(index));
+                out.push_back('=');
+                append_scalar_path_value(out, argument);
+            }
+        }
+
+        template <typename... Args>
+        [[nodiscard]] std::string typed_path_value(std::string_view base, const Args &...args)
+        {
+            std::string out{base};
+            if constexpr (sizeof...(Args) > 0)
+            {
+                out.push_back('[');
+                std::size_t index = 0;
+                (
+                    [&] {
+                        if (index != 0) { out.push_back(','); }
+                        append_scalar_path_segment(out, index, args);
+                        ++index;
+                    }(),
+                    ...);
+                out.push_back(']');
+            }
+            return out;
+        }
+    }  // namespace wiring_path_detail
+
     /**
      * The interned wiring identity. It pairs a node's ``NodeBuilder`` (which
      * carries any per-instance scalar configuration) with its time-series input
@@ -365,6 +481,14 @@ namespace hgraph
          * but no runtime edge is emitted.
          */
         void add_rank_dependency(const WiringInstance *node, const WiringInstance *depends_on);
+
+        /**
+         * Register an implementation-owned service/adaptor identity. This mirrors
+         * Python's wiring-context duplicate checks: clients may refer to a path
+         * many times, but only one implementation may own a concrete interface
+         * identity in a wiring graph.
+         */
+        void register_built_service_path(std::string path, std::string_view kind);
 
         /**
          * Deferred-builder overload: intern by ``(def, schema, inputs, scalars)``

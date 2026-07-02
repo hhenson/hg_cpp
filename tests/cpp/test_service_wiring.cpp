@@ -6,6 +6,9 @@
 #include <hgraph/types/service_wiring.h>
 #include <hgraph/types/static_node.h>
 
+#include <stdexcept>
+#include <string>
+
 namespace
 {
     using namespace hgraph;
@@ -82,6 +85,20 @@ namespace
             auto mutation = out.begin_mutation(out.evaluation_time());
             Value key{Int{7}};
             Value price{path.value() == "premium" ? Int{777} : Int{70}};
+            mutation.set(key.view(), price.view());
+        }
+    };
+
+    struct TypedReferencePricesPathImplNode
+    {
+        static constexpr auto name              = "typed_reference_prices_path_impl_node";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Scalar<"path", Str> path, Out<TSD<Int, TS<Int>>> out)
+        {
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            Value key{Int{7}};
+            Value price{path.value().find("premium") != std::string::npos ? Int{777} : Int{70}};
             mutation.set(key.view(), price.view());
         }
     };
@@ -217,6 +234,63 @@ namespace
         }
     };
 
+    struct AddTwentyServiceAdaptor : service_adaptor::interface
+    {
+        static constexpr std::string_view name{"add_twenty_adaptor"};
+        using input_schema  = TS<Int>;
+        using output_schema = TS<Int>;
+    };
+
+    struct AddTwentyServiceAdaptorImplNode
+    {
+        static constexpr auto name = "add_twenty_service_adaptor_impl_node";
+
+        static void eval(In<"requests", TSD<Int, TS<Int>>, InputValidity::Unchecked> requests,
+                         Out<TSD<Int, TS<Int>>> out)
+        {
+            if (!requests.modified()) { return; }
+
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            for (const auto &[request_id, request] : requests.removed_items())
+            {
+                (void)request;
+                static_cast<void>(mutation.erase(request_id));
+            }
+            for (const auto &[request_id, request] : requests.modified_items())
+            {
+                if (!request.valid())
+                {
+                    static_cast<void>(mutation.erase(request_id));
+                    continue;
+                }
+
+                Value response{request.value() + Int{20}};
+                mutation.set(request_id, response.view());
+            }
+        }
+    };
+
+    struct AddTwentyServiceAdaptorImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "add_twenty_service_adaptor_impl";
+
+        static void compose(Wiring &w, Scalar<"path", Str> path)
+        {
+            const auto custom = service_adaptor::path(path.value());
+            auto requests = service_adaptor::from_graph<AddTwentyServiceAdaptor>(w, custom);
+            auto replies = wire<AddTwentyServiceAdaptorImplNode>(w, requests).as<TSD<Int, TS<Int>>>();
+            service_adaptor::to_graph<AddTwentyServiceAdaptor>(w, custom, replies);
+        }
+    };
+
+    template <typename T>
+    struct TemplateAddService
+    {
+        static constexpr std::string_view name{"template_add"};
+        using request_schema  = TS<T>;
+        using response_schema = TS<T>;
+    };
+
     struct PricesImpl
     {
         [[maybe_unused]] static constexpr auto name = "prices_impl";
@@ -257,6 +331,34 @@ namespace
                 w, service::path("premium"));
             auto prices = wire<ReferencePricesService>(w, service::path("premium"));
             return wire<stdlib::getitem_>(w, prices, Int{7}).as<TS<Int>>();
+        }
+    };
+
+    struct TypedReferencePricePathGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "typed_reference_price_path_graph";
+
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            service::register_reference_service<ReferencePricesService, TypedReferencePricesPathImplNode>(
+                w, service::path("typed_prices", arg<"tier">(Str{"standard"})));
+            service::register_reference_service<ReferencePricesService, TypedReferencePricesPathImplNode>(
+                w, service::path("typed_prices", arg<"tier">(Str{"premium"})));
+            auto prices = wire<ReferencePricesService>(
+                w, service::path("typed_prices", arg<"tier">(Str{"premium"})));
+            return wire<stdlib::getitem_>(w, prices, Int{7}).as<TS<Int>>();
+        }
+    };
+
+    struct DuplicateReferenceServiceGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "duplicate_reference_service_graph";
+
+        static void compose(Wiring &w)
+        {
+            const auto custom = service::path("duplicate");
+            service::register_reference_service<ReferencePricesService, ReferencePricesImpl>(w, custom);
+            service::register_reference_service<ReferencePricesService, ReferencePricesAltImpl>(w, custom);
         }
     };
 
@@ -386,6 +488,33 @@ namespace
         }
     };
 
+    struct ServiceAdaptorTwoClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "service_adaptor_two_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs_request, Port<TS<Int>> rhs_request)
+        {
+            const auto custom = service_adaptor::path("multi_client");
+            service_adaptor::register_service_adaptor<AddTwentyServiceAdaptor, AddTwentyServiceAdaptorImpl>(
+                w, custom);
+            auto lhs_reply = wire<AddTwentyServiceAdaptor>(w, custom, lhs_request);
+            auto rhs_reply = wire<AddTwentyServiceAdaptor>(w, custom, rhs_request);
+            return wire<stdlib::add_>(w, lhs_reply, rhs_reply).as<TS<Int>>();
+        }
+    };
+
+    struct TemplateServiceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "template_service_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            const auto typed = service::path("template", arg<"T">(Str{"Int"}));
+            service::register_request_reply_service<TemplateAddService<Int>, AddOneImplNode>(w, typed);
+            return wire<TemplateAddService<Int>>(w, typed, request);
+        }
+    };
+
 }  // namespace
 
 TEST_CASE("service wiring: reference service client reads implementation output by reference")
@@ -409,6 +538,20 @@ TEST_CASE("service wiring: reference implementation can receive the service path
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<ReferencePricePathInjectionGraph>(), values<Int>(777));
+}
+
+TEST_CASE("service wiring: scalar-qualified paths keep implementations separate")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<TypedReferencePricePathGraph>(), values<Int>(777));
+}
+
+TEST_CASE("service wiring: duplicate implementation registrations are rejected")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_THROWS_AS(build_graph<DuplicateReferenceServiceGraph>(), std::invalid_argument);
 }
 
 TEST_CASE("service wiring: subscription client reads implementation output by reference")
@@ -462,4 +605,19 @@ TEST_CASE("service wiring: multi-interface implementation graph wires explicit s
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<MultiServiceClientGraph>(values<Int>(1)), values<Int>(none, 13));
+}
+
+TEST_CASE("service wiring: service adaptors collect multiple client requests")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<ServiceAdaptorTwoClientGraph>(values<Int>(1), values<Int>(10)),
+                 values<Int>(none, 51));
+}
+
+TEST_CASE("service wiring: templated service descriptors bind as concrete interfaces")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<TemplateServiceClientGraph>(values<Int>(3)), values<Int>(none, 4));
 }

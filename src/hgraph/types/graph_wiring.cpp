@@ -394,6 +394,7 @@ namespace hgraph
     {
         std::deque<WiringInstance>                                        instances{};
         std::unordered_map<InstanceKey, WiringInstance *, InstanceKeyHash> interned{};
+        std::unordered_map<std::string, std::string>                       built_service_paths{};
         GlobalState                                                        global_state{};
     };
 
@@ -481,6 +482,19 @@ namespace hgraph
         if (std::find(dependencies.begin(), dependencies.end(), depends_on) == dependencies.end())
         {
             dependencies.push_back(depends_on);
+        }
+    }
+
+    void Wiring::register_built_service_path(std::string path, std::string_view kind)
+    {
+        if (path.empty()) { throw std::invalid_argument("service/adaptor implementation path must not be empty"); }
+
+        auto [it, inserted] = impl_->built_service_paths.try_emplace(path, std::string{kind});
+        if (!inserted)
+        {
+            throw std::invalid_argument(
+                "duplicate " + std::string{kind} + " implementation registration for '" + path +
+                "'; already registered as " + it->second);
         }
     }
 

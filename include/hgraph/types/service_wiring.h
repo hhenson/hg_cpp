@@ -34,6 +34,14 @@ namespace hgraph::service
         return ServicePath{std::string{value}};
     }
 
+    template <typename... Args>
+        requires(sizeof...(Args) > 0)
+    [[nodiscard]] inline ServicePath path(std::string_view value, const Args &...args)
+    {
+        if (value.empty()) { throw std::invalid_argument("service path must not be empty"); }
+        return ServicePath{wiring_path_detail::typed_path_value(value, args...)};
+    }
+
     /**
      * C++ service wiring.
      *
@@ -130,6 +138,16 @@ namespace hgraph::service
         };
 
         template <typename Service, typename = void>
+        struct has_adaptor_input_schema : std::false_type
+        {
+        };
+
+        template <typename Service>
+        struct has_adaptor_input_schema<Service, std::void_t<typename Service::input_schema>> : std::true_type
+        {
+        };
+
+        template <typename Service, typename = void>
         struct has_request_reply_schema : std::false_type
         {
         };
@@ -145,6 +163,7 @@ namespace hgraph::service
         template <typename Service>
         concept reference_service_interface =
             has_reference_output_schema<Service>::value &&
+            !has_adaptor_input_schema<Service>::value &&
             !has_key_value_schema<Service>::value &&
             !has_request_reply_schema<Service>::value;
 
@@ -765,6 +784,7 @@ namespace hgraph::service
     {
         using output_schema = detail::reference_output_schema_t<Service>;
 
+        w.register_built_service_path(detail::reference_base_path<Service>(user_path), "reference service");
         auto shared_output = detail::reference_shared_output_source<Service>(w, user_path);
         auto output        = detail::wire_service_impl<Impl, output_schema>(w, user_path, args...);
         detail::capture_reference_service_output<Service, Impl>(w, output, shared_output, user_path);
@@ -869,6 +889,25 @@ namespace hgraph::service
                       "register_services requires at least one service interface");
         static_assert((detail::service_interface<Services> && ...),
                       "register_services requires service descriptor types");
+        (
+            [&] {
+                if constexpr (detail::reference_service_interface<Services>)
+                {
+                    w.register_built_service_path(
+                        detail::reference_base_path<Services>(user_path), "reference service");
+                }
+                else if constexpr (detail::subscription_service_interface<Services>)
+                {
+                    w.register_built_service_path(
+                        detail::subscription_base_path<Services>(user_path), "subscription service");
+                }
+                else if constexpr (detail::request_reply_service_interface<Services>)
+                {
+                    w.register_built_service_path(
+                        detail::request_reply_base_path<Services>(user_path), "request/reply service");
+                }
+            }(),
+            ...);
         detail::wire_service_graph<Impl>(w, user_path, args...);
     }
 
@@ -929,6 +968,7 @@ namespace hgraph::service
     {
         using output_schema = detail::output_schema_t<Service>;
 
+        w.register_built_service_path(detail::subscription_base_path<Service>(user_path), "subscription service");
         auto subscriptions = detail::subscription_source<Service>(w, user_path);
         auto shared_output = detail::shared_output_source<Service>(w, user_path);
         auto output = detail::wire_service_impl<Impl, output_schema>(
@@ -989,6 +1029,7 @@ namespace hgraph::service
     {
         using output_schema = detail::request_output_schema_t<Service>;
 
+        w.register_built_service_path(detail::request_reply_base_path<Service>(user_path), "request/reply service");
         auto requests = detail::request_input_source<Service>(w, user_path);
         auto replies  = detail::request_reply_output_source<Service>(w, user_path);
         auto output = detail::wire_service_impl<Impl, output_schema>(
@@ -1024,8 +1065,431 @@ namespace hgraph::service
     }
 }  // namespace hgraph::service
 
+namespace hgraph::service_adaptor
+{
+    struct interface
+    {
+    };
+
+    using ServiceAdaptorPath = service::ServicePath;
+
+    [[nodiscard]] inline ServiceAdaptorPath path(std::string_view value)
+    {
+        return service::path(value);
+    }
+
+    template <typename... Args>
+        requires(sizeof...(Args) > 0)
+    [[nodiscard]] inline ServiceAdaptorPath path(std::string_view value, const Args &...args)
+    {
+        return service::path(value, args...);
+    }
+
+    /**
+     * Multi-client adaptor wiring.
+     *
+     * Client code calls ``wire<Interface>(w, input)`` and receives that client's
+     * output. Implementation graphs call ``from_graph<Interface>()`` to receive
+     * all client inputs as ``TSD<Int, input_schema>`` and ``to_graph`` to publish
+     * ``TSD<Int, output_schema>`` replies keyed by the same client id.
+     */
+    namespace detail
+    {
+        template <typename Interface, typename = void>
+        struct has_input_schema : std::false_type
+        {
+        };
+
+        template <typename Interface>
+        struct has_input_schema<Interface, std::void_t<typename Interface::input_schema>> : std::true_type
+        {
+        };
+
+        template <typename Interface, typename = void>
+        struct has_output_schema : std::false_type
+        {
+        };
+
+        template <typename Interface>
+        struct has_output_schema<Interface, std::void_t<typename Interface::output_schema>> : std::true_type
+        {
+        };
+
+        template <typename Interface>
+        concept service_adaptor_interface =
+            std::derived_from<Interface, interface> &&
+            has_input_schema<Interface>::value &&
+            has_output_schema<Interface>::value;
+
+        template <typename Interface>
+        using input_schema_t = typename Interface::input_schema;
+
+        template <typename Interface>
+        using output_schema_t = typename Interface::output_schema;
+
+        template <typename Interface>
+        using request_input_schema_t = TSD<Int, input_schema_t<Interface>>;
+
+        template <typename Interface>
+        using request_output_schema_t = TSD<Int, output_schema_t<Interface>>;
+
+        template <typename Impl>
+        concept graph_implementation = requires { &Impl::compose; };
+
+        template <typename Impl>
+        concept node_implementation = requires { &Impl::eval; };
+
+        template <typename Impl, bool IsGraph = graph_implementation<Impl>, bool IsNode = node_implementation<Impl>>
+        struct implementation_params
+        {
+            using type = std::tuple<>;
+        };
+
+        template <typename Impl>
+        struct implementation_params<Impl, true, false>
+        {
+            using type = typename StaticGraphSignature<Impl>::param_types;
+        };
+
+        template <typename Impl>
+        struct implementation_params<Impl, false, true>
+        {
+            using type = typename StaticNodeSignature<Impl>::wire_param_types;
+        };
+
+        template <typename Impl>
+        using implementation_params_t = typename implementation_params<Impl>::type;
+
+        template <typename T>
+        struct is_path_scalar : std::false_type
+        {
+        };
+
+        template <fixed_string Name, typename T>
+        struct is_path_scalar<Scalar<Name, T>>
+            : std::bool_constant<Name.sv() == std::string_view{"path"} && std::same_as<T, Str>>
+        {
+        };
+
+        template <typename Params, std::size_t... I>
+        [[nodiscard]] consteval bool has_path_scalar(std::index_sequence<I...>)
+        {
+            return (false || ... || is_path_scalar<std::tuple_element_t<I, Params>>::value);
+        }
+
+        template <typename Impl>
+        [[nodiscard]] consteval bool implementation_accepts_path()
+        {
+            using params = implementation_params_t<Impl>;
+            return has_path_scalar<params>(std::make_index_sequence<std::tuple_size_v<params>>{});
+        }
+
+        template <typename Interface>
+        [[nodiscard]] std::string adaptor_name()
+        {
+            std::string_view name{Interface::name};
+            if (name.empty()) { throw std::invalid_argument("service adaptor name must not be empty"); }
+            return std::string{name};
+        }
+
+        template <typename Interface>
+        [[nodiscard]] ServiceAdaptorPath default_adaptor_path()
+        {
+            if constexpr (requires { std::string_view{Interface::default_path}; })
+            {
+                return path(std::string_view{Interface::default_path});
+            }
+            else
+            {
+                std::string value = adaptor_name<Interface>();
+                value.append("_default");
+                return ServiceAdaptorPath{std::move(value)};
+            }
+        }
+
+        template <typename Interface>
+        [[nodiscard]] std::string adaptor_base_path(const ServiceAdaptorPath &user_path)
+        {
+            constexpr std::string_view prefix{"service_adaptor://"};
+            if (user_path.value.starts_with(prefix)) { return user_path.value; }
+            std::string full{prefix};
+            full.append(user_path.value);
+            full.push_back('/');
+            full.append(adaptor_name<Interface>());
+            return full;
+        }
+
+        template <typename Interface>
+        [[nodiscard]] std::string adaptor_from_graph_path(const ServiceAdaptorPath &user_path)
+        {
+            std::string full = adaptor_base_path<Interface>(user_path);
+            full.append("/from_graph");
+            return full;
+        }
+
+        template <typename Interface>
+        [[nodiscard]] std::string adaptor_to_graph_path(const ServiceAdaptorPath &user_path)
+        {
+            std::string full = adaptor_base_path<Interface>(user_path);
+            full.append("/to_graph");
+            return full;
+        }
+
+        [[nodiscard]] inline Value path_key_value(const std::string &full_path)
+        {
+            return Value{Str{full_path}};
+        }
+
+        template <typename Interface>
+        struct request_input_source_marker
+        {
+        };
+
+        template <typename Interface>
+        struct request_input_capture_marker
+        {
+        };
+
+        template <typename Interface>
+        struct output_source_marker
+        {
+        };
+
+        template <typename Interface, typename Impl>
+        struct output_capture_marker
+        {
+        };
+
+        template <typename Interface>
+        [[nodiscard]] Port<request_input_schema_t<Interface>> request_input_source(
+            Wiring &w,
+            const ServiceAdaptorPath &user_path)
+        {
+            using input_schema = input_schema_t<Interface>;
+            using requests_schema = request_input_schema_t<Interface>;
+            static_assert(schema_descriptor<input_schema>::is_concrete(),
+                          "service adaptor input schema must be concrete");
+
+            std::string full_path = adaptor_from_graph_path<Interface>(user_path);
+            const auto *input_meta = schema_descriptor<input_schema>::ts_meta();
+            const auto *out_meta   = schema_descriptor<requests_schema>::ts_meta();
+
+            WiringNodeSchema schema;
+            schema.output = out_meta;
+            schema.state  = service::detail::request_input_state_schema(*input_meta);
+
+            WiringPortRef port = w.add_node(
+                std::type_index(typeid(request_input_source_marker<Interface>)), schema,
+                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                [path = std::move(full_path), input_meta]() {
+                    return make_request_input_source_node(path, *input_meta);
+                });
+            return Port<requests_schema>{w, std::move(port)};
+        }
+
+        template <typename Interface>
+        [[nodiscard]] Port<REF<request_output_schema_t<Interface>>> output_source(
+            Wiring &w,
+            const ServiceAdaptorPath &user_path)
+        {
+            using output_schema = request_output_schema_t<Interface>;
+            static_assert(schema_descriptor<output_schema>::is_concrete(),
+                          "service adaptor output schema must be concrete");
+
+            std::string full_path = adaptor_to_graph_path<Interface>(user_path);
+            const auto *target_meta = schema_descriptor<output_schema>::ts_meta();
+            const auto *ref_meta    = schema_descriptor<REF<output_schema>>::ts_meta();
+
+            WiringNodeSchema schema;
+            schema.output = ref_meta;
+            schema.state  = ref_meta->value_schema;
+
+            WiringPortRef port = w.add_node(
+                std::type_index(typeid(output_source_marker<Interface>)), schema,
+                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                [path = std::move(full_path), target_meta]() {
+                    return make_shared_output_source_node(path, *target_meta);
+                });
+            return Port<REF<output_schema>>{w, std::move(port)};
+        }
+
+        template <typename Interface>
+        void capture_request_input(Wiring &w,
+                                   Port<input_schema_t<Interface>> request,
+                                   Port<request_input_schema_t<Interface>> requests,
+                                   const ServiceAdaptorPath &user_path,
+                                   Int request_id)
+        {
+            using input_schema = input_schema_t<Interface>;
+
+            std::array<WiringPortRef, 2> sources{request.erased(), requests.erased()};
+            std::array<WiringInputRef, 2> inputs{{
+                WiringInputRef{.source = sources[0]},
+                WiringInputRef{.source = sources[1], .rank_dependency = false},
+            }};
+            NodeBuilder builder = make_request_input_capture_node(
+                adaptor_from_graph_path<Interface>(user_path),
+                *schema_descriptor<input_schema>::ts_meta(),
+                request_id);
+            builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                builder.binding().type_meta->input_schema,
+                std::span<const WiringPortRef>{sources.data(), sources.size()}));
+
+            WiringPortRef capture = w.add_node(std::type_index(typeid(request_input_capture_marker<Interface>)),
+                                               std::move(builder),
+                                               std::span<const WiringInputRef>{inputs.data(), inputs.size()},
+                                               Value{request_id});
+            w.add_rank_dependency(requests.node(), capture.peered_node());
+        }
+
+        template <typename Interface, typename Impl>
+        void capture_output(Wiring &w,
+                            Port<request_output_schema_t<Interface>> output,
+                            Port<REF<request_output_schema_t<Interface>>> shared_output,
+                            const ServiceAdaptorPath &user_path)
+        {
+            using output_schema = request_output_schema_t<Interface>;
+
+            std::array<WiringPortRef, 2> sources{output.erased(), shared_output.erased()};
+            std::array<WiringInputRef, 2> inputs{{
+                WiringInputRef{.source = sources[0]},
+                WiringInputRef{.source = sources[1], .rank_dependency = false},
+            }};
+            NodeBuilder builder = make_shared_output_capture_node(
+                adaptor_to_graph_path<Interface>(user_path), *schema_descriptor<output_schema>::ts_meta());
+            builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                builder.binding().type_meta->input_schema,
+                std::span<const WiringPortRef>{sources.data(), sources.size()}));
+
+            WiringPortRef capture = w.add_node(std::type_index(typeid(output_capture_marker<Interface, Impl>)),
+                                               std::move(builder),
+                                               std::span<const WiringInputRef>{inputs.data(), inputs.size()},
+                                               Value{});
+            w.add_rank_dependency(shared_output.node(), capture.peered_node());
+        }
+
+        template <typename Impl, typename... Args>
+        void wire_impl(Wiring &w, const ServiceAdaptorPath &user_path, const Args &...args)
+        {
+            if constexpr (implementation_accepts_path<Impl>())
+            {
+                static_cast<void>(wire<Impl>(w, args..., arg<"path">(Str{user_path.value})));
+            }
+            else
+            {
+                static_cast<void>(wire<Impl>(w, args...));
+            }
+        }
+    }  // namespace detail
+
+    template <typename Interface, typename Impl, typename... Args>
+    void register_service_adaptor(Wiring &w, ServiceAdaptorPath user_path, const Args &...args)
+    {
+        static_assert(detail::service_adaptor_interface<Interface>,
+                      "register_service_adaptor requires a type derived from service_adaptor::interface");
+        w.register_built_service_path(detail::adaptor_base_path<Interface>(user_path), "service adaptor");
+        detail::wire_impl<Impl>(w, user_path, args...);
+    }
+
+    template <typename Interface, typename Impl, typename... Args>
+    void register_service_adaptor(Wiring &w, const Args &...args)
+    {
+        register_service_adaptor<Interface, Impl>(w, detail::default_adaptor_path<Interface>(), args...);
+    }
+
+    template <typename Impl, typename... Interfaces, typename... Args>
+    void register_service_adaptors(Wiring &w, ServiceAdaptorPath user_path, const Args &...args)
+    {
+        static_assert(sizeof...(Interfaces) > 0,
+                      "register_service_adaptors requires at least one service adaptor interface");
+        static_assert((detail::service_adaptor_interface<Interfaces> && ...),
+                      "register_service_adaptors requires service_adaptor::interface descriptor types");
+        (w.register_built_service_path(detail::adaptor_base_path<Interfaces>(user_path), "service adaptor"), ...);
+        detail::wire_impl<Impl>(w, user_path, args...);
+    }
+
+    template <typename Interface>
+    [[nodiscard]] Port<detail::request_input_schema_t<Interface>> from_graph(
+        Wiring &w,
+        ServiceAdaptorPath user_path)
+    {
+        static_assert(detail::service_adaptor_interface<Interface>,
+                      "service_adaptor::from_graph requires a service adaptor interface");
+        return detail::request_input_source<Interface>(w, user_path);
+    }
+
+    template <typename Interface>
+    [[nodiscard]] Port<detail::request_input_schema_t<Interface>> from_graph(Wiring &w)
+    {
+        return from_graph<Interface>(w, detail::default_adaptor_path<Interface>());
+    }
+
+    struct explicit_impl_output_marker
+    {
+    };
+
+    template <typename Interface>
+    void to_graph(Wiring &w,
+                  ServiceAdaptorPath user_path,
+                  Port<detail::request_output_schema_t<Interface>> output)
+    {
+        static_assert(detail::service_adaptor_interface<Interface>,
+                      "service_adaptor::to_graph requires a service adaptor interface");
+        auto shared_output = detail::output_source<Interface>(w, user_path);
+        detail::capture_output<Interface, explicit_impl_output_marker>(
+            w, std::move(output), shared_output, user_path);
+    }
+
+    template <typename Interface>
+    void to_graph(Wiring &w, Port<detail::request_output_schema_t<Interface>> output)
+    {
+        to_graph<Interface>(w, detail::default_adaptor_path<Interface>(), std::move(output));
+    }
+
+    template <typename Interface>
+    [[nodiscard]] Port<detail::output_schema_t<Interface>> adaptor(
+        Wiring &w,
+        ServiceAdaptorPath user_path,
+        Port<detail::input_schema_t<Interface>> input)
+    {
+        static_assert(detail::service_adaptor_interface<Interface>,
+                      "service_adaptor::adaptor requires a service adaptor interface");
+        using replies_schema = detail::request_output_schema_t<Interface>;
+        using output_schema = detail::output_schema_t<Interface>;
+
+        const Int request_id = service::detail::next_request_id();
+        auto requests        = detail::request_input_source<Interface>(w, user_path);
+        auto replies         = detail::output_source<Interface>(w, user_path);
+        detail::capture_request_input<Interface>(w, std::move(input), requests, user_path, request_id);
+        return wire<stdlib::getitem_>(w, replies.template as<replies_schema>(), request_id)
+            .template as<output_schema>();
+    }
+
+    template <typename Interface>
+    [[nodiscard]] Port<detail::output_schema_t<Interface>> adaptor(
+        Wiring &w,
+        Port<detail::input_schema_t<Interface>> input)
+    {
+        return adaptor<Interface>(w, detail::default_adaptor_path<Interface>(), std::move(input));
+    }
+}  // namespace hgraph::service_adaptor
+
 namespace hgraph::graph_wiring_detail
 {
+    template <typename Interface, typename OutSchema, typename... Args>
+        requires service_adaptor::detail::service_adaptor_interface<Interface>
+    struct wire_customization<Interface, OutSchema, Args...>
+    {
+        static constexpr bool enabled = true;
+
+        static auto wire(Wiring &w, const Args &...args)
+        {
+            static_assert(std::is_void_v<OutSchema>,
+                          "wire<ServiceAdaptor, OutSchema>: output schema is defined by the interface");
+            return service_adaptor::adaptor<Interface>(w, args...);
+        }
+    };
+
     template <typename Service, typename OutSchema, typename... Args>
         requires service::detail::service_interface<Service>
     struct wire_customization<Service, OutSchema, Args...>

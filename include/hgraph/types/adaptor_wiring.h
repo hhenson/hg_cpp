@@ -33,6 +33,14 @@ namespace hgraph::adaptor
         return AdaptorPath{std::string{value}};
     }
 
+    template <typename... Args>
+        requires(sizeof...(Args) > 0)
+    [[nodiscard]] inline AdaptorPath path(std::string_view value, const Args &...args)
+    {
+        if (value.empty()) { throw std::invalid_argument("adaptor path must not be empty"); }
+        return AdaptorPath{wiring_path_detail::typed_path_value(value, args...)};
+    }
+
     /**
      * C++ adaptor wiring.
      *
@@ -348,6 +356,7 @@ namespace hgraph::adaptor
     {
         static_assert(detail::adaptor_interface<Interface>,
                       "register_adaptor requires a type derived from adaptor::interface");
+        w.register_built_service_path(detail::adaptor_base_path<Interface>(user_path), "adaptor");
         detail::wire_impl<Impl>(w, user_path, args...);
     }
 
@@ -364,6 +373,7 @@ namespace hgraph::adaptor
                       "register_adaptors requires at least one adaptor interface");
         static_assert((detail::adaptor_interface<Interfaces> && ...),
                       "register_adaptors requires adaptor::interface descriptor types");
+        (w.register_built_service_path(detail::adaptor_base_path<Interfaces>(user_path), "adaptor"), ...);
         detail::wire_impl<Impl>(w, user_path, args...);
     }
 
