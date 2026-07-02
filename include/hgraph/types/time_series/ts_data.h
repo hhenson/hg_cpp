@@ -1,3 +1,10 @@
+// types/time_series/ts_data.h — umbrella for the TS data substrate: the
+// payload+delta storage and views that BOTH TSOutput (owning endpoints) and
+// TSInput (non-owning proxies) are implemented over. Key invariants live
+// here: last_modified_time == evaluation_time means ticked-this-cycle,
+// == MIN_DT means never valid; delta cleanup is LAZY (no end-of-cycle sweep —
+// deltas reset on the next mutation, reads gate on modified()). Design record:
+// docs/source/developer_guide/data_structures/.
 #ifndef HGRAPH_CPP_ROOT_TS_DATA_H
 #define HGRAPH_CPP_ROOT_TS_DATA_H
 

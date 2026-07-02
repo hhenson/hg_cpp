@@ -1,3 +1,9 @@
+// types/value/value.h — the value layer's owning type: Value owns storage
+// described by an interned StoragePlan and constructed in place (arena
+// principle: plans hold offsets, not pointers); ValueView is the borrowing,
+// move-only two-word cursor over (memory, ops). This layer is 100% fn-ptr ops
+// tables — no virtuals. Vocabulary + design record:
+// docs/source/developer_guide/data_structures/core_concepts.rst.
 #ifndef HGRAPH_CPP_ROOT_VALUE_H
 #define HGRAPH_CPP_ROOT_VALUE_H
 

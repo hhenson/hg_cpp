@@ -1,3 +1,9 @@
+// runtime/node.h — the type-erased runtime node: NodeTypeMetaData (schema),
+// NodeOps (fn-ptr behaviour table), NodeBuilder (build-time only), and the
+// owning/borrowing NodeValue/NodeView pair. Nodes are constructed into the
+// graph's pre-allocated storage; behaviour dispatches through interned ops
+// tables, never virtuals. Design records:
+// docs/source/developer_guide/architecture.rst (+ wiring.rst for authoring).
 #ifndef HGRAPH_RUNTIME_NODE_H
 #define HGRAPH_RUNTIME_NODE_H
 

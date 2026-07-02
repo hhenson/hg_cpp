@@ -1,3 +1,9 @@
+// runtime/graph.h — the flattened, rank-ordered runtime graph: GraphBuilder /
+// GraphValue / GraphView plus the per-node schedule table, which is the ONLY
+// activation gate (input notification, node schedulers, schedule_on_start and
+// nested delegation all funnel into schedule_node). Scheduling invariants —
+// MIN_DT = never-scheduled sentinel, MAX_DT = idle, lazy cleanup — are
+// documented in docs/source/developer_guide/architecture.rst.
 #ifndef HGRAPH_RUNTIME_GRAPH_H
 #define HGRAPH_RUNTIME_GRAPH_H
 

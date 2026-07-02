@@ -1,3 +1,9 @@
+// types/metadata/type_registry.h — the singleton schema registry: interns all
+// scalar/value/time-series metadata (InternTable-backed, stable addresses for
+// the program lifetime) so schema identity is pointer identity. reset() is
+// test-only and must be orchestrated with the plan/binding factories (see
+// tests/cpp/registry_test_listener.cpp — ordering is load-bearing). Design
+// record: docs/source/developer_guide/data_structures/schemas/.
 //
 // Created by Howard Henson on 20/04/2026.
 //

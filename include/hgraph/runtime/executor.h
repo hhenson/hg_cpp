@@ -1,3 +1,10 @@
+// runtime/executor.h — the graph executor ops: the evaluation loop and all
+// run-level state (mode, evaluation time, stop/wake machinery) live HERE, in
+// a type-erased ops table — there is deliberately no separate
+// EvaluationEngine/EvaluationClock object (recorded decision);
+// EvaluationClockView is a borrowed read-only projection over this storage.
+// Modes: GraphExecutorMode::{Simulation, RealTime}. Design record:
+// docs/source/developer_guide/architecture.rst.
 #ifndef HGRAPH_RUNTIME_EXECUTOR_H
 #define HGRAPH_RUNTIME_EXECUTOR_H
 
