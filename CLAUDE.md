@@ -192,9 +192,28 @@ Python specials: `__keys__` (explicit TSS key set), name-based key detection +
 `__key_arg__` (keyword-only rename, `""` disables), and `pass_through`/`no_key`
 (wiring-time `WiringPortRef::ArgTag` port tags, folded into node identity via the
 `MapCallConfig` scalar). Remaining (deferred — see the doc's roadmap + non-goals):
-dynamic-TSL multiplexing/reduce, non-associative reduce, sink maps/switches,
-`mesh_`/services. **C++ only for
+dynamic-TSL multiplexing/reduce, non-associative reduce, sink maps/switches.
+**C++ only for
 now** — keep Python out of the configure/build/run path.
+
+**Mesh, services & shared outputs — DONE** (design records:
+`docs/source/developer_guide/mesh.rst` and `docs/source/developer_guide/services.rst`,
+authoritative). `mesh_` over TSD executes (on-demand instances via
+`mesh_subscribe`/`mesh_ref`, dependency ranking + cycle detection;
+`runtime/mesh_node.*`, `tests/cpp/test_mesh.cpp`; dynamic-TSL mesh still deferred).
+All three service flavours execute end-to-end with path-aware addressing —
+`reference_service` (client reads the impl output by REF), `subscription_service`
+(TSS key set via source/capture, ref-counted), `request_reply_service`
+(`TSD<int,request>` cumulative request dictionary) — `types/service_wiring.h`,
+`runtime/service_node.*`, `tests/cpp/test_service_wiring.cpp`; impl registration
+(`register_*_service<Service,Impl>`) is separate from client wiring. Shared outputs
+(`runtime/shared_output_node.*`) and the context **runtime primitive**
+(`runtime/context_node.*` — the user-facing context wiring API still needs approval)
+use the same feedback-style source/capture model. Real-time wall-clock scheduler
+alarms landed (`NodeScheduler(..., on_wall_clock=true)`, real-time executors only).
+TSW (tick-based windows) also executes end-to-end; duration-based windows have
+registry+runtime ops but no compile-time marker yet. Remaining at the boundary:
+adaptors, `@component`, graph-level context capture/lookup + nested import/export.
 
 **Error handling — DONE** (design record:
 `docs/source/developer_guide/error_handling.rst`, authoritative). `NodeError` is a
