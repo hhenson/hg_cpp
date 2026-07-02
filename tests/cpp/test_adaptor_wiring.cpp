@@ -1,0 +1,321 @@
+#include <hgraph/lib/testing/record_replay.h>
+#include <hgraph/runtime/runtime.h>
+#include <hgraph/types/adaptor_wiring.h>
+#include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/static_node.h>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace
+{
+    using namespace hgraph;
+
+    std::string node_name(const GraphBuilder &builder, std::size_t index)
+    {
+        const NodeBuilder &node = builder.nodes().at(index);
+        if (!node.label().empty()) { return std::string{node.label()}; }
+        const auto *meta = node.binding().type_meta;
+        return meta != nullptr && meta->display_name != nullptr ? std::string{meta->display_name} : std::string{};
+    }
+
+    std::size_t find_node(const GraphBuilder &builder, std::string_view needle)
+    {
+        for (std::size_t i = 0; i < builder.node_count(); ++i)
+        {
+            if (node_name(builder, i).find(needle) != std::string::npos) { return i; }
+        }
+        INFO("missing node containing: " << needle);
+        REQUIRE(false);
+        return static_cast<std::size_t>(-1);
+    }
+
+    struct OneTickSource
+    {
+        static constexpr auto name = "one_tick_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Out<TS<Int>> out) { out.set(Int{41}); }
+    };
+
+    struct EchoNode
+    {
+        static constexpr auto name = "echo_node";
+
+        static void eval(In<"ts", TS<Int>> ts, Out<TS<Int>> out) { out.set(ts.value()); }
+    };
+
+    struct LoopbackAdaptor : adaptor::interface
+    {
+        static constexpr std::string_view name{"loopback"};
+        using input_schema = TS<Int>;
+        using output_schema = TS<Int>;
+    };
+
+    struct LoopbackAdaptorImpl
+    {
+        static void compose(Wiring &w)
+        {
+            auto input = adaptor::from_graph<LoopbackAdaptor>(w);
+            auto output = wire<EchoNode>(w, input);
+            adaptor::to_graph<LoopbackAdaptor>(w, output);
+        }
+    };
+
+    struct NamedInputAdaptor : adaptor::interface
+    {
+        static constexpr std::string_view name{"named_input"};
+        using input_schema = TS<Int>;
+        using output_schema = TS<Int>;
+    };
+
+    struct NamedInputAdaptorImpl
+    {
+        static void compose(Wiring &w, Scalar<"path", Str> path)
+        {
+            const auto custom = adaptor::path(path.value());
+            auto incoming = adaptor::from_graph<NamedInputAdaptor>(w, custom);
+            auto output = wire<EchoNode>(w, incoming);
+            adaptor::to_graph<NamedInputAdaptor>(w, custom, output);
+        }
+    };
+
+    struct FiveSource
+    {
+        static constexpr auto name = "five_source";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Out<TS<Int>> out) { out.set(Int{5}); }
+    };
+
+    struct SourceOnlyAdaptor : adaptor::interface
+    {
+        static constexpr std::string_view name{"source_only"};
+        using output_schema = TS<Int>;
+    };
+
+    struct SourceOnlyAdaptorImpl
+    {
+        static void compose(Wiring &w)
+        {
+            auto output = wire<FiveSource>(w);
+            adaptor::to_graph<SourceOnlyAdaptor>(w, output);
+        }
+    };
+
+    struct SinkOnlyAdaptor : adaptor::interface
+    {
+        static constexpr std::string_view name{"sink_only"};
+        using input_schema = TS<Int>;
+    };
+
+    struct SinkOnlyAdaptorImpl
+    {
+        static void compose(Wiring &w)
+        {
+            auto input = adaptor::from_graph<SinkOnlyAdaptor>(w);
+            wire<testing::record>(w, input, std::string{"sink_out"});
+        }
+    };
+
+    struct NamedSinkAdaptor : adaptor::interface
+    {
+        static constexpr std::string_view name{"named_sink"};
+        using input_schema = TS<Int>;
+    };
+
+    struct NamedSinkAdaptorImpl
+    {
+        static void compose(Wiring &w, Scalar<"path", Str> path)
+        {
+            const auto custom = adaptor::path(path.value());
+            auto input = adaptor::from_graph<NamedSinkAdaptor>(w, custom);
+            wire<testing::record>(w, input, std::string{"named_sink_out"});
+        }
+    };
+
+    struct NamedSinkGraph
+    {
+        static constexpr auto name = "named_sink_graph";
+
+        static void compose(Wiring &w)
+        {
+            const auto custom = adaptor::path("named_custom");
+            adaptor::register_adaptor<NamedSinkAdaptor, NamedSinkAdaptorImpl>(w, custom);
+            auto input = wire<OneTickSource>(w);
+            wire<NamedSinkAdaptor>(w, custom, input);
+        }
+    };
+
+    struct LoopbackGraph
+    {
+        static constexpr auto name = "loopback_graph";
+
+        static void compose(Wiring &w)
+        {
+            adaptor::register_adaptor<LoopbackAdaptor, LoopbackAdaptorImpl>(w);
+            auto input = wire<OneTickSource>(w);
+            auto out = wire<LoopbackAdaptor>(w, input);
+            wire<testing::record>(w, out, std::string{"out"});
+        }
+    };
+
+    struct ExplicitPathGraph
+    {
+        static constexpr auto name = "explicit_path_graph";
+
+        static void compose(Wiring &w)
+        {
+            const auto custom = adaptor::path("custom");
+            adaptor::register_adaptor<NamedInputAdaptor, NamedInputAdaptorImpl>(w, custom);
+            auto input = wire<OneTickSource>(w);
+            auto out = wire<NamedInputAdaptor>(w, custom, input);
+            wire<testing::record>(w, out, std::string{"explicit_out"});
+        }
+    };
+
+    struct SourceOnlyGraph
+    {
+        static constexpr auto name = "source_only_graph";
+
+        static void compose(Wiring &w)
+        {
+            adaptor::register_adaptor<SourceOnlyAdaptor, SourceOnlyAdaptorImpl>(w);
+            auto out = wire<SourceOnlyAdaptor>(w);
+            wire<testing::record>(w, out, std::string{"source_out"});
+        }
+    };
+
+    struct SinkOnlyGraph
+    {
+        static constexpr auto name = "sink_only_graph";
+
+        static void compose(Wiring &w)
+        {
+            adaptor::register_adaptor<SinkOnlyAdaptor, SinkOnlyAdaptorImpl>(w);
+            auto input = wire<OneTickSource>(w);
+            wire<SinkOnlyAdaptor>(w, input);
+        }
+    };
+}  // namespace
+
+TEST_CASE("adaptor wiring ranks stubs around the implementation")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    GraphBuilder builder = build_graph<LoopbackGraph>();
+
+    const auto from_capture = find_node(
+        builder, "shared_output_capture:adaptor://loopback_default/loopback/from_graph");
+    const auto from_source = find_node(
+        builder, "shared_output_source:adaptor://loopback_default/loopback/from_graph");
+    const auto echo = find_node(builder, "echo_node");
+    const auto to_capture = find_node(
+        builder, "shared_output_capture:adaptor://loopback_default/loopback/to_graph");
+    const auto to_source = find_node(
+        builder, "shared_output_source:adaptor://loopback_default/loopback/to_graph");
+
+    CHECK(from_capture < from_source);
+    CHECK(from_source < echo);
+    CHECK(echo < to_capture);
+    CHECK(to_capture < to_source);
+}
+
+TEST_CASE("adaptor wiring round-trips a single-client input through an implementation")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    GraphBuilder builder = build_graph<LoopbackGraph>();
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(std::move(builder))
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{6});
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    auto               view = executor.view();
+    view.run();
+
+    const auto values = testing::get_recorded_values<Int>(view.graph().global_state(), "out");
+    REQUIRE(!values.empty());
+    CHECK(values[0] == Int{41});
+}
+
+TEST_CASE("adaptor wiring supports explicit paths through the adaptor call")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(build_graph<ExplicitPathGraph>())
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{6});
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    auto               view = executor.view();
+    view.run();
+
+    const auto values = testing::get_recorded_values<Int>(view.graph().global_state(), "explicit_out");
+    REQUIRE(!values.empty());
+    CHECK(values[0] == Int{41});
+}
+
+TEST_CASE("adaptor wiring supports source-only and sink-only descriptors")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    GraphExecutorBuilder source_executor_builder;
+    source_executor_builder.graph_builder(build_graph<SourceOnlyGraph>())
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{6});
+
+    GraphExecutorValue source_executor = source_executor_builder.make_executor();
+    auto               source_view = source_executor.view();
+    source_view.run();
+
+    const auto source_values = testing::get_recorded_values<Int>(
+        source_view.graph().global_state(), "source_out");
+    REQUIRE(!source_values.empty());
+    CHECK(source_values[0] == Int{5});
+
+    GraphExecutorBuilder sink_executor_builder;
+    sink_executor_builder.graph_builder(build_graph<SinkOnlyGraph>())
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{6});
+
+    GraphExecutorValue sink_executor = sink_executor_builder.make_executor();
+    auto               sink_view = sink_executor.view();
+    sink_view.run();
+
+    const auto sink_values = testing::get_recorded_values<Int>(
+        sink_view.graph().global_state(), "sink_out");
+    REQUIRE(!sink_values.empty());
+    CHECK(sink_values[0] == Int{41});
+
+    GraphExecutorBuilder named_sink_executor_builder;
+    named_sink_executor_builder.graph_builder(build_graph<NamedSinkGraph>())
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{6});
+
+    GraphExecutorValue named_sink_executor = named_sink_executor_builder.make_executor();
+    auto               named_sink_view = named_sink_executor.view();
+    named_sink_view.run();
+
+    const auto named_sink_values = testing::get_recorded_values<Int>(
+        named_sink_view.graph().global_state(), "named_sink_out");
+    REQUIRE(!named_sink_values.empty());
+    CHECK(named_sink_values[0] == Int{41});
+}

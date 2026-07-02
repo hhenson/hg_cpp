@@ -617,6 +617,227 @@ is the main difference from assembling a ``GraphBuilder`` by hand, where node
 order is the caller's responsibility.
 
 
+Nested graphs — ``nested_<G>``
+------------------------------
+
+``wire<G>`` *inlines* a sub-graph: its nodes are flattened into the parent.
+``nested_<G>(w, ports…)`` instead **compiles** ``G`` once and wires it as a
+single node that owns a child graph — same call shape, same argument checking:
+
+.. code-block:: cpp
+
+   struct Outer
+   {
+       static constexpr auto name = "outer";
+       static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in)
+       {
+           return nested_<AddOneSubGraph>(w, in);   // one node owning a child graph
+       }
+   };
+
+For ordinary composition prefer ``wire<G>`` (no runtime boundary). ``nested_``
+is the substrate the higher-order operators below are built on; reach for it
+directly when you want the sub-graph to exist as one runtime unit.
+
+
+Higher-order operators
+----------------------
+
+``map_`` / ``switch_`` / ``reduce_`` / ``mesh_`` are ordinary registered
+operators (call ``stdlib::register_standard_operators()`` first) that take a
+**function argument**: the ``WiredFn`` scalar ``fn<X>()``, where ``X`` is any
+node or graph struct. They mirror the Python call shapes.
+
+``map_`` — one child per key
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``map_(func, *args, **kwargs)`` instantiates one child instance of ``func`` per
+key of its multiplexed inputs and produces ``TSD<K, OUT>``. Every ``TSD`` in
+the argument tail multiplexes (children see the element ``TS``, keyed over the
+union key set); non-multiplexed arguments broadcast whole to every child.
+Same-size ``TSL`` inputs multiplex per index.
+
+.. code-block:: cpp
+
+   struct AddOneG
+   {
+       static constexpr auto name = "add_one_g";
+       static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> ts)
+       {
+           using namespace hgraph::stdlib::syntax;
+           return (ts + Int{1}).as<TS<Int>>();
+       }
+   };
+
+   // prices: Port<TSD<Str, TS<Int>>>  ->  TSD<Str, TS<Int>> of per-key results
+   auto out = wire<stdlib::map_>(w, fn<AddOneG>(), prices).as<TSD<Str, TS<Int>>>();
+
+Each key owns an isolated child instance (per-key ``State<>`` is independent);
+keys appearing/disappearing in the input dict create and destroy children.
+The Python specials are supported: a function whose **first parameter is named**
+``key`` (``NamedPort<"key", TS<K>>``) receives the key (``ndx`` for TSL maps);
+``arg<"__key_arg__">(Str{"…"})`` renames or (``""``) disables that detection;
+``arg<"__keys__">(tss_port)`` supplies an explicit key set; and
+``pass_through(port)`` / ``no_key(port)`` force broadcast / suppress keying for
+one argument.
+
+.. code-block:: python
+
+   map_(add_one, prices)   # the C++ call above
+
+``switch_`` — one branch at a time
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``switch_(key, cases, *ts, **kwargs)`` routes through **one** child graph,
+selected by the key's current value. A key change tears the old branch down and
+builds the new one, sampling the held inputs into it:
+
+.. code-block:: cpp
+
+   auto out = wire<stdlib::switch_>(
+                  w, mode,   // Port<TS<Str>>
+                  stdlib::switch_cases({{Value{Str{"a"}}, fn<Doubler>()},
+                                        {Value{Str{"b"}}, fn<Negator>()}}),
+                  input)
+                  .as<TS<Int>>();
+
+A trailing ``fn<Default>()`` inside ``switch_cases({…}, fn<Default>())`` is the
+fall-through branch for unmatched keys. A branch whose first parameter is named
+``key`` consumes the key as an input (branches of different arities may be
+mixed). ``switch_cases({…}).reload()`` re-instantiates the active branch every
+time the key *ticks*, even to the same value.
+
+``reduce_`` — fold a collection
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``reduce_(func, collection[, zero])`` folds a fixed ``TSL`` or a ``TSD`` down
+to one value with a binary combiner (associative — and, for ``TSD``,
+commutative, since dict reduction is unordered):
+
+.. code-block:: cpp
+
+   auto total = wire<stdlib::reduce_>(w, fn<stdlib::add_>(), values).as<TS<Int>>();
+
+For known operations the identity is derived (``zero_`` mirrors Python's
+``zero(tp, op)``: ``add_`` → 0, ``mul_`` → 1, …); pass an explicit zero for a
+custom combiner. Over a ``TSD`` the runtime maintains a minimal combiner tree
+and only re-computes the affected path when a key ticks.
+
+``mesh_`` — instances that read each other
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``mesh_`` is ``map_`` over a ``TSD`` whose per-key instances may read *each
+other's* outputs, with instances created **on demand** when an absent key is
+referenced (so recursion works) and evaluated in dependency order. Inside the
+function, reference a sibling by key with ``stdlib::mesh_ref``:
+
+.. code-block:: cpp
+
+   struct FollowPeer
+   {
+       static constexpr auto name = "follow_peer";
+       static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> peer_key)
+       {
+           return stdlib::mesh_ref<TS<Int>>(w, peer_key);   // mesh_(func)[k] in Python
+       }
+   };
+
+   auto out = wire<stdlib::mesh_>(w, fn<FollowPeer>(), links).as<TSD<Str, TS<Int>>>();
+
+``stdlib::mesh_keys_ref<K>(w[, "name"])`` observes the mesh's live key set;
+``arg<"__name__">(Str{"…"})`` names a mesh so nested meshes can be
+disambiguated; ``arg<"__keys__">`` supplies an explicit key set, as with
+``map_``. A dependency cycle between instances is a **runtime error**. With no
+cross-instance references, ``mesh_`` behaves exactly like ``map_``.
+(``mesh_ref`` lives in ``lib/std/operators/impl/higher_order_impl.h``.)
+
+
+Feedback — the sanctioned back-edge
+-----------------------------------
+
+Graphs are wired as DAGs; a value that must flow *backwards* goes through
+``feedback``, which delays it by exactly one engine cycle:
+
+.. code-block:: cpp
+
+   struct Accumulate
+   {
+       static constexpr auto name = "accumulate";
+       static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in)
+       {
+           auto prev = stdlib::feedback<TS<Int>>(w, Int{0});  // optional initial value
+           auto sum  = wire<AddInts>(w, in, prev());          // prev() -> delayed port
+           prev(sum);                                         // prev(port) binds the producer
+           return sum;
+       }
+   };
+
+``feedback<S>(w[, initial])`` returns a handle: call it **with** a port to bind
+the producer, and **without** arguments to obtain the one-cycle-delayed port.
+This is the only supported same-graph back-edge — any other backward wire is a
+wiring error.
+
+
+Error handling
+--------------
+
+Two levels, mirroring Python (design record: developer guide *Error handling*):
+
+- ``exception_time_series(port)`` activates error capture on the node that
+  produces ``port`` and returns ``Port<TS<NodeError>>``. When that node's
+  ``eval`` throws, a ``NodeError`` ticks on the error output and the graph
+  keeps running.
+- ``try_except_<G>(w, args…)`` wraps a whole sub-graph: the result is a ``TSB``
+  with fields ``exception`` (``TS<NodeError>``) and ``out`` (the wrapped
+  graph's output); a sink sub-graph yields a bare ``TS<NodeError>``.
+
+.. code-block:: cpp
+
+   auto doubled = wire<MightThrow>(w, x);
+   auto err     = exception_time_series(doubled);     // Port<TS<NodeError>>
+
+   auto result  = try_except_<RiskyGraph>(w, x).as<TryIntResult>();  // TSB{exception, out}
+
+``NodeError`` is a compound scalar of string fields (``error_msg`` and friends)
+readable through the normal bundle accessors.
+
+.. code-block:: python
+
+   err    = exception_time_series(doubled)
+   result = try_except(risky_graph, x)
+
+
+Services
+--------
+
+Services share one implementation across many client call sites, addressed by
+an optional path (design record: developer guide *Services, shared outputs and
+contexts*). Declare the service as a struct — the aliases pick the flavour —
+then register an implementation and consume it:
+
+.. code-block:: cpp
+
+   struct AddOneService                     // request/reply flavour
+   {
+       static constexpr std::string_view name{"add_one"};
+       using request_schema  = TS<Int>;
+       using response_schema = TS<Int>;
+   };
+
+   // inside a compose body:
+   service::register_request_reply_service<AddOneService, AddOneImplNode>(w);
+   auto reply = service::request_reply_service<AddOneService>(w, request);
+
+A **reference service** (``output_schema``) publishes one output that clients
+read by reference; a **subscription service** (``key_type`` + ``value_schema``)
+collects the union of client-subscribed keys into the implementation and
+returns the keyed responses; a **request/reply service** (``request_schema`` +
+``response_schema``) gives each client a private keyed request/response pair.
+``service::path("…")`` addresses independent instances of the same service;
+registration and consumption are separate, so a library can consume a service
+its host application registers.
+
+
 Running a graph
 ---------------
 
@@ -633,6 +854,32 @@ and running a graph*):
 .. code-block:: python
 
    run_graph(price_graph, run_mode=EvaluationMode.SIMULATION, start_time=start, end_time=end)
+
+**Real-time mode** aligns evaluation with the wall clock: the executor waits
+for each scheduled time, external threads can inject values through push
+sources (see *Authoring Nodes in C++ > Node kinds*), and ``request_stop()``
+wakes and stops a sleeping executor:
+
+.. code-block:: cpp
+
+   GraphExecutorBuilder ex;
+   ex.graph_builder(std::move(gb))
+       .mode(GraphExecutorMode::RealTime)
+       .start_time(start_time)
+       .end_time(start_time + TimeDelta{5'000'000});
+
+   GraphExecutorValue executor = ex.make_executor();
+   auto               view     = executor.view();
+   // view.run() blocks until end_time or request_stop(); run it on a worker
+   // thread when the controlling thread needs to keep going.
+   view.request_stop();   // callable from another thread; wakes the executor
+
+.. code-block:: python
+
+   run_graph(price_graph, run_mode=EvaluationMode.REAL_TIME, ...)
+
+Push sources require a real-time **root** graph, and real-time executors also
+enable wall-clock scheduler alarms (``NodeScheduler(..., on_wall_clock=true)``).
 
 
 Graph global state
@@ -720,3 +967,19 @@ C++ ↔ Python cheat sheet
      - a wiring-time time-series handle
    * - ``build_graph<G>()`` → ``GraphExecutor``
      - wiring the ``@graph`` + ``run_graph(...)``
+   * - ``nested_<G>(w, ports...)`` (compiled child graph)
+     - (implicit — Python nests via operators)
+   * - ``wire<stdlib::map_>(w, fn<F>(), tsd...)``
+     - ``map_(f, tsd...)``
+   * - ``wire<stdlib::switch_>(w, key, switch_cases({...}), ts...)``
+     - ``switch_(key, {...}, ts...)``
+   * - ``wire<stdlib::reduce_>(w, fn<F>(), coll)``
+     - ``reduce(f, coll, zero)``
+   * - ``wire<stdlib::mesh_>(w, fn<F>(), tsd...)`` / ``mesh_ref<S>(w, key)``
+     - ``mesh_(f, tsd...)`` / ``mesh_(f)[k]``
+   * - ``stdlib::feedback<S>(w, init)``; ``fb(port)`` / ``fb()``
+     - ``feedback(TS[...], init)``; ``fb(port)`` / ``fb()``
+   * - ``exception_time_series(port)`` / ``try_except_<G>(w, ...)``
+     - ``exception_time_series(ts)`` / ``try_except(g, ...)``
+   * - ``service::register_*_service<S, Impl>(w)`` + ``service::*_service<S>(w, ...)``
+     - ``@service_impl`` / ``register_service`` + calling the service

@@ -242,6 +242,7 @@ namespace hgraph
     {
         WiringPortRef             source{};
         std::vector<std::size_t>  target_path{};
+        bool                      rank_dependency{true};
     };
 
     /**
@@ -287,8 +288,9 @@ namespace hgraph
      */
     struct WiringInstance
     {
-        NodeBuilder                builder;
-        std::vector<WiringInputRef> inputs;
+        NodeBuilder                         builder;
+        std::vector<WiringInputRef>          inputs;
+        std::vector<const WiringInstance *> rank_dependencies;
     };
 
     struct CompiledSubGraph;   // defined in subgraph_wiring.h
@@ -357,6 +359,12 @@ namespace hgraph
         WiringPortRef add_unique_node(std::type_index def, NodeBuilder builder,
                                       std::span<const WiringPortRef> inputs,
                                       Value scalars);
+
+        /**
+         * Add a layout-only dependency. ``node`` is ranked after ``depends_on``,
+         * but no runtime edge is emitted.
+         */
+        void add_rank_dependency(const WiringInstance *node, const WiringInstance *depends_on);
 
         /**
          * Deferred-builder overload: intern by ``(def, schema, inputs, scalars)``
@@ -1924,6 +1932,12 @@ namespace hgraph
 
     namespace graph_wiring_detail
     {
+        template <typename X, typename OutSchema, typename... Args>
+        struct wire_customization
+        {
+            static constexpr bool enabled = false;
+        };
+
         template <typename X, typename OutSchema = void, typename... Args>
         auto wire_static_node_normal(Wiring &w, const Args &...args)
         {
@@ -2267,7 +2281,11 @@ namespace hgraph
     template <typename X, typename OutSchema = void, typename... Args>
     auto wire(Wiring &w, const Args &...args)
     {
-        if constexpr (graph_wiring_detail::is_graph_def<X>)
+        if constexpr (graph_wiring_detail::wire_customization<X, OutSchema, Args...>::enabled)
+        {
+            return graph_wiring_detail::wire_customization<X, OutSchema, Args...>::wire(w, args...);
+        }
+        else if constexpr (graph_wiring_detail::is_graph_def<X>)
         {
             // sub-graph: inline its body (flatten), forwarding ports through and
             // wrapping scalar literals into the compose Scalar<> parameters.

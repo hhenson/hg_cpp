@@ -391,7 +391,7 @@ cover the supported non-``REF`` time-series kinds.
    * - reference
      - ``REF<TSchema>``
      - ``REF[...]``
-     - planned
+     - **available** (opaque token surface; see *References and signals*)
 
 The marker types compose exactly like the Python generics — for example a dict
 of bundles keyed by string:
@@ -783,9 +783,10 @@ that fired this cycle and re-arms the node at the next pending time; when it fir
 for another reason (an input ticked) it simply re-arms the next timer — so an
 ``eval`` only needs to (re)schedule future work. This matches the authoritative
 Python ``SCHEDULER`` semantics. Wall-clock alarms (``on_wall_clock = true``) are
-not yet wired into the C++ ``NodeScheduler`` path, so that path throws for now;
-calling a mutating method on a node that did not declare a ``NodeScheduler``
-likewise throws.
+supported on **real-time** graph executors, where engine time is
+wall-clock-aligned; a simulation executor rejects them, because simulated time
+cannot be advanced by host time. Calling a mutating method on a node that did
+not declare a ``NodeScheduler`` throws.
 
 The interface follows the Python ``SCHEDULER`` contract (the authoritative
 reference). ``tag_time`` / ``tag_is_scheduled_now`` are convenience accessors over
@@ -1213,7 +1214,7 @@ C++ ↔ Python cheat sheet
      - ``TIME_SERIES_TYPE`` / ``SCALAR``
    * - ``eval`` with ``Out`` and no ``In`` (kind inferred)
      - ``@generator``
-   * - push-source builder + ``Sender<T>`` *(planned)*
+   * - ``make_push_source_node`` + ``PushSourceSender``
      - ``@push_queue`` message + ``sender`` callable
    * - ``NodeBuilder{}.implementation<N>()``
      - the decorator applied to the function

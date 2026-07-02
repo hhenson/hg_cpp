@@ -51,6 +51,7 @@ add_executable(hgraph_unit_tests
     test_shared_output_node.cpp
     test_service_node.cpp
     test_service_wiring.cpp
+    test_adaptor_wiring.cpp
     test_record_replay.cpp
     test_eval_node.cpp
     test_std_nodes.cpp

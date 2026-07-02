@@ -2,6 +2,7 @@
 #include <hgraph/types/subgraph_wiring.h>
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <stdexcept>
@@ -53,6 +54,7 @@ namespace hgraph
         {
             SourceKey               source{};
             std::vector<std::size_t> target_path{};
+            bool                    rank_dependency{true};
 
             bool operator==(const InputKey &) const noexcept = default;
         };
@@ -88,6 +90,7 @@ namespace hgraph
                 {
                     hash_source(input.source, h);
                     for (std::size_t p : input.target_path) { combine(h, std::hash<std::size_t>{}(p)); }
+                    combine(h, std::hash<bool>{}(input.rank_dependency));
                     combine(h, 0xA7A7A7A7ULL);  // target-path separator
                 }
                 combine(h, key.scalars.has_value() ? key.scalars.hash() : std::size_t{0});
@@ -150,6 +153,7 @@ namespace hgraph
                 key.inputs.push_back(InputKey{
                     .source      = source_key_for(input.source),
                     .target_path = input.target_path.empty() ? std::vector<std::size_t>{index} : input.target_path,
+                    .rank_dependency = input.rank_dependency,
                 });
             }
             return key;
@@ -304,6 +308,7 @@ namespace hgraph
             {
                 for (const auto &input : instance->inputs)
                 {
+                    if (!input.rank_dependency) { continue; }
                     std::vector<const WiringInstance *> producers;
                     collect_producers(input.source, producers);
                     for (const WiringInstance *producer : producers)
@@ -311,6 +316,12 @@ namespace hgraph
                         ++indegree[instance];
                         consumers[producer].push_back(instance);
                     }
+                }
+                for (const WiringInstance *producer : instance->rank_dependencies)
+                {
+                    if (producer == nullptr) { continue; }
+                    ++indegree[instance];
+                    consumers[producer].push_back(instance);
                 }
             }
 
@@ -459,6 +470,18 @@ namespace hgraph
         return add_unique_node(def, std::move(builder),
                                std::span<const WiringInputRef>{input_refs.data(), input_refs.size()},
                                std::move(scalars));
+    }
+
+    void Wiring::add_rank_dependency(const WiringInstance *node, const WiringInstance *depends_on)
+    {
+        if (node == nullptr || depends_on == nullptr) { throw std::invalid_argument("rank dependency requires nodes"); }
+        if (node == depends_on) { throw std::invalid_argument("rank dependency cannot target the same node"); }
+
+        auto &dependencies = const_cast<WiringInstance *>(node)->rank_dependencies;
+        if (std::find(dependencies.begin(), dependencies.end(), depends_on) == dependencies.end())
+        {
+            dependencies.push_back(depends_on);
+        }
     }
 
     WiringPortRef Wiring::add_node(std::type_index def, const WiringNodeSchema &schema,
