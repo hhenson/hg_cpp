@@ -127,6 +127,22 @@ namespace hgraph::testing
         // ---- graph (compose) reflection for the eval_node graph overload ----
         // Lazily guarded like the node reflection below: these appear in the
         // overload's *signature*, so a non-graph type must not hard-error.
+        template <typename GraphT, bool IsGraph, bool HasInput>
+        struct graph_first_input_element_impl
+        {
+            using type = Value;
+        };
+
+        template <typename GraphT>
+        struct graph_first_input_element_impl<GraphT, true, true>
+        {
+            using first = std::remove_cvref_t<
+                std::tuple_element_t<0, typename StaticGraphSignature<GraphT>::param_types>>;
+            static_assert(graph_wiring_detail::is_port<first>::value,
+                          "eval_node<G>: the first compose parameter must be a time-series Port");
+            using type = typename ts_harness<typename first::schema>::element;
+        };
+
         template <typename GraphT, bool = is_graph<GraphT>>
         struct graph_first_input_element
         {
@@ -134,12 +150,8 @@ namespace hgraph::testing
         };
         template <typename GraphT>
         struct graph_first_input_element<GraphT, true>
+            : graph_first_input_element_impl<GraphT, true, (StaticGraphSignature<GraphT>::input_count() >= 1)>
         {
-            using first = std::remove_cvref_t<
-                std::tuple_element_t<0, typename StaticGraphSignature<GraphT>::param_types>>;
-            static_assert(graph_wiring_detail::is_port<first>::value,
-                          "eval_node<G>: the first compose parameter must be a time-series Port");
-            using type = typename ts_harness<typename first::schema>::element;
         };
 
         template <typename P>
