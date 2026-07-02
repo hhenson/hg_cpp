@@ -322,7 +322,7 @@ positions cross out of the graph and how. The boundary schema records:
       as a parent output via a ForwardingLink (zero-copy).
     - ``alias_parent_input`` — expose a parent's input through the
       child boundary as if it were a child output. Used by
-      ``try_except`` and ``component`` patterns where child edge binding
+      ``try_except_`` and ``component`` patterns where child edge binding
       passes an input through unchanged.
     - ``bind_bundle_member_output`` — expose one field of a child's
       output bundle as a parent output (TSB navigation composed with
@@ -367,7 +367,7 @@ ports to parent positions live in *Allocation, Plans and Ops*.
 Dynamic Nested Graphs
 ~~~~~~~~~~~~~~~~~~~~~
 
-Some operators — ``map_``, ``switch_``, ``try_except``, ``mesh`` —
+Some operators — ``map_``, ``switch_``, ``try_except_``, ``mesh_`` —
 instantiate child graphs dynamically during evaluation. Their
 schemas carry an additional flag (``dynamic = true``) and the
 runtime uses a ``ChildGraphTemplateRegistry`` to keep already-built

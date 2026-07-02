@@ -30,17 +30,29 @@ Priority 1: Adaptors, Services, and Contexts
 
 These features define the full graph boundary model and therefore come first.
 
-Planned work:
+Landed (design record: :doc:`services`):
 
-- Add runtime support for graph services and service implementations.
-- Add runtime support for context capture, context lookup, and nested graph
-  context import/export.
-- Define adaptor foundations for source, sink, request/reply, and subscription
-  flows.
-- Complete request/reply services using feedback-style request dictionaries:
-  capture sinks update a source-owned request-delta state for
+- Graph services and service implementations: **reference**, **subscription**,
+  and **request/reply** services execute end-to-end with path-aware addressing
+  (``types/service_wiring.h``, ``runtime/service_node.*``,
+  ``tests/cpp/test_service_wiring.cpp``); implementation registration
+  (``register_*_service``) is separate from client wiring.
+- Request/reply services use feedback-style request dictionaries exactly as
+  designed below: capture sinks update a source-owned request-delta state for
   ``TSD<int, request_schema>`` and the source emits the cumulative delta on its
   next scheduled tick before resetting the delta state.
+- Shared outputs (``runtime/shared_output_node.*``) and the context
+  source/capture **runtime primitive** (``runtime/context_node.*``).
+- Real-time wall-clock scheduler alarms
+  (``NodeScheduler(..., on_wall_clock=true)``).
+
+Planned work:
+
+- The user-facing context wiring surface: graph-level context capture/lookup
+  and nested graph context import/export (the runtime primitive above exists;
+  the C++ API still needs approval).
+- Define adaptor foundations for source, sink, request/reply, and subscription
+  flows.
 - Integrate remaining adaptor external events with the scheduler and real-time
   executor.
 - Define lifecycle ownership for external resources.
@@ -48,7 +60,8 @@ Planned work:
 - Build concrete adaptor families only after the common runtime model is
   established.
 
-Boundary design decisions:
+Boundary design decisions (implemented; the authoritative record is
+:doc:`services`):
 
 - Runtime boundary outputs follow the normal graph rule: every non-sink node
   owns its output, and nested or adaptor-specific machinery forwards into that

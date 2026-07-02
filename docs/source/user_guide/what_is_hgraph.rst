@@ -3,7 +3,7 @@ What Is HGraph?
 
 HGraph is a framework for writing functional reactive programs. Programs are modeled as forward propagation graphs over time-series values.
 
-In the current Python implementation, users describe graphs through a Python DSL. In this C++ first implementation, the runtime and system nodes are native C++, while Python remains the primary compatibility and wiring surface for the existing ecosystem.
+In the original Python implementation, users describe graphs through a Python DSL. This C++-first implementation makes the native C++ runtime the source of truth: graphs are authored, wired, tested, and executed entirely in C++ (see :doc:`authoring_graphs_cpp`). A Python bridge onto the same runtime is planned for ecosystem compatibility, but Python is a compatibility surface, not the foundation.
 
 The core model is:
 

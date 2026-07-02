@@ -43,4 +43,4 @@ Evaluation happens in time order. The runtime must preserve ordering across real
 Wiring
 ------
 
-Wiring is the graph construction phase. It resolves node signatures, graph boundaries, time-series types, and connections. In this project, wiring remains Python first for ecosystem compatibility, but the runtime objects it builds should map cleanly onto native C++ structures.
+Wiring is the graph construction phase. It resolves node signatures, graph boundaries, time-series types, and connections. In this project wiring is native C++ (see :doc:`authoring_graphs_cpp`); the planned Python wiring bridge must lower into the same runtime construction data the C++ path produces, so the runtime never depends on Python wiring.

@@ -23,12 +23,13 @@ same runtime graph the same way.
    (``single_nested_graph_node``; see *Nested graphs*). Code in
    ``include/hgraph/types/graph_wiring.h`` + ``src/hgraph/types/graph_wiring.cpp``
    (and ``include/hgraph/runtime/nested_graph_node.h`` + its ``.cpp``), with
-   ``tests/cpp/test_graph_wiring.cpp``. Still **not yet implemented**: the
-   ``wire``-level higher-order operators (``map_`` / ``reduce`` / ``switch_``) that
-   build nested-graph nodes from a sub-graph, standalone sub-graph building with
-   supplied time-series boundary ports, and feedback edges; those parts of this
-   page are the design record. The user-facing view is *User Guide > Wiring Graphs
-   in C++*.
+   ``tests/cpp/test_graph_wiring.cpp``. The ``wire``-level higher-order operators
+   (``map_`` / ``reduce`` / ``switch_`` / ``mesh_``), standalone sub-graph
+   building with supplied time-series boundary ports (``compile_subgraph<G>`` —
+   see slice 9 below), and feedback edges have all since landed; see
+   :doc:`nested_graphs` and :doc:`mesh` for their design records, with the
+   corresponding slices of this page as the wiring-level record. The user-facing
+   view is *User Guide > Wiring Graphs in C++*.
 
 
 Two tiers

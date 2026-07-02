@@ -75,9 +75,9 @@ synthetic. Concretely, ``value_type("int")`` (the Python lookup) must return the
 ``TypeRegistry::ts(value_meta)`` interns on the value pointer, identity then
 composes upward automatically (``TS``, ``TSL``, ``TSD``, …). The standard-types
 seed must run **before** any overload is registered on either path; the C++ test
-listener seeds via ``register_standard_types()`` and the Python module seeds at
-import via ``register_builtin_value_types()`` — the two must agree on names and
-aliases.
+listener seeds via ``register_standard_types()`` and the Python module (when it
+is built) must seed at import via a ``register_builtin_value_types()`` entry
+point — the two must agree on names and aliases.
 
 Hosting a Python node
 ---------------------

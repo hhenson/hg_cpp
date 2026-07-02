@@ -251,9 +251,9 @@ source of truth, the code.
      - ``eval`` has ``In``, no ``Out``
      - ``eval(In<…>)``
      - ``@sink_node``
-   * - **Push source** *(planned)*
-     - built by the push-source node builder
-     - specialized node owns queue + ``Sender<T>``
+   * - **Push source** *(available — runtime builder)*
+     - built by ``make_push_source_node``
+     - specialized node owns queue + ``PushSourceSender``
      - ``@push_queue``
 
 A sink node (side effect, no output):
@@ -272,30 +272,28 @@ A sink node (side effect, no output):
    def print_(in_: TS[int]) -> None:
        print(in_.value)
 
-A push source receives messages from outside the graph (**planned**). It will
-use a specialized node/builder rather than the ordinary static-node
-``implementation<T>()`` path. The specialized node owns the message queue,
-hands a ``Sender<T>`` to user code during ``start``, and evaluates through the
-normal node ``eval`` interface when the real-time engine is woken by queued
-messages. Its internal evaluation applies queued messages to the output:
+A push source receives messages from outside the graph (**available** via the
+runtime builder; static-node authoring sugar is still planned). It uses a
+specialized node/builder rather than the ordinary static-node
+``implementation<T>()`` path: ``make_push_source_node``
+(``runtime/push_source_node.h``) owns the message storage, hands a thread-safe
+``PushSourceSender`` to user code during ``start``, and delivers values through
+the normal node evaluation path when the real-time engine is woken by queued
+messages. Two delivery policies exist — **Queue** (FIFO; drains one value per
+engine cycle) and **Conflating** (a delta-merging accumulator; delivers the
+merged state) — and push sources require a **real-time root graph** (they are
+rejected in simulation mode and inside nested graphs):
 
 .. code-block:: cpp
 
-   // Planned — illustrative shape for the specialized push-source builder
-   struct FromQueue
-   {
-       static constexpr auto name = "from_queue";
-
-       // Receive the Sender used to enqueue messages.
-       static void start(Sender<Int> sender) { /* register sender with a producer */ }
-
-       // Convert each scalar message into an output tick from the node's eval path.
-       static bool apply_message(Scalar<"message", Int> message, Out<TS<Int>> out)
-       {
-           out.set(message.value());
-           return true;
-       }
-   };
+   // Runtime builder — see tests/cpp/test_realtime_execution.cpp
+   graph_builder.add_node(make_push_source_node(
+       *ts_int,                                            // output schema: TS<Int>
+       make_push_source_queue_policy(*ts_int->value_schema),
+       [](PushSourceSender sender) {
+           // runs at start; hand `sender` to a producer thread.
+           // sender.send(Int{42}) enqueues a value and wakes the executor.
+       }));
 
 .. code-block:: python
 
@@ -303,10 +301,11 @@ messages. Its internal evaluation applies queued messages to the output:
    def from_queue(sender: Callable[[int], None]):
        ...  # register `sender`; call sender(value) from another thread to inject ticks
 
-The message/application surface is still provisional. The important runtime
-constraint is that push-source behavior belongs to the specialized node
-implementation and the real-time evaluator; it must not add a generic
-``apply_message`` operation to all nodes.
+A static-node authoring shape (a sender parameter on ``start`` plus a
+message-application hook) is still **planned**. The important runtime
+constraint stands either way: push-source behavior belongs to the specialized
+node implementation and the real-time evaluator; it must not add a generic
+message-application operation to all nodes.
 
 
 Lifecycle: ``start`` / ``eval`` / ``stop``
@@ -1174,8 +1173,8 @@ Feature status
    * - Generic node resolution (``TsVar`` / ``ScalarVar`` in signatures)
      - available
      - available
-   * - Push-source node/builder + ``Sender<T>``
-     - planned
+   * - Push-source node/builder + sender handle
+     - available (runtime builder; static-node sugar planned)
      - available
    * - Named state ``State<S, "name">``
      - planned

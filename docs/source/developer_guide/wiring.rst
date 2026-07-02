@@ -181,15 +181,20 @@ PullSource / Sink from shape with no override. ``GraphBuilder`` /
 by-name node/graph wiring arguments, node-level scalars, scalar defaults,
 graph-level scalar parameters, structural TSL/TSB input
 initialisers, special source roots (``recordable_state(port)`` /
-``error_output(port)``), and ordinary simulation execution.
+``error_output(port)``), and ordinary simulation execution. Also implemented
+since this page was first written: push-source nodes with real-time execution
+(``runtime/push_source_node.h`` — ``make_push_source_node`` with Queue /
+Conflating policies and a thread-safe ``PushSourceSender`` handed to user code
+at ``start``), standalone sub-graph boundary binding (``compile_subgraph<G>``),
+feedback edges, and the higher-order graph operators ``map_`` / ``reduce`` /
+``switch_`` / ``mesh_`` (see :doc:`nested_graphs` and :doc:`mesh`), plus
+services / shared outputs / the context runtime primitive (see :doc:`services`).
 
 Deferred (land with the relevant runtime layer):
 
 - automatic recordable-state recording;
-- push-source nodes — a specialized node/builder plus real-time evaluator
-  support; the node owns its queue, hands out ``Sender<T>`` during ``start``,
-  and applies queued messages from its normal ``eval`` implementation;
+- static-node authoring sugar for push sources (the runtime node/builder above
+  is the supported path today);
 - named state (``State<TSchema, "name">``);
-- standalone sub-graph boundary binding, generic graphs, and higher-order
-  graph operators such as ``map_`` / ``reduce`` / ``switch_``;
+- generic (``TsVar``) sub-graphs;
 - the Python lowering.

@@ -3,7 +3,7 @@ Error handling
 
 This page is the **authoritative design record** for runtime error handling:
 per-node exception capture, the ``NodeError`` value, ``exception_time_series``
-(the per-node extractor) and ``try_except`` (wrapping a whole sub-graph). It
+(the per-node extractor) and ``try_except_`` (wrapping a whole sub-graph). It
 mirrors the Python reference (``ext/main/hgraph/_wiring/_exception_handling.py``,
 ``_types/_error_type.py``) and records the deliberate C++ adaptations.
 
@@ -24,17 +24,17 @@ A node evaluation can throw. The framework's contract:
   best-effort stability, not a transaction: if the node wrote ordinary output
   before throwing, that output is unspecified and may remain observable. A node
   that does not capture errors lets the exception propagate (up to a
-  ``try_except`` boundary, else out of the graph).
+  ``try_except_`` boundary, else out of the graph).
 - ``exception_time_series(port)`` is the **per-node** extractor: it activates
   error capture on the producing node and returns its error-output time series.
-- ``try_except(func, …)`` wraps a **whole sub-graph** in one node that runs the
+- ``try_except_(func, …)`` wraps a **whole sub-graph** in one node that runs the
   child graph under try/catch and produces ``TSB[{exception, out}]`` — the
   ``out`` field forwards the wrapped graph's output, the ``exception`` field
   ticks a ``NodeError`` when the child raises.
 
 This matches Python: ``exception_time_series`` is the light per-node path and
-``try_except`` the graph path (Python's ``_try_except_node`` short-circuits a
-single node through its error output, while ``try_except`` over a graph builds a
+``try_except_`` the graph path (Python's ``_try_except_node`` short-circuits a
+single node through its error output, while ``try_except_`` over a graph builds a
 catching wrapper node).
 
 
@@ -103,10 +103,10 @@ identity; in the rare case where a structurally identical node without an error
 reference deduped to one that has it, the unused error port is harmless.
 
 
-``try_except`` over a sub-graph
--------------------------------
+``try_except_`` over a sub-graph
+--------------------------------
 
-``try_except<G>(w, args…)`` compiles ``G`` into a child graph (the same
+``try_except_<G>(w, args…)`` compiles ``G`` into a child graph (the same
 ``compile_subgraph`` path as ``nested_<G>``) and adds one **try/except node**
 built on the ``single_nested_graph_node`` substrate — the header advertises this
 exact use ("policy wrappers such as try/catch … supply their own callbacks while
@@ -140,7 +140,7 @@ Files
   ``NodeBuilder::with_error_capture``.
 - ``include/hgraph/runtime/try_except_node.{h}`` / ``src/…/try_except_node.cpp``
   — the try/except node on the nested substrate.
-- ``include/hgraph/types/subgraph_wiring.h`` — ``try_except<G>`` wiring entry;
+- ``include/hgraph/types/subgraph_wiring.h`` — ``try_except_<G>`` wiring entry;
   ``exception_time_series`` lives beside the existing ``error_output(port)``
   helper in ``graph_wiring.h``.
 - Tests: ``tests/cpp/test_error_handling.cpp``.
@@ -150,7 +150,7 @@ Roadmap / deferrals
 -------------------
 
 Done in this increment: ``NodeError``, per-node capture + ``exception_time_series``,
-``try_except`` over a sub-graph (value + sink), ASAN/UBSAN-verified.
+``try_except_`` over a sub-graph (value + sink), ASAN/UBSAN-verified.
 
 Deferred (recorded, not yet built):
 

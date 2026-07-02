@@ -609,10 +609,11 @@ Roadmap (this milestone)
    output ownership plus cross-instance forwarding, on-demand instance
    creation, dependency ranking, cycle detection, and key-set forwarding.
 
-Non-goals for the milestone: services/contexts,
+Non-goals for the milestone: services/contexts (since landed as their own
+milestone — see :doc:`services`),
 push sources inside nested graphs, TSD link-children aliasing,
 non-associative reduce, dynamic-TSL reduction, graph-level generic
 (``TsVar``) sub-graphs. (Explicit ``__keys__`` and the ``pass_through`` /
 ``no_key`` wrappers, originally deferred, landed within the milestone —
-see the ``map_`` section. ``try_except`` landed as its own follow-on
+see the ``map_`` section. ``try_except_`` landed as its own follow-on
 milestone — see :doc:`error_handling`.)

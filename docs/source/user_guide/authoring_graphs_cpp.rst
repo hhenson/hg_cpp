@@ -18,9 +18,11 @@ inlines their nodes, and only nodes exist at run time.
    ``wire<G>`` sub-graph composition (graphs flatten), and ``build_graph<G>(…)`` for
    a top-level graph — including **graph-level scalar parameters** (a top-level
    graph's ``compose`` may take ``Scalar<>`` parameters, supplied through
-   ``build_graph<G>(values…)``). Still **not yet implemented** (see *What's
-   planned*): standalone sub-graph building / time-series boundary inputs, generic
-   graphs and higher-order operators. A graph's body method is named ``compose`` and
+   ``build_graph<G>(values…)``). Standalone sub-graph building / time-series
+   boundary inputs, the higher-order operators (``map_`` / ``reduce`` /
+   ``switch_`` / ``mesh_``), ``feedback``, and ``try_except_`` error handling
+   have all since landed; see *What's planned* below for what remains (generic
+   graphs are the main gap). A graph's body method is named ``compose`` and
    the wiring verb is ``wire`` — distinct names, so inside a ``compose`` body you
    call ``wire<…>`` directly. How it works internally, and how it is shared with
    Python wiring, is in *Developer Guide > Graph Wiring*.
@@ -675,21 +677,20 @@ What's planned
 
 Node wiring, sub-graph composition (with the same scalar-literal ergonomics as
 nodes), node-level scalar arguments and top-level graph-level scalar parameters work
-today; beyond the basics above the following are deferred (and map onto Python
+today — as do standalone sub-graph building / boundary binding (the substrate for
+non-flattening nested graphs), the higher-order operators ``map_`` / ``reduce`` /
+``switch_`` / ``mesh_`` and ``feedback`` (see the developer guide's *Nested
+graphs* and *Mesh* pages), and ``try_except_`` error handling (see *Error
+handling*). Beyond those the following are deferred (and map onto Python
 features):
 
-- **standalone sub-graph building / boundary binding** — supplying time-series
-  **input ports** to ``build_graph`` / ``wire<G>`` so a sub-graph can be built on
-  its own; this is the precondition for non-flattening nested graphs and is deferred
-  until those operators need it;
 - **multiple outputs** — a graph returning a ``TSB`` becomes a bundle ``Port``
   with ``.field<"x">()`` to take a sub-port; as syntactic sugar a graph's outputs
   may instead be returned as an array;
 - **generic graphs** — ``TsVar`` / ``ScalarVar`` in the ``compose`` signature
   (``TIME_SERIES_TYPE`` / ``SCALAR`` / ``K`` / ``V`` in Python);
-- **higher-order operators** — ``map_`` / ``reduce`` / ``switch_`` / feedback,
-  which take graphs as arguments; these are where C++ is furthest from Python's
-  dynamism.
+- **dynamic-TSL multiplexing** in ``map_`` / ``reduce`` / ``mesh_``,
+  non-associative ``reduce``, and sink maps / all-sink switches.
 
 
 C++ ↔ Python cheat sheet

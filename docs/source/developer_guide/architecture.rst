@@ -24,9 +24,9 @@ The clock exposes three related time concepts:
 ``now``
     The runtime's current approximation of "now".
 
-    In ``REAL_TIME`` mode, ``now`` is derived from the computer clock in UTC.
+    In ``RealTime`` mode, ``now`` is derived from the computer clock in UTC.
 
-    In ``SIMULATION`` mode, ``now`` is an implementation-specific approximation of what ``now`` could have been in real-time mode if the event had triggered at wall-clock time. The implementation should preserve that intuition, but the exact mechanism is not part of the semantic contract.
+    In ``Simulation`` mode, ``now`` is an implementation-specific approximation of what ``now`` could have been in real-time mode if the event had triggered at wall-clock time. The implementation should preserve that intuition, but the exact mechanism is not part of the semantic contract.
 
 ``cycle_time``
     The elapsed time from the beginning of the current evaluation cycle to the current point in that cycle. This represents processing lag within the cycle.
@@ -38,11 +38,12 @@ node code only observes it.
 Execution Modes
 ~~~~~~~~~~~~~~~
 
-The engine has two primary execution modes: ``REAL_TIME`` and ``SIMULATION``.
+The engine has two primary execution modes: ``RealTime`` and ``Simulation``
+(``GraphExecutorMode`` in ``runtime/executor.h``).
 
-In ``SIMULATION`` mode, time is compressed. The engine does not wait between scheduled events. It processes events as quickly as possible while preserving event-time ordering.
+In ``Simulation`` mode, time is compressed. The engine does not wait between scheduled events. It processes events as quickly as possible while preserving event-time ordering.
 
-In ``REAL_TIME`` mode, the engine attempts to align event processing with wall-clock time. If an event is scheduled for the future, the engine waits until wall-clock time reaches that event time. If the engine is already behind, it evaluates immediately. Waiting would only increase the lag.
+In ``RealTime`` mode, the engine attempts to align event processing with wall-clock time. If an event is scheduled for the future, the engine waits until wall-clock time reaches that event time. If the engine is already behind, it evaluates immediately. Waiting would only increase the lag.
 
 The engine does not skip scheduled events. If event coalescing or collapsing is required, that behavior belongs to a source node. A collapsing source node may choose to combine external events before introducing them into the runtime, but that is source-node behavior, not scheduler behavior.
 

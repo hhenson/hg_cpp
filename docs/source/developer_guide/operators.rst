@@ -759,8 +759,9 @@ Roadmap
    ``last_modified_*``), and optional
    wiring-time ``DivideByZero`` policy overloads (``Error`` / ``Nan`` / ``Inf`` /
    ``NoTick`` / ``Zero`` / ``One``, mirroring ``ext/2603`` where applicable).
-   ``DivideByZero`` is a registered *enum scalar*. Because parameter defaults are not yet
-   a framework feature, optional scalar policies are modelled as two overloads selected by
+   ``DivideByZero`` is a registered *enum scalar*. These optional scalar policies predate
+   framework parameter defaults (see *Named arguments, defaults and kwargs* above) and
+   remain modelled as two overloads selected by
    **arity** — e.g. ``div_(a, b)`` defaults to ``Error`` and ``div_(a, b, policy)`` uses
    the supplied policy. ``zero_`` mirrors Python's ``zero(tp, op)``: the value depends on
    the output type **and** the operation (a ``WiredFn`` argument — ``add_``/``sum_`` -> 0,
