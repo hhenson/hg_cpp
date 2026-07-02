@@ -811,35 +811,207 @@ Services
 --------
 
 Services share one implementation across many client call sites, addressed by
-an optional path (design record: developer guide *Services, shared outputs and
-contexts*). Declare the service as a struct — the aliases it declares are its
-**flavour tag** (exactly one set, checked at compile time) — register an
-implementation, and consume it with the **ordinary ``wire<>`` verb**:
+an optional path (design record: developer guide *Services, adaptors, shared
+outputs and contexts*). Declare the service as a struct — the aliases it
+declares are its **flavour tag** (exactly one set, checked at compile time) —
+register an implementation, and consume it with the **ordinary ``wire<>``
+verb**. How the flavours (and the adaptor kinds of the next section) differ:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 24 20 20 20
+
+   * - Kind
+     - Descriptor
+     - Client wires
+     - Client receives
+     - Implementation sees / produces
+   * - **Reference service**
+     - ``output_schema``
+     - ``wire<S>(w)``
+     - the one shared output, read by reference (same cycle)
+     - nothing in; produces ``output_schema`` (source-shaped)
+   * - **Subscription service**
+     - ``key_type`` + ``value_schema``
+     - ``wire<S>(w, key)``
+     - the value for *its* subscribed key (next cycle)
+     - ``TSS<key_type>`` (union of all subscribed keys) in; ``TSD<key_type, value_schema>`` out
+   * - **Request/reply service**
+     - ``request_schema`` + ``response_schema``
+     - ``wire<S>(w, request)``
+     - its **own** reply (next cycle)
+     - ``TSD<Int, request_schema>`` keyed by client id in; ``TSD<Int, response_schema>`` keyed by the same id out
+   * - **Adaptor**
+     - ``: adaptor::interface`` + ``input_schema`` / ``output_schema``
+     - ``wire<I>(w, in)``
+     - the one shared output stream (all clients see the same)
+     - one merged input stream (``from_graph``); publishes one output (``to_graph``)
+   * - **Service adaptor**
+     - ``: service_adaptor::interface`` + ``input_schema`` / ``output_schema``
+     - ``wire<I>(w, in)``
+     - its **own** reply
+     - ``TSD<Int, input_schema>`` keyed by client id (``from_graph``); replies keyed by the same id (``to_graph``)
+
+The worked examples below are taken from ``tests/cpp/test_service_wiring.cpp``
+and run green.
+
+Reference service — publish once, read anywhere
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The implementation is source-shaped (nothing flows *in* from clients), so it
+must initiate itself — here via ``schedule_on_start``. Clients read the shared
+output by reference, in the same cycle it is published:
 
 .. code-block:: cpp
 
-   struct AddOneService                     // request/reply flavour
+   struct ReferencePricesService                 // tag: output_schema only
+   {
+       static constexpr std::string_view name{"reference_prices"};
+       using output_schema = TSD<Int, TS<Int>>;
+   };
+
+   struct ReferencePricesImplNode                // the implementation: a source
+   {
+       static constexpr auto name              = "reference_prices_impl_node";
+       static constexpr bool schedule_on_start = true;
+
+       static void eval(Out<TSD<Int, TS<Int>>> out)
+       {
+           auto  mutation = out.begin_mutation(out.evaluation_time());
+           Value key_7{Int{7}}, price_7{Int{70}};
+           mutation.set(key_7.view(), price_7.view());
+       }
+   };
+
+   struct ReferencePriceClient                   // register + consume
+   {
+       static constexpr auto name = "reference_price_client";
+
+       static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
+       {
+           service::register_reference_service<ReferencePricesService, ReferencePricesImplNode>(w);
+           auto prices = wire<ReferencePricesService>(w);   // Port<TSD<Int, TS<Int>>>
+           return wire<stdlib::getitem_>(w, prices, instrument).as<TS<Int>>();
+       }
+   };
+
+Subscription service — clients subscribe keys
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each client subscribes a key; the implementation receives the **union** of all
+subscribed keys as a ``TSS<key_type>`` and publishes a keyed dictionary; each
+client reads back only its own key's value. The key set is **invalid until the
+first subscriber arrives** — declare it ``InputValidity::Unchecked`` and
+guard — and keys come and go, so removed keys must be erased from the output:
+
+.. code-block:: cpp
+
+   struct PricesService                          // tag: key_type + value_schema
+   {
+       static constexpr std::string_view name{"prices"};
+       using key_type     = Int;
+       using value_schema = TS<Int>;
+   };
+
+   struct PricesImplNode                         // the implementation
+   {
+       static constexpr auto name = "prices_impl_node";
+
+       static void eval(In<"keys", TSS<Int>, InputValidity::Unchecked> keys,
+                        Out<TSD<Int, TS<Int>>> out)
+       {
+           if (!keys.valid()) { return; }        // no subscribers yet
+
+           auto mutation = out.begin_mutation(out.evaluation_time());
+           for (Int removed : keys.removed()) { static_cast<void>(mutation.erase(Value{removed}.view())); }
+           for (Int key : keys.values())
+           {
+               Value key_value{key};
+               Value price{key * Int{10}};
+               mutation.set(key_value.view(), price.view());
+           }
+       }
+   };
+
+   struct PriceClient                            // register + consume
+   {
+       static constexpr auto name = "price_client";
+
+       static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
+       {
+           service::register_subscription_service<PricesService, PricesImplNode>(w);
+           return wire<PricesService>(w, instrument);   // subscribe; value arrives next cycle
+       }
+   };
+
+A subscription is a round trip — the key reaches the implementation on the
+next cycle, so the first value lags the subscription by one engine cycle.
+
+Request/reply service — every client gets its own answer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each client's request is a **separate** entry in a request dictionary, keyed
+by a stable per-client id assigned at wiring; the implementation must reply
+keyed by the **same id** — that is how a reply finds its client. The request
+dictionary is ``InputValidity::Unchecked`` for the same reason as above; a
+request element that ticks **invalid** means that client's request went away,
+so its reply is erased:
+
+.. code-block:: cpp
+
+   struct AddOneService                          // tag: request_schema + response_schema
    {
        static constexpr std::string_view name{"add_one"};
        using request_schema  = TS<Int>;
        using response_schema = TS<Int>;
    };
 
-   // inside a compose body:
-   service::register_request_reply_service<AddOneService, AddOneImplNode>(w);
-   auto reply = wire<AddOneService>(w, request);
+   struct AddOneImplNode                         // the implementation
+   {
+       static constexpr auto name = "add_one_impl_node";
 
-A **reference service** (``output_schema``) publishes one output that clients
-read by reference — consume with ``wire<S>(w)``; a **subscription service**
-(``key_type`` + ``value_schema``) collects the union of client-subscribed keys
-into the implementation and returns the keyed responses — consume with
-``wire<S>(w, key)``; a **request/reply service** (``request_schema`` +
-``response_schema``) gives each client a private keyed request/response pair —
-consume with ``wire<S>(w, request)``. ``service::path("…")`` addresses
-independent instances of the same service and is always the **first** argument
-after ``w`` (e.g. ``wire<S>(w, service::path("premium"), request)``);
-registration and consumption are separate, so a library can consume a service
-its host application registers.
+       static void eval(In<"requests", TSD<Int, TS<Int>>, InputValidity::Unchecked> requests,
+                        Out<TSD<Int, TS<Int>>> out)
+       {
+           if (!requests.modified()) { return; }
+
+           auto mutation = out.begin_mutation(out.evaluation_time());
+           for (const auto &[request_id, request] : requests.removed_items())
+           {
+               static_cast<void>(mutation.erase(request_id));
+           }
+           for (const auto &[request_id, request] : requests.modified_items())
+           {
+               if (!request.valid()) { static_cast<void>(mutation.erase(request_id)); continue; }
+               Value response{request.value() + Int{1}};
+               mutation.set(request_id, response.view());
+           }
+       }
+   };
+
+   struct AddOneClient                           // register + consume
+   {
+       static constexpr auto name = "add_one_client";
+
+       static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+       {
+           service::register_request_reply_service<AddOneService, AddOneImplNode>(w);
+           return wire<AddOneService>(w, request);      // this client's own reply, next cycle
+       }
+   };
+
+Two clients of the same service are two independent request-dictionary
+entries; the implementation sees both requests in one cumulative delta and
+each client receives only its own reply.
+
+Paths and other service mechanics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``service::path("…")`` addresses independent instances of the same service and
+is always the **first** argument after ``w`` (for registration and consumption
+alike — e.g. ``wire<S>(w, service::path("premium"), request)``); registration
+and consumption are separate, so a library can consume a service its host
+application registers.
 
 Paths may be **qualified with scalar arguments** —
 ``service::path("prices", arg<"tier">(Str{"premium"}))`` — and each distinct
@@ -851,17 +1023,15 @@ Registering two implementations on the **same** path is rejected at build time
 each instantiation (``TemplateAddService<Int>``) binds as its own concrete
 interface; use a qualified path to keep instantiations apart.
 
-The **implementation** is itself an ordinary node or graph: a subscription
-implementation receives the subscribed key set (``TSS<key_type>``) and returns
-``TSD<key_type, value_schema>``; a request/reply implementation receives the
-request dictionary (``TSD<Int, request_schema>``, keyed by a stable per-client
-request id) and must reply keyed by the **same id**. Both inputs start invalid
-(no clients yet), so implementations declare them ``InputValidity::Unchecked``
-and guard. One graph can implement **several services at once** —
-``service::register_services<Impl, Services…>(w, path)`` with
-``service::impl_input<S>(w, path)`` / ``service::impl_output<S>(w, path, port)``
-inside its ``compose``. The full contracts and worked examples are in the
-developer guide's *Services, adaptors, shared outputs and contexts* page.
+An implementation may be a node (as above) or a graph (``compose`` taking the
+flavour input as a port), and may declare ``Scalar<"path", Str>`` to receive
+the path it was registered under. One graph can implement **several services
+at once** — register with ``service::register_services<Impl, Services…>(w,
+path)`` and, inside its ``compose``, fetch each interface's input with
+``service::impl_input<S>(w, path)`` and publish each output with
+``service::impl_output<S>(w, path, port)``. The design record, including the
+multi-interface worked example, is the developer guide's *Services, adaptors,
+shared outputs and contexts* page.
 
 
 Adaptors
@@ -869,7 +1039,9 @@ Adaptors
 
 An adaptor is the boundary to the outside world: one implementation owns the
 external interaction and client graphs exchange time-series with it through an
-interface. The descriptor derives from ``adaptor::interface`` and declares
+interface (see the comparison table at the top of *Services* for how the two
+adaptor kinds relate to the service flavours). The descriptor derives from
+``adaptor::interface`` and declares
 ``input_schema`` (what clients send) and/or ``output_schema`` (what clients
 receive) — omit one for a sink-only or source-only adaptor. Clients use the
 ordinary ``wire<>`` verb; the implementation is a graph that reaches the
