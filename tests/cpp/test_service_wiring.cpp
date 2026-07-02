@@ -219,7 +219,7 @@ namespace
         {
             service::register_reference_service<ReferencePricesService, ReferencePricesPathImplNode>(
                 w, service::path("premium"));
-            auto prices = service::reference_service<ReferencePricesService>(w, service::path("premium"));
+            auto prices = wire<ReferencePricesService>(w, service::path("premium"));
             return wire<stdlib::getitem_>(w, prices, Int{7}).as<TS<Int>>();
         }
     };
@@ -231,7 +231,7 @@ namespace
         static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
         {
             service::register_reference_service<ReferencePricesService, ReferencePricesImpl>(w);
-            auto prices = service::reference_service<ReferencePricesService>(w);
+            auto prices = wire<ReferencePricesService>(w);
             return wire<stdlib::getitem_>(w, prices, instrument).as<TS<Int>>();
         }
     };
@@ -246,7 +246,7 @@ namespace
                 w, service::path("primary"));
             service::register_reference_service<ReferencePricesService, ReferencePricesAltImpl>(
                 w, service::path("secondary"));
-            auto prices = service::reference_service<ReferencePricesService>(w, service::path("secondary"));
+            auto prices = wire<ReferencePricesService>(w, service::path("secondary"));
             return wire<stdlib::getitem_>(w, prices, instrument).as<TS<Int>>();
         }
     };
@@ -257,8 +257,8 @@ namespace
 
         static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
         {
-            auto prices = service::subscription_service_impl<PricesService, PricesImpl>(w);
-            return prices(instrument);
+            service::register_subscription_service<PricesService, PricesImpl>(w);
+            return wire<PricesService>(w, instrument);
         }
     };
 
@@ -269,8 +269,7 @@ namespace
         static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
         {
             service::register_subscription_service<PricesService, PricesPathImplNode>(w, service::path("premium"));
-            auto prices = service::subscription_service<PricesService>(w, service::path("premium"));
-            return prices(instrument);
+            return wire<PricesService>(w, service::path("premium"), instrument);
         }
     };
 
@@ -281,8 +280,7 @@ namespace
         static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> instrument)
         {
             service::register_subscription_service<PricesService, PricesImpl>(w);
-            auto prices = service::subscription_service<PricesService>(w);
-            return prices(instrument);
+            return wire<PricesService>(w, instrument);
         }
     };
 
@@ -293,7 +291,7 @@ namespace
         static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
         {
             service::register_request_reply_service<AddOneService, AddOneImplNode>(w);
-            return service::request_reply_service<AddOneService>(w, request);
+            return wire<AddOneService>(w, request);
         }
     };
 
@@ -305,7 +303,7 @@ namespace
         {
             service::register_request_reply_service<AddOneService, AddOnePathImplNode>(
                 w, service::path("premium"));
-            return service::request_reply_service<AddOneService>(w, request, service::path("premium"));
+            return wire<AddOneService>(w, service::path("premium"), request);
         }
     };
 
@@ -316,8 +314,8 @@ namespace
         static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs_request, Port<TS<Int>> rhs_request)
         {
             service::register_request_reply_service<AddOneService, AddOneImplNode>(w);
-            auto lhs_reply = service::request_reply_service<AddOneService>(w, lhs_request);
-            auto rhs_reply = service::request_reply_service<AddOneService>(w, rhs_request);
+            auto lhs_reply = wire<AddOneService>(w, lhs_request);
+            auto rhs_reply = wire<AddOneService>(w, rhs_request);
             return wire<stdlib::add_>(w, lhs_reply, rhs_reply).as<TS<Int>>();
         }
     };

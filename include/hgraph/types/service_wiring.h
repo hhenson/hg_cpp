@@ -16,7 +16,9 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <typeindex>
+#include <type_traits>
 #include <utility>
 
 namespace hgraph::service
@@ -55,7 +57,7 @@ namespace hgraph::service
      *    };
      *
      *    register_reference_service<Accounts, StaticAccounts>(w);
-     *    auto accounts = reference_service<Accounts>(w);
+     *    auto accounts = wire<Accounts>(w);
      *
      * Use ``service::path("name")`` as the first argument after ``w`` to bind
      * or call a non-default service path.
@@ -65,8 +67,7 @@ namespace hgraph::service
      * ``register_subscription_service<Prices, Impl>(w)`` wires ``Impl`` with a
      * ``TSS<key_type>`` subscription input and captures its
      * ``TSD<key_type, value_schema>`` output as a shared reference.
-     * ``subscription_service<Prices>(w)`` returns the client handle. Calling the
-     * handle with a key port records that client's subscription and returns the
+     * ``wire<Prices>(w, key)`` records that client's subscription and returns the
      * selected service value by reference; no service value is copied by the
      * wiring layer.
      *
@@ -82,7 +83,7 @@ namespace hgraph::service
      *    };
      *
      *    register_request_reply_service<AddOne, AddOneImpl>(w);
-     *    auto reply = request_reply_service<AddOne>(w, request);
+     *    auto reply = wire<AddOne>(w, request);
      *
      * The request source owns ``TSD<Int, request_schema>`` plus a mutable
      * request-delta state. Client capture sinks update that state, and the
@@ -91,6 +92,80 @@ namespace hgraph::service
 
     namespace detail
     {
+        template <typename>
+        inline constexpr bool always_false_v = false;
+
+        template <typename T>
+        struct is_service_path : std::false_type
+        {
+        };
+
+        template <>
+        struct is_service_path<ServicePath> : std::true_type
+        {
+        };
+
+        template <typename T>
+        inline constexpr bool is_service_path_v = is_service_path<std::remove_cvref_t<T>>::value;
+
+        template <typename Service, typename = void>
+        struct has_key_value_schema : std::false_type
+        {
+        };
+
+        template <typename Service>
+        struct has_key_value_schema<Service, std::void_t<typename Service::key_type, typename Service::value_schema>>
+            : std::true_type
+        {
+        };
+
+        template <typename Service, typename = void>
+        struct has_reference_output_schema : std::false_type
+        {
+        };
+
+        template <typename Service>
+        struct has_reference_output_schema<Service, std::void_t<typename Service::output_schema>> : std::true_type
+        {
+        };
+
+        template <typename Service, typename = void>
+        struct has_request_reply_schema : std::false_type
+        {
+        };
+
+        template <typename Service>
+        struct has_request_reply_schema<
+            Service,
+            std::void_t<typename Service::request_schema, typename Service::response_schema>>
+            : std::true_type
+        {
+        };
+
+        template <typename Service>
+        concept reference_service_interface =
+            has_reference_output_schema<Service>::value &&
+            !has_key_value_schema<Service>::value &&
+            !has_request_reply_schema<Service>::value;
+
+        template <typename Service>
+        concept subscription_service_interface =
+            has_key_value_schema<Service>::value &&
+            !has_reference_output_schema<Service>::value &&
+            !has_request_reply_schema<Service>::value;
+
+        template <typename Service>
+        concept request_reply_service_interface =
+            has_request_reply_schema<Service>::value &&
+            !has_reference_output_schema<Service>::value &&
+            !has_key_value_schema<Service>::value;
+
+        template <typename Service>
+        concept service_interface =
+            reference_service_interface<Service> ||
+            subscription_service_interface<Service> ||
+            request_reply_service_interface<Service>;
+
         template <typename Service>
         using key_type_t = typename Service::key_type;
 
@@ -839,5 +914,81 @@ namespace hgraph::service
             w, std::move(request), detail::default_service_path<Service>(), args...);
     }
 }  // namespace hgraph::service
+
+namespace hgraph::graph_wiring_detail
+{
+    template <typename Service, typename OutSchema, typename... Args>
+        requires service::detail::service_interface<Service>
+    struct wire_customization<Service, OutSchema, Args...>
+    {
+        static constexpr bool enabled = true;
+
+        static auto wire(Wiring &w, const Args &...args)
+        {
+            static_assert(std::is_void_v<OutSchema>,
+                          "wire<Service, OutSchema>: service output schema is defined by the service descriptor");
+
+            auto arg_tuple = std::forward_as_tuple(args...);
+            if constexpr (service::detail::reference_service_interface<Service>)
+            {
+                static_assert(sizeof...(Args) <= 1,
+                              "wire<ReferenceService>: expected zero arguments or service::path(...)");
+                if constexpr (sizeof...(Args) == 0)
+                {
+                    return service::reference_service<Service>(w);
+                }
+                else
+                {
+                    using A0 = std::tuple_element_t<0, std::tuple<Args...>>;
+                    static_assert(service::detail::is_service_path_v<A0>,
+                                  "wire<ReferenceService>: first argument must be service::path(...)");
+                    return service::reference_service<Service>(w, std::get<0>(arg_tuple));
+                }
+            }
+            else if constexpr (service::detail::subscription_service_interface<Service>)
+            {
+                static_assert(sizeof...(Args) == 1 || sizeof...(Args) == 2,
+                              "wire<SubscriptionService>: expected key or service::path(...), key");
+                if constexpr (sizeof...(Args) == 1)
+                {
+                    using A0 = std::tuple_element_t<0, std::tuple<Args...>>;
+                    static_assert(!service::detail::is_service_path_v<A0>,
+                                  "wire<SubscriptionService>: missing key after service::path(...)");
+                    return service::subscription_service<Service>(w)(std::get<0>(arg_tuple));
+                }
+                else
+                {
+                    using A0 = std::tuple_element_t<0, std::tuple<Args...>>;
+                    static_assert(service::detail::is_service_path_v<A0>,
+                                  "wire<SubscriptionService>: first argument must be service::path(...)");
+                    return service::subscription_service<Service>(w, std::get<0>(arg_tuple))(std::get<1>(arg_tuple));
+                }
+            }
+            else if constexpr (service::detail::request_reply_service_interface<Service>)
+            {
+                static_assert(sizeof...(Args) == 1 || sizeof...(Args) == 2,
+                              "wire<RequestReplyService>: expected request or service::path(...), request");
+                if constexpr (sizeof...(Args) == 1)
+                {
+                    using A0 = std::tuple_element_t<0, std::tuple<Args...>>;
+                    static_assert(!service::detail::is_service_path_v<A0>,
+                                  "wire<RequestReplyService>: missing request after service::path(...)");
+                    return service::request_reply_service<Service>(w, std::get<0>(arg_tuple));
+                }
+                else
+                {
+                    using A0 = std::tuple_element_t<0, std::tuple<Args...>>;
+                    static_assert(service::detail::is_service_path_v<A0>,
+                                  "wire<RequestReplyService>: first argument must be service::path(...)");
+                    return service::request_reply_service<Service>(w, std::get<1>(arg_tuple), std::get<0>(arg_tuple));
+                }
+            }
+            else
+            {
+                static_assert(service::detail::always_false_v<Service>, "unsupported service descriptor");
+            }
+        }
+    };
+}  // namespace hgraph::graph_wiring_detail
 
 #endif  // HGRAPH_TYPES_SERVICE_WIRING_H
