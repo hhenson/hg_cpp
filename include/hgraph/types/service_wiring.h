@@ -4,11 +4,13 @@
 #include <hgraph/lib/std/operators/container.h>
 #include <hgraph/runtime/service_node.h>
 #include <hgraph/runtime/shared_output_node.h>
+#include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_schema.h>
 
 #include <array>
+#include <atomic>
 #include <concepts>
 #include <span>
 #include <stdexcept>
@@ -67,6 +69,24 @@ namespace hgraph::service
      * handle with a key port records that client's subscription and returns the
      * selected service value by reference; no service value is copied by the
      * wiring layer.
+     *
+     * Request/reply services collect client requests through a feedback-style
+     * source/capture pair:
+     *
+     * .. code-block:: cpp
+     *
+     *    struct AddOne {
+     *        static constexpr std::string_view name{"add_one"};
+     *        using request_schema = TS<Int>;
+     *        using response_schema = TS<Int>;
+     *    };
+     *
+     *    register_request_reply_service<AddOne, AddOneImpl>(w);
+     *    auto reply = request_reply_service<AddOne>(w, request);
+     *
+     * The request source owns ``TSD<Int, request_schema>`` plus a mutable
+     * request-delta state. Client capture sinks update that state, and the
+     * source emits the cumulative delta on the next scheduled tick.
      */
 
     namespace detail
@@ -82,6 +102,18 @@ namespace hgraph::service
 
         template <typename Service>
         using output_schema_t = TSD<key_type_t<Service>, value_schema_t<Service>>;
+
+        template <typename Service>
+        using request_schema_t = typename Service::request_schema;
+
+        template <typename Service>
+        using response_schema_t = typename Service::response_schema;
+
+        template <typename Service>
+        using request_input_schema_t = TSD<Int, request_schema_t<Service>>;
+
+        template <typename Service>
+        using request_output_schema_t = TSD<Int, response_schema_t<Service>>;
 
         template <typename T>
         concept graph_implementation = requires { &T::compose; };
@@ -271,6 +303,12 @@ namespace hgraph::service
         }
 
         template <typename Service>
+        [[nodiscard]] std::string request_reply_base_path(const ServicePath &user_path)
+        {
+            return service_full_path<Service>("reqrepl_svc://", "request-reply", user_path);
+        }
+
+        template <typename Service>
         [[nodiscard]] std::string reference_output_path(const ServicePath &user_path)
         {
             return reference_base_path<Service>(user_path);
@@ -290,6 +328,43 @@ namespace hgraph::service
             std::string path = subscription_base_path<Service>(user_path);
             path.append("/out");
             return path;
+        }
+
+        template <typename Service>
+        [[nodiscard]] std::string request_input_path(const ServicePath &user_path)
+        {
+            std::string path = request_reply_base_path<Service>(user_path);
+            path.append("/request");
+            return path;
+        }
+
+        template <typename Service>
+        [[nodiscard]] std::string request_reply_output_path(const ServicePath &user_path)
+        {
+            std::string path = request_reply_base_path<Service>(user_path);
+            path.append("/replies");
+            return path;
+        }
+
+        [[nodiscard]] inline Int next_request_id() noexcept
+        {
+            static std::atomic<Int> next{0};
+            return next.fetch_add(1, std::memory_order_relaxed) + 1;
+        }
+
+        [[nodiscard]] inline const ValueTypeMetaData *request_input_state_schema(
+            const TSValueTypeMetaData &request_schema)
+        {
+            if (request_schema.delta_value_schema == nullptr)
+            {
+                throw std::invalid_argument("request/reply service request schema must have a delta schema");
+            }
+
+            auto       &registry          = TypeRegistry::instance();
+            const auto *request_id_schema = registry.register_scalar<Int>("int");
+            const auto *removed_schema    = registry.mutable_set(request_id_schema);
+            const auto *modified_schema   = registry.mutable_map(request_id_schema, request_schema.delta_value_schema);
+            return registry.un_named_bundle({{"removed", removed_schema}, {"modified", modified_schema}});
         }
 
         [[nodiscard]] inline Value path_key_value(const std::string &full_path)
@@ -325,6 +400,26 @@ namespace hgraph::service
 
         template <typename Service, typename Impl>
         struct shared_output_capture_marker
+        {
+        };
+
+        template <typename Service>
+        struct request_input_source_marker
+        {
+        };
+
+        template <typename Service>
+        struct request_input_capture_marker
+        {
+        };
+
+        template <typename Service>
+        struct request_reply_output_source_marker
+        {
+        };
+
+        template <typename Service, typename Impl>
+        struct request_reply_output_capture_marker
         {
         };
 
@@ -403,6 +498,59 @@ namespace hgraph::service
         }
 
         template <typename Service>
+        [[nodiscard]] Port<request_input_schema_t<Service>> request_input_source(
+            Wiring &w,
+            const ServicePath &user_path)
+        {
+            using input_schema = request_input_schema_t<Service>;
+            using request_schema = request_schema_t<Service>;
+            static_assert(schema_descriptor<input_schema>::is_concrete(),
+                          "request/reply service request schema must be concrete");
+
+            std::string full_path = request_input_path<Service>(user_path);
+            const auto *request_meta = schema_descriptor<request_schema>::ts_meta();
+            const auto *out_meta     = schema_descriptor<input_schema>::ts_meta();
+
+            WiringNodeSchema schema;
+            schema.output = out_meta;
+            schema.state  = request_input_state_schema(*request_meta);
+
+            WiringPortRef port = w.add_node(
+                std::type_index(typeid(request_input_source_marker<Service>)), schema,
+                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                [path = std::move(full_path), request_meta]() {
+                    return make_request_input_source_node(path, *request_meta);
+                });
+            return Port<input_schema>{w, std::move(port)};
+        }
+
+        template <typename Service>
+        [[nodiscard]] Port<REF<request_output_schema_t<Service>>> request_reply_output_source(
+            Wiring &w,
+            const ServicePath &user_path)
+        {
+            using output_schema = request_output_schema_t<Service>;
+            static_assert(schema_descriptor<output_schema>::is_concrete(),
+                          "request/reply service response schema must be concrete");
+
+            std::string full_path = request_reply_output_path<Service>(user_path);
+            const auto *target_meta = schema_descriptor<output_schema>::ts_meta();
+            const auto *ref_meta    = schema_descriptor<REF<output_schema>>::ts_meta();
+
+            WiringNodeSchema schema;
+            schema.output = ref_meta;
+            schema.state  = ref_meta->value_schema;
+
+            WiringPortRef port = w.add_node(
+                std::type_index(typeid(request_reply_output_source_marker<Service>)), schema,
+                std::span<const WiringPortRef>{}, path_key_value(full_path),
+                [path = std::move(full_path), target_meta]() {
+                    return make_shared_output_source_node(path, *target_meta);
+                });
+            return Port<REF<output_schema>>{w, std::move(port)};
+        }
+
+        template <typename Service>
         void capture_subscription_key(Wiring &w,
                                       Port<TS<key_type_t<Service>>> key,
                                       Port<TSS<key_type_t<Service>>> subscriptions,
@@ -421,6 +569,28 @@ namespace hgraph::service
                                          std::move(builder),
                                          std::span<const WiringPortRef>{inputs.data(), inputs.size()},
                                          Value{}));
+        }
+
+        template <typename Service>
+        void capture_request_input(Wiring &w,
+                                   Port<request_schema_t<Service>> request,
+                                   Port<request_input_schema_t<Service>> requests,
+                                   const ServicePath &user_path,
+                                   Int request_id)
+        {
+            using request_schema = request_schema_t<Service>;
+
+            std::array<WiringPortRef, 2> inputs{request.erased(), requests.erased()};
+            NodeBuilder builder = make_request_input_capture_node(
+                request_input_path<Service>(user_path), *schema_descriptor<request_schema>::ts_meta(), request_id);
+            builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                builder.binding().type_meta->input_schema,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+
+            static_cast<void>(w.add_node(std::type_index(typeid(request_input_capture_marker<Service>)),
+                                         std::move(builder),
+                                         std::span<const WiringPortRef>{inputs.data(), inputs.size()},
+                                         Value{request_id}));
         }
 
         template <typename Service, typename Impl>
@@ -463,6 +633,29 @@ namespace hgraph::service
                                          std::move(builder),
                                          std::span<const WiringPortRef>{inputs.data(), inputs.size()},
                                          Value{}));
+        }
+
+        template <typename Service, typename Impl>
+        void capture_request_reply_service_output(
+            Wiring &w,
+            Port<request_output_schema_t<Service>> output,
+            Port<REF<request_output_schema_t<Service>>> shared_output,
+            const ServicePath &user_path)
+        {
+            using output_schema = request_output_schema_t<Service>;
+
+            std::array<WiringPortRef, 2> inputs{output.erased(), shared_output.erased()};
+            NodeBuilder builder = make_shared_output_capture_node(
+                request_reply_output_path<Service>(user_path), *schema_descriptor<output_schema>::ts_meta());
+            builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                builder.binding().type_meta->input_schema,
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+
+            static_cast<void>(w.add_node(
+                std::type_index(typeid(request_reply_output_capture_marker<Service, Impl>)),
+                std::move(builder),
+                std::span<const WiringPortRef>{inputs.data(), inputs.size()},
+                Value{}));
         }
     }  // namespace detail
 
@@ -578,6 +771,72 @@ namespace hgraph::service
     [[nodiscard]] SubscriptionService<Service> subscription_service_impl(Wiring &w, const Args &...args)
     {
         return subscription_service_impl<Service, Impl>(w, detail::default_service_path<Service>(), args...);
+    }
+
+    template <typename Service>
+    [[nodiscard]] Port<typename Service::response_schema> request_reply_service(
+        Wiring &w,
+        Port<typename Service::request_schema> request,
+        ServicePath user_path)
+    {
+        using output_schema   = detail::request_output_schema_t<Service>;
+        using response_schema = detail::response_schema_t<Service>;
+
+        const Int request_id = detail::next_request_id();
+        auto requests        = detail::request_input_source<Service>(w, user_path);
+        auto replies         = detail::request_reply_output_source<Service>(w, user_path);
+
+        detail::capture_request_input<Service>(w, std::move(request), requests, user_path, request_id);
+        return wire<stdlib::getitem_>(w, replies.template as<output_schema>(), request_id)
+            .template as<response_schema>();
+    }
+
+    template <typename Service>
+    [[nodiscard]] Port<typename Service::response_schema> request_reply_service(
+        Wiring &w,
+        Port<typename Service::request_schema> request)
+    {
+        return request_reply_service<Service>(
+            w, std::move(request), detail::default_service_path<Service>());
+    }
+
+    template <typename Service, typename Impl, typename... Args>
+    void register_request_reply_service(Wiring &w, ServicePath user_path, const Args &...args)
+    {
+        using output_schema = detail::request_output_schema_t<Service>;
+
+        auto requests = detail::request_input_source<Service>(w, user_path);
+        auto replies  = detail::request_reply_output_source<Service>(w, user_path);
+        auto output = detail::wire_service_impl<Impl, output_schema>(
+            w, user_path, detail::service_input_arg<Impl>(requests), args...);
+        detail::capture_request_reply_service_output<Service, Impl>(w, output, replies, user_path);
+    }
+
+    template <typename Service, typename Impl, typename... Args>
+    void register_request_reply_service(Wiring &w, const Args &...args)
+    {
+        register_request_reply_service<Service, Impl>(w, detail::default_service_path<Service>(), args...);
+    }
+
+    template <typename Service, typename Impl, typename... Args>
+    [[nodiscard]] Port<typename Service::response_schema> request_reply_service_impl(
+        Wiring &w,
+        Port<typename Service::request_schema> request,
+        ServicePath user_path,
+        const Args &...args)
+    {
+        register_request_reply_service<Service, Impl>(w, user_path, args...);
+        return request_reply_service<Service>(w, std::move(request), std::move(user_path));
+    }
+
+    template <typename Service, typename Impl, typename... Args>
+    [[nodiscard]] Port<typename Service::response_schema> request_reply_service_impl(
+        Wiring &w,
+        Port<typename Service::request_schema> request,
+        const Args &...args)
+    {
+        return request_reply_service_impl<Service, Impl>(
+            w, std::move(request), detail::default_service_path<Service>(), args...);
     }
 }  // namespace hgraph::service
 

@@ -24,6 +24,13 @@ namespace
         using output_schema = TSD<Int, TS<Int>>;
     };
 
+    struct AddOneService
+    {
+        static constexpr std::string_view name{"add_one"};
+        using request_schema  = TS<Int>;
+        using response_schema = TS<Int>;
+    };
+
     struct ReferencePricesImplNode
     {
         static constexpr auto name              = "reference_prices_impl_node";
@@ -110,6 +117,66 @@ namespace
                 Value key_value{key};
                 Value price{key * multiplier};
                 mutation.set(key_value.view(), price.view());
+            }
+        }
+    };
+
+    struct AddOneImplNode
+    {
+        static constexpr auto name = "add_one_impl_node";
+
+        static void eval(In<"requests", TSD<Int, TS<Int>>, InputValidity::Unchecked> requests,
+                         Out<TSD<Int, TS<Int>>> out)
+        {
+            if (!requests.modified()) { return; }
+
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            for (const auto &[request_id, request] : requests.removed_items())
+            {
+                (void)request;
+                static_cast<void>(mutation.erase(request_id));
+            }
+            for (const auto &[request_id, request] : requests.modified_items())
+            {
+                if (!request.valid())
+                {
+                    static_cast<void>(mutation.erase(request_id));
+                    continue;
+                }
+
+                Value response{request.value() + Int{1}};
+                mutation.set(request_id, response.view());
+            }
+        }
+    };
+
+    struct AddOnePathImplNode
+    {
+        static constexpr auto name = "add_one_path_impl_node";
+
+        static void eval(Scalar<"path", Str> path,
+                         In<"requests", TSD<Int, TS<Int>>, InputValidity::Unchecked> requests,
+                         Out<TSD<Int, TS<Int>>> out)
+        {
+            if (!requests.modified()) { return; }
+
+            const Int addend = path.value() == "premium" ? Int{100} : Int{1};
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            for (const auto &[request_id, request] : requests.removed_items())
+            {
+                (void)request;
+                static_cast<void>(mutation.erase(request_id));
+            }
+            for (const auto &[request_id, request] : requests.modified_items())
+            {
+                if (!request.valid())
+                {
+                    static_cast<void>(mutation.erase(request_id));
+                    continue;
+                }
+
+                Value response{request.value() + addend};
+                mutation.set(request_id, response.view());
             }
         }
     };
@@ -218,6 +285,43 @@ namespace
             return prices(instrument);
         }
     };
+
+    struct AddOneClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "add_one_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            service::register_request_reply_service<AddOneService, AddOneImplNode>(w);
+            return service::request_reply_service<AddOneService>(w, request);
+        }
+    };
+
+    struct AddOnePathClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "add_one_path_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            service::register_request_reply_service<AddOneService, AddOnePathImplNode>(
+                w, service::path("premium"));
+            return service::request_reply_service<AddOneService>(w, request, service::path("premium"));
+        }
+    };
+
+    struct AddOneTwoClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "add_one_two_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs_request, Port<TS<Int>> rhs_request)
+        {
+            service::register_request_reply_service<AddOneService, AddOneImplNode>(w);
+            auto lhs_reply = service::request_reply_service<AddOneService>(w, lhs_request);
+            auto rhs_reply = service::request_reply_service<AddOneService>(w, rhs_request);
+            return wire<stdlib::add_>(w, lhs_reply, rhs_reply).as<TS<Int>>();
+        }
+    };
+
 }  // namespace
 
 TEST_CASE("service wiring: reference service client reads implementation output by reference")
@@ -265,4 +369,26 @@ TEST_CASE("service wiring: implementation registration is separate from client u
 
     CHECK_OUTPUT(eval_node<RegisteredPriceClientGraph>(values<Int>(7, none, 8)),
                  values<Int>(none, 70, none, 80));
+}
+
+TEST_CASE("service wiring: request/reply client receives keyed implementation response")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<AddOneClientGraph>(values<Int>(1)), values<Int>(none, 2));
+}
+
+TEST_CASE("service wiring: request/reply service supports explicit paths")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<AddOnePathClientGraph>(values<Int>(7)), values<Int>(none, 107));
+}
+
+TEST_CASE("service wiring: request/reply source emits cumulative client requests")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<AddOneTwoClientGraph>(values<Int>(1), values<Int>(10)),
+                 values<Int>(none, 13));
 }

@@ -2,6 +2,7 @@
 #define HGRAPH_RUNTIME_SERVICE_NODE_H
 
 #include <hgraph/runtime/node.h>
+#include <hgraph/types/primitive_types.h>
 
 #include <string>
 
@@ -39,6 +40,31 @@ namespace hgraph
     [[nodiscard]] HGRAPH_EXPORT NodeBuilder make_subscription_key_capture_node(
         std::string path,
         const ValueTypeMetaData &key_schema);
+
+    /**
+     * Build a source node that owns a request/reply service request dictionary.
+     *
+     * The output schema is ``TSD<int, request_schema>``. Paired capture nodes
+     * update a source-owned request delta state; the source applies that delta
+     * to its own output and resets it during evaluation.
+     */
+    [[nodiscard]] HGRAPH_EXPORT NodeBuilder make_request_input_source_node(
+        std::string path,
+        const TSValueTypeMetaData &request_schema);
+
+    /**
+     * Build a sink node that captures one request/reply client's request.
+     *
+     * Input field ``request`` is ``request_schema`` and field ``requests`` is
+     * the paired source node's ``TSD<int, request_schema>`` output. Only
+     * ``request`` is active; ``requests`` is a passive binding used to locate
+     * the source node. Captures schedule the source for the current engine time
+     * during start, and the next engine tick during normal evaluation.
+     */
+    [[nodiscard]] HGRAPH_EXPORT NodeBuilder make_request_input_capture_node(
+        std::string path,
+        const TSValueTypeMetaData &request_schema,
+        Int request_id);
 }  // namespace hgraph
 
 #endif  // HGRAPH_RUNTIME_SERVICE_NODE_H

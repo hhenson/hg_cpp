@@ -37,6 +37,10 @@ Planned work:
   context import/export.
 - Define adaptor foundations for source, sink, request/reply, and subscription
   flows.
+- Complete request/reply services using feedback-style request dictionaries:
+  capture sinks update a source-owned request-delta state for
+  ``TSD<int, request_schema>`` and the source emits the cumulative delta on its
+  next scheduled tick before resetting the delta state.
 - Integrate external events with the scheduler and real-time executor.
 - Define lifecycle ownership for external resources.
 - Support data-catalogue-style publish/subscribe as a graph feature.
@@ -68,6 +72,13 @@ Boundary design decisions:
   source owns a ``TSS<K>`` output and graph-local reference counts; capture sinks
   enqueue add/remove intents and schedule the source. The source mutates only
   its own output, so client key changes do not copy values between outputs.
+- Request/reply services collect client request values through a
+  feedback-style source/capture pair. The source owns
+  ``TSD<int, request_schema>``; each client has a stable wiring-time request id;
+  capture sinks update source-local mutable delta state; the source applies
+  that delta in one mutation when scheduled and then resets it. Multiple
+  captures can update before the source emits, so the final request delta is
+  cumulative.
 
 Priority 2: Graph and Higher-Order Completeness
 -----------------------------------------------
