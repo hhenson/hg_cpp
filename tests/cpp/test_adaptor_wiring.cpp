@@ -153,6 +153,44 @@ namespace
         }
     };
 
+    struct MultiInAdaptor : adaptor::interface
+    {
+        static constexpr std::string_view name{"multi_in"};
+        using input_schema = TS<Int>;
+    };
+
+    struct MultiOutAdaptor : adaptor::interface
+    {
+        static constexpr std::string_view name{"multi_out"};
+        using output_schema = TS<Int>;
+    };
+
+    struct MultiAdaptorImpl
+    {
+        static void compose(Wiring &w, Scalar<"path", Str> path)
+        {
+            const auto custom = adaptor::path(path.value());
+            auto input = adaptor::from_graph<MultiInAdaptor>(w, custom);
+            auto output = wire<EchoNode>(w, input);
+            adaptor::to_graph<MultiOutAdaptor>(w, custom, output);
+        }
+    };
+
+    struct MultiAdaptorGraph
+    {
+        static constexpr auto name = "multi_adaptor_graph";
+
+        static void compose(Wiring &w)
+        {
+            const auto custom = adaptor::path("multi");
+            adaptor::register_adaptors<MultiAdaptorImpl, MultiInAdaptor, MultiOutAdaptor>(w, custom);
+            auto input = wire<OneTickSource>(w);
+            wire<MultiInAdaptor>(w, custom, input);
+            auto output = wire<MultiOutAdaptor>(w, custom);
+            wire<testing::record>(w, output, std::string{"multi_out"});
+        }
+    };
+
     struct LoopbackGraph
     {
         static constexpr auto name = "loopback_graph";
@@ -318,4 +356,24 @@ TEST_CASE("adaptor wiring supports source-only and sink-only descriptors")
         named_sink_view.graph().global_state(), "named_sink_out");
     REQUIRE(!named_sink_values.empty());
     CHECK(named_sink_values[0] == Int{41});
+}
+
+TEST_CASE("adaptor wiring supports multi-interface implementations")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    GraphExecutorBuilder executor_builder;
+    executor_builder.graph_builder(build_graph<MultiAdaptorGraph>())
+        .start_time(MIN_ST)
+        .end_time(MIN_ST + TimeDelta{6});
+
+    GraphExecutorValue executor = executor_builder.make_executor();
+    auto               view = executor.view();
+    view.run();
+
+    const auto values = testing::get_recorded_values<Int>(view.graph().global_state(), "multi_out");
+    REQUIRE(!values.empty());
+    CHECK(values[0] == Int{41});
 }

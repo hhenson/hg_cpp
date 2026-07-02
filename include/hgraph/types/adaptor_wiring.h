@@ -357,6 +357,16 @@ namespace hgraph::adaptor
         register_adaptor<Interface, Impl>(w, detail::default_adaptor_path<Interface>(), args...);
     }
 
+    template <typename Impl, typename... Interfaces, typename... Args>
+    void register_adaptors(Wiring &w, AdaptorPath user_path, const Args &...args)
+    {
+        static_assert(sizeof...(Interfaces) > 0,
+                      "register_adaptors requires at least one adaptor interface");
+        static_assert((detail::adaptor_interface<Interfaces> && ...),
+                      "register_adaptors requires adaptor::interface descriptor types");
+        detail::wire_impl<Impl>(w, user_path, args...);
+    }
+
     template <typename Interface>
         requires detail::has_input_schema<Interface>::value
     [[nodiscard]] Port<detail::input_schema_t<Interface>> from_graph(Wiring &w, AdaptorPath user_path)

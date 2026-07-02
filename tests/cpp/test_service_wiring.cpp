@@ -31,6 +31,13 @@ namespace
         using response_schema = TS<Int>;
     };
 
+    struct AddTenService
+    {
+        static constexpr std::string_view name{"add_ten"};
+        using request_schema  = TS<Int>;
+        using response_schema = TS<Int>;
+    };
+
     struct ReferencePricesImplNode
     {
         static constexpr auto name              = "reference_prices_impl_node";
@@ -181,6 +188,35 @@ namespace
         }
     };
 
+    struct AddTenImplNode
+    {
+        static constexpr auto name = "add_ten_impl_node";
+
+        static void eval(In<"requests", TSD<Int, TS<Int>>, InputValidity::Unchecked> requests,
+                         Out<TSD<Int, TS<Int>>> out)
+        {
+            if (!requests.modified()) { return; }
+
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            for (const auto &[request_id, request] : requests.removed_items())
+            {
+                (void)request;
+                static_cast<void>(mutation.erase(request_id));
+            }
+            for (const auto &[request_id, request] : requests.modified_items())
+            {
+                if (!request.valid())
+                {
+                    static_cast<void>(mutation.erase(request_id));
+                    continue;
+                }
+
+                Value response{request.value() + Int{10}};
+                mutation.set(request_id, response.view());
+            }
+        }
+    };
+
     struct PricesImpl
     {
         [[maybe_unused]] static constexpr auto name = "prices_impl";
@@ -320,6 +356,36 @@ namespace
         }
     };
 
+    struct MultiRequestReplyImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "multi_request_reply_impl";
+
+        static void compose(Wiring &w, Scalar<"path", Str> path)
+        {
+            const auto custom = service::path(path.value());
+            auto add_one_requests = service::impl_input<AddOneService>(w, custom);
+            auto add_ten_requests = service::impl_input<AddTenService>(w, custom);
+            auto add_one_replies = wire<AddOneImplNode>(w, add_one_requests).as<TSD<Int, TS<Int>>>();
+            auto add_ten_replies = wire<AddTenImplNode>(w, add_ten_requests).as<TSD<Int, TS<Int>>>();
+            service::impl_output<AddOneService>(w, custom, add_one_replies);
+            service::impl_output<AddTenService>(w, custom, add_ten_replies);
+        }
+    };
+
+    struct MultiServiceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "multi_service_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            const auto custom = service::path("multi");
+            service::register_services<MultiRequestReplyImpl, AddOneService, AddTenService>(w, custom);
+            auto add_one = wire<AddOneService>(w, custom, request);
+            auto add_ten = wire<AddTenService>(w, custom, request);
+            return wire<stdlib::add_>(w, add_one, add_ten).as<TS<Int>>();
+        }
+    };
+
 }  // namespace
 
 TEST_CASE("service wiring: reference service client reads implementation output by reference")
@@ -389,4 +455,11 @@ TEST_CASE("service wiring: request/reply source emits cumulative client requests
 
     CHECK_OUTPUT(eval_node<AddOneTwoClientGraph>(values<Int>(1), values<Int>(10)),
                  values<Int>(none, 13));
+}
+
+TEST_CASE("service wiring: multi-interface implementation graph wires explicit stubs")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<MultiServiceClientGraph>(values<Int>(1)), values<Int>(none, 13));
 }

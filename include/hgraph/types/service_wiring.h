@@ -732,6 +732,19 @@ namespace hgraph::service
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()},
                 Value{}));
         }
+
+        template <typename Impl, typename... Args>
+        void wire_service_graph(Wiring &w, const ServicePath &user_path, const Args &...args)
+        {
+            if constexpr (implementation_accepts_path<Impl>())
+            {
+                static_cast<void>(wire<Impl>(w, args..., arg<"path">(Str{user_path.value})));
+            }
+            else
+            {
+                static_cast<void>(wire<Impl>(w, args...));
+            }
+        }
     }  // namespace detail
 
     template <typename Service>
@@ -761,6 +774,102 @@ namespace hgraph::service
     void register_reference_service(Wiring &w, const Args &...args)
     {
         register_reference_service<Service, Impl>(w, detail::default_service_path<Service>(), args...);
+    }
+
+    template <typename Service>
+        requires detail::subscription_service_interface<Service>
+    [[nodiscard]] Port<TSS<detail::key_type_t<Service>>> impl_input(Wiring &w, ServicePath user_path)
+    {
+        return detail::subscription_source<Service>(w, user_path);
+    }
+
+    template <typename Service>
+        requires detail::subscription_service_interface<Service>
+    [[nodiscard]] Port<TSS<detail::key_type_t<Service>>> impl_input(Wiring &w)
+    {
+        return impl_input<Service>(w, detail::default_service_path<Service>());
+    }
+
+    template <typename Service>
+        requires detail::request_reply_service_interface<Service>
+    [[nodiscard]] Port<detail::request_input_schema_t<Service>> impl_input(Wiring &w, ServicePath user_path)
+    {
+        return detail::request_input_source<Service>(w, user_path);
+    }
+
+    template <typename Service>
+        requires detail::request_reply_service_interface<Service>
+    [[nodiscard]] Port<detail::request_input_schema_t<Service>> impl_input(Wiring &w)
+    {
+        return impl_input<Service>(w, detail::default_service_path<Service>());
+    }
+
+    struct explicit_impl_output_marker
+    {
+    };
+
+    template <typename Service>
+        requires detail::reference_service_interface<Service>
+    void impl_output(Wiring &w,
+                     ServicePath user_path,
+                     Port<detail::reference_output_schema_t<Service>> output)
+    {
+        auto shared_output = detail::reference_shared_output_source<Service>(w, user_path);
+        detail::capture_reference_service_output<Service, explicit_impl_output_marker>(
+            w, std::move(output), shared_output, user_path);
+    }
+
+    template <typename Service>
+        requires detail::reference_service_interface<Service>
+    void impl_output(Wiring &w, Port<detail::reference_output_schema_t<Service>> output)
+    {
+        impl_output<Service>(w, detail::default_service_path<Service>(), std::move(output));
+    }
+
+    template <typename Service>
+        requires detail::subscription_service_interface<Service>
+    void impl_output(Wiring &w,
+                     ServicePath user_path,
+                     Port<detail::output_schema_t<Service>> output)
+    {
+        auto shared_output = detail::shared_output_source<Service>(w, user_path);
+        detail::capture_service_output<Service, explicit_impl_output_marker>(
+            w, std::move(output), shared_output, user_path);
+    }
+
+    template <typename Service>
+        requires detail::subscription_service_interface<Service>
+    void impl_output(Wiring &w, Port<detail::output_schema_t<Service>> output)
+    {
+        impl_output<Service>(w, detail::default_service_path<Service>(), std::move(output));
+    }
+
+    template <typename Service>
+        requires detail::request_reply_service_interface<Service>
+    void impl_output(Wiring &w,
+                     ServicePath user_path,
+                     Port<detail::request_output_schema_t<Service>> output)
+    {
+        auto shared_output = detail::request_reply_output_source<Service>(w, user_path);
+        detail::capture_request_reply_service_output<Service, explicit_impl_output_marker>(
+            w, std::move(output), shared_output, user_path);
+    }
+
+    template <typename Service>
+        requires detail::request_reply_service_interface<Service>
+    void impl_output(Wiring &w, Port<detail::request_output_schema_t<Service>> output)
+    {
+        impl_output<Service>(w, detail::default_service_path<Service>(), std::move(output));
+    }
+
+    template <typename Impl, typename... Services, typename... Args>
+    void register_services(Wiring &w, ServicePath user_path, const Args &...args)
+    {
+        static_assert(sizeof...(Services) > 0,
+                      "register_services requires at least one service interface");
+        static_assert((detail::service_interface<Services> && ...),
+                      "register_services requires service descriptor types");
+        detail::wire_service_graph<Impl>(w, user_path, args...);
     }
 
     template <typename Service>
