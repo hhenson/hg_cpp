@@ -27,10 +27,10 @@ namespace hgraph
     {
         const void *context{nullptr};
 
-        [[nodiscard]] DateTime (*evaluation_time_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] DateTime (*now_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] TimeDelta (*cycle_time_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] DateTime (*next_cycle_evaluation_time_impl)(const void *context,
+        DateTime (*evaluation_time_impl)(const void *context, const void *memory) noexcept = nullptr;
+        DateTime (*now_impl)(const void *context, const void *memory) noexcept = nullptr;
+        TimeDelta (*cycle_time_impl)(const void *context, const void *memory) noexcept = nullptr;
+        DateTime (*next_cycle_evaluation_time_impl)(const void *context,
                                                                   const void *memory) noexcept = nullptr;
     };
 

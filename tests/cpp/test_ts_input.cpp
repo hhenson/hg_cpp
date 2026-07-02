@@ -105,9 +105,8 @@ TEST_CASE("TSInput builds a non-peered TSB root with nested peered terminals")
     const auto *nested   = registry.tsb("TSInputNested", {{"x", ts_int}});
     const auto *root     = registry.tsb("TSInputRoot", {{"a", ts_int}, {"nested", nested}});
 
-    const auto &builder = TSInputBuilderFactory::checked_builder_for(
-        *root,
-        nested_input_schema(root, nested, ts_int));
+    auto        schema  = nested_input_schema(root, nested, ts_int);
+    const auto &builder = TSInputBuilderFactory::checked_builder_for(*root, schema);
     TSOutput output{*ts_int};
     TSOutput replacement{*ts_int};
     const auto t1 = MIN_ST;

@@ -162,7 +162,8 @@ namespace hgraph::stdlib
             Bool contains_all = ts.valid();
             if (contains_all)
             {
-                for (const ValueView &value : item.base().as_set().values())
+                const auto &item_set = item.base().as_set();
+                for (const ValueView &value : item_set.values())
                 {
                     if (!ts.base().as_set().contains(value))
                     {

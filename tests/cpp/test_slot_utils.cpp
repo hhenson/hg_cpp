@@ -122,6 +122,9 @@ namespace
 
         TrackedPayload(const TrackedPayload &other) : value(other.value) { ++constructed; }
 
+        TrackedPayload &operator=(const TrackedPayload &) = default;
+        TrackedPayload &operator=(TrackedPayload &&)      = default;
+
         ~TrackedPayload() { ++destroyed; }
 
         static void reset() {

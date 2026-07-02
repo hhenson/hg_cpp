@@ -25,15 +25,15 @@ namespace hgraph
         {
             const MemoryUtils::StoragePlan *storage_plan{nullptr};
 
-            [[nodiscard]] const ValueTypeMetaData &(*sender_schema_impl)(const void *context) = nullptr;
-            [[nodiscard]] bool (*output_compatible_impl)(const void *context,
+            const ValueTypeMetaData &(*sender_schema_impl)(const void *context) = nullptr;
+            bool (*output_compatible_impl)(const void *context,
                                                          const TSValueTypeMetaData &output_schema) = nullptr;
             void (*start_impl)(const void *context,
                                void *storage,
                                const TSValueTypeMetaData &output_schema) = nullptr;
             void (*stop_impl)(const void *context, void *storage) = nullptr;
-            [[nodiscard]] bool (*send_impl)(const void *context, void *storage, Value value) = nullptr;
-            [[nodiscard]] bool (*emit_next_impl)(const void *context,
+            bool (*send_impl)(const void *context, void *storage, Value value) = nullptr;
+            bool (*emit_next_impl)(const void *context,
                                                  void *storage,
                                                  const TSOutputView &output) = nullptr;
         };
@@ -572,21 +572,21 @@ namespace hgraph
             },
         };
         const auto &plan = node_storage_plan_for(schema, fields);
-        const auto &context = register_push_source_node_context(
+        const auto *context = &register_push_source_node_context(
             output_schema,
             policy,
             plan.component(push_source_policy_field_name).offset,
             std::move(on_start));
 
         NodeCallbacks callbacks;
-        callbacks.start = [&context](const NodeView &view, DateTime) {
-            push_source_start(context, view);
+        callbacks.start = [context](const NodeView &view, DateTime) {
+            push_source_start(*context, view);
         };
-        callbacks.evaluate = [&context](const NodeView &view, DateTime evaluation_time) {
-            push_source_eval(context, view, evaluation_time);
+        callbacks.evaluate = [context](const NodeView &view, DateTime evaluation_time) {
+            push_source_eval(*context, view, evaluation_time);
         };
-        callbacks.stop = [&context](const NodeView &view, DateTime) {
-            push_source_stop(context, view);
+        callbacks.stop = [context](const NodeView &view, DateTime) {
+            push_source_stop(*context, view);
         };
 
         NodeTypeDescriptor descriptor;

@@ -709,13 +709,11 @@ namespace hgraph
         // terminal forwarding outputs hold links INTO it.
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, {}, fields);
 
-        const auto &context = register_map_node_context(
-            std::move(spec), descriptor.storage_plan->component(map_storage_field_name).offset);
-
         descriptor.callbacks.stop            = &map_node_stop;
         descriptor.ops.evaluate_impl         = &map_evaluate_impl;
         descriptor.ops.extended_view_type_id = MapNodeView::node_view_type_id();
-        descriptor.ops.extended_view_context = &context;
+        descriptor.ops.extended_view_context = &register_map_node_context(
+            std::move(spec), descriptor.storage_plan->component(map_storage_field_name).offset);
 
         return NodeBuilder::from_descriptor(std::move(descriptor));
     }

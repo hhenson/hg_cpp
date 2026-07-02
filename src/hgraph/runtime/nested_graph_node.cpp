@@ -218,16 +218,14 @@ namespace hgraph
         }};
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
-        const auto &context = register_single_nested_graph_context(
-            std::move(spec),
-            options,
-            descriptor.storage_plan->component(child_graph_field_name).offset);
-
         descriptor.callbacks.start = &single_nested_graph_start;
         descriptor.callbacks.stop  = &single_nested_graph_stop;
         descriptor.ops.evaluate_impl = &single_nested_graph_evaluate_impl;
         descriptor.ops.extended_view_type_id = SingleNestedGraphNodeView::node_view_type_id();
-        descriptor.ops.extended_view_context = &context;
+        descriptor.ops.extended_view_context = &register_single_nested_graph_context(
+            std::move(spec),
+            options,
+            descriptor.storage_plan->component(child_graph_field_name).offset);
 
         return descriptor;
     }

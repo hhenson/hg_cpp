@@ -134,21 +134,21 @@ struct HGRAPH_EXPORT GraphEdge
         void (*schedule_node_impl)(const void *context, const GraphView &graph, std::size_t node_index,
                                    DateTime when) = nullptr;
 
-        [[nodiscard]] bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] bool (*evaluating_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] DateTime (*evaluation_time_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] DateTime (*next_scheduled_time_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] std::size_t (*node_count_impl)(const void *context, const void *memory) noexcept = nullptr;
-        [[nodiscard]] NodeView (*node_at_impl)(const void *context, void *memory, std::size_t index) = nullptr;
-        [[nodiscard]] DateTime (*node_scheduled_time_impl)(const void *context, const void *memory,
+        bool (*started_impl)(const void *context, const void *memory) noexcept = nullptr;
+        bool (*evaluating_impl)(const void *context, const void *memory) noexcept = nullptr;
+        DateTime (*evaluation_time_impl)(const void *context, const void *memory) noexcept = nullptr;
+        DateTime (*next_scheduled_time_impl)(const void *context, const void *memory) noexcept = nullptr;
+        std::size_t (*node_count_impl)(const void *context, const void *memory) noexcept = nullptr;
+        NodeView (*node_at_impl)(const void *context, void *memory, std::size_t index) = nullptr;
+        DateTime (*node_scheduled_time_impl)(const void *context, const void *memory,
                                                            std::size_t index) noexcept = nullptr;
-        [[nodiscard]] GlobalStateView (*global_state_impl)(const void *context, void *memory) = nullptr;
+        GlobalStateView (*global_state_impl)(const void *context, void *memory) = nullptr;
         /** This graph's OWN trait entry (no parent walk); invalid view when absent. */
-        [[nodiscard]] ValueView (*trait_impl)(const void *context, void *memory,
+        ValueView (*trait_impl)(const void *context, void *memory,
                                               std::string_view name) noexcept = nullptr;
-        [[nodiscard]] RootGraphView (*root_impl)(const void *context, const GraphView &graph) = nullptr;
-        [[nodiscard]] GraphExecutorView (*graph_executor_impl)(const void *context, void *memory) = nullptr;
-        [[nodiscard]] NodeView (*parent_node_impl)(const void *context, void *memory) = nullptr;
+        RootGraphView (*root_impl)(const void *context, const GraphView &graph) = nullptr;
+        GraphExecutorView (*graph_executor_impl)(const void *context, void *memory) = nullptr;
+        NodeView (*parent_node_impl)(const void *context, void *memory) = nullptr;
     };
 
     using GraphTypeBinding = TypeBinding<GraphTypeMetaData, GraphOps>;

@@ -80,7 +80,7 @@ namespace hgraph
         {
             return []<std::size_t... I>(std::index_sequence<I...>) {
                 std::array<std::size_t, Count> positions{};
-                std::size_t                    next = 0;
+                [[maybe_unused]] std::size_t   next = 0;
                 (
                     [&] {
                         using P = std::remove_cvref_t<std::tuple_element_t<I, Params>>;

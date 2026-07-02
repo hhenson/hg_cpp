@@ -317,9 +317,9 @@ namespace hgraph::ts_data_plan_factory_detail
             element_data_offsets.push_back(child_binding->plan() == &root_plan ? 0 : child_aux_offset);
         }
 
-        const auto &ops = fixed_structured_ts_data_ops(schema, root_plan, value_offset, aux_offset, tracking_offset,
-                                                       std::move(element_bindings), std::move(element_data_offsets));
-        return &TSDataBinding::intern(schema, root_plan, ops);
+        return &TSDataBinding::intern(schema, root_plan,
+            fixed_structured_ts_data_ops(schema, root_plan, value_offset, aux_offset, tracking_offset,
+                                         std::move(element_bindings), std::move(element_data_offsets)));
     }
 
     [[nodiscard]] const MemoryUtils::StoragePlan *synthesise_fixed_plan(const TSValueTypeMetaData &schema)

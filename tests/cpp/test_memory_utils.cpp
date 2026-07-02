@@ -340,10 +340,10 @@ TEST_CASE("memory utils storage plans expose copy and move assignment hooks", "[
 TEST_CASE("memory utils composite and array plans forward assignment support from child plans", "[memory utils]") {
     TrackedValue::reset();
 
-    const auto &tuple_plan = MemoryUtils::named_tuple()
-                                 .add_field("value", MemoryUtils::plan_for<TrackedValue>())
-                                 .add_field("count", MemoryUtils::plan_for<uint32_t>())
-                                 .build();
+    auto        tuple_builder = MemoryUtils::named_tuple()
+                                    .add_field("value", MemoryUtils::plan_for<TrackedValue>())
+                                    .add_field("count", MemoryUtils::plan_for<uint32_t>());
+    const auto &tuple_plan    = tuple_builder.build();
     REQUIRE(tuple_plan.can_copy_assign());
     REQUIRE(tuple_plan.can_move_assign());
 
@@ -456,16 +456,17 @@ TEST_CASE("memory utils supports custom inline policies and aligned heap ownersh
 }
 
 TEST_CASE("memory utils caches tuple and named tuple plans and supports nesting", "[memory utils]") {
-    const auto &point = MemoryUtils::named_tuple().add_field<uint16_t>("x").add_field<uint16_t>("y").build();
+    auto        point_builder = MemoryUtils::named_tuple().add_field<uint16_t>("x").add_field<uint16_t>("y");
+    const auto &point         = point_builder.build();
 
     const auto &point_again =
         MemoryUtils::named_tuple_plan({{"x", &MemoryUtils::plan_for<uint16_t>()}, {"y", &MemoryUtils::plan_for<uint16_t>()}});
 
-    const auto &payload = MemoryUtils::tuple()
-                              .add_type<uint8_t>()
-                              .add_plan(point)
-                              .add_plan(MemoryUtils::named_tuple_plan({{"id", &MemoryUtils::plan_for<uint32_t>()}}))
-                              .build();
+    auto        payload_builder = MemoryUtils::tuple()
+                                      .add_type<uint8_t>()
+                                      .add_plan(point)
+                                      .add_plan(MemoryUtils::named_tuple_plan({{"id", &MemoryUtils::plan_for<uint32_t>()}}));
+    const auto &payload         = payload_builder.build();
 
     REQUIRE(&point == &point_again);
     REQUIRE(point.is_named_tuple());
@@ -486,12 +487,14 @@ TEST_CASE("memory utils caches tuple and named tuple plans and supports nesting"
 }
 
 TEST_CASE("memory utils caches array plans and exposes homogeneous array metadata", "[memory utils]") {
-    const auto &point = MemoryUtils::named_tuple().add_field<uint16_t>("x").add_field<uint16_t>("y").build();
+    auto        point_builder = MemoryUtils::named_tuple().add_field<uint16_t>("x").add_field<uint16_t>("y");
+    const auto &point         = point_builder.build();
 
     const auto &points       = MemoryUtils::array_plan(point, 3);
     const auto &points_again = MemoryUtils::array_plan(point, 3);
     const auto &empty_values = MemoryUtils::array_plan<uint32_t>(0);
-    const auto &payload      = MemoryUtils::tuple().add_type<uint8_t>().add_plan(points).build();
+    auto        payload_builder = MemoryUtils::tuple().add_type<uint8_t>().add_plan(points);
+    const auto &payload         = payload_builder.build();
 
     REQUIRE(&points == &points_again);
     REQUIRE(points.is_array());
@@ -514,7 +517,8 @@ TEST_CASE("memory utils caches array plans and exposes homogeneous array metadat
 }
 
 TEST_CASE("memory utils stores composite components in trailing composite-state storage", "[memory utils]") {
-    const auto &point = MemoryUtils::named_tuple().add_field<uint16_t>("x").add_field<uint16_t>("y").build();
+    auto        point_builder = MemoryUtils::named_tuple().add_field<uint16_t>("x").add_field<uint16_t>("y");
+    const auto &point         = point_builder.build();
 
     const auto *state = point.composite_state();
     REQUIRE(state != nullptr);
@@ -542,10 +546,12 @@ TEST_CASE("memory utils composite builders reject invalid tuple and named tuple 
 TEST_CASE("memory utils nested composite handles construct and destroy in deterministic order", "[memory utils]") {
     LifecycleRecorder::reset();
 
-    const auto &inner = MemoryUtils::named_tuple().add_field<OrderedValue<2>>("lhs").add_field<OrderedValue<3>>("rhs").build();
+    auto        inner_builder = MemoryUtils::named_tuple().add_field<OrderedValue<2>>("lhs").add_field<OrderedValue<3>>("rhs");
+    const auto &inner         = inner_builder.build();
 
     {
-        const auto                  &outer = MemoryUtils::tuple().add_type<OrderedValue<1>>().add_plan(inner).build();
+        auto        outer_builder = MemoryUtils::tuple().add_type<OrderedValue<1>>().add_plan(inner);
+        const auto &outer         = outer_builder.build();
         MemoryUtils::StorageHandle<> handle(outer);
         REQUIRE(handle.is_owning());
     }
@@ -556,10 +562,10 @@ TEST_CASE("memory utils nested composite handles construct and destroy in determ
 TEST_CASE("memory utils composite handles deep-copy nested child payloads", "[memory utils]") {
     TrackedValue::reset();
 
-    const auto &composite = MemoryUtils::named_tuple()
-                                .add_field("value", MemoryUtils::plan_for<TrackedValue>())
-                                .add_field("count", MemoryUtils::plan_for<uint32_t>())
-                                .build();
+    auto        composite_builder = MemoryUtils::named_tuple()
+                                       .add_field("value", MemoryUtils::plan_for<TrackedValue>())
+                                       .add_field("count", MemoryUtils::plan_for<uint32_t>());
+    const auto &composite         = composite_builder.build();
 
     {
         MemoryUtils::StorageHandle<> source(composite);
@@ -629,7 +635,8 @@ TEST_CASE("memory utils array handles deep-copy element payloads", "[memory util
 TEST_CASE("memory utils composite plans clean up partial construction on owning handle creation", "[memory utils]") {
     PartiallyConstructedValue::reset();
 
-    const auto &composite = MemoryUtils::tuple().add_type<PartiallyConstructedValue>().add_type<ThrowsOnDefault>().build();
+    auto        composite_builder = MemoryUtils::tuple().add_type<PartiallyConstructedValue>().add_type<ThrowsOnDefault>();
+    const auto &composite         = composite_builder.build();
 
     REQUIRE_THROWS_AS(MemoryUtils::StorageHandle<>{composite}, std::runtime_error);
     REQUIRE(PartiallyConstructedValue::destroyed == 1);

@@ -52,11 +52,11 @@ void instantiate_memory_utils() {
     assert(plan.valid());
     assert(plan.layout.size == sizeof(std::int32_t));
 
-    const auto &tuple_plan = MemoryUtils::tuple_plan({&plan, &plan});
+    [[maybe_unused]] const auto &tuple_plan = MemoryUtils::tuple_plan({&plan, &plan});
     assert(tuple_plan.is_tuple());
     assert(tuple_plan.component_count() == 2);
 
-    const auto &array_plan = MemoryUtils::array_plan(plan, 4);
+    [[maybe_unused]] const auto &array_plan = MemoryUtils::array_plan(plan, 4);
     assert(array_plan.is_array());
     assert(array_plan.array_count() == 4);
 
@@ -66,7 +66,7 @@ void instantiate_memory_utils() {
 
 void instantiate_intern_table() {
     hgraph::InternTable<int, int> table;
-    const int &v = table.emplace(7, 7);
+    [[maybe_unused]] const int &v = table.emplace(7, 7);
     assert(v == 7);
 }
 
@@ -79,7 +79,7 @@ void instantiate_slot_stores() {
     KeySlotStore keys(MemoryUtils::plan_for<std::int32_t>(), hgraph::key_slot_store_ops_for<std::int32_t>());
     KeyMirroredValueSlotStore mirrored_values(keys, MemoryUtils::plan_for<std::int32_t>());
     int          k = 42;
-    auto         result = keys.insert(k);
+    [[maybe_unused]] auto result = keys.insert(k);
     assert(result.inserted);
     assert(keys.contains(k));
     assert(mirrored_values.has_slot(result.slot));
@@ -96,7 +96,7 @@ void instantiate_slot_stores() {
 void instantiate_schema() {
     using hgraph::TypeRegistry;
     auto       &registry = TypeRegistry::instance();
-    const auto *standard_int_meta = registry.value_type("int");
+    [[maybe_unused]] const auto *standard_int_meta = registry.value_type("int");
     assert(standard_int_meta != nullptr);
     assert(standard_int_meta == registry.scalar_binding<std::int64_t>()->type_meta);
 
@@ -105,7 +105,7 @@ void instantiate_schema() {
     assert(int_meta->kind == hgraph::ValueTypeKind::Atomic);
     assert(int_meta == registry.value_type("int32"));
 
-    const auto *ts_int = registry.ts(int_meta);
+    [[maybe_unused]] const auto *ts_int = registry.ts(int_meta);
     assert(ts_int != nullptr);
     assert(ts_int->kind == hgraph::TSTypeKind::TS);
 }
@@ -121,13 +121,13 @@ void instantiate_plan_factory() {
     const auto *int_meta   = registry.register_scalar<std::int32_t>("int32");
     const auto *float_meta = registry.register_scalar<float>("float32");
 
-    const auto *int_plan   = factory.plan_for(int_meta);
-    const auto *float_plan = factory.plan_for(float_meta);
+    [[maybe_unused]] const auto *int_plan   = factory.plan_for(int_meta);
+    [[maybe_unused]] const auto *float_plan = factory.plan_for(float_meta);
     assert(int_plan == &MemoryUtils::plan_for<std::int32_t>());
     assert(float_plan == &MemoryUtils::plan_for<float>());
 
     const auto *tuple_meta = registry.tuple({int_meta, float_meta});
-    const auto *tuple_plan = factory.plan_for(tuple_meta);
+    [[maybe_unused]] const auto *tuple_plan = factory.plan_for(tuple_meta);
     assert(tuple_plan != nullptr);
     assert(tuple_plan->is_tuple());
     assert(tuple_plan->component_count() == 2);
