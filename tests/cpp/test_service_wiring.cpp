@@ -241,6 +241,27 @@ namespace
         using output_schema = TS<Int>;
     };
 
+    struct AddThirtyServiceAdaptor : service_adaptor::interface
+    {
+        static constexpr std::string_view name{"add_thirty_adaptor"};
+        using input_schema  = TS<Int>;
+        using output_schema = TS<Int>;
+    };
+
+    struct GenericAddOneService
+    {
+        static constexpr std::string_view name{"generic_add_one"};
+        using request_schema  = TS<ScalarVar<"T">>;
+        using response_schema = TS<ScalarVar<"T">>;
+    };
+
+    struct GenericServiceAdaptor : service_adaptor::interface
+    {
+        static constexpr std::string_view name{"generic_service_adaptor"};
+        using input_schema  = TS<ScalarVar<"T">>;
+        using output_schema = TS<ScalarVar<"T">>;
+    };
+
     struct AddTwentyServiceAdaptorImplNode
     {
         static constexpr auto name = "add_twenty_service_adaptor_impl_node";
@@ -270,6 +291,30 @@ namespace
         }
     };
 
+    struct AddThirtyServiceAdaptorImplNode
+    {
+        static constexpr auto name = "add_thirty_service_adaptor_impl_node";
+
+        static void eval(In<"requests", TSD<Int, TS<Int>>, InputValidity::Unchecked> requests,
+                         Out<TSD<Int, TS<Int>>> out)
+        {
+            if (!requests.modified()) { return; }
+
+            auto mutation = out.begin_mutation(out.evaluation_time());
+            for (const auto &[request_id, request] : requests.modified_items())
+            {
+                if (!request.valid())
+                {
+                    static_cast<void>(mutation.erase(request_id));
+                    continue;
+                }
+
+                Value response{request.value() + Int{30}};
+                mutation.set(request_id, response.view());
+            }
+        }
+    };
+
     struct AddTwentyServiceAdaptorImpl
     {
         [[maybe_unused]] static constexpr auto name = "add_twenty_service_adaptor_impl";
@@ -280,6 +325,67 @@ namespace
             auto requests = service_adaptor::from_graph<AddTwentyServiceAdaptor>(w, custom);
             auto replies = wire<AddTwentyServiceAdaptorImplNode>(w, requests).as<TSD<Int, TS<Int>>>();
             service_adaptor::to_graph<AddTwentyServiceAdaptor>(w, custom, replies);
+        }
+    };
+
+    struct MultiServiceAdaptorImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "multi_service_adaptor_impl";
+
+        static void compose(Wiring &w, Scalar<"path", Str> path)
+        {
+            const auto custom = service_adaptor::path(path.value());
+            auto add_twenty_requests = service_adaptor::from_graph<AddTwentyServiceAdaptor>(w, custom);
+            auto add_thirty_requests = service_adaptor::from_graph<AddThirtyServiceAdaptor>(w, custom);
+            auto add_twenty_replies = wire<AddTwentyServiceAdaptorImplNode>(w, add_twenty_requests)
+                .as<TSD<Int, TS<Int>>>();
+            auto add_thirty_replies = wire<AddThirtyServiceAdaptorImplNode>(w, add_thirty_requests)
+                .as<TSD<Int, TS<Int>>>();
+            service_adaptor::to_graph<AddTwentyServiceAdaptor>(w, custom, add_twenty_replies);
+            service_adaptor::to_graph<AddThirtyServiceAdaptor>(w, custom, add_thirty_replies);
+        }
+    };
+
+    struct GenericServiceAdaptorImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "generic_service_adaptor_impl";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TSD<Int, TS<ScalarVar<"T">>>> requests)
+        {
+            return wire<AddTwentyServiceAdaptorImplNode>(w, requests.as<TSD<Int, TS<Int>>>())
+                .as<TSD<Int, TS<Int>>>();
+        }
+    };
+
+    struct MissingServiceAdaptorOutputImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "missing_service_adaptor_output_impl";
+
+        static void compose(Wiring &w, Scalar<"path", Str> path)
+        {
+            const auto custom = service_adaptor::path(path.value());
+            (void)service_adaptor::from_graph<AddTwentyServiceAdaptor>(w, custom);
+        }
+    };
+
+    struct MissingMultiServiceOutputImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "missing_multi_service_output_impl";
+
+        static void compose(Wiring &w, Scalar<"path", Str> path)
+        {
+            const auto custom = service::path(path.value());
+            (void)service::impl_input<AddOneService>(w, custom);
+        }
+    };
+
+    struct GenericAddOneImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "generic_add_one_impl";
+
+        static Port<TSD<Int, TS<Int>>> compose(Wiring &w, Port<TSD<Int, TS<ScalarVar<"T">>>> requests)
+        {
+            return wire<AddOneImplNode>(w, requests.as<TSD<Int, TS<Int>>>()).as<TSD<Int, TS<Int>>>();
         }
     };
 
@@ -344,8 +450,10 @@ namespace
                 w, service::path("typed_prices", arg<"tier">(Str{"standard"})));
             service::register_reference_service<ReferencePricesService, TypedReferencePricesPathImplNode>(
                 w, service::path("typed_prices", arg<"tier">(Str{"premium"})));
+            service::register_reference_service<ReferencePricesService, TypedReferencePricesPathImplNode>(
+                w, service::path("typed_prices", arg<"tier">(Str{"premium/special, value"})));
             auto prices = wire<ReferencePricesService>(
-                w, service::path("typed_prices", arg<"tier">(Str{"premium"})));
+                w, service::path("typed_prices", arg<"tier">(Str{"premium/special, value"})));
             return wire<stdlib::getitem_>(w, prices, Int{7}).as<TS<Int>>();
         }
     };
@@ -458,6 +566,36 @@ namespace
         }
     };
 
+    struct MissingServiceImplementationGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "missing_service_implementation_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            return wire<AddOneService>(w, request);
+        }
+    };
+
+    struct IllegalServiceStubGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "illegal_service_stub_graph";
+
+        static void compose(Wiring &w)
+        {
+            (void)service::impl_input<AddOneService>(w);
+        }
+    };
+
+    struct MissingMultiServiceStubGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "missing_multi_service_stub_graph";
+
+        static void compose(Wiring &w)
+        {
+            service::register_services<MissingMultiServiceOutputImpl, AddOneService>(w, service::path("missing"));
+        }
+    };
+
     struct MultiRequestReplyImpl
     {
         [[maybe_unused]] static constexpr auto name = "multi_request_reply_impl";
@@ -503,6 +641,82 @@ namespace
         }
     };
 
+    struct ServiceAdaptorImplTwoClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "service_adaptor_impl_two_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs_request, Port<TS<Int>> rhs_request)
+        {
+            const auto custom = service_adaptor::path("multi_client_impl");
+            service_adaptor::register_service_adaptor_impl<AddTwentyServiceAdaptor, AddTwentyServiceAdaptorImplNode>(
+                w, custom);
+            auto lhs_reply = wire<AddTwentyServiceAdaptor>(w, custom, lhs_request);
+            auto rhs_reply = wire<AddTwentyServiceAdaptor>(w, custom, rhs_request);
+            return wire<stdlib::add_>(w, lhs_reply, rhs_reply).as<TS<Int>>();
+        }
+    };
+
+    struct MultiServiceAdaptorClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "multi_service_adaptor_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            const auto custom = service_adaptor::path("multi_service_adaptor");
+            service_adaptor::register_service_adaptors<
+                MultiServiceAdaptorImpl, AddTwentyServiceAdaptor, AddThirtyServiceAdaptor>(w, custom);
+            auto add_twenty = wire<AddTwentyServiceAdaptor>(w, custom, request);
+            auto add_thirty = wire<AddThirtyServiceAdaptor>(w, custom, request);
+            return wire<stdlib::add_>(w, add_twenty, add_thirty).as<TS<Int>>();
+        }
+    };
+
+    struct GenericServiceAdaptorClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "generic_service_adaptor_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            service_adaptor::register_service_adaptor_impl<
+                GenericServiceAdaptor, GenericServiceAdaptorImpl>(
+                    w, service_adaptor::path("generic_service_adaptor", arg<"T">(scalar_type<Int>())));
+            return wire<GenericServiceAdaptor>(w, service_adaptor::path("generic_service_adaptor"), request)
+                .as<TS<Int>>();
+        }
+    };
+
+    struct MissingServiceAdaptorImplementationGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "missing_service_adaptor_implementation_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            return wire<AddTwentyServiceAdaptor>(w, service_adaptor::path("missing_service_adaptor"), request);
+        }
+    };
+
+    struct IllegalServiceAdaptorStubGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "illegal_service_adaptor_stub_graph";
+
+        static void compose(Wiring &w)
+        {
+            (void)service_adaptor::from_graph<AddTwentyServiceAdaptor>(w);
+        }
+    };
+
+    struct MissingServiceAdaptorStubGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "missing_service_adaptor_stub_graph";
+
+        static void compose(Wiring &w)
+        {
+            service_adaptor::register_service_adaptor<
+                AddTwentyServiceAdaptor, MissingServiceAdaptorOutputImpl>(
+                    w, service_adaptor::path("missing_stub"));
+        }
+    };
+
     struct TemplateServiceClientGraph
     {
         [[maybe_unused]] static constexpr auto name = "template_service_client_graph";
@@ -512,6 +726,18 @@ namespace
             const auto typed = service::path("template", arg<"T">(Str{"Int"}));
             service::register_request_reply_service<TemplateAddService<Int>, AddOneImplNode>(w, typed);
             return wire<TemplateAddService<Int>>(w, typed, request);
+        }
+    };
+
+    struct GenericServiceClientGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "generic_service_client_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> request)
+        {
+            service::register_request_reply_service<GenericAddOneService, GenericAddOneImpl>(
+                w, service::path("generic", arg<"T">(scalar_type<Int>())));
+            return wire<GenericAddOneService>(w, service::path("generic"), request).as<TS<Int>>();
         }
     };
 
@@ -600,6 +826,15 @@ TEST_CASE("service wiring: request/reply source emits cumulative client requests
                  values<Int>(none, 13));
 }
 
+TEST_CASE("service wiring: validates missing implementations and illegal stubs")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_THROWS_AS((void)eval_node<MissingServiceImplementationGraph>(values<Int>(1)), std::invalid_argument);
+    CHECK_THROWS_AS(build_graph<IllegalServiceStubGraph>(), std::invalid_argument);
+    CHECK_THROWS_AS(build_graph<MissingMultiServiceStubGraph>(), std::invalid_argument);
+}
+
 TEST_CASE("service wiring: multi-interface implementation graph wires explicit stubs")
 {
     hgraph::stdlib::register_standard_operators();
@@ -615,9 +850,41 @@ TEST_CASE("service wiring: service adaptors collect multiple client requests")
                  values<Int>(none, 51));
 }
 
+TEST_CASE("service wiring: service_adaptor_impl auto-wires single-interface implementations")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<ServiceAdaptorImplTwoClientGraph>(values<Int>(1), values<Int>(10)),
+                 values<Int>(none, 51));
+}
+
+TEST_CASE("service wiring: multi-interface service adaptors wire explicit stubs")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<MultiServiceAdaptorClientGraph>(values<Int>(1)), values<Int>(none, 52));
+}
+
+TEST_CASE("service wiring: service adaptors validate missing implementations and stubs")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_THROWS_AS((void)eval_node<MissingServiceAdaptorImplementationGraph>(values<Int>(1)), std::invalid_argument);
+    CHECK_THROWS_AS(build_graph<IllegalServiceAdaptorStubGraph>(), std::invalid_argument);
+    CHECK_THROWS_AS(build_graph<MissingServiceAdaptorStubGraph>(), std::invalid_argument);
+}
+
 TEST_CASE("service wiring: templated service descriptors bind as concrete interfaces")
 {
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<TemplateServiceClientGraph>(values<Int>(3)), values<Int>(none, 4));
+}
+
+TEST_CASE("service wiring: generic service descriptors resolve from client inputs")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<GenericServiceClientGraph>(values<Int>(3)), values<Int>(none, 4));
+    CHECK_OUTPUT(eval_node<GenericServiceAdaptorClientGraph>(values<Int>(3)), values<Int>(none, 23));
 }

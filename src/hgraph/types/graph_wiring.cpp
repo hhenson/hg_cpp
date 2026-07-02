@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <typeindex>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -392,9 +393,19 @@ namespace hgraph
 
     struct Wiring::Impl
     {
+        struct ServiceImplementationScope
+        {
+            std::string                          description{};
+            std::unordered_set<std::string>      required_endpoints{};
+            std::unordered_map<std::string, ResolutionMap> endpoint_resolutions{};
+            std::unordered_set<std::string>      used_endpoints{};
+        };
+
         std::deque<WiringInstance>                                        instances{};
         std::unordered_map<InstanceKey, WiringInstance *, InstanceKeyHash> interned{};
         std::unordered_map<std::string, std::string>                       built_service_paths{};
+        std::unordered_map<std::string, std::string>                       client_service_paths{};
+        std::vector<ServiceImplementationScope>                            implementation_scopes{};
         GlobalState                                                        global_state{};
     };
 
@@ -498,6 +509,102 @@ namespace hgraph
         }
     }
 
+    void Wiring::register_service_client_path(std::string path, std::string_view kind)
+    {
+        if (path.empty()) { throw std::invalid_argument("service/adaptor client path must not be empty"); }
+        impl_->client_service_paths.try_emplace(std::move(path), std::string{kind});
+    }
+
+    void Wiring::begin_service_implementation(std::string description, std::vector<std::string> required_endpoints)
+    {
+        std::vector<WiringServiceImplementationEndpoint> endpoints;
+        endpoints.reserve(required_endpoints.size());
+        for (auto &endpoint : required_endpoints)
+        {
+            endpoints.push_back(WiringServiceImplementationEndpoint{std::move(endpoint), ResolutionMap{}});
+        }
+        begin_service_implementation(std::move(description), std::move(endpoints));
+    }
+
+    void Wiring::begin_service_implementation(std::string description,
+                                              std::vector<WiringServiceImplementationEndpoint> required_endpoints)
+    {
+        Impl::ServiceImplementationScope scope;
+        scope.description = std::move(description);
+        scope.required_endpoints.reserve(required_endpoints.size());
+        for (auto &endpoint : required_endpoints)
+        {
+            if (endpoint.endpoint.empty())
+            {
+                throw std::invalid_argument("service/adaptor implementation endpoint must not be empty");
+            }
+            scope.required_endpoints.insert(endpoint.endpoint);
+            scope.endpoint_resolutions.emplace(std::move(endpoint.endpoint), std::move(endpoint.resolution));
+        }
+        impl_->implementation_scopes.push_back(std::move(scope));
+    }
+
+    void Wiring::register_service_implementation_stub(std::string endpoint, std::string_view kind)
+    {
+        if (impl_->implementation_scopes.empty())
+        {
+            throw std::invalid_argument(
+                std::string{kind} + " implementation stub may only be used inside a registered implementation graph");
+        }
+
+        auto &scope = impl_->implementation_scopes.back();
+        if (!scope.required_endpoints.empty() && !scope.required_endpoints.contains(endpoint))
+        {
+            throw std::invalid_argument(
+                std::string{kind} + " implementation stub for '" + endpoint +
+                "' is not part of active implementation '" + scope.description + "'");
+        }
+        scope.used_endpoints.insert(std::move(endpoint));
+    }
+
+    ResolutionMap Wiring::service_implementation_stub_resolution(const std::string &endpoint) const
+    {
+        if (impl_->implementation_scopes.empty()) { return ResolutionMap{}; }
+        const auto &scope = impl_->implementation_scopes.back();
+        auto it = scope.endpoint_resolutions.find(endpoint);
+        return it != scope.endpoint_resolutions.end() ? it->second : ResolutionMap{};
+    }
+
+    void Wiring::end_service_implementation()
+    {
+        if (impl_->implementation_scopes.empty())
+        {
+            throw std::logic_error("end_service_implementation called without an active implementation");
+        }
+
+        auto scope = std::move(impl_->implementation_scopes.back());
+        impl_->implementation_scopes.pop_back();
+
+        std::vector<std::string> missing;
+        for (const auto &endpoint : scope.required_endpoints)
+        {
+            if (!scope.used_endpoints.contains(endpoint)) { missing.push_back(endpoint); }
+        }
+        if (!missing.empty())
+        {
+            std::sort(missing.begin(), missing.end());
+            std::string message = "implementation '" + scope.description + "' did not wire required stub";
+            if (missing.size() != 1) { message.push_back('s'); }
+            message.append(": ");
+            for (std::size_t i = 0; i < missing.size(); ++i)
+            {
+                if (i != 0) { message.append(", "); }
+                message.append(missing[i]);
+            }
+            throw std::invalid_argument(message);
+        }
+    }
+
+    void Wiring::cancel_service_implementation() noexcept
+    {
+        if (!impl_->implementation_scopes.empty()) { impl_->implementation_scopes.pop_back(); }
+    }
+
     WiringPortRef Wiring::add_node(std::type_index def, const WiringNodeSchema &schema,
                                    std::span<const WiringPortRef> inputs, Value scalars,
                                    std::function<NodeBuilder()> make_builder)
@@ -548,6 +655,18 @@ namespace hgraph
 
     GraphBuilder Wiring::finish() &&
     {
+        if (!impl_->implementation_scopes.empty())
+        {
+            throw std::logic_error("Wiring::finish encountered an unterminated service/adaptor implementation scope");
+        }
+        for (const auto &[path, kind] : impl_->client_service_paths)
+        {
+            if (!impl_->built_service_paths.contains(path))
+            {
+                throw std::invalid_argument("missing implementation for " + kind + " '" + path + "'");
+            }
+        }
+
         RankedGraphBuild build = build_ranked_graph(impl_->instances, nullptr);
         build.graph_builder.global_state(std::move(impl_->global_state));  // carry wiring-time entries onto the graph
         return std::move(build.graph_builder);
@@ -556,6 +675,19 @@ namespace hgraph
     CompiledSubGraph Wiring::finish_subgraph(std::optional<WiringPortRef> output,
                                              std::vector<const TSValueTypeMetaData *> input_schemas) &&
     {
+        if (!impl_->implementation_scopes.empty())
+        {
+            throw std::logic_error(
+                "Wiring::finish_subgraph encountered an unterminated service/adaptor implementation scope");
+        }
+        for (const auto &[path, kind] : impl_->client_service_paths)
+        {
+            if (!impl_->built_service_paths.contains(path))
+            {
+                throw std::invalid_argument("missing implementation for " + kind + " '" + path + "'");
+            }
+        }
+
         CompiledSubGraph compiled;
         compiled.input_schemas = std::move(input_schemas);
 

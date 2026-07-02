@@ -11,6 +11,7 @@
 #include <hgraph/types/type_resolution.h>               // ResolutionMap, ts_resolver, unifiers, ts_type
 #include <hgraph/types/value/value.h>                   // Value (scalar configuration)
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <functional>
@@ -281,10 +282,23 @@ namespace hgraph
         explicit WiringNamedStructuralSourceArg(std::vector<WiringNamedPortRef> refs) : fields(std::move(refs)) {}
     };
 
+    struct WiringServiceImplementationEndpoint
+    {
+        std::string   endpoint{};
+        ResolutionMap resolution{};
+    };
+
     namespace wiring_path_detail
     {
         template <typename>
         inline constexpr bool always_false_v = false;
+
+        struct TypedPathValue
+        {
+            std::string   value{};
+            ResolutionMap resolution{};
+            bool          has_typed_suffix{false};
+        };
 
         inline void append_escaped_path_component(std::string &out, std::string_view value)
         {
@@ -306,6 +320,12 @@ namespace hgraph
                     out.push_back(hex[c & 0x0FU]);
                 }
             }
+        }
+
+        [[nodiscard]] inline std::string_view metadata_name(const TypeMetaData *meta)
+        {
+            if (meta == nullptr) { return "<unresolved>"; }
+            return meta->display_name != nullptr ? std::string_view{meta->display_name} : std::string_view{"<unnamed>"};
         }
 
         template <typename T>
@@ -342,10 +362,18 @@ namespace hgraph
                 stream << value;
                 append_escaped_path_component(out, stream.str());
             }
+            else if constexpr (std::same_as<V, const TSValueTypeMetaData *>)
+            {
+                append_escaped_path_component(out, metadata_name(value));
+            }
+            else if constexpr (std::same_as<V, const ValueTypeMetaData *>)
+            {
+                append_escaped_path_component(out, metadata_name(value));
+            }
             else
             {
                 static_assert(always_false_v<V>,
-                              "service/adaptor path scalars must be named primitive scalar values");
+                              "service/adaptor path values must be primitive scalars or named type metadata");
             }
         }
 
@@ -375,24 +403,127 @@ namespace hgraph
             }
         }
 
-        template <typename... Args>
-        [[nodiscard]] std::string typed_path_value(std::string_view base, const Args &...args)
+        template <typename Arg>
+        void bind_path_resolution(ResolutionMap &resolution, const Arg &argument)
         {
-            std::string out{base};
+            using A = std::remove_cvref_t<Arg>;
+            if constexpr (call_args_detail::is_named_arg_v<A>)
+            {
+                const std::string_view name = argument.name;
+                using V = std::remove_cvref_t<decltype(argument.value)>;
+                if constexpr (std::same_as<V, const TSValueTypeMetaData *>)
+                {
+                    resolution.bind_ts(name, argument.value);
+                }
+                else if constexpr (std::same_as<V, const ValueTypeMetaData *>)
+                {
+                    resolution.bind_scalar(name, argument.value);
+                }
+            }
+        }
+
+        template <typename... Args>
+        [[nodiscard]] TypedPathValue typed_path_value(std::string_view base, const Args &...args)
+        {
+            TypedPathValue typed;
+            typed.value = std::string{base};
             if constexpr (sizeof...(Args) > 0)
             {
-                out.push_back('[');
+                typed.has_typed_suffix = true;
+                typed.value.push_back('[');
                 std::size_t index = 0;
                 (
                     [&] {
-                        if (index != 0) { out.push_back(','); }
-                        append_scalar_path_segment(out, index, args);
+                        if (index != 0) { typed.value.push_back(','); }
+                        append_scalar_path_segment(typed.value, index, args);
+                        bind_path_resolution(typed.resolution, args);
                         ++index;
                     }(),
                     ...);
-                out.push_back(']');
+                typed.value.push_back(']');
             }
-            return out;
+            return typed;
+        }
+
+        [[nodiscard]] inline bool has_resolution(const ResolutionMap &resolution)
+        {
+            return !resolution.ts_vars.empty() || !resolution.scalar_vars.empty() || !resolution.size_vars.empty();
+        }
+
+        inline void merge_resolution(ResolutionMap &target, const ResolutionMap &source)
+        {
+            for (const auto &[name, meta] : source.ts_vars) { target.bind_ts(name, meta); }
+            for (const auto &[name, meta] : source.scalar_vars) { target.bind_scalar(name, meta); }
+            for (const auto &[name, size] : source.size_vars) { target.bind_size(name, size); }
+        }
+
+        [[nodiscard]] inline std::vector<std::pair<std::string, std::string>> missing_resolution_segments(
+            const ResolutionMap &target,
+            const ResolutionMap &already_in_path)
+        {
+            std::vector<std::pair<std::string, std::string>> segments;
+            for (const auto &[name, meta] : target.ts_vars)
+            {
+                if (already_in_path.find_ts(name) != nullptr) { continue; }
+                std::string value;
+                append_escaped_path_component(value, metadata_name(meta));
+                segments.emplace_back(name, std::move(value));
+            }
+            for (const auto &[name, meta] : target.scalar_vars)
+            {
+                if (already_in_path.find_scalar(name) != nullptr) { continue; }
+                std::string value;
+                append_escaped_path_component(value, metadata_name(meta));
+                segments.emplace_back(name, std::move(value));
+            }
+            for (const auto &[name, size] : target.size_vars)
+            {
+                if (already_in_path.find_size(name).has_value()) { continue; }
+                segments.emplace_back(name, std::to_string(size));
+            }
+            std::sort(segments.begin(), segments.end(),
+                      [](const auto &lhs, const auto &rhs) { return lhs.first < rhs.first; });
+            return segments;
+        }
+
+        inline void append_resolution_segments(std::string &value,
+                                               bool &has_typed_suffix,
+                                               const std::vector<std::pair<std::string, std::string>> &segments)
+        {
+            if (segments.empty()) { return; }
+
+            if (has_typed_suffix && !value.empty() && value.back() == ']')
+            {
+                value.pop_back();
+                value.push_back(',');
+            }
+            else
+            {
+                value.push_back('[');
+                has_typed_suffix = true;
+            }
+
+            for (std::size_t index = 0; index < segments.size(); ++index)
+            {
+                if (index != 0) { value.push_back(','); }
+                append_escaped_path_component(value, segments[index].first);
+                value.push_back('=');
+                value.append(segments[index].second);
+            }
+            value.push_back(']');
+        }
+
+        template <typename Path>
+        [[nodiscard]] Path with_resolution(Path path, const ResolutionMap &inferred)
+        {
+            if (!has_resolution(inferred)) { return path; }
+
+            ResolutionMap merged = path.resolution;
+            merge_resolution(merged, inferred);
+            auto segments = missing_resolution_segments(merged, path.resolution);
+            append_resolution_segments(path.value, path.has_typed_suffix, segments);
+            path.resolution = std::move(merged);
+            return path;
         }
     }  // namespace wiring_path_detail
 
@@ -489,6 +620,16 @@ namespace hgraph
          * identity in a wiring graph.
          */
         void register_built_service_path(std::string path, std::string_view kind);
+
+        void register_service_client_path(std::string path, std::string_view kind);
+
+        void begin_service_implementation(std::string description, std::vector<std::string> required_endpoints);
+        void begin_service_implementation(std::string description,
+                                          std::vector<WiringServiceImplementationEndpoint> required_endpoints);
+        void register_service_implementation_stub(std::string endpoint, std::string_view kind);
+        [[nodiscard]] ResolutionMap service_implementation_stub_resolution(const std::string &endpoint) const;
+        void end_service_implementation();
+        void cancel_service_implementation() noexcept;
 
         /**
          * Deferred-builder overload: intern by ``(def, schema, inputs, scalars)``

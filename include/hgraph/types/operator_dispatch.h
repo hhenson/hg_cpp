@@ -267,9 +267,13 @@ namespace hgraph
     };
 
     /**
-     * Process-wide registry of operator overloads (singleton; single-threaded, no
-     * locks — mirrors ``TypeRegistry``). Candidates hold *borrowed* interned schema
-     * pointers, so ``reset()`` must run before the ``TypeRegistry`` reset.
+     * Process-wide registry of operator overloads (singleton). Wiring is
+     * single-threaded, so this registry itself takes no locks; build-time
+     * interning it sits beside (``InternTable``, plan factories) may lock to
+     * guard shared resources — sanctioned, per the single-threaded-evaluation
+     * rule in CLAUDE.md §7 (the per-tick path stays lock-free). Candidates hold
+     * *borrowed* interned schema pointers, so ``reset()`` must run before the
+     * ``TypeRegistry`` reset.
      */
     class HGRAPH_EXPORT OperatorRegistry
     {

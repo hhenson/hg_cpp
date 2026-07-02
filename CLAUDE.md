@@ -277,7 +277,12 @@ ctest --test-dir build --output-on-failure
 ## 7. Conventions
 
 - **C++23**; prefer std features that simplify.
-- **Single-threaded**: no locks/atomics in value/TS/runtime infra.
+- **Single-threaded evaluation** (ruling 2026-07-02): the **per-tick runtime path**
+  (value/TS/runtime ops invoked during evaluation) must be lock-free and
+  `shared_ptr`-free. **Build-time machinery** (interning, plan/ops-synthesis caches,
+  registries) MAY use mutexes to guard shared resources — that is sanctioned, not
+  drift. Push-source senders + the real-time executor CV remain the only
+  cross-thread runtime boundary.
 - **Ops tables**: structs of fn-ptrs, first param = the structure's memory; metadata
   (header) separate from operations (`*_ops`).
 - **Lifetime**: builders are build-time only; no `shared_ptr` for builder lifetime in

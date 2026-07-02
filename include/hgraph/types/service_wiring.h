@@ -8,6 +8,7 @@
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/static_schema.h>
+#include <hgraph/types/type_pattern.h>
 
 #include <array>
 #include <atomic>
@@ -25,7 +26,9 @@ namespace hgraph::service
 {
     struct ServicePath
     {
-        std::string value{};
+        std::string   value{};
+        ResolutionMap resolution{};
+        bool          has_typed_suffix{false};
     };
 
     [[nodiscard]] inline ServicePath path(std::string_view value)
@@ -39,7 +42,8 @@ namespace hgraph::service
     [[nodiscard]] inline ServicePath path(std::string_view value, const Args &...args)
     {
         if (value.empty()) { throw std::invalid_argument("service path must not be empty"); }
-        return ServicePath{wiring_path_detail::typed_path_value(value, args...)};
+        auto typed = wiring_path_detail::typed_path_value(value, args...);
+        return ServicePath{std::move(typed.value), std::move(typed.resolution), typed.has_typed_suffix};
     }
 
     /**
@@ -209,6 +213,81 @@ namespace hgraph::service
         template <typename Service>
         using request_output_schema_t = TSD<Int, response_schema_t<Service>>;
 
+        template <typename Schema>
+        void bind_schema_resolution(ResolutionMap &resolution,
+                                    const TSValueTypeMetaData *concrete,
+                                    std::string_view context)
+        {
+            if constexpr (!schema_descriptor<Schema>::is_concrete())
+            {
+                if (concrete == nullptr || !ts_pattern_match(to_pattern<Schema>(), concrete, resolution))
+                {
+                    throw std::invalid_argument(
+                        std::string{context} + " does not match generic service schema " +
+                        ts_pattern_to_string(to_pattern<Schema>()));
+                }
+            }
+        }
+
+        template <typename Schema>
+        [[nodiscard]] const TSValueTypeMetaData *resolved_schema_meta(const ResolutionMap &resolution,
+                                                                      std::string_view context)
+        {
+            if constexpr (schema_descriptor<Schema>::is_concrete())
+            {
+                return schema_descriptor<Schema>::ts_meta();
+            }
+            else
+            {
+                const auto *meta = ts_pattern_resolve(to_pattern<Schema>(), resolution);
+                if (meta == nullptr)
+                {
+                    throw std::invalid_argument(
+                        std::string{context} + " has unresolved generic service schema " +
+                        ts_pattern_to_string(to_pattern<Schema>()));
+                }
+                return meta;
+            }
+        }
+
+        template <typename Scalar>
+        void bind_scalar_resolution(ResolutionMap &resolution,
+                                    const TSValueTypeMetaData *concrete,
+                                    std::string_view context)
+        {
+            if constexpr (!scalar_descriptor<Scalar>::is_concrete())
+            {
+                const auto *scalar_meta = concrete != nullptr ? concrete->value_schema : nullptr;
+                if (scalar_meta == nullptr || !scalar_pattern_match(to_scalar_pattern<Scalar>(), scalar_meta, resolution))
+                {
+                    throw std::invalid_argument(
+                        std::string{context} + " does not match generic service key " +
+                        scalar_pattern_to_string(to_scalar_pattern<Scalar>()));
+                }
+            }
+        }
+
+        template <typename Scalar>
+        [[nodiscard]] const ValueTypeMetaData *resolved_scalar_meta(const ResolutionMap &resolution,
+                                                                    std::string_view context)
+        {
+            if constexpr (scalar_descriptor<Scalar>::is_concrete())
+            {
+                return scalar_descriptor<Scalar>::value_meta();
+            }
+            else
+            {
+                const auto *meta = scalar_pattern_resolve(to_scalar_pattern<Scalar>(), resolution);
+                if (meta == nullptr)
+                {
+                    throw std::invalid_argument(
+                        std::string{context} + " has unresolved generic service key " +
+                        scalar_pattern_to_string(to_scalar_pattern<Scalar>()));
+                }
+                return meta;
+            }
+        }
+
         template <typename T>
         concept graph_implementation = requires { &T::compose; };
 
@@ -322,11 +401,27 @@ namespace hgraph::service
         {
             if constexpr (implementation_accepts_path<Impl>())
             {
-                return wire<Impl>(w, args..., arg<"path">(Str{user_path.value})).template as<OutputSchema>();
+                auto output = wire<Impl>(w, args..., arg<"path">(Str{user_path.value}));
+                if constexpr (schema_descriptor<OutputSchema>::is_concrete())
+                {
+                    return output.template as<OutputSchema>();
+                }
+                else
+                {
+                    return Port<OutputSchema>{w, output.erased()};
+                }
             }
             else
             {
-                return wire<Impl>(w, args...).template as<OutputSchema>();
+                auto output = wire<Impl>(w, args...);
+                if constexpr (schema_descriptor<OutputSchema>::is_concrete())
+                {
+                    return output.template as<OutputSchema>();
+                }
+                else
+                {
+                    return Port<OutputSchema>{w, output.erased()};
+                }
             }
         }
 
@@ -440,6 +535,41 @@ namespace hgraph::service
             return path;
         }
 
+        template <typename Service>
+        void append_required_stub_endpoints(std::vector<WiringServiceImplementationEndpoint> &endpoints,
+                                            const ServicePath &user_path)
+        {
+            if constexpr (reference_service_interface<Service>)
+            {
+                endpoints.push_back(WiringServiceImplementationEndpoint{
+                    reference_output_path<Service>(user_path), user_path.resolution});
+            }
+            else if constexpr (subscription_service_interface<Service>)
+            {
+                endpoints.push_back(WiringServiceImplementationEndpoint{
+                    subscriptions_path<Service>(user_path), user_path.resolution});
+                endpoints.push_back(WiringServiceImplementationEndpoint{
+                    output_path<Service>(user_path), user_path.resolution});
+            }
+            else if constexpr (request_reply_service_interface<Service>)
+            {
+                endpoints.push_back(WiringServiceImplementationEndpoint{
+                    request_input_path<Service>(user_path), user_path.resolution});
+                endpoints.push_back(WiringServiceImplementationEndpoint{
+                    request_reply_output_path<Service>(user_path), user_path.resolution});
+            }
+        }
+
+        template <typename Service, typename RequestSchema>
+        [[nodiscard]] ServicePath resolve_request_reply_client_path(ServicePath user_path,
+                                                                    const Port<RequestSchema> &request)
+        {
+            ResolutionMap inferred = user_path.resolution;
+            bind_schema_resolution<request_schema_t<Service>>(
+                inferred, request.erased().schema, "request/reply service request");
+            return wiring_path_detail::with_resolution(std::move(user_path), inferred);
+        }
+
         [[nodiscard]] inline Int next_request_id() noexcept
         {
             static std::atomic<Int> next{0};
@@ -523,12 +653,11 @@ namespace hgraph::service
             const ServicePath &user_path)
         {
             using output_schema = reference_output_schema_t<Service>;
-            static_assert(schema_descriptor<output_schema>::is_concrete(),
-                          "reference service output schema must be concrete");
 
             std::string full_path = reference_output_path<Service>(user_path);
-            const auto *target_meta = schema_descriptor<output_schema>::ts_meta();
-            const auto *ref_meta    = schema_descriptor<REF<output_schema>>::ts_meta();
+            const auto *target_meta = resolved_schema_meta<output_schema>(
+                user_path.resolution, "reference service output");
+            const auto *ref_meta = TypeRegistry::instance().ref(target_meta);
 
             WiringNodeSchema schema;
             schema.output = ref_meta;
@@ -547,12 +676,11 @@ namespace hgraph::service
         [[nodiscard]] Port<TSS<key_type_t<Service>>> subscription_source(Wiring &w, const ServicePath &user_path)
         {
             using key_type = key_type_t<Service>;
-            static_assert(scalar_descriptor<key_type>::is_concrete(),
-                          "subscription service key_type must be a concrete scalar type");
 
             std::string full_path = subscriptions_path<Service>(user_path);
-            const auto *key_meta = scalar_descriptor<key_type>::value_meta();
-            const auto *out_meta = schema_descriptor<TSS<key_type>>::ts_meta();
+            const auto *key_meta = resolved_scalar_meta<key_type>(
+                user_path.resolution, "subscription service key");
+            const auto *out_meta = TypeRegistry::instance().tss(key_meta);
 
             WiringNodeSchema schema;
             schema.output = out_meta;
@@ -571,12 +699,14 @@ namespace hgraph::service
                                                                                const ServicePath &user_path)
         {
             using output_schema = output_schema_t<Service>;
-            static_assert(schema_descriptor<output_schema>::is_concrete(),
-                          "subscription service output schema must be concrete");
 
             std::string full_path = output_path<Service>(user_path);
-            const auto *target_meta = schema_descriptor<output_schema>::ts_meta();
-            const auto *ref_meta    = schema_descriptor<REF<output_schema>>::ts_meta();
+            const auto *key_meta = resolved_scalar_meta<key_type_t<Service>>(
+                user_path.resolution, "subscription service key");
+            const auto *value_meta = resolved_schema_meta<value_schema_t<Service>>(
+                user_path.resolution, "subscription service value");
+            const auto *target_meta = TypeRegistry::instance().tsd(key_meta, value_meta);
+            const auto *ref_meta    = TypeRegistry::instance().ref(target_meta);
 
             WiringNodeSchema schema;
             schema.output = ref_meta;
@@ -598,12 +728,12 @@ namespace hgraph::service
         {
             using input_schema = request_input_schema_t<Service>;
             using request_schema = request_schema_t<Service>;
-            static_assert(schema_descriptor<input_schema>::is_concrete(),
-                          "request/reply service request schema must be concrete");
 
             std::string full_path = request_input_path<Service>(user_path);
-            const auto *request_meta = schema_descriptor<request_schema>::ts_meta();
-            const auto *out_meta     = schema_descriptor<input_schema>::ts_meta();
+            const auto *request_meta = resolved_schema_meta<request_schema>(
+                user_path.resolution, "request/reply service request");
+            const auto *out_meta = TypeRegistry::instance().tsd(
+                scalar_descriptor<Int>::value_meta(), request_meta);
 
             WiringNodeSchema schema;
             schema.output = out_meta;
@@ -624,12 +754,13 @@ namespace hgraph::service
             const ServicePath &user_path)
         {
             using output_schema = request_output_schema_t<Service>;
-            static_assert(schema_descriptor<output_schema>::is_concrete(),
-                          "request/reply service response schema must be concrete");
 
             std::string full_path = request_reply_output_path<Service>(user_path);
-            const auto *target_meta = schema_descriptor<output_schema>::ts_meta();
-            const auto *ref_meta    = schema_descriptor<REF<output_schema>>::ts_meta();
+            const auto *response_meta = resolved_schema_meta<response_schema_t<Service>>(
+                user_path.resolution, "request/reply service response");
+            const auto *target_meta = TypeRegistry::instance().tsd(
+                scalar_descriptor<Int>::value_meta(), response_meta);
+            const auto *ref_meta = TypeRegistry::instance().ref(target_meta);
 
             WiringNodeSchema schema;
             schema.output = ref_meta;
@@ -653,8 +784,10 @@ namespace hgraph::service
             using key_type = key_type_t<Service>;
 
             std::array<WiringPortRef, 2> inputs{key.erased(), subscriptions.erased()};
+            const auto *key_meta = resolved_scalar_meta<key_type>(
+                user_path.resolution, "subscription service key");
             NodeBuilder builder = make_subscription_key_capture_node(
-                subscriptions_path<Service>(user_path), *scalar_descriptor<key_type>::value_meta());
+                subscriptions_path<Service>(user_path), *key_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
@@ -665,9 +798,9 @@ namespace hgraph::service
                                          Value{}));
         }
 
-        template <typename Service>
+        template <typename Service, typename RequestSchema>
         void capture_request_input(Wiring &w,
-                                   Port<request_schema_t<Service>> request,
+                                   Port<RequestSchema> request,
                                    Port<request_input_schema_t<Service>> requests,
                                    const ServicePath &user_path,
                                    Int request_id)
@@ -675,8 +808,10 @@ namespace hgraph::service
             using request_schema = request_schema_t<Service>;
 
             std::array<WiringPortRef, 2> inputs{request.erased(), requests.erased()};
+            const auto *request_meta = resolved_schema_meta<request_schema>(
+                user_path.resolution, "request/reply service request");
             NodeBuilder builder = make_request_input_capture_node(
-                request_input_path<Service>(user_path), *schema_descriptor<request_schema>::ts_meta(), request_id);
+                request_input_path<Service>(user_path), *request_meta, request_id);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
@@ -696,8 +831,14 @@ namespace hgraph::service
             using output_schema = reference_output_schema_t<Service>;
 
             std::array<WiringPortRef, 2> inputs{output.erased(), shared_output.erased()};
+            const auto *output_meta = output.erased().schema;
+            if (output_meta == nullptr)
+            {
+                output_meta = resolved_schema_meta<output_schema>(
+                    user_path.resolution, "reference service output");
+            }
             NodeBuilder builder = make_shared_output_capture_node(
-                reference_output_path<Service>(user_path), *schema_descriptor<output_schema>::ts_meta());
+                reference_output_path<Service>(user_path), *output_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
@@ -714,11 +855,18 @@ namespace hgraph::service
                                     Port<REF<output_schema_t<Service>>> shared_output,
                                     const ServicePath &user_path)
         {
-            using output_schema = output_schema_t<Service>;
-
             std::array<WiringPortRef, 2> inputs{output.erased(), shared_output.erased()};
+            const auto *output_meta = output.erased().schema;
+            if (output_meta == nullptr)
+            {
+                const auto *key_meta = resolved_scalar_meta<key_type_t<Service>>(
+                    user_path.resolution, "subscription service key");
+                const auto *value_meta = resolved_schema_meta<value_schema_t<Service>>(
+                    user_path.resolution, "subscription service value");
+                output_meta = TypeRegistry::instance().tsd(key_meta, value_meta);
+            }
             NodeBuilder builder = make_shared_output_capture_node(
-                output_path<Service>(user_path), *schema_descriptor<output_schema>::ts_meta());
+                output_path<Service>(user_path), *output_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
@@ -736,11 +884,17 @@ namespace hgraph::service
             Port<REF<request_output_schema_t<Service>>> shared_output,
             const ServicePath &user_path)
         {
-            using output_schema = request_output_schema_t<Service>;
-
             std::array<WiringPortRef, 2> inputs{output.erased(), shared_output.erased()};
+            const auto *output_meta = output.erased().schema;
+            if (output_meta == nullptr)
+            {
+                const auto *response_meta = resolved_schema_meta<response_schema_t<Service>>(
+                    user_path.resolution, "request/reply service response");
+                output_meta = TypeRegistry::instance().tsd(
+                    scalar_descriptor<Int>::value_meta(), response_meta);
+            }
             NodeBuilder builder = make_shared_output_capture_node(
-                request_reply_output_path<Service>(user_path), *schema_descriptor<output_schema>::ts_meta());
+                request_reply_output_path<Service>(user_path), *output_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
                 std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
@@ -764,12 +918,33 @@ namespace hgraph::service
                 static_cast<void>(wire<Impl>(w, args...));
             }
         }
+
+        template <typename Impl, typename... Args>
+        void wire_service_graph_with_scope(Wiring &w,
+                                           const ServicePath &user_path,
+                                           std::string description,
+                                           std::vector<WiringServiceImplementationEndpoint> required_endpoints,
+                                           const Args &...args)
+        {
+            w.begin_service_implementation(std::move(description), std::move(required_endpoints));
+            try
+            {
+                wire_service_graph<Impl>(w, user_path, args...);
+            }
+            catch (...)
+            {
+                w.cancel_service_implementation();
+                throw;
+            }
+            w.end_service_implementation();
+        }
     }  // namespace detail
 
     template <typename Service>
     [[nodiscard]] Port<typename Service::output_schema> reference_service(Wiring &w, ServicePath user_path)
     {
         using output_schema = detail::reference_output_schema_t<Service>;
+        w.register_service_client_path(detail::reference_base_path<Service>(user_path), "reference service");
         return detail::reference_shared_output_source<Service>(w, user_path).template as<output_schema>();
     }
 
@@ -800,6 +975,10 @@ namespace hgraph::service
         requires detail::subscription_service_interface<Service>
     [[nodiscard]] Port<TSS<detail::key_type_t<Service>>> impl_input(Wiring &w, ServicePath user_path)
     {
+        const std::string endpoint = detail::subscriptions_path<Service>(user_path);
+        wiring_path_detail::merge_resolution(
+            user_path.resolution, w.service_implementation_stub_resolution(endpoint));
+        w.register_service_implementation_stub(endpoint, "subscription service");
         return detail::subscription_source<Service>(w, user_path);
     }
 
@@ -814,6 +993,10 @@ namespace hgraph::service
         requires detail::request_reply_service_interface<Service>
     [[nodiscard]] Port<detail::request_input_schema_t<Service>> impl_input(Wiring &w, ServicePath user_path)
     {
+        const std::string endpoint = detail::request_input_path<Service>(user_path);
+        wiring_path_detail::merge_resolution(
+            user_path.resolution, w.service_implementation_stub_resolution(endpoint));
+        w.register_service_implementation_stub(endpoint, "request/reply service");
         return detail::request_input_source<Service>(w, user_path);
     }
 
@@ -834,6 +1017,10 @@ namespace hgraph::service
                      ServicePath user_path,
                      Port<detail::reference_output_schema_t<Service>> output)
     {
+        const std::string endpoint = detail::reference_output_path<Service>(user_path);
+        wiring_path_detail::merge_resolution(
+            user_path.resolution, w.service_implementation_stub_resolution(endpoint));
+        w.register_service_implementation_stub(endpoint, "reference service");
         auto shared_output = detail::reference_shared_output_source<Service>(w, user_path);
         detail::capture_reference_service_output<Service, explicit_impl_output_marker>(
             w, std::move(output), shared_output, user_path);
@@ -852,6 +1039,10 @@ namespace hgraph::service
                      ServicePath user_path,
                      Port<detail::output_schema_t<Service>> output)
     {
+        const std::string endpoint = detail::output_path<Service>(user_path);
+        wiring_path_detail::merge_resolution(
+            user_path.resolution, w.service_implementation_stub_resolution(endpoint));
+        w.register_service_implementation_stub(endpoint, "subscription service");
         auto shared_output = detail::shared_output_source<Service>(w, user_path);
         detail::capture_service_output<Service, explicit_impl_output_marker>(
             w, std::move(output), shared_output, user_path);
@@ -870,6 +1061,10 @@ namespace hgraph::service
                      ServicePath user_path,
                      Port<detail::request_output_schema_t<Service>> output)
     {
+        const std::string endpoint = detail::request_reply_output_path<Service>(user_path);
+        wiring_path_detail::merge_resolution(
+            user_path.resolution, w.service_implementation_stub_resolution(endpoint));
+        w.register_service_implementation_stub(endpoint, "request/reply service");
         auto shared_output = detail::request_reply_output_source<Service>(w, user_path);
         detail::capture_request_reply_service_output<Service, explicit_impl_output_marker>(
             w, std::move(output), shared_output, user_path);
@@ -908,7 +1103,10 @@ namespace hgraph::service
                 }
             }(),
             ...);
-        detail::wire_service_graph<Impl>(w, user_path, args...);
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+        (detail::append_required_stub_endpoints<Services>(required_endpoints, user_path), ...);
+        detail::wire_service_graph_with_scope<Impl>(
+            w, user_path, "multi-service implementation", std::move(required_endpoints), args...);
     }
 
     template <typename Service>
@@ -952,6 +1150,7 @@ namespace hgraph::service
     template <typename Service>
     [[nodiscard]] SubscriptionService<Service> subscription_service(Wiring &w, ServicePath user_path)
     {
+        w.register_service_client_path(detail::subscription_base_path<Service>(user_path), "subscription service");
         auto subscriptions = detail::subscription_source<Service>(w, user_path);
         auto shared_output = detail::shared_output_source<Service>(w, user_path);
         return SubscriptionService<Service>{w, subscriptions, shared_output, std::move(user_path)};
@@ -997,28 +1196,46 @@ namespace hgraph::service
         return subscription_service_impl<Service, Impl>(w, detail::default_service_path<Service>(), args...);
     }
 
-    template <typename Service>
+    template <typename Service, typename RequestSchema>
     [[nodiscard]] Port<typename Service::response_schema> request_reply_service(
         Wiring &w,
-        Port<typename Service::request_schema> request,
+        Port<RequestSchema> request,
         ServicePath user_path)
     {
         using output_schema   = detail::request_output_schema_t<Service>;
         using response_schema = detail::response_schema_t<Service>;
 
+        user_path = detail::resolve_request_reply_client_path<Service>(std::move(user_path), request);
+        w.register_service_client_path(detail::request_reply_base_path<Service>(user_path), "request/reply service");
         const Int request_id = detail::next_request_id();
         auto requests        = detail::request_input_source<Service>(w, user_path);
         auto replies         = detail::request_reply_output_source<Service>(w, user_path);
 
         detail::capture_request_input<Service>(w, std::move(request), requests, user_path, request_id);
-        return wire<stdlib::getitem_>(w, replies.template as<output_schema>(), request_id)
-            .template as<response_schema>();
+        if constexpr (schema_descriptor<output_schema>::is_concrete())
+        {
+            auto reply = wire<stdlib::getitem_>(w, replies.template as<output_schema>(), request_id);
+            if constexpr (schema_descriptor<response_schema>::is_concrete())
+            {
+                return reply.template as<response_schema>();
+            }
+            else
+            {
+                return Port<response_schema>{w, reply.erased()};
+            }
+        }
+        else
+        {
+            auto dict = Port<output_schema>{w, replies.erased()};
+            auto reply = wire<stdlib::getitem_>(w, dict, request_id);
+            return Port<response_schema>{w, reply.erased()};
+        }
     }
 
-    template <typename Service>
+    template <typename Service, typename RequestSchema>
     [[nodiscard]] Port<typename Service::response_schema> request_reply_service(
         Wiring &w,
-        Port<typename Service::request_schema> request)
+        Port<RequestSchema> request)
     {
         return request_reply_service<Service>(
             w, std::move(request), detail::default_service_path<Service>());
@@ -1133,6 +1350,16 @@ namespace hgraph::service_adaptor
         template <typename Interface>
         using request_output_schema_t = TSD<Int, output_schema_t<Interface>>;
 
+        template <typename Interface, typename InputSchema>
+        [[nodiscard]] ServiceAdaptorPath resolve_client_path(ServiceAdaptorPath user_path,
+                                                             const Port<InputSchema> &input)
+        {
+            ResolutionMap inferred = user_path.resolution;
+            service::detail::bind_schema_resolution<input_schema_t<Interface>>(
+                inferred, input.erased().schema, "service adaptor input");
+            return wiring_path_detail::with_resolution(std::move(user_path), inferred);
+        }
+
         template <typename Impl>
         concept graph_implementation = requires { &Impl::compose; };
 
@@ -1235,6 +1462,16 @@ namespace hgraph::service_adaptor
             return full;
         }
 
+        template <typename Interface>
+        void append_required_stub_endpoints(std::vector<WiringServiceImplementationEndpoint> &endpoints,
+                                            const ServiceAdaptorPath &user_path)
+        {
+            endpoints.push_back(WiringServiceImplementationEndpoint{
+                adaptor_from_graph_path<Interface>(user_path), user_path.resolution});
+            endpoints.push_back(WiringServiceImplementationEndpoint{
+                adaptor_to_graph_path<Interface>(user_path), user_path.resolution});
+        }
+
         [[nodiscard]] inline Value path_key_value(const std::string &full_path)
         {
             return Value{Str{full_path}};
@@ -1267,12 +1504,12 @@ namespace hgraph::service_adaptor
         {
             using input_schema = input_schema_t<Interface>;
             using requests_schema = request_input_schema_t<Interface>;
-            static_assert(schema_descriptor<input_schema>::is_concrete(),
-                          "service adaptor input schema must be concrete");
 
             std::string full_path = adaptor_from_graph_path<Interface>(user_path);
-            const auto *input_meta = schema_descriptor<input_schema>::ts_meta();
-            const auto *out_meta   = schema_descriptor<requests_schema>::ts_meta();
+            const auto *input_meta = service::detail::resolved_schema_meta<input_schema>(
+                user_path.resolution, "service adaptor input");
+            const auto *out_meta = TypeRegistry::instance().tsd(
+                scalar_descriptor<Int>::value_meta(), input_meta);
 
             WiringNodeSchema schema;
             schema.output = out_meta;
@@ -1293,12 +1530,13 @@ namespace hgraph::service_adaptor
             const ServiceAdaptorPath &user_path)
         {
             using output_schema = request_output_schema_t<Interface>;
-            static_assert(schema_descriptor<output_schema>::is_concrete(),
-                          "service adaptor output schema must be concrete");
 
             std::string full_path = adaptor_to_graph_path<Interface>(user_path);
-            const auto *target_meta = schema_descriptor<output_schema>::ts_meta();
-            const auto *ref_meta    = schema_descriptor<REF<output_schema>>::ts_meta();
+            const auto *response_meta = service::detail::resolved_schema_meta<output_schema_t<Interface>>(
+                user_path.resolution, "service adaptor output");
+            const auto *target_meta = TypeRegistry::instance().tsd(
+                scalar_descriptor<Int>::value_meta(), response_meta);
+            const auto *ref_meta = TypeRegistry::instance().ref(target_meta);
 
             WiringNodeSchema schema;
             schema.output = ref_meta;
@@ -1313,9 +1551,9 @@ namespace hgraph::service_adaptor
             return Port<REF<output_schema>>{w, std::move(port)};
         }
 
-        template <typename Interface>
+        template <typename Interface, typename InputSchema>
         void capture_request_input(Wiring &w,
-                                   Port<input_schema_t<Interface>> request,
+                                   Port<InputSchema> request,
                                    Port<request_input_schema_t<Interface>> requests,
                                    const ServiceAdaptorPath &user_path,
                                    Int request_id)
@@ -1327,9 +1565,15 @@ namespace hgraph::service_adaptor
                 WiringInputRef{.source = sources[0]},
                 WiringInputRef{.source = sources[1], .rank_dependency = false},
             }};
+            const auto *input_meta = request.erased().schema;
+            if (input_meta == nullptr)
+            {
+                input_meta = service::detail::resolved_schema_meta<input_schema>(
+                    user_path.resolution, "service adaptor input");
+            }
             NodeBuilder builder = make_request_input_capture_node(
                 adaptor_from_graph_path<Interface>(user_path),
-                *schema_descriptor<input_schema>::ts_meta(),
+                *input_meta,
                 request_id);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
@@ -1342,21 +1586,27 @@ namespace hgraph::service_adaptor
             w.add_rank_dependency(requests.node(), capture.peered_node());
         }
 
-        template <typename Interface, typename Impl>
+        template <typename Interface, typename Impl, typename OutputSchema>
         void capture_output(Wiring &w,
-                            Port<request_output_schema_t<Interface>> output,
+                            Port<OutputSchema> output,
                             Port<REF<request_output_schema_t<Interface>>> shared_output,
                             const ServiceAdaptorPath &user_path)
         {
-            using output_schema = request_output_schema_t<Interface>;
-
             std::array<WiringPortRef, 2> sources{output.erased(), shared_output.erased()};
             std::array<WiringInputRef, 2> inputs{{
                 WiringInputRef{.source = sources[0]},
                 WiringInputRef{.source = sources[1], .rank_dependency = false},
             }};
+            const auto *output_meta = output.erased().schema;
+            if (output_meta == nullptr)
+            {
+                const auto *response_meta = service::detail::resolved_schema_meta<output_schema_t<Interface>>(
+                    user_path.resolution, "service adaptor output");
+                output_meta = TypeRegistry::instance().tsd(
+                    scalar_descriptor<Int>::value_meta(), response_meta);
+            }
             NodeBuilder builder = make_shared_output_capture_node(
-                adaptor_to_graph_path<Interface>(user_path), *schema_descriptor<output_schema>::ts_meta());
+                adaptor_to_graph_path<Interface>(user_path), *output_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
                 std::span<const WiringPortRef>{sources.data(), sources.size()}));
@@ -1380,6 +1630,57 @@ namespace hgraph::service_adaptor
                 static_cast<void>(wire<Impl>(w, args...));
             }
         }
+
+        template <typename Impl, typename OutputSchema, typename... Args>
+        [[nodiscard]] Port<OutputSchema> wire_impl_output(Wiring &w,
+                                                          const ServiceAdaptorPath &user_path,
+                                                          const Args &...args)
+        {
+            if constexpr (implementation_accepts_path<Impl>())
+            {
+                auto output = wire<Impl>(w, args..., arg<"path">(Str{user_path.value}));
+                if constexpr (schema_descriptor<OutputSchema>::is_concrete())
+                {
+                    return output.template as<OutputSchema>();
+                }
+                else
+                {
+                    return Port<OutputSchema>{w, output.erased()};
+                }
+            }
+            else
+            {
+                auto output = wire<Impl>(w, args...);
+                if constexpr (schema_descriptor<OutputSchema>::is_concrete())
+                {
+                    return output.template as<OutputSchema>();
+                }
+                else
+                {
+                    return Port<OutputSchema>{w, output.erased()};
+                }
+            }
+        }
+
+        template <typename Impl, typename... Args>
+        void wire_impl_with_scope(Wiring &w,
+                                  const ServiceAdaptorPath &user_path,
+                                  std::string description,
+                                  std::vector<WiringServiceImplementationEndpoint> required_endpoints,
+                                  const Args &...args)
+        {
+            w.begin_service_implementation(std::move(description), std::move(required_endpoints));
+            try
+            {
+                wire_impl<Impl>(w, user_path, args...);
+            }
+            catch (...)
+            {
+                w.cancel_service_implementation();
+                throw;
+            }
+            w.end_service_implementation();
+        }
     }  // namespace detail
 
     template <typename Interface, typename Impl, typename... Args>
@@ -1387,8 +1688,12 @@ namespace hgraph::service_adaptor
     {
         static_assert(detail::service_adaptor_interface<Interface>,
                       "register_service_adaptor requires a type derived from service_adaptor::interface");
-        w.register_built_service_path(detail::adaptor_base_path<Interface>(user_path), "service adaptor");
-        detail::wire_impl<Impl>(w, user_path, args...);
+        std::string base_path = detail::adaptor_base_path<Interface>(user_path);
+        w.register_built_service_path(base_path, "service adaptor");
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+        detail::append_required_stub_endpoints<Interface>(required_endpoints, user_path);
+        detail::wire_impl_with_scope<Impl>(
+            w, user_path, "service adaptor " + base_path, std::move(required_endpoints), args...);
     }
 
     template <typename Interface, typename Impl, typename... Args>
@@ -1405,7 +1710,52 @@ namespace hgraph::service_adaptor
         static_assert((detail::service_adaptor_interface<Interfaces> && ...),
                       "register_service_adaptors requires service_adaptor::interface descriptor types");
         (w.register_built_service_path(detail::adaptor_base_path<Interfaces>(user_path), "service adaptor"), ...);
-        detail::wire_impl<Impl>(w, user_path, args...);
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+        (detail::append_required_stub_endpoints<Interfaces>(required_endpoints, user_path), ...);
+        detail::wire_impl_with_scope<Impl>(
+            w, user_path, "multi-service-adaptor implementation", std::move(required_endpoints), args...);
+    }
+
+    template <typename Interface>
+    [[nodiscard]] Port<detail::request_input_schema_t<Interface>> from_graph(
+        Wiring &w,
+        ServiceAdaptorPath user_path);
+
+    template <typename Interface, typename OutputPort>
+    void to_graph(Wiring &w, ServiceAdaptorPath user_path, OutputPort output);
+
+    template <typename Interface, typename Impl, typename... Args>
+    void register_service_adaptor_impl(Wiring &w, ServiceAdaptorPath user_path, const Args &...args)
+    {
+        static_assert(detail::service_adaptor_interface<Interface>,
+                      "register_service_adaptor_impl requires a service adaptor interface");
+        using output_schema = detail::request_output_schema_t<Interface>;
+
+        std::string base_path = detail::adaptor_base_path<Interface>(user_path);
+        w.register_built_service_path(base_path, "service adaptor");
+
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+        detail::append_required_stub_endpoints<Interface>(required_endpoints, user_path);
+        w.begin_service_implementation("service adaptor impl " + base_path, std::move(required_endpoints));
+        try
+        {
+            auto requests = from_graph<Interface>(w, user_path);
+            auto replies = detail::wire_impl_output<Impl, output_schema>(w, user_path, requests, args...);
+            to_graph<Interface>(w, user_path, replies);
+        }
+        catch (...)
+        {
+            w.cancel_service_implementation();
+            throw;
+        }
+        w.end_service_implementation();
+    }
+
+    template <typename Interface, typename Impl, typename... Args>
+    void register_service_adaptor_impl(Wiring &w, const Args &...args)
+    {
+        register_service_adaptor_impl<Interface, Impl>(
+            w, detail::default_adaptor_path<Interface>(), args...);
     }
 
     template <typename Interface>
@@ -1415,6 +1765,10 @@ namespace hgraph::service_adaptor
     {
         static_assert(detail::service_adaptor_interface<Interface>,
                       "service_adaptor::from_graph requires a service adaptor interface");
+        const std::string endpoint = detail::adaptor_from_graph_path<Interface>(user_path);
+        wiring_path_detail::merge_resolution(
+            user_path.resolution, w.service_implementation_stub_resolution(endpoint));
+        w.register_service_implementation_stub(endpoint, "service adaptor");
         return detail::request_input_source<Interface>(w, user_path);
     }
 
@@ -1428,20 +1782,24 @@ namespace hgraph::service_adaptor
     {
     };
 
-    template <typename Interface>
+    template <typename Interface, typename OutputPort>
     void to_graph(Wiring &w,
                   ServiceAdaptorPath user_path,
-                  Port<detail::request_output_schema_t<Interface>> output)
+                  OutputPort output)
     {
         static_assert(detail::service_adaptor_interface<Interface>,
                       "service_adaptor::to_graph requires a service adaptor interface");
+        const std::string endpoint = detail::adaptor_to_graph_path<Interface>(user_path);
+        wiring_path_detail::merge_resolution(
+            user_path.resolution, w.service_implementation_stub_resolution(endpoint));
+        w.register_service_implementation_stub(endpoint, "service adaptor");
         auto shared_output = detail::output_source<Interface>(w, user_path);
         detail::capture_output<Interface, explicit_impl_output_marker>(
             w, std::move(output), shared_output, user_path);
     }
 
     template <typename Interface>
-    void to_graph(Wiring &w, Port<detail::request_output_schema_t<Interface>> output)
+    void to_graph(Wiring &w, auto output)
     {
         to_graph<Interface>(w, detail::default_adaptor_path<Interface>(), std::move(output));
     }
@@ -1450,25 +1808,43 @@ namespace hgraph::service_adaptor
     [[nodiscard]] Port<detail::output_schema_t<Interface>> adaptor(
         Wiring &w,
         ServiceAdaptorPath user_path,
-        Port<detail::input_schema_t<Interface>> input)
+        auto input)
     {
         static_assert(detail::service_adaptor_interface<Interface>,
                       "service_adaptor::adaptor requires a service adaptor interface");
         using replies_schema = detail::request_output_schema_t<Interface>;
         using output_schema = detail::output_schema_t<Interface>;
 
+        user_path = detail::resolve_client_path<Interface>(std::move(user_path), input);
         const Int request_id = service::detail::next_request_id();
+        w.register_service_client_path(detail::adaptor_base_path<Interface>(user_path), "service adaptor");
         auto requests        = detail::request_input_source<Interface>(w, user_path);
         auto replies         = detail::output_source<Interface>(w, user_path);
         detail::capture_request_input<Interface>(w, std::move(input), requests, user_path, request_id);
-        return wire<stdlib::getitem_>(w, replies.template as<replies_schema>(), request_id)
-            .template as<output_schema>();
+        if constexpr (schema_descriptor<replies_schema>::is_concrete())
+        {
+            auto reply = wire<stdlib::getitem_>(w, replies.template as<replies_schema>(), request_id);
+            if constexpr (schema_descriptor<output_schema>::is_concrete())
+            {
+                return reply.template as<output_schema>();
+            }
+            else
+            {
+                return Port<output_schema>{w, reply.erased()};
+            }
+        }
+        else
+        {
+            auto dict = Port<replies_schema>{w, replies.erased()};
+            auto reply = wire<stdlib::getitem_>(w, dict, request_id);
+            return Port<output_schema>{w, reply.erased()};
+        }
     }
 
     template <typename Interface>
     [[nodiscard]] Port<detail::output_schema_t<Interface>> adaptor(
         Wiring &w,
-        Port<detail::input_schema_t<Interface>> input)
+        auto input)
     {
         return adaptor<Interface>(w, detail::default_adaptor_path<Interface>(), std::move(input));
     }

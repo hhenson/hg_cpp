@@ -4,6 +4,7 @@
 #include <hgraph/runtime/shared_output_node.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/static_schema.h>
+#include <hgraph/types/type_pattern.h>
 
 #include <array>
 #include <concepts>
@@ -24,7 +25,9 @@ namespace hgraph::adaptor
 
     struct AdaptorPath
     {
-        std::string value{};
+        std::string   value{};
+        ResolutionMap resolution{};
+        bool          has_typed_suffix{false};
     };
 
     [[nodiscard]] inline AdaptorPath path(std::string_view value)
@@ -38,7 +41,8 @@ namespace hgraph::adaptor
     [[nodiscard]] inline AdaptorPath path(std::string_view value, const Args &...args)
     {
         if (value.empty()) { throw std::invalid_argument("adaptor path must not be empty"); }
-        return AdaptorPath{wiring_path_detail::typed_path_value(value, args...)};
+        auto typed = wiring_path_detail::typed_path_value(value, args...);
+        return AdaptorPath{std::move(typed.value), std::move(typed.resolution), typed.has_typed_suffix};
     }
 
     /**
@@ -88,6 +92,43 @@ namespace hgraph::adaptor
 
         template <typename Interface>
         using output_schema_t = typename Interface::output_schema;
+
+        template <typename Schema>
+        void bind_schema_resolution(ResolutionMap &resolution,
+                                    const TSValueTypeMetaData *concrete,
+                                    std::string_view context)
+        {
+            if constexpr (!schema_descriptor<Schema>::is_concrete())
+            {
+                if (concrete == nullptr || !ts_pattern_match(to_pattern<Schema>(), concrete, resolution))
+                {
+                    throw std::invalid_argument(
+                        std::string{context} + " does not match generic adaptor schema " +
+                        ts_pattern_to_string(to_pattern<Schema>()));
+                }
+            }
+        }
+
+        template <typename Schema>
+        [[nodiscard]] const TSValueTypeMetaData *resolved_schema_meta(const ResolutionMap &resolution,
+                                                                      std::string_view context)
+        {
+            if constexpr (schema_descriptor<Schema>::is_concrete())
+            {
+                return schema_descriptor<Schema>::ts_meta();
+            }
+            else
+            {
+                const auto *meta = ts_pattern_resolve(to_pattern<Schema>(), resolution);
+                if (meta == nullptr)
+                {
+                    throw std::invalid_argument(
+                        std::string{context} + " has unresolved generic adaptor schema " +
+                        ts_pattern_to_string(to_pattern<Schema>()));
+                }
+                return meta;
+            }
+        }
 
         template <typename Interface>
         concept adaptor_interface =
@@ -196,6 +237,31 @@ namespace hgraph::adaptor
             return full;
         }
 
+        template <typename Interface>
+        void append_required_stub_endpoints(std::vector<WiringServiceImplementationEndpoint> &endpoints,
+                                            const AdaptorPath &user_path)
+        {
+            if constexpr (has_input_schema<Interface>::value)
+            {
+                endpoints.push_back(WiringServiceImplementationEndpoint{
+                    adaptor_from_graph_path<Interface>(user_path), user_path.resolution});
+            }
+            if constexpr (has_output_schema<Interface>::value)
+            {
+                endpoints.push_back(WiringServiceImplementationEndpoint{
+                    adaptor_to_graph_path<Interface>(user_path), user_path.resolution});
+            }
+        }
+
+        template <typename Interface, typename InputSchema>
+        [[nodiscard]] AdaptorPath resolve_client_path(AdaptorPath user_path, const Port<InputSchema> &input)
+        {
+            ResolutionMap inferred = user_path.resolution;
+            bind_schema_resolution<input_schema_t<Interface>>(
+                inferred, input.erased().schema, "adaptor input");
+            return wiring_path_detail::with_resolution(std::move(user_path), inferred);
+        }
+
         [[nodiscard]] inline Value path_key_value(const std::string &full_path)
         {
             return Value{Str{full_path}};
@@ -225,12 +291,11 @@ namespace hgraph::adaptor
         [[nodiscard]] Port<REF<input_schema_t<Interface>>> input_stub_source(Wiring &w, const AdaptorPath &user_path)
         {
             using input_schema = input_schema_t<Interface>;
-            static_assert(schema_descriptor<input_schema>::is_concrete(),
-                          "adaptor input schema must be concrete");
 
             std::string full_path = adaptor_from_graph_path<Interface>(user_path);
-            const auto *input_meta = schema_descriptor<input_schema>::ts_meta();
-            const auto *ref_meta = schema_descriptor<REF<input_schema>>::ts_meta();
+            const auto *input_meta = resolved_schema_meta<input_schema>(
+                user_path.resolution, "adaptor input");
+            const auto *ref_meta = TypeRegistry::instance().ref(input_meta);
 
             WiringNodeSchema schema;
             schema.output = ref_meta;
@@ -245,9 +310,9 @@ namespace hgraph::adaptor
             return Port<REF<input_schema>>{w, std::move(port)};
         }
 
-        template <typename Interface>
+        template <typename Interface, typename InputSchema>
         void capture_input(Wiring &w,
-                           Port<input_schema_t<Interface>> input,
+                           Port<InputSchema> input,
                            Port<REF<input_schema_t<Interface>>> source,
                            const AdaptorPath &user_path)
         {
@@ -258,8 +323,13 @@ namespace hgraph::adaptor
                 WiringInputRef{.source = sources[0]},
                 WiringInputRef{.source = sources[1], .rank_dependency = false},
             }};
+            const auto *input_meta = input.erased().schema;
+            if (input_meta == nullptr)
+            {
+                input_meta = resolved_schema_meta<input_schema>(user_path.resolution, "adaptor input");
+            }
             NodeBuilder builder = make_shared_output_capture_node(
-                adaptor_from_graph_path<Interface>(user_path), *schema_descriptor<input_schema>::ts_meta());
+                adaptor_from_graph_path<Interface>(user_path), *input_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
                 std::span<const WiringPortRef>{sources.data(), sources.size()}));
@@ -275,12 +345,11 @@ namespace hgraph::adaptor
         [[nodiscard]] Port<REF<output_schema_t<Interface>>> output_source(Wiring &w, const AdaptorPath &user_path)
         {
             using output_schema = output_schema_t<Interface>;
-            static_assert(schema_descriptor<output_schema>::is_concrete(),
-                          "adaptor output schema must be concrete");
 
             std::string full_path = adaptor_to_graph_path<Interface>(user_path);
-            const auto *target_meta = schema_descriptor<output_schema>::ts_meta();
-            const auto *ref_meta = schema_descriptor<REF<output_schema>>::ts_meta();
+            const auto *target_meta = resolved_schema_meta<output_schema>(
+                user_path.resolution, "adaptor output");
+            const auto *ref_meta = TypeRegistry::instance().ref(target_meta);
 
             WiringNodeSchema schema;
             schema.output = ref_meta;
@@ -295,9 +364,9 @@ namespace hgraph::adaptor
             return Port<REF<output_schema>>{w, std::move(port)};
         }
 
-        template <typename Interface>
+        template <typename Interface, typename OutputSchema>
         void capture_output(Wiring &w,
-                            Port<output_schema_t<Interface>> output,
+                            Port<OutputSchema> output,
                             Port<REF<output_schema_t<Interface>>> shared_output,
                             const AdaptorPath &user_path)
         {
@@ -308,8 +377,13 @@ namespace hgraph::adaptor
                 WiringInputRef{.source = sources[0]},
                 WiringInputRef{.source = sources[1], .rank_dependency = false},
             }};
+            const auto *output_meta = output.erased().schema;
+            if (output_meta == nullptr)
+            {
+                output_meta = resolved_schema_meta<output_schema>(user_path.resolution, "adaptor output");
+            }
             NodeBuilder builder = make_shared_output_capture_node(
-                adaptor_to_graph_path<Interface>(user_path), *schema_descriptor<output_schema>::ts_meta());
+                adaptor_to_graph_path<Interface>(user_path), *output_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
                 std::span<const WiringPortRef>{sources.data(), sources.size()}));
@@ -334,12 +408,13 @@ namespace hgraph::adaptor
             }
         }
 
-        template <typename Interface>
+        template <typename Interface, typename InputSchema>
         void client_from_graph(
             Wiring &w,
             AdaptorPath user_path,
-            Port<input_schema_t<Interface>> input)
+            Port<InputSchema> input)
         {
+            w.register_service_client_path(adaptor_base_path<Interface>(user_path), "adaptor");
             auto source = input_stub_source<Interface>(w, user_path);
             capture_input<Interface>(w, std::move(input), source, user_path);
         }
@@ -347,7 +422,36 @@ namespace hgraph::adaptor
         template <typename Interface>
         [[nodiscard]] Port<output_schema_t<Interface>> client_to_graph(Wiring &w, AdaptorPath user_path)
         {
-            return output_source<Interface>(w, user_path).template as<output_schema_t<Interface>>();
+            w.register_service_client_path(adaptor_base_path<Interface>(user_path), "adaptor");
+            auto source = output_source<Interface>(w, user_path);
+            if constexpr (schema_descriptor<output_schema_t<Interface>>::is_concrete())
+            {
+                return source.template as<output_schema_t<Interface>>();
+            }
+            else
+            {
+                return Port<output_schema_t<Interface>>{w, source.erased()};
+            }
+        }
+
+        template <typename Impl, typename... Args>
+        void wire_impl_with_scope(Wiring &w,
+                                  const AdaptorPath &user_path,
+                                  std::string description,
+                                  std::vector<WiringServiceImplementationEndpoint> required_endpoints,
+                                  const Args &...args)
+        {
+            w.begin_service_implementation(std::move(description), std::move(required_endpoints));
+            try
+            {
+                wire_impl<Impl>(w, user_path, args...);
+            }
+            catch (...)
+            {
+                w.cancel_service_implementation();
+                throw;
+            }
+            w.end_service_implementation();
         }
     }  // namespace detail
 
@@ -356,8 +460,12 @@ namespace hgraph::adaptor
     {
         static_assert(detail::adaptor_interface<Interface>,
                       "register_adaptor requires a type derived from adaptor::interface");
-        w.register_built_service_path(detail::adaptor_base_path<Interface>(user_path), "adaptor");
-        detail::wire_impl<Impl>(w, user_path, args...);
+        std::string base_path = detail::adaptor_base_path<Interface>(user_path);
+        w.register_built_service_path(base_path, "adaptor");
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+        detail::append_required_stub_endpoints<Interface>(required_endpoints, user_path);
+        detail::wire_impl_with_scope<Impl>(
+            w, user_path, "adaptor " + base_path, std::move(required_endpoints), args...);
     }
 
     template <typename Interface, typename Impl, typename... Args>
@@ -374,14 +482,29 @@ namespace hgraph::adaptor
         static_assert((detail::adaptor_interface<Interfaces> && ...),
                       "register_adaptors requires adaptor::interface descriptor types");
         (w.register_built_service_path(detail::adaptor_base_path<Interfaces>(user_path), "adaptor"), ...);
-        detail::wire_impl<Impl>(w, user_path, args...);
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+        (detail::append_required_stub_endpoints<Interfaces>(required_endpoints, user_path), ...);
+        detail::wire_impl_with_scope<Impl>(
+            w, user_path, "multi-adaptor implementation", std::move(required_endpoints), args...);
     }
 
     template <typename Interface>
         requires detail::has_input_schema<Interface>::value
     [[nodiscard]] Port<detail::input_schema_t<Interface>> from_graph(Wiring &w, AdaptorPath user_path)
     {
-        return detail::input_stub_source<Interface>(w, user_path).template as<detail::input_schema_t<Interface>>();
+        const std::string endpoint = detail::adaptor_from_graph_path<Interface>(user_path);
+        wiring_path_detail::merge_resolution(
+            user_path.resolution, w.service_implementation_stub_resolution(endpoint));
+        w.register_service_implementation_stub(endpoint, "adaptor");
+        auto source = detail::input_stub_source<Interface>(w, user_path);
+        if constexpr (schema_descriptor<detail::input_schema_t<Interface>>::is_concrete())
+        {
+            return source.template as<detail::input_schema_t<Interface>>();
+        }
+        else
+        {
+            return Port<detail::input_schema_t<Interface>>{w, source.erased()};
+        }
     }
 
     template <typename Interface>
@@ -395,15 +518,19 @@ namespace hgraph::adaptor
         requires detail::has_output_schema<Interface>::value
     void to_graph(Wiring &w,
                   AdaptorPath user_path,
-                  Port<detail::output_schema_t<Interface>> output)
+                  auto output)
     {
+        const std::string endpoint = detail::adaptor_to_graph_path<Interface>(user_path);
+        wiring_path_detail::merge_resolution(
+            user_path.resolution, w.service_implementation_stub_resolution(endpoint));
+        w.register_service_implementation_stub(endpoint, "adaptor");
         auto shared_output = detail::output_source<Interface>(w, user_path);
         detail::capture_output<Interface>(w, std::move(output), shared_output, user_path);
     }
 
     template <typename Interface>
         requires detail::has_output_schema<Interface>::value
-    void to_graph(Wiring &w, Port<detail::output_schema_t<Interface>> output)
+    void to_graph(Wiring &w, auto output)
     {
         to_graph<Interface>(w, detail::default_adaptor_path<Interface>(), std::move(output));
     }
@@ -414,8 +541,9 @@ namespace hgraph::adaptor
     [[nodiscard]] Port<detail::output_schema_t<Interface>> adaptor(
         Wiring &w,
         AdaptorPath user_path,
-        Port<detail::input_schema_t<Interface>> input)
+        auto input)
     {
+        user_path = detail::resolve_client_path<Interface>(std::move(user_path), input);
         detail::client_from_graph<Interface>(w, user_path, std::move(input));
         return detail::client_to_graph<Interface>(w, std::move(user_path));
     }
@@ -425,7 +553,7 @@ namespace hgraph::adaptor
                  detail::has_output_schema<Interface>::value)
     [[nodiscard]] Port<detail::output_schema_t<Interface>> adaptor(
         Wiring &w,
-        Port<detail::input_schema_t<Interface>> input)
+        auto input)
     {
         return adaptor<Interface>(w, detail::default_adaptor_path<Interface>(), std::move(input));
     }
@@ -449,15 +577,16 @@ namespace hgraph::adaptor
     template <typename Interface>
         requires(detail::has_input_schema<Interface>::value &&
                  !detail::has_output_schema<Interface>::value)
-    void adaptor(Wiring &w, AdaptorPath user_path, Port<detail::input_schema_t<Interface>> input)
+    void adaptor(Wiring &w, AdaptorPath user_path, auto input)
     {
+        user_path = detail::resolve_client_path<Interface>(std::move(user_path), input);
         detail::client_from_graph<Interface>(w, std::move(user_path), std::move(input));
     }
 
     template <typename Interface>
         requires(detail::has_input_schema<Interface>::value &&
                  !detail::has_output_schema<Interface>::value)
-    void adaptor(Wiring &w, Port<detail::input_schema_t<Interface>> input)
+    void adaptor(Wiring &w, auto input)
     {
         adaptor<Interface>(w, detail::default_adaptor_path<Interface>(), std::move(input));
     }
@@ -465,7 +594,7 @@ namespace hgraph::adaptor
     template <typename Interface>
         requires(detail::has_input_schema<Interface>::value &&
                  !detail::has_output_schema<Interface>::value)
-    void sink_adaptor(Wiring &w, AdaptorPath user_path, Port<detail::input_schema_t<Interface>> input)
+    void sink_adaptor(Wiring &w, AdaptorPath user_path, auto input)
     {
         adaptor<Interface>(w, std::move(user_path), std::move(input));
     }
@@ -473,7 +602,7 @@ namespace hgraph::adaptor
     template <typename Interface>
         requires(detail::has_input_schema<Interface>::value &&
                  !detail::has_output_schema<Interface>::value)
-    void sink_adaptor(Wiring &w, Port<detail::input_schema_t<Interface>> input)
+    void sink_adaptor(Wiring &w, auto input)
     {
         sink_adaptor<Interface>(w, detail::default_adaptor_path<Interface>(), std::move(input));
     }

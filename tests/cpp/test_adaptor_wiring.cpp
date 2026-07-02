@@ -1,3 +1,5 @@
+#include <hgraph/lib/testing/check_output.h>
+#include <hgraph/lib/testing/eval_node.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/adaptor_wiring.h>
@@ -136,6 +138,31 @@ namespace
         }
     };
 
+    struct GenericEchoAdaptor : adaptor::interface
+    {
+        static constexpr std::string_view name{"generic_echo"};
+        using input_schema = TS<ScalarVar<"T">>;
+        using output_schema = TS<ScalarVar<"T">>;
+    };
+
+    struct GenericEchoAdaptorImpl
+    {
+        static void compose(Wiring &w, Scalar<"path", Str> path)
+        {
+            const auto custom = adaptor::path(path.value());
+            auto input = adaptor::from_graph<GenericEchoAdaptor>(w, custom);
+            adaptor::to_graph<GenericEchoAdaptor>(w, custom, input);
+        }
+    };
+
+    struct MissingOutputAdaptorImpl
+    {
+        static void compose(Wiring &w)
+        {
+            (void)adaptor::from_graph<LoopbackAdaptor>(w);
+        }
+    };
+
     struct SinkOnlyAdaptor : adaptor::interface
     {
         static constexpr std::string_view name{"sink_only"};
@@ -205,16 +232,14 @@ namespace
 
     struct MultiAdaptorGraph
     {
-        static constexpr auto name = "multi_adaptor_graph";
+        [[maybe_unused]] static constexpr auto name = "multi_adaptor_graph";
 
-        static void compose(Wiring &w)
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> input)
         {
             const auto custom = adaptor::path("multi");
             adaptor::register_adaptors<MultiAdaptorImpl, MultiInAdaptor, MultiOutAdaptor>(w, custom);
-            auto input = wire<OneTickSource>(w);
             wire<MultiInAdaptor>(w, custom, input);
-            auto output = wire<MultiOutAdaptor>(w, custom);
-            wire<testing::record>(w, output, std::string{"multi_out"});
+            return wire<MultiOutAdaptor>(w, custom);
         }
     };
 
@@ -222,53 +247,63 @@ namespace
     {
         static constexpr auto name = "loopback_graph";
 
-        static void compose(Wiring &w)
+        static Port<TS<Int>> compose(Wiring &w)
         {
             adaptor::register_adaptor<LoopbackAdaptor, LoopbackAdaptorImpl>(w);
             auto input = wire<OneTickSource>(w);
-            auto out = wire<LoopbackAdaptor>(w, input);
-            wire<testing::record>(w, out, std::string{"out"});
+            return wire<LoopbackAdaptor>(w, input);
         }
     };
 
     struct ExplicitPathGraph
     {
-        static constexpr auto name = "explicit_path_graph";
+        [[maybe_unused]] static constexpr auto name = "explicit_path_graph";
 
-        static void compose(Wiring &w)
+        static Port<TS<Int>> compose(Wiring &w)
         {
             const auto custom = adaptor::path("custom");
             adaptor::register_adaptor<NamedInputAdaptor, NamedInputAdaptorImpl>(w, custom);
             auto input = wire<OneTickSource>(w);
-            auto out = wire<NamedInputAdaptor>(w, custom, input);
-            wire<testing::record>(w, out, std::string{"explicit_out"});
+            return wire<NamedInputAdaptor>(w, custom, input);
         }
     };
 
     struct SourceOnlyGraph
     {
-        static constexpr auto name = "source_only_graph";
+        [[maybe_unused]] static constexpr auto name = "source_only_graph";
 
-        static void compose(Wiring &w)
+        static Port<TS<Int>> compose(Wiring &w)
         {
             adaptor::register_adaptor<SourceOnlyAdaptor, SourceOnlyAdaptorImpl>(w);
-            auto out = wire<SourceOnlyAdaptor>(w);
-            wire<testing::record>(w, out, std::string{"source_out"});
+            return wire<SourceOnlyAdaptor>(w);
         }
     };
 
     struct TypedPathAdaptorGraph
     {
-        static constexpr auto name = "typed_path_adaptor_graph";
+        [[maybe_unused]] static constexpr auto name = "typed_path_adaptor_graph";
 
-        static void compose(Wiring &w)
+        static Port<TS<Int>> compose(Wiring &w, Scalar<"side", Str> side)
         {
             adaptor::register_adaptor<TypedSourceAdaptor, TypedSourceAdaptorImpl>(
                 w, adaptor::path("typed", arg<"side">(Str{"primary"})));
             adaptor::register_adaptor<TypedSourceAdaptor, TypedSourceAdaptorImpl>(
                 w, adaptor::path("typed", arg<"side">(Str{"secondary"})));
-            auto out = wire<TypedSourceAdaptor>(w, adaptor::path("typed", arg<"side">(Str{"secondary"})));
-            wire<testing::record>(w, out, std::string{"typed_path_out"});
+            adaptor::register_adaptor<TypedSourceAdaptor, TypedSourceAdaptorImpl>(
+                w, adaptor::path("typed", arg<"side">(Str{"secondary/special, value"})));
+            return wire<TypedSourceAdaptor>(w, adaptor::path("typed", arg<"side">(side.value())));
+        }
+    };
+
+    struct GenericAdaptorGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "generic_adaptor_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> input)
+        {
+            adaptor::register_adaptor<GenericEchoAdaptor, GenericEchoAdaptorImpl>(
+                w, adaptor::path("generic", arg<"T">(scalar_type<Int>())));
+            return wire<GenericEchoAdaptor>(w, adaptor::path("generic"), input).as<TS<Int>>();
         }
     };
 
@@ -293,6 +328,37 @@ namespace
             const auto custom = adaptor::path("duplicate");
             adaptor::register_adaptor<TypedSourceAdaptor, TypedSourceAdaptorImpl>(w, custom);
             adaptor::register_adaptor<TypedSourceAdaptor, TypedSourceAdaptorImpl>(w, custom);
+        }
+    };
+
+    struct MissingAdaptorImplementationGraph
+    {
+        static constexpr auto name = "missing_adaptor_implementation_graph";
+
+        static void compose(Wiring &w)
+        {
+            auto out = wire<SourceOnlyAdaptor>(w);
+            wire<testing::record>(w, out, std::string{"missing_adaptor_out"});
+        }
+    };
+
+    struct IllegalAdaptorStubGraph
+    {
+        static constexpr auto name = "illegal_adaptor_stub_graph";
+
+        static void compose(Wiring &w)
+        {
+            (void)adaptor::from_graph<LoopbackAdaptor>(w);
+        }
+    };
+
+    struct MissingAdaptorStubGraph
+    {
+        static constexpr auto name = "missing_adaptor_stub_graph";
+
+        static void compose(Wiring &w)
+        {
+            adaptor::register_adaptor<LoopbackAdaptor, MissingOutputAdaptorImpl>(w);
         }
     };
 }  // namespace
@@ -327,20 +393,7 @@ TEST_CASE("adaptor wiring round-trips a single-client input through an implement
 
     (void)TypeRegistry::instance().register_scalar<Int>("int");
 
-    GraphBuilder builder = build_graph<LoopbackGraph>();
-
-    GraphExecutorBuilder executor_builder;
-    executor_builder.graph_builder(std::move(builder))
-        .start_time(MIN_ST)
-        .end_time(MIN_ST + TimeDelta{6});
-
-    GraphExecutorValue executor = executor_builder.make_executor();
-    auto               view = executor.view();
-    view.run();
-
-    const auto values = testing::get_recorded_values<Int>(view.graph().global_state(), "out");
-    REQUIRE(!values.empty());
-    CHECK(values[0] == Int{41});
+    CHECK_OUTPUT(testing::eval_node<LoopbackGraph>(), testing::values<Int>(41));
 }
 
 TEST_CASE("adaptor wiring supports explicit paths through the adaptor call")
@@ -349,18 +402,7 @@ TEST_CASE("adaptor wiring supports explicit paths through the adaptor call")
 
     (void)TypeRegistry::instance().register_scalar<Int>("int");
 
-    GraphExecutorBuilder executor_builder;
-    executor_builder.graph_builder(build_graph<ExplicitPathGraph>())
-        .start_time(MIN_ST)
-        .end_time(MIN_ST + TimeDelta{6});
-
-    GraphExecutorValue executor = executor_builder.make_executor();
-    auto               view = executor.view();
-    view.run();
-
-    const auto values = testing::get_recorded_values<Int>(view.graph().global_state(), "explicit_out");
-    REQUIRE(!values.empty());
-    CHECK(values[0] == Int{41});
+    CHECK_OUTPUT(testing::eval_node<ExplicitPathGraph>(), testing::values<Int>(41));
 }
 
 TEST_CASE("adaptor wiring supports source-only and sink-only descriptors")
@@ -369,19 +411,7 @@ TEST_CASE("adaptor wiring supports source-only and sink-only descriptors")
 
     (void)TypeRegistry::instance().register_scalar<Int>("int");
 
-    GraphExecutorBuilder source_executor_builder;
-    source_executor_builder.graph_builder(build_graph<SourceOnlyGraph>())
-        .start_time(MIN_ST)
-        .end_time(MIN_ST + TimeDelta{6});
-
-    GraphExecutorValue source_executor = source_executor_builder.make_executor();
-    auto               source_view = source_executor.view();
-    source_view.run();
-
-    const auto source_values = testing::get_recorded_values<Int>(
-        source_view.graph().global_state(), "source_out");
-    REQUIRE(!source_values.empty());
-    CHECK(source_values[0] == Int{5});
+    CHECK_OUTPUT(testing::eval_node<SourceOnlyGraph>(), testing::values<Int>(5));
 
     GraphExecutorBuilder sink_executor_builder;
     sink_executor_builder.graph_builder(build_graph<SinkOnlyGraph>())
@@ -418,18 +448,7 @@ TEST_CASE("adaptor wiring supports multi-interface implementations")
 
     (void)TypeRegistry::instance().register_scalar<Int>("int");
 
-    GraphExecutorBuilder executor_builder;
-    executor_builder.graph_builder(build_graph<MultiAdaptorGraph>())
-        .start_time(MIN_ST)
-        .end_time(MIN_ST + TimeDelta{6});
-
-    GraphExecutorValue executor = executor_builder.make_executor();
-    auto               view = executor.view();
-    view.run();
-
-    const auto values = testing::get_recorded_values<Int>(view.graph().global_state(), "multi_out");
-    REQUIRE(!values.empty());
-    CHECK(values[0] == Int{41});
+    CHECK_OUTPUT(testing::eval_node<MultiAdaptorGraph>(testing::values<Int>(41)), testing::values<Int>(41));
 }
 
 TEST_CASE("adaptor wiring supports scalar-qualified paths")
@@ -438,18 +457,18 @@ TEST_CASE("adaptor wiring supports scalar-qualified paths")
 
     (void)TypeRegistry::instance().register_scalar<Int>("int");
 
-    GraphExecutorBuilder executor_builder;
-    executor_builder.graph_builder(build_graph<TypedPathAdaptorGraph>())
-        .start_time(MIN_ST)
-        .end_time(MIN_ST + TimeDelta{6});
+    CHECK_OUTPUT(testing::eval_node<TypedPathAdaptorGraph>(Str{"primary"}), testing::values<Int>(11));
+    CHECK_OUTPUT(testing::eval_node<TypedPathAdaptorGraph>(Str{"secondary"}), testing::values<Int>(22));
+    CHECK_OUTPUT(testing::eval_node<TypedPathAdaptorGraph>(Str{"secondary/special, value"}), testing::values<Int>(22));
+}
 
-    GraphExecutorValue executor = executor_builder.make_executor();
-    auto               view = executor.view();
-    view.run();
+TEST_CASE("adaptor wiring resolves generic interface identities from client input")
+{
+    using namespace hgraph;
 
-    const auto values = testing::get_recorded_values<Int>(view.graph().global_state(), "typed_path_out");
-    REQUIRE(!values.empty());
-    CHECK(values[0] == Int{22});
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    CHECK_OUTPUT(testing::eval_node<GenericAdaptorGraph>(testing::values<Int>(41)), testing::values<Int>(41));
 }
 
 TEST_CASE("adaptor wiring rejects duplicate implementation registrations")
@@ -459,4 +478,15 @@ TEST_CASE("adaptor wiring rejects duplicate implementation registrations")
     (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     CHECK_THROWS_AS(build_graph<DuplicateAdaptorGraph>(), std::invalid_argument);
+}
+
+TEST_CASE("adaptor wiring validates missing implementations and illegal stubs")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    CHECK_THROWS_AS(build_graph<MissingAdaptorImplementationGraph>(), std::invalid_argument);
+    CHECK_THROWS_AS(build_graph<IllegalAdaptorStubGraph>(), std::invalid_argument);
+    CHECK_THROWS_AS(build_graph<MissingAdaptorStubGraph>(), std::invalid_argument);
 }
