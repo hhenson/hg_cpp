@@ -71,6 +71,17 @@ new dependency depth per engine cycle; the tests assert the settled state and so
 pass under either, but same-cycle settlement is the behaviour this runtime
 targets — see *The mesh evaluation engine* below.)
 
+.. mermaid::
+
+   flowchart LR
+      req["requested key: fib(7)"] --> f7["fib(7) instance"]
+      f7 -->|"mesh_ref[6]"| f6["fib(6) — created on demand"]
+      f7 -->|"mesh_ref[5]"| f5["fib(5)"]
+      f6 --> f5
+      f6 -->|"…"| f1["fib(1), fib(0)"]
+      f5 -->|"…"| f1
+      f1 -->|"evaluate leaf-first in dependency rank order,<br/>re-entering via the graph's pause/resume cursor"| out["settled output {7: 13}<br/>same engine cycle"]
+
 Removal and reference counting
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

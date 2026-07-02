@@ -10,6 +10,24 @@ The vocabulary is grouped into three roles: a *concept* group that describes
 what something is, a *resolution* group that picks an implementation for it,
 and a *data* group that holds and exposes the actual instance.
 
+.. mermaid::
+
+   flowchart LR
+      subgraph interned["Interned — stable addresses, program lifetime"]
+         Schema["Schema<br/>(layout-free type identity)"]
+         Plan["Plan<br/>(size/alignment/offsets + lifecycle ops)"]
+         Ops["Ops<br/>(struct of fn-ptrs)"]
+      end
+      Builder["Builder<br/>(the only place Schema binds to a Plan + Ops)"]
+      Value["Value<br/>(owns memory; constructed in place by the Plan)"]
+      View["View<br/>(borrows memory + Ops)"]
+
+      Schema --> Builder
+      Plan --> Builder
+      Ops --> Builder
+      Builder -->|"constructs into pre-allocated storage"| Value
+      Value -->|"borrow"| View
+
 Concept Group
 ~~~~~~~~~~~~~
 

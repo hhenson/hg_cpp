@@ -102,6 +102,31 @@ considered. Active time-series inputs, node-local schedulers, ``schedule_on_star
 and explicit graph scheduling APIs all express work by writing the graph
 schedule table.
 
+The evaluation cycle, end to end — every activation path funnels into the one
+schedule table:
+
+.. mermaid::
+
+   flowchart TD
+      advance["executor ops: advance evaluation_time<br/>(Simulation jumps; RealTime waits on the wall clock)"]
+      drain["drain pending push values into push-source outputs<br/>(real-time root graphs only)"]
+      scan["graph: scan nodes in rank order"]
+      gate{"schedule[node] == evaluation_time?"}
+      eval["node eval"]
+      tick["output tick: record_modified"]
+      notify["TSData observer set: notify"]
+      sched["input notifier: schedule_node(downstream, now)"]
+      selfsched["NodeScheduler / schedule_on_start<br/>also write the schedule table"]
+      next["fold next_scheduled_time (MAX_DT = idle);<br/>executor advances or sleeps until then"]
+
+      advance --> drain --> scan
+      scan --> gate
+      gate -- "no" --> scan
+      gate -- "yes" --> eval
+      eval --> tick --> notify --> sched --> scan
+      eval -.-> selfsched
+      scan --> next --> advance
+
 Evaluation Cycle
 ~~~~~~~~~~~~~~~~
 

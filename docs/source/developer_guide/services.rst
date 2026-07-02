@@ -24,6 +24,20 @@ The boundary model (design decisions)
 Everything on this page is built from one runtime shape — a **feedback-style
 source/capture pair** — applied with different payloads:
 
+.. mermaid::
+
+   flowchart LR
+      client["client / producer node"]
+      cap["capture node (sink)<br/>records intent into the paired source's state"]
+      src["boundary source (pull source)<br/>owns the shared output + graph-local state"]
+      out["owned output<br/>REF&lt;T&gt; / TSS&lt;K&gt; / TSD&lt;int, request&gt;"]
+      cons["consumers bind here and are woken by<br/>ordinary output notification"]
+
+      client --> cap
+      cap -->|"write state; schedule_node<br/>(start: now / eval: +MIN_TD)"| src
+      src -->|"applies state in one mutation<br/>of its own output"| out
+      out --> cons
+
 - Runtime boundary outputs follow the normal graph rule: every non-sink node
   owns its output, and boundary machinery forwards into that output instead of
   copying values between outputs.

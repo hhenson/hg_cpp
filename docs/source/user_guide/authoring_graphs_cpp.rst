@@ -266,6 +266,14 @@ The tables below list the overloads currently registered by that call. Operator 
 outside this table may be declared for catalogue completeness, but they are not wired
 until a concrete implementation is registered.
 
+.. note::
+
+   This section is the **single authoritative overload catalogue**. Update it in
+   the same change as the registrations in
+   ``include/hgraph/lib/std/operators/impl/*.h`` (the developer guide's
+   *Operators* page records the framework design and intentionally does not
+   duplicate this list).
+
 Notation:
 
 - ``Int`` is the standard hgraph integer scalar (``std::int64_t``), ``Float`` is

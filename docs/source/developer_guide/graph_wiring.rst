@@ -39,14 +39,19 @@ Because Python cannot instantiate C++ templates, the engine is split so that the
 part Python shares is an ordinary runtime object, and the C++ ergonomics sit on
 top of it:
 
-.. code-block:: text
+.. mermaid::
 
-   C++ graph-struct  ─┐                          ┌─ StaticGraphSignature<G>  (reflect wire())
-                      ├─►  shared runtime core  ──┤
-   Python @graph     ─┘   (Wiring → GraphBuilder)  └─ Python signature introspection
-                                   │
-                                   ▼
-                           topo-sort + rank → flattened nodes + edges → runtime graph
+   flowchart TD
+      cpp["C++ graph-struct<br/>StaticGraphSignature&lt;G&gt; (reflect wire())"]
+      py["Python @graph<br/>(signature introspection — planned)"]
+      core["shared runtime core<br/>(Wiring → GraphBuilder)"]
+      rank["topo-sort + rank"]
+      flat["flattened nodes + edges"]
+      rt["runtime graph"]
+
+      cpp --> core
+      py --> core
+      core --> rank --> flat --> rt
 
 - **Runtime core** (``Wiring``) — a small, language-agnostic object that
   accumulates a graph and, on finish, topologically sorts and ranks it. Both C++

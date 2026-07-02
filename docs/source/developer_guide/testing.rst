@@ -6,7 +6,8 @@ Testing should scale with the runtime surface being introduced.
 C++ Tests
 ---------
 
-C++ tests live under ``tests/cpp``. They should cover:
+C++ tests live under ``tests/cpp`` (add new files to
+``tests/cpp/CMakeLists.txt``). They should cover:
 
 - public headers and exported CMake targets,
 - memory ownership and teardown,
@@ -24,23 +25,91 @@ test body runs. Tests should normally use the default registry state instead of
 calling ``stdlib::register_standard_types()`` themselves; use a private test-only
 scalar type when a test needs to exercise unregistered-type behaviour.
 
+.. note::
+
+   The teardown ordering encoded in ``registry_test_listener.cpp`` is
+   load-bearing: pointer-keyed plan/context registries must be cleared *before*
+   ``TypeRegistry::reset()`` frees the schemas they key on, or a later test can
+   intern a stale pointer (this caused real memory corruption once). Any new
+   pointer-keyed registry must be added to that sequence.
+
+The graph unit-testing toolkit (design record)
+----------------------------------------------
+
+This section is the design record for the ``eval_node`` harness and its
+substrate (``include/hgraph/lib/testing/`` — ``eval_node.h``,
+``record_replay.h``, ``check_output.h``). The user-facing reference, with
+worked examples for every time-series kind, is
+*User Guide > Testing Graphs in C++*; this section records *how it works* so
+the toolkit can be maintained and extended.
+
+**Shape.** ``eval_node<NodeT>(inputs…)`` wires and runs a real graph under the
+ordinary executor: one erased ``replay`` source per time-series input, the node
+under test, and one erased ``record`` sink on its output. Tests deal only in
+per-cycle value sequences — one element per engine cycle, ``none`` meaning "no
+tick this cycle".
+
+**Buffers.** ``replay``/``record`` move data through a cycle-aligned
+``List<Any>`` buffer stored in ``GlobalState`` (seeded at wiring via
+``Wiring::global_state()`` / read and written at runtime through the
+``GlobalStateView`` injectable). ``set_replay_values`` /
+``get_recorded_values`` are the raw access points the harness uses.
+
+**Type erasure.** ``replay`` and ``record`` are *single erased nodes*, not
+per-schema templates: capture uses the runtime, type-erased ``capture_delta``
+(dispatch on ``schema()->kind``) to rebuild a canonical delta ``Value`` from
+the live view, and replay applies deltas with ``apply_delta``. Adding a new
+time-series kind therefore extends ``capture_delta``/``apply_delta``, not the
+testing library.
+
+**Element mapping** (``ts_harness<S>::element``): for ``TS<T>`` the harness
+element is ``T``; for ``SIGNAL`` it is ``bool``; for the collection kinds
+(``TSS`` / ``TSL`` / ``TSD`` / ``TSB`` / ``TSW``) it is a canonical delta
+``Value`` built with the recursive builders ``set_delta`` / ``list_delta`` /
+``dict_delta`` / ``tsb_delta``. Expected outputs are written with the same
+``values<T>(…)`` helper used for inputs and compared by ``CHECK_OUTPUT``,
+which uses ``Value::equals`` (order-independent for sets/maps) for erased
+elements and ``==`` otherwise.
+
+**Overloads.** Three forms: a source-node form (no time-series inputs; scalar
+arguments follow directly), an input-driven form (input sequences first, then
+scalars — supports multiple TS inputs, named arguments via ``arg<"name">(v)``,
+and node ``defaults()``), and an operator form ``eval_node<Op>(…)`` that
+dispatches through the ``OperatorRegistry`` at wiring time and returns
+type-erased ``vector<optional<Value>>``. Callable arguments (for higher-order
+operators such as ``map_`` / ``switch_`` / ``reduce``) are passed as the
+``WiredFn`` scalar ``fn<X>()``.
+
+**Sources are not scheduled by default.** A source node in a test graph
+initiates via ``schedule_on_start = true`` (declarative), a
+``SingleShotScheduler`` (lightweight one-shot in ``start``), or a full
+``NodeScheduler``. This mirrors the runtime rule that the graph schedule table
+is the only activation gate.
+
+**Reuse rule.** Tests reuse ``lib/std`` operators and the ``replay``/``record``
+substrate rather than defining duplicate test nodes; a bespoke node in a test
+file should exist only to exercise a shape the toolkit cannot express.
+
 Python Compatibility Tests
 --------------------------
 
 Python tests live under ``tests/python`` and should be used where Python wiring or Python user nodes cross into the C++ runtime.
 
-Initial Commands
-----------------
+Commands
+--------
 
 .. code-block:: bash
 
-   cmake -S . -B /tmp/hg_cpp-cmake-check
-   cmake --build /tmp/hg_cpp-cmake-check
-   ctest --test-dir /tmp/hg_cpp-cmake-check --output-on-failure
+   cmake -S . -B build
+   cmake --build build -j
+   ctest --test-dir build --output-on-failure
+   ./build/tests/cpp/hgraph_unit_tests   # run the Catch2 suite directly
+
+Sanitizer configurations: ``-DHGRAPH_ENABLE_ASAN=ON -DHGRAPH_ENABLE_UBSAN=ON``
+(Clang/GCC; exclusive with TSAN).
 
 Open Design Items
 -----------------
 
-- Select the long-term C++ test framework.
 - Decide how to run Python compatibility tests against locally built bindings.
 - Add sanitizer and leak-checking CI profiles.

@@ -769,7 +769,10 @@ Roadmap
    ``str``; an unmapped operation is a wiring-time error (Python's ``KeyError``).
    ``default_`` is the REF-forwarding substitute-until-valid implementation mirroring
    Python's ``_default`` (``valid=()``; keeps ``ts`` active while invalid, forwards the
-   reference and goes passive once valid).
+   reference and goes passive once valid). The **per-overload catalogue is
+   maintained once**, in *User Guide > Wiring Graphs in C++ > Supported standard
+   operator overloads* — this page records the operator-framework design and
+   deliberately does not duplicate that inventory.
 4. **Phase 4 — Python implementation path.** Runtime-data ``OperatorImpl`` from a
    Python signature; ``NodeCallbacks`` hosting a Python callable; cross-boundary
    identity asserted. Behind ``HGRAPH_ENABLE_PYTHON_USER_NODES``.
