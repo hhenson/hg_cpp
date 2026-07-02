@@ -73,7 +73,8 @@ TEST_CASE("context source publishes the reference captured during start")
     CHECK_FALSE(view.global_state().contains(key));
 
     view.stop();
-    const auto &cleared = view.node_at(1).state().checked_as<TimeSeriesReference>();
+    auto        state_view = view.node_at(1).state();
+    const auto &cleared    = state_view.checked_as<TimeSeriesReference>();
     CHECK(cleared.is_empty());
     CHECK(cleared.target_schema() == nullptr);
 }

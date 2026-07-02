@@ -196,7 +196,8 @@ TEST_CASE("testing set_output_value moves owned scalar values")
     view.start(t1);
     view.evaluate(t1);
 
-    const auto &output_value = node.view().output(t1).value().checked_as<MoveCountingScalar>();
+    auto        output_view  = node.view().output(t1).value();
+    const auto &output_value = output_view.checked_as<MoveCountingScalar>();
     REQUIRE(output_value.value == 17);
     REQUIRE(MoveCountingScalar::copy_constructs == 0);
     REQUIRE(MoveCountingScalar::copy_assigns == 0);
