@@ -326,14 +326,14 @@ input-to-output transition identity, while the projected output
 
    sequenceDiagram
       participant Output as Output TSData
-      participant Link as TargetLink observer
+      participant TLink as TargetLink observer
       participant Prefix as Non-peered parents
       participant Active as Active scheduling notifier
       participant Node as Owning node Notifiable
 
-      Output->>Link: notify(modified_time)
-      Link->>Link: record local modified time
-      Link->>Prefix: bubble child modified
+      Output->>TLink: notify(modified_time)
+      TLink->>TLink: record local modified time
+      TLink->>Prefix: bubble child modified
       Prefix->>Active: notify(modified_time)
       Active->>Node: notify(modified_time)
 
