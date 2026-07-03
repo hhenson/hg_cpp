@@ -52,6 +52,20 @@ namespace hgraph
     {
         inline constexpr std::size_t npos = static_cast<std::size_t>(-1);
 
+        /**
+         * Always-false trait used to fail compilation when a required call
+         * argument is neither supplied nor defaulted. It exists (instead of a
+         * plain dependent-false) so the compiler error NAMES the missing
+         * parameter: the failed requirement reads
+         * ``missing_required_argument<Scalar<{"delta"}, long long>>::value``,
+         * pointing straight at the ``In<"name", …>`` / ``Scalar<"name", T>``
+         * that was not provided.
+         */
+        template <typename MissingParam>
+        struct missing_required_argument : std::false_type
+        {
+        };
+
         template <typename T>
         struct is_named_arg : std::false_type
         {

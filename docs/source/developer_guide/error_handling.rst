@@ -37,6 +37,14 @@ This matches Python: ``exception_time_series`` is the light per-node path and
 single node through its error output, while ``try_except_`` over a graph builds a
 catching wrapper node).
 
+An exception that neither path catches — one that escapes the **root** graph —
+is annotated at the root evaluation boundary with the throwing node's identity
+(``node[<index> '<name>'] evaluate failed: …``) so an unhandled failure is
+diagnosable. This annotation never alters what capture or ``try_except_`` see:
+they sit *below* the root boundary and receive the original exception, so
+``NodeError.error_msg`` stays the raw ``what()`` (see *Runtime Diagnostics* in
+:doc:`architecture`).
+
 
 ``NodeError``
 -------------

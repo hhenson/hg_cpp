@@ -27,11 +27,13 @@ scalar type when a test needs to exercise unregistered-type behaviour.
 
 .. note::
 
-   The teardown ordering encoded in ``registry_test_listener.cpp`` is
-   load-bearing: pointer-keyed plan/context registries must be cleared *before*
-   ``TypeRegistry::reset()`` frees the schemas they key on, or a later test can
-   intern a stale pointer (this caused real memory corruption once). Any new
-   pointer-keyed registry must be added to that sequence.
+   The teardown ordering is load-bearing: pointer-keyed plan/context registries
+   must be cleared *before* ``TypeRegistry::reset()`` frees the schemas they key
+   on, or a later test can intern a stale pointer (this caused real memory
+   corruption once). The ordered sequence is library-owned —
+   ``reset_all_registries()`` in ``hgraph/types/registry_reset.h`` — and the
+   listener only delegates to it. Any new pointer-keyed registry must be added
+   **there**, never as a second teardown sequence.
 
 The graph unit-testing toolkit (design record)
 ----------------------------------------------

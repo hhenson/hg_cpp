@@ -127,6 +127,26 @@ schedule table:
       eval -.-> selfsched
       scan --> next --> advance
 
+Runtime Diagnostics
+~~~~~~~~~~~~~~~~~~~
+
+Two hooks exist for the "which node is misbehaving?" question
+(``tests/cpp/test_graph_introspection.cpp``):
+
+- **Node identity on escaping exceptions.** An exception that leaves a node's
+  ``start`` / ``evaluate`` / ``stop`` and would escape the **root** graph is
+  re-thrown as ``std::runtime_error`` prefixed with
+  ``node[<index> '<label-or-display-name>'] <phase> failed:``. The annotation
+  happens only at the root boundary: exceptions inside nested graphs reach
+  ``try_except_`` / per-node error capture unmodified, so ``NodeError``
+  payloads keep the original message (see :doc:`error_handling`).
+- **``GraphView::dump()``** returns a human-readable snapshot — graph name,
+  lifecycle state, ``evaluation_time`` / ``next_scheduled_time``, then one
+  line per node with its index, display name/label, and current
+  graph-schedule entry (``-`` = not scheduled). ``GraphView`` also exposes
+  ``node_scheduled_time(index)`` for programmatic inspection. Intended for
+  logging and debugger use, not as a stable machine format.
+
 Evaluation Cycle
 ~~~~~~~~~~~~~~~~
 

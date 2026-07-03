@@ -23,6 +23,62 @@ namespace hgraph
             return std::chrono::time_point_cast<std::chrono::microseconds>(engine_clock::now());
         }
 
+        /** "node[3 'my_label']" — the identity prefix used in diagnostics. */
+        [[nodiscard]] std::string node_identity(const NodeView &node, std::size_t index)
+        {
+            std::string      id = "node[" + std::to_string(index);
+            std::string_view name{};
+            if (node.valid())
+            {
+                name = node.label();
+                if (name.empty() && node.schema() != nullptr && node.schema()->display_name != nullptr)
+                {
+                    name = node.schema()->display_name;
+                }
+            }
+            if (!name.empty())
+            {
+                id += " '";
+                id.append(name);
+                id += '\'';
+            }
+            id += ']';
+            return id;
+        }
+
+        /**
+         * Re-throw the in-flight exception annotated with the throwing node's
+         * identity. Applied only at the ROOT graph boundary: exceptions inside
+         * nested graphs must reach ``try_except_`` / per-node error capture
+         * unmodified (``NodeError.error_msg`` is the original ``what()``), so
+         * the annotation happens exactly once — where an exception would
+         * otherwise leave the runtime with no clue which node threw.
+         */
+        [[noreturn]] void rethrow_with_node_identity(const NodeView &node, std::size_t index, const char *phase)
+        {
+            const std::string prefix = node_identity(node, index) + ' ' + phase + " failed: ";
+            try
+            {
+                throw;
+            }
+            catch (const std::exception &e)
+            {
+                throw std::runtime_error(prefix + e.what());
+            }
+            catch (...)
+            {
+                throw std::runtime_error(prefix + "unknown error");
+            }
+        }
+
+        /** Render a graph-schedule entry for dump(): sentinels by name, else raw ticks. */
+        [[nodiscard]] std::string schedule_to_string(DateTime when)
+        {
+            if (when == MIN_DT) { return "-"; }
+            if (when == MAX_DT) { return "MAX_DT"; }
+            return std::to_string(when.time_since_epoch().count());
+        }
+
         [[nodiscard]] TSOutputView output_at_path(TSOutputView view, const std::vector<std::size_t> &path)
         {
             for (const std::size_t component : path)
@@ -601,7 +657,21 @@ namespace hgraph
             // than the graph blanket-scheduling everything.
             for (std::size_t index = 0; index < runtime.layout.node_count; ++index)
             {
-                graph_node_view(runtime, graph.data(), index).start(state.evaluation_time);
+                if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
+                {
+                    try
+                    {
+                        graph_node_view(runtime, graph.data(), index).start(state.evaluation_time);
+                    }
+                    catch (...)
+                    {
+                        rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index), index, "start");
+                    }
+                }
+                else
+                {
+                    graph_node_view(runtime, graph.data(), index).start(state.evaluation_time);
+                }
                 ++started_nodes;
             }
 
@@ -628,10 +698,35 @@ namespace hgraph
             FirstExceptionRecorder exceptions;
             for (std::size_t index = runtime.layout.node_count; index > 0; --index)
             {
-                exceptions.capture([&] { graph_node_view(runtime, graph.data(), index - 1).stop(state.evaluation_time); });
+                exceptions.capture([&] {
+                    if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
+                    {
+                        try
+                        {
+                            graph_node_view(runtime, graph.data(), index - 1).stop(state.evaluation_time);
+                        }
+                        catch (...)
+                        {
+                            rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index - 1), index - 1,
+                                                       "stop");
+                        }
+                    }
+                    else
+                    {
+                        graph_node_view(runtime, graph.data(), index - 1).stop(state.evaluation_time);
+                    }
+                });
             }
             state.started = false;
             exceptions.rethrow_if_any();
+        }
+
+        template <typename Storage>
+        DateTime node_scheduled_time_impl(const void *context, const void *memory, std::size_t index) noexcept
+        {
+            const auto &runtime = graph_context(context);
+            if (index >= runtime.layout.node_count) { return MIN_DT; }
+            return graph_schedule(runtime, const_cast<void *>(memory), index);
         }
 
         template <typename Storage>
@@ -678,7 +773,15 @@ namespace hgraph
                             {
                                 if (scheduled_now) { scheduled = MIN_DT; }
                                 state.evaluation_cursor = index;
-                                graph_node_view(runtime, graph.data(), index).evaluate(evaluation_time);
+                                try
+                                {
+                                    graph_node_view(runtime, graph.data(), index).evaluate(evaluation_time);
+                                }
+                                catch (...)
+                                {
+                                    rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index), index,
+                                                               "evaluate");
+                                }
                             }
                             if (scheduled > evaluation_time && scheduled < state.next_scheduled_time)
                             {
@@ -696,7 +799,27 @@ namespace hgraph
                 if (scheduled == evaluation_time)
                 {
                     // post-eval MIN_DT stamp removed (see lazy-cleanup invariant)
-                    if (!graph_node_view(runtime, graph.data(), state.evaluation_cursor).evaluate(state.evaluation_time))
+                    bool completed = true;
+                    if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
+                    {
+                        try
+                        {
+                            completed = graph_node_view(runtime, graph.data(), state.evaluation_cursor)
+                                            .evaluate(state.evaluation_time);
+                        }
+                        catch (...)
+                        {
+                            rethrow_with_node_identity(
+                                graph_node_view(runtime, graph.data(), state.evaluation_cursor),
+                                state.evaluation_cursor, "evaluate");
+                        }
+                    }
+                    else
+                    {
+                        completed = graph_node_view(runtime, graph.data(), state.evaluation_cursor)
+                                        .evaluate(state.evaluation_time);
+                    }
+                    if (!completed)
                     {
                         // Pause requested: hold the cursor on this node and propagate upward
                         // (the enclosing mesh node resolves the dependency and resumes us).
@@ -790,6 +913,7 @@ namespace hgraph
                     .next_scheduled_time_impl = &next_scheduled_time_impl<RootGraphRuntimeStorage>,
                     .node_count_impl = &node_count_impl<RootGraphRuntimeStorage>,
                     .node_at_impl = &node_at_impl<RootGraphRuntimeStorage>,
+                    .node_scheduled_time_impl = &node_scheduled_time_impl<RootGraphRuntimeStorage>,
                     .global_state_impl = &root_global_state_impl,
                     .root_impl = &root_graph_root_impl,
                     .graph_executor_impl = &root_graph_executor_impl,
@@ -813,6 +937,7 @@ namespace hgraph
                     .next_scheduled_time_impl = &next_scheduled_time_impl<NestedGraphRuntimeStorage>,
                     .node_count_impl = &node_count_impl<NestedGraphRuntimeStorage>,
                     .node_at_impl = &node_at_impl<NestedGraphRuntimeStorage>,
+                    .node_scheduled_time_impl = &node_scheduled_time_impl<NestedGraphRuntimeStorage>,
                     .global_state_impl = &nested_global_state_impl,
                     .root_impl = &nested_graph_root_impl,
                     .graph_executor_impl = &nested_graph_executor_impl,
@@ -911,6 +1036,40 @@ namespace hgraph
     NodeView GraphView::node_at(std::size_t index) const
     {
         return ops().node_at_impl(ops().context, data(), index);
+    }
+
+    DateTime GraphView::node_scheduled_time(std::size_t node_index) const noexcept
+    {
+        if (!valid() || ops().node_scheduled_time_impl == nullptr) { return MIN_DT; }
+        return ops().node_scheduled_time_impl(ops().context, data(), node_index);
+    }
+
+    std::string GraphView::dump() const
+    {
+        if (!valid()) { return "<invalid graph>"; }
+
+        std::string out = "graph";
+        const auto *meta = schema();
+        if (meta != nullptr && meta->display_name != nullptr && *meta->display_name != '\0')
+        {
+            out += " '";
+            out += meta->display_name;
+            out += '\'';
+        }
+        const std::size_t count = node_count();
+        out += started() ? " [started" : " [stopped";
+        out += " nodes=" + std::to_string(count);
+        out += " evaluation_time=" + schedule_to_string(evaluation_time());
+        out += " next_scheduled=" + schedule_to_string(next_scheduled_time());
+        out += "]\n";
+
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            out += "  " + node_identity(node_at(index), index);
+            out += " scheduled=" + schedule_to_string(node_scheduled_time(index));
+            out += '\n';
+        }
+        return out;
     }
 
     GlobalStateView GraphView::global_state() const

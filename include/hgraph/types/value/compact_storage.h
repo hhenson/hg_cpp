@@ -120,11 +120,16 @@ namespace hgraph
             const void *(*at)(const void *owner, std::size_t slot) noexcept{nullptr};
         };
 
+        // The hash/equal functors hold a RAW pointer to the SlotIndexContext the
+        // owning SlotIndex uniquely owns on the heap: the pointee's address is
+        // stable across SlotIndex moves, and single-threaded evaluation means no
+        // shared ownership is needed (a shared_ptr here put atomic refcounting on
+        // the per-tick value path — banned by the single-threaded rule).
         struct SlotHash
         {
             using is_transparent = void;
 
-            std::shared_ptr<SlotIndexContext> context{};
+            const SlotIndexContext *context{nullptr};
 
             [[nodiscard]] std::size_t operator()(std::int32_t slot) const
             {
@@ -141,7 +146,7 @@ namespace hgraph
         {
             using is_transparent = void;
 
-            std::shared_ptr<SlotIndexContext> context{};
+            const SlotIndexContext *context{nullptr};
 
             [[nodiscard]] bool operator()(std::int32_t lhs, std::int32_t rhs) const
             {
@@ -174,8 +179,8 @@ namespace hgraph
             using slot_type = std::int32_t;
 
             SlotIndex()
-                : context_{std::make_shared<SlotIndexContext>()}
-                , slots_{0, SlotHash{context_}, SlotEqual{context_}}
+                : context_{std::make_unique<SlotIndexContext>()}
+                , slots_{0, SlotHash{context_.get()}, SlotEqual{context_.get()}}
             {
             }
 
@@ -243,14 +248,18 @@ namespace hgraph
                 return static_cast<slot_type>(slot);
             }
 
-            std::shared_ptr<SlotIndexContext> context_;
+            std::unique_ptr<SlotIndexContext> context_;
             ankerl::unordered_dense::set<slot_type, SlotHash, SlotEqual> slots_;
 
+            // A moved-from SlotIndex gets a fresh context + empty set so it stays
+            // fully usable (reset/rebind/find) — the move transfers the uniquely
+            // owned context, whose stable heap address keeps the destination
+            // set's raw functor pointers valid.
             void reset_empty_context()
             {
-                context_ = std::make_shared<SlotIndexContext>();
+                context_ = std::make_unique<SlotIndexContext>();
                 slots_   = ankerl::unordered_dense::set<slot_type, SlotHash, SlotEqual>{
-                    0, SlotHash{context_}, SlotEqual{context_}};
+                    0, SlotHash{context_.get()}, SlotEqual{context_.get()}};
             }
         };
     }  // namespace compact_detail

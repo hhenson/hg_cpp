@@ -171,20 +171,27 @@ namespace hgraph
         KeySlotStore(const KeySlotStore &)            = delete;
         KeySlotStore &operator=(const KeySlotStore &) = delete;
 
-        /** Move construction transfers slots, bookkeeping, and rebuilds the lookup index. */
+        /**
+         * Move construction transfers slots, bookkeeping, AND the lookup index
+         * (O(1), allocation-free — honestly ``noexcept``): the index functors
+         * point at the heap-stable ``IndexBackPtr`` cell, which moves with the
+         * store and is re-pointed with one write. The moved-from store keeps no
+         * index and must only be destroyed or assigned into.
+         */
         KeySlotStore(KeySlotStore &&other) noexcept
             : key_storage(std::move(other.key_storage)), constructed(std::move(other.constructed)), live(std::move(other.live)),
               observers(std::move(other.observers)), m_size(std::exchange(other.m_size, 0)),
               m_pending_erase_count(std::exchange(other.m_pending_erase_count, 0)),
               m_key_plan(std::exchange(other.m_key_plan, nullptr)), m_ops(other.m_ops),
-              m_free_slots(std::move(other.m_free_slots)) {
-            rebuild_index();
+              m_free_slots(std::move(other.m_free_slots)), m_index_owner(std::move(other.m_index_owner)),
+              m_index(std::move(other.m_index)) {
+            if (m_index_owner != nullptr) { m_index_owner->store = this; }
             other.constructed.clear();
             other.live.clear();
             other.m_free_slots.clear();
         }
 
-        /** Move assignment destroys current contents and adopts ``other``. */
+        /** Move assignment destroys current contents and adopts ``other`` (O(1), ``noexcept``). */
         KeySlotStore &operator=(KeySlotStore &&other) noexcept {
             if (this != &other) {
                 hard_clear();
@@ -197,7 +204,9 @@ namespace hgraph
                 m_key_plan            = std::exchange(other.m_key_plan, nullptr);
                 m_ops                 = other.m_ops;
                 m_free_slots          = std::move(other.m_free_slots);
-                rebuild_index();
+                m_index_owner         = std::move(other.m_index_owner);
+                m_index               = std::move(other.m_index);
+                if (m_index_owner != nullptr) { m_index_owner->store = this; }
                 other.constructed.clear();
                 other.live.clear();
                 other.m_free_slots.clear();
@@ -503,31 +512,56 @@ namespace hgraph
         void remove_slot_observer(SlotObserver *observer) { observers.remove(observer); }
 
       private:
+        /**
+         * Stable indirection cell for the index functors. The functors are
+         * copied into the ankerl set, so they must not hold ``this`` directly:
+         * a moved store would leave them pointing at the old object. Instead
+         * they point at this heap-allocated cell, which moves with the store
+         * (``unique_ptr``) and is re-pointed with a single write — keeping the
+         * move operations honestly ``noexcept`` and O(1) (no index rebuild).
+         */
+        struct IndexBackPtr
+        {
+            const KeySlotStore *store{nullptr};
+        };
+
         struct IndexHash
         {
             using is_transparent = void;
             using is_avalanching = void;
 
-            const KeySlotStore *store{nullptr};
+            const IndexBackPtr *owner{nullptr};
 
-            [[nodiscard]] size_t operator()(size_t slot) const { return store != nullptr ? store->hash_at_slot(slot) : 0U; }
+            [[nodiscard]] const KeySlotStore *store() const noexcept { return owner != nullptr ? owner->store : nullptr; }
 
-            [[nodiscard]] size_t operator()(const void *key) const { return store != nullptr ? store->m_ops.hash_key(key) : 0U; }
+            [[nodiscard]] size_t operator()(size_t slot) const {
+                const KeySlotStore *s = store();
+                return s != nullptr ? s->hash_at_slot(slot) : 0U;
+            }
+
+            [[nodiscard]] size_t operator()(const void *key) const {
+                const KeySlotStore *s = store();
+                return s != nullptr ? s->m_ops.hash_key(key) : 0U;
+            }
         };
 
         struct IndexEqual
         {
             using is_transparent = void;
 
-            const KeySlotStore *store{nullptr};
+            const IndexBackPtr *owner{nullptr};
+
+            [[nodiscard]] const KeySlotStore *store() const noexcept { return owner != nullptr ? owner->store : nullptr; }
 
             [[nodiscard]] bool operator()(size_t lhs, size_t rhs) const {
                 if (lhs == rhs) { return true; }
-                return store != nullptr && store->m_ops.equal_keys(store->key_memory(lhs), store->key_memory(rhs));
+                const KeySlotStore *s = store();
+                return s != nullptr && s->m_ops.equal_keys(s->key_memory(lhs), s->key_memory(rhs));
             }
 
             [[nodiscard]] bool operator()(size_t slot, const void *key) const {
-                return store != nullptr && store->m_ops.equal_keys(store->key_memory(slot), key);
+                const KeySlotStore *s = store();
+                return s != nullptr && s->m_ops.equal_keys(s->key_memory(slot), key);
             }
 
             [[nodiscard]] bool operator()(const void *key, size_t slot) const { return (*this)(slot, key); }
@@ -567,10 +601,13 @@ namespace hgraph
         }
 
         [[nodiscard]] std::unique_ptr<IndexSet> make_index() const {
-            return std::make_unique<IndexSet>(0, IndexHash{.store = this}, IndexEqual{.store = this});
+            return std::make_unique<IndexSet>(0, IndexHash{.owner = m_index_owner.get()},
+                                              IndexEqual{.owner = m_index_owner.get()});
         }
 
         void rebuild_index() {
+            if (m_index_owner == nullptr) { m_index_owner = std::make_unique<IndexBackPtr>(); }
+            m_index_owner->store = this;
             m_index = make_index();
             for (size_t slot = 0; slot < slot_capacity(); ++slot) {
                 if (slot_constructed(slot)) { m_index->insert(slot); }
@@ -599,6 +636,7 @@ namespace hgraph
         const MemoryUtils::StoragePlan *m_key_plan{nullptr};
         KeySlotStoreOps                 m_ops{};
         std::vector<size_t>             m_free_slots{};
+        std::unique_ptr<IndexBackPtr>   m_index_owner{};
         std::unique_ptr<IndexSet>       m_index{};
     };
 }  // namespace hgraph

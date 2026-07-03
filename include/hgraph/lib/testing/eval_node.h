@@ -289,16 +289,22 @@ namespace hgraph::testing
         inline std::string input_key(std::size_t index) { return "eval_node::in" + std::to_string(index); }
 
         template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple>
-        [[nodiscard]] decltype(auto) bound_payload_at(const ArgsTuple &args, std::string_view call_name)
+        [[nodiscard]] decltype(auto) bound_payload_at(const ArgsTuple &args,
+                                                      [[maybe_unused]] std::string_view call_name)
         {
             using Param = std::tuple_element_t<ParamIndex, ParamsTuple>;
             constexpr std::size_t arg_index =
                 call_args_detail::bound_arg_index<ParamIndex, ParamsTuple, ArgsTuple>();
             if constexpr (arg_index == call_args_detail::npos)
             {
-                throw std::invalid_argument(std::string{call_name} + ": missing argument " +
-                                            call_args_detail::missing_parameter_name(
-                                                call_args_detail::parameter_name<Param>(), ParamIndex));
+                // Compile-time failure (a runtime throw here would return void and
+                // cascade into wire<>'s overload set — an unreadable error). The
+                // failed requirement names the missing parameter type.
+                static_assert(call_args_detail::missing_required_argument<Param>::value,
+                              "eval_node/wire: missing required argument — the "
+                              "'missing_required_argument<…>' type in this error names the In<\"name\", …> / "
+                              "Scalar<\"name\", T> parameter that was not supplied; pass it positionally, by "
+                              "name via arg<\"name\">(value), or give the node a defaults() entry");
             }
             else
             {
@@ -309,7 +315,7 @@ namespace hgraph::testing
         template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple, typename DefaultsTuple>
         [[nodiscard]] decltype(auto) bound_payload_or_default_at(const ArgsTuple &args,
                                                                  const DefaultsTuple &defaults,
-                                                                 std::string_view call_name)
+                                                                 [[maybe_unused]] std::string_view call_name)
         {
             using Param = std::tuple_element_t<ParamIndex, ParamsTuple>;
             constexpr std::size_t arg_index =
@@ -326,9 +332,14 @@ namespace hgraph::testing
             }
             else
             {
-                throw std::invalid_argument(std::string{call_name} + ": missing argument " +
-                                            call_args_detail::missing_parameter_name(
-                                                call_args_detail::parameter_name<Param>(), ParamIndex));
+                // Compile-time failure (a runtime throw here would return void and
+                // cascade into wire<>'s overload set — an unreadable error). The
+                // failed requirement names the missing parameter type.
+                static_assert(call_args_detail::missing_required_argument<Param>::value,
+                              "eval_node/wire: missing required argument — the "
+                              "'missing_required_argument<…>' type in this error names the In<\"name\", …> / "
+                              "Scalar<\"name\", T> parameter that was not supplied; pass it positionally, by "
+                              "name via arg<\"name\">(value), or give the node a defaults() entry");
             }
         }
 

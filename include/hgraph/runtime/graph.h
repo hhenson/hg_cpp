@@ -140,6 +140,8 @@ struct HGRAPH_EXPORT GraphEdge
         [[nodiscard]] DateTime (*next_scheduled_time_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] std::size_t (*node_count_impl)(const void *context, const void *memory) noexcept = nullptr;
         [[nodiscard]] NodeView (*node_at_impl)(const void *context, void *memory, std::size_t index) = nullptr;
+        [[nodiscard]] DateTime (*node_scheduled_time_impl)(const void *context, const void *memory,
+                                                           std::size_t index) noexcept = nullptr;
         [[nodiscard]] GlobalStateView (*global_state_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] RootGraphView (*root_impl)(const void *context, const GraphView &graph) = nullptr;
         [[nodiscard]] GraphExecutorView (*graph_executor_impl)(const void *context, void *memory) = nullptr;
@@ -188,6 +190,18 @@ struct HGRAPH_EXPORT GraphEdge
         /// calling evaluate again at the same time; the cursor is held in graph state).
         bool evaluate(DateTime evaluation_time) const;
         void schedule_node(std::size_t node_index, DateTime when) const;
+
+        /** The graph-schedule entry for one node (``MIN_DT`` = not scheduled). */
+        [[nodiscard]] DateTime node_scheduled_time(std::size_t node_index) const noexcept;
+
+        /**
+         * Human-readable snapshot of the graph for diagnostics: the graph name
+         * and lifecycle state, then one line per node — index, display
+         * name/label, and its current graph-schedule entry. Intended for
+         * logging/debugging (the on-call "which of these nodes is live?"
+         * question); not a stable machine-readable format.
+         */
+        [[nodiscard]] std::string dump() const;
 
       protected:
         [[nodiscard]] const GraphOps &ops() const;

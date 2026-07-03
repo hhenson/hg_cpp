@@ -62,6 +62,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/graph_wiring.cpp
     hgraph/types/type_pattern.cpp
     hgraph/types/operator_dispatch.cpp
+    hgraph/types/registry_reset.cpp
 )
 
 # Public headers — listed so CLion (and other IDEs) pick them up under the
