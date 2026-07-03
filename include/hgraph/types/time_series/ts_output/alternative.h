@@ -37,6 +37,17 @@ namespace hgraph::detail
 
         [[nodiscard]] TSOutputHandle binding_for(const TSOutputView &source,
                                                  const TSValueTypeMetaData &requested_schema);
+
+        /**
+         * Stop-time subscription teardown. Alternatives subscribe to their
+         * source output and (for from-ref alternatives) hold target links to
+         * whatever output the reference currently designates — outputs that
+         * teardown order may destroy first. The lifecycle contract is that
+         * ``stop`` releases these while every producer is still alive, so the
+         * store's destructor finds no live references. ``release_time`` is the
+         * stop-time evaluation time (must not be ``MIN_DT``).
+         */
+        void release_subscriptions(DateTime release_time) noexcept;
         [[nodiscard]] static TimeSeriesReference peered_reference_as(const TSValueTypeMetaData *target_schema,
                                                                      TSOutputHandle target);
         [[nodiscard]] static const TSOutputHandle &peered_reference_target(const TimeSeriesReference &reference);

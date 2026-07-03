@@ -1,6 +1,7 @@
 #include <hgraph/runtime/graph.h>
 
 #include <hgraph/runtime/executor.h>
+#include <hgraph/types/time_series/ts_output.h>
 #include <hgraph/util/scope.h>
 
 #include <algorithm>
@@ -314,6 +315,63 @@ namespace hgraph
                 auto target = input_at_path(graph_node_view(context, memory, edge.target_node).input(MIN_DT),
                                             edge.target_path);
                 target.bind_output(source);
+            }
+        }
+
+        /**
+         * Stop-time subscription teardown — the dual of ``bind_edges``.
+         *
+         * Lifecycle contract: ``stop`` tears the subscriptions down while every
+         * producer's storage is still alive; by dispose time no references may
+         * remain. This matters because boundary machinery (services/adaptors)
+         * retargets edge-established links at runtime to outputs the ranker
+         * never saw, so a link may point at a HIGHER-ranked node — and storage
+         * destruction runs in reverse rank, freeing that producer before the
+         * consumer's link storage is destroyed. Unbinding here (all storage
+         * alive, ``MIN_DT`` so no notifier side effects) leaves the destructor
+         * unbind as a no-op backstop. Best-effort per edge: teardown must not
+         * throw.
+         */
+        void unbind_edges(const GraphRuntimeContext &context, void *memory,
+                          const std::vector<GraphEdge> &edges) noexcept
+        {
+            for (const auto &edge : edges)
+            {
+                static_cast<void>(fallback_on_exception(false, [&] {
+                    if (edge.target_node >= context.layout.node_count) { return false; }
+                    auto target = input_at_path(graph_node_view(context, memory, edge.target_node).input(MIN_DT),
+                                                edge.target_path);
+                    if (target.is_bindable() && target.bound()) { target.unbind_output(); }
+                    return true;
+                }));
+            }
+        }
+
+        /**
+         * Stop-time release of output alternative-store subscriptions — the
+         * second half of the teardown contract (see unbind_edges). REF
+         * alternatives subscribe to their source output and hold links to the
+         * currently referenced output, which teardown order may free first;
+         * releasing them at stop leaves their destructors nothing to touch.
+         */
+        void release_alternative_subscriptions(const GraphRuntimeContext &context, void *memory,
+                                               DateTime release_time) noexcept
+        {
+            constexpr GraphEdgeSourceKind kinds[] = {GraphEdgeSourceKind::Output, GraphEdgeSourceKind::ErrorOutput,
+                                                     GraphEdgeSourceKind::RecordableState};
+            for (std::size_t index = 0; index < context.layout.node_count; ++index)
+            {
+                for (const GraphEdgeSourceKind kind : kinds)
+                {
+                    static_cast<void>(fallback_on_exception(false, [&] {
+                        auto view = edge_source_root(graph_node_view(context, memory, index), MIN_DT, kind);
+                        if (view.output() != nullptr)
+                        {
+                            view.output()->release_alternative_subscriptions(release_time);
+                        }
+                        return true;
+                    }));
+                }
             }
         }
 
@@ -649,6 +707,13 @@ namespace hgraph
                 state.started = false;
             });
 
+            // NOTE: edge subscriptions are established at construction and torn
+            // down at stop (see unbind_edges). Restarting a stopped graph
+            // instance therefore needs a rebind pass here — deliberately NOT a
+            // blanket bind_edges(), which would reset REF-adapted bindings that
+            // construction set up; a restart-aware rebind is future work (no
+            // current caller restarts a stopped instance).
+
             // Nodes are NOT scheduled by default. A node that needs an initial
             // evaluation schedules itself in its ``start`` (a source does
             // ``schedule(now())``); compute/sink nodes are driven by input
@@ -717,6 +782,12 @@ namespace hgraph
                     }
                 });
             }
+            // Tear down the edge subscriptions and alternative-store links
+            // while every node's storage is still alive (see unbind_edges /
+            // release_alternative_subscriptions); dispose must find no
+            // references.
+            if (graph.schema() != nullptr) { unbind_edges(runtime, graph.data(), graph.schema()->edges); }
+            release_alternative_subscriptions(runtime, graph.data(), state.evaluation_time);
             state.started = false;
             exceptions.rethrow_if_any();
         }
@@ -1210,7 +1281,24 @@ namespace hgraph
         attach_nodes();
     }
 
-    GraphValue::~GraphValue() = default;
+    GraphValue::~GraphValue()
+    {
+        // Lifecycle contract: subscriptions are torn down at stop, while every
+        // producer's storage is alive; disposal must find no references. A
+        // graph destroyed while still started would skip that teardown, so
+        // stop it here (best-effort — a destructor must not throw).
+        if (storage_.has_value())
+        {
+            const GraphView graph = view();
+            if (graph.valid() && graph.started())
+            {
+                static_cast<void>(fallback_on_exception(false, [&] {
+                    graph.stop();
+                    return true;
+                }));
+            }
+        }
+    }
 
     GraphValue::GraphValue(GraphValue &&other) noexcept
         : storage_(std::move(other.storage_))

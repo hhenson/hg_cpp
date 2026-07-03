@@ -58,6 +58,12 @@ source/capture pair** — applied with different payloads:
 - **Lifecycle:** the source clears its captured state on ``stop``. A restarted
   graph must republish through capture before the source can produce a live
   shared output.
+- **Teardown:** because boundary links are retargeted at runtime to outputs the
+  ranker never saw, they may point at higher-ranked nodes — which reverse-rank
+  storage destruction frees first. The graph therefore tears all subscriptions
+  down at **stop**, while every producer is alive (edge unbind + alternative-
+  store release; see *Lifecycle Teardown* in :doc:`architecture`); disposal
+  must find no references.
 
 The per-flavour payloads:
 

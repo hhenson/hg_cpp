@@ -127,6 +127,27 @@ schedule table:
       eval -.-> selfsched
       scan --> next --> advance
 
+Lifecycle Teardown
+~~~~~~~~~~~~~~~~~~
+
+Subscription teardown is a **stop-time** responsibility: ``stop`` unbinds the
+edge-established input links (``unbind_edges``, the dual of ``bind_edges``) and
+releases output alternative-store subscriptions/links
+(``release_alternative_subscriptions``) while **every producer's storage is
+still alive**; by dispose time no cross-node references remain, and the
+destructors' tolerant unbind paths are no-ops. This contract exists because
+boundary machinery (services/adaptors, REF alternatives) retargets links at
+runtime to outputs the ranker never saw — a link may point at a *higher*-ranked
+node, and storage destruction runs in reverse rank, so destructor-time unbind
+would dereference freed memory. A graph destroyed while still started is
+stopped by ``GraphValue``'s destructor first (best-effort) for the same reason.
+
+Edge bindings are established at graph **construction** (so a built graph is
+inspectable before its first start). Restarting a stopped graph instance
+therefore requires a restart-aware rebind pass at ``start`` — deliberately not
+a blanket re-bind, which would reset REF-adapted bindings; this is recorded
+future work (no current caller restarts a stopped instance).
+
 Runtime Diagnostics
 ~~~~~~~~~~~~~~~~~~~
 

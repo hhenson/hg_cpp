@@ -68,6 +68,13 @@ namespace hgraph
         [[nodiscard]] TSOutputHandle binding_for(const TSOutputView &source,
                                                  const TSValueTypeMetaData &requested_schema) const;
 
+        /**
+         * Stop-time teardown of alternative-store subscriptions/links (the
+         * graph stop pass calls this while every producer is alive, so the
+         * store's destructor finds no live references). No-op without a store.
+         */
+        void release_alternative_subscriptions(DateTime release_time) const noexcept;
+
         /** Begin a root mutation scope. */
         [[nodiscard]] TSOutputMutationView begin_mutation(DateTime evaluation_time);
 

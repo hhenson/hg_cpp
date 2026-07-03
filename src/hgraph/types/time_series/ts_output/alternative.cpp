@@ -647,6 +647,13 @@ namespace hgraph::detail
         ToRefAlternativeState &operator=(const ToRefAlternativeState &) = delete;
         ~ToRefAlternativeState() = default;
 
+        /** Stop-time teardown: drop the (unsubscribed) source references. */
+        void release_subscriptions() noexcept
+        {
+            source.reset();
+            build_context.output = nullptr;
+        }
+
         const TSValueTypeMetaData *requested_schema{nullptr};
         TSData                     data{};
         TSOutputHandle             source{};
@@ -737,6 +744,23 @@ namespace hgraph::detail
             refresh(new_source.evaluation_time());
         }
 
+        /**
+         * Stop-time teardown: unsubscribe from the reference source and unbind
+         * the projected data's links to the currently referenced output, while
+         * both are still alive. Leaves the destructor's tolerant cleanup a
+         * no-op.
+         */
+        void release_subscriptions(DateTime release_time) noexcept
+        {
+            unsubscribe_source();
+            source.reset();
+            static_cast<void>(fallback_on_exception(false, [&] {
+                auto target = data.view();
+                unbind_from_ref_data(target, endpoint_schema, release_time);
+                return true;
+            }));
+        }
+
       private:
         void subscribe_source()
         {
@@ -773,6 +797,18 @@ namespace hgraph::detail
     TSOutputAlternativeStore::TSOutputAlternativeStore(TSOutputAlternativeStore &&) noexcept = default;
     TSOutputAlternativeStore &TSOutputAlternativeStore::operator=(TSOutputAlternativeStore &&) noexcept = default;
     TSOutputAlternativeStore::~TSOutputAlternativeStore() noexcept = default;
+
+    void TSOutputAlternativeStore::release_subscriptions(DateTime release_time) noexcept
+    {
+        for (auto &[key, state] : to_ref_alternatives_)
+        {
+            if (state != nullptr) { state->release_subscriptions(); }
+        }
+        for (auto &[key, state] : ref_link_alternatives_)
+        {
+            if (state != nullptr) { state->release_subscriptions(release_time); }
+        }
+    }
 
     std::size_t TSOutputAlternativeStore::AlternativeKeyHash::operator()(const AlternativeKey &key) const noexcept
     {

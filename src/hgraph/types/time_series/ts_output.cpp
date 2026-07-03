@@ -147,6 +147,11 @@ namespace hgraph
         return alternatives_->binding_for(source, requested_schema);
     }
 
+    void TSOutput::release_alternative_subscriptions(DateTime release_time) const noexcept
+    {
+        if (alternatives_) { alternatives_->release_subscriptions(release_time); }
+    }
+
     const TSDataBinding &TSOutput::checked_binding_for(const TSValueTypeMetaData *schema)
     {
         if (schema == nullptr) { throw std::invalid_argument("TSOutput requires a time-series schema"); }
