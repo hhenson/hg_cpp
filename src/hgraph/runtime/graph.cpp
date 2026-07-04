@@ -708,11 +708,10 @@ namespace hgraph
             });
 
             // NOTE: edge subscriptions are established at construction and torn
-            // down at stop (see unbind_edges). Restarting a stopped graph
-            // instance therefore needs a rebind pass here — deliberately NOT a
-            // blanket bind_edges(), which would reset REF-adapted bindings that
-            // construction set up; a restart-aware rebind is future work (no
-            // current caller restarts a stopped instance).
+            // down at stop (see unbind_edges). Restart is NOT supported by
+            // design: stop is a step toward erase (cleanup before disposal),
+            // so no rebind pass exists here — a blanket bind_edges() would
+            // reset REF-adapted bindings that construction set up.
 
             // Nodes are NOT scheduled by default. A node that needs an initial
             // evaluation schedules itself in its ``start`` (a source does

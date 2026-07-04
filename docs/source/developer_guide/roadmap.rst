@@ -137,19 +137,39 @@ Priority 3: Parity Matrix and Operators
 After the graph model is stable, build and maintain a Python-to-C++ parity
 matrix. Then complete operator families against that inventory.
 
+Landed:
+
+- ``record`` / ``replay`` are registered operators (the testing toolkit's
+  in-memory GlobalState buffer is the registered backend); pluggable backends
+  (Python's model registry / DataWriter) remain planned.
+- ``time`` (time-of-day) and ``bytes`` scalar atoms — distinct strong types
+  with schema identity, hash/compare/to_string, standard-vocabulary aliases
+  and ``TS``/``TSS`` pre-interning (``util/date_time.h`` /
+  ``types/primitive_types.h``).
+
 Planned work:
 
-- IO, record, replay, and compare operators.
+- IO and compare operators; pluggable record/replay backends.
 - Stream, window, and analytical operators.
 - ``TSD`` and ``TSL`` convenience operators.
 - Conversion and serialization operators.
 - JSON, table, dataframe, numpy, and related scalar value types.
-- Scalar and compound type coverage required by the Python tests.
+- Scalar and compound type coverage required by the Python tests. C++ ``enum``
+  scalars already register (the ``DivideByZero`` pattern); *runtime-defined*
+  enums (Python-created, no C++ type) are bridge-time work.
 
 Priority 4: Python Support
 --------------------------
 
 Python support is built on top of the C++ runtime, not the other way around.
+
+The wiring contract for the bridge is **runtime-schema dispatch** — build
+``WiringArg`` values, ``OperatorRegistry::resolve`` by name, ``impl->wire`` —
+and it is proven template-free by ``tests/cpp/test_erased_wiring.cpp``: full
+graphs wire and run via name resolution only (positional and keyword args,
+defaults, expected-output-driven generic resolution, resolution errors). Any
+capability that test suite cannot reach is by definition unreachable from
+Python; extend it as new wiring surface lands.
 
 Planned work:
 

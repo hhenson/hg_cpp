@@ -63,6 +63,8 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/type_pattern.cpp
     hgraph/types/operator_dispatch.cpp
     hgraph/types/registry_reset.cpp
+    hgraph/types/primitive_types.cpp
+    hgraph/util/date_time.cpp
 )
 
 # Public headers — listed so CLion (and other IDEs) pick them up under the

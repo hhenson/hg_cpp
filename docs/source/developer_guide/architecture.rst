@@ -178,10 +178,10 @@ above. A graph destroyed while still started is stopped by ``GraphValue``'s
 destructor first (best-effort) for the same reason.
 
 Edge bindings are established at graph **construction** (so a built graph is
-inspectable before its first start). Restarting a stopped graph instance
-therefore requires a restart-aware rebind pass at ``start`` — deliberately not
-a blanket re-bind, which would reset REF-adapted bindings; this is recorded
-future work (no current caller restarts a stopped instance).
+inspectable before its first start). **Restart is not supported by design**
+(ruling 2026-07-04): a stopped node/graph is never restarted — ``stop`` is a
+step toward erase, run to guarantee the instance is clean before disposal.
+No restart-aware rebind pass exists or is planned.
 
 Runtime Diagnostics
 ~~~~~~~~~~~~~~~~~~~

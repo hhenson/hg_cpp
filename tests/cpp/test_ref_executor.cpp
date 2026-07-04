@@ -1,0 +1,75 @@
+#include <hgraph/lib/std/std_operators.h>
+#include <hgraph/lib/testing/check_output.h>
+#include <hgraph/lib/testing/eval_node.h>
+#include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/metadata/type_registry.h>
+#include <hgraph/types/static_node.h>
+
+#include <catch2/catch_test_macros.hpp>
+
+// User-visible REF ports through the full executor (closes the review gap:
+// prior REF coverage was view/binding-level plus std operators). A
+// user-authored node publishes ``Out<REF<TS<Int>>>`` retargeting between two
+// INDEPENDENT upstream producers mid-run; an ordinary ``TS<Int>`` consumer
+// follows the reference (REF-transparent input adaptation + alternative-store
+// rebinds) across executor cycles.
+
+namespace
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+
+    struct RefSelector
+    {
+        static constexpr auto name = "ref_selector";
+
+        static void eval(In<"pick_rhs", TS<Bool>> pick_rhs,
+                         In<"lhs", TS<Int>, InputValidity::Unchecked> lhs,
+                         In<"rhs", TS<Int>, InputValidity::Unchecked> rhs,
+                         Out<REF<TS<Int>>> out)
+        {
+            if (!pick_rhs.modified()) { return; }  // retarget only on a selection change
+            out.set(pick_rhs.value() ? rhs.reference() : lhs.reference());
+        }
+    };
+
+    struct RefSelectGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "ref_select_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Bool>> pick_rhs, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            // The REF<TS<Int>> port is consumed as a plain TS<Int> — the
+            // REF-transparent binding dereferences whatever output the
+            // reference currently designates.
+            return wire<RefSelector>(w, pick_rhs, lhs, rhs).as<TS<Int>>();
+        }
+    };
+}  // namespace
+
+TEST_CASE("REF executor: a user REF output retargets between independent producers mid-run")
+{
+    stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<RefSelectGraph>(values<Bool>(true, none, false, none, none),
+                                           values<Int>(1, 2, none, 4, none),
+                                           values<Int>(10, none, 30, none, 50)),
+                 // cycle 0: ref -> rhs, sees 10. cycle 1: rhs silent (lhs's 2
+                 // is not observed — the ref points at rhs). cycle 2: retarget
+                 // to lhs, whose current value (2) is observed on rebind.
+                 // cycle 3: lhs ticks 4. cycle 4: rhs's 50 is not observed.
+                 values<Int>(10, none, 2, 4, none));
+}
+
+TEST_CASE("REF executor: a reference retarget to an already-valid producer samples its current value")
+{
+    stdlib::register_standard_operators();
+
+    // lhs ticks only at cycle 0; the retarget at cycle 2 must still deliver
+    // that value to the consumer (rebind-time sampling, matching the Python
+    // REF semantics), not wait for the producer's next tick.
+    CHECK_OUTPUT(eval_node<RefSelectGraph>(values<Bool>(true, none, false, none),
+                                           values<Int>(7, none, none, none),
+                                           values<Int>(10, 20, none, none)),
+                 values<Int>(10, 20, 7, none));
+}

@@ -6,6 +6,9 @@
 #define HGRAPH_DATE_TIME_H
 
 #include <chrono>
+#include <compare>
+#include <cstdint>
+#include <iosfwd>
 
 namespace std {
     /** ``std::hash`` specialisation for ``std::chrono::time_point``. */
@@ -103,5 +106,48 @@ namespace hgraph {
 
     /** Smallest time delta; equal to ``smallest_time_increment()``. */
     inline auto static MIN_TD = smallest_time_increment();
+
+    /**
+     * Time-of-day scalar (microseconds since midnight), mirroring Python's
+     * ``datetime.time``. A distinct strong type — NOT an alias of ``TimeDelta``
+     * — so operator dispatch and schema identity can tell the two apart.
+     * The valid range is [0, 86'400'000'000); like Python, validation belongs
+     * at construction, not in the value layer.
+     */
+    struct Time
+    {
+        std::int64_t microseconds{0};
+
+        friend constexpr bool operator==(const Time &, const Time &) noexcept = default;
+        friend constexpr std::strong_ordering operator<=>(const Time &, const Time &) noexcept = default;
+    };
+
+    /** Build a ``Time`` from wall-clock components. */
+    [[nodiscard]] constexpr Time time_of_day(int hours, int minutes, int seconds = 0,
+                                             std::int64_t microseconds = 0) noexcept
+    {
+        return Time{((static_cast<std::int64_t>(hours) * 60 + minutes) * 60 + seconds) * 1'000'000 +
+                    microseconds};
+    }
+
+    /** The time-of-day component of a ``DateTime``. */
+    [[nodiscard]] inline Time time_of_day(DateTime when) noexcept
+    {
+        const auto day = std::chrono::floor<std::chrono::days>(when);
+        return Time{std::chrono::duration_cast<std::chrono::microseconds>(when - day).count()};
+    }
+
+    /** Render as ``HH:MM:SS[.ffffff]`` (the Python ``time`` string form). */
+    std::ostream &operator<<(std::ostream &os, const Time &value);
 } // namespace hgraph
+
+/** ``std::hash`` for ``Time`` (usable as a TSS element / TSD key). */
+template <>
+struct std::hash<hgraph::Time>
+{
+    [[nodiscard]] std::size_t operator()(const hgraph::Time &value) const noexcept
+    {
+        return std::hash<std::int64_t>{}(value.microseconds);
+    }
+};
 #endif  // HGRAPH_DATE_TIME_H

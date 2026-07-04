@@ -52,6 +52,8 @@ add_executable(hgraph_unit_tests
     test_service_node.cpp
     test_service_wiring.cpp
     test_adaptor_wiring.cpp
+    test_erased_wiring.cpp
+    test_ref_executor.cpp
     test_record_replay.cpp
     test_eval_node.cpp
     test_std_nodes.cpp

@@ -31,7 +31,9 @@ namespace hgraph::stdlib
         const ValueTypeMetaData *date_type{nullptr};
         const ValueTypeMetaData *datetime_type{nullptr};
         const ValueTypeMetaData *timedelta_type{nullptr};
+        const ValueTypeMetaData *time_type{nullptr};
         const ValueTypeMetaData *str_type{nullptr};
+        const ValueTypeMetaData *bytes_type{nullptr};
 
         const ValueTypeMetaData *int8_type{nullptr};
         const ValueTypeMetaData *int16_type{nullptr};
@@ -50,7 +52,9 @@ namespace hgraph::stdlib
         const TSValueTypeMetaData *ts_date{nullptr};
         const TSValueTypeMetaData *ts_datetime{nullptr};
         const TSValueTypeMetaData *ts_timedelta{nullptr};
+        const TSValueTypeMetaData *ts_time{nullptr};
         const TSValueTypeMetaData *ts_str{nullptr};
+        const TSValueTypeMetaData *ts_bytes{nullptr};
 
         const TSValueTypeMetaData *tss_bool{nullptr};
         const TSValueTypeMetaData *tss_int{nullptr};
@@ -58,7 +62,9 @@ namespace hgraph::stdlib
         const TSValueTypeMetaData *tss_date{nullptr};
         const TSValueTypeMetaData *tss_datetime{nullptr};
         const TSValueTypeMetaData *tss_timedelta{nullptr};
+        const TSValueTypeMetaData *tss_time{nullptr};
         const TSValueTypeMetaData *tss_str{nullptr};
+        const TSValueTypeMetaData *tss_bytes{nullptr};
     };
 
     namespace standard_types_detail
@@ -113,7 +119,9 @@ namespace hgraph::stdlib
      * - ``date`` -> ``Date``
      * - ``datetime`` -> ``DateTime``
      * - ``timedelta`` -> ``TimeDelta``
+     * - ``time`` -> ``Time`` (time of day)
      * - ``str`` -> ``Str``
+     * - ``bytes`` -> ``Bytes``
      *
      * Explicit aliases include ``int8``/``int16``/``int32``/``int64``,
      * ``uint8``/``uint16``/``uint32``/``uint64``, ``float32`` and
@@ -131,7 +139,9 @@ namespace hgraph::stdlib
         types.date_type      = standard_types_detail::register_scalar_aliases<Date>(registry, {"date"});
         types.datetime_type  = standard_types_detail::register_scalar_aliases<DateTime>(registry, {"datetime"});
         types.timedelta_type = standard_types_detail::register_scalar_aliases<TimeDelta>(registry, {"timedelta"});
+        types.time_type      = standard_types_detail::register_scalar_aliases<Time>(registry, {"time"});
         types.str_type       = standard_types_detail::register_scalar_aliases<Str>(registry, {"str", "string"});
+        types.bytes_type     = standard_types_detail::register_scalar_aliases<Bytes>(registry, {"bytes"});
 
         types.int8_type    = standard_types_detail::register_scalar_aliases<std::int8_t>(registry, {"int8"});
         types.int16_type   = standard_types_detail::register_scalar_aliases<std::int16_t>(registry, {"int16"});
@@ -153,8 +163,12 @@ namespace hgraph::stdlib
                                                    types.tss_datetime);
         standard_types_detail::register_ts_aliases(registry, types.timedelta_type, {"timedelta"}, types.ts_timedelta,
                                                    types.tss_timedelta);
+        standard_types_detail::register_ts_aliases(registry, types.time_type, {"time"}, types.ts_time,
+                                                   types.tss_time);
         standard_types_detail::register_ts_aliases(registry, types.str_type, {"str", "string"}, types.ts_str,
                                                    types.tss_str);
+        standard_types_detail::register_ts_aliases(registry, types.bytes_type, {"bytes"}, types.ts_bytes,
+                                                   types.tss_bytes);
 
         const TSValueTypeMetaData *unused_ts  = nullptr;
         const TSValueTypeMetaData *unused_tss = nullptr;

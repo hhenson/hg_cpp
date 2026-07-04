@@ -201,13 +201,46 @@ TEST_CASE("TypeRegistry::reset leaves the standard types registered by default")
 
     const TypeRegistry &registry = TypeRegistry::instance();
     for (const char *name : {"bool", "int", "int64", "float", "float64", "str", "string", "date", "datetime",
-                             "timedelta"})
+                             "timedelta", "time", "bytes"})
     {
         CHECK(registry.value_type(name) != nullptr);
     }
     // The standard TS / TSS aliases come back too.
     CHECK(registry.time_series_type("TS[int]") != nullptr);
     CHECK(registry.time_series_type("TS[timedelta]") != nullptr);
+    CHECK(registry.time_series_type("TS[time]") != nullptr);
+    CHECK(registry.time_series_type("TS[bytes]") != nullptr);
+}
+
+TEST_CASE("time and bytes scalar atoms behave as value-layer scalars")
+{
+    using namespace hgraph;
+
+    // Distinct schema identity: ``time`` is NOT ``timedelta`` and ``bytes``
+    // is NOT ``str`` (the whole point of the strong types).
+    CHECK(scalar_descriptor<Time>::value_meta() != scalar_descriptor<TimeDelta>::value_meta());
+    CHECK(scalar_descriptor<Bytes>::value_meta() != scalar_descriptor<Str>::value_meta());
+    CHECK(std::string{scalar_descriptor<Time>::value_meta()->name()} == "time");
+    CHECK(std::string{scalar_descriptor<Bytes>::value_meta()->name()} == "bytes");
+
+    const Time noon = time_of_day(12, 30, 15, 250);
+    CHECK(noon == Time{45'015'000'250});
+    CHECK(time_of_day(0, 0) < noon);
+    CHECK(time_of_day(DateTime{TimeDelta{86'400'000'000 + 45'015'000'250}}) == noon);
+
+    Value time_value{noon};
+    CHECK(time_value.view().checked_as<Time>() == noon);
+    CHECK(time_value.view().to_string() == "12:30:15.000250");
+
+    const Bytes payload = bytes_(std::string_view{"ab\0c", 4});
+    CHECK(payload.data.size() == 4);  // byte-safe: the embedded NUL survives
+    Value bytes_value{payload};
+    CHECK(bytes_value.view().checked_as<Bytes>() == payload);
+    CHECK(bytes_value.view().to_string() == "b'ab\\x00c'");
+
+    // Hashable — usable as TSS elements / TSD keys.
+    CHECK(std::hash<Time>{}(noon) == std::hash<Time>{}(Time{45'015'000'250}));
+    CHECK(std::hash<Bytes>{}(payload) == std::hash<Bytes>{}(bytes_(std::string_view{"ab\0c", 4})));
 }
 
 TEST_CASE("date-time aliases and constants match the 2603 runtime definitions")

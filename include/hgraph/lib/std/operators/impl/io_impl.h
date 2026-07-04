@@ -1,7 +1,8 @@
 #ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_IO_IMPL_H
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_IO_IMPL_H
 
-#include <hgraph/lib/std/operators/io.h>   // debug_print / null_sink
+#include <hgraph/lib/std/operators/io.h>        // debug_print / null_sink / record / replay
+#include <hgraph/lib/testing/record_replay.h>   // the in-memory (GlobalState) record/replay backend
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
 #include <hgraph/types/static_node.h>
@@ -42,6 +43,14 @@ namespace hgraph::stdlib
     {
         register_overload<debug_print, debug_print_impl>();
         register_overload<null_sink, null_sink_impl>();
+        // ``record`` / ``replay`` register the in-memory GlobalState backend
+        // (the testing toolkit's cycle-aligned ``List<Any>`` buffer) as the
+        // operator implementations, making them name-resolvable — a Python
+        // frontend needs the registry path, not the C++ ``wire<T>`` sugar
+        // (tests/cpp/test_erased_wiring.cpp). Pluggable record/replay backends
+        // (Python's model registry / DataWriter) remain roadmap P3.
+        register_overload<record, testing::record>();
+        register_overload<replay, testing::replay>();
     }
 }  // namespace hgraph::stdlib
 

@@ -400,3 +400,47 @@ TEST_CASE("stdlib::debug_print runs over a tick")
     GraphExecutorValue executor = testing::run_graph(build_graph<DebugPrintGraph>());
     CHECK(executor.view().graph().node_count() == 2);
 }
+
+namespace
+{
+    // pass_through_node is TsVar-generic; eval_node needs the concrete schema,
+    // so drive it through lightweight wrapper graphs (the agreed pattern).
+    struct TimeEchoGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "time_echo_graph";
+
+        static hgraph::Port<hgraph::TS<hgraph::Time>> compose(hgraph::Wiring &w,
+                                                              hgraph::Port<hgraph::TS<hgraph::Time>> ts)
+        {
+            return wire<hgraph::stdlib::pass_through_node>(w, ts).as<hgraph::TS<hgraph::Time>>();
+        }
+    };
+
+    struct BytesEchoGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "bytes_echo_graph";
+
+        static hgraph::Port<hgraph::TS<hgraph::Bytes>> compose(hgraph::Wiring &w,
+                                                               hgraph::Port<hgraph::TS<hgraph::Bytes>> ts)
+        {
+            return wire<hgraph::stdlib::pass_through_node>(w, ts).as<hgraph::TS<hgraph::Bytes>>();
+        }
+    };
+}  // namespace
+
+TEST_CASE("time and bytes atoms round-trip through the executor as TS payloads")
+{
+    using namespace hgraph;
+    using namespace hgraph::testing;
+    stdlib::register_standard_operators();
+
+    const Time morning = time_of_day(9, 15);
+    const Time close   = time_of_day(16, 30, 0, 500);
+    CHECK_OUTPUT(eval_node<TimeEchoGraph>(values<Time>(morning, none, close)),
+                 values<Time>(morning, none, close));
+
+    const Bytes ping = bytes_("ping");
+    const Bytes raw  = bytes_(std::string_view{"\x00\xff", 2});
+    CHECK_OUTPUT(eval_node<BytesEchoGraph>(values<Bytes>(ping, raw)),
+                 values<Bytes>(ping, raw));
+}
