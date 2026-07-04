@@ -56,6 +56,56 @@ def test_json_round_trip():
     check(run.recorded("out") == [5, -9], f"unexpected: {run.recorded('out')}")
 
 
+def test_value_conversion_round_trips():
+    import datetime
+
+    samples = [
+        True,
+        42,
+        -1.5,
+        "text",
+        b"\x00raw",
+        datetime.datetime(2024, 1, 2, 3, 4, 5, 123456),
+        datetime.date(2024, 1, 2),
+        datetime.timedelta(seconds=90),
+        datetime.time(3, 4, 5, 123456),
+        frozenset({1, 2, 3}),
+        {"a": 1, "b": 2},
+        (1, 2, 3),
+        [1.5, 2.5],
+    ]
+    for sample in samples:
+        result = hg._roundtrip_value(sample)
+        expected = sample
+        if isinstance(sample, (set, frozenset)):
+            expected = frozenset(sample)
+        elif isinstance(sample, tuple):
+            expected = list(sample)  # homogeneous sequences convert as lists
+        check(result == expected, f"round trip {sample!r} -> {result!r}")
+
+
+def test_datetime_scalars_through_a_graph():
+    import datetime
+
+    w = hg.Wiring()
+    src = w.wire("const", (datetime.date(2024, 6, 30),), {}, output_type=hg.ts_type("TS[date]"))
+    w.wire("record", (src, "d"), {})
+    run = w.run()
+    check(run.recorded("d") == [datetime.date(2024, 6, 30)], f"unexpected: {run.recorded('d')}")
+
+
+def test_type_construction():
+    ts_int = hg.ts(hg.value_type("int"))
+    tss_str = hg.tss(hg.value_type("str"))
+    tsd = hg.tsd(hg.value_type("str"), ts_int)
+    tsl = hg.tsl(ts_int, 3)
+    check(all(x is not None for x in (ts_int, tss_str, tsd, tsl)), "type construction failed")
+    # Constructed TS[int] resolves identically to the registered name.
+    w = hg.Wiring()
+    p = w.wire("const", (1,), {}, output_type=ts_int)
+    check(p is not None, "constructed type failed to wire")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

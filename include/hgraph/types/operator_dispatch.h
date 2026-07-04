@@ -310,6 +310,9 @@ namespace hgraph
                                            std::span<const WiringArg> args,
                                            const TSValueTypeMetaData *expected_output = nullptr) const;
 
+        /** Every registered operator name (sorted) — discovery for the Python bridge. */
+        [[nodiscard]] std::vector<std::string> registered_names() const;
+
         void reset() noexcept;
 
         /**

@@ -549,6 +549,15 @@ namespace hgraph
                                 std::span<const std::pair<std::string, WiringPortRef>>{resolved.kwargs}});
     }
 
+    std::vector<std::string> OperatorRegistry::registered_names() const
+    {
+        std::vector<std::string> names;
+        names.reserve(overloads_.size());
+        for (const auto &[name, impls] : overloads_) { names.push_back(name); }
+        std::sort(names.begin(), names.end());
+        return names;
+    }
+
     void OperatorRegistry::reset() noexcept
     {
         overloads_.clear();
