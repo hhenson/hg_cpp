@@ -55,6 +55,7 @@ add_executable(hgraph_unit_tests
     test_erased_wiring.cpp
     test_ref_executor.cpp
     test_context_wiring.cpp
+    test_json.cpp
     test_record_replay.cpp
     test_eval_node.cpp
     test_std_nodes.cpp

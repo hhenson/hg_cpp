@@ -199,12 +199,44 @@ const-evaluable operator for explicit wiring-time reads.
 
 **Sequencing** (each lands green independently):
 
-1. Serializer-ops synthesis + ``to_json``/``from_json`` (proves the pattern,
-   no new dependencies).
+1. **DONE (2026-07-04)** — serializer-ops synthesis + ``to_json``/``from_json``.
 2. Graph traits + RecordReplayConfig (+ mode scope machinery).
 3. Arrow value integration + ``table_schema``/``to_table``/``from_table``.
 4. Data-frame (Arrow) record/replay backend; ``replay_const`` + RECOVER.
 5. ``@component`` on top of all of it.
+
+Step 1 — landed
+---------------
+
+``types/value/json_codec.h`` — the interned per-schema ``JsonConverter``
+(struct of write/read fn-ptrs + child converters, synthesized recursively
+over ``ValueTypeMetaData`` and interned; cleared by ``reset_all_registries``
+— the Python ``PartialSchema``/``to_json_builder`` pattern as a C++ ops
+table). ``to_json_string(view)`` / ``from_json_string(meta, text)`` are the
+value-layer entry points; parsing is meta-directed recursive descent (no
+DOM). Operators ``to_json(ts, delta=false) -> TS<Str>`` and
+``from_json -> OUT`` (output schema at the wiring site) are registered
+(``operators/json.h`` + ``impl/json_impl.h``). The ``delta`` flag is a
+wiring-time constant, so value vs delta is resolved by **overload selection**
+(``requires_`` on the flag) — the per-tick evals are branch-free
+(wiring-time resolution over run-time cost). Tests:
+``tests/cpp/test_json.cpp``.
+
+Wire-format decisions (vs Python, recorded):
+
+- Value forms match Python exactly for atomics (dates/times/timedeltas in the
+  strftime shapes), bundles/tuples, lists/sets, and maps (non-string keys
+  rendered then quoted).
+- **Delta mode serialises the canonical delta value** (``capture_delta``) —
+  for ``TS`` scalars/compounds this equals the value form; for set/dict
+  time-series the canonical delta shape is the wire form rather than
+  Python's per-TS-kind ad-hoc delta JSON (reconcile at bridge time if the
+  Python tests require byte-identical delta JSON).
+- ``from_json`` applies the parsed value as the tick's delta — the Python
+  support surface (``TS`` over scalars/compounds).
+- Not yet serialisable (throw at converter synthesis): ``bytes`` (no Python
+  JSON form either), enum names (needs the runtime enum name table),
+  ``Any``/CyclicBuffer/Queue.
 
 Rulings (Howard, 2026-07-04)
 ----------------------------

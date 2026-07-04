@@ -1,3 +1,4 @@
+#include <hgraph/types/value/json_codec.h>
 #include <hgraph/types/registry_reset.h>
 
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
@@ -18,6 +19,7 @@ namespace hgraph
         // full rationale; the type registry must be LAST because it owns the
         // schemas every other registry borrows by pointer.
         OperatorRegistry::instance().reset();
+        clear_json_converters();  // interns by meta/binding pointer — must precede the lenders below
         ValuePlanFactory::instance().reset();
         TSDataPlanFactory::instance().reset();
         TSInputBuilderFactory::reset();

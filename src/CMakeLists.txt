@@ -64,6 +64,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/operator_dispatch.cpp
     hgraph/types/registry_reset.cpp
     hgraph/types/primitive_types.cpp
+    hgraph/types/value/json_codec.cpp
     hgraph/util/date_time.cpp
 )
 
@@ -113,6 +114,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/type_registry.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/value_plan_factory.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/value_type_meta_data.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/value/json_codec.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/intern_table.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/key_slot_store.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/utils/memory_utils.h

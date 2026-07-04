@@ -26,7 +26,7 @@ Operator catalogue
 ------------------
 
 Of the **165** public operator definitions in ``hgraph/_operators``:
-**102 registered**, **23 declared-only**, **40 missing**.
+**104 registered**, **23 declared-only**, **38 missing** (snapshot updated 2026-07-04: ``to_json``/``from_json`` landed).
 
 .. list-table::
    :header-rows: 1
@@ -88,10 +88,11 @@ Of the **165** public operator definitions in ``hgraph/_operators``:
      - 2
      - **json_decode**, **json_encode**
    * - JSON serialization (``to_json``)
+     - 2
      - 0
-     - 0
-     - 4
-     - **from_json**, **from_json_builder**, **to_json**, **to_json_builder**
+     - 2
+     - **from_json_builder**, **to_json_builder** (wiring-time builder
+       helpers — the C++ counterpart is the interned ``json_converter``)
    * - Lifted operators (``lift_operators``)
      - 0
      - 0
@@ -143,18 +144,19 @@ Of the **165** public operator definitions in ``hgraph/_operators``:
      - 0
      - *cast_*, *downcast_*, *downcast_ref*
    * - **Total (165 public defs)**
-     - **102**
+     - **104**
      - **23**
-     - **40**
+     - **38**
      - 
 
 
 Notes on the gap clusters (deliberate ordering per :doc:`roadmap` P3):
 
-- **Serialization families** (``to_json``/``from_json``, the entire
-  ``to_table`` schema ecosystem, ``from_data_frame``/``to_data_frame``,
-  ``json_encode``/``json_decode``) — blocked on the JSON / table / DataFrame
-  **value kinds**, not on operator machinery. One family, one design pass.
+- **Serialization families** — ``to_json``/``from_json`` are **registered**
+  (the interned ``JsonConverter``, step 1 of :doc:`record_replay_table`).
+  The ``to_table`` schema ecosystem, ``from_data_frame``/``to_data_frame``
+  and ``json_encode``/``json_decode`` remain blocked on the table / DataFrame
+  / JSON **value kinds** (Arrow ``Frame`` design approved).
 - **Record/replay ecosystem** (``record_replay_model*``, recordable-id
   traits, ``get_fq_recordable_id``…) — ``record``/``replay`` themselves are
   registered (in-memory GlobalState backend); the pluggable model registry
