@@ -57,6 +57,12 @@ namespace hgraph
 
     void GlobalStateView::set(std::string_view key, const Value &value) const { set(key, value.view()); }
 
+    void GlobalStateView::set(std::string_view key, Value &&value) const
+    {
+        const Value key_value{std::string{key}};
+        map_->as_map().begin_mutation().value(key_value.view()).as_mutable_any().set(std::move(value));
+    }
+
     bool GlobalStateView::erase(std::string_view key) const
     {
         const Value key_value{std::string{key}};

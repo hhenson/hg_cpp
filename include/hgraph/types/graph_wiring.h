@@ -609,6 +609,15 @@ namespace hgraph
                                       Value scalars);
 
         /**
+         * Set a graph trait — parent-chained key-value metadata carried onto
+         * the produced ``GraphBuilder`` (see ``GraphView::trait_or`` and the
+         * record/replay design record, P5). Typical use:
+         * ``w.set_trait(std::string{record_replay::RECORDABLE_ID_TRAIT}, ...)``.
+         */
+        void set_trait(std::string_view name, const ValueView &value);
+        void set_trait(std::string_view name, Value &&value);
+
+        /**
          * Add a layout-only dependency. ``node`` is ranked after ``depends_on``,
          * but no runtime edge is emitted.
          */

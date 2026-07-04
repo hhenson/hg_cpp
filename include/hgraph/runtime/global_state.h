@@ -53,6 +53,8 @@ namespace hgraph
         /** Insert or replace ``key`` with a copy of ``value`` (assigned in place). */
         void set(std::string_view key, const ValueView &value) const;
         void set(std::string_view key, const Value &value) const;
+        /** Insert or replace ``key`` by MOVING ``value`` into the store (no copy). */
+        void set(std::string_view key, Value &&value) const;
 
         /** Remove ``key``; returns whether a key was removed. */
         bool erase(std::string_view key) const;

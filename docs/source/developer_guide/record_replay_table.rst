@@ -200,7 +200,7 @@ const-evaluable operator for explicit wiring-time reads.
 **Sequencing** (each lands green independently):
 
 1. **DONE (2026-07-04)** — serializer-ops synthesis + ``to_json``/``from_json``.
-2. Graph traits + RecordReplayConfig (+ mode scope machinery).
+2. **DONE (2026-07-04)** — graph traits + RecordReplayConfig + mode scope.
 3. Arrow value integration + ``table_schema``/``to_table``/``from_table``.
 4. Data-frame (Arrow) record/replay backend; ``replay_const`` + RECOVER.
 5. ``@component`` on top of all of it.
@@ -237,6 +237,51 @@ Wire-format decisions (vs Python, recorded):
 - Not yet serialisable (throw at converter synthesis): ``bytes`` (no Python
   JSON form either), enum names (needs the runtime enum name table),
   ``Any``/CyclicBuffer/Queue.
+
+Step 2 — landed
+---------------
+
+``types/record_replay.h`` + graph traits (implements P2, P3, P5):
+
+- **``record_replay::Config``** (P2) — the explicit wiring-time
+  configuration: ``model`` (default ``IN_MEMORY``), the bitemporal
+  ``date_key``/``as_of_key`` column names, and the optional ``as_of``
+  override. ``set_config`` before wiring; backends guard overloads with
+  ordinary ``requires_`` predicates via ``record_replay::model_is``.
+  Python's imperative setters (``set_record_replay_model``,
+  ``set_table_schema_date_key``, ``set_as_of``…) become bridge shims over
+  this. State resets through ``OperatorRegistry::reset()`` (the single reset
+  point for wiring-time global state).
+- **``record_replay::scope``** (P3) — the RAII mode scope
+  (``Mode`` flag set mirroring ``RecordReplayEnum``, plus a recordable id);
+  ``current_scope()`` reads the innermost entry. Consumers that consult it
+  while wiring must fold the consulted state into their intern identity
+  (enforced by convention now; ``@component`` in step 5 is the first real
+  consumer).
+- **Graph traits** (P5) — ``GraphBuilder::trait`` / ``Wiring::set_trait``
+  write; two read accessors mirroring Python's ``Traits`` exactly:
+  ``GraphView::trait(name)`` is the **chained lookup that bubbles up the
+  nested parent chain** (Python ``get_trait`` — children inherit and may
+  shadow), while ``GraphView::trait_or(name)`` reads **this graph's own
+  entry only** (Python ``get_trait_or``). Both return an invalid view when
+  absent (the C++ absence idiom; Python's ``get_trait`` throws).
+  ``fq_recordable_id`` resolves through the *chained* accessor — the
+  bubbling replaces Python's explicit copy-down of fq ids onto child
+  graphs, with identical results when each component level sets its fq
+  trait and strictly more forgiving when one doesn't. The store is the
+  **value-layer mutable ``Map<string, Any>``** — the same shape as
+  ``GlobalState`` (one runtime model; no parallel std-container store).
+  Setters take a borrowed ``ValueView`` (copy-assign in place) or an rvalue
+  ``Value`` (moved into the ``Any`` box — ``MutableAnyView::set(Value&&)``
+  and ``GlobalStateView::set(key, Value&&)`` were added for this and benefit
+  every GlobalState writer). Storage rides the shared graph runtime header;
+  the ops-table entry ``trait_impl`` returns the graph's own entry, the view
+  does the walk. ``record_replay::fq_recordable_id(graph, local)``
+  implements Python's ``get_fq_recordable_id`` over the trait chain
+  (``RECORDABLE_ID_TRAIT = "recordable_id"``).
+
+Tests: ``tests/cpp/test_record_replay_config.cpp`` (config + reset, scope
+nesting/shadowing, root traits, nested chain + shadowing, fq-id rules).
 
 Rulings (Howard, 2026-07-04)
 ----------------------------

@@ -141,6 +141,9 @@ namespace hgraph
             std::size_t                     evaluation_cursor{invalid_cursor};
             bool                            started{false};
             bool                            evaluating{false};
+            /** Graph traits (parent-chained key-value metadata; GraphView::trait_or).
+                The same value-layer ``Map<string, Any>`` store as GlobalState. */
+            GlobalState traits{};
         };
 
         struct RootGraphRuntimeStorage : GraphRuntimeBaseStorage
@@ -535,6 +538,13 @@ namespace hgraph
             const auto &runtime = graph_context(context);
             if (index >= runtime.layout.node_count) { throw std::out_of_range("Graph node index is out of range"); }
             return graph_node_view(runtime, memory, index);
+        }
+
+        template <typename Storage>
+        ValueView graph_trait_impl(const void *context, void *memory, std::string_view name) noexcept
+        {
+            auto &traits = graph_header<Storage>(graph_context(context), memory).traits;
+            return traits.view().get(name);
         }
 
         GlobalStateView root_global_state_impl(const void *context, void *memory)
@@ -985,6 +995,7 @@ namespace hgraph
                     .node_at_impl = &node_at_impl<RootGraphRuntimeStorage>,
                     .node_scheduled_time_impl = &node_scheduled_time_impl<RootGraphRuntimeStorage>,
                     .global_state_impl = &root_global_state_impl,
+                    .trait_impl = &graph_trait_impl<RootGraphRuntimeStorage>,
                     .root_impl = &root_graph_root_impl,
                     .graph_executor_impl = &root_graph_executor_impl,
                     .parent_node_impl = &root_parent_node_impl,
@@ -1009,6 +1020,7 @@ namespace hgraph
                     .node_at_impl = &node_at_impl<NestedGraphRuntimeStorage>,
                     .node_scheduled_time_impl = &node_scheduled_time_impl<NestedGraphRuntimeStorage>,
                     .global_state_impl = &nested_global_state_impl,
+                    .trait_impl = &graph_trait_impl<NestedGraphRuntimeStorage>,
                     .root_impl = &nested_graph_root_impl,
                     .graph_executor_impl = &nested_graph_executor_impl,
                     .parent_node_impl = &nested_parent_node_impl,
@@ -1147,6 +1159,38 @@ namespace hgraph
         return ops().global_state_impl(ops().context, data());
     }
 
+    ValueView GraphView::trait_or(std::string_view name) const noexcept
+    {
+        // This graph's OWN entry only (Python get_trait_or) — no bubbling.
+        if (ops().trait_impl == nullptr) { return ValueView{}; }
+        return ops().trait_impl(ops().context, data(), name);
+    }
+
+    ValueView GraphView::trait(std::string_view name) const noexcept
+    {
+        // Chained lookup (Python get_trait): own entry first, then BUBBLE UP
+        // the nested parent chain (each hop is one graph; terminates at root).
+        const GraphView *graph = this;
+        GraphView        parent_holder;
+        while (graph != nullptr && graph->valid())
+        {
+            if (graph->ops().trait_impl != nullptr)
+            {
+                if (ValueView entry = graph->ops().trait_impl(graph->ops().context, graph->data(), name);
+                    entry.valid())
+                {
+                    return entry;
+                }
+            }
+            if (!graph->is_nested()) { break; }
+            GraphValue *parent = graph->as_nested().parent_node().graph_value();
+            if (parent == nullptr) { break; }
+            parent_holder = parent->view();
+            graph         = &parent_holder;
+        }
+        return ValueView{};
+    }
+
     GraphParentKind GraphView::parent_kind() const
     {
         return ops().parent_kind;
@@ -1255,6 +1299,7 @@ namespace hgraph
                         throw std::invalid_argument("Root graph construction requires a live executor parent");
                     }
                     state.global_state = builder.global_state_;
+                    state.traits = builder.traits_;
                     state.root_executor_ref = root_executor;
                 });
         });
@@ -1270,6 +1315,7 @@ namespace hgraph
                 builder,
                 dst,
                 [&](NestedGraphRuntimeStorage &state) {
+                    state.traits = builder.traits_;
                     if (!parent_node.has_value())
                     {
                         throw std::invalid_argument("Nested graph construction requires a live node parent");
@@ -1365,6 +1411,22 @@ namespace hgraph
     }
 
     GlobalStateView GraphBuilder::global_state() noexcept { return global_state_.view(); }
+
+    GraphBuilder &GraphBuilder::trait(std::string_view name, const ValueView &value)
+    {
+        if (name.empty()) { throw std::invalid_argument("graph trait name must not be empty"); }
+        traits_.view().set(name, value);
+        return *this;
+    }
+
+    GraphBuilder &GraphBuilder::trait(std::string_view name, Value &&value)
+    {
+        if (name.empty()) { throw std::invalid_argument("graph trait name must not be empty"); }
+        traits_.view().set(name, std::move(value));
+        return *this;
+    }
+
+    GlobalStateView GraphBuilder::traits() noexcept { return traits_.view(); }
     GraphBuilder   &GraphBuilder::global_state(GlobalState state)
     {
         global_state_ = std::move(state);

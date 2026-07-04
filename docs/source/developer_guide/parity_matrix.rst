@@ -26,7 +26,7 @@ Operator catalogue
 ------------------
 
 Of the **165** public operator definitions in ``hgraph/_operators``:
-**104 registered**, **23 declared-only**, **38 missing** (snapshot updated 2026-07-04: ``to_json``/``from_json`` landed).
+**104 registered**, **23 declared-only**, **32 missing** — 6 further names are covered by equivalent C++ APIs (snapshot updated 2026-07-04: ``to_json``/``from_json`` + the record/replay config/traits layer landed).
 
 .. list-table::
    :header-rows: 1
@@ -101,8 +101,12 @@ Of the **165** public operator definitions in ``hgraph/_operators``:
    * - Record / replay (``record_replay``)
      - 2
      - 2
-     - 8
-     - *compare*, *replay_const* · **from_data_frame**, **get_fq_recordable_id**, **has_recordable_id_trait**, **record_replay_model**, **record_replay_model_restriction**, **set_parent_recordable_id**, **set_record_replay_model**, **to_data_frame**
+     - 2
+     - *compare*, *replay_const* · **from_data_frame**, **to_data_frame**.
+       The six config/traits functions are covered by the C++ API
+       (``record_replay::set_config``/``config``/``model_is``/
+       ``fq_recordable_id``/``has_recordable_id`` + ``Wiring::set_trait`` —
+       step 2 of :doc:`record_replay_table`)
    * - Stream (``stream``)
      - 14
      - 4
@@ -146,7 +150,7 @@ Of the **165** public operator definitions in ``hgraph/_operators``:
    * - **Total (165 public defs)**
      - **104**
      - **23**
-     - **38**
+     - **32** (+6 API-covered)
      - 
 
 
@@ -157,12 +161,12 @@ Notes on the gap clusters (deliberate ordering per :doc:`roadmap` P3):
   The ``to_table`` schema ecosystem, ``from_data_frame``/``to_data_frame``
   and ``json_encode``/``json_decode`` remain blocked on the table / DataFrame
   / JSON **value kinds** (Arrow ``Frame`` design approved).
-- **Record/replay ecosystem** (``record_replay_model*``, recordable-id
-  traits, ``get_fq_recordable_id``…) — ``record``/``replay`` themselves are
-  registered (in-memory GlobalState backend); the pluggable model registry
-  and the traits it rides on are the missing layer, shared with
-  ``@component``. The architectural analysis (const_fn, model selection,
-  Arrow tables, sequencing) is :doc:`record_replay_table`.
+- **Record/replay ecosystem** — ``record``/``replay`` are registered
+  (in-memory GlobalState backend), and the config/traits layer landed in
+  step 2 of :doc:`record_replay_table` (``record_replay::Config`` + mode
+  scope + graph traits with ``fq_recordable_id``). Remaining: the Arrow
+  backend (``from_data_frame``/``to_data_frame``, step 4) and
+  ``@component`` (step 5).
 - **Conversion/type operators** (*convert*, *combine*, *collect*, *emit*,
   *cast_*, *downcast_*…) — declared-only: the markers record the intended
   API; implementations are P3 catalogue work.
@@ -209,8 +213,9 @@ Types and scalars
        (recorded divergence); nested import/export deferred.
    * - ``STATE`` / ``RECORDABLE_STATE``
      - Full / partial
-     - RecordableState storage+eval works; ``@component`` recording and
-       recordable-id traits do not exist.
+     - RecordableState storage+eval works; graph traits + recordable-id
+       resolution landed (step 2 of :doc:`record_replay_table`);
+       ``@component`` recording does not exist yet.
    * - Scalars: ``bool int float str date datetime timedelta``
      - Full
      - Plus C++ extras Python lacks (width-specific ints, CyclicBuffer,
@@ -281,7 +286,7 @@ Wiring and node-authoring surface
    * - Injectables: STATE, SCHEDULER, CLOCK, GlobalState, OUTPUT
      - Full
      -
-   * - Injectables: LOGGER, TRAITS, node self
+   * - Injectables: LOGGER, node self
      - Missing
      - **Ruling (2026-07-04): LOGGER is a C++-native logger — spdlog** (built
        in ``SPDLOG_FMT_EXTERNAL`` mode against the fmt the project already

@@ -1,4 +1,5 @@
 #include <hgraph/types/operator_dispatch.h>
+#include <hgraph/types/record_replay.h>
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -534,6 +535,7 @@ namespace hgraph
         overloads_.clear();
         mesh_scopes_.clear();
         context_scopes_.clear();
+        record_replay::reset();   // config + mode scopes (types/record_replay.h)
     }
 
     void OperatorRegistry::push_context_scope(std::string_view name, WiringPortRef port, const void *wiring)

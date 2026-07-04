@@ -373,6 +373,11 @@ namespace hgraph
         *static_cast<Value *>(mutable_data()) = value;
     }
 
+    void MutableAnyView::set(Value &&value) const
+    {
+        *static_cast<Value *>(mutable_data()) = std::move(value);
+    }
+
     void MutableAnyView::clear() const
     {
         static_cast<Value *>(mutable_data())->reset();

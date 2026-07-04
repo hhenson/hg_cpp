@@ -871,6 +871,8 @@ namespace hgraph
         void set(const ValueView &value) const;
         /** Replace the contained value with a copy of ``value``. */
         void set(const Value &value) const;
+        /** Replace the contained value by MOVING ``value`` into the box (no copy). */
+        void set(Value &&value) const;
         /** Clear the box back to the empty state. */
         void clear() const;
     };

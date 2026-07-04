@@ -143,6 +143,9 @@ struct HGRAPH_EXPORT GraphEdge
         [[nodiscard]] DateTime (*node_scheduled_time_impl)(const void *context, const void *memory,
                                                            std::size_t index) noexcept = nullptr;
         [[nodiscard]] GlobalStateView (*global_state_impl)(const void *context, void *memory) = nullptr;
+        /** This graph's OWN trait entry (no parent walk); invalid view when absent. */
+        [[nodiscard]] ValueView (*trait_impl)(const void *context, void *memory,
+                                              std::string_view name) noexcept = nullptr;
         [[nodiscard]] RootGraphView (*root_impl)(const void *context, const GraphView &graph) = nullptr;
         [[nodiscard]] GraphExecutorView (*graph_executor_impl)(const void *context, void *memory) = nullptr;
         [[nodiscard]] NodeView (*parent_node_impl)(const void *context, void *memory) = nullptr;
@@ -176,6 +179,25 @@ struct HGRAPH_EXPORT GraphEdge
 
         /** A view over the graph's shared ``GlobalState`` (the owning value lives on the graph). */
         [[nodiscard]] GlobalStateView global_state() const;
+
+        /**
+         * Graph traits: a small parent-chained key-value store (design
+         * record: *Record/replay, tables and const_fn*, P5). Written at
+         * build time (``GraphBuilder::trait`` / ``Wiring::set_trait``), read
+         * at runtime. Two accessors mirroring Python's ``Traits``:
+         *
+         * - ``trait(name)`` — the CHAINED lookup (Python ``get_trait``):
+         *   checks this graph, then BUBBLES UP the nested parent chain
+         *   (a child inherits its parent's traits unless it shadows them).
+         * - ``trait_or(name)`` — this graph's OWN entry only (Python
+         *   ``get_trait_or``), no bubbling.
+         *
+         * Both return an invalid view when absent (the C++ absence idiom;
+         * Python's ``get_trait`` throws instead — callers that need the
+         * throw check ``valid()``).
+         */
+        [[nodiscard]] ValueView trait(std::string_view name) const noexcept;
+        [[nodiscard]] ValueView trait_or(std::string_view name) const noexcept;
         [[nodiscard]] GraphParentKind parent_kind() const;
         [[nodiscard]] bool is_root() const;
         [[nodiscard]] bool is_nested() const;
@@ -282,6 +304,16 @@ struct HGRAPH_EXPORT GraphEdge
         /** Replace the initial ``GlobalState`` (used by the wiring layer's ``finish``). */
         GraphBuilder &global_state(GlobalState state);
 
+        /**
+         * Set a graph trait (parent-chained key-value metadata; see
+         * ``GraphView::trait_or``). Copied onto every graph instance the
+         * builder produces.
+         */
+        GraphBuilder &trait(std::string_view name, const ValueView &value);
+        GraphBuilder &trait(std::string_view name, Value &&value);
+        /** The trait store (a value-layer ``Map<string, Any>``, like ``GlobalState``). */
+        [[nodiscard]] GlobalStateView traits() noexcept;
+
         [[nodiscard]] std::string_view label() const noexcept;
         [[nodiscard]] std::size_t node_count() const noexcept;
         [[nodiscard]] const std::vector<NodeBuilder> &nodes() const noexcept;
@@ -302,6 +334,7 @@ struct HGRAPH_EXPORT GraphEdge
         std::vector<NodeBuilder>      nodes_{};
         std::vector<GraphEdge>        edges_{};
         GlobalState                   global_state_{};
+        GlobalState                   traits_{};   // trait store: same value-layer Map<string, Any> shape
     };
 
 }  // namespace hgraph

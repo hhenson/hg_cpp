@@ -506,6 +506,7 @@ namespace hgraph
         std::unordered_map<std::string, const WiringInstance *>            service_rank_anchors{};
         std::vector<ServiceClientRank>                                      service_client_ranks{};
         std::vector<SameCyclePair>                                          same_cycle_pairs{};
+        GlobalState                                                         traits{};   // value-layer Map<string, Any>
         std::vector<ServiceImplementationScope>                            implementation_scopes{};
         GlobalState                                                        global_state{};
     };
@@ -595,6 +596,18 @@ namespace hgraph
         {
             dependencies.push_back(depends_on);
         }
+    }
+
+    void Wiring::set_trait(std::string_view name, const ValueView &value)
+    {
+        if (name.empty()) { throw std::invalid_argument("graph trait name must not be empty"); }
+        impl_->traits.view().set(name, value);
+    }
+
+    void Wiring::set_trait(std::string_view name, Value &&value)
+    {
+        if (name.empty()) { throw std::invalid_argument("graph trait name must not be empty"); }
+        impl_->traits.view().set(name, std::move(value));
     }
 
     void Wiring::add_same_cycle_pair(const WiringInstance *capture, const WiringInstance *source)
@@ -864,6 +877,10 @@ namespace hgraph
         RankedGraphBuild build = build_ranked_graph(impl_->instances, nullptr);
         validate_same_cycle_pairs(build.index_of);
         build.graph_builder.global_state(std::move(impl_->global_state));  // carry wiring-time entries onto the graph
+        for (const auto [key, boxed] : impl_->traits.as_value().view().as_map())
+        {
+            build.graph_builder.trait(key.checked_as<Str>(), boxed.as_any().get());
+        }
         return std::move(build.graph_builder);
     }
 
@@ -889,6 +906,10 @@ namespace hgraph
 
         RankedGraphBuild build = build_ranked_graph(impl_->instances, &compiled.input_bindings);
         validate_same_cycle_pairs(build.index_of);
+        for (const auto [key, boxed] : impl_->traits.as_value().view().as_map())
+        {
+            build.graph_builder.trait(key.checked_as<Str>(), boxed.as_any().get());
+        }
         compiled.graph_builder = std::move(build.graph_builder);
         const auto &index_of   = build.index_of;
 

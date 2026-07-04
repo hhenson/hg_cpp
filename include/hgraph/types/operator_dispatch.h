@@ -329,6 +329,13 @@ namespace hgraph
         /** Nearest enclosing entry with this name, or ``nullptr``. */
         [[nodiscard]] const ContextScopeEntry *resolve_context_scope(std::string_view name) const noexcept;
 
+        // NOTE: the record/replay wiring state (config + mode scope,
+        // ``types/record_replay.h``) is further wiring-time global state in
+        // the same family as the mesh/context scopes above. Its typed storage
+        // lives with its API (record_replay.cpp); ``reset()`` here chains to
+        // ``record_replay::reset()`` so registry reset remains the single
+        // reset point for all wiring-time global state.
+
       private:
         struct MeshScope
         {
