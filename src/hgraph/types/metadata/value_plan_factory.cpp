@@ -651,8 +651,10 @@ namespace hgraph
 
     ValuePlanFactory &ValuePlanFactory::instance()
     {
-        static ValuePlanFactory factory;
-        return factory;
+        // Immortal (see OperatorRegistry::instance): interned plans/bindings
+        // must outlive every Value destructor, including static-teardown ones.
+        static ValuePlanFactory *factory = new ValuePlanFactory();
+        return *factory;
     }
 
     void ValuePlanFactory::register_atomic(const ValueTypeMetaData *schema, const MemoryUtils::StoragePlan *plan)

@@ -393,6 +393,16 @@ wraps per its mode:
 - **Replay** — inputs are REPLACED by their recordings (Python parity: the
   live wiring stays but the recorded values win).
 - **ReplayOutput** — the output is replaced by its recording.
+- **Recover** — each input routes through a component-owned *recovering
+  pass-through* that publishes the last recorded value at or before the
+  start time from its own ``start`` (the P7 seed — Python's
+  ``merge(ts, replay_const(...))`` fused into one node; **no graph-level
+  seed state** — only recovering components pay, per Howard's review);
+  live ticks override thereafter. ``Recover | Record`` continues
+  recording; ``Recover`` combined with replay modes is rejected.
+- **Compare** — inputs are replaced by their recordings, the output is
+  recomputed, and per-tick equality against the recorded ``__out__`` lands
+  in the store — the backtesting regression check (see *The Compare sink*).
 - **None** — a plain ``wire<G>``; no wrapping.
 
 Input keys are the graph's ``NamedPort`` names (``arg_<I>`` for plain
@@ -404,10 +414,39 @@ required under an active mode (throws otherwise); the consulted
 (mode, id) manifests structurally in the wiring, honouring the P3
 intern-identity ruling.
 
-Deferred from step 5 (throw rather than mis-wire): **Compare** (needs the
-comparison sink over the P6 store) and **Recover** (P7 start-time
-seeding); scalar compose params on component graphs. Tests:
+Deferred from step 5: scalar compose params on component graphs. Tests:
 ``tests/cpp/test_component.cpp``.
+
+The Compare sink (landed)
+-------------------------
+
+The Q-compare ruling realised: ``compare(lhs, rhs, recordable_id="")`` is a
+sink recording per-tick equality (erased ``ValueView::equals``) into a
+bitemporal ``Bool`` frame via the ``FrameRecorder``, written through the
+**registered frame store** (P6) at stop under ``fq.__compare__`` — the
+store is the pluggable seam, so one implementation serves every model.
+Activation with a one-sided value IS a mismatch (one series produced where
+the other did not) and is recorded as a failure — never skipped.
+``record_replay::comparison_summary(fq_key)`` reads results back as
+``(compared, mismatches)``.
+
+P1 — const-evaluable operators (landed)
+---------------------------------------
+
+The const_fn ruling realised without a node-class port: an operator impl
+may declare ``static Value const_eval(const TSValueTypeMetaData
+*resolved_output, OperatorCallContext)`` — detected at registration like
+``requires_`` and stored as the overload's **const kernel**.
+``OperatorRegistry::evaluate_const(name, args, expected_output)`` resolves
+the overload exactly as ``wire`` does (normalisation, defaults,
+``requires_`` gates, expected-output unification) and invokes the kernel
+directly — Python's dual-mode ``@const_fn`` eager call. The wired form is
+the same impl's ordinary ``eval``. Registered const-evaluables:
+``replay_const(key, recordable_id, tm=MAX_DT)`` (DATA_FRAME-gated; the
+eager call REQUIRES an explicit ``recordable_id`` — no graph traits exist
+outside a graph; the wired form resolves through traits and cuts at the
+start time) and ``from_table_const(value: Frame)`` (the frame's last row
+at the resolved output schema). Tests: ``tests/cpp/test_const_eval.cpp``.
 
 Rulings (Howard, 2026-07-04)
 ----------------------------

@@ -520,13 +520,33 @@ namespace hgraph
 
     OperatorRegistry &OperatorRegistry::instance() noexcept
     {
-        static OperatorRegistry registry;
-        return registry;
+        // Immortal: registries are process-lifetime; destroying them at exit
+        // is unordered across TUs in a shared module (Python bridge) and the
+        // impls' default Values reference interned bindings owned elsewhere.
+        static OperatorRegistry *registry = new OperatorRegistry();
+        return *registry;
     }
 
     void OperatorRegistry::register_overload(OperatorImpl impl)
     {
         overloads_[impl.name].push_back(std::move(impl));
+    }
+
+    Value OperatorRegistry::evaluate_const(std::string_view name, std::span<const WiringArg> args,
+                                           const TSValueTypeMetaData *expected_output) const
+    {
+        ResolvedOperatorCall resolved = resolve(name, args, std::nullopt, expected_output);
+        if (!resolved.impl->const_kernel)
+        {
+            throw OperatorResolutionError(fmt::format(
+                "operator '{}' resolved to an overload that is not const-evaluable", name));
+        }
+        const TSValueTypeMetaData *resolved_output =
+            resolved.impl->has_output ? ts_pattern_resolve(resolved.impl->output, resolved.map) : nullptr;
+        return resolved.impl->const_kernel(
+            resolved_output,
+            OperatorCallContext{resolved.args, resolved.impl->params,
+                                std::span<const std::pair<std::string, WiringPortRef>>{resolved.kwargs}});
     }
 
     void OperatorRegistry::reset() noexcept

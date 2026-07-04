@@ -28,6 +28,12 @@ namespace hgraph::stdlib
     struct from_table : Operator<"from_table", In<"ts", TS<Frame>>, Out<TsVar<"O">>>
     {
     };
+
+    /** ``from_table_const`` — the const-evaluable form of ``from_table``:
+        extract the (last) row of a frame VALUE as the output type. */
+    struct from_table_const : Operator<"from_table_const", Scalar<"value", Frame>, Out<TsVar<"O">>>
+    {
+    };
 }  // namespace hgraph::stdlib
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_TABLE_H

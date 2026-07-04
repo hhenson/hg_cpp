@@ -70,11 +70,41 @@ namespace hgraph::stdlib
         }
     };
 
+    /**
+     * ``from_table_const`` — const-evaluable (the const_fn ruling, P1): the
+     * eager kernel extracts the frame's last row at the resolved output
+     * schema; the wired form emits the same value once at start.
+     */
+    struct from_table_const_impl
+    {
+        static constexpr auto name              = "from_table_const";
+        static constexpr bool schedule_on_start = true;
+
+        static Value const_eval(const TSValueTypeMetaData *resolved_output, OperatorCallContext context)
+        {
+            const auto *frame = context.scalar_as<Frame>("value");
+            if (frame == nullptr || !frame->has_value() || frame_rows(*frame) == 0) { return Value{}; }
+            const auto &converter = table_converter(resolved_output->value_schema);
+            return read_row(converter, *frame, frame_rows(*frame) - 1);
+        }
+
+        static void eval(Scalar<"value", Frame> value, Out<TsVar<"O">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto &frame  = value.value();
+            if (!frame.has_value() || frame_rows(frame) == 0) { return; }
+            const auto &converter = table_converter(erased.schema()->value_schema);
+            Value       row       = read_row(converter, frame, frame_rows(frame) - 1);
+            out.apply(row.view());
+        }
+    };
+
     /** Register the table operator overloads. */
     inline void register_table_operators()
     {
         register_overload<to_table, to_table_impl>();
         register_overload<from_table, from_table_impl>();
+        register_overload<from_table_const, from_table_const_impl>();
     }
 }  // namespace hgraph::stdlib
 

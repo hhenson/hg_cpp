@@ -182,8 +182,11 @@ namespace hgraph
 
     TypeRegistry &TypeRegistry::instance()
     {
-        static TypeRegistry registry;
-        static const bool   seeded = [] {
+        // Immortal (see OperatorRegistry::instance): metas must outlive every
+        // consumer, including static-teardown Value destructors.
+        static TypeRegistry *registry_ptr = new TypeRegistry();
+        static TypeRegistry &registry     = *registry_ptr;
+        static const bool    seeded       = [] {
             (void)stdlib::register_standard_types(registry);
             return true;
         }();

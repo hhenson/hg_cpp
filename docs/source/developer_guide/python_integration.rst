@@ -91,3 +91,37 @@ Python, and writing the result back through the ``TSOutputView``. This is the
 mechanism behind a Python *operator* implementation registering as an ordinary
 candidate (see *Operators > The Python implementation path*), built only under
 ``HGRAPH_ENABLE_PYTHON_USER_NODES``.
+
+The Bridge (Slice 1 — Landed)
+-----------------------------
+
+``bindings/python/`` (opt-in: ``-DHGRAPH_BUILD_PYTHON_BINDINGS=ON``; the
+default build never needs Python) holds the nanobind module ``_hgraph``.
+Slice 1 proves the contract end to end from Python:
+
+- **Wiring by name**: ``Wiring.wire(name, args, kwargs, output_type=None)``
+  builds erased ``WiringArg`` lists (ports and scalars, positional and
+  keyword) and goes through the exact three calls the template-free proof
+  established (``OperatorRegistry::resolve`` → ``impl->wire``); ports come
+  back as opaque handles. ``ts_type("TS[int]")`` resolves expected-output
+  schemas by registry name.
+- **Running**: ``Wiring.run()`` finishes the wiring, builds a simulation
+  executor and runs it; ``Wiring.set_replay(key, [values|None])`` seeds the
+  replay buffer at wiring, ``Run.recorded(key)`` reads recordings back as
+  Python values — the eval_node harness shape, from Python.
+- **Eager const**: ``evaluate_const(name, args, kwargs, output_type)``
+  exposes the P1 kernel.
+- **Scalar conversion** (slice 1): bool/int/float/str + datetime/timedelta
+  via the vendored nanobind chrono casters. Containers, bundles, Frame and
+  the remaining atoms are the next conversion slice.
+- Registration happens at module import; ``reset_registries()`` re-seeds.
+  Type metadata handles must be re-looked-up after a reset.
+
+Landed with a load-bearing fix: the core registries (TypeRegistry,
+ValuePlanFactory, TSDataPlanFactory, OperatorRegistry) are **immortal**
+(leaked) singletons — in a shared module, cross-TU static destruction
+order destroyed interned bindings before the operator impls' default
+``Value``\ s that reference them (a segfault at interpreter exit).
+Registries hold process-lifetime immutable artifacts; they are never
+destroyed. Tests: ``bindings/python/tests/test_bridge.py`` (registered
+with ctest under the option).

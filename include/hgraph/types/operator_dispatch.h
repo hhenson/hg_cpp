@@ -239,6 +239,15 @@ namespace hgraph
         Source                     source{Source::Cpp};
         std::function<void(ResolutionMap &, OperatorCallContext)> default_resolver{};   ///< may be empty
         std::function<bool(const ResolutionMap &, OperatorCallContext)> requires_predicate{};  ///< may be empty
+
+        /**
+         * Const-evaluable eager kernel (the const_fn ruling, P1): evaluates
+         * the operator at wiring/bridge time from the normalised call — no
+         * node is wired. ``resolved_output`` is the resolved output schema
+         * (null for sink-shaped operators). Empty when the overload is only
+         * wirable.
+         */
+        std::function<Value(const TSValueTypeMetaData *resolved_output, OperatorCallContext)> const_kernel{};
         std::function<OperatorWireResult(Wiring &, const ResolutionMap &, std::span<const WiringArg>,
                                          std::span<const std::pair<std::string, WiringPortRef>>)>
             wire{};
@@ -288,6 +297,18 @@ namespace hgraph
             std::span<const WiringArg> args,
             std::optional<bool> output_required = std::nullopt,
             const TSValueTypeMetaData *expected_output = nullptr) const;
+
+        /**
+         * Resolve and EAGERLY evaluate a const-evaluable overload (the
+         * const_fn ruling, P1): Python's dual-mode ``@const_fn`` without a
+         * node class — C++ wiring code and the Python bridge call this to
+         * get the value directly; wrap with ``const_`` when a source port is
+         * wanted. Throws ``OperatorResolutionError`` when the selected
+         * overload has no const kernel.
+         */
+        [[nodiscard]] Value evaluate_const(std::string_view name,
+                                           std::span<const WiringArg> args,
+                                           const TSValueTypeMetaData *expected_output = nullptr) const;
 
         void reset() noexcept;
 
@@ -446,6 +467,11 @@ namespace hgraph
         template <typename T>
         concept has_requires_with_context = requires(const ResolutionMap &resolution, OperatorCallContext context) {
             { T::requires_(resolution, context) } -> std::convertible_to<bool>;
+        };
+
+        template <typename T>
+        concept has_const_eval = requires(const TSValueTypeMetaData *resolved_output, OperatorCallContext context) {
+            { T::const_eval(resolved_output, context) } -> std::convertible_to<Value>;
         };
 
         template <typename T>
@@ -1241,6 +1267,12 @@ namespace hgraph
         {
             impl.default_resolver = [](ResolutionMap &m, OperatorCallContext) { Impl::resolve_default_types(m); };
         }
+        if constexpr (operator_dispatch_detail::has_const_eval<Impl>)
+        {
+            impl.const_kernel = [](const TSValueTypeMetaData *resolved_output, OperatorCallContext c) {
+                return Impl::const_eval(resolved_output, c);
+            };
+        }
         if constexpr (operator_dispatch_detail::has_requires_with_context<Impl>)
         {
             impl.requires_predicate = [](const ResolutionMap &m, OperatorCallContext c) { return Impl::requires_(m, c); };
@@ -1311,6 +1343,12 @@ namespace hgraph
         else if constexpr (graph_wiring_detail::has_resolve_default_types<Impl>)
         {
             impl.default_resolver = [](ResolutionMap &m, OperatorCallContext) { Impl::resolve_default_types(m); };
+        }
+        if constexpr (operator_dispatch_detail::has_const_eval<Impl>)
+        {
+            impl.const_kernel = [](const TSValueTypeMetaData *resolved_output, OperatorCallContext c) {
+                return Impl::const_eval(resolved_output, c);
+            };
         }
         if constexpr (operator_dispatch_detail::has_requires_with_context<Impl>)
         {

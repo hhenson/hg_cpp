@@ -1,30 +1,12 @@
-set(_hgraph_python_package_dir "${PROJECT_BINARY_DIR}/python/hgraph")
-file(MAKE_DIRECTORY "${_hgraph_python_package_dir}")
+# The Python bridge module (roadmap P4). Opt-in only: the default build never
+# needs Python (HGRAPH_BUILD_PYTHON_BINDINGS=ON enables this subtree).
+nanobind_add_module(_hgraph NB_STATIC NOSTRIP module.cpp)
+target_link_libraries(_hgraph PRIVATE hgraph_core hgraph::options)
 
-configure_file(
-    "${PROJECT_SOURCE_DIR}/python/hgraph/__init__.py"
-    "${_hgraph_python_package_dir}/__init__.py"
-    COPYONLY
+add_test(
+    NAME hgraph_python_bridge
+    COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bridge.py"
 )
-
-get_target_property(_hgraph_core_type hgraph_core TYPE)
-if(NOT _hgraph_core_type STREQUAL "INTERFACE_LIBRARY")
-    set_target_properties(hgraph_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-endif()
-
-nanobind_add_module(_hgraph NB_STATIC hgraph_module.cpp)
-
-target_link_libraries(_hgraph
-    PRIVATE
-        hgraph::core
-)
-
-set_target_properties(_hgraph PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${_hgraph_python_package_dir}"
-    RUNTIME_OUTPUT_DIRECTORY "${_hgraph_python_package_dir}"
-)
-
-install(TARGETS _hgraph
-    LIBRARY DESTINATION hgraph
-    RUNTIME DESTINATION hgraph
+set_tests_properties(hgraph_python_bridge PROPERTIES
+    ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:_hgraph>"
 )

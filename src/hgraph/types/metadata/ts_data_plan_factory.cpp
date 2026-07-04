@@ -24,8 +24,9 @@ namespace hgraph
 
     TSDataPlanFactory &TSDataPlanFactory::instance()
     {
-        static TSDataPlanFactory factory;
-        return factory;
+        // Immortal (see OperatorRegistry::instance).
+        static TSDataPlanFactory *factory = new TSDataPlanFactory();
+        return *factory;
     }
 
     const MemoryUtils::StoragePlan *TSDataPlanFactory::plan_for(const TSValueTypeMetaData *schema)

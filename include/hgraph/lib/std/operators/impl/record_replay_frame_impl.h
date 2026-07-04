@@ -233,12 +233,65 @@ namespace hgraph::stdlib
         }
     };
 
+    /**
+     * ``replay_const`` — const-evaluable (the const_fn ruling, P1). The
+     * eager kernel reads the last recorded value from the frame store
+     * (``recordable_id`` MUST be explicit — no graph traits exist outside a
+     * graph, matching Python's eager-call contract); the wired form emits
+     * the recovered value once at start, resolving the id through graph
+     * traits like every other record/replay node.
+     */
+    struct replay_const_impl
+    {
+        static constexpr auto name              = "replay_const";
+        static constexpr bool schedule_on_start = true;
+
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"recordable_id", Value{Str{}}}, {"tm", Value{MAX_DT}}};
+        }
+
+        static bool requires_(const ResolutionMap &, OperatorCallContext)
+        {
+            return record_replay::model_is(record_replay::DATA_FRAME);
+        }
+
+        static Value const_eval(const TSValueTypeMetaData *resolved_output, OperatorCallContext context)
+        {
+            const auto *key           = context.scalar_as<Str>("key");
+            const auto *recordable_id = context.scalar_as<Str>("recordable_id");
+            const auto *tm            = context.scalar_as<DateTime>("tm");
+            if (recordable_id == nullptr || recordable_id->empty())
+            {
+                throw std::invalid_argument(
+                    "replay_const: an explicit recordable_id is required for the eager (const) call");
+            }
+            return record_replay::replay_const_value(
+                *recordable_id + "." + (key != nullptr ? *key : Str{}), resolved_output->value_schema,
+                tm != nullptr ? *tm : MAX_DT,
+                record_replay::config().as_of.value_or(MAX_DT));
+        }
+
+        static void eval(Scalar<"key", Str> key, Scalar<"recordable_id", Str> recordable_id,
+                         Scalar<"tm", DateTime> tm, TraitsView traits, DateTime now, Out<TsVar<"O">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto  cutoff = tm.value() == MAX_DT ? now : tm.value();
+            Value       value  = record_replay::replay_const_value(
+                record_replay::fq_recordable_id(traits, recordable_id.value()) + "." + key.value(),
+                erased.schema()->value_schema, cutoff,
+                record_replay::config().as_of.value_or(MAX_DT));
+            if (value.has_value()) { out.apply(value.view()); }
+        }
+    };
+
     /** Register the data-frame record/replay backend overloads. */
     inline void register_record_replay_frame_operators()
     {
         register_overload<record, record_frame_impl>();
         register_overload<replay, replay_frame_impl>();
         register_overload<compare, compare_impl>();
+        register_overload<replay_const, replay_const_impl>();
     }
 }  // namespace hgraph::stdlib
 

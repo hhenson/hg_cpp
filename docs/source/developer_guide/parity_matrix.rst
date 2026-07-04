@@ -26,7 +26,7 @@ Operator catalogue
 ------------------
 
 Of the **165** public operator definitions in ``hgraph/_operators``:
-**106 registered**, **23 declared-only**, **23 missing** — 13 further names are covered by equivalent C++ APIs (snapshot updated 2026-07-04: json + record/replay config/traits + Arrow ``Frame``/``to_table``/``from_table`` landed).
+**110 registered**, **20 declared-only**, **22 missing** — 13 further names are covered by equivalent C++ APIs (snapshot updated 2026-07-04: json + record/replay config/traits + Arrow ``Frame``/``to_table``/``from_table`` landed).
 
 .. list-table::
    :header-rows: 1
@@ -100,10 +100,12 @@ Of the **165** public operator definitions in ``hgraph/_operators``:
      - 1
      - **round_**
    * - Record / replay (``record_replay``)
+     - 4
+     - 0
      - 2
-     - 2
-     - 2
-     - *compare*, *replay_const* · **from_data_frame**, **to_data_frame**.
+     - **from_data_frame**, **to_data_frame**. ``compare`` (the P6-store
+       comparison sink) and ``replay_const`` (const-evaluable, P1) are
+       registered.
        The six config/traits functions are covered by the C++ API
        (``record_replay::set_config``/``config``/``model_is``/
        ``fq_recordable_id``/``has_recordable_id`` + ``Wiring::set_trait`` —
@@ -134,11 +136,12 @@ Of the **165** public operator definitions in ``hgraph/_operators``:
      - 1
      - **compute_set_delta**
    * - Table serialization (``to_table``)
-     - 2
+     - 3
      - 0
-     - 5
-     - **from_table_const**, **make_table_schema**, **shape_of_table_type**,
-       **table_shape**, **table_shape_from_schema**. ``to_table``/
+     - 4
+     - **make_table_schema**, **shape_of_table_type**,
+       **table_shape**, **table_shape_from_schema**. ``from_table_const``
+       is registered (const-evaluable, P1). ``to_table``/
        ``from_table`` are registered (Arrow ``Frame``, step 3 of
        :doc:`record_replay_table`); ``table_schema`` maps onto the
        ``TableConverter``; the six as-of / column-key config functions are
@@ -221,7 +224,7 @@ Types and scalars
      - Full / partial
      - RecordableState storage+eval works; graph traits + recordable-id
        resolution landed (step 2 of :doc:`record_replay_table`);
-       ``component<G>`` recording landed (step 5); RECOVER seeding pending.
+       ``component<G>`` recording + RECOVER seeding landed (step 5 + P7).
    * - Scalars: ``bool int float str date datetime timedelta``
      - Full
      - Plus C++ extras Python lacks (width-specific ints, CyclicBuffer,
@@ -289,8 +292,8 @@ Wiring and node-authoring surface
    * - ``@component``
      - Full (first pass)
      - ``stdlib::component<G>`` over the mode scope + record/replay
-       (Record/Replay/ReplayOutput; Compare + Recover pending — step 5 of
-       :doc:`record_replay_table`).
+       — the full mode set (Record/Replay/ReplayOutput/Recover/Compare;
+       step 5 + P7 of :doc:`record_replay_table`).
    * - Injectables: STATE, SCHEDULER, CLOCK, GlobalState, OUTPUT
      - Full
      -
