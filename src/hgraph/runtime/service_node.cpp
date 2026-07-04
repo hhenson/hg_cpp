@@ -356,15 +356,19 @@ namespace hgraph
             return source.as<RequestInputSourceView>();
         }
 
-        [[nodiscard]] DateTime paired_source_schedule_time(
-            const NodeView &capture,
-            std::size_t source_node_index,
-            DateTime evaluation_time,
-            bool start_phase)
+        /**
+         * Request stubs (subscription keys, request/reply requests) are the
+         * sanctioned NEXT-cycle forwarders: their pairing with the service
+         * source is deliberately rank-free (no rank dependency at wiring), so
+         * the temporal break here — rather than a wiring edge — is what allows
+         * a client's request to derive from the service's own response.
+         * Capture during ``start`` schedules for the current engine time so
+         * the first cycle publishes. (Shared-output relays are the opposite:
+         * rank-correct and same-cycle — see shared_output_node.cpp.)
+         */
+        [[nodiscard]] DateTime request_stub_forward_time(DateTime evaluation_time, bool start_phase)
         {
-            return start_phase || source_node_index > capture.node_index()
-                ? evaluation_time
-                : evaluation_time + MIN_TD;
+            return start_phase ? evaluation_time : evaluation_time + MIN_TD;
         }
 
         void apply_pending_subscription_key_changes(
@@ -568,8 +572,7 @@ namespace hgraph
             auto bundle = input.as_bundle();
             auto key    = bundle.at("key");
             auto source = recover_source_view(view, evaluation_time);
-            const DateTime schedule_time =
-                paired_source_schedule_time(view, source.node_index(), evaluation_time, start_phase);
+            const DateTime schedule_time = request_stub_forward_time(evaluation_time, start_phase);
             record_subscription_key(source, capture_storage_of(view, context), key, schedule_time);
         }
 
@@ -585,8 +588,7 @@ namespace hgraph
             auto request = bundle.at("request");
             auto source  = recover_request_source_view(view, evaluation_time);
             auto &storage = capture_storage_of(view, context);
-            const DateTime schedule_time =
-                paired_source_schedule_time(view, source.node_index(), evaluation_time, start_phase);
+            const DateTime schedule_time = request_stub_forward_time(evaluation_time, start_phase);
 
             if (!force && !request.modified()) { return; }
 

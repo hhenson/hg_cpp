@@ -84,10 +84,13 @@ Boundary design decisions (implemented; the authoritative record is
 - Shared outputs do not use global-state subscribers or shared ownership for
   graph-local state. Consumers bind to the source node output and are woken by
   ordinary output notification.
-- Capture during ``start`` schedules the paired source for the current engine
-  time. Capture during graph evaluation schedules the source for
-  ``evaluation_time + MIN_TD`` so a source that has already passed in rank order
-  is observed on the next engine cycle.
+- Boundary scheduling splits by kind (authoritative statement:
+  :doc:`services` / :doc:`architecture` *Lifecycle Teardown*): shared-output
+  relays are rank-correct (paired source ranked after every capture,
+  re-ranked by ``Wiring::finish`` once all captures are known) and relay
+  **same-cycle**; subscription/request-reply **request stubs** are rank-free
+  and forward at ``evaluation_time + MIN_TD`` (current time during ``start``)
+  — the sanctioned next-cycle break that lets requests derive from responses.
 - The source clears its captured reference on ``stop``. A restarted graph must
   republish through capture before the source can produce a live shared output.
 - Context capture/lookup uses the same source/capture runtime primitive. Context

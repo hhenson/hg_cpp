@@ -800,7 +800,14 @@ namespace hgraph::service
                                                std::move(builder),
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{});
-            w.add_rank_dependency(subscriptions.node(), capture.peered_node());
+            // Request stubs are the sanctioned NEXT-cycle forwarders: the key
+            // reaches the subscription source at evaluation_time + MIN_TD, so
+            // the pairing is deliberately rank-free (no rank dependency, and
+            // the recovery input above is rank_dependency = false). This is
+            // what permits a client whose subscription key derives from the
+            // service's own response — the temporal break replaces a wiring
+            // cycle. Contrast with shared-output captures below, which ARE
+            // rank-constrained and relay same-cycle.
             return capture.peered_node();
         }
 
@@ -830,7 +837,8 @@ namespace hgraph::service
                                                std::move(builder),
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{request_id});
-            w.add_rank_dependency(requests.node(), capture.peered_node());
+            // Request stubs forward NEXT cycle by design — rank-free pairing
+            // (see capture_subscription_key above).
             return capture.peered_node();
         }
 
@@ -863,6 +871,14 @@ namespace hgraph::service
                                                std::move(builder),
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{});
+            // Shared-output relays are RANK-CORRECT and same-cycle: the rank
+            // dependency places the paired source after this capture (and
+            // Wiring::finish's topological sort re-ranks once ALL captures are
+            // known), so the capture schedules the source for the CURRENT
+            // evaluation time — no next-cycle workaround. Contrast with the
+            // request stubs above, which are rank-free next-cycle forwarders.
+            // The same rule applies at every add_rank_dependency site below
+            // and in adaptor_wiring.h.
             w.add_rank_dependency(shared_output.node(), capture.peered_node());
             return capture.peered_node();
         }
@@ -1644,7 +1660,8 @@ namespace hgraph::service_adaptor
                                                std::move(builder),
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{request_id});
-            w.add_rank_dependency(requests.node(), capture.peered_node());
+            // Request stubs forward NEXT cycle by design — rank-free pairing
+            // (see capture_subscription_key).
             return capture.peered_node();
         }
 

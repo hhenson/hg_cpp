@@ -255,6 +255,40 @@ namespace
         }
     };
 
+    struct SecondLoopbackAdaptor : adaptor::interface
+    {
+        static constexpr std::string_view name{"second_loopback"};
+        using input_schema = TS<Int>;
+        using output_schema = TS<Int>;
+    };
+
+    struct SecondLoopbackAdaptorImpl
+    {
+        static void compose(Wiring &w)
+        {
+            auto input = adaptor::from_graph<SecondLoopbackAdaptor>(w);
+            auto output = wire<EchoNode>(w, input);
+            adaptor::to_graph<SecondLoopbackAdaptor>(w, output);
+        }
+    };
+
+    // Two adaptors in series: the value crosses BOTH boundary relays. Adaptors
+    // are rank-correct (captures rank before their paired sources, re-ranked
+    // by Wiring::finish once all captures are known), so the whole chain
+    // settles in a single engine cycle — no next-cycle workaround anywhere.
+    struct ChainedAdaptorGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "chained_adaptor_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> input)
+        {
+            adaptor::register_adaptor<LoopbackAdaptor, LoopbackAdaptorImpl>(w);
+            adaptor::register_adaptor<SecondLoopbackAdaptor, SecondLoopbackAdaptorImpl>(w);
+            auto first = wire<LoopbackAdaptor>(w, input);
+            return wire<SecondLoopbackAdaptor>(w, first);
+        }
+    };
+
     struct ExplicitPathGraph
     {
         [[maybe_unused]] static constexpr auto name = "explicit_path_graph";
@@ -394,6 +428,19 @@ TEST_CASE("adaptor wiring round-trips a single-client input through an implement
     (void)TypeRegistry::instance().register_scalar<Int>("int");
 
     CHECK_OUTPUT(testing::eval_node<LoopbackGraph>(), testing::values<Int>(41));
+}
+
+TEST_CASE("adaptor wiring relays same-cycle through chained adaptors")
+{
+    using namespace hgraph;
+
+    (void)TypeRegistry::instance().register_scalar<Int>("int");
+
+    // The value crosses two full adaptor boundaries in ONE engine cycle:
+    // adaptors are rank-correct, so every capture schedules its paired source
+    // for the current evaluation time.
+    CHECK_OUTPUT(testing::eval_node<ChainedAdaptorGraph>(testing::values<Int>(7)),
+                 testing::values<Int>(7));
 }
 
 TEST_CASE("adaptor wiring supports explicit paths through the adaptor call")

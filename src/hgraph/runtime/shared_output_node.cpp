@@ -91,9 +91,26 @@ namespace hgraph
             {
                 throw std::logic_error("shared output source node is not attached to a graph");
             }
-            const DateTime schedule_time =
-                start_phase || source_node.node_index() > view.node_index() ? evaluation_time : evaluation_time + MIN_TD;
-            graph->schedule_node(source_node.node_index(), schedule_time);
+            // Shared-output relays are rank-correct by construction: wiring
+            // adds an explicit rank dependency placing the paired source AFTER
+            // every capture, and Wiring::finish's topological sort re-ranks
+            // once all captures are known. The source therefore has never been
+            // passed when a capture evaluates, and the relay is SAME-cycle —
+            // scheduling for a later time here would be a workaround masking a
+            // ranking bug, so a violated precondition is reported loudly
+            // instead. (Next-cycle forwarding is the sanctioned design only
+            // for subscription/request-reply request stubs — service_node.cpp.)
+            if (graph != view.graph_value())
+            {
+                throw std::logic_error(
+                    "shared output capture and its paired source must live in the same graph");
+            }
+            if (!start_phase && source_node.node_index() <= view.node_index())
+            {
+                throw std::logic_error(
+                    "shared output capture must rank before its paired source (wiring rank violation)");
+            }
+            graph->schedule_node(source_node.node_index(), evaluation_time);
         }
     }  // namespace
 

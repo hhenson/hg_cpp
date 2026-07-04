@@ -34,7 +34,7 @@ source/capture pair** — applied with different payloads:
       cons["consumers bind here and are woken by<br/>ordinary output notification"]
 
       client --> cap
-      cap -->|"write state; schedule_node<br/>(start: now / eval: +MIN_TD)"| src
+      cap -->|"write state; schedule_node<br/>(relays: same cycle / request stubs: +MIN_TD)"| src
       src -->|"applies state in one mutation<br/>of its own output"| out
       out --> cons
 
@@ -50,21 +50,29 @@ source/capture pair** — applied with different payloads:
   consumers bind to the source node's output and are woken by ordinary output
   notification. This keeps the boundary inside the single scheduling model
   (everything funnels through ``schedule_node``).
-- **Scheduling:** capture during ``start`` schedules the paired source for the
-  current engine time; capture during graph evaluation schedules it for
-  ``evaluation_time + MIN_TD`` so a source that has already passed in rank
-  order is observed on the next engine cycle (the same one-cycle rule as
-  ``feedback``).
+- **Scheduling matrix** (see *Lifecycle Teardown* in :doc:`architecture` for
+  the invariant statement):
+
+  - **Shared-output relays** (reference outputs, service responses, adaptor
+    ``from_graph``/``to_graph``, contexts) are **rank-correct and
+    same-cycle**: an explicit rank dependency places the paired source after
+    every capture, ``Wiring::finish`` re-ranks once all captures are known
+    (which is what keeps chains of multiple adaptors/services correct), and a
+    capture always schedules the source for the **current** evaluation time.
+    A source that has already been passed is a ranking bug and throws
+    (``shared_output_node.cpp``) — never a silent next-cycle deferral.
+  - **Request stubs** (subscription keys, request/reply requests) forward
+    **next cycle** by design: the pairing is rank-free (no rank dependency),
+    and the capture schedules the service source for
+    ``evaluation_time + MIN_TD`` (current time during ``start``). The temporal
+    break replaces a wiring edge, so a client's request may derive from the
+    service's own response — the same one-cycle rule as ``feedback``.
 - **Lifecycle:** the source clears its captured state on ``stop``. A restarted
   graph must republish through capture before the source can produce a live
   shared output.
-- **Rank:** a capture ranks **before** its paired source (explicit rank
-  dependency), so that a capture evaluated at rank *k* can schedule the source
-  (rank > *k*, not yet passed) for the **current** evaluation time — a
-  same-cycle boundary relay; when the source has already passed, the capture
-  falls back to ``evaluation_time + MIN_TD``. The capture's recovery input
-  (slot 1, linking the source's output) is ``rank_dependency = false``: it is
-  one of the three sanctioned backward-link categories (see *Lifecycle
+- **Rank:** the capture's recovery input (slot 1, linking the source's output)
+  is ``rank_dependency = false`` so the pairing itself never creates a wiring
+  cycle; it is one of the sanctioned backward-link categories (see *Lifecycle
   Teardown* in :doc:`architecture`) and is torn down at stop.
 - **Teardown:** the graph tears all subscriptions down at **stop**, while every
   producer is alive (edge unbind + alternative-store release; see *Lifecycle

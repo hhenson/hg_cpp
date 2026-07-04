@@ -140,12 +140,27 @@ exceptions exist, each declared rather than accidental:
   whose links follow a *dynamic* target (whatever the reference currently
   designates) and therefore cannot be rank-ordered structurally;
 - the boundary **capture's paired-source recovery input**
-  (``rank_dependency = false``): captures deliberately rank **before** their
-  paired source (an explicit rank dependency), so a capture can schedule the
-  source for the **current** evaluation time when the source has not yet been
-  passed — a same-cycle boundary relay (see the adaptor loopback round-trip
-  test); a capture ranked after its source falls back to
-  ``evaluation_time + MIN_TD``.
+  (``rank_dependency = false``): the port-level link never constrains rank so
+  the pairing itself cannot create a wiring cycle. How the pair is ordered and
+  scheduled then splits by kind — the boundary scheduling matrix:
+
+  - **Shared-output relays** (adaptor ``from_graph``/``to_graph``, reference
+    service outputs, service response outputs, context/shared outputs) are
+    **rank-correct and same-cycle**: wiring adds an explicit rank dependency
+    placing the paired source *after* every capture, and ``Wiring::finish``'s
+    topological sort re-ranks the whole graph once **all** captures are known
+    (this is what keeps chains of multiple adaptors/services correct — see the
+    chained-adaptor test). A capture always schedules its source for the
+    **current** evaluation time; a source that has already been passed is a
+    ranking bug and is reported loudly (``shared_output_node.cpp``), never
+    papered over with a next-cycle deferral.
+  - **Request stubs** (subscription keys, request/reply requests) are the
+    sanctioned **next-cycle** forwarders: the pairing is rank-free (no rank
+    dependency at all), and the capture forwards to the service source at
+    ``evaluation_time + MIN_TD`` (current time during ``start``). The temporal
+    break — not a wiring edge — is what allows a client's request to derive
+    from the service's own response without creating a wiring cycle, exactly
+    like ``feedback``.
 
 Anything else pointing backward is a wiring bug.
 
