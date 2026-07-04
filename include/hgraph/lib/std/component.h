@@ -88,7 +88,10 @@ namespace hgraph::stdlib
      * backend the active model selects):
      *
      * - ``Record``   — each input and the output (``__out__``) is recorded.
-     * - ``Replay`` / ``Compare`` — inputs are REPLACED by their recordings.
+     * - ``Replay`` / ``Compare`` — inputs are REPLACED by their recordings;
+     *   ``Compare`` additionally recomputes the output and records per-tick
+     *   equality against the recorded output (``fq.__compare__`` in the
+     *   store; read with ``record_replay::comparison_summary``).
      * - ``ReplayOutput`` — the output is replaced by its recording.
      * - ``None`` — no wrapping; the component is a plain ``wire<G>``.
      *
@@ -106,8 +109,6 @@ namespace hgraph::stdlib
      *   merge nodes, no graph-level state); live ticks override thereafter.
      *   Combine with ``Record`` to continue recording the recovered stream.
      *
-     * Deferred (recorded): ``Compare``'s comparison sink (needs the compare
-     * operator over the P6 store) — throws rather than silently mis-wiring.
      */
     template <typename G, typename... S>
     [[nodiscard]] auto component(Wiring &w, std::string_view recordable_id, Port<S>... inputs)
@@ -133,10 +134,6 @@ namespace hgraph::stdlib
         {
             throw std::invalid_argument(
                 "component<G>: a recordable id is required under an active record/replay mode");
-        }
-        if (has_mode(mode, Mode::Compare))
-        {
-            throw std::logic_error("component<G>: Compare mode is not implemented yet (see the design record)");
         }
         if (has_mode(mode, Mode::Recover) && (has_mode(mode, Mode::Replay) || has_mode(mode, Mode::ReplayOutput)))
         {
@@ -167,6 +164,15 @@ namespace hgraph::stdlib
             if (has_mode(mode, Mode::Record))
             {
                 wire<stdlib::record>(w, out, Str{"__out__"}, arg<"recordable_id">(Str{fq}));
+            }
+            if (has_mode(mode, Mode::Compare))
+            {
+                // Backtesting regression: the recomputed output (from the
+                // replayed inputs) against the recorded output; per-tick
+                // equality lands in the store under ``fq.__compare__``.
+                auto recorded = wire<stdlib::replay, OutSchema>(w, Str{"__out__"}, arg<"recordable_id">(Str{fq}))
+                                    .template as<OutSchema>();
+                wire<stdlib::compare>(w, out, recorded, arg<"recordable_id">(Str{fq}));
             }
             return out;
         }

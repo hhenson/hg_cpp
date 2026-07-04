@@ -104,6 +104,41 @@ namespace
         }
     };
 
+    // The same shape as SumGraph but a DIFFERENT computation - the
+    // regression a Compare run must catch.
+    struct ProductGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "component_product_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, NamedPort<"lhs", TS<Int>> lhs, NamedPort<"rhs", TS<Int>> rhs)
+        {
+            return wire<stdlib::mul_>(w, lhs, rhs).as<TS<Int>>();
+        }
+    };
+
+    template <typename G>
+    struct CompareHarness
+    {
+        [[maybe_unused]] static constexpr auto name = "component_compare_harness";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            record_replay::scope mode{Mode::Compare};
+            return stdlib::component<G>(w, "calc", lhs, rhs);
+        }
+    };
+
+    struct DirectCompareGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "direct_compare_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            wire<stdlib::compare>(w, lhs, rhs, arg<"recordable_id">(Str{"sided"}));
+            return lhs;
+        }
+    };
+
     struct NoIdHarness
     {
         [[maybe_unused]] static constexpr auto name = "component_no_id_harness";
@@ -198,4 +233,41 @@ TEST_CASE("component: Recover seeds inputs at start from the recordings; live ti
     // SILENT live inputs; the live lhs=100 @t1 then overrides (100+10).
     CHECK_OUTPUT(eval_node<RecoverHarness>(values<Int>(none, 100), values<Int>(none, none)),
                  values<Int>(11, 110));
+}
+
+TEST_CASE("component: Compare recomputes from recorded inputs and records per-tick equality")
+{
+    stdlib::register_standard_operators();
+    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+
+    (void)eval_node<RecordingHarness>(values<Int>(1, none, 3), values<Int>(10, 20, none));
+
+    // Same computation: every recomputed tick matches the recording.
+    (void)eval_node<CompareHarness<SumGraph>>(values<Int>(100), values<Int>(100));
+    auto matched = record_replay::comparison_summary("calc.__compare__");
+    CHECK(matched.compared == 3);
+    CHECK(matched.mismatches == 0);
+
+    // A regressed computation (product instead of sum) mismatches every tick.
+    (void)eval_node<CompareHarness<ProductGraph>>(values<Int>(100), values<Int>(100));
+    auto regressed = record_replay::comparison_summary("calc.__compare__");
+    CHECK(regressed.compared == 3);
+    CHECK(regressed.mismatches == 3);
+
+    // No comparison recorded under an unknown key.
+    CHECK_THROWS_AS((void)record_replay::comparison_summary("nowhere.__compare__"), std::runtime_error);
+}
+
+TEST_CASE("compare: a one-sided value is recorded as a mismatch")
+{
+    stdlib::register_standard_operators();
+    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+
+    // cycle 0: lhs=1, rhs invalid -> mismatch. cycle 1: rhs=1 arrives and
+    // lhs still holds 1 -> equal. cycle 2: lhs=5 vs rhs=1 -> mismatch.
+    (void)eval_node<DirectCompareGraph>(values<Int>(1, none, 5), values<Int>(none, 1, none));
+
+    auto summary = record_replay::comparison_summary("sided.__compare__");
+    CHECK(summary.compared == 3);
+    CHECK(summary.mismatches == 2);
 }

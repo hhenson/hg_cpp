@@ -62,8 +62,11 @@ namespace hgraph::stdlib
     {
     };
 
-    /** ``compare`` — compare two time-series (used when running in COMPARE mode; a sink). */
-    struct compare : Operator<"compare", In<"lhs", TsVar<"S">>, In<"rhs", TsVar<"S">>>
+    /** ``compare`` — the backtesting comparison sink (COMPARE mode): records
+        per-tick equality of ``lhs`` vs ``rhs`` through the registered frame
+        store (P6) under ``fq_recordable_id.__compare__``. */
+    struct compare : Operator<"compare", In<"lhs", TsVar<"S">>, In<"rhs", TsVar<"S">>,
+                              Scalar<"recordable_id", Str>>
     {
     };
 }  // namespace hgraph::stdlib

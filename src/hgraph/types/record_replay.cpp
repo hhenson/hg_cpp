@@ -118,6 +118,23 @@ namespace hgraph::record_replay
         return best < 0 ? Value{} : read_row(converter, frame, best);
     }
 
+    ComparisonSummary comparison_summary(std::string_view fq_key)
+    {
+        const Frame frame = store_read(fq_key);
+        if (!frame.has_value())
+        {
+            throw std::runtime_error("no comparison recorded under '" + std::string{fq_key} + "'");
+        }
+        const auto &converter = table_converter(scalar_descriptor<Bool>::value_meta());
+        ComparisonSummary summary;
+        summary.compared = static_cast<std::size_t>(frame_rows(frame));
+        for (std::int64_t row = 0; row < frame_rows(frame); ++row)
+        {
+            if (!read_row(converter, frame, row).view().checked_as<Bool>()) { ++summary.mismatches; }
+        }
+        return summary;
+    }
+
     Value recorded_seed_resolver(std::string_view fq_key, const ValueTypeMetaData *meta, DateTime start_time)
     {
         return replay_const_value(fq_key, meta, start_time, g_config.as_of.value_or(MAX_DT));

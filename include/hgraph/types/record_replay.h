@@ -193,6 +193,20 @@ namespace hgraph
         [[nodiscard]] HGRAPH_EXPORT Value recorded_seed_resolver(std::string_view fq_key,
                                                                  const ValueTypeMetaData *meta,
                                                                  DateTime start_time);
+
+        /**
+         * Comparison-result summary: (rows compared, mismatches) from the
+         * ``compare`` sink's frame under ``fq_key`` (typically
+         * ``<component-id>.__compare__``). Throws when no comparison was
+         * recorded under the key.
+         */
+        struct ComparisonSummary
+        {
+            std::size_t compared{0};
+            std::size_t mismatches{0};
+        };
+
+        [[nodiscard]] HGRAPH_EXPORT ComparisonSummary comparison_summary(std::string_view fq_key);
     }  // namespace record_replay
 }  // namespace hgraph
 

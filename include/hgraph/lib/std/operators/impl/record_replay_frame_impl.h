@@ -184,11 +184,61 @@ namespace hgraph::stdlib
         }
     };
 
+    /**
+     * ``compare`` — the backtesting comparison sink (the Q-compare ruling):
+     * per tick, records whether ``lhs`` and ``rhs`` hold equal values into a
+     * bitemporal ``equal`` frame written through the REGISTERED frame store
+     * (P6) at stop, under ``fq.__compare__``. Model-independent — the store
+     * is the pluggable seam, so a single implementation serves every model.
+     */
+    struct compare_impl
+    {
+        static constexpr auto name = "compare";
+
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"recordable_id", Value{Str{}}}};
+        }
+
+        static void start(Scalar<"recordable_id", Str> recordable_id, TraitsView traits,
+                          State<FrameRecorderState> state)
+        {
+            using record_replay_frame_detail::RecorderHandle;
+            const auto &converter = table_converter(scalar_descriptor<Bool>::value_meta());
+            auto        handle    = std::make_unique<RecorderHandle>(RecorderHandle{
+                FrameRecorder{converter},
+                record_replay::fq_recordable_id(traits, recordable_id.value()) + ".__compare__"});
+            state.set(FrameRecorderState{handle.release()});   // owned by node State until stop
+        }
+
+        static void eval(In<"lhs", TsVar<"S">, InputValidity::Unchecked> lhs,
+                         In<"rhs", TsVar<"S">, InputValidity::Unchecked> rhs,
+                         Scalar<"recordable_id", Str> recordable_id, State<FrameRecorderState> state,
+                         DateTime now)
+        {
+            static_cast<void>(recordable_id);
+            // Activation means at least one side ticked: a one-sided value IS
+            // a mismatch (one series produced where the other did not).
+            const bool equal = lhs.valid() && rhs.valid() && lhs.value().equals(rhs.value());
+            const auto as_of = record_replay::config().as_of.value_or(now);
+            state.get().handle->recorder.append(now, as_of, Value{Bool{equal}}.view());
+        }
+
+        static void stop(State<FrameRecorderState> state)
+        {
+            std::unique_ptr<record_replay_frame_detail::RecorderHandle> handle{state.get().handle};
+            state.set(FrameRecorderState{});
+            if (handle == nullptr) { return; }
+            record_replay::store_write(handle->fq_key, handle->recorder.finish());
+        }
+    };
+
     /** Register the data-frame record/replay backend overloads. */
     inline void register_record_replay_frame_operators()
     {
         register_overload<record, record_frame_impl>();
         register_overload<replay, replay_frame_impl>();
+        register_overload<compare, compare_impl>();
     }
 }  // namespace hgraph::stdlib
 
