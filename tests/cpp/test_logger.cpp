@@ -53,6 +53,18 @@ namespace
         }
     };
 
+    struct QuietLogGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "quiet_log_graph";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> ts)
+        {
+            auto fmt_source = wire<stdlib::const_>(w, Str{"quiet {}"});
+            wire<stdlib::log_>(w, fmt_source.as<TS<Str>>(), ts);   // default level: info
+            return ts;
+        }
+    };
+
     struct LogOperatorGraph
     {
         [[maybe_unused]] static constexpr auto name = "log_operator_graph";
@@ -86,4 +98,16 @@ TEST_CASE("logger: the log_ operator formats and logs through the injectable")
 
     CHECK_OUTPUT(eval_node<LogOperatorGraph>(values<Int>(42)), values<Int>(42));
     CHECK_THAT(captured.joined(), Catch::Matchers::ContainsSubstring("observed 42"));
+}
+
+TEST_CASE("logger: log_ skips formatting when the level is filtered out")
+{
+    stdlib::register_standard_operators();
+    CapturedLog captured;
+    log::logger().set_level(spdlog::level::err);   // info/warn filtered
+
+    CHECK_OUTPUT(eval_node<QuietLogGraph>(values<Int>(1)), values<Int>(1));
+    CHECK_THAT(captured.joined(), !Catch::Matchers::ContainsSubstring("quiet 1"));
+    CHECK(!LoggerView{&log::logger()}.should_log(2));   // info filtered
+    CHECK(LoggerView{&log::logger()}.should_log(4));    // error passes
 }

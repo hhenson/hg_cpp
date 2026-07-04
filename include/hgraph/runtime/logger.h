@@ -68,20 +68,32 @@ namespace hgraph
         }
 
         /**
-         * Erased-level entry (the ``log_`` operator's path): ``level`` uses
-         * the spdlog scale — 0 trace, 1 debug, 2 info, 3 warn, 4 error,
-         * 5 critical (values are clamped).
+         * Whether ``level`` would actually be emitted — check BEFORE doing
+         * any formatting/rendering work for the erased path (the typed
+         * methods above are already lazy: spdlog checks the level before
+         * formatting). ``level`` uses the spdlog scale — 0 trace, 1 debug,
+         * 2 info, 3 warn, 4 error, 5 critical (values are clamped).
          */
+        [[nodiscard]] bool should_log(int level) const noexcept
+        {
+            return logger_ != nullptr && logger_->should_log(clamp_level(level));
+        }
+
+        /** Erased-level entry (the ``log_`` operator's path); see ``should_log``. */
         void log(int level, std::string_view message) const
         {
             if (logger_ == nullptr) { return; }
-            const auto clamped = level < 0 ? 0 : (level > 5 ? 5 : level);
-            logger_->log(static_cast<spdlog::level::level_enum>(clamped), "{}", message);
+            logger_->log(clamp_level(level), "{}", message);
         }
 
         [[nodiscard]] spdlog::logger *raw() const noexcept { return logger_; }
 
       private:
+        [[nodiscard]] static spdlog::level::level_enum clamp_level(int level) noexcept
+        {
+            return static_cast<spdlog::level::level_enum>(level < 0 ? 0 : (level > 5 ? 5 : level));
+        }
+
         spdlog::logger *logger_{nullptr};   // borrowed from log::logger()
     };
 

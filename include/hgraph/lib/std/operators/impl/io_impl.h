@@ -50,9 +50,12 @@ namespace hgraph::stdlib
         static void eval(In<"fmt", TS<Str>> format, In<"args", TsVar<"A">, InputValidity::Unchecked> args,
                          Scalar<"level", Int> level, LoggerView log)
         {
-            log.log(static_cast<int>(level.value()),
-                    fmt::format(fmt::runtime(format.value()),
-                                args.valid() ? args.value().to_string() : std::string{"<n/a>"}));
+            // Check the level FIRST: no formatting (and no erased to_string
+            // rendering) when the message would be filtered out anyway.
+            const auto lvl = static_cast<int>(level.value());
+            if (!log.should_log(lvl)) { return; }
+            log.log(lvl, fmt::format(fmt::runtime(format.value()),
+                                     args.valid() ? args.value().to_string() : std::string{"<n/a>"}));
         }
     };
 
