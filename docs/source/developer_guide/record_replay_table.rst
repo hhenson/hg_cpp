@@ -1,14 +1,12 @@
-Record/replay, tables and ``const_fn`` — architectural review
-==============================================================
+Record/replay, tables and ``const_fn`` — design record
+=======================================================
 
 .. note::
-   **Status: analysis for an architectural session — NOT an approved design.**
-   This page maps how the Python machinery actually works (``ext/main``),
-   isolates the design issues that make a direct port questionable, and
-   proposes options with recommendations. Rulings from the session get folded
-   back in and the page becomes the design record. (Ruling already recorded:
+   **Status: APPROVED design (rulings 2026-07-04, recorded in *Rulings*
+   below).** The page keeps the analysis of the Python machinery for the
+   record, then states the approved C++ shape. Standing ruling folded in:
    the Frame/table specification maps onto **Apache Arrow**, not Polars —
-   Polars sits on Arrow and stays reachable zero-copy.)
+   Polars sits on Arrow and stays reachable zero-copy.
 
 How the Python machinery works
 ------------------------------
@@ -155,20 +153,49 @@ dedicated stack beside the context stack on ``OperatorRegistry``), carrying
 must fold the consulted mode into its intern key (the ``MapCallConfig``
 precedent) so identical calls under different modes are distinct instances.
 
-**P4 — Arrow-native tables.** ``TableSchema`` maps to an Arrow schema
-(``value_time``/``as_of`` as timestamp columns; partition keys; removed as a
-bool column). The serializer ops write **directly into Arrow array builders**
-(append per tick), so the recorder accumulates a ``RecordBatch`` without a
-per-tick row value; ``from_table`` walks Arrow arrays. The user-visible
-``to_table`` operator (a ``TS`` of row values) stays for parity, but
-record/replay backends bypass it and drive the serializer ops directly —
-one copy, no intermediate tuples. Arrow becomes an optional dependency
-(``HGRAPH_ENABLE_ARROW``), never in the default build path.
+**P4 — Arrow-native tables, ``Frame`` as a first-class type.** Apache Arrow
+is a **formal dependency** of the project (fetched/required like fmt, not an
+opt-in build flag). The Arrow table is a first-class scalar value kind,
+**abstracted behind the ``Frame`` marker** (mirroring Python's
+``Frame[Schema]``) so user code names ``Frame``/``Frame<Schema>``, never
+Arrow directly. Schema semantics (ruling):
+
+- ``Frame`` with **no schema** is acceptable (an untyped frame);
+- a schema on an **input** is a *minimum requirement* — the arriving frame
+  must contain **at least** those columns at those types (structural
+  width-subtyping; extra columns pass through);
+- a schema on an **output** is *exact* — the produced frame must have
+  **exactly** that schema.
+
+``TableSchema`` maps to an Arrow schema (``value_time``/``as_of`` as
+timestamp columns; partition keys; removed as a bool column). The serializer
+ops write **directly into Arrow array builders** (append per tick), so the
+recorder accumulates a ``RecordBatch`` without a per-tick row value;
+``from_table`` walks Arrow arrays. The user-visible ``to_table`` operator (a
+``TS`` of row values) stays for parity, but record/replay backends bypass it
+and drive the serializer ops directly — one copy, no intermediate tuples.
 
 **P5 — graph traits primitive.** A small parent-chained key-value store on
 graph storage (build-time write, runtime read), carrying ``recordable_id``
 and later the rest of Python's traits surface. Prerequisite for
 ``@component``.
+
+**P6 — a registered, type-erased content store.** ``compare`` (and related
+record/replay code) reads/writes results through a **type-erased store
+abstraction** — an ops-table interface (open/read/write/list over keyed
+content) with implementations **registered** the same way operator backends
+are. The in-memory GlobalState buffer is the default registration; file /
+Arrow-dataset stores register alongside it. This replaces Python's "writes
+to a comparison result file" with a pluggable seam shared by the recorder
+backends.
+
+**P7 — recovery seeds state directly.** Python's RECOVER wires
+``merge(ts, replay_const(...))`` — an expedient, not a design (ruling).
+The C++ recovery path takes the efficient route: recorded values are
+written **directly into node outputs / recordable state during graph
+start** (the seeding pass runs before the first evaluation cycle), with no
+merge nodes added to the topology. ``replay_const`` remains available as a
+const-evaluable operator for explicit wiring-time reads.
 
 **Sequencing** (each lands green independently):
 
@@ -179,27 +206,26 @@ and later the rest of Python's traits surface. Prerequisite for
 4. Data-frame (Arrow) record/replay backend; ``replay_const`` + RECOVER.
 5. ``@component`` on top of all of it.
 
-Questions for the session
--------------------------
+Rulings (Howard, 2026-07-04)
+----------------------------
 
-1. **Q-const_fn:** agree to *not* port ``const_fn`` as a node kind, replacing
-   it with const-evaluable operator registration (P1)? If not, what should
-   its C++ shape be?
-2. **Q-model:** is making the record/replay model an explicit wiring-time
-   configuration (P2) acceptable, with the Python-compat imperative setters
-   as bridge shims? This deliberately drops "change the model mid-wiring".
-3. **Q-modes:** should the mode scope fold into intern identity per P3, or
-   should components take the mode as an explicit argument (even more
-   explicit, but diverges further from Python's ``with`` ergonomics)?
-4. **Q-table-surface:** keep the user-visible ``TS[TABLE]``-style operator
-   (rows as values) alongside the fused builder path (P4), or make tabular
-   conversion recorder-internal until a concrete need appears?
-5. **Q-arrow-dep:** Arrow as opt-in dependency fetched like fmt/Catch2, or
-   system-provided only? What is TS-value form of a table — an owned
-   ``RecordBatch`` scalar kind, or do we avoid tables-as-values entirely?
-6. **Q-compare:** ``compare`` (backtesting comparison sink) writes results
-   to "a comparison result file" in Python — what should the C++ result
-   channel be (GlobalState buffer, logger, file via adaptor)?
-7. **Q-recover:** RECOVER seeds inputs by ``merge(ts, replay_const(...))``.
-   Is merge-based seeding the C++ design too, or should recovery use the
-   recordable-state machinery (``RecordableState``) directly?
+1. **Q-const_fn — ruled: not ported.** ``const_fn`` does not exist in C++;
+   const-evaluable operator registration (P1) is the design.
+2. **Q-model — ruled: P2 approved.** The record/replay model is explicit
+   wiring-time configuration; Python's imperative setters become bridge
+   shims. Changing the model mid-wiring is deliberately unsupported.
+3. **Q-modes — ruled: P3 approved.** The mode scope rides the wiring-scope
+   machinery and is folded into intern identity.
+4. **Q-table-surface — ruled: P4 approved.** User-visible ``to_table``
+   stays; backends drive the serializer ops / Arrow builders directly.
+5. **Q-arrow-dep — ruled:** Arrow is a **formal dependency** and the table
+   is a **first-class type abstracted behind ``Frame``**, with the flexible
+   schema semantics recorded in P4: schema-less ``Frame`` is legal; an input
+   schema is a *minimum* (at-least-these-columns); an output schema is
+   *exact*.
+6. **Q-compare — ruled:** results flow through a **registered, type-erased
+   content store** (P6), shared with related record/replay code.
+7. **Q-recover — ruled: most efficient approach.** Python's merge-based
+   seeding was expedience ("kept simple because I wanted something I was
+   reasonably sure would work"); C++ recovery seeds outputs/recordable state
+   directly at start (P7).

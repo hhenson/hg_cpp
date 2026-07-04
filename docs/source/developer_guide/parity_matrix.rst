@@ -223,12 +223,15 @@ Types and scalars
        **runtime-defined** enums (Python-created, no C++ type) are
        bridge-time work.
    * - DataFrame / Series, numpy arrays, JSON scalar
-     - Missing
+     - Missing (designed)
      - Value kinds; gate the serialization operator families. **Ruling
        (2026-07-04): the Frame/table specification maps onto Apache Arrow
        tables, not Polars** — Polars sits on Arrow, so Polars (and other
        Arrow-native frame libraries) remain reachable by zero-cost
-       transformation, while Arrow is the universal interchange layer.
+       transformation. Arrow is a **formal dependency**; the table is a
+       first-class type behind the ``Frame`` marker (schema-less legal;
+       input schema = minimum columns; output schema = exact). Full design:
+       :doc:`record_replay_table`.
    * - Generics (``TypeVar``, ``AUTO_RESOLVE``, ``Type[...]``)
      - Re-architected
      - ``TsVar``/``ScalarVar``/``SizeVar`` + wiring ``ResolutionMap`` +
