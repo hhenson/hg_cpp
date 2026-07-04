@@ -1427,6 +1427,17 @@ namespace hgraph
                                                            const TSValueTypeMetaData *input_schema,
                                                            WiringPortRef source);
 
+        // ---- context scopes (see *Contexts* in services.rst) ----
+        // The wiring-time context stack lives on the OperatorRegistry singleton
+        // (mesh-scope precedent); these free functions keep operator_dispatch.h
+        // out of this header. `resolve` throws a precise wiring error when the
+        // context is missing or was published by a DIFFERENT Wiring (the
+        // unsupported compiled-sub-graph import case).
+        [[nodiscard]] WiringPortRef resolve_context_source(const Wiring &w, std::string_view name);
+        [[nodiscard]] bool          has_context_source(const Wiring &w, std::string_view name) noexcept;
+        void push_context_source(const Wiring &w, std::string_view name, WiringPortRef port);
+        void pop_context_source() noexcept;
+
         [[nodiscard]] inline TSEndpointSchema endpoint_for_source(const TSValueTypeMetaData *schema,
                                                                   const WiringPortRef       &source)
         {
@@ -2253,8 +2264,18 @@ namespace hgraph
                                 call_args_detail::bound_arg_index<I, wire_params, decltype(arg_tuple)>();
                             constexpr std::size_t default_index =
                                 call_args_detail::default_arg_index<I, wire_params, decltype(default_args)>();
-                            if constexpr (arg_index != call_args_detail::npos ||
-                                          default_index != call_args_detail::npos)
+                            if constexpr (static_node_detail::is_input_selector<P>::value &&
+                                          call_args_detail::auto_context_param_v<P> &&
+                                          arg_index == call_args_detail::npos)
+                            {
+                                // Context-bound input with no keyword override:
+                                // unify from the published port's schema.
+                                ts_unifier<typename graph_wiring_detail::in_param_schema<P>::type>::unify(
+                                    graph_wiring_detail::resolve_context_source(w, P::field_name.sv()).schema,
+                                    map);
+                            }
+                            else if constexpr (arg_index != call_args_detail::npos ||
+                                               default_index != call_args_detail::npos)
                             {
                                 if constexpr (static_node_detail::is_input_selector<P>::value)
                                 {
@@ -2341,6 +2362,23 @@ namespace hgraph
                                         inputs.push_back(
                                             graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
                                     }
+                                }
+                                else if constexpr (call_args_detail::auto_context_param_v<P>)
+                                {
+                                    // Context-bound input: source from the nearest
+                                    // enclosing context::scope with this name.
+                                    const auto *expected =
+                                        ts_resolver<typename graph_wiring_detail::in_param_schema<P>::type>::resolve(map);
+                                    WiringPortRef ref =
+                                        graph_wiring_detail::resolve_context_source(w, P::field_name.sv());
+                                    if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
+                                    {
+                                        throw std::logic_error(
+                                            "wire<T>: context '" + std::string{P::field_name.sv()} +
+                                            "' schema does not match the node's Context<> input");
+                                    }
+                                    inputs.push_back(
+                                        graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
                                 }
                             }
                         }(),
@@ -2458,6 +2496,23 @@ namespace hgraph
                                         inputs.push_back(graph_wiring_detail::adapt_source_for_input(
                                             w, expected, call_args_detail::payload_at<arg_index>(arg_tuple).erased()));
                                     }
+                                }
+                                else if constexpr (call_args_detail::auto_context_param_v<P>)
+                                {
+                                    // Context-bound input: source from the nearest
+                                    // enclosing context::scope with this name.
+                                    const auto *expected = schema_descriptor<
+                                        typename graph_wiring_detail::in_param_schema<P>::type>::ts_meta();
+                                    WiringPortRef ref =
+                                        graph_wiring_detail::resolve_context_source(w, P::field_name.sv());
+                                    if (!graph_wiring_detail::input_accepts_output_schema(expected, ref.schema))
+                                    {
+                                        throw std::logic_error(
+                                            "wire<T>: context '" + std::string{P::field_name.sv()} +
+                                            "' schema does not match the node's Context<> input");
+                                    }
+                                    inputs.push_back(
+                                        graph_wiring_detail::adapt_source_for_input(w, expected, std::move(ref)));
                                 }
                             }
                         }(),

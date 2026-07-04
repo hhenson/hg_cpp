@@ -225,13 +225,21 @@ scalar-qualified (`path("p", arg<"k">(v))`), descriptors may set `default_path`,
 service descriptors may be templates (instantiations bind as concrete interfaces),
 and duplicate registrations on one path throw at build time. Shared outputs
 (`runtime/shared_output_node.*`) and the context **runtime primitive**
-(`runtime/context_node.*` — the user-facing context wiring API still needs approval)
-use the same feedback-style source/capture model. Real-time wall-clock scheduler
+(`runtime/context_node.*`) use the same feedback-style source/capture model.
+**Contexts — user wiring API DONE** (approved 2026-07-04; `types/context_wiring.h`,
+design record services.rst *Contexts*): `context::scope<"name"> ctx{w, port}`
+publishes for a wiring scope (stack on `OperatorRegistry`, mesh-scope
+precedent); `Context<"name", S>` is an In alias tagged `InputBinding::Context`
+— auto-wired from the nearest scope, keyword-overridable
+(`arg<"name">(port)`), no positional slot (`call_args` auto-param machinery);
+`context::get`/`has` are the function forms. Same-Wiring only: cross-wiring
+lookups throw (nested import/export deferred). Real-time wall-clock scheduler
 alarms landed (`NodeScheduler(..., on_wall_clock=true)`, real-time executors only).
 TSW (tick-based windows) also executes end-to-end; duration-based windows have
 registry+runtime ops but no compile-time marker yet. Remaining at the boundary:
 request/reply + subscription adaptor flows and concrete adaptor families,
-`@component`, graph-level context capture/lookup + nested import/export.
+`@component`, nested context import/export, `Context<>` on registered operator
+impls.
 
 **Error handling — DONE** (design record:
 `docs/source/developer_guide/error_handling.rst`, authoritative). `NodeError` is a

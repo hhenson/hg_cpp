@@ -1,4 +1,5 @@
 #include <hgraph/types/graph_wiring.h>
+#include <hgraph/types/operator_dispatch.h>   // context scope stack (OperatorRegistry)
 #include <hgraph/types/subgraph_wiring.h>
 
 #include <array>
@@ -441,6 +442,37 @@ namespace hgraph
         }
         return source;
     }
+
+    WiringPortRef graph_wiring_detail::resolve_context_source(const Wiring &w, std::string_view name)
+    {
+        const auto *entry = OperatorRegistry::instance().resolve_context_scope(name);
+        if (entry == nullptr)
+        {
+            throw std::logic_error("no enclosing context::scope publishes context '" + std::string{name} +
+                                   "' (required by a Context<\"" + std::string{name} + "\", ...> input)");
+        }
+        if (entry->wiring != static_cast<const void *>(&w))
+        {
+            throw std::logic_error(
+                "context '" + std::string{name} +
+                "' was published in a different wiring: importing a context into a compiled "
+                "sub-graph (map_/switch_/nested_ child) is not supported yet (see services.rst, Contexts)");
+        }
+        return entry->port;
+    }
+
+    bool graph_wiring_detail::has_context_source(const Wiring &w, std::string_view name) noexcept
+    {
+        const auto *entry = OperatorRegistry::instance().resolve_context_scope(name);
+        return entry != nullptr && entry->wiring == static_cast<const void *>(&w);
+    }
+
+    void graph_wiring_detail::push_context_source(const Wiring &w, std::string_view name, WiringPortRef port)
+    {
+        OperatorRegistry::instance().push_context_scope(name, std::move(port), static_cast<const void *>(&w));
+    }
+
+    void graph_wiring_detail::pop_context_source() noexcept { OperatorRegistry::instance().pop_context_scope(); }
 
     struct Wiring::Impl
     {

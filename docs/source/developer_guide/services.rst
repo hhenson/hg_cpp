@@ -92,9 +92,8 @@ The per-flavour payloads:
   wiring-scoped keys — ``context_output_key(scope, …)`` plus
   ``make_context_source_node`` / ``make_context_capture_node``. Context keys
   are wiring-time identifiers for scope resolution; they are **not** runtime
-  ``GlobalState`` storage locations for copied reference values. (The
-  user-facing ``@graph``-level context wiring API is still pending approval —
-  see *Status* below.)
+  ``GlobalState`` storage locations for copied reference values. The
+  user-facing wiring surface is described in *Contexts* below.
 - **Subscription service**: the source owns a ``TSS<K>`` output and graph-local
   reference counts; capture sinks enqueue key add/remove intents and schedule
   the source (``make_subscription_key_source_node`` /
@@ -471,6 +470,89 @@ path. Service markers (``…_source_marker`` / ``…_capture_marker`` in
 nodes.
 
 
+Contexts
+--------
+
+The user-facing context wiring surface (approved 2026-07-04). A context is a
+**wiring-scoped named port**: a graph publishes a time-series under a name for
+the duration of a wiring scope, and anything wired inside that scope can
+consume it without threading the port through every intermediate signature.
+
+.. code-block:: cpp
+
+   struct PricingGraph
+   {
+       static void compose(Wiring &w, Port<TS<Float>> price)
+       {
+           context::scope<"price"> ctx{w, price};   // publish for this scope
+           wire<Consumer>(w);                        // resolves the context
+           // ctx pops at scope exit
+       }
+   };
+
+   struct Consumer
+   {
+       static constexpr auto name = "consumer";
+       // An ordinary time-series input, auto-wired from the nearest enclosing
+       // ``context::scope<"price">`` — callers do not pass it.
+       static void eval(Context<"price", TS<Float>> price, Out<TS<Float>> out)
+       {
+           out.set(price.value() * 2.0);
+       }
+   };
+
+The pieces (``types/context_wiring.h``):
+
+- ``context::scope<"name"> ctx{w, port};`` — RAII publisher. Pushes the erased
+  port onto the wiring-time **context stack**; pops on destruction. The stack
+  lives on the ``OperatorRegistry`` singleton (the mesh-scope precedent: the
+  build is single-threaded, no thread-locals, and the stack must survive
+  machinery that compiles in a fresh ``Wiring``).
+- ``Context<"name", Schema>`` — a node/graph signature marker: an ordinary
+  time-series input (it participates in the input schema, activity and
+  validity exactly like ``In``) whose **source is resolved at wiring time**
+  from the nearest enclosing scope with a matching name, instead of being
+  supplied by the caller. The published port's schema must satisfy the
+  declared schema (REF-transparent, generic patterns allowed — a
+  ``Context<"price", TsVar<"S">>`` binds whatever is published).
+- ``context::get<Schema>(w, "name")`` — the function form for ``compose``
+  bodies and ad-hoc wiring; returns a typed ``Port``. ``context::has(w,
+  "name")`` supports optional consumption.
+
+Semantics:
+
+- **Nearest-wins shadowing**: scopes nest; a lookup walks the stack from the
+  innermost entry. Same-name republication inside a nested scope shadows the
+  outer one for the scope's duration.
+- **Missing context is a wiring error** naming the context and where it was
+  required.
+- **Rank**: consumption is a direct port binding — an ordinary
+  rank-constraining edge, so context consumers rank after the published
+  port's producer. Contexts are therefore rank-correct by construction (no
+  entry in the boundary scheduling matrix is needed for the same-graph case).
+- **Interning**: a node consuming a context is interned with the resolved
+  source in its input identity, exactly as if the caller had passed the port.
+
+Deliberate divergence from Python (recorded): Python's ``CONTEXT[T]`` resolves
+by **type**, nearest-match; the C++ surface resolves by **name**. Names make
+shadowing and multi-context graphs explicit and cheap to diagnose; the future
+Python bridge can derive stable names for ``CONTEXT[T]`` compatibility.
+
+Deferred (see *Status* below): crossing a **compiled sub-graph boundary**
+(``map_`` / ``switch_`` / ``nested_`` children compile in a fresh ``Wiring``;
+a context port from the outer wiring cannot bind there directly). That is the
+context **import/export** step, which lowers onto the runtime source/capture
+primitive above (REF publication under ``context_output_key``); the wiring
+surface stays the same. A cross-wiring lookup is detected and reported as
+unsupported rather than mis-wired. Also deferred: ``Context<>`` params on
+operator implementations registered via ``register_overload`` (the
+lifted-kernel path builds its inputs separately) — supported today on
+directly-wired nodes.
+
+Tests: ``tests/cpp/test_context_wiring.cpp`` (scope binding, mixed
+caller/context params, shadowing, keyword override, ``get``/``has``, generic
+resolution, missing-context error).
+
 Status / deferred
 -----------------
 
@@ -480,13 +562,14 @@ duplicate-registration rejection, and multi-interface implementations via
 ``register_services`` + ``impl_input``/``impl_output``), adaptor foundations
 (source/sink/duplex interfaces, ``from_graph``/``to_graph``, multi-interface
 ``register_adaptors``), **service adaptors** (per-client keyed exchange),
-shared outputs, the context source/capture primitive, and wall-clock alarms.
+shared outputs, the context source/capture primitive, the user-facing
+**context wiring API** (``context::scope<"name">`` / ``Context<"name", S>`` /
+``context::get`` — see *Contexts* above), and wall-clock alarms.
 
 Deferred (see :doc:`roadmap` Priority 1):
 
-- the user-facing **context wiring API** (graph-level capture/lookup, nested
-  graph context import/export) — the runtime primitive exists; the C++ surface
-  needs approval before implementation;
+- nested graph context **import/export** (contexts across compiled sub-graph
+  boundaries) and ``Context<>`` on registered operator implementations;
 - **request/reply and subscription adaptor flows**, integration of adaptor
   external events with the scheduler/real-time executor, lifecycle ownership
   for external resources, and concrete adaptor families (kafka/sql/…);

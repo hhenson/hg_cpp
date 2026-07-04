@@ -53,6 +53,90 @@ namespace hgraph
         inline constexpr std::size_t npos = static_cast<std::size_t>(-1);
 
         /**
+         * Auto-bound parameter customisation point. ``Context<"name", S>``
+         * inputs (see static_node.h) are resolved from the wiring-time
+         * context stack rather than supplied by the caller: they never
+         * consume a POSITIONAL argument and are never "missing", but MAY be
+         * overridden by a keyword argument (``arg<"name">(port)``), matching
+         * Python's explicit-context-override behaviour. The primary template
+         * is false; static_node.h specialises it for context-tagged ``In``.
+         */
+        template <typename P>
+        inline constexpr bool auto_context_param_v = false;
+
+        /**
+         * The positional rank of ``ParamIndex`` among the caller-visible
+         * (non-auto) parameters, or ``npos`` when the parameter is auto-bound
+         * (it has no positional slot).
+         */
+        template <std::size_t ParamIndex, typename ParamsTuple>
+        [[nodiscard]] consteval std::size_t caller_positional_rank()
+        {
+            if constexpr (auto_context_param_v<
+                              std::remove_cvref_t<std::tuple_element_t<ParamIndex, ParamsTuple>>>)
+            {
+                return npos;
+            }
+            else
+            {
+                std::size_t rank = 0;
+                [&]<std::size_t... I>(std::index_sequence<I...>) {
+                    (
+                        [&] {
+                            if constexpr (I < ParamIndex &&
+                                          !auto_context_param_v<std::remove_cvref_t<
+                                              std::tuple_element_t<I, ParamsTuple>>>)
+                            {
+                                ++rank;
+                            }
+                        }(),
+                        ...);
+                }(std::make_index_sequence<std::tuple_size_v<ParamsTuple>>{});
+                return rank;
+            }
+        }
+
+        template <typename ParamsTuple>
+        [[nodiscard]] consteval std::size_t caller_visible_param_count()
+        {
+            std::size_t count = 0;
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                (
+                    [&] {
+                        if constexpr (!auto_context_param_v<std::remove_cvref_t<
+                                          std::tuple_element_t<I, ParamsTuple>>>)
+                        {
+                            ++count;
+                        }
+                    }(),
+                    ...);
+            }(std::make_index_sequence<std::tuple_size_v<ParamsTuple>>{});
+            return count;
+        }
+
+        /** Map a positional slot (rank among caller-visible params) to its param index. */
+        template <typename ParamsTuple>
+        [[nodiscard]] consteval std::array<std::size_t, std::tuple_size_v<ParamsTuple>>
+        positional_slot_to_param_index()
+        {
+            std::array<std::size_t, std::tuple_size_v<ParamsTuple>> map{};
+            std::size_t slot = 0;
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                (
+                    [&] {
+                        if constexpr (!auto_context_param_v<std::remove_cvref_t<
+                                          std::tuple_element_t<I, ParamsTuple>>>)
+                        {
+                            map[slot++] = I;
+                        }
+                    }(),
+                    ...);
+            }(std::make_index_sequence<std::tuple_size_v<ParamsTuple>>{});
+            for (; slot < map.size(); ++slot) { map[slot] = npos; }
+            return map;
+        }
+
+        /**
          * Always-false trait used to fail compilation when a required call
          * argument is neither supplied nor defaulted. It exists (instead of a
          * plain dependent-false) so the compiler error NAMES the missing
@@ -335,6 +419,10 @@ namespace hgraph
             validate_default_args<ParamsTuple>(call_name, defaults, parameter_kind);
 
             constexpr std::size_t param_count = std::tuple_size_v<ParamsTuple>;
+            // Auto-bound (context) params have no positional slot: positional
+            // arguments fill the caller-visible params in declaration order.
+            constexpr std::size_t caller_params = caller_visible_param_count<ParamsTuple>();
+            constexpr auto        slot_to_param = positional_slot_to_param_index<ParamsTuple>();
             std::array<bool, param_count> filled{};
             bool                          seen_named = false;
             std::size_t                   positional = 0;
@@ -363,11 +451,11 @@ namespace hgraph
                             throw std::invalid_argument(std::string{call_name} +
                                                         ": positional argument follows a named argument");
                         }
-                        if (positional >= param_count)
+                        if (positional >= caller_params)
                         {
                             throw std::invalid_argument(std::string{call_name} + ": too many arguments");
                         }
-                        filled[positional++] = true;
+                        filled[slot_to_param[positional++]] = true;
                     }
                 }(),
                 ...);
@@ -375,13 +463,16 @@ namespace hgraph
             [&]<std::size_t... P>(std::index_sequence<P...>) {
                 (
                     [&] {
-                        constexpr std::size_t default_index = default_arg_index<P, ParamsTuple, DefaultsTuple>();
-                        if (!filled[P] && default_index == npos)
+                        using Param = std::tuple_element_t<P, ParamsTuple>;
+                        if constexpr (!auto_context_param_v<std::remove_cvref_t<Param>>)
                         {
-                            using Param = std::tuple_element_t<P, ParamsTuple>;
-                            throw std::invalid_argument(std::string{call_name} + ": missing " +
-                                                        std::string{parameter_kind} + " " +
-                                                        missing_parameter_name(parameter_name<Param>(), P));
+                            constexpr std::size_t default_index = default_arg_index<P, ParamsTuple, DefaultsTuple>();
+                            if (!filled[P] && default_index == npos)
+                            {
+                                throw std::invalid_argument(std::string{call_name} + ": missing " +
+                                                            std::string{parameter_kind} + " " +
+                                                            missing_parameter_name(parameter_name<Param>(), P));
+                            }
                         }
                     }(),
                     ...);
@@ -441,7 +532,12 @@ namespace hgraph
                     }
                     else
                     {
-                        if (!seen_named && positional == ParamIndex) { found = I; }
+                        // Auto-bound params have rank npos and never match a
+                        // positional argument.
+                        if (!seen_named && positional == caller_positional_rank<ParamIndex, ParamsTuple>())
+                        {
+                            found = I;
+                        }
                         ++positional;
                     }
                 }(),

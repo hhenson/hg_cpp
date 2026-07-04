@@ -98,6 +98,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/call_args.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/graph_wiring.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/adaptor_wiring.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/context_wiring.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/service_wiring.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/subgraph_wiring.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/wired_fn.h

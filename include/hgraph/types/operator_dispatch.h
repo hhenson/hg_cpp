@@ -307,6 +307,28 @@ namespace hgraph
         [[nodiscard]] const TSValueTypeMetaData *resolve_mesh_scope(std::string_view name) const noexcept;
         [[nodiscard]] const ValueTypeMetaData *resolve_mesh_key_scope(std::string_view name) const noexcept;
 
+        /**
+         * Context wiring scope — a wiring-scoped named port published by
+         * ``context::scope<"name">`` and consumed by ``Context<"name", S>``
+         * params / ``context::get`` (see *Contexts* in services.rst). Same
+         * placement rationale as the mesh scope: single-threaded build, no
+         * thread-locals, must survive machinery that compiles in a fresh
+         * ``Wiring``. ``wiring`` records the owning ``Wiring`` so a lookup
+         * from a *different* wiring (a compiled sub-graph child) is reported
+         * as the unsupported import case rather than mis-wired.
+         */
+        struct ContextScopeEntry
+        {
+            std::string   name{};
+            WiringPortRef port{};
+            const void   *wiring{nullptr};
+        };
+
+        void push_context_scope(std::string_view name, WiringPortRef port, const void *wiring);
+        void pop_context_scope() noexcept;
+        /** Nearest enclosing entry with this name, or ``nullptr``. */
+        [[nodiscard]] const ContextScopeEntry *resolve_context_scope(std::string_view name) const noexcept;
+
       private:
         struct MeshScope
         {
@@ -317,6 +339,7 @@ namespace hgraph
 
         std::unordered_map<std::string, std::vector<OperatorImpl>> overloads_{};
         std::vector<MeshScope>                                     mesh_scopes_{};
+        std::vector<ContextScopeEntry>                             context_scopes_{};
     };
 
     namespace operator_dispatch_detail

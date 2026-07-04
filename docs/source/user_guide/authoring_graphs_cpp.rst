@@ -1116,6 +1116,54 @@ contract as a request/reply service implementation):
    auto reply = wire<AddTwentyServiceAdaptor>(w, custom, request);
 
 
+Contexts
+--------
+
+A context is a **wiring-scoped named port**: publish a time-series under a
+name for a scope, and anything wired inside consumes it without threading the
+port through every intermediate signature (``types/context_wiring.h``):
+
+.. code-block:: cpp
+
+   struct Consumer
+   {
+       static constexpr auto name = "consumer";
+
+       // An ordinary input, auto-wired from the nearest enclosing
+       // ``context::scope<"price">`` — callers do not pass it.
+       static void eval(Context<"price", TS<Float>> price, Out<TS<Float>> out)
+       {
+           out.set(price.value() * 2.0);
+       }
+   };
+
+   struct PricingGraph
+   {
+       static void compose(Wiring &w, Port<TS<Float>> price)
+       {
+           context::scope<"price"> ctx{w, price};   // publish for this scope
+           wire<Consumer>(w);                        // ``price`` resolves here
+       }                                             // scope pops
+   };
+
+The rules:
+
+- Scopes **nest**; the nearest publication with a matching name wins
+  (an inner ``context::scope<"price">`` shadows an outer one).
+- A ``Context<"name", S>`` input behaves exactly like ``In`` at evaluation
+  time and accepts the same activity/validity policies. Generic schemas work:
+  ``Context<"price", TS<ScalarVar<"T">>>`` binds whatever is published.
+- Passing ``arg<"name">(port)`` explicitly **overrides** the ambient context
+  for that one call; positional arguments never touch context parameters.
+- ``context::get<TS<Float>>(w, "price")`` / ``context::has(w, "price")`` are
+  the function forms for ``compose`` bodies.
+- A missing context is a **wiring-time error** naming the context.
+
+Contexts do not yet cross compiled sub-graph boundaries (``map_`` /
+``switch_`` / ``nested_`` children) — that import/export step is on the
+roadmap, and the wiring surface will not change when it lands.
+
+
 Running a graph
 ---------------
 

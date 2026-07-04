@@ -533,6 +533,28 @@ namespace hgraph
     {
         overloads_.clear();
         mesh_scopes_.clear();
+        context_scopes_.clear();
+    }
+
+    void OperatorRegistry::push_context_scope(std::string_view name, WiringPortRef port, const void *wiring)
+    {
+        if (name.empty()) { throw std::invalid_argument("context scope requires a non-empty name"); }
+        context_scopes_.push_back(ContextScopeEntry{std::string{name}, std::move(port), wiring});
+    }
+
+    void OperatorRegistry::pop_context_scope() noexcept
+    {
+        if (!context_scopes_.empty()) { context_scopes_.pop_back(); }
+    }
+
+    const OperatorRegistry::ContextScopeEntry *
+    OperatorRegistry::resolve_context_scope(std::string_view name) const noexcept
+    {
+        for (auto it = context_scopes_.rbegin(); it != context_scopes_.rend(); ++it)
+        {
+            if (it->name == name) { return &*it; }
+        }
+        return nullptr;
     }
 
     void OperatorRegistry::push_mesh_scope(const TSValueTypeMetaData *element_schema,

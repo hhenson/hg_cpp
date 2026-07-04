@@ -60,9 +60,15 @@ Landed (design record: :doc:`services`):
 
 Planned work:
 
-- The user-facing context wiring surface: graph-level context capture/lookup
-  and nested graph context import/export (the runtime primitive above exists;
-  the C++ API still needs approval).
+- Nested graph context import/export: importing a context into a compiled
+  sub-graph (``map_``/``switch_``/``nested_`` children), lowering onto the
+  context source/capture runtime primitive. (The user-facing wiring surface —
+  ``context::scope<"name">`` / ``Context<"name", S>`` / ``context::get`` —
+  landed 2026-07-04; see *Contexts* in :doc:`services`. Cross-wiring lookups
+  are detected and reported as unsupported.)
+- ``Context<>`` parameters on operator implementations registered through
+  ``register_overload`` (the lifted-kernel path); today the marker is
+  supported on directly-wired nodes.
 - Subscription adaptor flows (request/reply landed as service adaptors).
 - Integrate remaining adaptor external events with the scheduler and real-time
   executor.

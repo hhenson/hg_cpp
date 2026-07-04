@@ -5,6 +5,7 @@
 #include <hgraph/runtime/executor.h>
 #include <hgraph/runtime/node.h>
 #include <hgraph/runtime/node_scheduler.h>
+#include <hgraph/types/call_args.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/static_schema.h>
 #include <hgraph/types/type_resolution.h>
@@ -457,20 +458,34 @@ namespace hgraph
         Unchecked,
     };
 
+    /**
+     * How an input's source is bound at wiring. ``Caller`` (the default): the
+     * caller passes a port. ``Context``: the source resolves from the nearest
+     * enclosing ``context::scope`` with a matching name — the caller passes
+     * nothing (an explicit ``arg<"name">(port)`` keyword overrides the
+     * ambient context). Use via the ``Context<"name", S>`` alias.
+     */
+    enum class InputBinding
+    {
+        Caller,
+        Context,
+    };
+
     namespace static_node_detail
     {
         template <auto TPolicy>
         consteval bool is_input_policy_flag()
         {
             using policy_type = std::remove_cv_t<decltype(TPolicy)>;
-            return std::is_same_v<policy_type, InputActivity> || std::is_same_v<policy_type, InputValidity>;
+            return std::is_same_v<policy_type, InputActivity> || std::is_same_v<policy_type, InputValidity> ||
+                   std::is_same_v<policy_type, InputBinding>;
         }
 
         template <auto... TPolicies>
         consteval void validate_input_policy_flags()
         {
             static_assert((is_input_policy_flag<TPolicies>() && ...),
-                          "In<> only accepts InputActivity / InputValidity policy flags");
+                          "In<> only accepts InputActivity / InputValidity / InputBinding policy flags");
             static_assert((0U + ... +
                            static_cast<unsigned>(
                                std::is_same_v<std::remove_cv_t<decltype(TPolicies)>, InputActivity>)) <= 1U,
@@ -479,6 +494,24 @@ namespace hgraph
                            static_cast<unsigned>(
                                std::is_same_v<std::remove_cv_t<decltype(TPolicies)>, InputValidity>)) <= 1U,
                           "In<> accepts at most one InputValidity policy flag");
+            static_assert((0U + ... +
+                           static_cast<unsigned>(
+                               std::is_same_v<std::remove_cv_t<decltype(TPolicies)>, InputBinding>)) <= 1U,
+                          "In<> accepts at most one InputBinding policy flag");
+        }
+
+        template <auto... TPolicies>
+        consteval InputBinding resolved_input_binding()
+        {
+            validate_input_policy_flags<TPolicies...>();
+            InputBinding result = InputBinding::Caller;
+            (
+                [&] {
+                    using policy_type = std::remove_cv_t<decltype(TPolicies)>;
+                    if constexpr (std::is_same_v<policy_type, InputBinding>) { result = TPolicies; }
+                }(),
+                ...);
+            return result;
         }
 
         template <auto... TPolicies>
@@ -512,6 +545,27 @@ namespace hgraph
 
     template <fixed_string Name, typename TSchema, auto... TPolicies>
     class In;
+
+    /**
+     * A context-bound time-series input: an ordinary ``In`` whose source is
+     * resolved at wiring time from the nearest enclosing
+     * ``context::scope<"name">`` (see *Contexts* in services.rst) instead of
+     * being passed by the caller. The context name IS the field name. An
+     * explicit keyword argument (``arg<"name">(port)``) overrides the ambient
+     * context. Everything else — input schema, activity/validity policies,
+     * eval-side access — is exactly ``In``.
+     */
+    template <fixed_string Name, typename TSchema, auto... TPolicies>
+    using Context = In<Name, TSchema, InputBinding::Context, TPolicies...>;
+
+    namespace call_args_detail
+    {
+        // Context-bound inputs are auto-bound call parameters: no positional
+        // slot, never "missing", keyword-overridable (see call_args.h).
+        template <fixed_string N, typename S, auto... P>
+        inline constexpr bool auto_context_param_v<In<N, S, P...>> =
+            static_node_detail::resolved_input_binding<P...>() == InputBinding::Context;
+    }  // namespace call_args_detail
 
     template <fixed_string Name, typename TValue, auto... TPolicies>
     class In<Name, TS<TValue>, TPolicies...> : public TSInputView
