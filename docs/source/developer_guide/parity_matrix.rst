@@ -159,7 +159,8 @@ Notes on the gap clusters (deliberate ordering per :doc:`roadmap` P3):
   traits, ``get_fq_recordable_id``…) — ``record``/``replay`` themselves are
   registered (in-memory GlobalState backend); the pluggable model registry
   and the traits it rides on are the missing layer, shared with
-  ``@component``.
+  ``@component``. The architectural analysis (const_fn, model selection,
+  Arrow tables, sequencing) is :doc:`record_replay_table`.
 - **Conversion/type operators** (*convert*, *combine*, *collect*, *emit*,
   *cast_*, *downcast_*…) — declared-only: the markers record the intended
   API; implementations are P3 catalogue work.
@@ -223,7 +224,11 @@ Types and scalars
        bridge-time work.
    * - DataFrame / Series, numpy arrays, JSON scalar
      - Missing
-     - Value kinds; gate the serialization operator families.
+     - Value kinds; gate the serialization operator families. **Ruling
+       (2026-07-04): the Frame/table specification maps onto Apache Arrow
+       tables, not Polars** — Polars sits on Arrow, so Polars (and other
+       Arrow-native frame libraries) remain reachable by zero-cost
+       transformation, while Arrow is the universal interchange layer.
    * - Generics (``TypeVar``, ``AUTO_RESOLVE``, ``Type[...]``)
      - Re-architected
      - ``TsVar``/``ScalarVar``/``SizeVar`` + wiring ``ResolutionMap`` +
@@ -273,7 +278,10 @@ Wiring and node-authoring surface
      -
    * - Injectables: LOGGER, TRAITS, node self
      - Missing
-     -
+     - **Ruling (2026-07-04): LOGGER is a C++-native logger — spdlog** (built
+       in ``SPDLOG_FMT_EXTERNAL`` mode against the fmt the project already
+       vendors). The injectable hands nodes a logger view; per-tick logging
+       must stay allocation-light.
    * - ``stop_engine``, lifecycle observers, evaluation trace/profiling
      - Missing
      - Observability is the weakest runtime dimension.
