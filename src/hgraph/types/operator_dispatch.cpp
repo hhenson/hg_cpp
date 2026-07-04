@@ -1,5 +1,6 @@
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/record_replay.h>
+#include <hgraph/util/scope.h>
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -480,15 +481,14 @@ namespace hgraph
             OperatorCallContext context{args, impl.params, kwargs};
             if (impl.default_resolver)
             {
-                try
-                {
-                    impl.default_resolver(map, context);
-                }
-                catch (const std::exception &e)
-                {
-                    why = fmt::format("default type resolution failed: {}", e.what());
-                    return false;
-                }
+                const bool resolved = fallback_on_exception(
+                    false,
+                    [&] {
+                        impl.default_resolver(map, context);
+                        return true;
+                    },
+                    [&](const char *message) { why = fmt::format("default type resolution failed: {}", message); });
+                if (!resolved) { return false; }
             }
 
             if (impl.has_output && ts_pattern_resolve(impl.output, map) == nullptr)
@@ -499,16 +499,15 @@ namespace hgraph
 
             if (impl.requires_predicate)
             {
-                bool accepted = false;
-                try
-                {
-                    accepted = impl.requires_predicate(map, context);
-                }
-                catch (const std::exception &e)
-                {
-                    why = fmt::format("requires predicate threw: {}", e.what());
-                    return false;
-                }
+                bool threw = false;
+                const bool accepted = fallback_on_exception(
+                    false,
+                    [&] { return impl.requires_predicate(map, context); },
+                    [&](const char *message) {
+                        why   = fmt::format("requires predicate threw: {}", message);
+                        threw = true;
+                    });
+                if (threw) { return false; }
                 if (!accepted)
                 {
                     why = "rejected by requires predicate";

@@ -617,6 +617,7 @@ namespace hgraph
         void set_trait(std::string_view name, const ValueView &value);
         void set_trait(std::string_view name, Value &&value);
 
+
         /**
          * Add a layout-only dependency. ``node`` is ranked after ``depends_on``,
          * but no runtime edge is emitted.

@@ -118,6 +118,11 @@ namespace hgraph::record_replay
         return best < 0 ? Value{} : read_row(converter, frame, best);
     }
 
+    Value recorded_seed_resolver(std::string_view fq_key, const ValueTypeMetaData *meta, DateTime start_time)
+    {
+        return replay_const_value(fq_key, meta, start_time, g_config.as_of.value_or(MAX_DT));
+    }
+
     void reset() noexcept
     {
         g_config = Config{};

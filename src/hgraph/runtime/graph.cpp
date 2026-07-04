@@ -733,14 +733,9 @@ namespace hgraph
             {
                 if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
                 {
-                    try
-                    {
-                        graph_node_view(runtime, graph.data(), index).start(state.evaluation_time);
-                    }
-                    catch (...)
-                    {
-                        rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index), index, "start");
-                    }
+                    annotate_on_exception(
+                        [&] { graph_node_view(runtime, graph.data(), index).start(state.evaluation_time); },
+                        [&] { rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index), index, "start"); });
                 }
                 else
                 {
@@ -775,15 +770,12 @@ namespace hgraph
                 exceptions.capture([&] {
                     if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
                     {
-                        try
-                        {
-                            graph_node_view(runtime, graph.data(), index - 1).stop(state.evaluation_time);
-                        }
-                        catch (...)
-                        {
-                            rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index - 1), index - 1,
-                                                       "stop");
-                        }
+                        annotate_on_exception(
+                            [&] { graph_node_view(runtime, graph.data(), index - 1).stop(state.evaluation_time); },
+                            [&] {
+                                rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index - 1),
+                                                           index - 1, "stop");
+                            });
                     }
                     else
                     {
@@ -853,15 +845,12 @@ namespace hgraph
                             {
                                 if (scheduled_now) { scheduled = MIN_DT; }
                                 state.evaluation_cursor = index;
-                                try
-                                {
-                                    graph_node_view(runtime, graph.data(), index).evaluate(evaluation_time);
-                                }
-                                catch (...)
-                                {
-                                    rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index), index,
-                                                               "evaluate");
-                                }
+                                annotate_on_exception(
+                                    [&] { graph_node_view(runtime, graph.data(), index).evaluate(evaluation_time); },
+                                    [&] {
+                                        rethrow_with_node_identity(graph_node_view(runtime, graph.data(), index),
+                                                                   index, "evaluate");
+                                    });
                             }
                             if (scheduled > evaluation_time && scheduled < state.next_scheduled_time)
                             {
@@ -882,17 +871,16 @@ namespace hgraph
                     bool completed = true;
                     if constexpr (std::is_same_v<Storage, RootGraphRuntimeStorage>)
                     {
-                        try
-                        {
-                            completed = graph_node_view(runtime, graph.data(), state.evaluation_cursor)
-                                            .evaluate(state.evaluation_time);
-                        }
-                        catch (...)
-                        {
-                            rethrow_with_node_identity(
-                                graph_node_view(runtime, graph.data(), state.evaluation_cursor),
-                                state.evaluation_cursor, "evaluate");
-                        }
+                        completed = annotate_on_exception(
+                            [&] {
+                                return graph_node_view(runtime, graph.data(), state.evaluation_cursor)
+                                    .evaluate(state.evaluation_time);
+                            },
+                            [&] {
+                                rethrow_with_node_identity(
+                                    graph_node_view(runtime, graph.data(), state.evaluation_cursor),
+                                    state.evaluation_cursor, "evaluate");
+                            });
                     }
                     else
                     {
@@ -1439,6 +1427,7 @@ namespace hgraph
     }
 
     GlobalStateView GraphBuilder::traits() noexcept { return traits_.view(); }
+
     GraphBuilder   &GraphBuilder::global_state(GlobalState state)
     {
         global_state_ = std::move(state);

@@ -73,6 +73,26 @@ namespace hgraph {
      * ``std::partial_ordering::unordered`` when a structural fallback cannot be
      * evaluated.
      */
+    /**
+     * Run ``f`` and return its result. If ``f`` throws, invoke ``annotate``
+     * from inside the catch — typically a ``[[noreturn]]`` helper that
+     * rethrows the in-flight exception enriched with context (e.g. a node
+     * identity prefix). Should ``annotate`` return, the original exception
+     * propagates unchanged. The annotate-and-propagate counterpart of
+     * ``fallback_on_exception`` — call sites stay expression-shaped instead
+     * of hand-rolled try/catch blocks.
+     */
+    template <typename F, typename Annotate>
+    decltype(auto) annotate_on_exception(F &&f, Annotate &&annotate)
+    {
+        try {
+            return std::forward<F>(f)();
+        } catch (...) {
+            std::forward<Annotate>(annotate)();
+            throw;
+        }
+    }
+
     template <typename Result, typename F>
     [[nodiscard]] Result fallback_on_exception(Result fallback, F &&f) noexcept
     {

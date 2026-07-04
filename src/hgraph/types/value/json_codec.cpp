@@ -8,6 +8,8 @@
 
 #include <fmt/core.h>
 
+#include <hgraph/util/scope.h>
+
 #include <charconv>
 #include <chrono>
 #include <memory>
@@ -637,8 +639,10 @@ namespace hgraph
             converter->meta    = meta;
             converter->binding = ValuePlanFactory::instance().binding_for(meta);
             auto *raw          = converter.get();
-            // Insert before recursing so self-referential schemas terminate.
+            // Insert before recursing so self-referential schemas terminate;
+            // the guard removes the half-built entry if synthesis throws.
             g_converters.emplace(meta, std::move(converter));
+            auto unwind = UnwindCleanupGuard([&] { g_converters.erase(meta); });
 
             switch (meta->kind)
             {
@@ -646,7 +650,6 @@ namespace hgraph
                     raw->atomic_tag = atomic_tag_for(meta);
                     if (raw->atomic_tag == AtomicTag::None)
                     {
-                        g_converters.erase(meta);
                         throw std::logic_error(fmt::format("json: unsupported atomic scalar '{}'",
                                                            meta->display_name ? meta->display_name : "?"));
                     }
@@ -663,7 +666,6 @@ namespace hgraph
                     }
                     if (!raw->names.empty() && raw->names.size() != raw->children.size())
                     {
-                        g_converters.erase(meta);
                         throw std::logic_error("json: partially-named composite is not supported");
                     }
                     raw->write_ = &write_composite;
@@ -689,12 +691,11 @@ namespace hgraph
                     raw->read_  = &read_map;
                     break;
                 }
-                default: {
-                    g_converters.erase(meta);
+                default:
                     throw std::logic_error(fmt::format("json: unsupported value kind for '{}'",
                                                        meta->display_name ? meta->display_name : "?"));
-                }
             }
+            unwind.release();
             return raw;
         }
     }  // namespace

@@ -73,8 +73,8 @@ namespace hgraph::stdlib
                 args.push_back(std::move(arg));
             }
 
-            try
-            {
+            // A resolution probe: failure means "no kernel", not an error.
+            return fallback_on_exception(static_cast<const LiftedKernel *>(nullptr), [&]() -> const LiftedKernel * {
                 ResolvedOperatorCall resolved =
                     OperatorRegistry::instance().resolve(func.operator_name,
                                                          std::span<const WiringArg>{args.data(), args.size()},
@@ -82,11 +82,7 @@ namespace hgraph::stdlib
                                                          expected_output);
                 const LiftedKernel *kernel = resolved.impl != nullptr ? resolved.impl->lifted_kernel : nullptr;
                 return kernel != nullptr && kernel->valid() ? kernel : nullptr;
-            }
-            catch (...)
-            {
-                return nullptr;
-            }
+            });
         }
 
         // A fixed-size TSL second argument (shared requires_ of the TSL overloads;
@@ -899,18 +895,16 @@ namespace hgraph::stdlib
                 slot_schemas.push_back(port.schema);
             }
 
-            try
-            {
+            // A resolution probe: leave unresolved on failure — the real
+            // wiring path reports the error.
+            (void)fallback_on_exception(false, [&] {
                 const TSValueTypeMetaData *output_schema = nullptr;
                 (void)compile_switch_branch(*branch, key_schema, {slot_schemas.data(), slot_schemas.size()},
                                             positional_count, {named_slots.data(), named_slots.size()},
                                             output_schema);
                 bind_graph_output(resolution, output_schema, "O");
-            }
-            catch (...)
-            {
-                // Leave unresolved; the real wiring path reports the error.
-            }
+                return true;
+            });
         }
 
         /** ``switch_(key, cases, *ts, **kwargs)`` — keywords resolve per branch. */

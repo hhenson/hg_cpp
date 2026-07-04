@@ -1,3 +1,4 @@
+#include <hgraph/util/scope.h>
 #include <hgraph/types/metadata/ts_data_plan_factory.h>
 #include <hgraph/types/metadata/ts_data_plan_factory_detail.h>
 
@@ -76,15 +77,9 @@ namespace hgraph::ts_data_plan_factory_detail
                 {
                     const auto index = elements_.size();
                     elements_.emplace_back(element_binding());
-                    try
-                    {
-                        ordinal_keys_.push_back(static_cast<std::int64_t>(index));
-                    }
-                    catch (...)
-                    {
-                        elements_.pop_back();
-                        throw;
-                    }
+                    auto rollback = UnwindCleanupGuard([&] { elements_.pop_back(); });
+                    ordinal_keys_.push_back(static_cast<std::int64_t>(index));
+                    rollback.release();
                 }
             }
 

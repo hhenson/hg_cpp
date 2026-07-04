@@ -93,6 +93,17 @@ namespace
         }
     };
 
+    struct RecoverHarness
+    {
+        [[maybe_unused]] static constexpr auto name = "component_recover_harness";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        {
+            record_replay::scope mode{Mode::Recover};
+            return stdlib::component<SumGraph>(w, "calc", lhs, rhs);
+        }
+    };
+
     struct NoIdHarness
     {
         [[maybe_unused]] static constexpr auto name = "component_no_id_harness";
@@ -172,4 +183,19 @@ TEST_CASE("component: no ambient mode wires plainly; active mode without an id t
 
     CHECK_OUTPUT(eval_node<PlainHarness>(values<Int>(2), values<Int>(3)), values<Int>(5));
     CHECK_THROWS_AS((void)eval_node<NoIdHarness>(values<Int>(1), values<Int>(1)), std::invalid_argument);
+}
+
+TEST_CASE("component: Recover seeds inputs at start from the recordings; live ticks override")
+{
+    stdlib::register_standard_operators();
+    record_replay::set_config(record_replay::Config{.model = std::string{record_replay::DATA_FRAME}});
+
+    // Record: lhs ticks 1 @t0 and 3 @t2; rhs ticks 10 @t0 and 20 @t1.
+    (void)eval_node<RecordingHarness>(values<Int>(1, none, 3), values<Int>(10, 20, none));
+
+    // Recover (same start time): the seeds are the values recorded AT OR
+    // BEFORE the start time - lhs=1, rhs=10 - so cycle 0 computes 11 with
+    // SILENT live inputs; the live lhs=100 @t1 then overrides (100+10).
+    CHECK_OUTPUT(eval_node<RecoverHarness>(values<Int>(none, 100), values<Int>(none, none)),
+                 values<Int>(11, 110));
 }

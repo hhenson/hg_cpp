@@ -183,6 +183,16 @@ namespace hgraph
                                                              const ValueTypeMetaData *meta,
                                                              DateTime tm    = MAX_DT,
                                                              DateTime as_of = MAX_DT);
+
+        /**
+         * The RECOVER seed resolver (``GraphBuilder::StartSeed::ResolveFn``
+         * shape): the last recorded value at or before the start time,
+         * honouring the configured as-of override. Registered on seeds by
+         * ``component<G>`` under ``Mode::Recover``.
+         */
+        [[nodiscard]] HGRAPH_EXPORT Value recorded_seed_resolver(std::string_view fq_key,
+                                                                 const ValueTypeMetaData *meta,
+                                                                 DateTime start_time);
     }  // namespace record_replay
 }  // namespace hgraph
 

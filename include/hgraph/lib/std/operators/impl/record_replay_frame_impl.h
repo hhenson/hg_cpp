@@ -9,6 +9,7 @@
 #include <hgraph/types/time_series/ts_delta.h>
 #include <hgraph/types/value/table_codec.h>
 
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -97,10 +98,10 @@ namespace hgraph::stdlib
         {
             using record_replay_frame_detail::RecorderHandle;
             const auto &converter = table_converter(ts.base().schema()->value_schema);
-            auto *handle          = new RecorderHandle{
+            auto        handle    = std::make_unique<RecorderHandle>(RecorderHandle{
                 FrameRecorder{converter},
-                record_replay_frame_detail::frame_key(traits, recordable_id.value(), key.value())};
-            state.set(FrameRecorderState{handle});
+                record_replay_frame_detail::frame_key(traits, recordable_id.value(), key.value())});
+            state.set(FrameRecorderState{handle.release()});   // owned by node State until stop
         }
 
         static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", Str> key,
@@ -115,11 +116,11 @@ namespace hgraph::stdlib
 
         static void stop(State<FrameRecorderState> state)
         {
-            auto *handle = state.get().handle;
+            // Take ownership first so a throwing store write cannot leak.
+            std::unique_ptr<record_replay_frame_detail::RecorderHandle> handle{state.get().handle};
+            state.set(FrameRecorderState{});
             if (handle == nullptr) { return; }
             record_replay::store_write(handle->fq_key, handle->recorder.finish());
-            delete handle;
-            state.set(FrameRecorderState{});
         }
     };
 
@@ -149,12 +150,12 @@ namespace hgraph::stdlib
             }
             const auto &erased    = static_cast<const TSOutputView &>(out);
             const auto &converter = table_converter(erased.schema()->value_schema);
-            auto       *handle    = new ReplayHandle{&converter, std::move(frame), 0};
-            state.set(FrameReplayState{handle});
+            auto        handle    = std::make_unique<ReplayHandle>(ReplayHandle{&converter, std::move(frame), 0});
             if (frame_rows(handle->frame) > 0)
             {
                 sched.schedule(frame_value_time(converter, handle->frame, 0));
             }
+            state.set(FrameReplayState{handle.release()});   // owned by node State until stop
         }
 
         static void eval(Scalar<"key", Str> key, Scalar<"recordable_id", Str> recordable_id,
@@ -178,7 +179,7 @@ namespace hgraph::stdlib
 
         static void stop(State<FrameReplayState> state)
         {
-            delete state.get().handle;
+            std::unique_ptr<record_replay_frame_detail::ReplayHandle> handle{state.get().handle};
             state.set(FrameReplayState{});
         }
     };
