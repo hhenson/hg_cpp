@@ -238,6 +238,8 @@ namespace hgraph
                 graph->schedule_node(view_.node_index(), schedule_time);
             }
 
+            [[nodiscard]] std::size_t node_index() const noexcept { return view_.node_index(); }
+
           private:
             SubscriptionKeySourceView(NodeView view, const SubscriptionKeySourceContext *context) noexcept
                 : view_(std::move(view)),
@@ -292,6 +294,8 @@ namespace hgraph
                 static_cast<void>(removed.add(request_id_value.view()));
                 schedule(schedule_time);
             }
+
+            [[nodiscard]] std::size_t node_index() const noexcept { return view_.node_index(); }
 
           private:
             explicit RequestInputSourceView(NodeView view) noexcept
@@ -350,6 +354,17 @@ namespace hgraph
                 throw std::logic_error("request input capture is not bound to a request input source");
             }
             return source.as<RequestInputSourceView>();
+        }
+
+        [[nodiscard]] DateTime paired_source_schedule_time(
+            const NodeView &capture,
+            std::size_t source_node_index,
+            DateTime evaluation_time,
+            bool start_phase)
+        {
+            return start_phase || source_node_index > capture.node_index()
+                ? evaluation_time
+                : evaluation_time + MIN_TD;
         }
 
         void apply_pending_subscription_key_changes(
@@ -547,12 +562,14 @@ namespace hgraph
             const SubscriptionKeyCaptureContext &context,
             const NodeView &view,
             DateTime evaluation_time,
-            DateTime schedule_time)
+            bool start_phase)
         {
             auto input  = view.input(evaluation_time);
             auto bundle = input.as_bundle();
             auto key    = bundle.at("key");
             auto source = recover_source_view(view, evaluation_time);
+            const DateTime schedule_time =
+                paired_source_schedule_time(view, source.node_index(), evaluation_time, start_phase);
             record_subscription_key(source, capture_storage_of(view, context), key, schedule_time);
         }
 
@@ -560,7 +577,7 @@ namespace hgraph
             const RequestInputCaptureContext &context,
             const NodeView &view,
             DateTime evaluation_time,
-            DateTime schedule_time,
+            bool start_phase,
             bool force)
         {
             auto input   = view.input(evaluation_time);
@@ -568,6 +585,8 @@ namespace hgraph
             auto request = bundle.at("request");
             auto source  = recover_request_source_view(view, evaluation_time);
             auto &storage = capture_storage_of(view, context);
+            const DateTime schedule_time =
+                paired_source_schedule_time(view, source.node_index(), evaluation_time, start_phase);
 
             if (!force && !request.modified()) { return; }
 
@@ -682,10 +701,10 @@ namespace hgraph
             path, descriptor.storage_plan->component(subscription_key_capture_storage_field).offset);
 
         descriptor.callbacks.start = [context](const NodeView &view, DateTime evaluation_time) {
-            capture_subscription_key(*context, view, evaluation_time, evaluation_time);
+            capture_subscription_key(*context, view, evaluation_time, true);
         };
         descriptor.callbacks.evaluate = [context](const NodeView &view, DateTime evaluation_time) {
-            capture_subscription_key(*context, view, evaluation_time, evaluation_time + MIN_TD);
+            capture_subscription_key(*context, view, evaluation_time, false);
         };
         descriptor.callbacks.stop             = &subscription_key_capture_stop;
         descriptor.ops.extended_view_context  = context;
@@ -754,10 +773,10 @@ namespace hgraph
             path, request_id, descriptor.storage_plan->component(request_input_capture_storage_field).offset);
 
         descriptor.callbacks.start = [context](const NodeView &view, DateTime evaluation_time) {
-            capture_request_input(*context, view, evaluation_time, evaluation_time, true);
+            capture_request_input(*context, view, evaluation_time, true, true);
         };
         descriptor.callbacks.evaluate = [context](const NodeView &view, DateTime evaluation_time) {
-            capture_request_input(*context, view, evaluation_time, evaluation_time + MIN_TD, false);
+            capture_request_input(*context, view, evaluation_time, false, false);
         };
         descriptor.callbacks.stop            = &request_input_capture_stop;
         descriptor.ops.extended_view_context = context;

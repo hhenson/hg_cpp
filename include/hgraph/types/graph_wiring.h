@@ -622,6 +622,9 @@ namespace hgraph
         void register_built_service_path(std::string path, std::string_view kind);
 
         void register_service_client_path(std::string path, std::string_view kind);
+        void register_service_rank_anchor(std::string path, const WiringInstance *node);
+        void register_service_client_rank(std::string path, std::string_view kind,
+                                          const WiringInstance *node, bool receive);
 
         void begin_service_implementation(std::string description, std::vector<std::string> required_endpoints);
         void begin_service_implementation(std::string description,
@@ -675,6 +678,8 @@ namespace hgraph
             std::vector<const TSValueTypeMetaData *> input_schemas) &&;
 
       private:
+        void apply_service_rank_dependencies();
+
         struct Impl;
         std::unique_ptr<Impl> impl_;
     };

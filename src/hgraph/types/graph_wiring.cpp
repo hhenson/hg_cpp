@@ -347,7 +347,58 @@ namespace hgraph
 
             if (ranked.size() != all.size())
             {
-                throw std::runtime_error("Wiring::finish detected a cycle in the wiring graph");
+                auto name_of = [](const WiringInstance *instance) {
+                    if (instance == nullptr) { return std::string{"<null>"}; }
+                    const auto &builder = instance->builder;
+                    std::string label = std::string{builder.label()};
+                    if (!label.empty()) { return label; }
+                    const auto *meta = builder.binding().type_meta;
+                    return meta != nullptr && meta->display_name != nullptr
+                        ? std::string{meta->display_name}
+                        : std::string{"<unnamed>"};
+                };
+
+                std::string message = "Wiring::finish detected a cycle in the wiring graph";
+                std::size_t shown = 0;
+                for (const auto &[instance, degree] : indegree)
+                {
+                    if (degree == 0) { continue; }
+                    message += shown == 0 ? ": " : ", ";
+                    message += name_of(instance);
+                    if (++shown == 8) { break; }
+                }
+                shown = 0;
+                for (const auto &[instance, degree] : indegree)
+                {
+                    if (degree == 0 || shown == 4) { continue; }
+                    message += "; ";
+                    message += name_of(instance);
+                    message += " waits on ";
+                    bool first = true;
+                    for (const auto &input : instance->inputs)
+                    {
+                        if (!input.rank_dependency) { continue; }
+                        std::vector<const WiringInstance *> producers;
+                        collect_producers(input.source, producers);
+                        for (const WiringInstance *producer : producers)
+                        {
+                            if (indegree[producer] == 0) { continue; }
+                            if (!first) { message += ", "; }
+                            message += name_of(producer);
+                            first = false;
+                        }
+                    }
+                    for (const WiringInstance *producer : instance->rank_dependencies)
+                    {
+                        if (producer == nullptr || indegree[producer] == 0) { continue; }
+                        if (!first) { message += ", "; }
+                        message += name_of(producer);
+                        first = false;
+                    }
+                    if (first) { message += "<none in cycle>"; }
+                    ++shown;
+                }
+                throw std::runtime_error(message);
             }
 
             RankedGraphBuild build;
@@ -401,10 +452,20 @@ namespace hgraph
             std::unordered_set<std::string>      used_endpoints{};
         };
 
+        struct ServiceClientRank
+        {
+            std::string                 path{};
+            std::string                 kind{};
+            const WiringInstance       *node{nullptr};
+            bool                        receive{true};
+        };
+
         std::deque<WiringInstance>                                        instances{};
         std::unordered_map<InstanceKey, WiringInstance *, InstanceKeyHash> interned{};
         std::unordered_map<std::string, std::string>                       built_service_paths{};
         std::unordered_map<std::string, std::string>                       client_service_paths{};
+        std::unordered_map<std::string, const WiringInstance *>            service_rank_anchors{};
+        std::vector<ServiceClientRank>                                      service_client_ranks{};
         std::vector<ServiceImplementationScope>                            implementation_scopes{};
         GlobalState                                                        global_state{};
     };
@@ -513,6 +574,32 @@ namespace hgraph
     {
         if (path.empty()) { throw std::invalid_argument("service/adaptor client path must not be empty"); }
         impl_->client_service_paths.try_emplace(std::move(path), std::string{kind});
+    }
+
+    void Wiring::register_service_rank_anchor(std::string path, const WiringInstance *node)
+    {
+        if (path.empty()) { throw std::invalid_argument("service/adaptor rank anchor path must not be empty"); }
+        if (node == nullptr) { return; }
+
+        auto [it, inserted] = impl_->service_rank_anchors.try_emplace(std::move(path), node);
+        if (!inserted && it->second != node)
+        {
+            throw std::invalid_argument("conflicting service/adaptor rank anchor for '" + it->first + "'");
+        }
+    }
+
+    void Wiring::register_service_client_rank(std::string path, std::string_view kind,
+                                              const WiringInstance *node, bool receive)
+    {
+        if (path.empty()) { throw std::invalid_argument("service/adaptor client rank path must not be empty"); }
+        if (node == nullptr) { return; }
+
+        impl_->service_client_ranks.push_back(Impl::ServiceClientRank{
+            .path = std::move(path),
+            .kind = std::string{kind},
+            .node = node,
+            .receive = receive,
+        });
     }
 
     void Wiring::begin_service_implementation(std::string description, std::vector<std::string> required_endpoints)
@@ -653,6 +740,30 @@ namespace hgraph
 
     GlobalStateView Wiring::global_state() noexcept { return impl_->global_state.view(); }
 
+    void Wiring::apply_service_rank_dependencies()
+    {
+        for (const auto &client : impl_->service_client_ranks)
+        {
+            auto anchor_it = impl_->service_rank_anchors.find(client.path);
+            if (anchor_it == impl_->service_rank_anchors.end() || anchor_it->second == nullptr)
+            {
+                continue;
+            }
+
+            const WiringInstance *anchor = anchor_it->second;
+            if (anchor == client.node) { continue; }
+
+            if (client.receive)
+            {
+                add_rank_dependency(client.node, anchor);
+            }
+            else
+            {
+                add_rank_dependency(anchor, client.node);
+            }
+        }
+    }
+
     GraphBuilder Wiring::finish() &&
     {
         if (!impl_->implementation_scopes.empty())
@@ -667,6 +778,7 @@ namespace hgraph
             }
         }
 
+        apply_service_rank_dependencies();
         RankedGraphBuild build = build_ranked_graph(impl_->instances, nullptr);
         build.graph_builder.global_state(std::move(impl_->global_state));  // carry wiring-time entries onto the graph
         return std::move(build.graph_builder);
@@ -688,6 +800,7 @@ namespace hgraph
             }
         }
 
+        apply_service_rank_dependencies();
         CompiledSubGraph compiled;
         compiled.input_schemas = std::move(input_schemas);
 

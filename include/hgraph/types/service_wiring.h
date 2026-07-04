@@ -776,61 +776,77 @@ namespace hgraph::service
         }
 
         template <typename Service>
-        void capture_subscription_key(Wiring &w,
-                                      Port<TS<key_type_t<Service>>> key,
-                                      Port<TSS<key_type_t<Service>>> subscriptions,
-                                      const ServicePath &user_path)
+        const WiringInstance *capture_subscription_key(Wiring &w,
+                                                       Port<TS<key_type_t<Service>>> key,
+                                                       Port<TSS<key_type_t<Service>>> subscriptions,
+                                                       const ServicePath &user_path)
         {
             using key_type = key_type_t<Service>;
 
-            std::array<WiringPortRef, 2> inputs{key.erased(), subscriptions.erased()};
+            std::array<WiringPortRef, 2> sources{key.erased(), subscriptions.erased()};
+            std::array<WiringInputRef, 2> inputs{{
+                WiringInputRef{.source = sources[0]},
+                WiringInputRef{.source = sources[1], .rank_dependency = false},
+            }};
             const auto *key_meta = resolved_scalar_meta<key_type>(
                 user_path.resolution, "subscription service key");
             NodeBuilder builder = make_subscription_key_capture_node(
                 subscriptions_path<Service>(user_path), *key_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
-                std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                std::span<const WiringPortRef>{sources.data(), sources.size()}));
 
-            static_cast<void>(w.add_node(std::type_index(typeid(subscription_capture_marker<Service>)),
-                                         std::move(builder),
-                                         std::span<const WiringPortRef>{inputs.data(), inputs.size()},
-                                         Value{}));
+            WiringPortRef capture = w.add_node(std::type_index(typeid(subscription_capture_marker<Service>)),
+                                               std::move(builder),
+                                               std::span<const WiringInputRef>{inputs.data(), inputs.size()},
+                                               Value{});
+            w.add_rank_dependency(subscriptions.node(), capture.peered_node());
+            return capture.peered_node();
         }
 
         template <typename Service, typename RequestSchema>
-        void capture_request_input(Wiring &w,
-                                   Port<RequestSchema> request,
-                                   Port<request_input_schema_t<Service>> requests,
-                                   const ServicePath &user_path,
-                                   Int request_id)
+        const WiringInstance *capture_request_input(Wiring &w,
+                                                    Port<RequestSchema> request,
+                                                    Port<request_input_schema_t<Service>> requests,
+                                                    const ServicePath &user_path,
+                                                    Int request_id)
         {
             using request_schema = request_schema_t<Service>;
 
-            std::array<WiringPortRef, 2> inputs{request.erased(), requests.erased()};
+            std::array<WiringPortRef, 2> sources{request.erased(), requests.erased()};
+            std::array<WiringInputRef, 2> inputs{{
+                WiringInputRef{.source = sources[0]},
+                WiringInputRef{.source = sources[1], .rank_dependency = false},
+            }};
             const auto *request_meta = resolved_schema_meta<request_schema>(
                 user_path.resolution, "request/reply service request");
             NodeBuilder builder = make_request_input_capture_node(
                 request_input_path<Service>(user_path), *request_meta, request_id);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
-                std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                std::span<const WiringPortRef>{sources.data(), sources.size()}));
 
-            static_cast<void>(w.add_node(std::type_index(typeid(request_input_capture_marker<Service>)),
-                                         std::move(builder),
-                                         std::span<const WiringPortRef>{inputs.data(), inputs.size()},
-                                         Value{request_id}));
+            WiringPortRef capture = w.add_node(std::type_index(typeid(request_input_capture_marker<Service>)),
+                                               std::move(builder),
+                                               std::span<const WiringInputRef>{inputs.data(), inputs.size()},
+                                               Value{request_id});
+            w.add_rank_dependency(requests.node(), capture.peered_node());
+            return capture.peered_node();
         }
 
         template <typename Service, typename Impl>
-        void capture_reference_service_output(Wiring &w,
-                                              Port<reference_output_schema_t<Service>> output,
-                                              Port<REF<reference_output_schema_t<Service>>> shared_output,
-                                              const ServicePath &user_path)
+        const WiringInstance *capture_reference_service_output(Wiring &w,
+                                                               Port<reference_output_schema_t<Service>> output,
+                                                               Port<REF<reference_output_schema_t<Service>>> shared_output,
+                                                               const ServicePath &user_path)
         {
             using output_schema = reference_output_schema_t<Service>;
 
-            std::array<WiringPortRef, 2> inputs{output.erased(), shared_output.erased()};
+            std::array<WiringPortRef, 2> sources{output.erased(), shared_output.erased()};
+            std::array<WiringInputRef, 2> inputs{{
+                WiringInputRef{.source = sources[0]},
+                WiringInputRef{.source = sources[1], .rank_dependency = false},
+            }};
             const auto *output_meta = output.erased().schema;
             if (output_meta == nullptr)
             {
@@ -841,21 +857,27 @@ namespace hgraph::service
                 reference_output_path<Service>(user_path), *output_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
-                std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                std::span<const WiringPortRef>{sources.data(), sources.size()}));
 
-            static_cast<void>(w.add_node(std::type_index(typeid(reference_output_capture_marker<Service, Impl>)),
-                                         std::move(builder),
-                                         std::span<const WiringPortRef>{inputs.data(), inputs.size()},
-                                         Value{}));
+            WiringPortRef capture = w.add_node(std::type_index(typeid(reference_output_capture_marker<Service, Impl>)),
+                                               std::move(builder),
+                                               std::span<const WiringInputRef>{inputs.data(), inputs.size()},
+                                               Value{});
+            w.add_rank_dependency(shared_output.node(), capture.peered_node());
+            return capture.peered_node();
         }
 
         template <typename Service, typename Impl>
-        void capture_service_output(Wiring &w,
-                                    Port<output_schema_t<Service>> output,
-                                    Port<REF<output_schema_t<Service>>> shared_output,
-                                    const ServicePath &user_path)
+        const WiringInstance *capture_service_output(Wiring &w,
+                                                     Port<output_schema_t<Service>> output,
+                                                     Port<REF<output_schema_t<Service>>> shared_output,
+                                                     const ServicePath &user_path)
         {
-            std::array<WiringPortRef, 2> inputs{output.erased(), shared_output.erased()};
+            std::array<WiringPortRef, 2> sources{output.erased(), shared_output.erased()};
+            std::array<WiringInputRef, 2> inputs{{
+                WiringInputRef{.source = sources[0]},
+                WiringInputRef{.source = sources[1], .rank_dependency = false},
+            }};
             const auto *output_meta = output.erased().schema;
             if (output_meta == nullptr)
             {
@@ -869,22 +891,28 @@ namespace hgraph::service
                 output_path<Service>(user_path), *output_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
-                std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                std::span<const WiringPortRef>{sources.data(), sources.size()}));
 
-            static_cast<void>(w.add_node(std::type_index(typeid(shared_output_capture_marker<Service, Impl>)),
-                                         std::move(builder),
-                                         std::span<const WiringPortRef>{inputs.data(), inputs.size()},
-                                         Value{}));
+            WiringPortRef capture = w.add_node(std::type_index(typeid(shared_output_capture_marker<Service, Impl>)),
+                                               std::move(builder),
+                                               std::span<const WiringInputRef>{inputs.data(), inputs.size()},
+                                               Value{});
+            w.add_rank_dependency(shared_output.node(), capture.peered_node());
+            return capture.peered_node();
         }
 
         template <typename Service, typename Impl>
-        void capture_request_reply_service_output(
+        const WiringInstance *capture_request_reply_service_output(
             Wiring &w,
             Port<request_output_schema_t<Service>> output,
             Port<REF<request_output_schema_t<Service>>> shared_output,
             const ServicePath &user_path)
         {
-            std::array<WiringPortRef, 2> inputs{output.erased(), shared_output.erased()};
+            std::array<WiringPortRef, 2> sources{output.erased(), shared_output.erased()};
+            std::array<WiringInputRef, 2> inputs{{
+                WiringInputRef{.source = sources[0]},
+                WiringInputRef{.source = sources[1], .rank_dependency = false},
+            }};
             const auto *output_meta = output.erased().schema;
             if (output_meta == nullptr)
             {
@@ -897,13 +925,15 @@ namespace hgraph::service
                 request_reply_output_path<Service>(user_path), *output_meta);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta->input_schema,
-                std::span<const WiringPortRef>{inputs.data(), inputs.size()}));
+                std::span<const WiringPortRef>{sources.data(), sources.size()}));
 
-            static_cast<void>(w.add_node(
+            WiringPortRef capture = w.add_node(
                 std::type_index(typeid(request_reply_output_capture_marker<Service, Impl>)),
                 std::move(builder),
-                std::span<const WiringPortRef>{inputs.data(), inputs.size()},
-                Value{}));
+                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
+                Value{});
+            w.add_rank_dependency(shared_output.node(), capture.peered_node());
+            return capture.peered_node();
         }
 
         template <typename Impl, typename... Args>
@@ -945,7 +975,10 @@ namespace hgraph::service
     {
         using output_schema = detail::reference_output_schema_t<Service>;
         w.register_service_client_path(detail::reference_base_path<Service>(user_path), "reference service");
-        return detail::reference_shared_output_source<Service>(w, user_path).template as<output_schema>();
+        auto source = detail::reference_shared_output_source<Service>(w, user_path);
+        w.register_service_client_rank(
+            detail::reference_base_path<Service>(user_path), "reference service", source.node(), true);
+        return source.template as<output_schema>();
     }
 
     template <typename Service>
@@ -962,7 +995,9 @@ namespace hgraph::service
         w.register_built_service_path(detail::reference_base_path<Service>(user_path), "reference service");
         auto shared_output = detail::reference_shared_output_source<Service>(w, user_path);
         auto output        = detail::wire_service_impl<Impl, output_schema>(w, user_path, args...);
-        detail::capture_reference_service_output<Service, Impl>(w, output, shared_output, user_path);
+        const WiringInstance *capture =
+            detail::capture_reference_service_output<Service, Impl>(w, output, shared_output, user_path);
+        w.register_service_rank_anchor(detail::reference_base_path<Service>(user_path), capture);
     }
 
     template <typename Service, typename Impl, typename... Args>
@@ -979,7 +1014,9 @@ namespace hgraph::service
         wiring_path_detail::merge_resolution(
             user_path.resolution, w.service_implementation_stub_resolution(endpoint));
         w.register_service_implementation_stub(endpoint, "subscription service");
-        return detail::subscription_source<Service>(w, user_path);
+        auto source = detail::subscription_source<Service>(w, user_path);
+        w.register_service_rank_anchor(detail::subscriptions_path<Service>(user_path), source.node());
+        return source;
     }
 
     template <typename Service>
@@ -997,7 +1034,9 @@ namespace hgraph::service
         wiring_path_detail::merge_resolution(
             user_path.resolution, w.service_implementation_stub_resolution(endpoint));
         w.register_service_implementation_stub(endpoint, "request/reply service");
-        return detail::request_input_source<Service>(w, user_path);
+        auto source = detail::request_input_source<Service>(w, user_path);
+        w.register_service_rank_anchor(detail::request_input_path<Service>(user_path), source.node());
+        return source;
     }
 
     template <typename Service>
@@ -1022,8 +1061,9 @@ namespace hgraph::service
             user_path.resolution, w.service_implementation_stub_resolution(endpoint));
         w.register_service_implementation_stub(endpoint, "reference service");
         auto shared_output = detail::reference_shared_output_source<Service>(w, user_path);
-        detail::capture_reference_service_output<Service, explicit_impl_output_marker>(
+        const WiringInstance *capture = detail::capture_reference_service_output<Service, explicit_impl_output_marker>(
             w, std::move(output), shared_output, user_path);
+        w.register_service_rank_anchor(detail::reference_base_path<Service>(user_path), capture);
     }
 
     template <typename Service>
@@ -1044,8 +1084,9 @@ namespace hgraph::service
             user_path.resolution, w.service_implementation_stub_resolution(endpoint));
         w.register_service_implementation_stub(endpoint, "subscription service");
         auto shared_output = detail::shared_output_source<Service>(w, user_path);
-        detail::capture_service_output<Service, explicit_impl_output_marker>(
+        const WiringInstance *capture = detail::capture_service_output<Service, explicit_impl_output_marker>(
             w, std::move(output), shared_output, user_path);
+        w.register_service_rank_anchor(detail::output_path<Service>(user_path), capture);
     }
 
     template <typename Service>
@@ -1066,8 +1107,10 @@ namespace hgraph::service
             user_path.resolution, w.service_implementation_stub_resolution(endpoint));
         w.register_service_implementation_stub(endpoint, "request/reply service");
         auto shared_output = detail::request_reply_output_source<Service>(w, user_path);
-        detail::capture_request_reply_service_output<Service, explicit_impl_output_marker>(
+        const WiringInstance *capture =
+            detail::capture_request_reply_service_output<Service, explicit_impl_output_marker>(
             w, std::move(output), shared_output, user_path);
+        w.register_service_rank_anchor(detail::request_reply_output_path<Service>(user_path), capture);
     }
 
     template <typename Service>
@@ -1135,7 +1178,10 @@ namespace hgraph::service
         [[nodiscard]] Port<value_schema> operator()(Port<TS<key_type>> key) const
         {
             if (wiring_ == nullptr) { throw std::logic_error("subscription service handle is not bound"); }
-            detail::capture_subscription_key<Service>(*wiring_, key, subscriptions_, path_);
+            const WiringInstance *capture =
+                detail::capture_subscription_key<Service>(*wiring_, key, subscriptions_, path_);
+            wiring_->register_service_client_rank(
+                detail::subscriptions_path<Service>(path_), "subscription service", capture, false);
             return wire<stdlib::getitem_>(*wiring_, output_.template as<output_schema>(), key)
                 .template as<value_schema>();
         }
@@ -1153,6 +1199,9 @@ namespace hgraph::service
         w.register_service_client_path(detail::subscription_base_path<Service>(user_path), "subscription service");
         auto subscriptions = detail::subscription_source<Service>(w, user_path);
         auto shared_output = detail::shared_output_source<Service>(w, user_path);
+        w.register_service_rank_anchor(detail::subscriptions_path<Service>(user_path), subscriptions.node());
+        w.register_service_client_rank(
+            detail::output_path<Service>(user_path), "subscription service", shared_output.node(), true);
         return SubscriptionService<Service>{w, subscriptions, shared_output, std::move(user_path)};
     }
 
@@ -1170,9 +1219,12 @@ namespace hgraph::service
         w.register_built_service_path(detail::subscription_base_path<Service>(user_path), "subscription service");
         auto subscriptions = detail::subscription_source<Service>(w, user_path);
         auto shared_output = detail::shared_output_source<Service>(w, user_path);
+        w.register_service_rank_anchor(detail::subscriptions_path<Service>(user_path), subscriptions.node());
         auto output = detail::wire_service_impl<Impl, output_schema>(
             w, user_path, detail::service_input_arg<Impl>(subscriptions), args...);
-        detail::capture_service_output<Service, Impl>(w, output, shared_output, user_path);
+        const WiringInstance *capture =
+            detail::capture_service_output<Service, Impl>(w, output, shared_output, user_path);
+        w.register_service_rank_anchor(detail::output_path<Service>(user_path), capture);
     }
 
     template <typename Service, typename Impl, typename... Args>
@@ -1211,7 +1263,13 @@ namespace hgraph::service
         auto requests        = detail::request_input_source<Service>(w, user_path);
         auto replies         = detail::request_reply_output_source<Service>(w, user_path);
 
-        detail::capture_request_input<Service>(w, std::move(request), requests, user_path, request_id);
+        w.register_service_rank_anchor(detail::request_input_path<Service>(user_path), requests.node());
+        const WiringInstance *capture =
+            detail::capture_request_input<Service>(w, std::move(request), requests, user_path, request_id);
+        w.register_service_client_rank(
+            detail::request_input_path<Service>(user_path), "request/reply service", capture, false);
+        w.register_service_client_rank(
+            detail::request_reply_output_path<Service>(user_path), "request/reply service", replies.node(), true);
         if constexpr (schema_descriptor<output_schema>::is_concrete())
         {
             auto reply = wire<stdlib::getitem_>(w, replies.template as<output_schema>(), request_id);
@@ -1249,9 +1307,12 @@ namespace hgraph::service
         w.register_built_service_path(detail::request_reply_base_path<Service>(user_path), "request/reply service");
         auto requests = detail::request_input_source<Service>(w, user_path);
         auto replies  = detail::request_reply_output_source<Service>(w, user_path);
+        w.register_service_rank_anchor(detail::request_input_path<Service>(user_path), requests.node());
         auto output = detail::wire_service_impl<Impl, output_schema>(
             w, user_path, detail::service_input_arg<Impl>(requests), args...);
-        detail::capture_request_reply_service_output<Service, Impl>(w, output, replies, user_path);
+        const WiringInstance *capture =
+            detail::capture_request_reply_service_output<Service, Impl>(w, output, replies, user_path);
+        w.register_service_rank_anchor(detail::request_reply_output_path<Service>(user_path), capture);
     }
 
     template <typename Service, typename Impl, typename... Args>
@@ -1552,11 +1613,11 @@ namespace hgraph::service_adaptor
         }
 
         template <typename Interface, typename InputSchema>
-        void capture_request_input(Wiring &w,
-                                   Port<InputSchema> request,
-                                   Port<request_input_schema_t<Interface>> requests,
-                                   const ServiceAdaptorPath &user_path,
-                                   Int request_id)
+        const WiringInstance *capture_request_input(Wiring &w,
+                                                    Port<InputSchema> request,
+                                                    Port<request_input_schema_t<Interface>> requests,
+                                                    const ServiceAdaptorPath &user_path,
+                                                    Int request_id)
         {
             using input_schema = input_schema_t<Interface>;
 
@@ -1584,13 +1645,14 @@ namespace hgraph::service_adaptor
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{request_id});
             w.add_rank_dependency(requests.node(), capture.peered_node());
+            return capture.peered_node();
         }
 
         template <typename Interface, typename Impl, typename OutputSchema>
-        void capture_output(Wiring &w,
-                            Port<OutputSchema> output,
-                            Port<REF<request_output_schema_t<Interface>>> shared_output,
-                            const ServiceAdaptorPath &user_path)
+        const WiringInstance *capture_output(Wiring &w,
+                                             Port<OutputSchema> output,
+                                             Port<REF<request_output_schema_t<Interface>>> shared_output,
+                                             const ServiceAdaptorPath &user_path)
         {
             std::array<WiringPortRef, 2> sources{output.erased(), shared_output.erased()};
             std::array<WiringInputRef, 2> inputs{{
@@ -1616,6 +1678,7 @@ namespace hgraph::service_adaptor
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{});
             w.add_rank_dependency(shared_output.node(), capture.peered_node());
+            return capture.peered_node();
         }
 
         template <typename Impl, typename... Args>
@@ -1769,7 +1832,9 @@ namespace hgraph::service_adaptor
         wiring_path_detail::merge_resolution(
             user_path.resolution, w.service_implementation_stub_resolution(endpoint));
         w.register_service_implementation_stub(endpoint, "service adaptor");
-        return detail::request_input_source<Interface>(w, user_path);
+        auto source = detail::request_input_source<Interface>(w, user_path);
+        w.register_service_rank_anchor(detail::adaptor_from_graph_path<Interface>(user_path), source.node());
+        return source;
     }
 
     template <typename Interface>
@@ -1794,8 +1859,9 @@ namespace hgraph::service_adaptor
             user_path.resolution, w.service_implementation_stub_resolution(endpoint));
         w.register_service_implementation_stub(endpoint, "service adaptor");
         auto shared_output = detail::output_source<Interface>(w, user_path);
-        detail::capture_output<Interface, explicit_impl_output_marker>(
+        const WiringInstance *capture = detail::capture_output<Interface, explicit_impl_output_marker>(
             w, std::move(output), shared_output, user_path);
+        w.register_service_rank_anchor(detail::adaptor_to_graph_path<Interface>(user_path), capture);
     }
 
     template <typename Interface>
@@ -1818,9 +1884,15 @@ namespace hgraph::service_adaptor
         user_path = detail::resolve_client_path<Interface>(std::move(user_path), input);
         const Int request_id = service::detail::next_request_id();
         w.register_service_client_path(detail::adaptor_base_path<Interface>(user_path), "service adaptor");
+        const std::string from_endpoint = detail::adaptor_from_graph_path<Interface>(user_path);
+        const std::string to_endpoint = detail::adaptor_to_graph_path<Interface>(user_path);
         auto requests        = detail::request_input_source<Interface>(w, user_path);
         auto replies         = detail::output_source<Interface>(w, user_path);
-        detail::capture_request_input<Interface>(w, std::move(input), requests, user_path, request_id);
+        w.register_service_rank_anchor(from_endpoint, requests.node());
+        const WiringInstance *capture =
+            detail::capture_request_input<Interface>(w, std::move(input), requests, user_path, request_id);
+        w.register_service_client_rank(from_endpoint, "service adaptor", capture, false);
+        w.register_service_client_rank(to_endpoint, "service adaptor", replies.node(), true);
         if constexpr (schema_descriptor<replies_schema>::is_concrete())
         {
             auto reply = wire<stdlib::getitem_>(w, replies.template as<replies_schema>(), request_id);

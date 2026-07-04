@@ -130,17 +130,35 @@ schedule table:
 Lifecycle Teardown
 ~~~~~~~~~~~~~~~~~~
 
+**Rank invariant:** an input target link (including a ``REF``-adapted binding)
+may only point at a **lower**-ranked node's output. Exactly three sanctioned
+exceptions exist, each declared rather than accidental:
+
+- ``feedback``'s delayed value edge (``rank_dependency = false``; one-cycle
+  semantics);
+- **output forwarding** — projection state such as the REF alternative store,
+  whose links follow a *dynamic* target (whatever the reference currently
+  designates) and therefore cannot be rank-ordered structurally;
+- the boundary **capture's paired-source recovery input**
+  (``rank_dependency = false``): captures deliberately rank **before** their
+  paired source (an explicit rank dependency), so a capture can schedule the
+  source for the **current** evaluation time when the source has not yet been
+  passed — a same-cycle boundary relay (see the adaptor loopback round-trip
+  test); a capture ranked after its source falls back to
+  ``evaluation_time + MIN_TD``.
+
+Anything else pointing backward is a wiring bug.
+
 Subscription teardown is a **stop-time** responsibility: ``stop`` unbinds the
 edge-established input links (``unbind_edges``, the dual of ``bind_edges``) and
 releases output alternative-store subscriptions/links
 (``release_alternative_subscriptions``) while **every producer's storage is
 still alive**; by dispose time no cross-node references remain, and the
-destructors' tolerant unbind paths are no-ops. This contract exists because
-boundary machinery (services/adaptors, REF alternatives) retargets links at
-runtime to outputs the ranker never saw — a link may point at a *higher*-ranked
-node, and storage destruction runs in reverse rank, so destructor-time unbind
-would dereference freed memory. A graph destroyed while still started is
-stopped by ``GraphValue``'s destructor first (best-effort) for the same reason.
+destructors' tolerant unbind paths are no-ops. The rank invariant makes
+reverse-rank storage destruction safe for ordinary links; the stop-time
+release is what makes it safe for the three sanctioned backward categories
+above. A graph destroyed while still started is stopped by ``GraphValue``'s
+destructor first (best-effort) for the same reason.
 
 Edge bindings are established at graph **construction** (so a built graph is
 inspectable before its first start). Restarting a stopped graph instance

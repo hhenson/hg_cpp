@@ -58,12 +58,20 @@ source/capture pair** — applied with different payloads:
 - **Lifecycle:** the source clears its captured state on ``stop``. A restarted
   graph must republish through capture before the source can produce a live
   shared output.
-- **Teardown:** because boundary links are retargeted at runtime to outputs the
-  ranker never saw, they may point at higher-ranked nodes — which reverse-rank
-  storage destruction frees first. The graph therefore tears all subscriptions
-  down at **stop**, while every producer is alive (edge unbind + alternative-
-  store release; see *Lifecycle Teardown* in :doc:`architecture`); disposal
-  must find no references.
+- **Rank:** a capture ranks **before** its paired source (explicit rank
+  dependency), so that a capture evaluated at rank *k* can schedule the source
+  (rank > *k*, not yet passed) for the **current** evaluation time — a
+  same-cycle boundary relay; when the source has already passed, the capture
+  falls back to ``evaluation_time + MIN_TD``. The capture's recovery input
+  (slot 1, linking the source's output) is ``rank_dependency = false``: it is
+  one of the three sanctioned backward-link categories (see *Lifecycle
+  Teardown* in :doc:`architecture`) and is torn down at stop.
+- **Teardown:** the graph tears all subscriptions down at **stop**, while every
+  producer is alive (edge unbind + alternative-store release; see *Lifecycle
+  Teardown* in :doc:`architecture`); disposal must find no references. The
+  alternative-store release is the load-bearing part: REF projection links
+  follow a dynamic target and are the sanctioned output-forwarding exception
+  to the rank invariant.
 
 The per-flavour payloads:
 

@@ -41,6 +41,18 @@ namespace
         using response_schema = TS<Int>;
     };
 
+    struct BaseValueService
+    {
+        static constexpr std::string_view name{"base_value"};
+        using output_schema = TS<Int>;
+    };
+
+    struct DerivedValueService
+    {
+        static constexpr std::string_view name{"derived_value"};
+        using output_schema = TS<Int>;
+    };
+
     struct ReferencePricesImplNode
     {
         static constexpr auto name              = "reference_prices_impl_node";
@@ -86,6 +98,45 @@ namespace
             Value key{Int{7}};
             Value price{path.value() == "premium" ? Int{777} : Int{70}};
             mutation.set(key.view(), price.view());
+        }
+    };
+
+    struct TenSourceNode
+    {
+        static constexpr auto name              = "ten_source_node";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Out<TS<Int>> out) { out.set(Int{10}); }
+    };
+
+    struct AddOneValueNode
+    {
+        static constexpr auto name = "add_one_value_node";
+
+        static void eval(In<"value", TS<Int>> value, Out<TS<Int>> out)
+        {
+            out.set(value.value() + Int{1});
+        }
+    };
+
+    struct BaseValueImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "base_value_impl";
+
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            return wire<TenSourceNode>(w);
+        }
+    };
+
+    struct DerivedValueImpl
+    {
+        [[maybe_unused]] static constexpr auto name = "derived_value_impl";
+
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            auto base = wire<BaseValueService>(w);
+            return wire<AddOneValueNode>(w, base);
         }
     };
 
@@ -440,6 +491,18 @@ namespace
         }
     };
 
+    struct ReferenceServiceDependencyGraph
+    {
+        [[maybe_unused]] static constexpr auto name = "reference_service_dependency_graph";
+
+        static Port<TS<Int>> compose(Wiring &w)
+        {
+            service::register_reference_service<DerivedValueService, DerivedValueImpl>(w);
+            service::register_reference_service<BaseValueService, BaseValueImpl>(w);
+            return wire<DerivedValueService>(w);
+        }
+    };
+
     struct TypedReferencePricePathGraph
     {
         [[maybe_unused]] static constexpr auto name = "typed_reference_price_path_graph";
@@ -766,6 +829,13 @@ TEST_CASE("service wiring: reference implementation can receive the service path
     CHECK_OUTPUT(eval_node<ReferencePricePathInjectionGraph>(), values<Int>(777));
 }
 
+TEST_CASE("service wiring: service implementation can depend on a later registered service")
+{
+    hgraph::stdlib::register_standard_operators();
+
+    CHECK_OUTPUT(eval_node<ReferenceServiceDependencyGraph>(), values<Int>(11));
+}
+
 TEST_CASE("service wiring: scalar-qualified paths keep implementations separate")
 {
     hgraph::stdlib::register_standard_operators();
@@ -785,7 +855,7 @@ TEST_CASE("service wiring: subscription client reads implementation output by re
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<PriceClientGraph>(values<Int>(7, none, 8)),
-                 values<Int>(none, 70, none, 80));
+                 values<Int>(70, none, 80));
 }
 
 TEST_CASE("service wiring: subscription service supports explicit paths")
@@ -793,7 +863,7 @@ TEST_CASE("service wiring: subscription service supports explicit paths")
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<PathPriceClientGraph>(values<Int>(7, none, 8)),
-                 values<Int>(none, 700, none, 800));
+                 values<Int>(700, none, 800));
 }
 
 TEST_CASE("service wiring: implementation registration is separate from client use")
@@ -801,21 +871,21 @@ TEST_CASE("service wiring: implementation registration is separate from client u
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<RegisteredPriceClientGraph>(values<Int>(7, none, 8)),
-                 values<Int>(none, 70, none, 80));
+                 values<Int>(70, none, 80));
 }
 
 TEST_CASE("service wiring: request/reply client receives keyed implementation response")
 {
     hgraph::stdlib::register_standard_operators();
 
-    CHECK_OUTPUT(eval_node<AddOneClientGraph>(values<Int>(1)), values<Int>(none, 2));
+    CHECK_OUTPUT(eval_node<AddOneClientGraph>(values<Int>(1)), values<Int>(2));
 }
 
 TEST_CASE("service wiring: request/reply service supports explicit paths")
 {
     hgraph::stdlib::register_standard_operators();
 
-    CHECK_OUTPUT(eval_node<AddOnePathClientGraph>(values<Int>(7)), values<Int>(none, 107));
+    CHECK_OUTPUT(eval_node<AddOnePathClientGraph>(values<Int>(7)), values<Int>(107));
 }
 
 TEST_CASE("service wiring: request/reply source emits cumulative client requests")
@@ -823,7 +893,7 @@ TEST_CASE("service wiring: request/reply source emits cumulative client requests
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<AddOneTwoClientGraph>(values<Int>(1), values<Int>(10)),
-                 values<Int>(none, 13));
+                 values<Int>(13));
 }
 
 TEST_CASE("service wiring: validates missing implementations and illegal stubs")
@@ -839,7 +909,7 @@ TEST_CASE("service wiring: multi-interface implementation graph wires explicit s
 {
     hgraph::stdlib::register_standard_operators();
 
-    CHECK_OUTPUT(eval_node<MultiServiceClientGraph>(values<Int>(1)), values<Int>(none, 13));
+    CHECK_OUTPUT(eval_node<MultiServiceClientGraph>(values<Int>(1)), values<Int>(13));
 }
 
 TEST_CASE("service wiring: service adaptors collect multiple client requests")
@@ -847,7 +917,7 @@ TEST_CASE("service wiring: service adaptors collect multiple client requests")
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<ServiceAdaptorTwoClientGraph>(values<Int>(1), values<Int>(10)),
-                 values<Int>(none, 51));
+                 values<Int>(51));
 }
 
 TEST_CASE("service wiring: service_adaptor_impl auto-wires single-interface implementations")
@@ -855,14 +925,14 @@ TEST_CASE("service wiring: service_adaptor_impl auto-wires single-interface impl
     hgraph::stdlib::register_standard_operators();
 
     CHECK_OUTPUT(eval_node<ServiceAdaptorImplTwoClientGraph>(values<Int>(1), values<Int>(10)),
-                 values<Int>(none, 51));
+                 values<Int>(51));
 }
 
 TEST_CASE("service wiring: multi-interface service adaptors wire explicit stubs")
 {
     hgraph::stdlib::register_standard_operators();
 
-    CHECK_OUTPUT(eval_node<MultiServiceAdaptorClientGraph>(values<Int>(1)), values<Int>(none, 52));
+    CHECK_OUTPUT(eval_node<MultiServiceAdaptorClientGraph>(values<Int>(1)), values<Int>(52));
 }
 
 TEST_CASE("service wiring: service adaptors validate missing implementations and stubs")
@@ -878,13 +948,13 @@ TEST_CASE("service wiring: templated service descriptors bind as concrete interf
 {
     hgraph::stdlib::register_standard_operators();
 
-    CHECK_OUTPUT(eval_node<TemplateServiceClientGraph>(values<Int>(3)), values<Int>(none, 4));
+    CHECK_OUTPUT(eval_node<TemplateServiceClientGraph>(values<Int>(3)), values<Int>(4));
 }
 
 TEST_CASE("service wiring: generic service descriptors resolve from client inputs")
 {
     hgraph::stdlib::register_standard_operators();
 
-    CHECK_OUTPUT(eval_node<GenericServiceClientGraph>(values<Int>(3)), values<Int>(none, 4));
-    CHECK_OUTPUT(eval_node<GenericServiceAdaptorClientGraph>(values<Int>(3)), values<Int>(none, 23));
+    CHECK_OUTPUT(eval_node<GenericServiceClientGraph>(values<Int>(3)), values<Int>(4));
+    CHECK_OUTPUT(eval_node<GenericServiceAdaptorClientGraph>(values<Int>(3)), values<Int>(23));
 }

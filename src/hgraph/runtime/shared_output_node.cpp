@@ -64,7 +64,7 @@ namespace hgraph
             const SharedOutputConfig &config,
             const NodeView &view,
             DateTime evaluation_time,
-            DateTime schedule_time)
+            bool start_phase)
         {
             auto input = view.input(evaluation_time);
             auto bundle = input.as_bundle();
@@ -91,6 +91,8 @@ namespace hgraph
             {
                 throw std::logic_error("shared output source node is not attached to a graph");
             }
+            const DateTime schedule_time =
+                start_phase || source_node.node_index() > view.node_index() ? evaluation_time : evaluation_time + MIN_TD;
             graph->schedule_node(source_node.node_index(), schedule_time);
         }
     }  // namespace
@@ -160,10 +162,10 @@ namespace hgraph
 
         NodeCallbacks callbacks;
         callbacks.start = [config](const NodeView &view, DateTime evaluation_time) {
-            capture_shared_output_reference(*config, view, evaluation_time, evaluation_time);
+            capture_shared_output_reference(*config, view, evaluation_time, true);
         };
         callbacks.evaluate = [config](const NodeView &view, DateTime evaluation_time) {
-            capture_shared_output_reference(*config, view, evaluation_time, evaluation_time + MIN_TD);
+            capture_shared_output_reference(*config, view, evaluation_time, false);
         };
 
         NodeBuilder builder = NodeBuilder::native(std::move(schema), std::move(callbacks));

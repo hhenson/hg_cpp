@@ -311,10 +311,10 @@ namespace hgraph::adaptor
         }
 
         template <typename Interface, typename InputSchema>
-        void capture_input(Wiring &w,
-                           Port<InputSchema> input,
-                           Port<REF<input_schema_t<Interface>>> source,
-                           const AdaptorPath &user_path)
+        const WiringInstance *capture_input(Wiring &w,
+                                            Port<InputSchema> input,
+                                            Port<REF<input_schema_t<Interface>>> source,
+                                            const AdaptorPath &user_path)
         {
             using input_schema = input_schema_t<Interface>;
 
@@ -339,6 +339,7 @@ namespace hgraph::adaptor
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{});
             w.add_rank_dependency(source.node(), capture.peered_node());
+            return capture.peered_node();
         }
 
         template <typename Interface>
@@ -365,10 +366,10 @@ namespace hgraph::adaptor
         }
 
         template <typename Interface, typename OutputSchema>
-        void capture_output(Wiring &w,
-                            Port<OutputSchema> output,
-                            Port<REF<output_schema_t<Interface>>> shared_output,
-                            const AdaptorPath &user_path)
+        const WiringInstance *capture_output(Wiring &w,
+                                             Port<OutputSchema> output,
+                                             Port<REF<output_schema_t<Interface>>> shared_output,
+                                             const AdaptorPath &user_path)
         {
             using output_schema = output_schema_t<Interface>;
 
@@ -393,6 +394,7 @@ namespace hgraph::adaptor
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{});
             w.add_rank_dependency(shared_output.node(), capture.peered_node());
+            return capture.peered_node();
         }
 
         template <typename Impl, typename... Args>
@@ -415,15 +417,20 @@ namespace hgraph::adaptor
             Port<InputSchema> input)
         {
             w.register_service_client_path(adaptor_base_path<Interface>(user_path), "adaptor");
+            const std::string endpoint = adaptor_from_graph_path<Interface>(user_path);
             auto source = input_stub_source<Interface>(w, user_path);
-            capture_input<Interface>(w, std::move(input), source, user_path);
+            w.register_service_rank_anchor(endpoint, source.node());
+            const WiringInstance *capture = capture_input<Interface>(w, std::move(input), source, user_path);
+            w.register_service_client_rank(endpoint, "adaptor", capture, false);
         }
 
         template <typename Interface>
         [[nodiscard]] Port<output_schema_t<Interface>> client_to_graph(Wiring &w, AdaptorPath user_path)
         {
             w.register_service_client_path(adaptor_base_path<Interface>(user_path), "adaptor");
+            const std::string endpoint = adaptor_to_graph_path<Interface>(user_path);
             auto source = output_source<Interface>(w, user_path);
+            w.register_service_client_rank(endpoint, "adaptor", source.node(), true);
             if constexpr (schema_descriptor<output_schema_t<Interface>>::is_concrete())
             {
                 return source.template as<output_schema_t<Interface>>();
@@ -497,6 +504,7 @@ namespace hgraph::adaptor
             user_path.resolution, w.service_implementation_stub_resolution(endpoint));
         w.register_service_implementation_stub(endpoint, "adaptor");
         auto source = detail::input_stub_source<Interface>(w, user_path);
+        w.register_service_rank_anchor(detail::adaptor_from_graph_path<Interface>(user_path), source.node());
         if constexpr (schema_descriptor<detail::input_schema_t<Interface>>::is_concrete())
         {
             return source.template as<detail::input_schema_t<Interface>>();
@@ -525,7 +533,9 @@ namespace hgraph::adaptor
             user_path.resolution, w.service_implementation_stub_resolution(endpoint));
         w.register_service_implementation_stub(endpoint, "adaptor");
         auto shared_output = detail::output_source<Interface>(w, user_path);
-        detail::capture_output<Interface>(w, std::move(output), shared_output, user_path);
+        const WiringInstance *capture =
+            detail::capture_output<Interface>(w, std::move(output), shared_output, user_path);
+        w.register_service_rank_anchor(detail::adaptor_to_graph_path<Interface>(user_path), capture);
     }
 
     template <typename Interface>
