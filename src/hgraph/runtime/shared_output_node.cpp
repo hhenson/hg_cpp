@@ -1,5 +1,7 @@
 #include <hgraph/runtime/shared_output_node.h>
 
+#include <cassert>
+
 #include <hgraph/runtime/graph.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/types/time_series/ts_input/bundle_view.h>
@@ -91,25 +93,19 @@ namespace hgraph
             {
                 throw std::logic_error("shared output source node is not attached to a graph");
             }
-            // Shared-output relays are rank-correct by construction: wiring
-            // adds an explicit rank dependency placing the paired source AFTER
-            // every capture, and Wiring::finish's topological sort re-ranks
-            // once all captures are known. The source therefore has never been
-            // passed when a capture evaluates, and the relay is SAME-cycle —
-            // scheduling for a later time here would be a workaround masking a
-            // ranking bug, so a violated precondition is reported loudly
-            // instead. (Next-cycle forwarding is the sanctioned design only
-            // for subscription/request-reply request stubs — service_node.cpp.)
-            if (graph != view.graph_value())
-            {
-                throw std::logic_error(
-                    "shared output capture and its paired source must live in the same graph");
-            }
-            if (!start_phase && source_node.node_index() <= view.node_index())
-            {
-                throw std::logic_error(
-                    "shared output capture must rank before its paired source (wiring rank violation)");
-            }
+            // Shared-output relays are rank-correct BY WIRING-TIME PROOF: the
+            // pair is declared with Wiring::add_same_cycle_pair, which both
+            // rank-constrains the source after every capture and has
+            // Wiring::finish VALIDATE the final order once all captures are
+            // known. The runtime therefore trusts it — the relay is SAME-cycle
+            // with no hot-path checks (wiring-time validation over run-time
+            // cost). Next-cycle forwarding is the sanctioned design only for
+            // subscription/request-reply request stubs — service_node.cpp.
+            assert(graph == view.graph_value() &&
+                   "shared output capture and its paired source must live in the same graph");
+            assert((start_phase || source_node.node_index() > view.node_index()) &&
+                   "shared output capture must rank before its paired source (validated at wiring)");
+            static_cast<void>(start_phase);
             graph->schedule_node(source_node.node_index(), evaluation_time);
         }
     }  // namespace

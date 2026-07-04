@@ -146,14 +146,16 @@ exceptions exist, each declared rather than accidental:
 
   - **Shared-output relays** (adaptor ``from_graph``/``to_graph``, reference
     service outputs, service response outputs, context/shared outputs) are
-    **rank-correct and same-cycle**: wiring adds an explicit rank dependency
-    placing the paired source *after* every capture, and ``Wiring::finish``'s
-    topological sort re-ranks the whole graph once **all** captures are known
+    **rank-correct and same-cycle**: pairs are declared with
+    ``Wiring::add_same_cycle_pair``, which rank-constrains the paired source
+    *after* every capture; ``Wiring::finish`` re-ranks the whole graph once
+    **all** captures are known and then **validates** every pair's final order
     (this is what keeps chains of multiple adaptors/services correct — see the
-    chained-adaptor test). A capture always schedules its source for the
-    **current** evaluation time; a source that has already been passed is a
-    ranking bug and is reported loudly (``shared_output_node.cpp``), never
-    papered over with a next-cycle deferral.
+    chained-adaptor test). Because the ordering is proven at wiring time, the
+    runtime trusts it: a capture schedules its source for the **current**
+    evaluation time with no hot-path checks (debug asserts only) — wiring-time
+    validation over run-time cost, and never a next-cycle deferral papering
+    over a ranking bug.
   - **Request stubs** (subscription keys, request/reply requests) are the
     sanctioned **next-cycle** forwarders: the pairing is rank-free (no rank
     dependency at all), and the capture forwards to the service source at

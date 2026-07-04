@@ -460,12 +460,20 @@ namespace hgraph
             bool                        receive{true};
         };
 
+        /** A same-cycle boundary pairing: the capture must rank before the source. */
+        struct SameCyclePair
+        {
+            const WiringInstance *capture{nullptr};
+            const WiringInstance *source{nullptr};
+        };
+
         std::deque<WiringInstance>                                        instances{};
         std::unordered_map<InstanceKey, WiringInstance *, InstanceKeyHash> interned{};
         std::unordered_map<std::string, std::string>                       built_service_paths{};
         std::unordered_map<std::string, std::string>                       client_service_paths{};
         std::unordered_map<std::string, const WiringInstance *>            service_rank_anchors{};
         std::vector<ServiceClientRank>                                      service_client_ranks{};
+        std::vector<SameCyclePair>                                          same_cycle_pairs{};
         std::vector<ServiceImplementationScope>                            implementation_scopes{};
         GlobalState                                                        global_state{};
     };
@@ -554,6 +562,48 @@ namespace hgraph
         if (std::find(dependencies.begin(), dependencies.end(), depends_on) == dependencies.end())
         {
             dependencies.push_back(depends_on);
+        }
+    }
+
+    void Wiring::add_same_cycle_pair(const WiringInstance *capture, const WiringInstance *source)
+    {
+        // A same-cycle boundary pairing (shared-output relays): the source is
+        // rank-constrained after the capture, and finish() validates the final
+        // order so the RUNTIME can trust it unconditionally — the capture
+        // schedules the source for the current evaluation time with no checks
+        // on the hot path (wiring-time validation over run-time cost).
+        add_rank_dependency(source, capture);
+        impl_->same_cycle_pairs.push_back(Impl::SameCyclePair{capture, source});
+    }
+
+    void Wiring::validate_same_cycle_pairs(
+        const std::unordered_map<const WiringInstance *, std::size_t> &index_of) const
+    {
+        auto name_of = [](const WiringInstance *instance) {
+            if (instance == nullptr) { return std::string{"<null>"}; }
+            std::string label = std::string{instance->builder.label()};
+            if (!label.empty()) { return label; }
+            const auto *meta = instance->builder.binding().type_meta;
+            return meta != nullptr && meta->display_name != nullptr ? std::string{meta->display_name}
+                                                                    : std::string{"<unnamed>"};
+        };
+
+        for (const auto &pair : impl_->same_cycle_pairs)
+        {
+            const auto capture = index_of.find(pair.capture);
+            const auto source  = index_of.find(pair.source);
+            if (capture == index_of.end() || source == index_of.end())
+            {
+                throw std::logic_error("Wiring::finish lost a same-cycle boundary pair node ('" +
+                                       name_of(pair.capture) + "' / '" + name_of(pair.source) + "')");
+            }
+            if (capture->second >= source->second)
+            {
+                throw std::logic_error(
+                    "Wiring::finish rank violation: same-cycle boundary capture '" + name_of(pair.capture) +
+                    "' (rank " + std::to_string(capture->second) + ") must rank before its paired source '" +
+                    name_of(pair.source) + "' (rank " + std::to_string(source->second) + ")");
+            }
         }
     }
 
@@ -780,6 +830,7 @@ namespace hgraph
 
         apply_service_rank_dependencies();
         RankedGraphBuild build = build_ranked_graph(impl_->instances, nullptr);
+        validate_same_cycle_pairs(build.index_of);
         build.graph_builder.global_state(std::move(impl_->global_state));  // carry wiring-time entries onto the graph
         return std::move(build.graph_builder);
     }
@@ -805,6 +856,7 @@ namespace hgraph
         compiled.input_schemas = std::move(input_schemas);
 
         RankedGraphBuild build = build_ranked_graph(impl_->instances, &compiled.input_bindings);
+        validate_same_cycle_pairs(build.index_of);
         compiled.graph_builder = std::move(build.graph_builder);
         const auto &index_of   = build.index_of;
 

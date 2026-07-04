@@ -55,12 +55,13 @@ source/capture pair** — applied with different payloads:
 
   - **Shared-output relays** (reference outputs, service responses, adaptor
     ``from_graph``/``to_graph``, contexts) are **rank-correct and
-    same-cycle**: an explicit rank dependency places the paired source after
-    every capture, ``Wiring::finish`` re-ranks once all captures are known
-    (which is what keeps chains of multiple adaptors/services correct), and a
-    capture always schedules the source for the **current** evaluation time.
-    A source that has already been passed is a ranking bug and throws
-    (``shared_output_node.cpp``) — never a silent next-cycle deferral.
+    same-cycle**: pairs are declared with ``Wiring::add_same_cycle_pair``
+    (source rank-constrained after every capture); ``Wiring::finish`` re-ranks
+    once all captures are known — which is what keeps chains of multiple
+    adaptors/services correct — and **validates** every pair's final order.
+    The runtime trusts the wiring-time proof: a capture always schedules the
+    source for the **current** evaluation time with no hot-path checks (debug
+    asserts only) — never a silent next-cycle deferral.
   - **Request stubs** (subscription keys, request/reply requests) forward
     **next cycle** by design: the pairing is rank-free (no rank dependency),
     and the capture schedules the service source for

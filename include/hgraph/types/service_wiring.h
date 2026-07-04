@@ -879,7 +879,7 @@ namespace hgraph::service
             // request stubs above, which are rank-free next-cycle forwarders.
             // The same rule applies at every add_rank_dependency site below
             // and in adaptor_wiring.h.
-            w.add_rank_dependency(shared_output.node(), capture.peered_node());
+            w.add_same_cycle_pair(capture.peered_node(), shared_output.node());
             return capture.peered_node();
         }
 
@@ -913,7 +913,7 @@ namespace hgraph::service
                                                std::move(builder),
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{});
-            w.add_rank_dependency(shared_output.node(), capture.peered_node());
+            w.add_same_cycle_pair(capture.peered_node(), shared_output.node());
             return capture.peered_node();
         }
 
@@ -948,7 +948,7 @@ namespace hgraph::service
                 std::move(builder),
                 std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                 Value{});
-            w.add_rank_dependency(shared_output.node(), capture.peered_node());
+            w.add_same_cycle_pair(capture.peered_node(), shared_output.node());
             return capture.peered_node();
         }
 
@@ -1694,7 +1694,7 @@ namespace hgraph::service_adaptor
                                                std::move(builder),
                                                std::span<const WiringInputRef>{inputs.data(), inputs.size()},
                                                Value{});
-            w.add_rank_dependency(shared_output.node(), capture.peered_node());
+            w.add_same_cycle_pair(capture.peered_node(), shared_output.node());
             return capture.peered_node();
         }
 

@@ -27,6 +27,7 @@
 #include <type_traits>
 #include <typeindex>
 #include <typeinfo>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -614,6 +615,16 @@ namespace hgraph
         void add_rank_dependency(const WiringInstance *node, const WiringInstance *depends_on);
 
         /**
+         * Declare a same-cycle boundary pair (shared-output relays): the
+         * ``source`` is rank-constrained after the ``capture``, and ``finish``
+         * VALIDATES the final order, so the runtime schedules the source for
+         * the current evaluation time with no hot-path checks. Request stubs
+         * (subscription/request-reply) must NOT use this — they are the
+         * sanctioned next-cycle forwarders with rank-free pairing.
+         */
+        void add_same_cycle_pair(const WiringInstance *capture, const WiringInstance *source);
+
+        /**
          * Register an implementation-owned service/adaptor identity. This mirrors
          * Python's wiring-context duplicate checks: clients may refer to a path
          * many times, but only one implementation may own a concrete interface
@@ -679,6 +690,8 @@ namespace hgraph
 
       private:
         void apply_service_rank_dependencies();
+        void validate_same_cycle_pairs(
+            const std::unordered_map<const WiringInstance *, std::size_t> &index_of) const;
 
         struct Impl;
         std::unique_ptr<Impl> impl_;
