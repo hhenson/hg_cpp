@@ -220,7 +220,7 @@ Types and scalars
      - Full / partial
      - RecordableState storage+eval works; graph traits + recordable-id
        resolution landed (step 2 of :doc:`record_replay_table`);
-       ``@component`` recording does not exist yet.
+       ``component<G>`` recording landed (step 5); RECOVER seeding pending.
    * - Scalars: ``bool int float str date datetime timedelta``
      - Full
      - Plus C++ extras Python lacks (width-specific ints, CyclicBuffer,
@@ -286,8 +286,10 @@ Wiring and node-authoring surface
      - Full (same-wiring)
      - See *Types* row; nested import/export deferred.
    * - ``@component``
-     - Missing
-     - Depends on the recordable-id/traits ecosystem.
+     - Full (first pass)
+     - ``stdlib::component<G>`` over the mode scope + record/replay
+       (Record/Replay/ReplayOutput; Compare + Recover pending — step 5 of
+       :doc:`record_replay_table`).
    * - Injectables: STATE, SCHEDULER, CLOCK, GlobalState, OUTPUT
      - Full
      -

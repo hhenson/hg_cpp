@@ -205,7 +205,9 @@ const-evaluable operator for explicit wiring-time reads.
    kind + ``to_table``/``from_table``.
 4. **DONE (2026-07-04, first pass)** — the Arrow record/replay backend +
    ``replay_const`` reads (RECOVER seeding remains — see below).
-5. ``@component`` on top of all of it.
+5. **DONE (2026-07-04, first pass)** — ``component<G>``
+   (Record / Replay / ReplayOutput; Compare + Recover throw pending their
+   pieces).
 
 Step 1 — landed
 ---------------
@@ -377,6 +379,35 @@ as-of generation filtering on replay (v1 replays a single recording
 generation), Python's per-frame overrides (track_as_of/track_removes/
 partition renames), and TSD partitioned recording (needs the step-3 TSD
 table support first). Tests: ``tests/cpp/test_record_replay_frame.cpp``.
+
+Step 5 — landed (first pass)
+----------------------------
+
+``stdlib::component<G>(w, "id", inputs...)`` (``lib/std/component.h``) —
+Python's ``@component`` as a wiring function. ``G`` is an ordinary graph
+struct; the component consults the ambient ``record_replay::scope`` and
+wraps per its mode:
+
+- **Record** — every input and the output (``__out__``) is recorded through
+  the name-resolved ``record`` (whatever backend the model selects).
+- **Replay** — inputs are REPLACED by their recordings (Python parity: the
+  live wiring stays but the recorded values win).
+- **ReplayOutput** — the output is replaced by its recording.
+- **None** — a plain ``wire<G>``; no wrapping.
+
+Input keys are the graph's ``NamedPort`` names (``arg_<I>`` for plain
+``Port`` params — name your component inputs); the fq id chains through
+**nested components** via the mode scope (``outer.inner.__out__``),
+replacing Python's trait copy-down at the wiring level (runtime graph
+traits still serve nodes inside compiled sub-graphs). A recordable id is
+required under an active mode (throws otherwise); the consulted
+(mode, id) manifests structurally in the wiring, honouring the P3
+intern-identity ruling.
+
+Deferred from step 5 (throw rather than mis-wire): **Compare** (needs the
+comparison sink over the P6 store) and **Recover** (P7 start-time
+seeding); scalar compose params on component graphs. Tests:
+``tests/cpp/test_component.cpp``.
 
 Rulings (Howard, 2026-07-04)
 ----------------------------

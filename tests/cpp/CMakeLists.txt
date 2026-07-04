@@ -59,6 +59,7 @@ add_executable(hgraph_unit_tests
     test_table.cpp
     test_record_replay_config.cpp
     test_record_replay_frame.cpp
+    test_component.cpp
     test_record_replay.cpp
     test_eval_node.cpp
     test_std_nodes.cpp
