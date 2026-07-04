@@ -56,6 +56,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/time_series/ts_delta.cpp
     hgraph/types/time_series_reference.cpp
     hgraph/runtime/global_state.cpp
+    hgraph/runtime/logger.cpp
     hgraph/types/value/any_ops.cpp
     hgraph/types/value/compact_container_ops.cpp
     hgraph/types/value/value_view.cpp
@@ -94,6 +95,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/map_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/reduce_node.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/runtime.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/runtime/logger.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/python/chrono.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/notifiable.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/primitive_types.h

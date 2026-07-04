@@ -1,7 +1,8 @@
 #ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_IO_IMPL_H
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_IO_IMPL_H
 
-#include <hgraph/lib/std/operators/io.h>        // debug_print / null_sink / record / replay
+#include <hgraph/lib/std/operators/io.h>        // debug_print / null_sink / record / replay / log_
+#include <hgraph/runtime/logger.h>
 #include <hgraph/lib/testing/record_replay.h>   // the in-memory (GlobalState) record/replay backend
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
@@ -32,6 +33,29 @@ namespace hgraph::stdlib
         }
     };
 
+    /**
+     * ``log_`` implementation: formats the (runtime) format string with the
+     * rendered argument and logs through the LOGGER injectable. ``level``
+     * uses the spdlog scale (0 trace .. 5 critical; default info).
+     */
+    struct log_impl
+    {
+        static constexpr auto name = "log_";
+
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"level", Value{Int{2}}}};   // info
+        }
+
+        static void eval(In<"fmt", TS<Str>> format, In<"args", TsVar<"A">, InputValidity::Unchecked> args,
+                         Scalar<"level", Int> level, LoggerView log)
+        {
+            log.log(static_cast<int>(level.value()),
+                    fmt::format(fmt::runtime(format.value()),
+                                args.valid() ? args.value().to_string() : std::string{"<n/a>"}));
+        }
+    };
+
     /** ``null_sink`` implementation: a single generic sink that consumes ``ts`` and does nothing. */
     struct null_sink_impl
     {
@@ -51,6 +75,7 @@ namespace hgraph::stdlib
         // (Python's model registry / DataWriter) remain roadmap P3.
         register_overload<record, testing::record>();
         register_overload<replay, testing::replay>();
+        register_overload<log_, log_impl>();
     }
 }  // namespace hgraph::stdlib
 

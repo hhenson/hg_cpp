@@ -134,6 +134,34 @@ target_link_libraries(hgraph_options INTERFACE fmt::fmt)
 find_package(Arrow CONFIG REQUIRED)
 target_link_libraries(hgraph_options INTERFACE Arrow::arrow_shared)
 
+# spdlog backs the LOGGER injectable (ruling 2026-07-04), built in
+# SPDLOG_FMT_EXTERNAL mode against the fmt above so there is exactly one fmt
+# in the process. A system spdlog is only trusted when fmt also came from the
+# system (a fetched fmt paired with a system spdlog risks ODR mismatches).
+if(fmt_FOUND)
+    find_package(spdlog CONFIG QUIET)
+endif()
+if(NOT spdlog_FOUND)
+    FetchContent_Declare(
+        spdlog
+        GIT_REPOSITORY https://github.com/gabime/spdlog.git
+        GIT_TAG        v1.15.3
+        GIT_SHALLOW    TRUE
+    )
+    set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "spdlog uses the project fmt" FORCE)
+    set(SPDLOG_INSTALL OFF CACHE BOOL "Generate spdlog install target" FORCE)
+    set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "Build spdlog examples" FORCE)
+    FetchContent_MakeAvailable(spdlog)
+endif()
+if(spdlog_FOUND)
+    target_link_libraries(hgraph_options INTERFACE spdlog::spdlog)
+else()
+    # The FetchContent'd spdlog target cannot join the install export set;
+    # link it for the build tree only and let installed consumers resolve
+    # spdlog via the exported find_dependency below.
+    target_link_libraries(hgraph_options INTERFACE $<BUILD_INTERFACE:spdlog::spdlog>)
+endif()
+
 set(HGRAPH_CORE_TARGET_TYPE STATIC)
 if(HGRAPH_BUILD_SHARED)
     set(HGRAPH_CORE_TARGET_TYPE SHARED)
@@ -299,6 +327,8 @@ write_basic_package_version_file(
 set(_hgraph_config_dependencies
     "find_dependency(Threads)\n"
     "find_dependency(fmt CONFIG)\n"
+    "find_dependency(Arrow CONFIG)\n"
+    "find_dependency(spdlog CONFIG)\n"
 )
 if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
     set(_hgraph_config_python_components "Interpreter Development.Module")

@@ -78,10 +78,11 @@ Of the **165** public operator definitions in ``hgraph/_operators``:
      - 0
      - —
    * - Graph operators (``graph_operators``)
-     - 3
-     - 3
+     - 4
      - 2
-     - *assert_*, *log_*, *print_* · **pass_through_node**, **stop_engine**
+     - 2
+     - *assert_*, *print_* · **pass_through_node**, **stop_engine**.
+       ``log_`` is registered over the LOGGER injectable
    * - JSON scalars (``json``)
      - 0
      - 0
@@ -293,12 +294,16 @@ Wiring and node-authoring surface
    * - Injectables: STATE, SCHEDULER, CLOCK, GlobalState, OUTPUT
      - Full
      -
-   * - Injectables: LOGGER, node self
+   * - Injectables: LOGGER
+     - Full
+     - ``LoggerView`` (``runtime/logger.h``) — spdlog in
+       ``SPDLOG_FMT_EXTERNAL`` mode against the project fmt (the ruling); a
+       transparent stateless injectable borrowing the process logger
+       (``log::logger()`` / ``log::set_logger``); per-tick logging is
+       allocation-light and refcount-free.
+   * - Injectables: node self
      - Missing
-     - **Ruling (2026-07-04): LOGGER is a C++-native logger — spdlog** (built
-       in ``SPDLOG_FMT_EXTERNAL`` mode against the fmt the project already
-       vendors). The injectable hands nodes a logger view; per-tick logging
-       must stay allocation-light.
+     -
    * - ``stop_engine``, lifecycle observers, evaluation trace/profiling
      - Missing
      - Observability is the weakest runtime dimension.
@@ -326,6 +331,6 @@ contract itself is proven template-free.
 
 **Additive** (each lands independently and becomes available to Python
 through the registry): every declared-only/missing operator above, the
-serialization value kinds, observability (LOGGER/observers/trace),
+serialization value kinds, observability (observers/trace),
 ``@component`` + traits, nested context import/export, dynamic-TSL
 higher-order support.
