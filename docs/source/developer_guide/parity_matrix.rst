@@ -26,7 +26,7 @@ Operator catalogue
 ------------------
 
 Of the **165** public operator definitions in ``hgraph/_operators``:
-**104 registered**, **23 declared-only**, **32 missing** — 6 further names are covered by equivalent C++ APIs (snapshot updated 2026-07-04: ``to_json``/``from_json`` + the record/replay config/traits layer landed).
+**106 registered**, **23 declared-only**, **23 missing** — 13 further names are covered by equivalent C++ APIs (snapshot updated 2026-07-04: json + record/replay config/traits + Arrow ``Frame``/``to_table``/``from_table`` landed).
 
 .. list-table::
    :header-rows: 1
@@ -133,10 +133,15 @@ Of the **165** public operator definitions in ``hgraph/_operators``:
      - 1
      - **compute_set_delta**
    * - Table serialization (``to_table``)
+     - 2
      - 0
-     - 0
-     - 14
-     - **from_table**, **from_table_const**, **get_as_of**, **get_table_schema_as_of_key**, **get_table_schema_date_key**, **make_table_schema**, **set_as_of**, **set_table_schema_as_of_key**, **set_table_schema_date_key**, **shape_of_table_type**, **table_schema**, **table_shape**, **table_shape_from_schema**, **to_table**
+     - 5
+     - **from_table_const**, **make_table_schema**, **shape_of_table_type**,
+       **table_shape**, **table_shape_from_schema**. ``to_table``/
+       ``from_table`` are registered (Arrow ``Frame``, step 3 of
+       :doc:`record_replay_table`); ``table_schema`` maps onto the
+       ``TableConverter``; the six as-of / column-key config functions are
+       covered by ``record_replay::Config``
    * - Throttle (``throttle``)
      - 0
      - 0
@@ -148,9 +153,9 @@ Of the **165** public operator definitions in ``hgraph/_operators``:
      - 0
      - *cast_*, *downcast_*, *downcast_ref*
    * - **Total (165 public defs)**
-     - **104**
+     - **106**
      - **23**
-     - **32** (+6 API-covered)
+     - **23** (+13 API-covered)
      - 
 
 
@@ -230,7 +235,7 @@ Types and scalars
        **runtime-defined** enums (Python-created, no C++ type) are
        bridge-time work.
    * - DataFrame / Series, numpy arrays, JSON scalar
-     - Missing (designed)
+     - ``Frame`` landed; rest missing
      - Value kinds; gate the serialization operator families. **Ruling
        (2026-07-04): the Frame/table specification maps onto Apache Arrow
        tables, not Polars** — Polars sits on Arrow, so Polars (and other

@@ -1,6 +1,7 @@
 #ifndef HGRAPH_LIB_STD_STANDARD_TYPES_H
 #define HGRAPH_LIB_STD_STANDARD_TYPES_H
 
+#include <hgraph/types/frame.h>
 #include <hgraph/types/metadata/type_registry.h>
 #include <hgraph/util/date_time.h>
 
@@ -34,6 +35,7 @@ namespace hgraph::stdlib
         const ValueTypeMetaData *time_type{nullptr};
         const ValueTypeMetaData *str_type{nullptr};
         const ValueTypeMetaData *bytes_type{nullptr};
+        const ValueTypeMetaData *frame_type{nullptr};
 
         const ValueTypeMetaData *int8_type{nullptr};
         const ValueTypeMetaData *int16_type{nullptr};
@@ -55,6 +57,7 @@ namespace hgraph::stdlib
         const TSValueTypeMetaData *ts_time{nullptr};
         const TSValueTypeMetaData *ts_str{nullptr};
         const TSValueTypeMetaData *ts_bytes{nullptr};
+        const TSValueTypeMetaData *ts_frame{nullptr};
 
         const TSValueTypeMetaData *tss_bool{nullptr};
         const TSValueTypeMetaData *tss_int{nullptr};
@@ -142,6 +145,7 @@ namespace hgraph::stdlib
         types.time_type      = standard_types_detail::register_scalar_aliases<Time>(registry, {"time"});
         types.str_type       = standard_types_detail::register_scalar_aliases<Str>(registry, {"str", "string"});
         types.bytes_type     = standard_types_detail::register_scalar_aliases<Bytes>(registry, {"bytes"});
+        types.frame_type     = standard_types_detail::register_scalar_aliases<Frame>(registry, {"frame"});
 
         types.int8_type    = standard_types_detail::register_scalar_aliases<std::int8_t>(registry, {"int8"});
         types.int16_type   = standard_types_detail::register_scalar_aliases<std::int16_t>(registry, {"int16"});
@@ -169,6 +173,11 @@ namespace hgraph::stdlib
                                                    types.tss_str);
         standard_types_detail::register_ts_aliases(registry, types.bytes_type, {"bytes"}, types.ts_bytes,
                                                    types.tss_bytes);
+        {
+            const TSValueTypeMetaData *unused_frame_tss = nullptr;
+            standard_types_detail::register_ts_aliases(registry, types.frame_type, {"frame"}, types.ts_frame,
+                                                       unused_frame_tss);
+        }
 
         const TSValueTypeMetaData *unused_ts  = nullptr;
         const TSValueTypeMetaData *unused_tss = nullptr;

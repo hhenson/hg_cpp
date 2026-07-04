@@ -80,6 +80,18 @@ namespace hgraph
 
     /** Parse ``text`` into an owned value of schema ``meta``. */
     [[nodiscard]] HGRAPH_EXPORT Value from_json_string(const ValueTypeMetaData *meta, std::string_view text);
+
+    /** Parse with a pre-resolved converter (the node-State fast path). */
+    [[nodiscard]] HGRAPH_EXPORT Value from_json_string(const JsonConverter &converter, std::string_view text);
+
+    /**
+     * Node-State payload carrying the converter resolved in ``start`` (the
+     * lifecycle form of the builder pattern: compose once, read per tick).
+     */
+    struct JsonCodecState
+    {
+        const JsonConverter *converter{nullptr};
+    };
 }  // namespace hgraph
 
 #endif  // HGRAPH_TYPES_VALUE_JSON_CODEC_H

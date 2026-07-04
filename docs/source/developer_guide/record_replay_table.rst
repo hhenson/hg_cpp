@@ -201,7 +201,8 @@ const-evaluable operator for explicit wiring-time reads.
 
 1. **DONE (2026-07-04)** — serializer-ops synthesis + ``to_json``/``from_json``.
 2. **DONE (2026-07-04)** — graph traits + RecordReplayConfig + mode scope.
-3. Arrow value integration + ``table_schema``/``to_table``/``from_table``.
+3. **DONE (2026-07-04, first pass)** — Arrow dependency + ``Frame`` value
+   kind + ``to_table``/``from_table``.
 4. Data-frame (Arrow) record/replay backend; ``replay_const`` + RECOVER.
 5. ``@component`` on top of all of it.
 
@@ -282,6 +283,62 @@ Step 2 — landed
 
 Tests: ``tests/cpp/test_record_replay_config.cpp`` (config + reset, scope
 nesting/shadowing, root traits, nested chain + shadowing, fq-id rules).
+
+Step 3 — landed (first pass)
+----------------------------
+
+Apache Arrow is wired as the **formal dependency** (``find_package(Arrow
+CONFIG REQUIRED)``; a package-manager install is expected — Arrow is too
+heavy to FetchContent by default). What landed:
+
+- **``Frame``** (``types/frame.h``) — the first-class table scalar backed by
+  ``std::shared_ptr<arrow::Table>`` (forward-declared; user code and operator
+  headers never see Arrow). Registered in the standard vocabulary
+  (``"frame"``, ``TS[frame]``). Copying copies the handle (Arrow tables are
+  immutable); equality/hash are **handle identity** — cheap and honest for
+  tick suppression; content comparison stays an explicit operation. The
+  shared handle is an opaque third-party resource (like ``Str``'s heap
+  buffer) — the no-shared-ptr rule governs runtime graph structure, not
+  foreign value payloads.
+- **``TableConverter``** (``types/value/table_codec.h``) — the interned
+  per-schema serializer ops for tables: flattened column layout
+  (``[date_key, as_of_key, *columns]``, names from
+  ``record_replay::config()`` at synthesis) with per-column append/read
+  fn-ptrs writing **directly into Arrow array builders** and reading from
+  Arrow arrays — no per-tick row tuples. Leaf coverage: all standard atomics
+  (bool/int/float/str/date/datetime/timedelta/time). v1 value coverage:
+  atomics + depth-1 bundles; TSD partition keys + removed columns and the
+  Sample/Snap modes land with the backend (step 4).
+- **Operators** ``to_table -> TS<Frame>`` (one bitemporal row per tick;
+  ``as_of`` = config override or the evaluation time) and
+  ``from_table -> OUT`` (rows applied in order; column resolution **by
+  name** — the input-minimum ruling: extra frame columns pass, missing
+  required columns throw). The typed ``Frame<Schema>`` wiring marker (exact
+  output schemas) follows once a schema-qualified frame consumer exists.
+- **A latent registry bug fixed on the way** (armed by the new allocations):
+  when ``reset_all_registries``' final ``TypeRegistry::instance().reset()``
+  was the process's FIRST registry touch, ``instance()`` seeded before the
+  plan-cache clears had any effect ordering-wise, so re-seeded metas could
+  reuse freed addresses against stale plan entries ("already registered with
+  a different plan", flaky by allocator reuse). ``reset_all_registries`` now
+  forces registry construction FIRST. (The stale-pointer-reuse class from
+  the plan-registries-clear-on-reset rule.)
+- The json/table converter intern tables take **no locks** (the
+  ``OperatorRegistry`` precedent: build and evaluation are single-threaded;
+  senders never touch them) — the json codec's initial precautionary mutex
+  was removed for the same reason.
+- **Converters resolve in ``start`` and live in node State** (the lifecycle
+  form of the builder pattern — ruled): each json/table operator's ``start``
+  hook resolves the composed converter once (``json_converter`` /
+  ``table_converter`` interned lookups are start-time only) and parks the
+  pointer in ``State<JsonCodecState>`` / ``State<TableCodecState>``;
+  ``eval`` is a plain converter invocation with NO lookups, locks or
+  branches on the per-tick path. This is the standing pattern for every
+  future serializer/codec operator.
+
+Tests: ``tests/cpp/test_table.cpp`` (codec round-trips for atomics and
+bundles, bitemporal columns, the input-minimum rule, operator ticks, as-of
+override, graph round-trip).
 
 Rulings (Howard, 2026-07-04)
 ----------------------------

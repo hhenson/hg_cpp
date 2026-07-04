@@ -663,7 +663,9 @@ namespace hgraph
         if (const auto it = cache_.find(schema); it != cache_.end())
         {
             if (it->second == plan) { return; }
-            throw std::logic_error("ValuePlanFactory: atomic schema already registered with a different plan");
+            throw std::logic_error(std::string{"ValuePlanFactory: atomic schema already registered with a "
+                                               "different plan: "} +
+                                   (schema->display_name ? schema->display_name : "?"));
         }
         cache_.emplace(schema, plan);
     }

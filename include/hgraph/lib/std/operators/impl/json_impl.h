@@ -7,19 +7,29 @@
 #include <hgraph/types/time_series/ts_delta.h>
 #include <hgraph/types/value/json_codec.h>
 
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+namespace hgraph::static_schema_detail
+{
+    template <>
+    struct scalar_name<JsonCodecState>
+    {
+        static constexpr std::string_view value{"JsonCodecState"};
+    };
+}  // namespace hgraph::static_schema_detail
+
 namespace hgraph::stdlib
 {
     /**
-     * ``to_json`` — erased implementations over any time-series
-     * (schema-as-data: the interned ``JsonConverter`` for the value schema is
-     * resolved on first use). The ``delta`` flag is a wiring-time constant,
-     * so the value/delta split is resolved by OVERLOAD SELECTION
-     * (``requires_`` on the flag) — each eval is branch-free on the hot path
-     * (wiring-time resolution over run-time cost).
+     * ``to_json`` — erased implementations over any time-series. The composed
+     * ``JsonConverter`` is resolved ONCE in ``start`` and carried in node
+     * State (the lifecycle form of the builder pattern); ``eval`` is a plain
+     * converter invocation. The ``delta`` flag is a wiring-time constant, so
+     * value vs delta is resolved by OVERLOAD SELECTION (``requires_`` on the
+     * flag) — no hot-path branches.
      */
     struct to_json_value_impl
     {
@@ -36,10 +46,18 @@ namespace hgraph::stdlib
             return delta != nullptr && !*delta;
         }
 
-        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"delta", Bool> delta, Out<TS<Str>> out)
+        static void start(In<"ts", TsVar<"S">> ts, State<JsonCodecState> codec)
+        {
+            codec.set(JsonCodecState{&json_converter(ts.base().schema()->value_schema)});
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"delta", Bool> delta, State<JsonCodecState> codec,
+                         Out<TS<Str>> out)
         {
             static_cast<void>(delta);   // resolved at wiring; always false here
-            out.set(to_json_string(ts.value()));
+            std::string text;
+            codec.get().converter->write(ts.value(), text);
+            out.set(std::move(text));
         }
     };
 
@@ -54,33 +72,43 @@ namespace hgraph::stdlib
             return delta != nullptr && *delta;
         }
 
-        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"delta", Bool> delta, Out<TS<Str>> out)
+        static void start(In<"ts", TsVar<"S">> ts, State<JsonCodecState> codec)
+        {
+            codec.set(JsonCodecState{&json_converter(ts.base().schema()->delta_value_schema)});
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"delta", Bool> delta, State<JsonCodecState> codec,
+                         Out<TS<Str>> out)
         {
             static_cast<void>(delta);   // resolved at wiring; always true here
             const Value tick_delta = capture_delta(ts.base());
-            out.set(to_json_string(tick_delta.view()));
+            std::string text;
+            codec.get().converter->write(tick_delta.view(), text);
+            out.set(std::move(text));
         }
     };
 
     /**
      * ``from_json`` — parses the incoming string into the resolved output's
-     * VALUE schema and applies it as the tick's delta. The output type is
-     * supplied at the wiring site: ``wire<from_json, TS<MySchema>>(w, ts)``.
-     * (Whole-value application: suits ``TS`` over scalars/compounds — the
-     * shapes whose delta and value schemas coincide, matching the Python
-     * ``from_json`` support surface.)
+     * VALUE schema (converter resolved once in ``start``) and applies the
+     * parsed value as the tick's delta. The output type is supplied at the
+     * wiring site: ``wire<from_json, TS<MySchema>>(w, ts)``.
      */
     struct from_json_impl
     {
         static constexpr auto name = "from_json";
 
-        static void eval(In<"ts", TS<Str>> ts, Out<TsVar<"O">> out)
+        static void start(Out<TsVar<"O">> out, State<JsonCodecState> codec)
         {
             // ``Out``'s ``schema`` type alias hides the inherited accessor;
             // reach the runtime schema through the erased view.
-            const auto &erased     = static_cast<const TSOutputView &>(out);
-            const auto *value_meta = erased.schema() != nullptr ? erased.schema()->value_schema : nullptr;
-            Value       parsed     = from_json_string(value_meta, ts.value());
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            codec.set(JsonCodecState{&json_converter(erased.schema()->value_schema)});
+        }
+
+        static void eval(In<"ts", TS<Str>> ts, State<JsonCodecState> codec, Out<TsVar<"O">> out)
+        {
+            Value parsed = from_json_string(*codec.get().converter, ts.value());
             apply_delta(out, parsed.view());
         }
     };

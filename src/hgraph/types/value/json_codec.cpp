@@ -11,7 +11,6 @@
 #include <charconv>
 #include <chrono>
 #include <memory>
-#include <mutex>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -604,7 +603,9 @@ namespace hgraph
         // Synthesis + interning (cleared on registry reset)
         // ---------------------------------------------------------------
 
-        std::mutex g_converters_mutex;
+        // NO locks: wiring and evaluation are single-threaded (the
+        // OperatorRegistry precedent) — push senders, the only cross-thread
+        // entry, never touch converters.
         std::unordered_map<const ValueTypeMetaData *, std::unique_ptr<JsonConverter>> g_converters;
 
         [[nodiscard]] AtomicTag atomic_tag_for(const ValueTypeMetaData *meta)
@@ -700,15 +701,14 @@ namespace hgraph
 
     const JsonConverter &json_converter(const ValueTypeMetaData *meta)
     {
-        const std::scoped_lock lock{g_converters_mutex};
+        // Composed + interned once per schema. Per-tick operator paths do NOT
+        // call this: nodes resolve their converter in ``start`` and carry it
+        // in node State (the lifecycle "compose once" contract); this lookup
+        // serves wiring/start-time resolution and ad-hoc utility use.
         return *converter_for_locked(meta);
     }
 
-    void clear_json_converters() noexcept
-    {
-        const std::scoped_lock lock{g_converters_mutex};
-        g_converters.clear();
-    }
+    void clear_json_converters() noexcept { g_converters.clear(); }
 
     std::string to_json_string(const ValueView &view)
     {
@@ -718,13 +718,17 @@ namespace hgraph
         return out;
     }
 
-    Value from_json_string(const ValueTypeMetaData *meta, std::string_view text)
+    Value from_json_string(const JsonConverter &converter, std::string_view text)
     {
-        const auto        &converter = json_converter(meta);
         json_detail::Reader reader{text};
         Value               result = converter.read(reader);
         reader.skip_ws();
         if (reader.pos != text.size()) { reader.fail("trailing content"); }
         return result;
+    }
+
+    Value from_json_string(const ValueTypeMetaData *meta, std::string_view text)
+    {
+        return from_json_string(json_converter(meta), text);
     }
 }  // namespace hgraph

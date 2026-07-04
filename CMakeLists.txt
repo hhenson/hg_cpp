@@ -126,6 +126,14 @@ if(NOT fmt_FOUND)
 endif()
 target_link_libraries(hgraph_options INTERFACE fmt::fmt)
 
+# Apache Arrow is a FORMAL dependency (design record: record_replay_table.rst,
+# ruling 2026-07-04): the Frame value kind and the table serialization family
+# are Arrow-native. A system/package-manager install is expected
+# (`brew install apache-arrow` / `apt install libarrow-dev`); Arrow is too
+# heavy to FetchContent by default.
+find_package(Arrow CONFIG REQUIRED)
+target_link_libraries(hgraph_options INTERFACE Arrow::arrow_shared)
+
 set(HGRAPH_CORE_TARGET_TYPE STATIC)
 if(HGRAPH_BUILD_SHARED)
     set(HGRAPH_CORE_TARGET_TYPE SHARED)

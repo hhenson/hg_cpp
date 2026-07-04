@@ -24,6 +24,7 @@
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>
 #include <hgraph/lib/std/operators/impl/io_impl.h>
 #include <hgraph/lib/std/operators/impl/json_impl.h>
+#include <hgraph/lib/std/operators/impl/table_impl.h>
 #include <hgraph/lib/std/operators/impl/logical_impl.h>
 #include <hgraph/lib/std/operators/impl/stream_impl.h>
 #include <hgraph/lib/std/operators/impl/string_impl.h>
@@ -48,6 +49,7 @@ namespace hgraph::stdlib
         register_higher_order_operators();
         register_io_operators();
         register_json_operators();
+        register_table_operators();
         register_stream_operators();
         register_string_operators();
         register_temporal_operators();
