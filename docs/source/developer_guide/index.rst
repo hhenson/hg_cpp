@@ -18,5 +18,6 @@ The developer guide describes the internal design of the C++ implementation. The
    mesh
    services
    operators
+   parity_matrix
    python_integration
    testing

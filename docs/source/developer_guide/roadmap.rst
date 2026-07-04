@@ -140,8 +140,11 @@ Planned work:
 Priority 3: Parity Matrix and Operators
 ---------------------------------------
 
-After the graph model is stable, build and maintain a Python-to-C++ parity
-matrix. Then complete operator families against that inventory.
+The Python-to-C++ parity matrix is built and maintained at
+:doc:`parity_matrix` (snapshot 2026-07-04: 102 of 165 Python operator
+definitions registered, 23 declared-only, 40 missing — update it in the same
+change as any operator addition). Complete operator families against that
+inventory.
 
 Landed:
 
