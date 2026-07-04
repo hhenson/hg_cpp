@@ -249,6 +249,66 @@ namespace hgraph
         }
     }  // namespace
 
+    struct FrameRecorder::Impl
+    {
+        const TableConverter                             *converter{nullptr};
+        std::unique_ptr<arrow::ArrayBuilder>              date_builder{};
+        std::unique_ptr<arrow::ArrayBuilder>              as_of_builder{};
+        std::vector<std::unique_ptr<arrow::ArrayBuilder>> column_builders{};
+        std::int64_t                                      rows{0};
+    };
+
+    FrameRecorder::FrameRecorder(const TableConverter &converter) : impl_(std::make_unique<Impl>())
+    {
+        impl_->converter     = &converter;
+        impl_->date_builder  = make_builder(arrow::timestamp(arrow::TimeUnit::MICRO));
+        impl_->as_of_builder = make_builder(arrow::timestamp(arrow::TimeUnit::MICRO));
+        impl_->column_builders.reserve(converter.columns.size());
+        for (const auto &column : converter.columns) { impl_->column_builders.push_back(make_builder(column.type)); }
+    }
+
+    FrameRecorder::FrameRecorder(FrameRecorder &&) noexcept            = default;
+    FrameRecorder &FrameRecorder::operator=(FrameRecorder &&) noexcept = default;
+    FrameRecorder::~FrameRecorder()                                    = default;
+
+    void FrameRecorder::append(DateTime value_time, DateTime as_of, const ValueView &value)
+    {
+        check(static_cast<arrow::TimestampBuilder &>(*impl_->date_builder)
+                  .Append(value_time.time_since_epoch().count()),
+              "append value time");
+        check(static_cast<arrow::TimestampBuilder &>(*impl_->as_of_builder).Append(as_of.time_since_epoch().count()),
+              "append as-of");
+        const auto &columns = impl_->converter->columns;
+        for (std::size_t i = 0; i < columns.size(); ++i)
+        {
+            const auto &column = columns[i];
+            if (column.path.empty()) { column.append(column, value, *impl_->column_builders[i]); }
+            else { column.append(column, value.as_bundle().at(column.path.front()), *impl_->column_builders[i]); }
+        }
+        ++impl_->rows;
+    }
+
+    Frame FrameRecorder::finish()
+    {
+        arrow::ArrayVector arrays;
+        arrays.reserve(impl_->converter->columns.size() + 2);
+        arrays.push_back(hgraph::finish(*impl_->date_builder));
+        arrays.push_back(hgraph::finish(*impl_->as_of_builder));
+        for (auto &builder : impl_->column_builders) { arrays.push_back(hgraph::finish(*builder)); }
+        return Frame{arrow::Table::Make(impl_->converter->arrow_schema, std::move(arrays), impl_->rows)};
+    }
+
+    DateTime frame_value_time(const TableConverter &converter, const Frame &frame, std::int64_t row)
+    {
+        const auto chunked = frame.table->GetColumnByName(converter.date_key);
+        if (chunked == nullptr)
+        {
+            throw std::invalid_argument("table codec: frame is missing its value-time column");
+        }
+        const auto &array = static_cast<const arrow::TimestampArray &>(*chunked->chunk(0));
+        return DateTime{std::chrono::microseconds{array.Value(row)}};
+    }
+
     const TableConverter &table_converter(const ValueTypeMetaData *meta)
     {
         // Composed + interned once per schema. Per-tick operator paths do NOT

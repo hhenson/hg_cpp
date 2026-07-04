@@ -1,6 +1,7 @@
 #ifndef HGRAPH_LIB_TESTING_RECORD_REPLAY_H
 #define HGRAPH_LIB_TESTING_RECORD_REPLAY_H
 
+#include <hgraph/types/record_replay.h>
 #include <hgraph/runtime/global_state.h>
 #include <hgraph/runtime/node_scheduler.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -152,6 +153,12 @@ namespace hgraph::testing
     struct replay
     {
         static constexpr auto name = "replay";
+
+        /** The in-memory backend: active only under the default model. */
+        static bool requires_(const ResolutionMap &, OperatorCallContext)
+        {
+            return record_replay::model_is(record_replay::IN_MEMORY);
+        }
         // A source initiates itself at the start cycle (default = not scheduled);
         // per-cycle rescheduling below uses the full NodeScheduler.
         static constexpr bool schedule_on_start = true;
@@ -182,6 +189,12 @@ namespace hgraph::testing
     struct record
     {
         static constexpr auto name = "record";
+
+        /** The in-memory backend: active only under the default model. */
+        static bool requires_(const ResolutionMap &, OperatorCallContext)
+        {
+            return record_replay::model_is(record_replay::IN_MEMORY);
+        }
 
         static void start(Scalar<"key", std::string> key, GlobalStateView gs)
         {

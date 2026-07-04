@@ -75,6 +75,35 @@ namespace hgraph
         const TableConverter *converter{nullptr};
     };
 
+    /**
+     * Multi-tick frame accumulator: append one bitemporal row per tick
+     * directly into Arrow array builders (the P4 fused path — no per-tick
+     * row values), then ``finish`` into a ``Frame``. Constructed in a node's
+     * ``start`` (against the pre-resolved converter) and finished in
+     * ``stop``. Move-only; Arrow internals stay behind the pimpl.
+     */
+    class HGRAPH_EXPORT FrameRecorder
+    {
+      public:
+        explicit FrameRecorder(const TableConverter &converter);
+        FrameRecorder(FrameRecorder &&) noexcept;
+        FrameRecorder &operator=(FrameRecorder &&) noexcept;
+        FrameRecorder(const FrameRecorder &)            = delete;
+        FrameRecorder &operator=(const FrameRecorder &) = delete;
+        ~FrameRecorder();
+
+        void append(DateTime value_time, DateTime as_of, const ValueView &value);
+        [[nodiscard]] Frame finish();
+
+      private:
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
+    };
+
+    /** The ``date_key`` (value-time) column entry for ``row``. */
+    [[nodiscard]] HGRAPH_EXPORT DateTime frame_value_time(const TableConverter &converter, const Frame &frame,
+                                                          std::int64_t row);
+
     /** Build a one-row bitemporal frame for one tick's value. */
     [[nodiscard]] HGRAPH_EXPORT Frame single_row_frame(const TableConverter &converter, DateTime value_time,
                                                        DateTime as_of, const ValueView &value);

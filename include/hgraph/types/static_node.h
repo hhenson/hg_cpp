@@ -1747,6 +1747,19 @@ namespace hgraph
             }
         };
 
+        // Transparent, stateless injectable (see TraitsView in runtime/graph.h).
+        template <>
+        struct arg_provider<TraitsView>
+        {
+            static TraitsView get(const NodeView &view, DateTime)
+            {
+                GraphValue *graph = view.graph_value();
+                if (graph == nullptr) { return TraitsView{}; }
+                GraphView graph_view = graph->view();
+                return TraitsView{GraphStorageRef{graph_view.binding(), graph_view.data()}};
+            }
+        };
+
         template <>
         struct arg_provider<EvaluationClockView>
         {

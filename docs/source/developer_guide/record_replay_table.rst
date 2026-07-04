@@ -203,7 +203,8 @@ const-evaluable operator for explicit wiring-time reads.
 2. **DONE (2026-07-04)** — graph traits + RecordReplayConfig + mode scope.
 3. **DONE (2026-07-04, first pass)** — Arrow dependency + ``Frame`` value
    kind + ``to_table``/``from_table``.
-4. Data-frame (Arrow) record/replay backend; ``replay_const`` + RECOVER.
+4. **DONE (2026-07-04, first pass)** — the Arrow record/replay backend +
+   ``replay_const`` reads (RECOVER seeding remains — see below).
 5. ``@component`` on top of all of it.
 
 Step 1 — landed
@@ -339,6 +340,43 @@ heavy to FetchContent by default). What landed:
 Tests: ``tests/cpp/test_table.cpp`` (codec round-trips for atomics and
 bundles, bitemporal columns, the input-minimum rule, operator ticks, as-of
 override, graph round-trip).
+
+Step 4 — landed (first pass)
+----------------------------
+
+The Arrow data-frame record/replay backend, model
+``record_replay::DATA_FRAME``:
+
+- **The P6 content store** (``record_replay::FrameStoreOps``) — the
+  type-erased keyed frame store: an ops table (context + write/read/
+  contains/clear fn-ptrs) with implementations **registered** over the
+  default in-memory map (``set_frame_store``; reset restores the default).
+  The store outlives graph runs — record in one run, replay in another.
+- **``TraitsView``** — the node-level injectable completing the traits
+  primitive: a transparent stateless injectable (the ``SingleShotScheduler``
+  pattern) giving hooks ``trait``/``trait_or`` over the owning graph's
+  chain; ``fq_recordable_id(TraitsView, id)`` is the node-side resolution.
+- **``record`` (frame backend)** — ``requires_`` gates on the model;
+  ``start`` resolves the ``TableConverter`` + fq key (explicit
+  ``recordable_id`` scalar, defaulting through the trait chain) and creates
+  a ``FrameRecorder`` (multi-tick Arrow builder accumulator, pimpl'd in the
+  table codec); ``eval`` appends one bitemporal row; ``stop`` finishes the
+  frame and writes it to the store. The in-memory (GlobalState) testing
+  backend now carries the matching ``requires_`` gate on ``IN_MEMORY``.
+- **``replay`` (frame backend)** — ``start`` reads the frame, resolves the
+  converter from the resolved output, and schedules the first row's
+  recorded value time; ``eval`` applies every row stamped at the current
+  time and schedules the next row's time (absolute scheduling) — replay
+  reproduces the RECORDED timing, gaps included.
+- **``replay_const_value(fq_key, meta, tm, as_of)``** — the const read
+  (Python's ``replay_const``, a plain function per the const_fn ruling):
+  the last row with value-time <= ``tm`` and as-of <= ``as_of``.
+
+Deferred from step 4: RECOVER seeding (P7 — the graph-start seeding pass),
+as-of generation filtering on replay (v1 replays a single recording
+generation), Python's per-frame overrides (track_as_of/track_removes/
+partition renames), and TSD partitioned recording (needs the step-3 TSD
+table support first). Tests: ``tests/cpp/test_record_replay_frame.cpp``.
 
 Rulings (Howard, 2026-07-04)
 ----------------------------

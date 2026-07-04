@@ -2,6 +2,7 @@
 #define HGRAPH_TYPES_RECORD_REPLAY_H
 
 #include <hgraph/hgraph_export.h>
+#include <hgraph/types/frame.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/util/date_time.h>
 
@@ -56,6 +57,9 @@ namespace hgraph::record_replay
     /** The default (in-memory GlobalState buffer) record/replay model. */
     inline constexpr std::string_view IN_MEMORY = "InMemory";
 
+    /** The Arrow data-frame record/replay model (frame-store backed). */
+    inline constexpr std::string_view DATA_FRAME = "DataFrame";
+
     /**
      * Explicit wiring-time configuration. ``model`` selects the backend
      * (overloads guard on it via ``requires_``); the date / as-of keys name
@@ -107,13 +111,42 @@ namespace hgraph::record_replay
         ~scope();
     };
 
-    /** Reset config + scopes to defaults (wired into ``reset_all_registries``). */
+    /**
+     * The type-erased keyed content store (P6 — ruled): recorded frames,
+     * comparison results and related content read/write through this ops
+     * table, with implementations REGISTERED like operator backends. The
+     * default registration is an in-memory map; file / Arrow-dataset stores
+     * register over it. Ops-table shape (no virtuals): first param is the
+     * store context.
+     */
+    struct FrameStoreOps
+    {
+        void *context{nullptr};
+        void (*write)(void *context, std::string_view key, Frame frame){nullptr};
+        /** Empty ``Frame`` when the key is absent. */
+        Frame (*read)(void *context, std::string_view key){nullptr};
+        bool (*contains)(void *context, std::string_view key){nullptr};
+        void (*clear)(void *context){nullptr};
+    };
+
+    /** Register a store (replacing the active one). */
+    HGRAPH_EXPORT void set_frame_store(FrameStoreOps ops);
+    /** The active store's ops. */
+    [[nodiscard]] HGRAPH_EXPORT const FrameStoreOps &frame_store();
+
+    /** Convenience wrappers over the active store. */
+    HGRAPH_EXPORT void store_write(std::string_view key, Frame frame);
+    [[nodiscard]] HGRAPH_EXPORT Frame store_read(std::string_view key);
+    [[nodiscard]] HGRAPH_EXPORT bool store_contains(std::string_view key);
+
+    /** Reset config + scopes + the store to defaults (wired into ``reset_all_registries``). */
     HGRAPH_EXPORT void reset() noexcept;
 }  // namespace hgraph::record_replay
 
 namespace hgraph
 {
     class GraphView;
+    class TraitsView;
 
     namespace record_replay
     {
@@ -132,6 +165,24 @@ namespace hgraph
          */
         [[nodiscard]] HGRAPH_EXPORT std::string fq_recordable_id(const GraphView &graph,
                                                                  std::string_view recordable_id);
+
+        /** The node-injectable form (``TraitsView`` parameter on a hook). */
+        [[nodiscard]] HGRAPH_EXPORT std::string fq_recordable_id(const TraitsView &traits,
+                                                                 std::string_view recordable_id);
+
+        /**
+         * The ``replay_const`` read (Python's wiring-time recorded-state
+         * read; the const-evaluable form of ``replay``): the LAST recorded
+         * value under ``fq_key`` with value-time <= ``tm`` and as-of <=
+         * ``as_of``, reconstructed at schema ``meta``. Returns an empty
+         * ``Value`` when nothing qualifies. A plain function per the
+         * const_fn ruling — wiring code calls it directly (wrap with
+         * ``const_`` for a source); the bridge exposes it eagerly.
+         */
+        [[nodiscard]] HGRAPH_EXPORT Value replay_const_value(std::string_view fq_key,
+                                                             const ValueTypeMetaData *meta,
+                                                             DateTime tm    = MAX_DT,
+                                                             DateTime as_of = MAX_DT);
     }  // namespace record_replay
 }  // namespace hgraph
 

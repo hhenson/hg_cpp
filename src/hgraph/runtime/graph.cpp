@@ -1412,6 +1412,18 @@ namespace hgraph
 
     GlobalStateView GraphBuilder::global_state() noexcept { return global_state_.view(); }
 
+    ValueView TraitsView::trait(std::string_view name) const noexcept
+    {
+        if (graph_.binding() == nullptr) { return ValueView{}; }
+        return GraphView{graph_.binding(), graph_.data()}.trait(name);
+    }
+
+    ValueView TraitsView::trait_or(std::string_view name) const noexcept
+    {
+        if (graph_.binding() == nullptr) { return ValueView{}; }
+        return GraphView{graph_.binding(), graph_.data()}.trait_or(name);
+    }
+
     GraphBuilder &GraphBuilder::trait(std::string_view name, const ValueView &value)
     {
         if (name.empty()) { throw std::invalid_argument("graph trait name must not be empty"); }

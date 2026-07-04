@@ -252,6 +252,28 @@ struct HGRAPH_EXPORT GraphEdge
         [[nodiscard]] NodeView parent_node() const;
     };
 
+    /**
+     * Node-level injectable over the owning graph's traits (the runtime half
+     * of the graph-traits primitive; design record P5). Declare a
+     * ``TraitsView`` parameter on a node hook to read traits:
+     * ``trait(name)`` is the chained lookup bubbling up the nested parent
+     * chain; ``trait_or(name)`` reads this graph's own entry only. A
+     * transparent, stateless injectable (the ``SingleShotScheduler``
+     * pattern): no signature footprint, no per-node slot.
+     */
+    class HGRAPH_EXPORT TraitsView
+    {
+      public:
+        TraitsView() noexcept = default;
+        explicit TraitsView(GraphStorageRef graph) noexcept : graph_(graph) {}
+
+        [[nodiscard]] ValueView trait(std::string_view name) const noexcept;
+        [[nodiscard]] ValueView trait_or(std::string_view name) const noexcept;
+
+      private:
+        GraphStorageRef graph_{};   // borrowed (binding, memory) cursor — the standard value-instance reference
+    };
+
     /** Owning graph value. */
     class HGRAPH_EXPORT GraphValue
     {
