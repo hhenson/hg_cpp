@@ -741,12 +741,15 @@ def test_multi_interface_service_impl():
     def add_rate(r: TS[int], rate_ts: TS[int]) -> TS[int]:
         return r + rate_ts
 
+    # hgraph's exact multi-service shape: the registered path is INJECTED,
+    # inputs read via get_service_inputs(path, stub).ts, outputs published
+    # via set_service_output(path, stub, out).
     @hg.service_impl(interfaces=(rate, boost))
-    def combined_impl():
+    def combined_impl(path: str):
         the_rate = hg.const(100, tp=TS[int])
-        hg.impl_output(rate, the_rate, path="svc")
-        requests = hg.impl_input(boost, path="svc")
-        hg.impl_output(boost, hg.map_(add_rate, requests, the_rate), path="svc")
+        hg.set_service_output(path, rate, the_rate)
+        requests = hg.get_service_inputs(path, boost).ts
+        hg.set_service_output(path, boost, hg.map_(add_rate, requests, the_rate))
 
     @graph
     def g(x: TS[int]) -> TS[int]:
@@ -756,7 +759,11 @@ def test_multi_interface_service_impl():
     out = eval_node(g, [5, 7], __end_time__=hg.MIN_ST + 4 * hg.MIN_TD)
     check(out == [None, None, 207], f"multi-interface: {out}")
 
-    # A multi-interface impl must take no wired inputs.
+    # The stub-method spellings work too (hgraph parity).
+    check(hasattr(boost, "wire_impl_inputs_stub") and hasattr(rate, "wire_impl_out_stub"),
+          "stub impl methods")
+
+    # A multi-interface impl must take no wired inputs (path is injected).
     try:
         @hg.service_impl(interfaces=(rate, boost))
         def bad(extra: TS[int]):

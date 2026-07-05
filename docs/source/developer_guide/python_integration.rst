@@ -243,7 +243,12 @@ Recorded divergences / gaps (the morning-summary list):
   ``impl_output(stub, out, path)`` per interface inside its body (the
   erased ``service_impl_input``/``service_impl_output`` flows +
   ``register_multi_service_impl`` with the combined required-endpoint
-  scope). The erased core
+  scope). The API is hgraph's exactly: the registered PATH is injected
+  into an impl declaring a leading ``path: str`` parameter; inputs read
+  via ``get_service_inputs(path, stub).ts`` (or
+  ``stub.wire_impl_inputs_stub(path).ts``), outputs publish via
+  ``set_service_output(path, stub, out)`` (or
+  ``stub.wire_impl_out_stub(path, out)``). The erased core
   (``types/service_runtime.{h,cpp}``) shares
   the role markers, path grammar and node makers with the templates, so
   an erased registration UNIFIES with a template client on the same path

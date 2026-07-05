@@ -434,6 +434,14 @@ class _ServiceStub:
                                       None if ts is None else _unwrap(ts))
         return WiringPort(port)
 
+    def wire_impl_inputs_stub(self, path=""):
+        """hgraph parity: the interface inputs inside a service impl."""
+        return _ServiceInputs(impl_input(self, path))
+
+    def wire_impl_out_stub(self, path, out):
+        """hgraph parity: publish this interface's output inside an impl."""
+        impl_output(self, out, path)
+
 
 def reference_service(fn):
     """The service interface stub for a reference service: the return
@@ -529,7 +537,8 @@ class _ServiceImpl:
         target = getattr(fn, "fn", fn)   # unwrap @graph/@compute_node wrappers
         ts_params = [
             p for p in inspect.signature(target).parameters.values()
-            if isinstance(p.annotation, _TsExpr) or p.annotation is inspect.Signature.empty
+            if p.name != "path"
+            and (isinstance(p.annotation, _TsExpr) or p.annotation is inspect.Signature.empty)
         ]
         if len(self.interfaces) > 1:
             # Multi-interface implementations take NO wired inputs: they
@@ -577,6 +586,26 @@ def service_impl(fn=None, *, interfaces=None):
     return _ServiceImpl(fn, interfaces)
 
 
+class _ServiceInputs:
+    """hgraph's get_service_inputs result: the interface inputs, exposed as
+    ``.ts`` (the single input time-series)."""
+
+    __slots__ = ("ts",)
+
+    def __init__(self, ts):
+        self.ts = ts
+
+
+def get_service_inputs(path, stub):
+    """hgraph parity: the interface's inputs inside a service impl."""
+    return _ServiceInputs(impl_input(stub, path))
+
+
+def set_service_output(path, stub, out):
+    """hgraph parity: publish an interface's output inside a service impl."""
+    impl_output(stub, out, path)
+
+
 def impl_input(stub, path=""):
     """Inside a multi-interface implementation: the interface's input
     (subscription key set / request dictionary)."""
@@ -598,14 +627,25 @@ def register_service(path, implementation, **kwargs):
         raise WiringError("register_service requires an @service_impl-decorated implementation")
     if kwargs:
         raise WiringError("implementation kwargs are not supported yet")
+    impl_fn = implementation.fn
+    target = getattr(impl_fn, "fn", impl_fn)
+    params = list(inspect.signature(target).parameters.values())
+    if params and params[0].name == "path":
+        # hgraph parity: the registered path is INJECTED into the impl.
+        bound_fn, bound_path = impl_fn, path
+
+        def bound():
+            return bound_fn(bound_path)
+
+        impl_fn = bound   # a fresh object per registration: unique identity per path
     if len(implementation.interfaces) > 1:
         _hgraph.register_multi_service_impl(
             _current_wiring(), [stub.descriptor for stub in implementation.interfaces], path,
-            _wrap_graph_fn(implementation.fn))
+            _wrap_graph_fn(impl_fn))
         return
     stub = implementation.interfaces[0]
     _hgraph.register_service_impl(
-        _current_wiring(), stub.descriptor, path, _wrap_graph_fn(implementation.fn))
+        _current_wiring(), stub.descriptor, path, _wrap_graph_fn(impl_fn))
 
 
 class _RecordReplayModes:
