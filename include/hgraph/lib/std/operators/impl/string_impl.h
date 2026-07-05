@@ -1,6 +1,7 @@
 #ifndef HGRAPH_LIB_STD_OPERATORS_IMPL_STRING_IMPL_H
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_STRING_IMPL_H
 
+#include <hgraph/lib/std/operators/impl/higher_order_impl.h>
 #include <hgraph/lib/std/operators/string.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
@@ -232,6 +233,85 @@ namespace hgraph::stdlib
         }
     };
 
+    /** join over the VARIADIC call shape (hgraph: ``join(*ts, separator=)``). */
+    struct join_multi_impl
+    {
+        static constexpr auto name = "join_multi";
+
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"__strict__", Value{Bool{false}}}};
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+        {
+            higher_order_impl_detail::bind_graph_output(
+                resolution, TypeRegistry::instance().ts(scalar_descriptor<Str>::value_meta()), "O");
+        }
+
+        static WiringPortRef compose(Wiring &w, VarIn<"ts", TS<Str>> ts, Scalar<"separator", Str> separator,
+                                     Scalar<"__strict__", Bool> strict)
+        {
+            if (ts.empty()) { throw std::invalid_argument("join requires at least one input"); }
+            auto &registry = TypeRegistry::instance();
+            const auto *element = registry.ts(scalar_descriptor<Str>::value_meta());
+            std::vector<WiringPortRef> children;
+            children.reserve(ts.size());
+            for (const WiringPortRef &port : ts) { children.push_back(port); }
+            WiringPortRef packed =
+                WiringPortRef::structural_source(registry.tsl(element, ts.size()), std::move(children));
+
+            WiringArg ts_arg;
+            ts_arg.kind = WiringArg::Kind::TimeSeries;
+            ts_arg.port = packed;
+            WiringArg sep_arg;
+            sep_arg.kind         = WiringArg::Kind::Scalar;
+            sep_arg.scalar_value = Value{separator.value()};
+            sep_arg.scalar_meta  = sep_arg.scalar_value.schema();
+            sep_arg.name         = "separator";
+            WiringArg strict_arg;
+            strict_arg.kind         = WiringArg::Kind::Scalar;
+            strict_arg.scalar_value = Value{strict.value()};
+            strict_arg.scalar_meta  = strict_arg.scalar_value.schema();
+            strict_arg.name         = "__strict__";
+            std::array<WiringArg, 3> args{ts_arg, sep_arg, strict_arg};
+            return wire_operator(w, "join", args).output.erased();
+        }
+    };
+
+    /** join over a tuple[str, ...] SCALAR value. */
+    struct join_tuple_impl
+    {
+        static constexpr auto name = "join_tuple";
+
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"__strict__", Value{Bool{false}}}};
+        }
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+        {
+            const auto *meta = resolution.find_scalar("T");
+            return meta != nullptr && meta->kind == ValueTypeKind::List && !meta->is_mutable() &&
+                   meta->element_type == scalar_descriptor<Str>::value_meta();
+        }
+
+        static void eval(In<"ts", TS<ScalarVar<"T">>> ts, Scalar<"separator", Str> separator,
+                         Scalar<"__strict__", Bool> strict, Out<TS<Str>> out)
+        {
+            static_cast<void>(strict);
+            Str  joined;
+            bool first = true;
+            for (const ValueView &item : ts.base().value().as_list())
+            {
+                if (!first) { joined += separator.value(); }
+                joined += item.checked_as<Str>();
+                first = false;
+            }
+            out.set(joined);
+        }
+    };
+
     struct join_tsl_impl
     {
         static void eval(In<"strings", TSL<TS<Str>, SIZE<"N">>, InputValidity::Unchecked> strings,
@@ -352,6 +432,8 @@ namespace hgraph::stdlib
         register_overload<substr, substr_impl>();
         register_overload<split, split_tsl_impl>();
         register_overload<join, join_tsl_impl>();
+        register_graph_overload<join, join_multi_impl>();
+        register_overload<join, join_tuple_impl>();
         register_graph_overload<format_, format_graph_impl>();
     }
 }  // namespace hgraph::stdlib

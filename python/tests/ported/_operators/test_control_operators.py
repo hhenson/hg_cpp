@@ -199,7 +199,6 @@ def test_merge_compound_scalars():
     ) == [initial, second]
 
 
-@pytest.mark.skip(reason="gap: race semantics hang - unbounded reschedule (investigate)")
 def test_race_scalars():
     @graph
     def app(tsl: TSL[TS[int], Size[3]]) -> REF[TS[int]]:
@@ -208,7 +207,6 @@ def test_race_scalars():
     assert eval_node(app, [{1: 100}, {0: 200, 2: 300}, {1: 300, 2: 500}, {0: 600}]) == [100, None, 300, None]
 
 
-@pytest.mark.skip(reason="gap: race semantics hang - unbounded reschedule (investigate)")
 def test_race_scalars_invalid():
     @graph
     def app(ts: TS[int]) -> REF[TS[int]]:
@@ -217,7 +215,6 @@ def test_race_scalars_invalid():
     assert eval_node(app, [None, 1, None]) == [None, 1, None]
 
 
-@pytest.mark.skip(reason="gap: race semantics hang - unbounded reschedule (investigate)")
 def test_race_tsls():
     @graph
     def app(invalidate: TS[bool]) -> TS[int]:
@@ -232,7 +229,6 @@ def test_race_tsls():
     assert eval_node(app, [False, True]) == [11, 21]
 
 
-@pytest.mark.skip(reason="gap: race semantics hang - unbounded reschedule (investigate)")
 def test_race_tsbs():
     class S(TimeSeriesSchema):
         a: TS[int]
@@ -249,7 +245,6 @@ def test_race_tsbs():
     assert eval_node(app, [False, True]) == [{"a": 11, "b": 12}, {"a": 21, "b": 22}]
 
 
-@pytest.mark.skip(reason="gap: race semantics hang - unbounded reschedule (investigate)")
 def test_race_tsd():
     @compute_node
     def make_ref(ts: TS[int], ref: REF[TS[int]], ref2: REF[TS[int]]) -> REF[TS[int]]:
@@ -285,7 +280,6 @@ def test_race_tsd():
     ]
 
 
-@pytest.mark.skip(reason="gap: race semantics hang - unbounded reschedule (investigate)")
 def test_race_tsd_of_bundles_all_free_bundles():
     class S(TimeSeriesSchema):
         a: TS[int]
@@ -313,7 +307,6 @@ def test_race_tsd_of_bundles_all_free_bundles():
     # deterministic.
 
 
-@pytest.mark.skip(reason="gap: race semantics hang - unbounded reschedule (investigate)")
 def test_race_tsd_of_bundles_switch_bundle_types():
     class S(TimeSeriesSchema):
         a: TS[int]

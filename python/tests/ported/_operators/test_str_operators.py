@@ -69,7 +69,6 @@ def test_split():
     assert eval_node(f, ["a,b,c"], ",") == [{0: "a", 1: "b,c"}]
 
 
-@pytest.mark.skip(reason="gap: hangs - unbounded reschedule (investigate)")
 def test_join():
     @graph
     def g(s: TSL[TS[str], Size[3]]) -> TS[str]:
@@ -84,7 +83,6 @@ def test_join():
     assert eval_node(g, [("a", "b", "c")]) == ["a,b,c"]
 
 
-@pytest.mark.skip(reason="gap: hangs - unbounded reschedule (investigate)")
 def test_join_strict():
     @graph
     def g(s: TSL[TS[str], Size[3]]) -> TS[str]:
@@ -93,7 +91,6 @@ def test_join_strict():
     assert eval_node(g, [("a", None, "c"), ("a", "b", "c")]) == [None, "a,b,c"]
 
 
-@pytest.mark.skip(reason="gap: hangs - unbounded reschedule (investigate)")
 def test_join_not_strict():
     @graph
     def g(s: TSL[TS[str], Size[3]]) -> TS[str]:

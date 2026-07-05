@@ -315,6 +315,19 @@ namespace hgraph
 
             auto target = link->target_output_at_path(*target_schema, data_.target_node);
             if (!target.bound()) { return TimeSeriesReference::empty(view_schema); }
+            // A target landing on a from-ref ALTERNATIVE position stays a
+            // reference TO that position while the alternative is BOUND (the
+            // consumer keeps following its retargets - mesh liveness), but
+            // reads as EMPTY when the alternative is UNBOUND (the source
+            // reference emptied - race re-races on the observed invalidity).
+            {
+                auto        target_data = target.data_view();
+                const auto *inner       = detail::target_link_storage(target_data);
+                if (inner != nullptr && !inner->bound())
+                {
+                    return TimeSeriesReference::empty(view_schema);
+                }
+            }
             return TimeSeriesReference{std::move(target)};
         }
 

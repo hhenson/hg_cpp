@@ -51,6 +51,12 @@ def _value_type(scalar):
 
 
 class _TsExpr:
+    @staticmethod
+    def from_ts(*ports):
+        from ._types import TSL
+
+        return TSL.from_ts(*ports)
+
     """A resolved time-series type: wraps the C++ TsType handle."""
 
     __slots__ = ("handle", "_label")
@@ -120,6 +126,15 @@ class Size:
 
 
 class _TSLMeta(type):
+    @staticmethod
+    def from_ts(*ports):
+        """hgraph parity: build a TSL from individual TS ports."""
+        import _hgraph as _m
+
+        from ._runtime import WiringPort, _unwrap
+
+        return WiringPort(_m.tsl_port([_unwrap(p) for p in ports]))
+
     def __getitem__(cls, item):
         element, size = item
         try:

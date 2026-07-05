@@ -376,3 +376,37 @@ The three types share the same lifetime invariant: borrowed target
 pointers are only valid while the owning framework keeps the target
 storage alive or explicitly unbinds the link first. Each one's
 notification surface is shaped to its job.
+
+Reference tokens over alternative-backed targets
+------------------------------------------------
+
+``TSInputView::reference()`` converts an input position to a
+``TimeSeriesReference``. Two rules govern positions whose resolved target
+lands on a from-REF alternative (added with the race-semantics work,
+2026-07-05):
+
+- **Bound alternative → reference TO the alternative position.** The
+  consumer keeps following the alternative's retargets (liveness — the
+  mesh dependency plumbing relies on this).
+- **Unbound alternative → typed EMPTY reference.** The source reference
+  emptied; the token must OBSERVE that invalidity (hgraph parity:
+  ``race`` re-races when the winning candidate's reference items go
+  empty). Collapsing further (chasing to the real output) is wrong in
+  both directions: a snapshot of the current target breaks retarget
+  liveness, and a live ref-to-ref never observes emptiness.
+
+Two supporting rules from the same work:
+
+- The ``structural_ref`` node declares an explicitly EMPTY
+  ``valid_inputs`` set (not nullopt = "all fields"): it must re-evaluate
+  when its source goes INVALID so consumers observe the emptied
+  reference.
+- ``race`` carries a second, always-active ``values`` input binding the
+  candidates DEREFERENCED (hgraph's hidden ``_values``): reference
+  inputs alone do not tick when a target merely becomes valid or
+  invalid. ``race_ref_impl`` is deliberately NOT registered as a direct
+  overload — its two-input shape would shadow the variadic graph
+  overload.
+- ``getitem_`` over a TSL holds its container input ACTIVE and dedupes
+  same-reference re-publishes: element REBINDS must re-emit the item
+  reference; plain value ticks must not.

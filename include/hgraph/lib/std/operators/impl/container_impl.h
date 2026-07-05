@@ -229,12 +229,18 @@ namespace hgraph::stdlib
             return true;
         }
 
-        static void eval(In<"ts", TSL<TsVar<"E">, SIZE<"N">>, InputActivity::Passive, InputValidity::Unchecked> ts,
+        static void eval(In<"ts", TSL<TsVar<"E">, SIZE<"N">>, InputValidity::Unchecked> ts,
                          In<"key", TS<Int>> key, Out<REF<TsVar<"E">>> out)
         {
-            const std::size_t          index =
+            // The ts input is ACTIVE: element/reference REBINDS (e.g. race
+            // re-targeting its winner) must re-emit the item reference, not
+            // only key ticks. Same-reference re-publishes are deduped so
+            // ordinary element value ticks do not retrigger consumers.
+            const std::size_t index =
                 container_impl_detail::normalize_item_index(key.value(), ts.size(), "TSL");
-            out.set(ts[index].base().reference());
+            TimeSeriesReference reference = ts[index].base().reference();
+            if (out.valid() && out.value().checked_as<TimeSeriesReference>() == reference) { return; }
+            out.set(std::move(reference));
         }
     };
 

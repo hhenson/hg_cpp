@@ -233,14 +233,26 @@ namespace hgraph::stdlib
         }
     };
 
-    //TODO: Re-review this as it seems more complicated that expected.
+    /**
+     * The race node (hgraph semantics, ext/main _flow_control.race_default):
+     * the winner is the candidate whose TARGET was valid first; a winner
+     * that goes invalid triggers a re-race. The ``ts`` input carries the
+     * candidate REFERENCES; references alone do not tick when a target
+     * becomes valid, so the ``values`` input binds the candidates
+     * DEREFERENCED (hgraph's hidden ``_values`` input) - a target validity
+     * change wakes the node. hgraph toggles ``_values`` active/passive
+     * around winner changes as an optimisation; here it stays active (the
+     * output still only ticks on winner change or winner-reference change).
+     */
     struct race_ref_impl
     {
         static void eval(In<"ts", TSL<REF<TsVar<"S">>, SIZE<"N">>, InputValidity::Unchecked> ts,
+                         In<"values", TSL<TsVar<"S">, SIZE<"N">>, InputValidity::Unchecked> values,
                          State<control_impl_detail::RaceState> state,
                          DateTime now,
                          Out<REF<TsVar<"S">>> out)
         {
+            static_cast<void>(values);   // wake-up only; reads go through the references
             auto current = state.get();
             control_impl_detail::ensure_race_state_size(current, ts.size());
 
@@ -324,7 +336,11 @@ namespace hgraph::stdlib
 
             WiringPortRef packed = WiringPortRef::structural_source(registry.tsl(ref_schema, ts.size()),
                                                                     std::move(children));
-            return wire<race_ref_impl>(w, Port<void>{w, std::move(packed)}).erased();
+            std::vector<WiringPortRef> value_children{ts.begin(), ts.end()};
+            WiringPortRef values = WiringPortRef::structural_source(registry.tsl(target, ts.size()),
+                                                                    std::move(value_children));
+            return wire<race_ref_impl>(w, Port<void>{w, std::move(packed)}, Port<void>{w, std::move(values)})
+                .erased();
         }
     };
 
@@ -425,7 +441,8 @@ namespace hgraph::stdlib
         register_graph_overload<any_, any_graph_impl>();
         register_overload<all_, all_tsd_impl>();
         register_overload<any_, any_tsd_impl>();
-        register_overload<race, race_ref_impl>();
+// race_ref_impl is wired ONLY through race_graph_impl::compose - a direct
+        // registration would let 2-arg calls match its (refs, values) shape.
         register_overload<if_, if_ref_impl>();
         register_overload<route_by_index, route_by_index_ref_impl>();
         register_overload<if_true, if_true_impl>();

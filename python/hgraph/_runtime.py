@@ -83,16 +83,32 @@ def _lift_scalars_to_const(args):
     return lifted if any_lifted else None
 
 
+class _OperatorFunction:
+    """A Python callable wiring the named registered operator. Supports
+    hgraph's SUBSCRIPT form ``op[TYPE](...)`` - the type becomes the
+    requested output type of the call."""
+
+    __slots__ = ("__name__", "__qualname__", "_output_type")
+
+    def __init__(self, name, output_type=None):
+        self.__name__ = name
+        self.__qualname__ = name
+        self._output_type = output_type
+
+    def __call__(self, *args, **kwargs):
+        if self._output_type is not None and "tp" not in kwargs and "output_type" not in kwargs:
+            kwargs["output_type"] = self._output_type
+        return wire(self.__name__, *args, **kwargs)
+
+    def __getitem__(self, item):
+        return _OperatorFunction(self.__name__, output_type=item)
+
+    def __repr__(self):
+        return f"<operator {self.__name__}>"
+
+
 def operator_function(name):
-    """A Python callable wiring the named registered operator."""
-
-    def _call(*args, **kwargs):
-        return wire(name, *args, **kwargs)
-
-    _call.__name__ = name
-    _call.__qualname__ = name
-    _call.__doc__ = f"Wire the hgraph operator '{name}' (registry-resolved)."
-    return _call
+    return _OperatorFunction(name)
 
 
 # --- hgraph's WiringPort operator sugar (ext/main _operators pattern) ---
@@ -117,6 +133,27 @@ for dunder, op_name in {
     setattr(WiringPort, dunder, (lambda op: lambda x: wire(op, x))(op_name))
 WiringPort.__getitem__ = lambda self, item: wire("getitem_", self, item)
 WiringPort.__hash__ = object.__hash__  # __eq__ wires a node; identity hashing stands
+
+
+_TSL_KIND = 3   # TSTypeKind::TSL
+
+
+def _port_len(self):
+    ts_type = self._port.ts_type
+    if ts_type.kind == _TSL_KIND and ts_type.fixed_size > 0:
+        return ts_type.fixed_size
+    raise TypeError("len() is only defined for fixed-size TSL ports")
+
+
+def _port_iter(self):
+    # The sequence protocol for fixed TSLs (`*tsl` unpacking, hgraph
+    # parity). Without __len__/__iter__, python's fallback iteration via
+    # __getitem__ would wire getitem_ nodes FOREVER.
+    return (self[i] for i in range(len(self)))
+
+
+WiringPort.__len__ = _port_len
+WiringPort.__iter__ = _port_iter
 
 
 def _port_getattr(self, name):
@@ -883,7 +920,7 @@ def run_graph(graph_fn, *args, start_time=None, end_time=None,
     try:
         out = graph_fn(*args, **kwargs)
         if out is not None:
-            w.wire("__harness_record", (_unwrap(out), "__run_graph__"), {})
+            w.wire("__harness_record", (_unwrap(out).dereferenced, "__run_graph__"), {})
         run = w.run(start_time=start_time, end_time=end_time,
                     realtime=run_mode == EvaluationMode.REAL_TIME)
     finally:
@@ -963,7 +1000,8 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         if out is None:
             run = w.run(start_time=__start_time__, end_time=__end_time__)
             return None
-        w.wire("__harness_record", (_unwrap(out), "eval_node::out"), {})
+        # hgraph parity: a REF graph output records its DEREFERENCED values.
+        w.wire("__harness_record", (_unwrap(out).dereferenced, "eval_node::out"), {})
         run = w.run(start_time=__start_time__, end_time=__end_time__)
     finally:
         _wiring_stack.pop()

@@ -499,9 +499,20 @@ namespace
                 return bundle.build();
             }
             case TSTypeKind::TSL: {
-                // A list/tuple of per-index entries; None = index silent this cycle.
                 const auto *map_meta = ts->delta_value_schema;
                 MapBuilder  builder{delta_binding(map_meta->key_type), delta_binding(map_meta->element_type)};
+                if (nb::isinstance<nb::dict>(object))
+                {
+                    // hgraph's SPARSE TSL delta: {index: child_delta}.
+                    for (auto [key, item] : nb::cast<nb::dict>(object))
+                    {
+                        const auto  index       = nb::cast<std::int64_t>(key);
+                        Value       child_delta = py_to_delta(item, ts->element_ts());
+                        builder.set_item_copy(std::addressof(index), child_delta.view().data());
+                    }
+                    return builder.build();
+                }
+                // A list/tuple of per-index entries; None = index silent this cycle.
                 std::int64_t index = 0;
                 for (nb::handle item : object)
                 {
@@ -1512,9 +1523,26 @@ NB_MODULE(_hgraph, m)
         .def("__eq__", [](const PyTsType &self, nb::handle other) {
             return nb::isinstance<PyTsType>(other) && nb::cast<PyTsType &>(other).meta == self.meta;
         })
-        .def("__hash__", [](const PyTsType &self) { return std::hash<const void *>{}(self.meta); });
+        .def("__hash__", [](const PyTsType &self) { return std::hash<const void *>{}(self.meta); })
+        .def_prop_ro("kind", [](const PyTsType &self) { return static_cast<int>(self.meta->kind); })
+        .def_prop_ro("fixed_size", [](const PyTsType &self) {
+            return self.meta->kind == TSTypeKind::TSL ? self.meta->fixed_size() : 0;
+        })
+        .def("__repr__", [](const PyTsType &self) {
+            return std::string{self.meta != nullptr && self.meta->display_name != nullptr ? self.meta->display_name
+                                                                                          : "<ts?>"};
+        });
     nb::class_<PyPort>(m, "Port")
-        .def_prop_ro("ts_type", [](const PyPort &self) { return PyTsType{self.ref.schema}; });
+        .def_prop_ro("ts_type", [](const PyPort &self) { return PyTsType{self.ref.schema}; })
+        .def_prop_ro("dereferenced", [](const PyPort &self) {
+            // The descriptive-schema patch (the Port::as / reference-service
+            // pattern): present a REF output as its value schema - input
+            // binding inserts the REF adaptation.
+            if (self.ref.schema == nullptr || self.ref.schema->kind != TSTypeKind::REF) { return self; }
+            PyPort patched = self;
+            patched.ref.schema = self.ref.schema->referenced_ts();
+            return patched;
+        });
     nb::class_<PyRun>(m, "Run").def("recorded", &PyRun::recorded, nb::arg("key"));
 
     m.def("ts_type", [](const std::string &name) {
@@ -1601,6 +1629,7 @@ NB_MODULE(_hgraph, m)
             return "unknown";
         })
         .def_prop_ro("name", [](const PyServiceDesc &self) { return self.descriptor->name; });
+    // (TsType kind/size introspection for the python sequence protocol)
     m.def("service_descriptor",
           [](const std::string &name, const std::string &flavour, std::optional<PyTsType> output,
              std::optional<PyTsType> key_ts, std::optional<PyTsType> value, std::optional<PyTsType> request,
@@ -1803,6 +1832,25 @@ NB_MODULE(_hgraph, m)
 
     // Pack argument ports into a STRUCTURAL un-named TSB (the dict/list
     // passing model for python user nodes - any arity, one operator).
+    m.def("tsl_port", [](nb::list ports) {
+        if (nb::len(ports) == 0) { throw nb::value_error("tsl_port requires at least one port"); }
+        std::vector<WiringPortRef> children;
+        children.reserve(nb::len(ports));
+        const TSValueTypeMetaData *element = nullptr;
+        for (nb::handle port : ports)
+        {
+            const WiringPortRef &ref = nb::cast<PyPort &>(port).ref;
+            if (element == nullptr) { element = ref.schema; }
+            else if (element != ref.schema)
+            {
+                throw nb::value_error("TSL.from_ts requires ports of one element type");
+            }
+            children.push_back(ref);
+        }
+        const auto *schema = TypeRegistry::instance().tsl(element, children.size());
+        return PyPort{WiringPortRef::structural_source(schema, std::move(children))};
+    });
+
     m.def("bundle_port", [](nb::list ports) {
         if (nb::len(ports) == 0) { throw nb::value_error("bundle_port requires at least one port"); }
         std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;

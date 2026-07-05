@@ -83,6 +83,7 @@ add_executable(hgraph_unit_tests
     test_error_handling.cpp
     test_graph_introspection.cpp
     test_operators.cpp
+    test_race_semantics.cpp
     test_std_operators.cpp
     test_compact_storage.cpp
     test_bundle_builder.cpp

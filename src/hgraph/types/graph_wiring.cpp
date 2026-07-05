@@ -203,7 +203,11 @@ namespace hgraph
             schema.input_schema      = input_schema;
             schema.output_schema     = output_schema;
             schema.node_kind         = NodeKind::Compute;
-            schema.valid_inputs      = {0};
+            // NO validity gating (an explicitly EMPTY required set - nullopt
+            // would mean "all fields"): the node must re-evaluate when the
+            // source goes INVALID too, so consumers observe the emptied
+            // reference (race re-races on winner invalidation).
+            schema.valid_inputs.emplace();
 
             NodeCallbacks callbacks;
             callbacks.evaluate = &evaluate_structural_ref_node;

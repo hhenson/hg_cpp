@@ -81,6 +81,9 @@ namespace hgraph
         /**
          * Convert this input projection to a reference token.
          *
+         * A REF-kind input produces its VALUE - the reference it carries -
+         * collapsing the ref-of-ref indirection (hgraph parity; an invalid
+         * REF input produces a typed EMPTY reference of the target schema).
          * A target-link input produces a PEERED reference when bound and a
          * typed EMPTY reference when unbound. Non-peered structural prefixes
          * convert recursively through their endpoint ops; leaf shapes reached
