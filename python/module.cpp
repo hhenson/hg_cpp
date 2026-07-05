@@ -569,6 +569,12 @@ NB_MODULE(_hgraph, m)
 
     m.def("operator_names", [] { return OperatorRegistry::instance().registered_names(); });
 
+    // The passive marker: a tagged COPY of the port (passivity applies to
+    // the tagged usage only - Python's passive(ts)).
+    m.def("passive", [](const PyPort &port) {
+        return PyPort{port.ref.with_arg_tag(WiringPortRef::ArgTag::Passive)};
+    });
+
     nb::class_<PyWiredFn>(m, "WiredFn");
     nb::class_<PySwitchCases>(m, "SwitchCases");
     nb::class_<PyFeedback>(m, "Feedback")

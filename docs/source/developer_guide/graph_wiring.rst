@@ -141,10 +141,11 @@ The shared core
        // NEVER part of graph structure — edge/source interning ignores it
        // (operators that must not dedup across tags fold them into their
        // scalar identity, e.g. map_'s MapCallConfig).
-       enum class ArgTag : std::uint8_t { None, PassThrough, NoKey };
+       enum class ArgTag : std::uint8_t { None, PassThrough, NoKey, Passive };
 
        const TSValueTypeMetaData *schema;
        ArgTag                     arg_tag;  // with_arg_tag(tag) returns a tagged copy
+
        // factories peered_source / structural_source / null_source, plus
        // source_kind() and the typed accessors.
    };
@@ -175,6 +176,18 @@ The shared core
        // Topo-sort + rank → a rank-ordered GraphBuilder (edges from each instance's inputs).
        GraphBuilder  finish() &&;
    };
+
+**The ``Passive`` tag** is the general-purpose marker (Python's
+``passive(ts)``, C++ ``passive(port)``): a tagged COPY of a port whose
+receiving node drops the matching slot from its active list — ticks on
+that input no longer schedule the node, values still read normally. The
+adjustment happens in ``Wiring::add_node`` via
+``NodeBuilder::with_passive_inputs`` (a schema rebind, like error capture —
+native nodes only), BEFORE schema resolution, so node identity/interning
+reflects passivity. Marking every input passive throws (the node could
+never fire). The motivating idiom is the feedback read —
+``add_(ts, passive(fb()))`` — which lets a bound feedback loop quiesce
+instead of re-ticking forever.
 
 - ``add_node`` keys the instance on ``(def, resolved schemas, input edges,
   scalars)`` — ``def`` is the node type's identity (``typeid(T)``), the resolved

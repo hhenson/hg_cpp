@@ -10,7 +10,7 @@ docs/source/developer_guide/parity_matrix.rst (e.g. REF is value-only)."""
 import _hgraph
 
 from ._types import TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema
-from ._runtime import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, REMOVED, feedback, switch_
+from ._runtime import WiringPort, graph, run_graph, eval_node, wire, operator_function, map_, reduce, REMOVED, feedback, switch_, passive
 
 MIN_ST = _hgraph.MIN_ST
 MIN_TD = _hgraph.MIN_TD
@@ -36,7 +36,7 @@ def __dir__():
 
 __all__ = [
     "TS", "TSS", "TSD", "TSL", "TSB", "Size", "TimeSeriesSchema",
-    "WiringPort", "graph", "run_graph", "eval_node", "wire", "map_", "reduce", "REMOVED", "feedback", "switch_",
+    "WiringPort", "graph", "run_graph", "eval_node", "wire", "map_", "reduce", "REMOVED", "feedback", "switch_", "passive",
     "MIN_ST", "MIN_TD", "IN_MEMORY", "DATA_FRAME",
     "set_record_replay_config", "evaluate_const",
 ]

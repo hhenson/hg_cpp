@@ -163,9 +163,9 @@ Recorded divergences / gaps (the morning-summary list):
   as C++ sub-graphs, so ``map_``/``switch_`` branches must be registered
   operators (a Python-graph-to-``CompiledSubGraph`` path is the next
   large bridge feature, alongside ``@compute_node`` Python user nodes).
-- Feedback consumption is **active** (per-edge passivity is a planned
-  runtime feature, designed doc-first); bound feedback loops need an
-  explicit end time until then.
+- ``passive(port)`` landed (both languages): the feedback idiom is
+  ``a + passive(fb())``, and such loops quiesce naturally. ACTIVE feedback
+  consumption still needs an explicit end time.
 - ``run_graph`` output times are cycle-aligned from the start time in
   ``MIN_TD`` steps (the simulation clock convention).
 - Services/adaptors/contexts/components are not yet surfaced in Python.

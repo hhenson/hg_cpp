@@ -135,6 +135,14 @@ class Feedback:
         return self
 
 
+def passive(port):
+    """hgraph's passive marker: the receiving node's input for THIS usage is
+    removed from its active list (ticks no longer schedule the node; values
+    still read normally). Returns a marked copy - the original port is
+    unaffected."""
+    return WiringPort(_hgraph.passive(_unwrap(port)))
+
+
 def feedback(tp, initial=None):
     w = _current_wiring()
     return Feedback(w, w.feedback(_unwrap(tp), initial))

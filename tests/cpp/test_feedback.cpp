@@ -110,3 +110,29 @@ TEST_CASE("stdlib feedback supports canonical Fibonacci-style wiring")
     CHECK_OUTPUT(hgraph::testing::eval_node<FeedbackFibonacciGraph>(),
                  hgraph::testing::values<hgraph::Int>(1, 2, 3, 5, 8));
 }
+
+namespace
+{
+    struct PassiveFeedbackAccumulator
+    {
+        [[maybe_unused]] static constexpr auto name = "passive_feedback_accumulator";
+
+        static Port<TS<Int>> compose(Wiring &w, Port<TS<Int>> ts)
+        {
+            auto fb    = stdlib::feedback<TS<Int>>(w, Int{0});
+            auto total = wire<stdlib::add_>(w, ts, passive(fb())).as<TS<Int>>();
+            fb(total);
+            return total;
+        }
+    };
+}  // namespace
+
+TEST_CASE("feedback: passive consumption lets the loop quiesce naturally")
+{
+    stdlib::register_standard_operators();
+    // No end-time bound: the adder only fires on live ticks because the
+    // feedback read is passive, so the simulation ends when the inputs do.
+    CHECK_OUTPUT(hgraph::testing::eval_node<PassiveFeedbackAccumulator>(
+                     hgraph::testing::values<Int>(1, 2, 3)),
+                 hgraph::testing::values<Int>(1, 3, 6));
+}

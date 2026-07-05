@@ -1456,6 +1456,58 @@ namespace hgraph
         return result;
     }
 
+    NodeBuilder NodeBuilder::with_passive_inputs(std::span<const std::size_t> slots) const
+    {
+        if (binding_ == nullptr) { throw std::logic_error("NodeBuilder has no binding"); }
+        if (slots.empty()) { return *this; }
+
+        const NodeOps &node_ops = binding_->ops_ref();
+        // Same constraint as error capture: the rebind reuses the native
+        // runtime context; custom-ops nodes (nested/map/switch) manage their
+        // own activation.
+        if (node_ops.evaluate_impl != &evaluate_impl || node_ops.context == nullptr)
+        {
+            throw std::invalid_argument("passive inputs are only supported on native nodes");
+        }
+        const auto &origin = *static_cast<const NodeRuntimeContext *>(node_ops.context);
+
+        NodeTypeMetaData schema = *binding_->type_meta;
+        const std::size_t input_count =
+            schema.input_schema != nullptr && schema.input_schema->kind == TSTypeKind::TSB
+                ? schema.input_schema->field_count()
+                : (schema.input_schema != nullptr ? 1 : 0);
+
+        std::vector<std::size_t> active;
+        if (schema.active_inputs.has_value()) { active = *schema.active_inputs; }
+        else
+        {
+            active.resize(input_count);
+            for (std::size_t slot = 0; slot < input_count; ++slot) { active[slot] = slot; }
+        }
+        const bool had_active = !active.empty();
+        for (const std::size_t slot : slots)
+        {
+            if (slot >= input_count) { throw std::out_of_range("passive input slot is out of range"); }
+            std::erase(active, slot);
+        }
+        if (had_active && active.empty())
+        {
+            throw std::invalid_argument(
+                "passive would deactivate every input of the node — it could never evaluate");
+        }
+        schema.active_inputs = std::move(active);
+
+        const auto &plan = node_storage_plan_for(schema);
+        const auto &binding =
+            node_runtime_registry().make_binding(std::move(schema), origin.callbacks, plan, NodeOps{});
+
+        NodeBuilder result{binding, input_endpoint_};
+        result.output_endpoint_ = output_endpoint_;
+        result.label_           = label_;
+        result.scalars_         = scalars_;
+        return result;
+    }
+
     const TSEndpointSchema &NodeBuilder::input_endpoint() const noexcept
     {
         return input_endpoint_;

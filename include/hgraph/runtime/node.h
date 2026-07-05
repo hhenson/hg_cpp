@@ -367,6 +367,13 @@ namespace hgraph
          */
         [[nodiscard]] NodeBuilder with_error_capture(const TSValueTypeMetaData *error_schema) const;
 
+        /**
+         * A rebound builder whose ``active_inputs`` exclude ``slots`` (the
+         * wiring-time ``passive(port)`` marker; Python parity). Throws when
+         * every input would become passive — such a node could never fire.
+         */
+        [[nodiscard]] NodeBuilder with_passive_inputs(std::span<const std::size_t> slots) const;
+
         [[nodiscard]] const NodeTypeBinding &binding() const;
         [[nodiscard]] const TSEndpointSchema &input_endpoint() const noexcept;
         /**

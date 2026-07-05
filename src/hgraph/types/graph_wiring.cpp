@@ -519,6 +519,19 @@ namespace hgraph
     WiringPortRef Wiring::add_node(std::type_index def, NodeBuilder builder, std::span<const WiringInputRef> inputs,
                                    Value scalars)
     {
+        // The passive marker (Python's ``passive(ts)``): a Passive-tagged
+        // source removes the receiving slot from THIS node's active list.
+        // Adjusted before schema resolution so node identity reflects it.
+        std::vector<std::size_t> passive_slots;
+        for (std::size_t slot = 0; slot < inputs.size(); ++slot)
+        {
+            if (inputs[slot].source.arg_tag == WiringPortRef::ArgTag::Passive) { passive_slots.push_back(slot); }
+        }
+        if (!passive_slots.empty())
+        {
+            builder = builder.with_passive_inputs({passive_slots.data(), passive_slots.size()});
+        }
+
         const WiringNodeSchema schema = resolved_schema_of(builder);
 
         // Output-less (sink / side-effecting) nodes are never deduped: two identical

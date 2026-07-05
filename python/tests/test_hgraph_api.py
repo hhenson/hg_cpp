@@ -140,11 +140,25 @@ def test_switch_over_named_branches():
 
 
 def test_feedback_accumulator():
-    # NOTE: we currently cannot mark the fb() consumption as passive, so
-    # the bound loop re-ticks every cycle and the graph never quiesces; we
-    # set __end_time__ explicitly to ensure the test terminates. When
-    # per-edge passive support lands, drop the end time and let the graph
-    # end naturally.
+    # The fb() read is consumed PASSIVELY (hgraph's default idiom), so the
+    # adder only fires on live ticks and the graph quiesces naturally - no
+    # end-time bound needed.
+    @graph
+    def accum(a: TS[int]) -> TS[int]:
+        fb = hg.feedback(TS[int], 0)
+        total = a + hg.passive(fb())
+        fb(total)
+        return total
+
+    out = eval_node(accum, [1, 2, 3])
+    check(out == [1, 3, 6], f"feedback: {out}")
+
+
+def test_feedback_active_consumption_with_explicit_end():
+    # ACTIVE consumption re-ticks every cycle; such a graph never quiesces
+    # and must be explicitly bounded. We run ONE TICK past the inputs to
+    # validate the run-on behaviour: with the inputs exhausted the loop
+    # still fires, re-adding the held a=3 to the fed-back total (6 -> 9).
     @graph
     def accum(a: TS[int]) -> TS[int]:
         fb = hg.feedback(TS[int], 0)
@@ -152,8 +166,8 @@ def test_feedback_accumulator():
         fb(total)
         return total
 
-    out = eval_node(accum, [1, 2, 3], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD)
-    check(out == [1, 3, 6], f"feedback: {out}")
+    out = eval_node(accum, [1, 2, 3], __end_time__=hg.MIN_ST + 4 * hg.MIN_TD)
+    check(out == [1, 3, 6, 9], f"feedback: {out}")
 
 
 def main():

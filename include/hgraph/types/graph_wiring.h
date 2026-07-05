@@ -121,6 +121,10 @@ namespace hgraph
             None        = 0,
             PassThrough = 1,   ///< do not demultiplex — pass the input whole
             NoKey       = 2,   ///< demultiplex, but exclude from key inference
+            /** The consuming node's input becomes PASSIVE (removed from its
+                active list; Python's ``passive(ts)`` marker). Applies to the
+                tagged USAGE only — tag a copy, the original port is untouched. */
+            Passive     = 3,
         };
 
         ArgTag arg_tag{ArgTag::None};
@@ -856,6 +860,18 @@ namespace hgraph
      * parameter is (operator graph overloads, sub-graphs, ``WiredFn``
      * functions — where the name also resolves the function's ``**kwargs``).
      */
+    /**
+     * Mark a port usage PASSIVE (Python's ``passive(ts)``): the receiving
+     * node's matching input is removed from its active list, so ticks on it
+     * no longer schedule the node (values still read normally). Returns a
+     * tagged COPY — passivity applies only where the returned port is used.
+     */
+    template <typename S>
+    [[nodiscard]] Port<S> passive(Port<S> port)
+    {
+        return Port<S>{port.checked_wiring(), port.erased().with_arg_tag(WiringPortRef::ArgTag::Passive)};
+    }
+
     template <fixed_string Name, typename S>
     struct NamedPort : Port<S>
     {
