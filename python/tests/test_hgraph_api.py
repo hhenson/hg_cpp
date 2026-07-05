@@ -598,9 +598,13 @@ def test_services_from_python():
     @hg.reference_service
     def base_rate() -> TS[int]: ...
 
+    @hg.service_impl(interfaces=base_rate)
+    def base_rate_impl() -> TS[int]:
+        return hg.const(100, tp=TS[int])
+
     @graph
     def ref_graph(x: TS[int]) -> TS[int]:
-        hg.register_service(base_rate, lambda: hg.const(100, tp=TS[int]), path="main")
+        hg.register_service("main", base_rate_impl)
         return x + hg.passive(base_rate(path="main"))
 
     check(eval_node(ref_graph, [1, 2]) == [101, 102], "reference service")
@@ -612,9 +616,11 @@ def test_services_from_python():
     def price_impl(keys: TSS[str]) -> TSD[str, TS[int]]:
         return {k: len(k) * 10 for k in keys.value}
 
+    quotes_impl = hg.service_impl(price_impl, interfaces=quotes)
+
     @graph
     def sub_graph(sym: TS[str]) -> TS[int]:
-        hg.register_service(quotes, price_impl, path="live")
+        hg.register_service("live", quotes_impl)
         return quotes(sym, path="live")
 
     # Subscription keys forward NEXT cycle by design (the sanctioned stub).
@@ -624,14 +630,39 @@ def test_services_from_python():
     @hg.request_reply_service
     def doubler(request: TS[int]) -> TS[int]: ...
 
+    @hg.service_impl(interfaces=doubler)
+    def doubler_impl(reqs) -> TSD[int, TS[int]]:
+        return hg.map_("add_", reqs, reqs)
+
     @graph
     def rr_graph(x: TS[int]) -> TS[int]:
-        hg.register_service(doubler, lambda reqs: hg.map_("add_", reqs, reqs), path="dbl")
+        hg.register_service("dbl", doubler_impl)
         return doubler(x, path="dbl")
 
     # Request stubs forward next cycle; a re-requesting client conflates.
     out = eval_node(rr_graph, [5, 7], __end_time__=hg.MIN_ST + 4 * hg.MIN_TD)
     check(out == [None, None, 14], f"request/reply service: {out}")
+
+    # @service_impl validates: wrong signature shape for the flavour...
+    try:
+        @hg.service_impl(interfaces=base_rate)
+        def bad_impl(extra) -> TS[int]:
+            return hg.const(1, tp=TS[int])
+        check(False, "expected a shape validation error")
+    except TypeError:
+        pass
+
+    # ...and register_service refuses undecorated implementations.
+    @graph
+    def unvalidated(x: TS[int]) -> TS[int]:
+        hg.register_service("p", lambda: hg.const(1, tp=TS[int]))
+        return x
+
+    try:
+        eval_node(unvalidated, [1])
+        check(False, "expected WiringError")
+    except hg.WiringError:
+        pass
 
 
 def main():

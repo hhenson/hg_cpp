@@ -232,9 +232,13 @@ Recorded divergences / gaps (the morning-summary list):
   (services.rst *Runtime service identity*): ``@reference_service`` /
   ``@subscription_service`` / ``@request_reply_service`` decorate
   interface stubs (annotations give the schemas; calling the stub wires a
-  client with ``path=``); ``register_service(stub_or_name, impl, path=)``
-  registers a Python impl — by NAME for C++-defined interfaces (the ruled
-  direction). The erased core (``types/service_runtime.{h,cpp}``) shares
+  client with ``path=``); implementations are
+  ``@service_impl(interfaces=...)``-decorated (hgraph's shape — the
+  declared interfaces validate the impl's signature per flavour at
+  decoration and drive ``register_service(path, impl)``, path first;
+  undecorated impls are refused); interfaces may be stubs or the NAMES of
+  C++-defined interfaces (the ruled direction). The erased core
+  (``types/service_runtime.{h,cpp}``) shares
   the role markers, path grammar and node makers with the templates, so
   an erased registration UNIFIES with a template client on the same path
   (proven in ``test_service_runtime.cpp``). Adaptors keep the template

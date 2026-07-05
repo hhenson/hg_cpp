@@ -384,6 +384,7 @@ class _ServiceStub:
     def __init__(self, fn, flavour):
         self.fn = fn
         self.__name__ = fn.__name__
+        self.flavour = flavour
         sig = inspect.signature(fn)
         params = [p for p in sig.parameters.values() if isinstance(p.annotation, _TsExpr)]
         out = sig.return_annotation
@@ -427,18 +428,76 @@ def request_reply_service(fn):
     return _ServiceStub(fn, "request_reply")
 
 
-def register_service(stub, impl, path=""):
-    """Register ``impl`` (a @graph / lambda / operator name) as the
-    implementation of ``stub`` on ``path``. ``stub`` may also be the NAME of
-    a C++-defined interface (the ruled direction: Python impls for C++
-    stubs)."""
-    if isinstance(stub, str):
-        descriptor = _hgraph.find_service(stub)
-        if descriptor is None:
-            raise WiringError(f"no service interface named '{stub}'")
-    else:
-        descriptor = stub.descriptor
-    _hgraph.register_service_impl(_current_wiring(), descriptor, path, _as_wired(impl))
+_FLAVOUR_TS_ARITY = {"reference": 0, "subscription": 1, "request_reply": 1}
+
+
+class _ServiceImpl:
+    """@service_impl: an implementation declaring WHICH interfaces it
+    supports - validated at decoration (signature shape per flavour) and
+    used at registration (hgraph parity)."""
+
+    def __init__(self, fn, interfaces):
+        self.fn = fn
+        self.__name__ = fn.__name__
+        if interfaces is None:
+            raise TypeError(f"@service_impl '{self.__name__}' requires interfaces=")
+        if not isinstance(interfaces, (tuple, list)):
+            interfaces = (interfaces,)
+        self.interfaces = tuple(self._resolve(stub) for stub in interfaces)
+        target = getattr(fn, "fn", fn)   # unwrap @graph/@compute_node wrappers
+        ts_params = [
+            p for p in inspect.signature(target).parameters.values()
+            if isinstance(p.annotation, _TsExpr) or p.annotation is inspect.Signature.empty
+        ]
+        for stub in self.interfaces:
+            expected = _FLAVOUR_TS_ARITY[stub.flavour]
+            if len(ts_params) != expected:
+                raise TypeError(
+                    f"@service_impl '{self.__name__}': a {stub.flavour} implementation takes "
+                    f"{expected} time-series parameter(s), found {len(ts_params)}"
+                )
+
+    @staticmethod
+    def _resolve(stub):
+        if isinstance(stub, str):
+            descriptor = _hgraph.find_service(stub)
+            if descriptor is None:
+                raise WiringError(f"no service interface named '{stub}'")
+
+            class _CppStub:
+                pass
+
+            resolved = _CppStub()
+            resolved.descriptor = descriptor
+            resolved.flavour = descriptor.flavour
+            return resolved
+        if not isinstance(stub, _ServiceStub):
+            raise TypeError(f"@service_impl interfaces must be service stubs, got {stub!r}")
+        return stub
+
+
+def service_impl(fn=None, *, interfaces=None):
+    """hgraph's @service_impl: declares (and validates) the interfaces an
+    implementation supports; register with ``register_service(path, impl)``.
+    Interfaces may be stubs or the NAMES of C++-defined interfaces (the
+    ruled direction: Python impls for C++ stubs)."""
+    if fn is None:
+        return lambda f: _ServiceImpl(f, interfaces)
+    return _ServiceImpl(fn, interfaces)
+
+
+def register_service(path, implementation, **kwargs):
+    """Bind ``implementation`` (an @service_impl) to ``path`` (hgraph's
+    signature: path first). Each declared interface registers on the path."""
+    if not isinstance(implementation, _ServiceImpl):
+        raise WiringError("register_service requires an @service_impl-decorated implementation")
+    if kwargs:
+        raise WiringError("implementation kwargs are not supported yet")
+    if len(implementation.interfaces) > 1:
+        raise WiringError("multi-interface implementations are not supported from Python yet")
+    stub = implementation.interfaces[0]
+    _hgraph.register_service_impl(
+        _current_wiring(), stub.descriptor, path, _as_wired(implementation.fn))
 
 
 class _RecordReplayModes:

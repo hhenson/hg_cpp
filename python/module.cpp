@@ -1497,7 +1497,17 @@ NB_MODULE(_hgraph, m)
 
     // Context publishing (same-wiring; the C++ design record's semantics).
     // --- services (runtime identity; services.rst rulings 2026-07-05) ---
-    nb::class_<PyServiceDesc>(m, "ServiceDescriptor");
+    nb::class_<PyServiceDesc>(m, "ServiceDescriptor")
+        .def_prop_ro("flavour", [](const PyServiceDesc &self) {
+            switch (self.descriptor->flavour)
+            {
+                case ServiceFlavour::Reference: return "reference";
+                case ServiceFlavour::Subscription: return "subscription";
+                case ServiceFlavour::RequestReply: return "request_reply";
+            }
+            return "unknown";
+        })
+        .def_prop_ro("name", [](const PyServiceDesc &self) { return self.descriptor->name; });
     m.def("service_descriptor",
           [](const std::string &name, const std::string &flavour, std::optional<PyTsType> output,
              std::optional<PyTsType> key_ts, std::optional<PyTsType> value, std::optional<PyTsType> request,
