@@ -371,6 +371,8 @@ NB_MODULE(_hgraph, m)
     });
     m.attr("IN_MEMORY")  = std::string{record_replay::IN_MEMORY};
     m.attr("DATA_FRAME") = std::string{record_replay::DATA_FRAME};
+    m.attr("MIN_ST")     = nb::cast(MIN_ST);
+    m.attr("MIN_TD")     = nb::cast(MIN_TD);
 
     m.def("operator_names", [] { return OperatorRegistry::instance().registered_names(); });
 

@@ -3,10 +3,12 @@
 nanobind_add_module(_hgraph NB_STATIC NOSTRIP module.cpp)
 target_link_libraries(_hgraph PRIVATE hgraph_core hgraph::options)
 
-add_test(
-    NAME hgraph_python_bridge
-    COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bridge.py"
-)
-set_tests_properties(hgraph_python_bridge PROPERTIES
-    ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:_hgraph>"
-)
+foreach(_hgraph_py_test IN ITEMS test_bridge test_hgraph_api)
+    add_test(
+        NAME hgraph_python_${_hgraph_py_test}
+        COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/${_hgraph_py_test}.py"
+    )
+    set_tests_properties(hgraph_python_${_hgraph_py_test} PROPERTIES
+        ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:_hgraph>:${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+endforeach()
