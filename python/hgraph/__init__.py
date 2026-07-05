@@ -25,6 +25,7 @@ evaluate_const = _hgraph.evaluate_const
 TimeSeries = _hgraph.TimeSeries
 _hgraph._set_removed_sentinel(REMOVED)
 _hgraph._set_cmp_result_enum(CmpResult)
+_hgraph._set_divide_by_zero_enum(DivideByZero)
 
 _OPERATOR_NAMES = frozenset(_hgraph.operator_names())
 

@@ -13,6 +13,7 @@
 #include <hgraph/types/wired_fn.h>
 #include <hgraph/lib/std/component.h>
 #include <hgraph/types/time_series/ts_delta.h>
+#include <hgraph/lib/std/operators/arithmetic.h>
 #include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/types/context_wiring.h>
@@ -118,6 +119,20 @@ namespace
     };
 
 
+    /** Registered python enum classes for C++ enum scalars (immortal). */
+    [[nodiscard]] nb::object &cmp_result_enum_slot()
+    {
+        static auto *slot = new nb::object{};
+        return *slot;
+    }
+
+    [[nodiscard]] nb::object &divide_by_zero_enum_slot()
+    {
+        static auto *slot = new nb::object{};
+        return *slot;
+    }
+
+
     [[nodiscard]] Value py_to_value(nb::handle object);
     [[nodiscard]] nb::object value_to_py(const ValueView &view);
     [[nodiscard]] Value py_arrow_to_frame(nb::handle object);
@@ -212,6 +227,14 @@ namespace
         TimeDelta delta;
         if (nb::try_cast<TimeDelta>(object, delta)) { return Value{delta}; }
         if (nb::hasattr(object, "__arrow_c_stream__")) { return py_arrow_to_frame(object); }
+        if (cmp_result_enum_slot().is_valid() && nb::isinstance(object, cmp_result_enum_slot()))
+        {
+            return Value{static_cast<stdlib::CmpResult>(nb::cast<std::int64_t>(object.attr("value")))};
+        }
+        if (divide_by_zero_enum_slot().is_valid() && nb::isinstance(object, divide_by_zero_enum_slot()))
+        {
+            return Value{static_cast<stdlib::DivideByZero>(nb::cast<std::int64_t>(object.attr("value")))};
+        }
         if (nb::isinstance<nb::frozenset>(object) || nb::isinstance<nb::set>(object) ||
             nb::isinstance<nb::dict>(object) || nb::isinstance<nb::tuple>(object) ||
             nb::isinstance<nb::list>(object))
@@ -268,13 +291,6 @@ namespace
         auto table = arrow::Table::FromRecordBatchReader(reader->get());
         if (!table.ok()) { throw std::runtime_error("arrow read failed: " + table.status().ToString()); }
         return Value{Frame{.table = std::move(*table)}};
-    }
-
-    /** Registered python enum classes for C++ enum scalars (immortal). */
-    [[nodiscard]] nb::object &cmp_result_enum_slot()
-    {
-        static auto *slot = new nb::object{};
-        return *slot;
     }
 
     [[nodiscard]] nb::object atomic_to_py(const ValueView &view)
@@ -380,6 +396,44 @@ namespace
             !nb::isinstance<nb::bool_>(object))
         {
             return Value{Float{static_cast<Float>(nb::cast<Int>(object))}};
+        }
+        // TARGET-DIRECTED container building: the target meta decides the
+        // container kind (immutable/compact included) and element schemas -
+        // this also makes empty python containers constructible.
+        switch (meta->kind)
+        {
+            case ValueTypeKind::Set: {
+                SetBuilder builder{delta_binding(meta->element_type)};
+                for (nb::handle item : object)
+                {
+                    (void)builder.insert_copy(py_to_value_as(item, meta->element_type).view().data());
+                }
+                return builder.build();
+            }
+            case ValueTypeKind::Map: {
+                MapBuilder builder{delta_binding(meta->key_type), delta_binding(meta->element_type)};
+                for (auto [key, item] : nb::cast<nb::dict>(object))
+                {
+                    builder.set_item_copy(py_to_value_as(key, meta->key_type).view().data(),
+                                          py_to_value_as(item, meta->element_type).view().data());
+                }
+                return builder.build();
+            }
+            case ValueTypeKind::List: {
+                ListBuilder builder{delta_binding(meta->element_type)};
+                for (nb::handle item : object)
+                {
+                    builder.push_back_copy(py_to_value_as(item, meta->element_type).view().data());
+                }
+                return builder.build();
+            }
+            case ValueTypeKind::Any: {
+                Value inner = py_to_value(object);
+                Value boxed{delta_binding(meta)};
+                MutableAnyView{boxed.begin_mutation()}.set(std::move(inner));
+                return boxed;
+            }
+            default: break;
         }
         Value value = py_to_value(object);
         if (meta->kind == ValueTypeKind::Any && value.schema() != meta)
@@ -1716,6 +1770,8 @@ NB_MODULE(_hgraph, m)
         .def("__str__", [](const PyTimeSeries &self) { return nb::str(self.value()); })
         .def("__repr__", [](const PyTimeSeries &self) { return nb::str("TimeSeries({})").format(self.value()); });
     m.def("_set_cmp_result_enum", [](nb::object enum_class) { cmp_result_enum_slot() = std::move(enum_class); });
+    m.def("_set_divide_by_zero_enum",
+          [](nb::object enum_class) { divide_by_zero_enum_slot() = std::move(enum_class); });
     m.def("_set_removed_sentinel", [](nb::object sentinel) { PyTimeSeries::removed_slot() = std::move(sentinel); });
     nb::class_<PyArrowStream>(m, "ArrowStream")
         .def("__arrow_c_stream__",

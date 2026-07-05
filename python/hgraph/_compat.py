@@ -11,12 +11,13 @@ class CmpResult(Enum):
 
 
 class DivideByZero(Enum):
-    ERROR = 1
-    NAN = 2
-    INF = 3
-    NONE = 4
-    ZERO = 5
-    ONE = 6
+    # Values match the C++ stdlib::DivideByZero scale.
+    ERROR = 0
+    NAN = 1
+    INF = 2
+    NONE = 3   # C++ NoTick: a zero divisor leaves the output un-ticked
+    ZERO = 4
+    ONE = 5
 
 
 def exception_time_series(ts):

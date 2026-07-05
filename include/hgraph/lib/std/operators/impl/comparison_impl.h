@@ -2,7 +2,8 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_COMPARISON_IMPL_H
 
 #include <hgraph/lib/std/lifted_kernels.h>
-#include <hgraph/lib/std/operators/comparison.h>   // eq_ / ne_ / lt_ / ...
+#include <hgraph/lib/std/operators/comparison.h>
+#include <hgraph/lib/std/operators/impl/higher_order_impl.h>   // eq_ / ne_ / lt_ / ...
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
@@ -99,6 +100,171 @@ namespace hgraph::stdlib
         };
     }  // namespace comparison_impl_detail
 
+    namespace comparison_impl_detail
+    {
+        /**
+         * The GENERIC same-schema comparisons over erased value equality /
+         * ordering (the value ops' equals/compare) — the fallback that
+         * covers container scalars (tuple / frozenset / map / ...). Typed
+         * overloads outrank these (~T generics rank below concrete).
+         */
+        struct eq_any_impl
+        {
+            static constexpr auto name = "eq_any";
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
+                             Out<TS<Bool>> out)
+            {
+                out.set(lhs.base().value().equals(rhs.base().value()));
+            }
+        };
+
+        struct ne_any_impl
+        {
+            static constexpr auto name = "ne_any";
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
+                             Out<TS<Bool>> out)
+            {
+                out.set(!lhs.base().value().equals(rhs.base().value()));
+            }
+        };
+
+        struct cmp_any_impl
+        {
+            static constexpr auto name = "cmp_any";
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
+                             Out<TS<CmpResult>> out)
+            {
+                const auto order = lhs.base().value().compare(rhs.base().value());
+                out.set(order == std::partial_ordering::less      ? CmpResult::LT
+                        : order == std::partial_ordering::greater ? CmpResult::GT
+                                                                  : CmpResult::EQ);
+            }
+        };
+    }  // namespace comparison_impl_detail
+
+    namespace comparison_impl_detail
+    {
+        /** Running (unary) extremum: ticks only when the running value improves. */
+        template <bool Min>
+        struct running_extremum_impl
+        {
+            static constexpr auto name = Min ? "min_unary" : "max_unary";
+
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts, Out<TS<ScalarVar<"T">>> out)
+            {
+                const ValueView value = ts.base().value();
+                if (!out.valid())
+                {
+                    out.apply(value);
+                    return;
+                }
+                const auto order = value.compare(out.value());
+                if ((Min && order == std::partial_ordering::less) ||
+                    (!Min && order == std::partial_ordering::greater))
+                {
+                    out.apply(value);
+                }
+            }
+        };
+
+        /** NON-STRICT binary extremum: a single valid side passes through. */
+        template <bool Min>
+        struct nonstrict_extremum_impl
+        {
+            static constexpr auto name = Min ? "min_nonstrict" : "max_nonstrict";
+
+            static std::vector<std::pair<std::string_view, Value>> defaults()
+            {
+                return {{"__strict__", Value{Bool{true}}}};
+            }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                const auto *strict = context.scalar_as<Bool>("__strict__");
+                return strict != nullptr && !*strict;
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>, InputValidity::Unchecked> lhs,
+                             In<"rhs", TS<ScalarVar<"T">>, InputValidity::Unchecked> rhs,
+                             Scalar<"__strict__", Bool> strict, Out<TS<ScalarVar<"T">>> out)
+            {
+                static_cast<void>(strict);
+                const bool lhs_ok = lhs.valid();
+                const bool rhs_ok = rhs.valid();
+                if (!lhs_ok && !rhs_ok) { return; }
+                if (lhs_ok && rhs_ok)
+                {
+                    const auto order = lhs.base().value().compare(rhs.base().value());
+                    const bool pick_lhs = Min ? order != std::partial_ordering::greater
+                                              : order != std::partial_ordering::less;
+                    out.apply(pick_lhs ? lhs.base().value() : rhs.base().value());
+                    return;
+                }
+                out.apply(lhs_ok ? lhs.base().value() : rhs.base().value());
+            }
+        };
+
+        /** N-ary extremum (>2 args): a fold of binary applications. */
+        template <bool Min>
+        struct multi_extremum_impl
+        {
+            static constexpr auto name = Min ? "min_multi" : "max_multi";
+
+            static std::vector<std::pair<std::string_view, Value>> defaults()
+            {
+                return {{"__strict__", Value{Bool{true}}}};
+            }
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return context.args.size() > 2;   // binary overloads win the pair case
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                // The result type is the (shared) argument type.
+                if (!context.args.empty() && context.args[0].kind == WiringArg::Kind::TimeSeries)
+                {
+                    higher_order_impl_detail::bind_graph_output(resolution, context.args[0].port.schema, "O");
+                }
+            }
+
+            static WiringPortRef compose(Wiring &w, VarIn<"ts", TsVar<"TS">> ts, Scalar<"__strict__", Bool> strict)
+            {
+                constexpr std::string_view op = Min ? "min_" : "max_";
+                WiringPortRef acc = ts[0];
+                for (std::size_t index = 1; index < ts.size(); ++index)
+                {
+                    WiringArg lhs_arg;
+                    lhs_arg.kind = WiringArg::Kind::TimeSeries;
+                    lhs_arg.port = acc;
+                    WiringArg rhs_arg;
+                    rhs_arg.kind = WiringArg::Kind::TimeSeries;
+                    rhs_arg.port = ts[index];
+                    if (strict.value())
+                    {
+                        std::array<WiringArg, 2> pair{lhs_arg, rhs_arg};
+                        acc = wire_operator(w, op, pair).output.erased();
+                    }
+                    else
+                    {
+                        WiringArg strict_arg;
+                        strict_arg.kind         = WiringArg::Kind::Scalar;
+                        strict_arg.scalar_value = Value{Bool{false}};
+                        strict_arg.scalar_meta  = strict_arg.scalar_value.schema();
+                        strict_arg.name         = "__strict__";
+                        std::array<WiringArg, 3> triple{lhs_arg, rhs_arg, strict_arg};
+                        acc = wire_operator(w, op, triple).output.erased();
+                    }
+                }
+                return acc;
+            }
+        };
+    }  // namespace comparison_impl_detail
+
     /** Register the comparison operator overloads. */
     inline void register_comparison_operators()
     {
@@ -138,6 +304,16 @@ namespace hgraph::stdlib
         register_mixed_numeric_comparisons<ge_, scalar_ge>();
 
         register_ordered_same_scalar_comparisons<cmp_, scalar_cmp>();
+        register_overload<cmp_, lift<scalar_cmp<Bool>>>();
+        register_overload<eq_, comparison_impl_detail::eq_any_impl>();
+        register_overload<ne_, comparison_impl_detail::ne_any_impl>();
+        register_overload<cmp_, comparison_impl_detail::cmp_any_impl>();
+        register_overload<min_, comparison_impl_detail::running_extremum_impl<true>>();
+        register_overload<max_, comparison_impl_detail::running_extremum_impl<false>>();
+        register_overload<min_, comparison_impl_detail::nonstrict_extremum_impl<true>>();
+        register_overload<max_, comparison_impl_detail::nonstrict_extremum_impl<false>>();
+        register_graph_overload<min_, comparison_impl_detail::multi_extremum_impl<true>>();
+        register_graph_overload<max_, comparison_impl_detail::multi_extremum_impl<false>>();
         register_mixed_numeric_comparisons<cmp_, scalar_cmp>();
 
         register_overload<min_, lift<scalar_min<Int>, std::numeric_limits<Int>::max()>>();

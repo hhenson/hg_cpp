@@ -3,8 +3,8 @@ import math
 import pytest
 
 from hgraph import add_, sub_, div_, exception_time_series, TS, graph, mod_, divmod_, pow_, eq_, const, DivideByZero, ln, sign
-# deviation: python-implementation internals (div_numbers) do not exist
-div_numbers = None
+# deviation: python-implementation internals - div_numbers adapts to the div_ OP
+from hgraph import div_ as div_numbers
 from hgraph.test import eval_node
 
 import pytest

@@ -38,6 +38,12 @@ def _unwrap(value):
 def wire(name, *args, __output_type__=None, **kwargs):
     """Wire operator ``name`` by registry resolution (the erased contract)."""
     out_type = kwargs.pop("tp", None) or kwargs.pop("output_type", None) or __output_type__
+    # hgraph idiom: a positional TYPE argument names the requested output
+    # type (e.g. nothing(TS[int])).
+    positional_types = [a for a in args if isinstance(a, _TsExpr)]
+    if positional_types and out_type is None:
+        out_type = positional_types[0]
+        args = tuple(a for a in args if not isinstance(a, _TsExpr))
     if out_type is not None:
         out_type = out_type.handle if isinstance(out_type, _TsExpr) else out_type
     w = _current_wiring()
@@ -895,21 +901,27 @@ def _infer_ts_type(series):
     for sample in series:
         if sample is None:
             continue
+        # UN-ANNOTATED inference treats container samples as SCALAR values
+        # (hgraph's operator-test convention). TSS/TSD delta semantics apply
+        # only through annotated parameters.
         if isinstance(sample, (set, frozenset)):
             for element in sample:
-                return TSS[type(element)]
+                return TS[frozenset[type(element)]]
+            continue
+        if isinstance(sample, tuple):
+            for element in sample:
+                return TS[tuple[type(element), ...]]
             continue
         if isinstance(sample, dict):
             for key_sample, value_sample in sample.items():
-                if value_sample is None:
-                    continue
-                return TSD[type(key_sample), TS[type(value_sample)]]
+                return TS[dict[type(key_sample), type(value_sample)]]
             continue
         return TS[type(sample)]
     return None
 
 
-def eval_node(fn, *inputs, output_type=None, __start_time__=None, __end_time__=None, __scalars__=None):
+def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
+              __start_time__=None, __end_time__=None, __scalars__=None, **kwargs):
     """Drive a @graph/composition ``fn`` with vectors of per-cycle values
     (None = no tick), mirroring hgraph's eval_node test util. Time-series
     input types come from ``fn``'s annotations. The run is unbounded by
@@ -933,6 +945,8 @@ def eval_node(fn, *inputs, output_type=None, __start_time__=None, __end_time__=N
                 ports.append(series)
                 continue
             annotation = params[i].annotation if i < len(params) else None
+            if resolution_dict and i < len(params) and params[i].name in resolution_dict:
+                annotation = resolution_dict[params[i].name]
             if not isinstance(annotation, _TsExpr):
                 annotation = _infer_ts_type(series)
                 if annotation is None:
@@ -942,7 +956,8 @@ def eval_node(fn, *inputs, output_type=None, __start_time__=None, __end_time__=N
             src = w.wire("__harness_replay", (key,), {}, output_type=annotation.handle)
             w.set_replay(key, list(series), ts_type=annotation.handle)
             ports.append(WiringPort(src))
-        scalars = __scalars__ or {}
+        scalars = dict(__scalars__ or {})
+        scalars.update(kwargs)   # hgraph parity: extra kwargs flow to the node
         out = fn(*ports, **scalars)
         length = max((len(series) for series in inputs if isinstance(series, (list, tuple))), default=0)
         if out is None:

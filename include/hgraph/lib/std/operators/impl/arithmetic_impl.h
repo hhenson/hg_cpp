@@ -2,7 +2,9 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_ARITHMETIC_IMPL_H
 
 #include <hgraph/lib/std/lifted_kernels.h>
-#include <hgraph/lib/std/operators/arithmetic.h>   // add_ / sub_ / mul_ / div_ / DivideByZero
+#include <hgraph/lib/std/operators/arithmetic.h>
+#include <hgraph/lib/std/operators/collection.h>
+#include <hgraph/lib/std/operators/impl/higher_order_impl.h>   // add_ / sub_ / mul_ / div_ / DivideByZero
 #include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
 #include <hgraph/types/operator_dispatch.h>
@@ -314,6 +316,147 @@ namespace hgraph::stdlib
         }
     };
 
+    namespace arithmetic_impl_detail
+    {
+        /** Welford accumulator for the running mean/std/var family. */
+        struct AggMoments
+        {
+            Int   count{0};
+            Float mean{0.0};
+            Float m2{0.0};
+
+            friend bool operator==(const AggMoments &, const AggMoments &) noexcept = default;
+        };
+
+        /** Running sum over one series (optionally reset by a bool series). */
+        template <typename T>
+        struct running_sum_impl
+        {
+            static constexpr auto name = "sum_unary";
+
+            static void eval(In<"ts", TS<T>> ts, Out<TS<T>> out)
+            {
+                const T prior = out.valid() ? out.value().template checked_as<T>() : T{};
+                out.set(prior + ts.value());
+            }
+        };
+
+        template <typename T>
+        struct running_sum_reset_impl
+        {
+            static constexpr auto name = "sum_unary_reset";
+
+            static void eval(In<"ts", TS<T>, InputValidity::Unchecked> ts,
+                             In<"reset", TS<Bool>, InputValidity::Unchecked> reset, Out<TS<T>> out)
+            {
+                if (reset.valid() && reset.modified())
+                {
+                    out.set(ts.modified() ? ts.value() : T{});
+                    return;
+                }
+                if (!ts.modified()) { return; }
+                const T prior = out.valid() ? out.value().template checked_as<T>() : T{};
+                out.set(prior + ts.value());
+            }
+        };
+
+        /** Running mean (population) over one series. */
+        template <typename T>
+        struct running_mean_impl
+        {
+            static constexpr auto name = "mean_unary";
+
+            static void eval(In<"ts", TS<T>> ts, State<Int> count, Out<TS<Float>> out)
+            {
+                const Int   n     = count.get() + 1;
+                const Float prior = out.valid() ? out.value().checked_as<Float>() : 0.0;
+                count.set(n);
+                out.set(prior + (static_cast<Float>(ts.value()) - prior) / static_cast<Float>(n));
+            }
+        };
+
+        /** Running population std / var (Welford). */
+        template <typename T, bool Std>
+        struct running_moments_impl
+        {
+            static constexpr auto name = Std ? "std_unary" : "var_unary";
+
+            static void eval(In<"ts", TS<T>> ts, State<AggMoments> state, Out<TS<Float>> out)
+            {
+                AggMoments  m     = state.get();
+                const Float value = static_cast<Float>(ts.value());
+                m.count += 1;
+                const Float delta = value - m.mean;
+                m.mean += delta / static_cast<Float>(m.count);
+                m.m2 += delta * (value - m.mean);
+                state.set(m);
+                const Float variance = m.count > 0 ? m.m2 / static_cast<Float>(m.count) : 0.0;
+                out.set(Std ? std::sqrt(variance) : variance);
+            }
+        };
+
+        /** N-ary sum / mean over the argument series (a fold of add_). */
+        template <bool Mean>
+        struct multi_sum_impl
+        {
+            static constexpr auto name = Mean ? "mean_multi" : "sum_multi";
+
+            static bool requires_(const ResolutionMap &, OperatorCallContext context)
+            {
+                return context.args.size() >= 2;   // the unary overloads own single-arg calls
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+                if constexpr (Mean)
+                {
+                    higher_order_impl_detail::bind_graph_output(
+                        resolution, TypeRegistry::instance().ts(scalar_descriptor<Float>::value_meta()), "O");
+                }
+                else
+                {
+                    higher_order_impl_detail::bind_graph_output(resolution, context.args[0].port.schema, "O");
+                }
+            }
+
+            static WiringPortRef compose(Wiring &w, VarIn<"ts", TsVar<"TS">> ts)
+            {
+                WiringPortRef acc = ts[0];
+                for (std::size_t index = 1; index < ts.size(); ++index)
+                {
+                    WiringArg lhs_arg;
+                    lhs_arg.kind = WiringArg::Kind::TimeSeries;
+                    lhs_arg.port = acc;
+                    WiringArg rhs_arg;
+                    rhs_arg.kind = WiringArg::Kind::TimeSeries;
+                    rhs_arg.port = ts[index];
+                    std::array<WiringArg, 2> pair{lhs_arg, rhs_arg};
+                    acc = wire_operator(w, "add_", pair).output.erased();
+                }
+                if constexpr (Mean)
+                {
+                    WiringArg n_arg;
+                    n_arg.kind         = WiringArg::Kind::Scalar;
+                    n_arg.scalar_value = Value{static_cast<Float>(ts.size())};
+                    n_arg.scalar_meta  = n_arg.scalar_value.schema();
+                    WiringArg n_const;
+                    n_const.kind = WiringArg::Kind::TimeSeries;
+                    n_const.port = wire_operator(w, "const", std::array<WiringArg, 1>{n_arg}, true,
+                                                 TypeRegistry::instance().ts(scalar_descriptor<Float>::value_meta()))
+                                       .output.erased();
+                    WiringArg sum_arg;
+                    sum_arg.kind = WiringArg::Kind::TimeSeries;
+                    sum_arg.port = acc;
+                    std::array<WiringArg, 2> pair{sum_arg, n_const};
+                    // mean = sum / N (div_ promotes ints to float).
+                    acc = wire_operator(w, "div_", pair).output.erased();
+                }
+                return acc;
+            }
+        };
+    }  // namespace arithmetic_impl_detail
+
     /** Register the arithmetic operator overloads (``add_`` / ``sub_`` / ``div_``). */
     inline void register_arithmetic_operators()
     {
@@ -372,6 +515,19 @@ namespace hgraph::stdlib
         register_overload<div_, lift<scalar_div<Int, Float>>>();
         register_overload<div_, lift<scalar_div<Float, Int>>>();
         register_overload<div_, div_numbers<Int, Int>>();             // int / int -> float (with policy)
+
+        register_overload<sum_, arithmetic_impl_detail::running_sum_impl<Int>>();
+        register_overload<sum_, arithmetic_impl_detail::running_sum_impl<Float>>();
+        register_overload<sum_, arithmetic_impl_detail::running_sum_reset_impl<Int>>();
+        register_overload<sum_, arithmetic_impl_detail::running_sum_reset_impl<Float>>();
+        register_graph_overload<sum_, arithmetic_impl_detail::multi_sum_impl<false>>();
+        register_overload<mean, arithmetic_impl_detail::running_mean_impl<Int>>();
+        register_overload<mean, arithmetic_impl_detail::running_mean_impl<Float>>();
+        register_graph_overload<mean, arithmetic_impl_detail::multi_sum_impl<true>>();
+        register_overload<std_, arithmetic_impl_detail::running_moments_impl<Int, true>>();
+        register_overload<std_, arithmetic_impl_detail::running_moments_impl<Float, true>>();
+        register_overload<var_, arithmetic_impl_detail::running_moments_impl<Int, false>>();
+        register_overload<var_, arithmetic_impl_detail::running_moments_impl<Float, false>>();
         register_overload<div_, div_numbers<Float, Float>>();         // float / float -> float (with policy)
         register_overload<div_, div_numbers<Int, Float>>();
         register_overload<div_, div_numbers<Float, Int>>();
@@ -448,5 +604,25 @@ namespace hgraph::stdlib
         register_overload<ln, lift<scalar_ln>>();
     }
 }  // namespace hgraph::stdlib
+
+
+namespace hgraph::static_schema_detail
+{
+    template <>
+    struct scalar_name<hgraph::stdlib::arithmetic_impl_detail::AggMoments>
+    {
+        static constexpr std::string_view value{"agg_moments"};
+    };
+}  // namespace hgraph::static_schema_detail
+
+template <>
+struct std::hash<hgraph::stdlib::arithmetic_impl_detail::AggMoments>
+{
+    [[nodiscard]] std::size_t operator()(const hgraph::stdlib::arithmetic_impl_detail::AggMoments &m) const noexcept
+    {
+        return std::hash<hgraph::Int>{}(m.count) ^ (std::hash<hgraph::Float>{}(m.mean) << 1) ^
+               (std::hash<hgraph::Float>{}(m.m2) << 2);
+    }
+};
 
 #endif  // HGRAPH_LIB_STD_OPERATORS_IMPL_ARITHMETIC_IMPL_H

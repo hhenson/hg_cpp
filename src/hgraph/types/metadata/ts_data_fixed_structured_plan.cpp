@@ -35,13 +35,26 @@ namespace hgraph::ts_data_plan_factory_detail
         case TSTypeKind::REF:
         case TSTypeKind::SIGNAL:
         {
-            const auto whole_value_kind = [](ValueTypeKind kind) {
-                return kind == ValueTypeKind::Atomic || kind == ValueTypeKind::Bundle;
+            // Whole-value scalars: atomics, compound scalars (Bundle), and
+            // IMMUTABLE container scalars (Tuple/List/Set/Map - python's
+            // tuple/frozenset/frozendict values) - all copy whole through
+            // their value plans. Mutable (slot-store-backed) containers are
+            // NOT whole-value copyable and stay excluded.
+            const auto whole_value = [](const ValueTypeMetaData &meta) {
+                switch (meta.kind)
+                {
+                    case ValueTypeKind::Atomic:
+                    case ValueTypeKind::Bundle: return true;
+                    case ValueTypeKind::Tuple:
+                    case ValueTypeKind::List:
+                    case ValueTypeKind::Set:
+                    case ValueTypeKind::Map: return !meta.is_mutable();
+                    default: return false;
+                }
             };
             return schema.value_schema != nullptr && schema.delta_value_schema != nullptr &&
                    schema.value_schema == schema.delta_value_schema &&
-                   whole_value_kind(schema.value_schema->kind) &&
-                   whole_value_kind(schema.delta_value_schema->kind);
+                   whole_value(*schema.value_schema);
         }
         default:
             return false;
