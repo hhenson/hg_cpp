@@ -1810,6 +1810,11 @@ namespace hgraph
             return context != nullptr ? context->schema : nullptr;
         }
 
+        bool has_input_children(const TSDataView &data) noexcept
+        {
+            return ::hgraph::input_context_for(data.binding()) != nullptr;
+        }
+
         TSInputChildProjection input_child_projection(const TSDataView &parent, std::size_t index)
         {
             const auto *context = ::hgraph::input_context_for(parent.binding());

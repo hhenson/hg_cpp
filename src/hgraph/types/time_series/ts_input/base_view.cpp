@@ -78,7 +78,21 @@ namespace hgraph
     DateTime TSInputView::InputDataCursor::last_modified_time() const
     {
         const auto &data = resolved_value_data();
-        if (is_target_position() && !data.valid()) { return raw_data.last_modified_time(); }
+        if (is_target_position())
+        {
+            if (!data.valid()) { return raw_data.last_modified_time(); }
+            // BLEND the link's own tracking (the sampled-runtime contract): a
+            // from-REF retarget records on the LINK - the position is modified
+            // even though the (already-valid) target did not tick. Applies
+            // only to positions with their OWN storage (target_node == null);
+            // descents within a root link tree share the root's tracking,
+            // which must not leak into per-child modified state.
+            if (target_node == nullptr)
+            {
+                return std::max(raw_data.last_modified_time(), data.last_modified_time());
+            }
+            return data.last_modified_time();
+        }
         return data.last_modified_time();
     }
 
@@ -86,7 +100,12 @@ namespace hgraph
     {
         if (evaluation_time == MIN_DT) { return false; }
         const auto &data = resolved_value_data();
-        if (is_target_position() && !data.valid()) { return raw_data.modified(evaluation_time); }
+        if (is_target_position())
+        {
+            if (!data.valid()) { return raw_data.modified(evaluation_time); }
+            if (target_node == nullptr && raw_data.modified(evaluation_time)) { return true; }   // rebind (sampled)
+            return data.modified(evaluation_time);
+        }
         return data.valid() && data.modified(evaluation_time);
     }
 
@@ -292,7 +311,23 @@ namespace hgraph
     ValueView TSInputView::delta_value() const
     {
         const auto &data = data_view();
-        if (data.valid()) { return data.delta_value(evaluation_time_); }
+        if (data.valid())
+        {
+            // Sampled rebind (the sampled-runtime contract): when the input's
+            // LINK was modified after the target's own last tick (a from-REF
+            // retarget bound an already-valid output), the delta IS the
+            // current value - the target's delta storage belongs to an older
+            // cycle.
+            if (is_target_position())
+            {
+                const auto *link = detail::target_link_storage(data_.raw_data);
+                if (link != nullptr && link->tracking.last_modified_time > data.last_modified_time())
+                {
+                    return data.value();
+                }
+            }
+            return data.delta_value(evaluation_time_);
+        }
         throw std::logic_error("TSInputView::delta_value requires a live input view");
     }
 
@@ -485,6 +520,21 @@ namespace hgraph
     TSInputView TSInputView::child_from_input(std::size_t index) const
     {
         auto parent = data_.value_data.borrowed_ref();
+        auto projection = detail::input_child_projection(parent, index);
+        if (projection.target_link.valid())
+        {
+            projection.target_link = TSDataView{projection.target_link.binding(), projection.target_link.data(),
+                                                parent, index};
+        }
+        else if (projection.visible.valid())
+        {
+            projection.visible = TSDataView{projection.visible.binding(), projection.visible.data(), parent, index};
+        }
+        return child_from_projection(std::move(projection), index);
+    }
+
+    TSInputView TSInputView::child_from_resolved_input(const TSDataView &parent, std::size_t index) const
+    {
         auto projection = detail::input_child_projection(parent, index);
         if (projection.target_link.valid())
         {

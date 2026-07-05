@@ -1832,6 +1832,42 @@ NB_MODULE(_hgraph, m)
 
     // Pack argument ports into a STRUCTURAL un-named TSB (the dict/list
     // passing model for python user nodes - any arity, one operator).
+    m.def("ts_field_types", [](PyTsType ts_type) {
+        nb::list result;
+        if (ts_type.meta == nullptr || ts_type.meta->kind != TSTypeKind::TSB) { return result; }
+        for (std::size_t index = 0; index < ts_type.meta->field_count(); ++index)
+        {
+            const auto &field = ts_type.meta->fields()[index];
+            result.append(nb::make_tuple(std::string{field.name != nullptr ? field.name : ""},
+                                         PyTsType{field.type}));
+        }
+        return result;
+    });
+
+    m.def("tsb_port", [](PyTsType ts_type, nb::dict ports) {
+        if (ts_type.meta == nullptr || ts_type.meta->kind != TSTypeKind::TSB)
+        {
+            throw nb::value_error("TSB.from_ts requires a TSB type");
+        }
+        if (nb::len(ports) != ts_type.meta->field_count())
+        {
+            throw nb::value_error("TSB.from_ts requires every field exactly once");
+        }
+        std::vector<WiringPortRef> children;
+        children.reserve(ts_type.meta->field_count());
+        for (std::size_t index = 0; index < ts_type.meta->field_count(); ++index)
+        {
+            const auto &field = ts_type.meta->fields()[index];
+            nb::object  port  = ports.attr("get")(field.name);
+            if (port.is_none())
+            {
+                throw nb::value_error(("TSB.from_ts is missing field '" + std::string{field.name} + "'").c_str());
+            }
+            children.push_back(nb::cast<PyPort &>(port).ref);
+        }
+        return PyPort{WiringPortRef::structural_source(ts_type.meta, std::move(children))};
+    });
+
     m.def("tsl_port", [](nb::list ports) {
         if (nb::len(ports) == 0) { throw nb::value_error("tsl_port requires at least one port"); }
         std::vector<WiringPortRef> children;

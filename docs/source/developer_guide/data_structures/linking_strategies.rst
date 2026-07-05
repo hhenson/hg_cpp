@@ -410,3 +410,28 @@ Two supporting rules from the same work:
 - ``getitem_`` over a TSL holds its container input ACTIVE and dedupes
   same-reference re-publishes: element REBINDS must re-emit the item
   reference; plain value ticks must not.
+
+Sampled rebinds through alternatives (2026-07-05 ruling)
+--------------------------------------------------------
+
+Howard's REF ruling: reference VALUES are opaque (storable/emittable;
+never dereferenced via ``.output``); code needing the dereferenced value
+accepts it as a (passive) input. Retargeting therefore must LOOK like a
+tick to consumers — the sampled-runtime contract at the input boundary:
+
+- ``TSInputView::delta_value()``: when the position's LINK was modified
+  after the target's own last tick (a from-REF retarget bound an
+  already-valid output), the delta IS the current value — the target's
+  delta storage belongs to an older cycle.
+- ``InputDataCursor``: positions with their OWN link storage
+  (``target_node == nullptr``) blend the link's tracking into
+  ``modified()``/``last_modified_time()``. Descents within a root link
+  tree do NOT blend the root's (shared) tracking — that would mark every
+  sibling modified.
+- A target position whose RESOLVED data is INPUT-SHAPED (a from-REF
+  alternative holding per-child target links) projects children like an
+  input (``child_from_resolved_input``): each child rides its own link
+  position, so per-child rebind tracking reaches modified state and the
+  sampled delta rule. The data-level element ops intentionally keep
+  resolving THROUGH to the target (value-plan copies need the raw target
+  memory).

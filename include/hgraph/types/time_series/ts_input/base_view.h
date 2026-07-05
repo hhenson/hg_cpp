@@ -192,6 +192,10 @@ namespace hgraph
         [[nodiscard]] TSDataView &checked_target_data_view(const char *what) const;
         [[nodiscard]] TSInputView child_from_target(TSDataView child, std::size_t index) const;
         [[nodiscard]] TSInputView child_from_input(std::size_t index) const;
+        /** Child projection over RESOLVED input-shaped data (a from-REF
+            alternative behind a target position): the projection carries the
+            per-child link tracking (sampled rebinds). */
+        [[nodiscard]] TSInputView child_from_resolved_input(const TSDataView &parent, std::size_t index) const;
         [[nodiscard]] TSInputView child_from_projection(detail::TSInputChildProjection projection,
                                                         std::size_t index) const noexcept;
 

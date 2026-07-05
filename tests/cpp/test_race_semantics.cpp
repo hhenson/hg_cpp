@@ -123,3 +123,53 @@ TEST_CASE("race over TSLs re-races when the winner goes invalid")
     CHECK_OUTPUT(eval_node<RaceTslRevokeGraph>(values<Bool>(false, true)),
                  values<Int>(11, 21));
 }
+
+namespace
+{
+    /** The python test_race_tsbs shape: race over two structural TSBs. */
+    struct RaceTsbRevokeGraph
+    {
+        static constexpr auto name = "race_tsb_revoke_graph";
+        using PairBundle = UnNamedTSB<Field<"a", TS<Int>>, Field<"b", TS<Int>>>;
+
+        static Port<PairBundle> compose(Wiring &w, Port<TS<Bool>> invalidate)
+        {
+            using IfBundle = UnNamedTSB<Field<"true", REF<TS<Int>>>, Field<"false", REF<TS<Int>>>>;
+            auto &registry = TypeRegistry::instance();
+            const auto *tsb_schema = schema_descriptor<PairBundle>::ts_meta();
+
+            auto v11 = wire<getitem_>(w, wire<if_, IfBundle>(w, invalidate, wire<const_, TS<Int>>(w, Int{11})),
+                                      Str{"false"});
+            auto v12 = wire<getitem_>(w, wire<if_, IfBundle>(w, invalidate, wire<const_, TS<Int>>(w, Int{12})),
+                                      Str{"false"});
+            WiringPortRef tsb1 = WiringPortRef::structural_source(tsb_schema, {v11.erased(), v12.erased()});
+
+            auto v21 = wire<const_, TS<Int>>(w, Int{21});
+            auto v22 = wire<const_, TS<Int>>(w, Int{22});
+            WiringPortRef tsb2 = WiringPortRef::structural_source(tsb_schema, {v21.erased(), v22.erased()});
+
+            std::array<WiringArg, 2> args{};
+            args[0].kind = WiringArg::Kind::TimeSeries;
+            args[0].port = tsb1;
+            args[1].kind = WiringArg::Kind::TimeSeries;
+            args[1].port = tsb2;
+            auto raced = wire_operator(w, "race", args);
+            return Port<void>{w, raced.output.erased()}.as<PairBundle>();
+        }
+    };
+}  // namespace
+
+TEST_CASE("race over TSBs delivers the re-raced winner's values")
+{
+    stdlib::register_standard_operators();
+    using namespace hgraph::testing;
+    auto pair_delta = [](Int a, Int b) {
+        const auto *schema = schema_descriptor<RaceTsbRevokeGraph::PairBundle>::ts_meta();
+        BundleBuilder builder{*ValuePlanFactory::instance().binding_for(schema->delta_value_schema)};
+        builder.set("a", Value{a});
+        builder.set("b", Value{b});
+        return builder.build();
+    };
+    CHECK_OUTPUT(eval_node<RaceTsbRevokeGraph>(values<Bool>(false, true)),
+                 values<Value>(pair_delta(11, 12), pair_delta(21, 22)));
+}

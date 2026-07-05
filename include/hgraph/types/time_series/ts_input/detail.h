@@ -32,6 +32,10 @@ namespace hgraph::detail
 
     [[nodiscard]] TSInputChildProjection input_child_projection(const TSDataView &parent, std::size_t index);
 
+    /** True when ``data`` is INPUT-SHAPED (holds per-child target links) —
+        e.g. a from-REF alternative's projected data. */
+    [[nodiscard]] bool has_input_children(const TSDataView &data) noexcept;
+
     struct TSInputViewOps
     {
         void make_active(TSInputView &view) const;

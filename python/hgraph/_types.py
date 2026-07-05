@@ -51,11 +51,26 @@ def _value_type(scalar):
 
 
 class _TsExpr:
-    @staticmethod
-    def from_ts(*ports):
-        from ._types import TSL
+    def from_ts(self, *ports, **kwargs):
+        """hgraph parity: build a structural port for this type from
+        per-element ports. Plain values lift to const at the field type."""
+        import _hgraph as _m
 
-        return TSL.from_ts(*ports)
+        from ._runtime import WiringPort, _unwrap, wire
+
+        if ports and not kwargs:
+            return WiringPort(_m.tsl_port([_unwrap(p) for p in ports]))
+        field_ports = {}
+        field_types = dict(_m.ts_field_types(self.handle))
+        for name, value in kwargs.items():
+            if name not in field_types:
+                raise TypeError(f"unknown field '{name}' for {self!r}")
+            unwrapped = _unwrap(value)
+            if not isinstance(unwrapped, _m.Port):
+                value = wire("const", value, output_type=field_types[name])
+                unwrapped = _unwrap(value)
+            field_ports[name] = unwrapped
+        return WiringPort(_m.tsb_port(self.handle, field_ports))
 
     """A resolved time-series type: wraps the C++ TsType handle."""
 
