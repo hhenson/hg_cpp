@@ -4,10 +4,12 @@
 #include <hgraph/hgraph_export.h>
 #include <hgraph/types/static_node.h>
 
+#include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
 #include <memory>
 #include <string_view>
+#include <utility>
 
 namespace hgraph
 {
@@ -26,10 +28,10 @@ namespace hgraph
      * A transparent, stateless injectable (the ``SingleShotScheduler``
      * pattern): no signature footprint, no per-node slot. The view BORROWS
      * the process logger (``log::logger()``) — no reference counting on the
-     * per-tick path; per-tick logging is allocation-light (spdlog formats
-     * into its own buffers). Configure the destination once with
+     * per-tick path. Configure the destination once with
      * ``log::set_logger`` (configuration-time; a ``shared_ptr`` there is
      * sanctioned — the hot path only ever sees the borrowed pointer).
+     * Formatting is skipped when the target level is disabled.
      */
     class HGRAPH_EXPORT LoggerView
     {
@@ -40,31 +42,31 @@ namespace hgraph
         template <typename... Args>
         void trace(fmt::format_string<Args...> format, Args &&...args) const
         {
-            if (logger_ != nullptr) { logger_->trace(format, std::forward<Args>(args)...); }
+            log_formatted(spdlog::level::trace, format, std::forward<Args>(args)...);
         }
 
         template <typename... Args>
         void debug(fmt::format_string<Args...> format, Args &&...args) const
         {
-            if (logger_ != nullptr) { logger_->debug(format, std::forward<Args>(args)...); }
+            log_formatted(spdlog::level::debug, format, std::forward<Args>(args)...);
         }
 
         template <typename... Args>
         void info(fmt::format_string<Args...> format, Args &&...args) const
         {
-            if (logger_ != nullptr) { logger_->info(format, std::forward<Args>(args)...); }
+            log_formatted(spdlog::level::info, format, std::forward<Args>(args)...);
         }
 
         template <typename... Args>
         void warn(fmt::format_string<Args...> format, Args &&...args) const
         {
-            if (logger_ != nullptr) { logger_->warn(format, std::forward<Args>(args)...); }
+            log_formatted(spdlog::level::warn, format, std::forward<Args>(args)...);
         }
 
         template <typename... Args>
         void error(fmt::format_string<Args...> format, Args &&...args) const
         {
-            if (logger_ != nullptr) { logger_->error(format, std::forward<Args>(args)...); }
+            log_formatted(spdlog::level::err, format, std::forward<Args>(args)...);
         }
 
         /**
@@ -83,7 +85,9 @@ namespace hgraph
         void log(int level, std::string_view message) const
         {
             if (logger_ == nullptr) { return; }
-            logger_->log(clamp_level(level), "{}", message);
+            const auto spd_level = clamp_level(level);
+            if (!logger_->should_log(spd_level)) { return; }
+            logger_->log(spdlog::source_loc{}, spd_level, spdlog::string_view_t{message.data(), message.size()});
         }
 
         [[nodiscard]] spdlog::logger *raw() const noexcept { return logger_; }
@@ -92,6 +96,14 @@ namespace hgraph
         [[nodiscard]] static spdlog::level::level_enum clamp_level(int level) noexcept
         {
             return static_cast<spdlog::level::level_enum>(level < 0 ? 0 : (level > 5 ? 5 : level));
+        }
+
+        template <typename... Args>
+        void log_formatted(spdlog::level::level_enum level, fmt::format_string<Args...> format, Args &&...args) const
+        {
+            if (logger_ == nullptr || !logger_->should_log(level)) { return; }
+            const auto message = fmt::format(format, std::forward<Args>(args)...);
+            logger_->log(spdlog::source_loc{}, level, spdlog::string_view_t{message.data(), message.size()});
         }
 
         spdlog::logger *logger_{nullptr};   // borrowed from log::logger()

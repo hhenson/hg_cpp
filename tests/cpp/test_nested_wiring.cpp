@@ -30,7 +30,7 @@ namespace
     struct AddOneSubGraph
     {
         static constexpr auto name = "add_one_subgraph";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> in)
         {
             using namespace hgraph::stdlib::syntax;
             return (in + Int{1}).as<TS<Int>>();
@@ -40,7 +40,7 @@ namespace
     struct SumSubGraph
     {
         static constexpr auto name = "sum_subgraph";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
         {
             using namespace hgraph::stdlib::syntax;
             return (lhs + rhs).as<TS<Int>>();
@@ -51,7 +51,7 @@ namespace
     struct FanOutSubGraph
     {
         static constexpr auto name = "fan_out_subgraph";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> in)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> in)
         {
             using namespace hgraph::stdlib::syntax;
             return (in + in).as<TS<Int>>();
@@ -61,7 +61,7 @@ namespace
     struct ScaledSubGraph
     {
         static constexpr auto name = "scaled_subgraph";
-        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"in", TS<Int>> in, Scalar<"factor", Int> factor)
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"in", TS<Int>> in, Scalar<"factor", Int> factor)
         {
             using namespace hgraph::stdlib::syntax;
             return (in * factor.value()).as<TS<Int>>();

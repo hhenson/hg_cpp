@@ -433,12 +433,19 @@ namespace hgraph
             }
             else { return StaticNodeSignature<X>::output_schema(); }
         }
+
+        template <typename X>
+        constexpr void mark_name_used() noexcept
+        {
+            if constexpr (static_node_detail::has_name<X>) { (void)X::name; }
+        }
     }  // namespace wired_fn_detail
 
     /** Erase the operator marker / node / sub-graph ``X`` into a ``WiredFn`` value. */
     template <typename X>
     [[nodiscard]] WiredFn fn()
     {
+        wired_fn_detail::mark_name_used<X>();
         return WiredFn{
             .wire_fn          = &wired_fn_detail::wire_thunk<X>,
             .compile_fn       = &wired_fn_detail::compile_thunk<X>,

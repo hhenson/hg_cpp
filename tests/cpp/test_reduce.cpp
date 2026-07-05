@@ -50,7 +50,7 @@ namespace
     struct SumCombiner
     {
         static constexpr auto name = "sum_combiner";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
         {
             using namespace hgraph::stdlib::syntax;
             return (lhs + rhs).as<TS<Int>>();

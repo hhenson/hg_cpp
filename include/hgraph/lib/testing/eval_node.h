@@ -288,6 +288,12 @@ namespace hgraph::testing
 
         inline std::string input_key(std::size_t index) { return "eval_node::in" + std::to_string(index); }
 
+        template <typename T>
+        void label_if_named(GraphBuilder &graph_builder)
+        {
+            if constexpr (static_node_detail::has_name<T>) { graph_builder.label(std::string{T::name}); }
+        }
+
         template <std::size_t ParamIndex, typename ParamsTuple, typename ArgsTuple>
         [[nodiscard]] decltype(auto) bound_payload_at(const ArgsTuple &args,
                                                       [[maybe_unused]] std::string_view call_name)
@@ -366,6 +372,7 @@ namespace hgraph::testing
             ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"});
 
             GraphBuilder gb = std::move(w).finish();
+            label_if_named<NodeT>(gb);
             GraphExecutorBuilder eb;
             eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
             GraphExecutorValue executor = eb.make_executor();
@@ -415,6 +422,7 @@ namespace hgraph::testing
 
             ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"});
             GraphBuilder gb = std::move(w).finish();
+            label_if_named<NodeT>(gb);
 
             // Pass 2: seed each time-series input's replay buffer (same key per
             // slot) and track the longest input.
@@ -480,6 +488,7 @@ namespace hgraph::testing
 
             ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"});
             GraphBuilder gb = std::move(w).finish();
+            label_if_named<GraphT>(gb);
 
             GraphExecutorBuilder eb;
             eb.graph_builder(std::move(gb)).start_time(MIN_ST).end_time(MAX_ET);
@@ -535,6 +544,7 @@ namespace hgraph::testing
             if constexpr (std::is_void_v<out_schema>) { wire<record>(w, out_port, std::string{"eval_node::out"}); }
             else { ts_harness<out_schema>::wire_record(w, out_port, std::string{"eval_node::out"}); }
             GraphBuilder gb = std::move(w).finish();
+            label_if_named<GraphT>(gb);
 
             // Pass 2: seed each Port parameter's replay buffer; track the longest input.
             std::size_t max_len = 0;
@@ -702,6 +712,7 @@ namespace hgraph::testing
 
         wire<record>(w, out_port, std::string{"eval_node::out"});
         GraphBuilder gb = std::move(w).finish();
+        eval_node_detail::label_if_named<Op>(gb);
 
         // Pass 2: seed each time-series input's replay buffer; track the longest input.
         std::size_t max_len = 0;

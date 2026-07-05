@@ -28,7 +28,7 @@ namespace
     struct AddOneG
     {
         static constexpr auto name = "mesh_add_one_g";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> ts)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
             return (ts + Int{1}).as<TS<Int>>();
@@ -39,7 +39,7 @@ namespace
     struct AddKeyG
     {
         static constexpr auto name = "mesh_add_key_g";
-        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"key", TS<Int>> key, Port<TS<Int>> ts)
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"key", TS<Int>> key, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
             return (key + ts).as<TS<Int>>();
@@ -103,7 +103,7 @@ namespace
     struct SwitchDoubleG
     {
         static constexpr auto name = "mesh_switch_double_g";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> value)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> value)
         {
             using namespace hgraph::stdlib::syntax;
             return (value * Int{2}).as<TS<Int>>();
@@ -113,7 +113,7 @@ namespace
     struct SwitchNegateG
     {
         static constexpr auto name = "mesh_switch_negate_g";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> value)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> value)
         {
             using namespace hgraph::stdlib::syntax;
             return (value * Int{-1}).as<TS<Int>>();

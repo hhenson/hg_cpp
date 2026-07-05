@@ -39,7 +39,7 @@ namespace
     struct AddOneG
     {
         static constexpr auto name = "add_one_g";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> ts)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
             return (ts + Int{1}).as<TS<Int>>();
@@ -51,7 +51,7 @@ namespace
     struct AddKeyG
     {
         static constexpr auto name = "add_key_g";
-        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"key", TS<Int>> key, Port<TS<Int>> ts)
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"key", TS<Int>> key, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
             return (key + ts).as<TS<Int>>();
@@ -61,7 +61,7 @@ namespace
     struct AddNdxG
     {
         static constexpr auto name = "add_ndx_g";
-        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"ndx", TS<Int>> ndx, Port<TS<Int>> ts)
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"ndx", TS<Int>> ndx, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
             return (ndx + ts).as<TS<Int>>();
@@ -72,7 +72,7 @@ namespace
     struct AddOffsetG
     {
         static constexpr auto name = "add_offset_g";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> ts, Port<TS<Int>> offset)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts, Port<TS<Int>> offset)
         {
             using namespace hgraph::stdlib::syntax;
             return (ts + offset).as<TS<Int>>();
@@ -413,7 +413,7 @@ namespace
     struct AddTwoOffsetsG
     {
         static constexpr auto name = "add_two_offsets_g";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> ts, Port<TS<Int>> o1, Port<TS<Int>> o2)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts, Port<TS<Int>> o1, Port<TS<Int>> o2)
         {
             using namespace hgraph::stdlib::syntax;
             return ((ts + o1).as<TS<Int>>() + o2).as<TS<Int>>();
@@ -424,7 +424,7 @@ namespace
     struct KeyOffsetG
     {
         static constexpr auto name = "key_offset_g";
-        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"ndx", TS<Int>> key, Port<TS<Int>> ts, Port<TS<Int>> offset)
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"ndx", TS<Int>> key, Port<TS<Int>> ts, Port<TS<Int>> offset)
         {
             using namespace hgraph::stdlib::syntax;
             return ((key + ts).as<TS<Int>>() + offset).as<TS<Int>>();
@@ -471,7 +471,7 @@ namespace
     struct AddPairG
     {
         static constexpr auto name = "add_pair_g";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> lhs, Port<TS<Int>> rhs)
         {
             using namespace hgraph::stdlib::syntax;
             return (lhs + rhs).as<TS<Int>>();
@@ -482,7 +482,7 @@ namespace
     struct AddPairOffsetG
     {
         static constexpr auto name = "add_pair_offset_g";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> lhs, Port<TS<Int>> rhs, Port<TS<Int>> offset)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> lhs, Port<TS<Int>> rhs, Port<TS<Int>> offset)
         {
             using namespace hgraph::stdlib::syntax;
             return ((lhs + rhs).as<TS<Int>>() + offset).as<TS<Int>>();
@@ -516,7 +516,7 @@ namespace
 
     struct ConstLeftOnlyDict
     {
-        static constexpr auto             name = "const_left_only_dict";
+        [[maybe_unused]] static constexpr auto name = "const_left_only_dict";
         static Port<TSD<Str, TS<Int>>> compose(Wiring &w)
         {
             return wire<stdlib::const_, TSD<Str, TS<Int>>>(
@@ -622,7 +622,7 @@ namespace
     struct NamedPairFn
     {
         static constexpr auto name = "named_pair_fn";
-        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"lhs", TS<Int>> lhs, NamedPort<"rhs", TS<Int>> rhs)
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"lhs", TS<Int>> lhs, NamedPort<"rhs", TS<Int>> rhs)
         {
             using namespace hgraph::stdlib::syntax;
             return (lhs - rhs).as<TS<Int>>();
@@ -927,7 +927,7 @@ namespace
     struct AddInstrumentG
     {
         static constexpr auto name = "add_instrument_g";
-        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"instrument", TS<Int>> instrument, Port<TS<Int>> ts)
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"instrument", TS<Int>> instrument, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
             return (instrument + ts).as<TS<Int>>();

@@ -31,7 +31,7 @@ namespace
     struct Doubler
     {
         static constexpr auto name = "doubler";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> ts)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
             return (ts * Int{2}).as<TS<Int>>();
@@ -41,7 +41,7 @@ namespace
     struct Negator
     {
         static constexpr auto name = "negator";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> ts)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
             return (ts * Int{-1}).as<TS<Int>>();
@@ -58,7 +58,7 @@ namespace
     struct AddKey
     {
         static constexpr auto name = "add_key";
-        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"key", TS<Int>> key, Port<TS<Int>> ts)
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"key", TS<Int>> key, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
             return (key + ts).as<TS<Int>>();
@@ -68,7 +68,7 @@ namespace
     struct AddUnnamedKey
     {
         static constexpr auto name = "add_unnamed_key";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> key, Port<TS<Int>> ts)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> key, Port<TS<Int>> ts)
         {
             using namespace hgraph::stdlib::syntax;
             return (key + ts).as<TS<Int>>();
@@ -228,7 +228,7 @@ namespace
     struct AddBoth
     {
         static constexpr auto name = "add_both";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> a, Port<TS<Int>> b)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> a, Port<TS<Int>> b)
         {
             using namespace hgraph::stdlib::syntax;
             return (a + b).as<TS<Int>>();
@@ -238,7 +238,7 @@ namespace
     struct SubBoth
     {
         static constexpr auto name = "sub_both";
-        static Port<TS<Int>>  compose(Wiring &w, Port<TS<Int>> a, Port<TS<Int>> b)
+        static Port<TS<Int>>  compose(Wiring &, Port<TS<Int>> a, Port<TS<Int>> b)
         {
             using namespace hgraph::stdlib::syntax;
             return (a - b).as<TS<Int>>();
@@ -249,7 +249,7 @@ namespace
     struct KeySumBoth
     {
         static constexpr auto name = "key_sum_both";
-        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"key", TS<Int>> key, Port<TS<Int>> a, Port<TS<Int>> b)
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"key", TS<Int>> key, Port<TS<Int>> a, Port<TS<Int>> b)
         {
             using namespace hgraph::stdlib::syntax;
             return (key + (a + b).as<TS<Int>>()).as<TS<Int>>();
@@ -285,7 +285,7 @@ namespace
     struct DiffLhsFirst
     {
         static constexpr auto name = "diff_lhs_first";
-        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"lhs", TS<Int>> lhs, NamedPort<"rhs", TS<Int>> rhs)
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"lhs", TS<Int>> lhs, NamedPort<"rhs", TS<Int>> rhs)
         {
             using namespace hgraph::stdlib::syntax;
             return (lhs - rhs).as<TS<Int>>();
@@ -297,7 +297,7 @@ namespace
     struct DiffRhsFirst
     {
         static constexpr auto name = "diff_rhs_first";
-        static Port<TS<Int>>  compose(Wiring &w, NamedPort<"rhs", TS<Int>> rhs, NamedPort<"lhs", TS<Int>> lhs)
+        static Port<TS<Int>>  compose(Wiring &, NamedPort<"rhs", TS<Int>> rhs, NamedPort<"lhs", TS<Int>> lhs)
         {
             using namespace hgraph::stdlib::syntax;
             return (rhs - lhs).as<TS<Int>>();
