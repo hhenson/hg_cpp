@@ -669,10 +669,11 @@ def test_mesh_from_python():
     # mesh_: per-key instances read each other via mesh_ref, created on
     # demand and evaluated in dependency order (the C++ ChainFn topology).
     @graph
-    def chain(links: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
-        def dep(key: TS[int], link: TS[int]) -> TS[int]:
-            return key + hg.default(hg.mesh_ref(link), hg.const(0, tp=TS[int]))
+    def dep(key: TS[int], link: TS[int]) -> TS[int]:
+        return key + hg.default(hg.mesh_ref(link), hg.const(0, tp=TS[int]))
 
+    @graph
+    def chain(links: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
         return hg.mesh_(dep, links)
 
     # 3 -> 2 -> 1; instance 1 is created ON DEMAND (no link -> base 0).
@@ -682,9 +683,6 @@ def test_mesh_from_python():
     # A genuine dependency cycle is detected and reported.
     @graph
     def cyclic(links: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
-        def dep(key: TS[int], link: TS[int]) -> TS[int]:
-            return key + hg.default(hg.mesh_ref(link), hg.const(0, tp=TS[int]))
-
         return hg.mesh_(dep, links)
 
     try:
@@ -692,6 +690,21 @@ def test_mesh_from_python():
         check(False, "expected a cycle error")
     except RuntimeError as e:
         check("cycle" in str(e), f"unexpected: {e}")
+
+    # A plain named function is NOT wirable - it must be tagged @graph
+    # (bare lambdas remain the anonymous convenience).
+    def untagged(key: TS[int], link: TS[int]) -> TS[int]:
+        return key
+
+    @graph
+    def rejected(links: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
+        return hg.mesh_(untagged, links)
+
+    try:
+        eval_node(rejected, [{1: 0}], __end_time__=hg.MIN_ST + 2 * hg.MIN_TD)
+        check(False, "expected a decoration error")
+    except TypeError as e:
+        check("@graph" in str(e), f"unexpected: {e}")
 
 
 def test_adaptor_from_python():

@@ -101,8 +101,13 @@ def _wrap_graph_fn(gfn):
     fresh child during sub-graph compilation), pushing it as the active
     wiring context. Identity is the user function object."""
     user_fn = gfn.fn if isinstance(gfn, _GraphFn) else gfn
-    sig = inspect.signature(user_fn)
-    names = [p.name for p in sig.parameters.values()]
+    # Introspect the REAL signature (unwrap @compute_node/@graph wrappers);
+    # injectable/context parameters are not wired inputs.
+    sig = inspect.signature(getattr(user_fn, "fn", user_fn))
+    names = [
+        p.name for p in sig.parameters.values()
+        if p.annotation not in _INJECTABLE_MARKERS and not isinstance(p.annotation, _ContextExpr)
+    ]
     # Only an explicit ``-> None`` marks a sink: un-annotated callables
     # (lambdas as reduce/map combiners) are assumed to produce a value.
     has_output = sig.return_annotation is not None
@@ -121,17 +126,22 @@ def _wrap_graph_fn(gfn):
 
 
 def _as_wired(func):
-    """Accept an operator name, an operator_function, a @graph function, or
-    a WiredFn handle."""
+    """Accept an operator name, an operator_function, a @graph-decorated
+    function, a @compute_node, a WiredFn handle - or a bare LAMBDA (the
+    anonymous convenience). Plain named functions must be tagged @graph."""
     if isinstance(func, _hgraph.WiredFn):
         return func
-    if isinstance(func, _GraphFn):
+    if isinstance(func, (_GraphFn, _PyNode)):
         return _wrap_graph_fn(func)
     if callable(func) and not isinstance(func, str):
         name = getattr(func, "__name__", None)
         if name is not None and name in _hgraph.operator_names():
             return _hgraph.wired_op(name)
-        return _wrap_graph_fn(func)
+        if name == "<lambda>":
+            return _wrap_graph_fn(func)
+        raise TypeError(
+            f"'{name}' must be decorated with @graph (or @compute_node) to be used as a wired "
+            "function; bare lambdas are also accepted")
     return _hgraph.wired_op(func)
 
 
@@ -489,7 +499,7 @@ def register_adaptor(path, implementation):
     if len(implementation.interfaces) > 1:
         raise WiringError("multi-interface adaptor implementations are not supported from Python yet")
     stub = implementation.interfaces[0]
-    _hgraph.register_adaptor_impl(_current_wiring(), stub.descriptor, path, _as_wired(implementation.fn))
+    _hgraph.register_adaptor_impl(_current_wiring(), stub.descriptor, path, _wrap_graph_fn(implementation.fn))
 
 
 def adaptor_impl(fn=None, *, interfaces=None):
@@ -569,7 +579,7 @@ def register_service(path, implementation, **kwargs):
         raise WiringError("multi-interface implementations are not supported from Python yet")
     stub = implementation.interfaces[0]
     _hgraph.register_service_impl(
-        _current_wiring(), stub.descriptor, path, _as_wired(implementation.fn))
+        _current_wiring(), stub.descriptor, path, _wrap_graph_fn(implementation.fn))
 
 
 class _RecordReplayModes:
