@@ -158,7 +158,15 @@ the ``_hgraph`` bridge module (built from ``python/module.cpp``):
 
 Recorded divergences / gaps (the morning-summary list):
 
-- REF is **value-only** (agreed): no output dereferencing from Python.
+- REF is **value-only** (Howard's ruling 2026-07-05): references are
+  OPAQUE VALUES — store, emit, pass, compare (``ref.value``,
+  ``TimeSeriesReference.make()`` for the empty reference) — but never
+  dereferenced (no ``.output``). Code that needs the dereferenced value
+  accepts it as an input: a ``REF[X]``-annotated node parameter receives
+  the reference (plain ports promote to REF at the boundary); a non-REF
+  parameter bound to a REF source receives the DEREFERENCED value
+  (binding inserts the from-REF adaptation). Retargets follow the
+  sampled contract — the new target's current value arrives as a tick.
 - Python ``@graph`` functions are full ``WiredFn`` citizens (the ruled
   type-erased context+ops backend): ``map_``/``switch_`` COMPILE them as
   C++ sub-graphs, ``reduce`` accepts raw lambdas (un-annotated callables

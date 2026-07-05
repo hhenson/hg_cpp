@@ -773,6 +773,30 @@ def test_multi_interface_service_impl():
         pass
 
 
+
+def test_opaque_references():
+    """Howard's REF ruling: references are opaque values - store/emit/pass
+    (ref.value), never dereference (.output); plain ports promote to REF
+    at REF-annotated params; non-REF params on REF sources deref."""
+    from hgraph import REF, TimeSeriesReference
+
+    @hg.compute_node
+    def pick(sel: TS[int], ref: REF[TS[int]], ref2: REF[TS[int]]) -> REF[TS[int]]:
+        if sel.value == 0:
+            return TimeSeriesReference.make()   # EMPTY: consumers go invalid
+        if sel.value == -1:
+            return ref2.value
+        return ref.value
+
+    @hg.graph
+    def app(sel: TS[int], a: TS[int], b: TS[int]) -> TS[int]:
+        return pick(sel, a, b)
+
+    out = hg.eval_node(app, [1, None, -1, 0, 1], [10, 11], [20, None, None, 21])
+    # cycle1: a ticks through the emitted reference; cycle4: the sampled
+    # retarget serves a's current value (11).
+    check(out == [10, 11, 20, None, 11], f"opaque refs: {out}")
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

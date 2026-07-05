@@ -1810,6 +1810,7 @@ NB_MODULE(_hgraph, m)
     nb::class_<PySender>(m, "Sender").def("send", &PySender::send, nb::arg("value"));
     nb::class_<PyTimeSeries>(m, "TimeSeries")
         .def_prop_ro("value", &PyTimeSeries::value)
+        .def_prop_ro("_kind", [](const PyTimeSeries &self) { return static_cast<int>(self.kind()); })
         .def_prop_ro("delta_value", &PyTimeSeries::delta_value)
         .def_prop_ro("modified", &PyTimeSeries::modified)
         .def_prop_ro("valid", &PyTimeSeries::valid)
@@ -1933,7 +1934,11 @@ NB_MODULE(_hgraph, m)
             // adaptation); a REF parameter receives the reference itself as
             // an opaque value.
             const bool as_ref = index < nb::len(keep_ref) && nb::cast<bool>(keep_ref[index]);
-            const auto *field_schema = as_ref ? ref.schema : registry.dereference(ref.schema);
+            const auto *field_schema =
+                as_ref ? (ref.schema != nullptr && ref.schema->kind == TSTypeKind::REF
+                              ? ref.schema
+                              : registry.ref(registry.dereference(ref.schema)))
+                       : registry.dereference(ref.schema);
             fields.emplace_back("_" + std::to_string(index++), field_schema);
             children.push_back(ref);
         }
