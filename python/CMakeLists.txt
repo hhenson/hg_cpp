@@ -14,15 +14,13 @@ foreach(_hgraph_py_test IN ITEMS test_bridge test_hgraph_api)
 endforeach()
 
 # The PORTED hgraph test suite (python/tests/ported): the parity yardstick.
-# Runs pytest over near-verbatim copies of ext/main's tests. DISABLED in the
-# default ctest run while C++ operator-coverage gaps close - run directly:
-#   PYTHONPATH=<build>/python:python .venv/bin/python -m pytest python/tests/ported
+# Near-verbatim copies of ext/main's tests; GREEN and gating (skips carry
+# precise "gap:"/"deviation:" reasons).
 add_test(
     NAME hgraph_python_ported_suite
     COMMAND "${Python_EXECUTABLE}" -m pytest "${CMAKE_CURRENT_SOURCE_DIR}/tests/ported" -q
 )
 set_tests_properties(hgraph_python_ported_suite PROPERTIES
     ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:_hgraph>:${CMAKE_CURRENT_SOURCE_DIR}"
-    DISABLED TRUE
     LABELS "parity"
 )

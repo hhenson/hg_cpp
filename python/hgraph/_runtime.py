@@ -969,4 +969,6 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         _wiring_stack.pop()
     recorded = [None if v is None else _simplify_delta(v) for v in run.recorded("eval_node::out")]
     recorded += [None] * (length - len(recorded))
+    if not any(v is not None for v in recorded):
+        return None   # hgraph parity: a never-ticking output reports None
     return recorded

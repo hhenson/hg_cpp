@@ -3,7 +3,10 @@
 
 #include <hgraph/lib/std/lifted_kernels.h>
 #include <hgraph/lib/std/operators/arithmetic.h>
+#include <hgraph/lib/std/operators/container.h>
+#include <hgraph/lib/std/operators/logical.h>
 #include <hgraph/lib/std/operators/collection.h>
+#include <hgraph/types/value/value_builder.h>
 #include <hgraph/lib/std/operators/impl/higher_order_impl.h>   // add_ / sub_ / mul_ / div_ / DivideByZero
 #include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
@@ -403,12 +406,26 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return context.args.size() >= 2;   // the unary overloads own single-arg calls
+                std::size_t ts_count = 0;
+                for (const WiringArg &arg : context.args)
+                {
+                    if (arg.kind == WiringArg::Kind::TimeSeries) { ++ts_count; }
+                }
+                return ts_count >= 2;   // the unary overloads own single-arg calls
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                if (context.args.empty() || context.args[0].kind != WiringArg::Kind::TimeSeries) { return; }
+                const WiringArg *first_ts = nullptr;
+                for (const WiringArg &arg : context.args)
+                {
+                    if (arg.kind == WiringArg::Kind::TimeSeries)
+                    {
+                        first_ts = &arg;
+                        break;
+                    }
+                }
+                if (first_ts == nullptr) { return; }
                 if constexpr (Mean)
                 {
                     higher_order_impl_detail::bind_graph_output(
@@ -416,7 +433,7 @@ namespace hgraph::stdlib
                 }
                 else
                 {
-                    higher_order_impl_detail::bind_graph_output(resolution, context.args[0].port.schema, "O");
+                    higher_order_impl_detail::bind_graph_output(resolution, first_ts->port.schema, "O");
                 }
             }
 
@@ -453,6 +470,151 @@ namespace hgraph::stdlib
                     acc = wire_operator(w, "div_", pair).output.erased();
                 }
                 return acc;
+            }
+        };
+    }  // namespace arithmetic_impl_detail
+
+    namespace arithmetic_impl_detail
+    {
+        [[nodiscard]] inline const ValueTypeMetaData *resolved_t(const ResolutionMap &resolution)
+        {
+            return resolution.find_scalar("T");
+        }
+
+        [[nodiscard]] inline const ValueTypeBinding &element_binding_of(const ValueTypeMetaData *meta)
+        {
+            const auto *binding = ValuePlanFactory::instance().binding_for(meta);
+            if (binding == nullptr) { throw std::logic_error("container element schema has no binding"); }
+            return *binding;
+        }
+
+        /** Tuple/list concatenation (python's tuple + tuple). */
+        struct concat_lists_impl
+        {
+            static constexpr auto name = "add_lists";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *meta = resolved_t(resolution);
+                return meta != nullptr && meta->kind == ValueTypeKind::List && !meta->is_mutable();
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
+                             Out<TS<ScalarVar<"T">>> out)
+            {
+                const auto *meta = lhs.base().value().schema();
+                ListBuilder builder{element_binding_of(meta->element_type)};
+                for (const ValueView &element : lhs.base().value().as_list()) { builder.push_back_copy(element.data()); }
+                for (const ValueView &element : rhs.base().value().as_list()) { builder.push_back_copy(element.data()); }
+                out.apply(builder.build().view());
+            }
+        };
+
+        /** frozenset difference / intersection / union / symmetric difference. */
+        enum class SetOpKind : std::uint8_t { Difference, Intersection, Union, SymmetricDifference };
+
+        template <SetOpKind Kind>
+        struct set_op_impl
+        {
+            static constexpr auto name = Kind == SetOpKind::Difference     ? "sub_sets"
+                                         : Kind == SetOpKind::Intersection ? "and_sets"
+                                         : Kind == SetOpKind::Union        ? "or_sets"
+                                                                           : "xor_sets";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *meta = resolved_t(resolution);
+                return meta != nullptr && meta->kind == ValueTypeKind::Set;
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
+                             Out<TS<ScalarVar<"T">>> out)
+            {
+                const auto *meta = lhs.base().value().schema();
+                auto        lhs_set = lhs.base().value().as_set();
+                auto        rhs_set = rhs.base().value().as_set();
+                SetBuilder  builder{element_binding_of(meta->element_type)};
+                for (const ValueView &element : lhs_set.values())
+                {
+                    const bool in_rhs = rhs_set.contains(element);
+                    const bool keep   = Kind == SetOpKind::Difference     ? !in_rhs
+                                        : Kind == SetOpKind::Intersection ? in_rhs
+                                        : Kind == SetOpKind::Union        ? true
+                                                                          : !in_rhs;
+                    if (keep) { (void)builder.insert_copy(element.data()); }
+                }
+                if constexpr (Kind == SetOpKind::Union || Kind == SetOpKind::SymmetricDifference)
+                {
+                    for (const ValueView &element : rhs_set.values())
+                    {
+                        if (Kind == SetOpKind::Union || !lhs_set.contains(element))
+                        {
+                            (void)builder.insert_copy(element.data());
+                        }
+                    }
+                }
+                out.apply(builder.build().view());
+            }
+        };
+
+        /** frozendict merge (bit_or: rhs entries win). */
+        struct merge_maps_impl
+        {
+            static constexpr auto name = "or_maps";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *meta = resolved_t(resolution);
+                return meta != nullptr && meta->kind == ValueTypeKind::Map;
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
+                             Out<TS<ScalarVar<"T">>> out)
+            {
+                const auto *meta = lhs.base().value().schema();
+                MapBuilder  builder{element_binding_of(meta->key_type), element_binding_of(meta->element_type)};
+                for (const auto [key, item] : lhs.base().value().as_map())
+                {
+                    builder.set_item_copy(key.data(), item.data());
+                }
+                for (const auto [key, item] : rhs.base().value().as_map())
+                {
+                    builder.set_item_copy(key.data(), item.data());
+                }
+                out.apply(builder.build().view());
+            }
+        };
+
+        /** Generic size of a container scalar (len_ over tuple/frozenset/map). */
+        struct len_container_impl
+        {
+            static constexpr auto name = "len_container";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *meta = resolved_t(resolution);
+                if (meta == nullptr) { return false; }
+                switch (meta->kind)
+                {
+                    case ValueTypeKind::List:
+                    case ValueTypeKind::Tuple:
+                    case ValueTypeKind::Set:
+                    case ValueTypeKind::Map: return true;
+                    default: return false;
+                }
+            }
+
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts, Out<TS<Int>> out)
+            {
+                const ValueView value = ts.base().value();
+                switch (value.schema()->kind)
+                {
+                    case ValueTypeKind::List: out.set(static_cast<Int>(value.as_list().size())); return;
+                    case ValueTypeKind::Tuple: out.set(static_cast<Int>(value.as_tuple().size())); return;
+                    case ValueTypeKind::Set: out.set(static_cast<Int>(value.as_set().size())); return;
+                    case ValueTypeKind::Map: out.set(static_cast<Int>(value.as_map().size())); return;
+                    default: throw std::logic_error("len_: not a sized container");
+                }
             }
         };
     }  // namespace arithmetic_impl_detail
@@ -515,6 +677,16 @@ namespace hgraph::stdlib
         register_overload<div_, lift<scalar_div<Int, Float>>>();
         register_overload<div_, lift<scalar_div<Float, Int>>>();
         register_overload<div_, div_numbers<Int, Int>>();             // int / int -> float (with policy)
+
+        register_overload<add_, arithmetic_impl_detail::concat_lists_impl>();
+        register_overload<sub_, arithmetic_impl_detail::set_op_impl<arithmetic_impl_detail::SetOpKind::Difference>>();
+        register_overload<bit_and,
+                          arithmetic_impl_detail::set_op_impl<arithmetic_impl_detail::SetOpKind::Intersection>>();
+        register_overload<bit_or, arithmetic_impl_detail::set_op_impl<arithmetic_impl_detail::SetOpKind::Union>>();
+        register_overload<bit_xor,
+                          arithmetic_impl_detail::set_op_impl<arithmetic_impl_detail::SetOpKind::SymmetricDifference>>();
+        register_overload<bit_or, arithmetic_impl_detail::merge_maps_impl>();
+        register_overload<len_, arithmetic_impl_detail::len_container_impl>();
 
         register_overload<sum_, arithmetic_impl_detail::running_sum_impl<Int>>();
         register_overload<sum_, arithmetic_impl_detail::running_sum_impl<Float>>();

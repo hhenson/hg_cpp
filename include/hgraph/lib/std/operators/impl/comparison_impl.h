@@ -137,10 +137,15 @@ namespace hgraph::stdlib
             static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
                              Out<TS<CmpResult>> out)
             {
+                // equals() first: container compare may report equivalence
+                // for unequal values (e.g. same-size maps).
+                if (lhs.base().value().equals(rhs.base().value()))
+                {
+                    out.set(CmpResult::EQ);
+                    return;
+                }
                 const auto order = lhs.base().value().compare(rhs.base().value());
-                out.set(order == std::partial_ordering::less      ? CmpResult::LT
-                        : order == std::partial_ordering::greater ? CmpResult::GT
-                                                                  : CmpResult::EQ);
+                out.set(order == std::partial_ordering::less ? CmpResult::LT : CmpResult::GT);
             }
         };
     }  // namespace comparison_impl_detail
@@ -220,15 +225,28 @@ namespace hgraph::stdlib
 
             static bool requires_(const ResolutionMap &, OperatorCallContext context)
             {
-                return context.args.size() > 2;   // binary overloads win the pair case
+                // Count TIME-SERIES args only (normalisation injects the
+                // defaulted kw-only scalar): binary overloads own pairs.
+                std::size_t ts_count = 0;
+                for (const WiringArg &arg : context.args)
+                {
+                    if (arg.kind == WiringArg::Kind::TimeSeries) { ++ts_count; }
+                }
+                return ts_count > 2;
             }
 
             static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
             {
-                // The result type is the (shared) argument type.
-                if (!context.args.empty() && context.args[0].kind == WiringArg::Kind::TimeSeries)
+                // The result type is the (shared) argument type - the FIRST
+                // time-series arg (normalisation places defaulted kw-only
+                // scalars ahead of the variadic tail).
+                for (const WiringArg &arg : context.args)
                 {
-                    higher_order_impl_detail::bind_graph_output(resolution, context.args[0].port.schema, "O");
+                    if (arg.kind == WiringArg::Kind::TimeSeries)
+                    {
+                        higher_order_impl_detail::bind_graph_output(resolution, arg.port.schema, "O");
+                        break;
+                    }
                 }
             }
 

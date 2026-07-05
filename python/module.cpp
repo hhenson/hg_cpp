@@ -359,6 +359,8 @@ namespace
             case ValueTypeKind::List: {
                 nb::list result;
                 for (const ValueView &element : view.as_list()) { result.append(value_to_py(element)); }
+                // A variadic-tuple list (python's tuple[X, ...]) reads back as a TUPLE.
+                if (meta->has(ValueTypeFlags::VariadicTuple)) { return nb::tuple(result); }
                 return result;
             }
             case ValueTypeKind::Set: {
