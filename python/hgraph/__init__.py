@@ -18,6 +18,7 @@ IN_MEMORY = _hgraph.IN_MEMORY
 DATA_FRAME = _hgraph.DATA_FRAME
 set_record_replay_config = _hgraph.set_record_replay_config
 frame_store_contains = _hgraph.frame_store_contains
+frame_store_read = _hgraph.frame_store_read
 evaluate_const = _hgraph.evaluate_const
 
 _OPERATOR_NAMES = frozenset(_hgraph.operator_names())
@@ -39,5 +40,5 @@ __all__ = [
     "TS", "TSS", "TSD", "TSL", "TSB", "Size", "TimeSeriesSchema",
     "WiringPort", "graph", "run_graph", "eval_node", "wire", "map_", "reduce", "REMOVED", "feedback", "switch_", "passive", "compute_node", "sink_node", "generator", "STATE", "SCHEDULER", "CLOCK", "component", "record_replay_scope", "RecordReplayEnum", "comparison_summary", "push_queue", "EvaluationMode",
     "MIN_ST", "MIN_TD", "IN_MEMORY", "DATA_FRAME",
-    "set_record_replay_config", "frame_store_contains", "evaluate_const",
+    "set_record_replay_config", "frame_store_contains", "frame_store_read", "evaluate_const",
 ]

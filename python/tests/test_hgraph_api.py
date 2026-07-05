@@ -378,6 +378,31 @@ def test_realtime_push_queue():
     check(collected == [2, 4, 6], f"realtime push: {collected}")
 
 
+def test_frame_pyarrow_round_trip():
+    # Frames cross the boundary as pyarrow.Tables (the Arrow C stream
+    # protocol - zero copy): store reads return Tables, and Tables convert
+    # back to Frame values.
+    import pyarrow as pa
+
+    hg.set_record_replay_config(hg.DATA_FRAME)
+
+    @hg.component
+    def snap(x: TS[int]) -> TS[int]:
+        return x + x
+
+    @graph
+    def recording(x: TS[int]) -> TS[int]:
+        with hg.record_replay_scope(hg.RecordReplayEnum.RECORD):
+            return snap(x)
+
+    eval_node(recording, [1, 2, 3])
+    table = hg.frame_store_read("snap.__out__")
+    check(isinstance(table, pa.Table), f"expected a pyarrow.Table, got {type(table)}")
+    check(table.column("value").to_pylist() == [2, 4, 6], f"values: {table.to_pydict()}")
+    check(table.num_columns == 3, "bitemporal columns present")
+    hg.set_record_replay_config(hg.IN_MEMORY)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

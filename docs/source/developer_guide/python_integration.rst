@@ -209,4 +209,15 @@ Recorded divergences / gaps (the morning-summary list):
   (plus wiring-time scalars) once the graph runs; values convert
   schema-directed on the sending thread and cross the sanctioned C++
   boundary. Wiring the decorated function returns its port.
-- Services/adaptors/contexts are not yet surfaced in Python.
+- **Frame ↔ pyarrow**: Frames cross the boundary as ``pyarrow.Table``\ s
+  through the Arrow C stream protocol (``__arrow_c_stream__`` capsules —
+  zero copy, version-independent): ``frame_store_read`` returns Tables,
+  Tables convert back to Frame values, and ``to_table``/``from_table``
+  are fully usable from Python.
+- Services/adaptors/contexts are not yet surfaced in Python. NOTE: the
+  service wiring is descriptor-TYPE-parameterized throughout (node
+  identity = ``typeid(marker<Service>)``); Python service descriptors
+  need runtime identity — an interning-semantics design decision, flagged
+  for a design session rather than improvised.
+- Deferred: TS-view objects for user nodes (inputs arrive as plain
+  VALUES today).

@@ -27,6 +27,11 @@
 #include <hgraph/types/value/value_builder.h>
 #include <hgraph/python/chrono.h>
 
+#include <arrow/c/bridge.h>
+#include <arrow/record_batch.h>
+#include <arrow/table.h>
+#include <hgraph/types/frame.h>
+
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/unique_ptr.h>
@@ -49,6 +54,7 @@ namespace
 
     [[nodiscard]] Value py_to_value(nb::handle object);
     [[nodiscard]] nb::object value_to_py(const ValueView &view);
+    [[nodiscard]] Value py_arrow_to_frame(nb::handle object);
 
     // datetime.date / datetime.time have no chrono caster; convert by attribute.
     [[nodiscard]] bool is_py_date(nb::handle object)
@@ -139,7 +145,56 @@ namespace
         if (nb::try_cast<DateTime>(object, when)) { return Value{when}; }
         TimeDelta delta;
         if (nb::try_cast<TimeDelta>(object, delta)) { return Value{delta}; }
+        if (nb::hasattr(object, "__arrow_c_stream__")) { return py_arrow_to_frame(object); }
         return py_container_to_value(object);
+    }
+
+    struct PyArrowStream
+    {
+        Frame frame;
+
+        [[nodiscard]] nb::object capsule() const
+        {
+            auto reader = std::make_shared<arrow::TableBatchReader>(*frame.table);
+            auto *stream = new ArrowArrayStream{};
+            const auto status = arrow::ExportRecordBatchReader(std::move(reader), stream);
+            if (!status.ok())
+            {
+                delete stream;
+                throw std::runtime_error("arrow export failed: " + status.ToString());
+            }
+            return nb::steal(PyCapsule_New(stream, "arrow_array_stream", [](PyObject *object) {
+                auto *raw = static_cast<ArrowArrayStream *>(
+                    PyCapsule_GetPointer(object, "arrow_array_stream"));
+                if (raw != nullptr)
+                {
+                    if (raw->release != nullptr) { raw->release(raw); }
+                    delete raw;
+                }
+            }));
+        }
+    };
+
+    [[nodiscard]] nb::object frame_to_py(const Frame &frame)
+    {
+        if (!frame.has_value()) { return nb::none(); }
+        // TableBatchReader borrows; PyArrowStream keeps the Frame alive for
+        // the export call, and the exported stream owns batch references.
+        nb::object stream = nb::cast(PyArrowStream{frame});
+        return nb::module_::import_("pyarrow").attr("table")(stream);
+    }
+
+    [[nodiscard]] Value py_arrow_to_frame(nb::handle object)
+    {
+        nb::object capsule = object.attr("__arrow_c_stream__")();
+        auto *stream = static_cast<ArrowArrayStream *>(
+            PyCapsule_GetPointer(capsule.ptr(), "arrow_array_stream"));
+        if (stream == nullptr) { throw nb::type_error("expected an arrow_array_stream capsule"); }
+        auto reader = arrow::ImportRecordBatchReader(stream);
+        if (!reader.ok()) { throw std::runtime_error("arrow import failed: " + reader.status().ToString()); }
+        auto table = arrow::Table::FromRecordBatchReader(reader->get());
+        if (!table.ok()) { throw std::runtime_error("arrow read failed: " + table.status().ToString()); }
+        return Value{Frame{.table = std::move(*table)}};
     }
 
     [[nodiscard]] nb::object atomic_to_py(const ValueView &view)
@@ -165,6 +220,7 @@ namespace
                 static_cast<int>(micros / 3'600'000'000LL), static_cast<int>(micros / 60'000'000LL % 60),
                 static_cast<int>(micros / 1'000'000LL % 60), static_cast<int>(micros % 1'000'000LL));
         }
+        if (meta == scalar_descriptor<Frame>::value_meta()) { return frame_to_py(view.checked_as<Frame>()); }
         if (meta == scalar_descriptor<Bytes>::value_meta())
         {
             const auto &bytes = view.checked_as<Bytes>();
@@ -1095,6 +1151,7 @@ NB_MODULE(_hgraph, m)
         return nb::make_tuple(summary.compared, summary.mismatches);
     });
     m.def("frame_store_contains", [](const std::string &key) { return record_replay::store_contains(key); });
+    m.def("frame_store_read", [](const std::string &key) { return frame_to_py(record_replay::store_read(key)); });
     m.attr("IN_MEMORY")  = std::string{record_replay::IN_MEMORY};
     m.attr("DATA_FRAME") = std::string{record_replay::DATA_FRAME};
     m.attr("MIN_ST")     = nb::cast(MIN_ST);
@@ -1112,6 +1169,10 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyNodeHandle>(m, "NodeRef");
     nb::class_<PyScalarValue>(m, "ScalarValue");
     nb::class_<PySender>(m, "Sender").def("send", &PySender::send, nb::arg("value"));
+    nb::class_<PyArrowStream>(m, "ArrowStream")
+        .def("__arrow_c_stream__",
+             [](const PyArrowStream &self, nb::handle) { return self.capsule(); },
+             nb::arg("requested_schema") = nb::none());
     // Wiring-time scalar values as one list-of-Any (part of node identity).
     m.def("any_list", [](nb::list values) {
         auto &registry = TypeRegistry::instance();
