@@ -95,12 +95,41 @@ def _port_getattr(self, name):
 WiringPort.__getattr__ = _port_getattr
 
 
+def _wrap_graph_fn(gfn):
+    """Erase a Python @graph function into a WiredFn: the wrapper runs the
+    function against whatever Wiring the C++ side supplies (inline OR a
+    fresh child during sub-graph compilation), pushing it as the active
+    wiring context. Identity is the user function object."""
+    user_fn = gfn.fn if isinstance(gfn, _GraphFn) else gfn
+    sig = inspect.signature(user_fn)
+    names = [p.name for p in sig.parameters.values()]
+    # Only an explicit ``-> None`` marks a sink: un-annotated callables
+    # (lambdas as reduce/map combiners) are assumed to produce a value.
+    has_output = sig.return_annotation is not None
+
+    def wrapper(borrowed_wiring, ports):
+        _wiring_stack.append(borrowed_wiring)
+        try:
+            out = user_fn(*(WiringPort(p) for p in ports))
+            return None if out is None else _unwrap(out)
+        finally:
+            _wiring_stack.pop()
+
+    return _hgraph.graph_fn(wrapper, user_fn, names, has_output)
+
+
 def _as_wired(func):
-    """Accept an operator name, an operator_function, or a WiredFn handle."""
+    """Accept an operator name, an operator_function, a @graph function, or
+    a WiredFn handle."""
     if isinstance(func, _hgraph.WiredFn):
         return func
+    if isinstance(func, _GraphFn):
+        return _wrap_graph_fn(func)
     if callable(func) and not isinstance(func, str):
-        func = getattr(func, "__name__", None) or func
+        name = getattr(func, "__name__", None)
+        if name is not None and name in _hgraph.operator_names():
+            return _hgraph.wired_op(name)
+        return _wrap_graph_fn(func)
     return _hgraph.wired_op(func)
 
 
@@ -153,9 +182,7 @@ def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
     a None key is the default branch."""
     prepared = {}
     for case_key, branch in cases.items():
-        if callable(branch) and not isinstance(branch, (str, _hgraph.WiredFn)):
-            branch = getattr(branch, "__name__", branch)
-        prepared[case_key] = branch
+        prepared[case_key] = branch if isinstance(branch, str) else _as_wired(branch)
     erased = _hgraph.switch_cases(prepared, reload=reload_on_ticked)
     return wire("switch_", key, erased, *args, **kwargs)
 

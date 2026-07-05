@@ -159,10 +159,12 @@ the ``_hgraph`` bridge module (built from ``python/module.cpp``):
 Recorded divergences / gaps (the morning-summary list):
 
 - REF is **value-only** (agreed): no output dereferencing from Python.
-- Python-defined ``@graph`` functions **inline**; they cannot yet compile
-  as C++ sub-graphs, so ``map_``/``switch_`` branches must be registered
-  operators (a Python-graph-to-``CompiledSubGraph`` path is the next
-  large bridge feature, alongside ``@compute_node`` Python user nodes).
+- Python ``@graph`` functions are full ``WiredFn`` citizens (the ruled
+  type-erased context+ops backend): ``map_``/``switch_`` COMPILE them as
+  C++ sub-graphs, ``reduce`` accepts raw lambdas (un-annotated callables
+  assume an output; only an explicit ``-> None`` marks a sink). Identity
+  is the user function object; records are immortal (WiredFn contexts).
+  ``@compute_node`` Python user nodes remain the next large feature.
 - ``passive(port)`` landed (both languages): the feedback idiom is
   ``a + passive(fb())``, and such loops quiesce naturally. ACTIVE feedback
   consumption still needs an explicit end time.

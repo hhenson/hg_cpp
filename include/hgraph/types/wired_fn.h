@@ -90,18 +90,33 @@ namespace hgraph
      * ``operator_dispatch.h`` at the ``fn<X>()`` instantiation point (the same
      * rule as ``wire<X>``).
      */
+    /**
+     * The WiredFn backend ops table (the codebase's type-erased pattern:
+     * a struct of fn-ptrs whose FIRST parameter is the backend context).
+     * C++ template erasures (``fn<X>()``) use a per-``X`` table with a null
+     * context — all state lives in the instantiation. Runtime backends (the
+     * Python bridge's graph callables) share ONE table and carry their
+     * state in ``context`` (a stable, registry-owned record). The two kinds
+     * coexist as ordinary scalar values.
+     */
+    struct WiredFnOps
+    {
+        WiringPortRef (*wire)(const void *context, Wiring &, std::span<const WiringPortRef>){nullptr};
+        CompiledSubGraph (*compile)(const void *context, std::span<const TSValueTypeMetaData *const>){nullptr};
+        std::span<const std::string_view> (*param_names)(const void *context){nullptr};
+        const TSValueTypeMetaData *(*output_schema)(const void *context){nullptr};
+    };
+
     struct WiredFn
     {
-        using WireThunk = WiringPortRef (*)(Wiring &, std::span<const WiringPortRef>);
-        using CompileThunk = CompiledSubGraph (*)(std::span<const TSValueTypeMetaData *const>);
-        using ParamNamesThunk = std::span<const std::string_view> (*)();
-
-        using OutputSchemaThunk = const TSValueTypeMetaData *(*)();
-
-        WireThunk             wire_fn{nullptr};
-        CompileThunk          compile_fn{nullptr};
-        ParamNamesThunk       param_names_fn{nullptr};
-        OutputSchemaThunk     output_schema_fn{nullptr};
+        const WiredFnOps     *ops{nullptr};
+        /**
+         * Backend payload — PART OF IDENTITY. Null for C++ template
+         * erasures; for runtime callables the interned per-function record
+         * (Python ruling: function-object identity), which must outlive
+         * every WiredFn value referencing it (registry-owned).
+         */
+        const void           *context{nullptr};
         const std::type_info *identity{nullptr};
         std::string_view      operator_name{};
         const LiftedKernel   *lifted{nullptr};
@@ -118,7 +133,7 @@ namespace hgraph
          */
         [[nodiscard]] const TSValueTypeMetaData *output_schema() const
         {
-            return output_schema_fn != nullptr ? output_schema_fn() : nullptr;
+            return ops != nullptr && ops->output_schema != nullptr ? ops->output_schema(context) : nullptr;
         }
 
         /**
@@ -131,16 +146,20 @@ namespace hgraph
         [[nodiscard]] std::span<const std::string_view> param_names() const
         {
             if (lifted != nullptr) { return lifted->param_names(); }
-            return param_names_fn != nullptr ? param_names_fn() : std::span<const std::string_view>{};
+            return ops != nullptr && ops->param_names != nullptr ? ops->param_names(context)
+                                                                 : std::span<const std::string_view>{};
         }
 
-        [[nodiscard]] bool valid() const noexcept { return wire_fn != nullptr && identity != nullptr; }
+        [[nodiscard]] bool valid() const noexcept
+        {
+            return ops != nullptr && ops->wire != nullptr && identity != nullptr;
+        }
 
         /** Wire one application **inline** over the given (already-erased) argument ports. */
         [[nodiscard]] WiringPortRef wire(Wiring &w, std::span<const WiringPortRef> args) const
         {
             if (!valid()) { throw std::logic_error("WiredFn::wire called on an empty function value"); }
-            return wire_fn(w, args);
+            return ops->wire(context, w, args);
         }
 
         /**
@@ -152,15 +171,16 @@ namespace hgraph
          */
         [[nodiscard]] CompiledSubGraph compile(std::span<const TSValueTypeMetaData *const> input_schemas) const
         {
-            if (compile_fn == nullptr)
+            if (ops == nullptr || ops->compile == nullptr)
             {
                 throw std::logic_error("WiredFn::compile called on an empty function value");
             }
-            return compile_fn(input_schemas);
+            return ops->compile(context, input_schemas);
         }
 
         [[nodiscard]] bool operator==(const WiredFn &other) const noexcept
         {
+            if (context != other.context) { return false; }
             if (identity == other.identity) { return true; }
             if (identity == nullptr || other.identity == nullptr) { return false; }
             return *identity == *other.identity;
@@ -441,16 +461,31 @@ namespace hgraph
         }
     }  // namespace wired_fn_detail
 
+    namespace wired_fn_detail
+    {
+        /** The per-``X`` ops table: context-ignoring wrappers over the template thunks. */
+        template <typename X>
+        [[nodiscard]] const WiredFnOps &ops_for()
+        {
+            static constexpr WiredFnOps ops{
+                [](const void *, Wiring &w, std::span<const WiringPortRef> args) { return wire_thunk<X>(w, args); },
+                [](const void *, std::span<const TSValueTypeMetaData *const> schemas) {
+                    return compile_thunk<X>(schemas);
+                },
+                [](const void *) { return param_names_thunk<X>(); },
+                [](const void *) { return output_schema_thunk<X>(); },
+            };
+            return ops;
+        }
+    }  // namespace wired_fn_detail
+
     /** Erase the operator marker / node / sub-graph ``X`` into a ``WiredFn`` value. */
     template <typename X>
     [[nodiscard]] WiredFn fn()
     {
         wired_fn_detail::mark_name_used<X>();
         return WiredFn{
-            .wire_fn          = &wired_fn_detail::wire_thunk<X>,
-            .compile_fn       = &wired_fn_detail::compile_thunk<X>,
-            .param_names_fn   = &wired_fn_detail::param_names_thunk<X>,
-            .output_schema_fn = &wired_fn_detail::output_schema_thunk<X>,
+            .ops            = &wired_fn_detail::ops_for<X>(),
             .identity       = &typeid(X),
             .operator_name  = [] {
                 if constexpr (std::is_base_of_v<operator_tag, X>) { return std::string_view{X::name}; }
@@ -467,7 +502,8 @@ struct std::hash<hgraph::WiredFn>
 {
     [[nodiscard]] std::size_t operator()(const hgraph::WiredFn &fn) const noexcept
     {
-        return fn.identity != nullptr ? fn.identity->hash_code() : 0;
+        const std::size_t base = fn.identity != nullptr ? fn.identity->hash_code() : 0;
+        return base ^ (std::hash<const void *>{}(fn.context) << 1);
     }
 };
 

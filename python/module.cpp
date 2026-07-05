@@ -336,6 +336,30 @@ namespace
         WiredFn fn{};
     };
 
+    // ---------------------------------------------------------------
+    // Python graph callables as WiredFn values (Howard's ruling: the
+    // type-erased context+ops pattern, so Python and C++ backends coexist;
+    // identity = the user function object).
+    // ---------------------------------------------------------------
+
+    struct PyGraphFnRecord
+    {
+        nb::object                    wrapper;   ///< package-side: wrapper(borrowed_wiring, ports) -> port|None
+        nb::object                    user_fn;   ///< identity anchor + keepalive
+        std::vector<std::string>      name_storage;
+        std::vector<std::string_view> names;
+        std::size_t                   arity{0};
+        bool                          has_output{true};
+    };
+
+    /** Immortal per-function records (stable context pointers; keyed by the
+        user function object per the identity ruling). */
+    [[nodiscard]] std::unordered_map<PyObject *, PyGraphFnRecord *> &py_graph_fn_registry()
+    {
+        static auto *registry = new std::unordered_map<PyObject *, PyGraphFnRecord *>{};
+        return *registry;
+    }
+
     // fn<X>() erases at a template instantiation point, so runtime names
     // resolve through a pre-instantiated table of the stdlib markers usable
     // as higher-order callables.
@@ -429,8 +453,28 @@ namespace
 
     struct PyWiring
     {
-        Wiring wiring{};
-        bool   finished{false};
+        // Owned by default; a BORROWED PyWiring (python graph callables run
+        // against a Wiring the C++ side owns - e.g. a sub-graph compile)
+        // aliases without ownership and cannot be run/finished.
+        std::unique_ptr<Wiring> owned{std::make_unique<Wiring>()};
+        Wiring                 *raw{owned.get()};
+        bool                    finished{false};
+
+        PyWiring() = default;
+
+        [[nodiscard]] static PyWiring borrow(Wiring &target)
+        {
+            PyWiring result;
+            result.owned.reset();
+            result.raw = &target;
+            return result;
+        }
+
+        [[nodiscard]] Wiring &wiring_ref()
+        {
+            if (raw == nullptr) { throw std::logic_error("Wiring is no longer available"); }
+            return *raw;
+        }
 
         [[nodiscard]] nb::object wire(const std::string &name, nb::tuple args, nb::dict kwargs,
                                       std::optional<PyTsType> output_type)
@@ -440,7 +484,8 @@ namespace
             ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
                 name, std::span<const WiringArg>{wiring_args.data(), wiring_args.size()}, std::nullopt,
                 output_type.has_value() ? output_type->meta : nullptr);
-            OperatorWireResult result = resolved.impl->wire(wiring, resolved.map, resolved.args, resolved.kwargs);
+            OperatorWireResult result =
+                resolved.impl->wire(wiring_ref(), resolved.map, resolved.args, resolved.kwargs);
             if (!result.has_output) { return nb::none(); }
             return nb::cast(PyPort{result.output.erased()});
         }
@@ -456,14 +501,15 @@ namespace
                 else if (ts_type.has_value()) { deltas.emplace_back(py_to_delta(object, ts_type->meta)); }
                 else { deltas.emplace_back(py_to_value(object)); }
             }
-            testing::set_replay_deltas(wiring.global_state(), key, deltas);
+            testing::set_replay_deltas(wiring_ref().global_state(), key, deltas);
         }
 
         [[nodiscard]] std::unique_ptr<PyRun> run(std::optional<DateTime> start_time, std::optional<DateTime> end_time)
         {
             ensure_open();
+            if (owned == nullptr) { throw std::logic_error("a borrowed Wiring cannot be run"); }
             finished = true;
-            GraphBuilder builder = std::move(wiring).finish();
+            GraphBuilder builder = std::move(*owned).finish();
 
             GraphExecutorBuilder eb;
             eb.graph_builder(std::move(builder))
@@ -486,41 +532,100 @@ namespace
                 stdlib::feedback_detail::validate_initial_delta(*schema, initial_delta);
             }
             NodeBuilder builder = make_feedback_source_node(*schema, has_initial);
-            WiringPortRef ref   = wiring.add_unique_node(
+            WiringPortRef ref   = wiring_ref().add_unique_node(
                 std::type_index(typeid(stdlib::feedback_detail::feedback_source_node_tag)), std::move(builder),
                 std::span<const WiringPortRef>{}, std::move(initial_delta));
-            return PyFeedback{&wiring, std::move(ref), schema, false};
+            return PyFeedback{&wiring_ref(), std::move(ref), schema, false};
         }
 
         void feedback_bind(PyFeedback &fb, const PyPort &port)
         {
             ensure_open();
             if (fb.bound) { throw std::logic_error("feedback is already bound"); }
-            WiringPortRef ts_source   = graph_wiring_detail::adapt_source_for_input(wiring, fb.schema, port.ref);
-            WiringPortRef self_source = graph_wiring_detail::adapt_source_for_input(wiring, fb.schema, fb.delegate);
+            WiringPortRef ts_source =
+                graph_wiring_detail::adapt_source_for_input(wiring_ref(), fb.schema, port.ref);
+            WiringPortRef self_source =
+                graph_wiring_detail::adapt_source_for_input(wiring_ref(), fb.schema, fb.delegate);
             std::array<WiringPortRef, 2> sources{std::move(ts_source), std::move(self_source)};
 
             NodeBuilder builder = make_feedback_sink_node(*fb.schema);
             builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
                 builder.binding().type_meta != nullptr ? builder.binding().type_meta->input_schema : nullptr,
                 std::span<const WiringPortRef>{sources.data(), sources.size()}));
-            (void)wiring.add_node(std::type_index(typeid(stdlib::feedback_detail::feedback_sink_node_tag)),
-                                  std::move(builder), std::span<const WiringPortRef>{sources.data(), sources.size()},
-                                  Value{});
+            (void)wiring_ref().add_node(
+                std::type_index(typeid(stdlib::feedback_detail::feedback_sink_node_tag)), std::move(builder),
+                std::span<const WiringPortRef>{sources.data(), sources.size()}, Value{});
             fb.bound = true;
         }
 
       private:
         void ensure_open() const
         {
-            if (finished) { throw std::logic_error("this Wiring has already been finished/run"); }
+            if (finished || raw == nullptr) { throw std::logic_error("this Wiring has already been finished/run"); }
         }
     };
+    [[nodiscard]] WiringPortRef py_graph_fn_wire(const void *context, Wiring &w,
+                                                 std::span<const WiringPortRef> args)
+    {
+        const auto &record = *static_cast<const PyGraphFnRecord *>(context);
+        nb::gil_scoped_acquire gil;
+        nb::list ports;
+        for (const WiringPortRef &arg : args) { ports.append(nb::cast(PyPort{arg})); }
+        nb::object borrowed = nb::cast(PyWiring::borrow(w));
+        nb::object result   = record.wrapper(borrowed, nb::tuple(ports));
+        if (result.is_none()) { return {}; }
+        return nb::cast<PyPort &>(result).ref;
+    }
+
+    [[nodiscard]] CompiledSubGraph py_graph_fn_compile(const void *context,
+                                                       std::span<const TSValueTypeMetaData *const> input_schemas)
+    {
+        const auto &record = *static_cast<const PyGraphFnRecord *>(context);
+        if (input_schemas.size() != record.arity)
+        {
+            throw std::invalid_argument("python graph fn: compiled input schema count does not match its inputs");
+        }
+        Wiring child;
+        std::vector<const TSValueTypeMetaData *> schemas{input_schemas.begin(), input_schemas.end()};
+        std::vector<WiringPortRef> boundary;
+        boundary.reserve(input_schemas.size());
+        for (std::size_t index = 0; index < input_schemas.size(); ++index)
+        {
+            boundary.push_back(WiringPortRef::boundary_source(index, {}, input_schemas[index]));
+        }
+        WiringPortRef out =
+            py_graph_fn_wire(context, child, {boundary.data(), boundary.size()});
+        if (record.has_output)
+        {
+            return std::move(child).finish_subgraph(out, std::move(schemas));
+        }
+        return std::move(child).finish_subgraph(std::nullopt, std::move(schemas));
+    }
+
+    [[nodiscard]] const WiredFnOps &py_graph_fn_ops()
+    {
+        static constexpr WiredFnOps ops{
+            &py_graph_fn_wire,
+            &py_graph_fn_compile,
+            [](const void *context) {
+                const auto &record = *static_cast<const PyGraphFnRecord *>(context);
+                return std::span<const std::string_view>{record.names.data(), record.names.size()};
+            },
+            nullptr,   // output schema unknown ahead of compilation (like operator markers)
+        };
+        return ops;
+    }
+
 }  // namespace
 
 NB_MODULE(_hgraph, m)
 {
     m.doc() = "hgraph C++ runtime bridge (slice 1: wire and run graphs by operator name)";
+
+    // The graph-callable records are immortal by design (WiredFn contexts
+    // must outlive every value referencing them), so their held Python
+    // objects survive interpreter teardown - not a refcount bug.
+    nb::set_leak_warnings(false);
 
     stdlib::register_standard_operators();
 
@@ -576,6 +681,30 @@ NB_MODULE(_hgraph, m)
     });
 
     nb::class_<PyWiredFn>(m, "WiredFn");
+    m.def("graph_fn", [](nb::object wrapper, nb::object user_fn, nb::list param_names, bool has_output) {
+        auto &registry = py_graph_fn_registry();
+        auto  found    = registry.find(user_fn.ptr());
+        if (found == registry.end())
+        {
+            auto *record = new PyGraphFnRecord{};   // immortal: WiredFn contexts must outlive every value
+            record->wrapper    = wrapper;
+            record->user_fn    = user_fn;
+            record->has_output = has_output;
+            record->arity      = nb::len(param_names);
+            record->name_storage.reserve(record->arity);
+            for (nb::handle name : param_names) { record->name_storage.push_back(nb::cast<std::string>(name)); }
+            for (const auto &name : record->name_storage) { record->names.emplace_back(name); }
+            found = registry.emplace(user_fn.ptr(), record).first;
+        }
+        const PyGraphFnRecord *record = found->second;
+        return PyWiredFn{WiredFn{
+            .ops        = &py_graph_fn_ops(),
+            .context    = record,
+            .identity   = &typeid(PyGraphFnRecord),
+            .arity      = record->arity,
+            .has_output = record->has_output,
+        }};
+    });
     nb::class_<PySwitchCases>(m, "SwitchCases");
     nb::class_<PyFeedback>(m, "Feedback")
         .def_prop_ro("port", [](const PyFeedback &fb) { return PyPort{fb.delegate}; })

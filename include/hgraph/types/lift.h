@@ -473,13 +473,26 @@ namespace hgraph
             return lift_detail::compile_lifted<F, Identity>(input_schemas);
         }
 
+        [[nodiscard]] static const WiredFnOps &wired_ops()
+        {
+            static constexpr WiredFnOps ops{
+                [](const void *, Wiring &w, std::span<const WiringPortRef> args) {
+                    return lift_detail::wire_thunk<F, Identity>(w, args);
+                },
+                [](const void *, std::span<const TSValueTypeMetaData *const> schemas) {
+                    return lift_detail::compile_thunk<F, Identity>(schemas);
+                },
+                [](const void *) { return lift_detail::param_names<F>(); },
+                nullptr,
+            };
+            return ops;
+        }
+
         [[nodiscard]] static WiredFn fn()
         {
             const LiftedKernel &k = kernel();
             return WiredFn{
-                .wire_fn        = &lift_detail::wire_thunk<F, Identity>,
-                .compile_fn     = &lift_detail::compile_thunk<F, Identity>,
-                .param_names_fn = &lift_detail::param_names<F>,
+                .ops            = &wired_ops(),
                 .identity       = &typeid(lift_detail::lifted_identity<F, Identity>),
                 .lifted         = &k,
                 .arity          = k.arity,

@@ -170,6 +170,35 @@ def test_feedback_active_consumption_with_explicit_end():
     check(out == [1, 3, 6, 9], f"feedback: {out}")
 
 
+def test_python_graph_fns_in_higher_order_operators():
+    # Python @graph callables erase into WiredFn values (the type-erased
+    # context+ops backend): map_/switch_ COMPILE them as C++ sub-graphs,
+    # reduce builds its combiner tree from them.
+    @graph
+    def double_plus_one(x: TS[int]) -> TS[int]:
+        return x + x + hg.const(1, tp=TS[int])
+
+    @graph
+    def mapped(d: TSD[str, TS[int]]) -> TSD[str, TS[int]]:
+        return hg.map_(double_plus_one, d)
+
+    out = eval_node(mapped, [{"a": 1}, {"b": 2}, {"a": 5}])
+    check(out == [{"a": 3}, {"b": 5}, {"a": 11}], f"map_ python: {out}")
+
+    @graph
+    def routed(k: TS[str], x: TS[int]) -> TS[int]:
+        return hg.switch_(k, {"dbl": double_plus_one, "neg": "neg_"}, x)
+
+    out = eval_node(routed, ["dbl", None, "neg"], [10, 20, 30])
+    check(out == [21, 41, -30], f"switch_ python: {out}")
+
+    @graph
+    def summed(d: TSD[str, TS[int]]) -> TS[int]:
+        return hg.reduce(lambda a, b: a + b, d, 0)
+
+    check(eval_node(summed, [{"a": 1}, {"b": 2}, {"a": 5}]) == [1, 3, 7], "reduce lambda")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:
