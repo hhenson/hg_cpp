@@ -665,6 +665,55 @@ def test_services_from_python():
         pass
 
 
+def test_mesh_from_python():
+    # mesh_: per-key instances read each other via mesh_ref, created on
+    # demand and evaluated in dependency order (the C++ ChainFn topology).
+    @graph
+    def chain(links: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
+        def dep(key: TS[int], link: TS[int]) -> TS[int]:
+            return key + hg.default(hg.mesh_ref(link), hg.const(0, tp=TS[int]))
+
+        return hg.mesh_(dep, links)
+
+    # 3 -> 2 -> 1; instance 1 is created ON DEMAND (no link -> base 0).
+    out = eval_node(chain, [{2: 1, 3: 2}], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD)
+    check(out == [{2: 3, 3: 6, 1: 1}], f"mesh chain: {out}")
+
+    # A genuine dependency cycle is detected and reported.
+    @graph
+    def cyclic(links: TSD[int, TS[int]]) -> TSD[int, TS[int]]:
+        def dep(key: TS[int], link: TS[int]) -> TS[int]:
+            return key + hg.default(hg.mesh_ref(link), hg.const(0, tp=TS[int]))
+
+        return hg.mesh_(dep, links)
+
+    try:
+        eval_node(cyclic, [{1: 2, 2: 1}], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD)
+        check(False, "expected a cycle error")
+    except RuntimeError as e:
+        check("cycle" in str(e), f"unexpected: {e}")
+
+
+def test_adaptor_from_python():
+    # A duplex adaptor: the client input reaches the impl via from_graph,
+    # the impl publishes via to_graph, the client reads it back same-cycle.
+    @hg.adaptor
+    def loopback(ts: TS[int]) -> TS[int]: ...
+
+    @hg.adaptor_impl(interfaces=loopback)
+    def loopback_impl():
+        incoming = hg.from_graph(loopback, path="io")
+        hg.to_graph(loopback, incoming + incoming, path="io")
+
+    @graph
+    def g(x: TS[int]) -> TS[int]:
+        hg.register_adaptor("io", loopback_impl)
+        return loopback(x, path="io")
+
+    out = eval_node(g, [3, 5], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD)
+    check(out == [6, 10], f"adaptor: {out}")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

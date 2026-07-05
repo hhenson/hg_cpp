@@ -2,6 +2,8 @@
 
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/operator_dispatch.h>
+#include <hgraph/types/adaptor_wiring.h>
+#include <hgraph/util/scope.h>
 #include <hgraph/types/service_wiring.h>
 
 #include <array>
@@ -18,7 +20,8 @@ namespace hgraph
         {
             return lhs.flavour == rhs.flavour && lhs.output_schema == rhs.output_schema &&
                    lhs.key_type == rhs.key_type && lhs.value_schema == rhs.value_schema &&
-                   lhs.request_schema == rhs.request_schema && lhs.response_schema == rhs.response_schema;
+                   lhs.request_schema == rhs.request_schema && lhs.response_schema == rhs.response_schema &&
+                   lhs.input_schema == rhs.input_schema;
         }
 
         /** Immortal (registry rule): descriptor addresses must stay stable. */
@@ -389,5 +392,123 @@ namespace hgraph
             w, std::type_index(typeid(service::detail::request_reply_output_capture_marker)),
             output.schema != nullptr ? output.schema : dict_meta, replies_path, output, replies);
         w.register_service_rank_anchor(replies_path, capture);
+    }
+
+    // ------------------------------------------------------------------
+    // Adaptors (adaptor_wiring.h erased; same recipe as the services)
+    // ------------------------------------------------------------------
+
+    namespace
+    {
+        [[nodiscard]] std::string adaptor_base(const RuntimeServiceDescriptor &d, std::string_view p)
+        {
+            return full_path("adaptor://", d, p);
+        }
+    }  // namespace
+
+    WiringPortRef adaptor_from_graph(Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path)
+    {
+        require_flavour(descriptor, ServiceFlavour::Adaptor, "adaptor");
+        if (descriptor.input_schema == nullptr)
+        {
+            throw std::invalid_argument("adaptor '" + descriptor.name + "' has no input schema");
+        }
+        const std::string endpoint = adaptor_base(descriptor, path) + "/from_graph";
+        w.register_service_implementation_stub(endpoint, "adaptor");
+        const auto *ref_meta = TypeRegistry::instance().ref(descriptor.input_schema);
+        WiringNodeSchema schema;
+        schema.output = ref_meta;
+        schema.state  = ref_meta->value_schema;
+        WiringPortRef source = w.add_node(
+            std::type_index(typeid(adaptor::detail::input_stub_source_marker)), schema,
+            std::span<const WiringPortRef>{}, adaptor::detail::path_key_value(endpoint),
+            [endpoint, input_meta = descriptor.input_schema]() {
+                return make_shared_output_source_node(endpoint, *input_meta, false);
+            });
+        w.register_service_rank_anchor(endpoint, source.peered_node());
+        source.schema = descriptor.input_schema;   // the erased Port::as facade
+        return source;
+    }
+
+    void adaptor_to_graph(Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
+                          const WiringPortRef &out)
+    {
+        require_flavour(descriptor, ServiceFlavour::Adaptor, "adaptor");
+        if (descriptor.output_schema == nullptr)
+        {
+            throw std::invalid_argument("adaptor '" + descriptor.name + "' has no output schema");
+        }
+        const std::string endpoint = adaptor_base(descriptor, path) + "/to_graph";
+        w.register_service_implementation_stub(endpoint, "adaptor");
+        WiringPortRef shared = shared_output_source_node(
+            w, std::type_index(typeid(adaptor::detail::output_source_marker)), descriptor.output_schema, endpoint);
+        const WiringInstance *capture = shared_output_capture_node(
+            w, std::type_index(typeid(adaptor::detail::output_capture_marker)),
+            out.schema != nullptr ? out.schema : descriptor.output_schema, endpoint, out, shared);
+        w.register_service_rank_anchor(endpoint, capture);
+    }
+
+    WiringPortRef adaptor_client(Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
+                                 const WiringPortRef *in)
+    {
+        require_flavour(descriptor, ServiceFlavour::Adaptor, "adaptor");
+        const std::string base = adaptor_base(descriptor, path);
+        w.register_service_client_path(base, "adaptor");
+        if (descriptor.input_schema != nullptr)
+        {
+            if (in == nullptr)
+            {
+                throw std::invalid_argument("adaptor '" + descriptor.name + "' requires an input");
+            }
+            const std::string endpoint = base + "/from_graph";
+            const auto *ref_meta = TypeRegistry::instance().ref(descriptor.input_schema);
+            WiringNodeSchema schema;
+            schema.output = ref_meta;
+            schema.state  = ref_meta->value_schema;
+            WiringPortRef source = w.add_node(
+                std::type_index(typeid(adaptor::detail::input_stub_source_marker)), schema,
+                std::span<const WiringPortRef>{}, adaptor::detail::path_key_value(endpoint),
+                [endpoint, input_meta = descriptor.input_schema]() {
+                    return make_shared_output_source_node(endpoint, *input_meta, false);
+                });
+            w.register_service_rank_anchor(endpoint, source.peered_node());
+            const WiringInstance *capture = shared_output_capture_node(
+                w, std::type_index(typeid(adaptor::detail::input_capture_marker)),
+                in->schema != nullptr ? in->schema : descriptor.input_schema, endpoint, *in, source);
+            w.register_service_client_rank(endpoint, "adaptor", capture, false);
+        }
+        if (descriptor.output_schema != nullptr)
+        {
+            const std::string endpoint = base + "/to_graph";
+            WiringPortRef shared = shared_output_source_node(
+                w, std::type_index(typeid(adaptor::detail::output_source_marker)), descriptor.output_schema,
+                endpoint);
+            w.register_service_client_rank(endpoint, "adaptor", shared.peered_node(), true);
+            shared.schema = descriptor.output_schema;   // the erased Port::as facade
+            return shared;
+        }
+        return WiringPortRef{};
+    }
+
+    void register_adaptor_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
+                               const WiredFn &impl)
+    {
+        require_flavour(descriptor, ServiceFlavour::Adaptor, "adaptor");
+        const std::string base = adaptor_base(descriptor, path);
+        w.register_built_service_path(base, "adaptor");
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+        if (descriptor.input_schema != nullptr)
+        {
+            required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/from_graph", {}});
+        }
+        if (descriptor.output_schema != nullptr)
+        {
+            required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/to_graph", {}});
+        }
+        w.begin_service_implementation("adaptor " + base, std::move(required_endpoints));
+        auto unwind = UnwindCleanupGuard([&] { w.cancel_service_implementation(); });
+        static_cast<void>(wire_impl(w, descriptor, impl, {}));
+        unwind.release();
+        w.end_service_implementation();
     }
 }  // namespace hgraph

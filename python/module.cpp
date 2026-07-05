@@ -17,6 +17,7 @@
 #include <hgraph/types/context_wiring.h>
 #include <hgraph/types/service_runtime.h>
 #include <hgraph/lib/std/operators/higher_order.h>
+#include <hgraph/lib/std/operators/impl/higher_order_impl.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/push_source_node.h>
 #include <hgraph/runtime/runtime.h>
@@ -532,6 +533,9 @@ namespace
         std::vector<std::string_view> names;
         std::size_t                   arity{0};
         bool                          has_output{true};
+        /** The annotated output schema, when known (mesh_ needs the element
+            type ahead of compilation). Null = resolve at compile. */
+        const TSValueTypeMetaData    *output_schema{nullptr};
     };
 
     /** Immortal per-function records (stable context pointers; keyed by the
@@ -839,7 +843,11 @@ namespace
                 const auto &record = *static_cast<const PyGraphFnRecord *>(context);
                 return std::span<const std::string_view>{record.names.data(), record.names.size()};
             },
-            nullptr,   // output schema unknown ahead of compilation (like operator markers)
+            [](const void *context) {
+                // Known when the python fn carries a TS return annotation
+                // (mesh_ learns its element type this way); else null.
+                return static_cast<const PyGraphFnRecord *>(context)->output_schema;
+            },
         };
         return ops;
     }
@@ -1504,6 +1512,7 @@ NB_MODULE(_hgraph, m)
                 case ServiceFlavour::Reference: return "reference";
                 case ServiceFlavour::Subscription: return "subscription";
                 case ServiceFlavour::RequestReply: return "request_reply";
+                case ServiceFlavour::Adaptor: return "adaptor";
             }
             return "unknown";
         })
@@ -1531,6 +1540,12 @@ NB_MODULE(_hgraph, m)
                   descriptor.flavour         = ServiceFlavour::RequestReply;
                   descriptor.request_schema  = request.value().meta;
                   descriptor.response_schema = response.value().meta;
+              }
+              else if (flavour == "adaptor")
+              {
+                  descriptor.flavour = ServiceFlavour::Adaptor;
+                  if (request.has_value()) { descriptor.input_schema = request->meta; }   // adaptor input
+                  if (output.has_value()) { descriptor.output_schema = output->meta; }
               }
               else { throw nb::value_error("unknown service flavour"); }
               return PyServiceDesc{&intern_service_descriptor(std::move(descriptor))};
@@ -1570,6 +1585,38 @@ NB_MODULE(_hgraph, m)
                 register_request_reply_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
                 return;
         }
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
+
+    // mesh_(func)[k] cross-instance access, called inside a mesh function.
+    m.def("mesh_ref", [](PyWiring &w, const PyPort &key, const std::string &name) {
+        const TSValueTypeMetaData *out_schema = OperatorRegistry::instance().resolve_mesh_scope(name);
+        if (out_schema == nullptr)
+        {
+            throw std::logic_error("mesh_ref used outside a mesh scope (no enclosing mesh is being wired)");
+        }
+        WiringPortRef placeholder =
+            wire_operator(w.wiring_ref(), "nothing", std::span<const WiringArg>{}, true, out_schema)
+                .output.erased();
+        return PyPort{stdlib::higher_order_impl_detail::mesh_ref_erased(w.wiring_ref(), key.ref, placeholder, name)};
+    }, nb::arg("w"), nb::arg("key"), nb::arg("name") = std::string{});
+
+    m.def("adaptor_client", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                               std::optional<PyPort> in) -> nb::object {
+        const WiringPortRef *in_ref = in.has_value() ? &in->ref : nullptr;
+        WiringPortRef        out    = adaptor_client(w.wiring_ref(), *desc.descriptor, path, in_ref);
+        if (out.schema == nullptr) { return nb::none(); }
+        return nb::cast(PyPort{std::move(out)});
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("in") = nb::none());
+    m.def("adaptor_from_graph", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path) {
+        return PyPort{adaptor_from_graph(w.wiring_ref(), *desc.descriptor, path)};
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{});
+    m.def("adaptor_to_graph", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                                 const PyPort &out) {
+        adaptor_to_graph(w.wiring_ref(), *desc.descriptor, path, out.ref);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("out"));
+    m.def("register_adaptor_impl", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                                      const PyWiredFn &impl) {
+        register_adaptor_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
     }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
 
     m.def("push_context", [](PyWiring &w, const std::string &name, const PyPort &port) {
@@ -1679,7 +1726,8 @@ NB_MODULE(_hgraph, m)
         return PyNodeHandle{found->second};
     });
 
-    m.def("graph_fn", [](nb::object wrapper, nb::object user_fn, nb::list param_names, bool has_output) {
+    m.def("graph_fn", [](nb::object wrapper, nb::object user_fn, nb::list param_names, bool has_output,
+                         std::optional<PyTsType> output_type) {
         auto &registry = py_graph_fn_registry();
         auto  found    = registry.find(user_fn.ptr());
         if (found == registry.end())
@@ -1689,6 +1737,7 @@ NB_MODULE(_hgraph, m)
             record->user_fn    = user_fn;
             record->has_output = has_output;
             record->arity      = nb::len(param_names);
+            if (output_type.has_value()) { record->output_schema = output_type->meta; }
             record->name_storage.reserve(record->arity);
             for (nb::handle name : param_names) { record->name_storage.push_back(nb::cast<std::string>(name)); }
             for (const auto &name : record->name_storage) { record->names.emplace_back(name); }
@@ -1702,7 +1751,8 @@ NB_MODULE(_hgraph, m)
             .arity      = record->arity,
             .has_output = record->has_output,
         }};
-    });
+    }, nb::arg("wrapper"), nb::arg("user_fn"), nb::arg("param_names"), nb::arg("has_output"),
+       nb::arg("output_type") = nb::none());
     nb::class_<PySwitchCases>(m, "SwitchCases");
     nb::class_<PyFeedback>(m, "Feedback")
         .def_prop_ro("port", [](const PyFeedback &fb) { return PyPort{fb.delegate}; })

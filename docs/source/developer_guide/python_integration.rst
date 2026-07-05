@@ -241,8 +241,14 @@ Recorded divergences / gaps (the morning-summary list):
   (``types/service_runtime.{h,cpp}``) shares
   the role markers, path grammar and node makers with the templates, so
   an erased registration UNIFIES with a template client on the same path
-  (proven in ``test_service_runtime.cpp``). Adaptors keep the template
-  surface for now.
+  (proven in ``test_service_runtime.cpp``). **Adaptors and mesh** are surfaced too:
+  ``@adaptor`` stubs (first TS param = graph-side input, return = output,
+  both optional), ``@adaptor_impl(interfaces=...)`` +
+  ``register_adaptor(path, impl)`` with impl-side ``from_graph``/
+  ``to_graph`` — the four adaptor markers de-templated to roles like the
+  services; and ``mesh_(func, ...)`` + ``mesh_ref(key[, name])`` with the
+  func's element type taken from the python fn's return annotation
+  (records carry their annotated output schema).
 - **TimeSeries view objects** (Howard's rulings: proper C++ objects, all
   kinds, strictly lazy): user nodes receive a C++-bound ``TimeSeries``
   view over the LIVE input — nothing converts unless accessed.

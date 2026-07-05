@@ -32,6 +32,7 @@ namespace hgraph
         Reference,
         Subscription,
         RequestReply,
+        Adaptor,
     };
 
     struct RuntimeServiceDescriptor
@@ -43,6 +44,9 @@ namespace hgraph
         const TSValueTypeMetaData *value_schema{nullptr};      ///< subscription
         const TSValueTypeMetaData *request_schema{nullptr};    ///< request/reply
         const TSValueTypeMetaData *response_schema{nullptr};   ///< request/reply
+        const TSValueTypeMetaData *input_schema{nullptr};      ///< adaptor (optional)
+        // (adaptor output reuses output_schema; either may be null for
+        //  sink-/source-only adaptors)
         std::string                default_path;
     };
 
@@ -80,6 +84,20 @@ namespace hgraph
         Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path, const WiringPortRef &request);
     HGRAPH_EXPORT void register_request_reply_service_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
                                                            std::string_view path, const WiredFn &impl);
+
+    /** Adaptor client: publishes ``in`` (when the interface has an input)
+        and returns the adaptor output ref (empty for sink-only adaptors). */
+    [[nodiscard]] HGRAPH_EXPORT WiringPortRef adaptor_client(Wiring &w, const RuntimeServiceDescriptor &descriptor,
+                                                             std::string_view path, const WiringPortRef *in);
+    /** Impl-side: the client input (called inside a registered impl). */
+    [[nodiscard]] HGRAPH_EXPORT WiringPortRef adaptor_from_graph(Wiring &w,
+                                                                 const RuntimeServiceDescriptor &descriptor,
+                                                                 std::string_view path);
+    /** Impl-side: publish the adaptor output back to clients. */
+    HGRAPH_EXPORT void adaptor_to_graph(Wiring &w, const RuntimeServiceDescriptor &descriptor,
+                                        std::string_view path, const WiringPortRef &out);
+    HGRAPH_EXPORT void register_adaptor_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
+                                             std::string_view path, const WiredFn &impl);
 }  // namespace hgraph
 
 #endif  // HGRAPH_TYPES_SERVICE_RUNTIME_H

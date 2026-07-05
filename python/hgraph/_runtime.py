@@ -115,7 +115,9 @@ def _wrap_graph_fn(gfn):
         finally:
             _wiring_stack.pop()
 
-    return _hgraph.graph_fn(wrapper, user_fn, names, has_output)
+    out_tp = sig.return_annotation
+    out_handle = out_tp.handle if isinstance(out_tp, _TsExpr) else None
+    return _hgraph.graph_fn(wrapper, user_fn, names, has_output, output_type=out_handle)
 
 
 def _as_wired(func):
@@ -138,6 +140,19 @@ def map_(func, *args, **kwargs):
     module-level operator function (Python-defined @graph callables cannot
     compile as C++ sub-graphs yet - a recorded divergence)."""
     return wire("map_", _as_wired(func), *args, **kwargs)
+
+
+def mesh_(func, *args, **kwargs):
+    """hgraph's mesh_: map_ over a TSD whose per-key instances may read each
+    other's outputs via ``mesh_ref(key)`` inside the mesh function, creating
+    instances on demand and evaluating in dependency order."""
+    return wire("mesh_", _as_wired(func), *args, **kwargs)
+
+
+def mesh_ref(key, name=""):
+    """Cross-instance access inside a mesh function: the sibling instance's
+    output for ``key`` (pausing until that sibling has produced it)."""
+    return WiringPort(_hgraph.mesh_ref(_current_wiring(), _unwrap(key), name))
 
 
 def reduce(func, ts, zero=None, **kwargs):
@@ -428,7 +443,64 @@ def request_reply_service(fn):
     return _ServiceStub(fn, "request_reply")
 
 
-_FLAVOUR_TS_ARITY = {"reference": 0, "subscription": 1, "request_reply": 1}
+class _AdaptorStub:
+    """@adaptor: an adaptor interface stub - the first TS parameter is the
+    graph-side input (optional), the return annotation the graph-side output
+    (optional). Calling the stub wires a CLIENT."""
+
+    def __init__(self, fn):
+        self.fn = fn
+        self.__name__ = fn.__name__
+        self.flavour = "adaptor"
+        sig = inspect.signature(fn)
+        params = [p for p in sig.parameters.values() if isinstance(p.annotation, _TsExpr)]
+        out = sig.return_annotation
+        kwargs = {"name": fn.__name__, "flavour": "adaptor"}
+        if params:
+            kwargs["request"] = _unwrap(params[0].annotation)   # the adaptor input slot
+        if isinstance(out, _TsExpr):
+            kwargs["output"] = _unwrap(out)
+        self.descriptor = _hgraph.service_descriptor(**kwargs)
+
+    def __call__(self, ts=None, *, path=""):
+        port = _hgraph.adaptor_client(_current_wiring(), self.descriptor, path,
+                                      None if ts is None else _unwrap(ts))
+        return None if port is None else WiringPort(port)
+
+
+def adaptor(fn):
+    return _AdaptorStub(fn)
+
+
+def from_graph(stub, path=""):
+    """Impl-side: the client input of ``stub`` (inside a registered impl)."""
+    return WiringPort(_hgraph.adaptor_from_graph(_current_wiring(), stub.descriptor, path))
+
+
+def to_graph(stub, out, path=""):
+    """Impl-side: publish the adaptor output of ``stub`` back to clients."""
+    _hgraph.adaptor_to_graph(_current_wiring(), stub.descriptor, path, out=_unwrap(out))
+
+
+def register_adaptor(path, implementation):
+    """Bind an @adaptor_impl to ``path`` (hgraph's shape)."""
+    if not isinstance(implementation, _ServiceImpl):
+        raise WiringError("register_adaptor requires an @adaptor_impl-decorated implementation")
+    if len(implementation.interfaces) > 1:
+        raise WiringError("multi-interface adaptor implementations are not supported from Python yet")
+    stub = implementation.interfaces[0]
+    _hgraph.register_adaptor_impl(_current_wiring(), stub.descriptor, path, _as_wired(implementation.fn))
+
+
+def adaptor_impl(fn=None, *, interfaces=None):
+    """@adaptor_impl: declares the adaptor interfaces an implementation
+    supports; the impl takes no wired inputs - it calls from_graph/to_graph."""
+    if fn is None:
+        return lambda f: _ServiceImpl(f, interfaces)
+    return _ServiceImpl(fn, interfaces)
+
+
+_FLAVOUR_TS_ARITY = {"reference": 0, "subscription": 1, "request_reply": 1, "adaptor": 0}
 
 
 class _ServiceImpl:
@@ -471,7 +543,7 @@ class _ServiceImpl:
             resolved.descriptor = descriptor
             resolved.flavour = descriptor.flavour
             return resolved
-        if not isinstance(stub, _ServiceStub):
+        if not isinstance(stub, (_ServiceStub, _AdaptorStub)):
             raise TypeError(f"@service_impl interfaces must be service stubs, got {stub!r}")
         return stub
 
