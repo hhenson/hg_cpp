@@ -441,7 +441,43 @@ def _times_for(values, start_time):
     ]
 
 
-def run_graph(graph_fn, *args, start_time=None, end_time=None, **kwargs):
+class EvaluationMode:
+    SIMULATION = "simulation"
+    REAL_TIME = "real_time"
+
+
+class _PushQueue:
+    """hgraph's @push_queue: the wrapped function is the node's START
+    lifecycle hook - called with the sender callable as its first argument
+    (plus any wiring-time scalars as kwargs) once the real-time graph is
+    running. sender(value) is thread-safe from any Python thread."""
+
+    def __init__(self, fn, tp, conflate):
+        self.fn = fn
+        self.tp = tp
+        self.conflate = conflate
+        self.__name__ = fn.__name__
+
+    def __call__(self, **scalars):
+        w = _current_wiring()
+        fn = self.fn
+
+        def on_start(sender):
+            fn(sender.send, **scalars)
+
+        port, _sender = w.push_source(_unwrap(self.tp), self.conflate, on_start)
+        return WiringPort(port)
+
+
+def push_queue(tp, conflate=False):
+    def decorator(fn):
+        return _PushQueue(fn, tp, conflate)
+
+    return decorator
+
+
+def run_graph(graph_fn, *args, start_time=None, end_time=None,
+              run_mode=EvaluationMode.SIMULATION, **kwargs):
     """Wire and evaluate ``graph_fn`` in simulation. Returns hgraph's
     evaluate_graph shape - [(time, value), ...] of the graph output ticks -
     or None for sink graphs. ``end_time`` bounds the run (REQUIRED for
@@ -454,7 +490,8 @@ def run_graph(graph_fn, *args, start_time=None, end_time=None, **kwargs):
         out = graph_fn(*args, **kwargs)
         if out is not None:
             w.wire("__harness_record", (_unwrap(out), "__run_graph__"), {})
-        run = w.run(start_time=start_time, end_time=end_time)
+        run = w.run(start_time=start_time, end_time=end_time,
+                    realtime=run_mode == EvaluationMode.REAL_TIME)
     finally:
         _wiring_stack.pop()
     if out is None:

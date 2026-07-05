@@ -340,6 +340,44 @@ def test_component_record_replay_modes():
     hg.set_record_replay_config(hg.IN_MEMORY)
 
 
+def test_realtime_push_queue():
+    # hgraph's @push_queue: the wrapped fn is the START hook, receiving the
+    # thread-safe sender callable; it spawns a feeder thread while the main
+    # thread blocks in run (GIL released). A python sink collects results.
+    import threading
+    import time
+
+    collected = []
+    threads = []
+
+    @hg.push_queue(TS[int])
+    def ticks(sender, values: tuple = (1, 2, 3)):
+        def feed():
+            time.sleep(0.15)
+            for value in values:
+                sender(value)
+                time.sleep(0.02)
+
+        thread = threading.Thread(target=feed)
+        threads.append(thread)
+        thread.start()
+
+    @hg.sink_node
+    def collect(v: TS[int]) -> None:
+        collected.append(v)
+
+    @graph
+    def live() -> None:
+        port = ticks()
+        collect(port + port)
+
+    end = datetime.datetime.now(datetime.UTC).replace(tzinfo=None) + datetime.timedelta(seconds=1)
+    run_graph(live, end_time=end, run_mode=hg.EvaluationMode.REAL_TIME)
+    for thread in threads:
+        thread.join()
+    check(collected == [2, 4, 6], f"realtime push: {collected}")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

@@ -201,4 +201,12 @@ Recorded divergences / gaps (the morning-summary list):
   ``__recovering_pass_through``. The eval_node/run_graph harness wires
   ungated ``__harness_record``/``__harness_replay`` aliases so the active
   record/replay MODEL never captures the test harness itself.
+- **Real-time + push sources** are surfaced with hgraph's shapes:
+  ``run_graph(..., run_mode=EvaluationMode.REAL_TIME)`` runs the
+  wall-clock executor (the GIL is released for the whole run), and
+  ``@push_queue(tp, conflate=False)`` wraps a function that IS the node's
+  start lifecycle hook — called with the thread-safe sender callable
+  (plus wiring-time scalars) once the graph runs; values convert
+  schema-directed on the sending thread and cross the sanctioned C++
+  boundary. Wiring the decorated function returns its port.
 - Services/adaptors/contexts are not yet surfaced in Python.

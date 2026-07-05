@@ -15,6 +15,7 @@
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/testing/record_replay.h>
+#include <hgraph/runtime/push_source_node.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
 #include <hgraph/types/metadata/type_registry.h>
@@ -351,6 +352,33 @@ namespace
         const PyNodeRecord *record{nullptr};
     };
 
+    /**
+     * The python push-source sender: the slot is filled by the node's
+     * on_start (graph thread); python threads convert and send through it.
+     * shared_ptr is sanctioned here - this IS the cross-thread boundary.
+     */
+    struct PySenderSlot
+    {
+        PushSourceSender           sender{};
+        const TSValueTypeMetaData *schema{nullptr};
+    };
+
+    struct PySender
+    {
+        std::shared_ptr<PySenderSlot> slot;
+
+        void send(nb::handle object) const
+        {
+            if (slot == nullptr || !slot->sender.valid())
+            {
+                throw std::logic_error("push sender is not started yet (the graph must be running)");
+            }
+            Value value = py_to_delta(object, slot->schema);
+            nb::gil_scoped_release release;
+            slot->sender.send(std::move(value));
+        }
+    };
+
     /** An opaque pre-converted scalar Value (e.g. the user-node scalars list). */
     struct PyScalarValue
     {
@@ -537,7 +565,8 @@ namespace
             testing::set_replay_deltas(wiring_ref().global_state(), key, deltas);
         }
 
-        [[nodiscard]] std::unique_ptr<PyRun> run(std::optional<DateTime> start_time, std::optional<DateTime> end_time)
+        [[nodiscard]] std::unique_ptr<PyRun> run(std::optional<DateTime> start_time, std::optional<DateTime> end_time,
+                                                 bool realtime)
         {
             ensure_open();
             if (owned == nullptr) { throw std::logic_error("a borrowed Wiring cannot be run"); }
@@ -547,7 +576,8 @@ namespace
             GraphExecutorBuilder eb;
             eb.graph_builder(std::move(builder))
                 .start_time(start_time.value_or(MIN_ST))
-                .end_time(end_time.value_or(MAX_ET));
+                .end_time(end_time.value_or(MAX_ET))
+                .mode(realtime ? GraphExecutorMode::RealTime : GraphExecutorMode::Simulation);
             auto run = std::make_unique<PyRun>(PyRun{eb.make_executor()});
             {
                 // Ruling: the GIL is released the instant we enter the run
@@ -556,6 +586,33 @@ namespace
                 run->executor.view().run();
             }
             return run;
+        }
+
+        [[nodiscard]] nb::tuple push_source(PyTsType ts_type, bool conflate, nb::object on_start)
+        {
+            ensure_open();
+            auto slot     = std::make_shared<PySenderSlot>();
+            slot->schema  = ts_type.meta;
+            auto policy   = conflate ? make_push_source_conflating_policy(*ts_type.meta->value_schema)
+                                     : make_push_source_queue_policy(*ts_type.meta->value_schema);
+            NodeBuilder builder = make_push_source_node(
+                *ts_type.meta, std::move(policy), [slot, on_start](PushSourceSender sender) {
+                    slot->sender = std::move(sender);
+                    if (!on_start.is_none())
+                    {
+                        // hgraph's @push_queue contract: the wrapped function
+                        // IS the start lifecycle hook, invoked with the sender.
+                        nb::gil_scoped_acquire gil;
+                        on_start(nb::cast(PySender{slot}));
+                    }
+                });
+            struct py_push_source_tag
+            {
+            };
+            WiringPortRef ref = wiring_ref().add_unique_node(std::type_index(typeid(py_push_source_tag)),
+                                                             std::move(builder), std::span<const WiringPortRef>{},
+                                                             Value{});
+            return nb::make_tuple(PyPort{std::move(ref)}, PySender{std::move(slot)});
         }
 
         [[nodiscard]] PyFeedback feedback(PyTsType ts_type, nb::handle initial)
@@ -1054,6 +1111,7 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyWiredFn>(m, "WiredFn");
     nb::class_<PyNodeHandle>(m, "NodeRef");
     nb::class_<PyScalarValue>(m, "ScalarValue");
+    nb::class_<PySender>(m, "Sender").def("send", &PySender::send, nb::arg("value"));
     // Wiring-time scalar values as one list-of-Any (part of node identity).
     m.def("any_list", [](nb::list values) {
         auto &registry = TypeRegistry::instance();
@@ -1176,7 +1234,10 @@ NB_MODULE(_hgraph, m)
              nb::arg("ts_type") = nb::none())
         .def("feedback", &PyWiring::feedback, nb::arg("ts_type"), nb::arg("initial") = nb::none())
         .def("feedback_bind", &PyWiring::feedback_bind, nb::arg("feedback"), nb::arg("port"))
-        .def("run", &PyWiring::run, nb::arg("start_time") = nb::none(), nb::arg("end_time") = nb::none());
+        .def("run", &PyWiring::run, nb::arg("start_time") = nb::none(), nb::arg("end_time") = nb::none(),
+             nb::arg("realtime") = false)
+        .def("push_source", &PyWiring::push_source, nb::arg("ts_type"), nb::arg("conflate") = false,
+             nb::arg("on_start") = nb::none());
 
     m.def(
         "evaluate_const",
