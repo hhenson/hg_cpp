@@ -118,6 +118,40 @@ def reduce(func, ts, zero=None, **kwargs):
     return wire("reduce", _as_wired(func), ts, zero, **kwargs)
 
 
+class Feedback:
+    """hgraph's feedback: ``fb = feedback(TS[int])``; ``fb(port)`` binds the
+    cycle-closing input; ``fb()`` reads the (next-cycle) source port."""
+
+    __slots__ = ("_wiring", "_fb")
+
+    def __init__(self, wiring, fb):
+        self._wiring = wiring
+        self._fb = fb
+
+    def __call__(self, port=None):
+        if port is None:
+            return WiringPort(self._fb.port)
+        self._wiring.feedback_bind(self._fb, _unwrap(port))
+        return self
+
+
+def feedback(tp, initial=None):
+    w = _current_wiring()
+    return Feedback(w, w.feedback(_unwrap(tp), initial))
+
+
+def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
+    """hgraph's switch_ - cases is {key_value: operator-name-or-WiredFn};
+    a None key is the default branch."""
+    prepared = {}
+    for case_key, branch in cases.items():
+        if callable(branch) and not isinstance(branch, (str, _hgraph.WiredFn)):
+            branch = getattr(branch, "__name__", branch)
+        prepared[case_key] = branch
+    erased = _hgraph.switch_cases(prepared, reload=reload_on_ticked)
+    return wire("switch_", key, erased, *args, **kwargs)
+
+
 class _GraphFn:
     """The @graph decorator: a plain composition function. Inside an active
     wiring it inlines (a call is just a call); run_graph/eval_node make it a
@@ -171,37 +205,43 @@ def _simplify_delta(value):
     return value
 
 
-def _times_for(values):
+def _times_for(values, start_time):
     return [
-        (_hgraph.MIN_ST + i * _hgraph.MIN_TD, v)
+        (start_time + i * _hgraph.MIN_TD, v)
         for i, v in enumerate(values)
         if v is not None
     ]
 
 
-def run_graph(graph_fn, *args, **kwargs):
+def run_graph(graph_fn, *args, start_time=None, end_time=None, **kwargs):
     """Wire and evaluate ``graph_fn`` in simulation. Returns hgraph's
     evaluate_graph shape - [(time, value), ...] of the graph output ticks -
-    or None for sink graphs. NOTE (divergence): the simulation clock is
-    cycle-aligned from MIN_ST in MIN_TD steps."""
+    or None for sink graphs. ``end_time`` bounds the run (REQUIRED for
+    self-perpetuating graphs, e.g. bound feedback loops). NOTE
+    (divergence): the simulation clock is cycle-aligned from MIN_ST in
+    MIN_TD steps."""
     w = _hgraph.Wiring()
     _wiring_stack.append(w)
     try:
         out = graph_fn(*args, **kwargs)
         if out is not None:
             w.wire("record", (_unwrap(out), "__run_graph__"), {})
-        run = w.run()
+        run = w.run(start_time=start_time, end_time=end_time)
     finally:
         _wiring_stack.pop()
     if out is None:
         return None
-    return _times_for(run.recorded("__run_graph__"))
+    return _times_for(run.recorded("__run_graph__"), start_time or _hgraph.MIN_ST)
 
 
-def eval_node(fn, *inputs, output_type=None, __scalars__=None):
+def eval_node(fn, *inputs, output_type=None, __start_time__=None, __end_time__=None, __scalars__=None):
     """Drive a @graph/composition ``fn`` with vectors of per-cycle values
     (None = no tick), mirroring hgraph's eval_node test util. Time-series
-    input types come from ``fn``'s annotations."""
+    input types come from ``fn``'s annotations. The run is unbounded by
+    default (MAX_ET, as always) - a graph ends when nothing remains
+    scheduled. ``__end_time__`` (Python-hgraph parity) bounds a run
+    explicitly; a test that cannot quiesce (e.g. a bound feedback loop
+    until per-edge passive support lands) must set it and say why."""
     fn_sig = inspect.signature(fn.fn if isinstance(fn, _GraphFn) else fn)
     params = list(fn_sig.parameters.values())
     w = _hgraph.Wiring()
@@ -220,10 +260,10 @@ def eval_node(fn, *inputs, output_type=None, __scalars__=None):
         out = fn(*ports, **scalars)
         length = max((len(series) for series in inputs), default=0)
         if out is None:
-            run = w.run()
+            run = w.run(start_time=__start_time__, end_time=__end_time__)
             return None
         w.wire("record", (_unwrap(out), "eval_node::out"), {})
-        run = w.run()
+        run = w.run(start_time=__start_time__, end_time=__end_time__)
     finally:
         _wiring_stack.pop()
     recorded = [None if v is None else _simplify_delta(v) for v in run.recorded("eval_node::out")]

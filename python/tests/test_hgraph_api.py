@@ -130,6 +130,32 @@ def test_tss_deltas():
     check(out == [2, 3, 2], f"tss: {out}")
 
 
+def test_switch_over_named_branches():
+    @graph
+    def routed(k: TS[str], a: TS[int], b: TS[int]) -> TS[int]:
+        return hg.switch_(k, {"plus": "add_", "minus": "sub_"}, a, b)
+
+    out = eval_node(routed, ["plus", None, "minus"], [10, 20, 30], [1, 2, 3])
+    check(out == [11, 22, 27], f"switch_: {out}")
+
+
+def test_feedback_accumulator():
+    # NOTE: we currently cannot mark the fb() consumption as passive, so
+    # the bound loop re-ticks every cycle and the graph never quiesces; we
+    # set __end_time__ explicitly to ensure the test terminates. When
+    # per-edge passive support lands, drop the end time and let the graph
+    # end naturally.
+    @graph
+    def accum(a: TS[int]) -> TS[int]:
+        fb = hg.feedback(TS[int], 0)
+        total = a + fb()
+        fb(total)
+        return total
+
+    out = eval_node(accum, [1, 2, 3], __end_time__=hg.MIN_ST + 3 * hg.MIN_TD)
+    check(out == [1, 3, 6], f"feedback: {out}")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

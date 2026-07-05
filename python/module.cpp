@@ -11,6 +11,8 @@
  */
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/types/wired_fn.h>
+#include <hgraph/lib/std/operators/control.h>
+#include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
@@ -359,6 +361,20 @@ namespace
 
     struct PyRun;
 
+    struct PySwitchCases
+    {
+        stdlib::SwitchCases cases{};
+    };
+
+    /** hgraph's feedback: an unbound source port bound later to close a cycle. */
+    struct PyFeedback
+    {
+        Wiring                    *wiring{nullptr};
+        WiringPortRef              delegate{};
+        const TSValueTypeMetaData *schema{nullptr};
+        bool                       bound{false};
+    };
+
     [[nodiscard]] std::vector<WiringArg> build_args(nb::tuple args, nb::dict kwargs)
     {
         std::vector<WiringArg> out;
@@ -375,6 +391,12 @@ namespace
             {
                 arg.kind         = WiringArg::Kind::Scalar;
                 arg.scalar_value = Value{nb::cast<PyWiredFn &>(object).fn};
+                arg.scalar_meta  = arg.scalar_value.schema();
+            }
+            else if (nb::isinstance<PySwitchCases>(object))
+            {
+                arg.kind         = WiringArg::Kind::Scalar;
+                arg.scalar_value = Value{nb::cast<PySwitchCases &>(object).cases};
                 arg.scalar_meta  = arg.scalar_value.schema();
             }
             else
@@ -437,17 +459,55 @@ namespace
             testing::set_replay_deltas(wiring.global_state(), key, deltas);
         }
 
-        [[nodiscard]] std::unique_ptr<PyRun> run()
+        [[nodiscard]] std::unique_ptr<PyRun> run(std::optional<DateTime> start_time, std::optional<DateTime> end_time)
         {
             ensure_open();
             finished = true;
             GraphBuilder builder = std::move(wiring).finish();
 
             GraphExecutorBuilder eb;
-            eb.graph_builder(std::move(builder)).start_time(MIN_ST).end_time(MAX_ET);
+            eb.graph_builder(std::move(builder))
+                .start_time(start_time.value_or(MIN_ST))
+                .end_time(end_time.value_or(MAX_ET));
             auto run = std::make_unique<PyRun>(PyRun{eb.make_executor()});
             run->executor.view().run();
             return run;
+        }
+
+        [[nodiscard]] PyFeedback feedback(PyTsType ts_type, nb::handle initial)
+        {
+            ensure_open();
+            const auto *schema = stdlib::feedback_detail::require_feedback_schema(ts_type.meta);
+            Value       initial_delta;
+            const bool  has_initial = !initial.is_none();
+            if (has_initial)
+            {
+                initial_delta = py_to_delta(initial, schema);
+                stdlib::feedback_detail::validate_initial_delta(*schema, initial_delta);
+            }
+            NodeBuilder builder = make_feedback_source_node(*schema, has_initial);
+            WiringPortRef ref   = wiring.add_unique_node(
+                std::type_index(typeid(stdlib::feedback_detail::feedback_source_node_tag)), std::move(builder),
+                std::span<const WiringPortRef>{}, std::move(initial_delta));
+            return PyFeedback{&wiring, std::move(ref), schema, false};
+        }
+
+        void feedback_bind(PyFeedback &fb, const PyPort &port)
+        {
+            ensure_open();
+            if (fb.bound) { throw std::logic_error("feedback is already bound"); }
+            WiringPortRef ts_source   = graph_wiring_detail::adapt_source_for_input(wiring, fb.schema, port.ref);
+            WiringPortRef self_source = graph_wiring_detail::adapt_source_for_input(wiring, fb.schema, fb.delegate);
+            std::array<WiringPortRef, 2> sources{std::move(ts_source), std::move(self_source)};
+
+            NodeBuilder builder = make_feedback_sink_node(*fb.schema);
+            builder.input_endpoint(graph_wiring_detail::input_endpoint_for_sources(
+                builder.binding().type_meta != nullptr ? builder.binding().type_meta->input_schema : nullptr,
+                std::span<const WiringPortRef>{sources.data(), sources.size()}));
+            (void)wiring.add_node(std::type_index(typeid(stdlib::feedback_detail::feedback_sink_node_tag)),
+                                  std::move(builder), std::span<const WiringPortRef>{sources.data(), sources.size()},
+                                  Value{});
+            fb.bound = true;
         }
 
       private:
@@ -510,6 +570,30 @@ NB_MODULE(_hgraph, m)
     m.def("operator_names", [] { return OperatorRegistry::instance().registered_names(); });
 
     nb::class_<PyWiredFn>(m, "WiredFn");
+    nb::class_<PySwitchCases>(m, "SwitchCases");
+    nb::class_<PyFeedback>(m, "Feedback")
+        .def_prop_ro("port", [](const PyFeedback &fb) { return PyPort{fb.delegate}; })
+        .def_prop_ro("bound", [](const PyFeedback &fb) { return fb.bound; });
+
+    m.def("switch_cases", [](nb::dict cases, bool reload) {
+        stdlib::SwitchCases result;
+        result.reload_on_ticked = reload;
+        for (auto [key, branch] : cases)
+        {
+            WiredFn fn;
+            if (nb::isinstance<PyWiredFn>(branch)) { fn = nb::cast<PyWiredFn &>(branch).fn; }
+            else
+            {
+                const auto &table = wired_fn_table();
+                const auto  found = table.find(nb::cast<std::string>(branch));
+                if (found == table.end()) { throw nb::value_error("no wired-fn erasure for switch branch"); }
+                fn = found->second;
+            }
+            if (key.is_none()) { result.default_branch = fn; }
+            else { result.cases.push_back(stdlib::SwitchCase{py_to_value(key), fn}); }
+        }
+        return PySwitchCases{std::move(result)};
+    }, nb::arg("cases"), nb::arg("reload") = false);
     m.def("wired_op", [](const std::string &name) {
         const auto &table = wired_fn_table();
         const auto  found = table.find(name);
@@ -530,7 +614,9 @@ NB_MODULE(_hgraph, m)
              nb::arg("kwargs") = nb::dict(), nb::arg("output_type") = nb::none())
         .def("set_replay", &PyWiring::set_replay, nb::arg("key"), nb::arg("values"),
              nb::arg("ts_type") = nb::none())
-        .def("run", &PyWiring::run);
+        .def("feedback", &PyWiring::feedback, nb::arg("ts_type"), nb::arg("initial") = nb::none())
+        .def("feedback_bind", &PyWiring::feedback_bind, nb::arg("feedback"), nb::arg("port"))
+        .def("run", &PyWiring::run, nb::arg("start_time") = nb::none(), nb::arg("end_time") = nb::none());
 
     m.def(
         "evaluate_const",
