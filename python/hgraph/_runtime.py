@@ -531,13 +531,22 @@ class _ServiceImpl:
             p for p in inspect.signature(target).parameters.values()
             if isinstance(p.annotation, _TsExpr) or p.annotation is inspect.Signature.empty
         ]
-        for stub in self.interfaces:
-            expected = _FLAVOUR_TS_ARITY[stub.flavour]
-            if len(ts_params) != expected:
+        if len(self.interfaces) > 1:
+            # Multi-interface implementations take NO wired inputs: they
+            # fetch each interface's input via impl_input and publish via
+            # impl_output inside the body.
+            if ts_params:
                 raise TypeError(
-                    f"@service_impl '{self.__name__}': a {stub.flavour} implementation takes "
-                    f"{expected} time-series parameter(s), found {len(ts_params)}"
-                )
+                    f"@service_impl '{self.__name__}': a multi-interface implementation takes no "
+                    "time-series parameters (use impl_input/impl_output)")
+        else:
+            for stub in self.interfaces:
+                expected = _FLAVOUR_TS_ARITY[stub.flavour]
+                if len(ts_params) != expected:
+                    raise TypeError(
+                        f"@service_impl '{self.__name__}': a {stub.flavour} implementation takes "
+                        f"{expected} time-series parameter(s), found {len(ts_params)}"
+                    )
 
     @staticmethod
     def _resolve(stub):
@@ -568,15 +577,32 @@ def service_impl(fn=None, *, interfaces=None):
     return _ServiceImpl(fn, interfaces)
 
 
+def impl_input(stub, path=""):
+    """Inside a multi-interface implementation: the interface's input
+    (subscription key set / request dictionary)."""
+    return WiringPort(_hgraph.service_impl_input(_current_wiring(), stub.descriptor, path))
+
+
+def impl_output(stub, out, path=""):
+    """Inside a multi-interface implementation: publish the interface's
+    output explicitly."""
+    _hgraph.service_impl_output(_current_wiring(), stub.descriptor, path, out=_unwrap(out))
+
+
 def register_service(path, implementation, **kwargs):
     """Bind ``implementation`` (an @service_impl) to ``path`` (hgraph's
-    signature: path first). Each declared interface registers on the path."""
+    signature: path first). A SINGLE-interface impl wires with its input
+    supplied and output captured automatically; a MULTI-interface impl
+    takes no wired inputs and uses impl_input/impl_output per interface."""
     if not isinstance(implementation, _ServiceImpl):
         raise WiringError("register_service requires an @service_impl-decorated implementation")
     if kwargs:
         raise WiringError("implementation kwargs are not supported yet")
     if len(implementation.interfaces) > 1:
-        raise WiringError("multi-interface implementations are not supported from Python yet")
+        _hgraph.register_multi_service_impl(
+            _current_wiring(), [stub.descriptor for stub in implementation.interfaces], path,
+            _wrap_graph_fn(implementation.fn))
+        return
     stub = implementation.interfaces[0]
     _hgraph.register_service_impl(
         _current_wiring(), stub.descriptor, path, _wrap_graph_fn(implementation.fn))

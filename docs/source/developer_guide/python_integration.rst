@@ -237,7 +237,13 @@ Recorded divergences / gaps (the morning-summary list):
   declared interfaces validate the impl's signature per flavour at
   decoration and drive ``register_service(path, impl)``, path first;
   undecorated impls are refused); interfaces may be stubs or the NAMES of
-  C++-defined interfaces (the ruled direction). The erased core
+  C++-defined interfaces (the ruled direction). MULTI-INTERFACE
+  implementations work per the C++ ``register_services`` shape: the impl
+  takes no wired inputs and uses ``impl_input(stub, path)`` /
+  ``impl_output(stub, out, path)`` per interface inside its body (the
+  erased ``service_impl_input``/``service_impl_output`` flows +
+  ``register_multi_service_impl`` with the combined required-endpoint
+  scope). The erased core
   (``types/service_runtime.{h,cpp}``) shares
   the role markers, path grammar and node makers with the templates, so
   an erased registration UNIFIES with a template client on the same path

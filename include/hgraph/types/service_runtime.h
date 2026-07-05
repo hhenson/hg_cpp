@@ -5,6 +5,7 @@
 #include <hgraph/types/metadata/ts_value_type_meta_data.h>
 #include <hgraph/types/wired_fn.h>
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -84,6 +85,21 @@ namespace hgraph
         Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path, const WiringPortRef &request);
     HGRAPH_EXPORT void register_request_reply_service_impl(Wiring &w, const RuntimeServiceDescriptor &descriptor,
                                                            std::string_view path, const WiredFn &impl);
+
+    /**
+     * Multi-interface implementations (the ``register_services`` +
+     * ``impl_input``/``impl_output`` shape, erased): ONE graph implements
+     * several interfaces by fetching each interface's input inside its body
+     * and publishing each output explicitly.
+     */
+    [[nodiscard]] HGRAPH_EXPORT WiringPortRef service_impl_input(Wiring &w,
+                                                                 const RuntimeServiceDescriptor &descriptor,
+                                                                 std::string_view path);
+    HGRAPH_EXPORT void service_impl_output(Wiring &w, const RuntimeServiceDescriptor &descriptor,
+                                           std::string_view path, const WiringPortRef &out);
+    HGRAPH_EXPORT void register_multi_service_impl(Wiring &w,
+                                                   std::span<const RuntimeServiceDescriptor *const> descriptors,
+                                                   std::string_view path, const WiredFn &impl);
 
     /** Adaptor client: publishes ``in`` (when the interface has an input)
         and returns the adaptor output ref (empty for sink-only adaptors). */

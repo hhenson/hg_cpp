@@ -727,6 +727,45 @@ def test_adaptor_from_python():
     check(out == [6, 10], f"adaptor: {out}")
 
 
+def test_multi_interface_service_impl():
+    # ONE implementation serving TWO interfaces (register_services +
+    # impl_input/impl_output, erased): a reference rate and a request/reply
+    # boost that adds the shared rate (broadcast into the map_ child).
+    @hg.reference_service
+    def rate() -> TS[int]: ...
+
+    @hg.request_reply_service
+    def boost(request: TS[int]) -> TS[int]: ...
+
+    @graph
+    def add_rate(r: TS[int], rate_ts: TS[int]) -> TS[int]:
+        return r + rate_ts
+
+    @hg.service_impl(interfaces=(rate, boost))
+    def combined_impl():
+        the_rate = hg.const(100, tp=TS[int])
+        hg.impl_output(rate, the_rate, path="svc")
+        requests = hg.impl_input(boost, path="svc")
+        hg.impl_output(boost, hg.map_(add_rate, requests, the_rate), path="svc")
+
+    @graph
+    def g(x: TS[int]) -> TS[int]:
+        hg.register_service("svc", combined_impl)
+        return boost(x, path="svc") + hg.passive(rate(path="svc"))
+
+    out = eval_node(g, [5, 7], __end_time__=hg.MIN_ST + 4 * hg.MIN_TD)
+    check(out == [None, None, 207], f"multi-interface: {out}")
+
+    # A multi-interface impl must take no wired inputs.
+    try:
+        @hg.service_impl(interfaces=(rate, boost))
+        def bad(extra: TS[int]):
+            pass
+        check(False, "expected a shape error")
+    except TypeError:
+        pass
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

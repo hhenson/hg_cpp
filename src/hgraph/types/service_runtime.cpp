@@ -395,6 +395,145 @@ namespace hgraph
     }
 
     // ------------------------------------------------------------------
+    // Multi-interface implementations (register_services + impl_input /
+    // impl_output, erased)
+    // ------------------------------------------------------------------
+
+    namespace
+    {
+        [[nodiscard]] std::string flavour_base(const RuntimeServiceDescriptor &d, std::string_view p)
+        {
+            switch (d.flavour)
+            {
+                case ServiceFlavour::Reference: return reference_base(d, p);
+                case ServiceFlavour::Subscription: return subscription_base(d, p);
+                case ServiceFlavour::RequestReply: return request_reply_base(d, p);
+                case ServiceFlavour::Adaptor: break;
+            }
+            throw std::invalid_argument("service '" + d.name + "': not a service flavour");
+        }
+    }  // namespace
+
+    WiringPortRef service_impl_input(Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path)
+    {
+        switch (descriptor.flavour)
+        {
+            case ServiceFlavour::Subscription: {
+                const std::string endpoint = subscription_base(descriptor, path) + "/subs";
+                w.register_service_implementation_stub(endpoint, "subscription service");
+                const auto *subs_meta = TypeRegistry::instance().tss(descriptor.key_type);
+                WiringNodeSchema schema;
+                schema.output = subs_meta;
+                WiringPortRef source = w.add_node(
+                    std::type_index(typeid(service::detail::subscription_source_marker)), schema,
+                    std::span<const WiringPortRef>{}, service::detail::path_key_value(endpoint),
+                    [endpoint, key_meta = descriptor.key_type]() {
+                        return make_subscription_key_source_node(endpoint, *key_meta);
+                    });
+                w.register_service_rank_anchor(endpoint, source.peered_node());
+                return source;
+            }
+            case ServiceFlavour::RequestReply: {
+                const std::string endpoint = request_reply_base(descriptor, path) + "/request";
+                w.register_service_implementation_stub(endpoint, "request/reply service");
+                WiringPortRef source = request_input_source_node(w, descriptor, endpoint);
+                w.register_service_rank_anchor(endpoint, source.peered_node());
+                return source;
+            }
+            default:
+                throw std::invalid_argument("service '" + descriptor.name + "': flavour has no impl input");
+        }
+    }
+
+    void service_impl_output(Wiring &w, const RuntimeServiceDescriptor &descriptor, std::string_view path,
+                             const WiringPortRef &out)
+    {
+        switch (descriptor.flavour)
+        {
+            case ServiceFlavour::Reference: {
+                const std::string base = reference_base(descriptor, path);
+                w.register_service_implementation_stub(base, "reference service");
+                WiringPortRef shared = shared_output_source_node(
+                    w, std::type_index(typeid(service::detail::reference_output_source_marker)),
+                    descriptor.output_schema, base);
+                const WiringInstance *capture = shared_output_capture_node(
+                    w, std::type_index(typeid(service::detail::reference_output_capture_marker)),
+                    out.schema != nullptr ? out.schema : descriptor.output_schema, base, out, shared);
+                w.register_service_rank_anchor(base, capture);
+                return;
+            }
+            case ServiceFlavour::Subscription: {
+                const std::string endpoint = subscription_base(descriptor, path) + "/out";
+                w.register_service_implementation_stub(endpoint, "subscription service");
+                const auto *dict_meta =
+                    TypeRegistry::instance().tsd(descriptor.key_type, descriptor.value_schema);
+                WiringPortRef shared = shared_output_source_node(
+                    w, std::type_index(typeid(service::detail::shared_output_source_marker)), dict_meta, endpoint);
+                const WiringInstance *capture = shared_output_capture_node(
+                    w, std::type_index(typeid(service::detail::shared_output_capture_marker)),
+                    out.schema != nullptr ? out.schema : dict_meta, endpoint, out, shared);
+                w.register_service_rank_anchor(endpoint, capture);
+                return;
+            }
+            case ServiceFlavour::RequestReply: {
+                const std::string endpoint = request_reply_base(descriptor, path) + "/replies";
+                w.register_service_implementation_stub(endpoint, "request/reply service");
+                WiringPortRef shared = reply_output_source_node(w, descriptor, endpoint);
+                const auto *dict_meta = TypeRegistry::instance().tsd(scalar_descriptor<Int>::value_meta(),
+                                                                     descriptor.response_schema);
+                const WiringInstance *capture = shared_output_capture_node(
+                    w, std::type_index(typeid(service::detail::request_reply_output_capture_marker)),
+                    out.schema != nullptr ? out.schema : dict_meta, endpoint, out, shared);
+                w.register_service_rank_anchor(endpoint, capture);
+                return;
+            }
+            default:
+                throw std::invalid_argument("service '" + descriptor.name + "': flavour has no impl output");
+        }
+    }
+
+    void register_multi_service_impl(Wiring &w, std::span<const RuntimeServiceDescriptor *const> descriptors,
+                                     std::string_view path, const WiredFn &impl)
+    {
+        if (descriptors.empty())
+        {
+            throw std::invalid_argument("register_multi_service_impl requires at least one interface");
+        }
+        std::vector<WiringServiceImplementationEndpoint> required_endpoints;
+        std::string description{"multi-service implementation:"};
+        for (const RuntimeServiceDescriptor *descriptor : descriptors)
+        {
+            const std::string base = flavour_base(*descriptor, path);
+            const char *what = descriptor->flavour == ServiceFlavour::Reference    ? "reference service"
+                               : descriptor->flavour == ServiceFlavour::Subscription ? "subscription service"
+                                                                                     : "request/reply service";
+            w.register_built_service_path(base, what);
+            description += ' ';
+            description += base;
+            switch (descriptor->flavour)
+            {
+                case ServiceFlavour::Reference:
+                    required_endpoints.push_back(WiringServiceImplementationEndpoint{base, {}});
+                    break;
+                case ServiceFlavour::Subscription:
+                    required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/subs", {}});
+                    required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/out", {}});
+                    break;
+                case ServiceFlavour::RequestReply:
+                    required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/request", {}});
+                    required_endpoints.push_back(WiringServiceImplementationEndpoint{base + "/replies", {}});
+                    break;
+                default: break;
+            }
+        }
+        w.begin_service_implementation(std::move(description), std::move(required_endpoints));
+        auto unwind = UnwindCleanupGuard([&] { w.cancel_service_implementation(); });
+        static_cast<void>(wire_impl(w, *descriptors.front(), impl, {}));
+        unwind.release();
+        w.end_service_implementation();
+    }
+
+    // ------------------------------------------------------------------
     // Adaptors (adaptor_wiring.h erased; same recipe as the services)
     // ------------------------------------------------------------------
 

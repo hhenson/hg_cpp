@@ -1600,6 +1600,24 @@ NB_MODULE(_hgraph, m)
         return PyPort{stdlib::higher_order_impl_detail::mesh_ref_erased(w.wiring_ref(), key.ref, placeholder, name)};
     }, nb::arg("w"), nb::arg("key"), nb::arg("name") = std::string{});
 
+    m.def("service_impl_input", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path) {
+        return PyPort{service_impl_input(w.wiring_ref(), *desc.descriptor, path)};
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{});
+    m.def("service_impl_output", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                                    const PyPort &out) {
+        service_impl_output(w.wiring_ref(), *desc.descriptor, path, out.ref);
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("out"));
+    m.def("register_multi_service_impl", [](PyWiring &w, nb::list descs, const std::string &path,
+                                            const PyWiredFn &impl) {
+        std::vector<const RuntimeServiceDescriptor *> descriptors;
+        descriptors.reserve(nb::len(descs));
+        for (nb::handle desc : descs) { descriptors.push_back(nb::cast<PyServiceDesc &>(desc).descriptor); }
+        register_multi_service_impl(w.wiring_ref(),
+                                    std::span<const RuntimeServiceDescriptor *const>{descriptors.data(),
+                                                                                     descriptors.size()},
+                                    path, impl.fn);
+    }, nb::arg("w"), nb::arg("descs"), nb::arg("path") = std::string{}, nb::arg("impl"));
+
     m.def("adaptor_client", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
                                std::optional<PyPort> in) -> nb::object {
         const WiringPortRef *in_ref = in.has_value() ? &in->ref : nullptr;
