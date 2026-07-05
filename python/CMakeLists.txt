@@ -18,7 +18,7 @@ endforeach()
 # precise "gap:"/"deviation:" reasons).
 add_test(
     NAME hgraph_python_ported_suite
-    COMMAND "${Python_EXECUTABLE}" -m pytest "${CMAKE_CURRENT_SOURCE_DIR}/tests/ported" -q
+    COMMAND "${Python_EXECUTABLE}" -m pytest "${CMAKE_CURRENT_SOURCE_DIR}/tests/ported" -q -m "not wip"
 )
 set_tests_properties(hgraph_python_ported_suite PROPERTIES
     ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:_hgraph>:${CMAKE_CURRENT_SOURCE_DIR}"

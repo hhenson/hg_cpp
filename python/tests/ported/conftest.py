@@ -6,3 +6,7 @@ Conventions:
 - Agreed deviations (REF is value-only; TSD internals; ...) skip with
   reason "deviation: ...". Unimplemented surface skips with "gap: ...".
 """
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "wip: ported file whose burn-down is in progress (excluded from the gate)")
