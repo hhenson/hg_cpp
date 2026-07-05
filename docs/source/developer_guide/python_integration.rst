@@ -125,3 +125,47 @@ order destroyed interned bindings before the operator impls' default
 Registries hold process-lifetime immutable artifacts; they are never
 destroyed. Tests: ``bindings/python/tests/test_bridge.py`` (registered
 with ctest under the option).
+
+The hgraph Package (Slices 2-4 — Landed)
+----------------------------------------
+
+``python/hgraph`` is the package that will eventually be **the** hgraph
+package (Howard's direction); it mirrors the Python hgraph surface over
+the ``_hgraph`` bridge module (built from ``python/module.cpp``):
+
+- **Types**: ``TS[int]``, ``TSS[str]``, ``TSD[str, TS[int]]``,
+  ``TSL[TS[int], Size[N]]``, ``TSB[SchemaClass]`` (``TimeSeriesSchema``
+  annotations) — each subscription resolves to an interned C++ type handle.
+- **Operator surface**: every registered operator (113) is a module-level
+  function via PEP 562; ``WiringPort`` carries hgraph's dunder sugar
+  (arithmetic/comparison/bitwise/unary, ``[]``, ``.field`` via
+  ``getattr_``); ``const`` takes hgraph's ``tp=``.
+- **Composition/evaluation**: ``@graph`` (nested graphs inline by calling),
+  ``run_graph(fn, *args, start_time=, end_time=)`` returning
+  ``[(time, value), ...]``, ``eval_node(fn, *vectors, __start_time__=,
+  __end_time__=)`` with schema-directed test vectors (TSS from sets, TSD
+  from ``{key: value}`` dicts with ``None`` = removal, TSL from per-index
+  lists) and friendly delta read-back (``REMOVED`` sentinel). No implicit
+  run bound is injected — a test that cannot quiesce sets ``__end_time__``
+  explicitly and says why.
+- **Higher-order**: ``map_``/``reduce``/``switch_`` over **named operator
+  callables** — the bridge pre-instantiates ``fn<X>()`` erasures for the
+  stdlib markers (``wired_op``); ``switch_`` builds the ``SwitchCases``
+  scalar; ``feedback(tp, initial)`` replicates the C++ feedback wiring
+  erased (same node tags → same interning).
+- **Value conversion**: all atoms (incl. date/time/bytes) + recursive
+  containers both ways; ``evaluate_const`` exposes the P1 kernel.
+
+Recorded divergences / gaps (the morning-summary list):
+
+- REF is **value-only** (agreed): no output dereferencing from Python.
+- Python-defined ``@graph`` functions **inline**; they cannot yet compile
+  as C++ sub-graphs, so ``map_``/``switch_`` branches must be registered
+  operators (a Python-graph-to-``CompiledSubGraph`` path is the next
+  large bridge feature, alongside ``@compute_node`` Python user nodes).
+- Feedback consumption is **active** (per-edge passivity is a planned
+  runtime feature, designed doc-first); bound feedback loops need an
+  explicit end time until then.
+- ``run_graph`` output times are cycle-aligned from the start time in
+  ``MIN_TD`` steps (the simulation clock convention).
+- Services/adaptors/contexts/components are not yet surfaced in Python.
