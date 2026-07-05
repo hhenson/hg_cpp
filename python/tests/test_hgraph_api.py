@@ -257,6 +257,42 @@ def test_compute_node_two_inputs():
     check(out == [25.0, 80.0], f"two inputs: {out}")
 
 
+def test_user_node_scalars_and_injectables():
+    # Wiring-time scalars ride the node identity; STATE/CLOCK/SCHEDULER
+    # annotated parameters are injected (not supplied by the caller).
+    @hg.compute_node
+    def ema(x: TS[float], alpha: float, state: hg.STATE = None, clock: hg.CLOCK = None) -> TS[float]:
+        prev = getattr(state, "value", None)
+        state.value = x if prev is None else alpha * x + (1 - alpha) * prev
+        check(clock.evaluation_time is not None, "clock injected")
+        return state.value
+
+    @graph
+    def smooth(x: TS[float]) -> TS[float]:
+        return ema(x, 0.5)
+
+    out = eval_node(smooth, [1.0, 2.0, 3.0])
+    check(out == [1.0, 1.5, 2.25], f"ema: {out}")
+
+
+def test_user_node_scheduler():
+    @hg.compute_node
+    def defer(x: TS[int], state: hg.STATE = None, sched: hg.SCHEDULER = None) -> TS[int]:
+        if getattr(state, "pending", None) is not None:
+            value, state.pending = state.pending, None
+            return value
+        state.pending = x + 100
+        sched.schedule_delta(hg.MIN_TD)
+        return x
+
+    @graph
+    def deferred(x: TS[int]) -> TS[int]:
+        return defer(x)
+
+    out = eval_node(deferred, [1])
+    check(out == [1, 101], f"scheduler: {out}")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

@@ -172,9 +172,19 @@ Recorded divergences / gaps (the morning-summary list):
   divergence from Python hgraph's TimeSeries view objects); a compute
   node's return value ticks its output (``None`` = no tick); a generator
   yields ``(datetime, value)`` pairs emitted at their absolute times. The
-  bridge registers internal erased operators (``__py_compute_N`` /
-  ``__py_sink_N`` / ``__py_generator``) over an immortal callable-record
-  scalar; each ``@generator`` call is a distinct source node.
+  bridge registers internal erased operators (``__py_compute`` /
+  ``__py_sink`` / ``__py_generator``) over an immortal callable-record
+  scalar. Argument ports pack into ONE structural un-named TSB and
+  wiring-time SCALARS ride a list-of-Any scalar, with a LAYOUT string
+  (part of node identity) mapping the python call positions — any arity,
+  one operator (Howard's review of the per-arity first cut).
+  ``STATE`` / ``CLOCK`` / ``SCHEDULER``-annotated parameters are injected
+  and MUST default to ``None`` (the hgraph convention, enforced at
+  decoration - graph code never supplies them):
+  STATE is a lazily-created per-node namespace preserved across ticks,
+  CLOCK exposes ``evaluation_time``, SCHEDULER exposes
+  ``schedule(datetime)`` / ``schedule_delta(timedelta)``. Each
+  ``@generator`` call is a distinct source node.
 - ``passive(port)`` landed (both languages): the feedback idiom is
   ``a + passive(fb())``, and such loops quiesce naturally. ACTIVE feedback
   consumption still needs an explicit end time.

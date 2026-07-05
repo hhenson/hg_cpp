@@ -350,6 +350,12 @@ namespace
         const PyNodeRecord *record{nullptr};
     };
 
+    /** An opaque pre-converted scalar Value (e.g. the user-node scalars list). */
+    struct PyScalarValue
+    {
+        Value value{};
+    };
+
     // ---------------------------------------------------------------
     // Python graph callables as WiredFn values (Howard's ruling: the
     // type-erased context+ops pattern, so Python and C++ backends coexist;
@@ -429,6 +435,12 @@ namespace
             {
                 arg.kind         = WiringArg::Kind::Scalar;
                 arg.scalar_value = Value{nb::cast<PyWiredFn &>(object).fn};
+                arg.scalar_meta  = arg.scalar_value.schema();
+            }
+            else if (nb::isinstance<PyScalarValue>(object))
+            {
+                arg.kind         = WiringArg::Kind::Scalar;
+                arg.scalar_value = nb::cast<PyScalarValue &>(object).value;
                 arg.scalar_meta  = arg.scalar_value.schema();
             }
             else if (nb::isinstance<PyNodeHandle>(object))
@@ -676,66 +688,125 @@ namespace
         out.apply(delta.view());
     }
 
-    struct py_compute_node_1
+    /**
+     * ONE compute/sink operator for ANY arity (Howard's review: per-arity
+     * stubs do not scale): the argument ports pack into a STRUCTURAL
+     * un-named TSB, wiring-time SCALARS ride a list-of-Any scalar, and the
+     * LAYOUT string (part of node identity) maps the python call positions:
+     * ``t`` = next ts field, ``s`` = next scalar, ``S`` = STATE namespace,
+     * ``c`` = CLOCK, ``d`` = SCHEDULER. All ts fields must hold values
+     * before the python function is called (the all-valid gate).
+     */
+    struct PyStateRef
     {
-        static constexpr auto name = "__py_compute_1";
-
-        static void eval(In<"a", TsVar<"A">> a, Scalar<"fn", PyNodeRef> fn, Out<TsVar<"O">> out)
-        {
-            nb::gil_scoped_acquire gil;
-            std::array<nb::object, 1> args{value_to_py(a.value())};
-            apply_py_result(call_py_node(fn.value(), args), out);
-        }
+        PyObject *ns{nullptr};   ///< a SimpleNamespace, lazily created (per-node python STATE)
+        friend bool operator==(const PyStateRef &, const PyStateRef &) noexcept = default;
     };
 
-    struct py_compute_node_2
+    struct PyEvalClock
     {
-        static constexpr auto name = "__py_compute_2";
-
-        static void eval(In<"a", TsVar<"A">> a, In<"b", TsVar<"B">> b, Scalar<"fn", PyNodeRef> fn,
-                         Out<TsVar<"O">> out)
-        {
-            nb::gil_scoped_acquire gil;
-            std::array<nb::object, 2> args{value_to_py(a.value()), value_to_py(b.value())};
-            apply_py_result(call_py_node(fn.value(), args), out);
-        }
+        DateTime evaluation_time{};
     };
 
-    struct py_compute_node_3
+    struct PyScheduler
     {
-        static constexpr auto name = "__py_compute_3";
-
-        static void eval(In<"a", TsVar<"A">> a, In<"b", TsVar<"B">> b, In<"c", TsVar<"C">> c,
-                         Scalar<"fn", PyNodeRef> fn, Out<TsVar<"O">> out)
-        {
-            nb::gil_scoped_acquire gil;
-            std::array<nb::object, 3> args{value_to_py(a.value()), value_to_py(b.value()), value_to_py(c.value())};
-            apply_py_result(call_py_node(fn.value(), args), out);
-        }
+        NodeScheduler scheduler;
     };
 
-    struct py_sink_node_1
+    [[nodiscard]] nb::object py_state_namespace(State<PyStateRef> &state)
     {
-        static constexpr auto name = "__py_sink_1";
+        PyStateRef ref = state.get();
+        if (ref.ns == nullptr)
+        {
+            nb::object ns = nb::module_::import_("types").attr("SimpleNamespace")();
+            ref.ns        = ns.release().ptr();
+            state.set(ref);
+        }
+        return nb::borrow(nb::handle(ref.ns));
+    }
 
-        static void eval(In<"a", TsVar<"A">> a, Scalar<"fn", PyNodeRef> fn)
+    void py_release_state(State<PyStateRef> &state)
+    {
+        PyStateRef ref = state.get();
+        if (ref.ns != nullptr)
         {
             nb::gil_scoped_acquire gil;
-            std::array<nb::object, 1> args{value_to_py(a.value())};
-            (void)call_py_node(fn.value(), args);
+            nb::steal(nb::handle(ref.ns));   // drop the held reference
+            state.set(PyStateRef{});
         }
+    }
+
+    /** Assemble the python call args per the layout; false = a ts arg is not yet valid. */
+    [[nodiscard]] bool py_assemble_args(std::string_view layout, const TSInputView &args, const ValueView &scalars,
+                                        State<PyStateRef> &state, NodeScheduler scheduler, DateTime now,
+                                        nb::list &call_args)
+    {
+        auto        bundle       = args.as_bundle();
+        std::size_t ts_index     = 0;
+        std::size_t scalar_index = 0;
+        auto        scalar_list  = scalars.valid() ? std::optional{scalars.as_list()} : std::nullopt;
+        for (const char kind : layout)
+        {
+            switch (kind)
+            {
+                case 't': {
+                    auto child = bundle[ts_index++];
+                    if (!child.valid()) { return false; }
+                    call_args.append(value_to_py(child.value()));
+                    break;
+                }
+                case 's': {
+                    if (!scalar_list.has_value()) { throw std::logic_error("python node: missing scalars value"); }
+                    call_args.append(value_to_py((*scalar_list)[scalar_index++].as_any().get()));
+                    break;
+                }
+                case 'S': call_args.append(py_state_namespace(state)); break;
+                case 'c': call_args.append(nb::cast(PyEvalClock{now})); break;
+                case 'd': call_args.append(nb::cast(PyScheduler{scheduler})); break;
+                default: throw std::logic_error("python node: unknown layout marker");
+            }
+        }
+        return true;
+    }
+
+    struct py_compute_node
+    {
+        static constexpr auto name = "__py_compute";
+
+        static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked> args, Scalar<"fn", PyNodeRef> fn,
+                         Scalar<"config", Str> config, Scalar<"scalars", ScalarVar<"SV">> scalars,
+                         State<PyStateRef> state, NodeScheduler scheduler, DateTime now, Out<TsVar<"O">> out)
+        {
+            nb::gil_scoped_acquire gil;
+            nb::list call_args;
+            if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args))
+            {
+                return;
+            }
+            apply_py_result(fn.value().record->fn(*nb::tuple(call_args)), out);
+        }
+
+        static void stop(State<PyStateRef> state) { py_release_state(state); }
     };
 
-    struct py_sink_node_2
+    struct py_sink_node
     {
-        static constexpr auto name = "__py_sink_2";
+        static constexpr auto name = "__py_sink";
 
-        static void eval(In<"a", TsVar<"A">> a, In<"b", TsVar<"B">> b, Scalar<"fn", PyNodeRef> fn)
+        static void eval(In<"args", TsVar<"A">, InputValidity::Unchecked> args, Scalar<"fn", PyNodeRef> fn,
+                         Scalar<"config", Str> config, Scalar<"scalars", ScalarVar<"SV">> scalars,
+                         State<PyStateRef> state, NodeScheduler scheduler, DateTime now)
         {
             nb::gil_scoped_acquire gil;
-            std::array<nb::object, 2> args{value_to_py(a.value()), value_to_py(b.value())};
-            (void)call_py_node(fn.value(), args);
+            nb::list call_args;
+            if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args))
+            {
+                return;
+            }
+            (void)fn.value().record->fn(*nb::tuple(call_args));
         }
+
+        static void stop(State<PyStateRef> state) { py_release_state(state); }
     };
 
     /** Heap iterator state (pointer-in-State, the frame-backend pattern). */
@@ -802,11 +873,10 @@ namespace
         }
     };
 
-    struct op_py_compute_1 : Operator<"__py_compute_1", In<"a", TsVar<"A">>, Scalar<"fn", PyNodeRef>, Out<TsVar<"O">>> {};
-    struct op_py_compute_2 : Operator<"__py_compute_2", In<"a", TsVar<"A">>, In<"b", TsVar<"B">>, Scalar<"fn", PyNodeRef>, Out<TsVar<"O">>> {};
-    struct op_py_compute_3 : Operator<"__py_compute_3", In<"a", TsVar<"A">>, In<"b", TsVar<"B">>, In<"c", TsVar<"C">>, Scalar<"fn", PyNodeRef>, Out<TsVar<"O">>> {};
-    struct op_py_sink_1 : Operator<"__py_sink_1", In<"a", TsVar<"A">>, Scalar<"fn", PyNodeRef>> {};
-    struct op_py_sink_2 : Operator<"__py_sink_2", In<"a", TsVar<"A">>, In<"b", TsVar<"B">>, Scalar<"fn", PyNodeRef>> {};
+    struct op_py_compute : Operator<"__py_compute", In<"args", TsVar<"A">>, Scalar<"fn", PyNodeRef>,
+                                     Scalar<"config", Str>, Scalar<"scalars", ScalarVar<"SV">>, Out<TsVar<"O">>> {};
+    struct op_py_sink : Operator<"__py_sink", In<"args", TsVar<"A">>, Scalar<"fn", PyNodeRef>,
+                                 Scalar<"config", Str>, Scalar<"scalars", ScalarVar<"SV">>> {};
     struct op_py_generator : Operator<"__py_generator", Scalar<"fn", PyNodeRef>, Out<TsVar<"O">>> {};
 
 }  // namespace
@@ -817,6 +887,15 @@ struct std::hash<PyNodeRef>
     [[nodiscard]] std::size_t operator()(const PyNodeRef &ref) const noexcept
     {
         return std::hash<const void *>{}(ref.record);
+    }
+};
+
+template <>
+struct std::hash<PyStateRef>
+{
+    [[nodiscard]] std::size_t operator()(const PyStateRef &ref) const noexcept
+    {
+        return std::hash<const void *>{}(ref.ns);
     }
 };
 
@@ -838,6 +917,12 @@ namespace hgraph::static_schema_detail
     };
 
     template <>
+    struct scalar_name<PyStateRef>
+    {
+        static constexpr std::string_view value{"py_state"};
+    };
+
+    template <>
     struct scalar_name<PyGenStateRef>
     {
         static constexpr std::string_view value{"py_gen_state"};
@@ -854,11 +939,8 @@ NB_MODULE(_hgraph, m)
     nb::set_leak_warnings(false);
 
     stdlib::register_standard_operators();
-    register_overload<op_py_compute_1, py_compute_node_1>();
-    register_overload<op_py_compute_2, py_compute_node_2>();
-    register_overload<op_py_compute_3, py_compute_node_3>();
-    register_overload<op_py_sink_1, py_sink_node_1>();
-    register_overload<op_py_sink_2, py_sink_node_2>();
+    register_overload<op_py_compute, py_compute_node>();
+    register_overload<op_py_sink, py_sink_node>();
     register_overload<op_py_generator, py_generator_node>();
 
     nb::class_<PyTsType>(m, "TsType");
@@ -914,6 +996,48 @@ NB_MODULE(_hgraph, m)
 
     nb::class_<PyWiredFn>(m, "WiredFn");
     nb::class_<PyNodeHandle>(m, "NodeRef");
+    nb::class_<PyScalarValue>(m, "ScalarValue");
+    // Wiring-time scalar values as one list-of-Any (part of node identity).
+    m.def("any_list", [](nb::list values) {
+        auto &registry = TypeRegistry::instance();
+        const auto *schema  = registry.mutable_list(registry.any());
+        const auto *binding = ValuePlanFactory::instance().binding_for(schema);
+        Value       result{*binding};
+        MutableListView list{result.begin_mutation()};
+        for (nb::handle item : values)
+        {
+            Value boxed_value{*ValuePlanFactory::instance().binding_for(registry.any())};
+            MutableAnyView{boxed_value.begin_mutation()}.set(py_to_value(item));
+            list.push_back(boxed_value.view());
+        }
+        return PyScalarValue{std::move(result)};
+    });
+
+    nb::class_<PyEvalClock>(m, "EvaluationClock")
+        .def_prop_ro("evaluation_time", [](const PyEvalClock &clock) { return clock.evaluation_time; });
+    nb::class_<PyScheduler>(m, "Scheduler")
+        .def("schedule", [](const PyScheduler &self, DateTime when) { self.scheduler.schedule(when); })
+        .def("schedule_delta", [](const PyScheduler &self, TimeDelta delta) { self.scheduler.schedule(delta); });
+
+    // Pack argument ports into a STRUCTURAL un-named TSB (the dict/list
+    // passing model for python user nodes - any arity, one operator).
+    m.def("bundle_port", [](nb::list ports) {
+        if (nb::len(ports) == 0) { throw nb::value_error("bundle_port requires at least one port"); }
+        std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
+        std::vector<WiringPortRef> children;
+        fields.reserve(nb::len(ports));
+        children.reserve(nb::len(ports));
+        std::size_t index = 0;
+        for (nb::handle port : ports)
+        {
+            const WiringPortRef &ref = nb::cast<PyPort &>(port).ref;
+            fields.emplace_back("_" + std::to_string(index++), ref.schema);
+            children.push_back(ref);
+        }
+        const auto *schema = TypeRegistry::instance().un_named_tsb(fields);
+        return PyPort{WiringPortRef::structural_source(schema, std::move(children))};
+    });
+
     m.def("node_ref", [](nb::object fn) {
         auto &registry = py_node_registry();
         auto  found    = registry.find(fn.ptr());
@@ -1012,11 +1136,8 @@ NB_MODULE(_hgraph, m)
     m.def("reset_registries", [] {
         reset_all_registries();
         stdlib::register_standard_operators();
-    register_overload<op_py_compute_1, py_compute_node_1>();
-    register_overload<op_py_compute_2, py_compute_node_2>();
-    register_overload<op_py_compute_3, py_compute_node_3>();
-    register_overload<op_py_sink_1, py_sink_node_1>();
-    register_overload<op_py_sink_2, py_sink_node_2>();
+    register_overload<op_py_compute, py_compute_node>();
+    register_overload<op_py_sink, py_sink_node>();
     register_overload<op_py_generator, py_generator_node>();
     });
 }

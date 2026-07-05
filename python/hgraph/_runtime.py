@@ -187,12 +187,31 @@ def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
     return wire("switch_", key, erased, *args, **kwargs)
 
 
+class STATE:
+    """Injectable: a per-node mutable namespace (attribute access), created
+    lazily and preserved across ticks. Annotate a parameter with STATE."""
+
+
+class SCHEDULER:
+    """Injectable: the node scheduler - .schedule(datetime) /
+    .schedule_delta(timedelta). Annotate a parameter with SCHEDULER."""
+
+
+class CLOCK:
+    """Injectable: the evaluation clock - .evaluation_time. Annotate a
+    parameter with CLOCK."""
+
+
+_INJECTABLE_MARKERS = {STATE: "S", CLOCK: "c", SCHEDULER: "d"}
+
+
 class _PyNode:
     """@compute_node / @sink_node: a Python function as a runtime node. The
     function runs on the graph thread (both modes) under the GIL, receives
-    its inputs as plain Python VALUES, and (for compute nodes) returns the
-    output value (None = no tick). It must have no side effects beyond its
-    output."""
+    time-series inputs as plain Python VALUES and wiring-time scalars as
+    supplied; STATE/CLOCK/SCHEDULER-annotated parameters are injected. A
+    compute node's return value ticks its output (None = no tick). It must
+    have no side effects beyond its output."""
 
     def __init__(self, fn, has_output):
         self.fn = fn
@@ -200,16 +219,38 @@ class _PyNode:
         self.__name__ = fn.__name__
         sig = inspect.signature(fn)
         self._out_tp = sig.return_annotation if has_output else None
+        self._params = list(sig.parameters.values())
+        # Injectable parameters MUST default to None (hgraph convention):
+        # the default guarantees user code in a graph never supplies them.
+        for param in self._params:
+            if param.annotation in _INJECTABLE_MARKERS and param.default is not None:
+                raise TypeError(
+                    f"injectable parameter '{param.name}' of '{self.__name__}' must default to None"
+                )
 
-    def __call__(self, *ports):
+    def __call__(self, *args):
         ref = _hgraph.node_ref(self.fn)
-        kind = "compute" if self.has_output else "sink"
-        name = f"__py_{kind}_{len(ports)}"
+        layout, ports, scalars = [], [], []
+        supplied = iter(args)
+        for param in self._params:
+            marker = _INJECTABLE_MARKERS.get(param.annotation)
+            if marker is not None:
+                layout.append(marker)
+                continue
+            value = next(supplied)
+            if isinstance(value, WiringPort):
+                layout.append("t")
+                ports.append(_unwrap(value))
+            else:
+                layout.append("s")
+                scalars.append(value)
+        packed = WiringPort(_hgraph.bundle_port(ports))
+        kwargs = {"fn": ref, "config": "".join(layout), "scalars": _hgraph.any_list(scalars)}
         if self.has_output:
             if not isinstance(self._out_tp, _TsExpr):
                 raise TypeError(f"@compute_node '{self.__name__}' needs a TS[...] return annotation")
-            return wire(name, *ports, fn=ref, output_type=self._out_tp)
-        return wire(name, *ports, fn=ref)
+            return wire("__py_compute", packed, output_type=self._out_tp, **kwargs)
+        return wire("__py_sink", packed, **kwargs)
 
 
 def compute_node(fn):
