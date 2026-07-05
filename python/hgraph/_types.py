@@ -21,6 +21,8 @@ _SCALAR_NAMES = {
 def _value_type(scalar):
     if isinstance(scalar, str):
         return _hgraph.value_type(scalar)
+    if isinstance(scalar, _TypeVarSentinel):
+        raise _GenericType()
     # typing generics: tuple[X, ...] / tuple[A, B] / frozenset[X] / dict[K, V]
     import typing
 
@@ -67,9 +69,16 @@ def _resolve(ts):
     raise TypeError(f"expected a time-series type (TS[...] etc.), got {ts!r}")
 
 
+class _GenericType(Exception):
+    """Raised internally when a type expression contains a type variable."""
+
+
 class _TSMeta(type):
     def __getitem__(cls, scalar):
-        return _TsExpr(_hgraph.ts(_value_type(scalar)), f"TS[{getattr(scalar, '__name__', scalar)}]")
+        try:
+            return _TsExpr(_hgraph.ts(_value_type(scalar)), f"TS[{getattr(scalar, '__name__', scalar)}]")
+        except _GenericType:
+            return _GenericTsExpr(f"TS[{scalar!r}]")
 
 
 class TS(metaclass=_TSMeta):
@@ -78,7 +87,10 @@ class TS(metaclass=_TSMeta):
 
 class _TSSMeta(type):
     def __getitem__(cls, scalar):
-        return _TsExpr(_hgraph.tss(_value_type(scalar)), f"TSS[{getattr(scalar, '__name__', scalar)}]")
+        try:
+            return _TsExpr(_hgraph.tss(_value_type(scalar)), f"TSS[{getattr(scalar, '__name__', scalar)}]")
+        except _GenericType:
+            return _GenericTsExpr(f"TSS[{scalar!r}]")
 
 
 class TSS(metaclass=_TSSMeta):
@@ -88,7 +100,12 @@ class TSS(metaclass=_TSSMeta):
 class _TSDMeta(type):
     def __getitem__(cls, item):
         key, value = item
-        return _TsExpr(_hgraph.tsd(_value_type(key), _resolve(value)), f"TSD[{key!r}, {value!r}]")
+        try:
+            if isinstance(value, _GenericTsExpr):
+                raise _GenericType()
+            return _TsExpr(_hgraph.tsd(_value_type(key), _resolve(value)), f"TSD[{key!r}, {value!r}]")
+        except _GenericType:
+            return _GenericTsExpr(f"TSD[{key!r}, {value!r}]")
 
 
 class TSD(metaclass=_TSDMeta):
@@ -105,7 +122,12 @@ class Size:
 class _TSLMeta(type):
     def __getitem__(cls, item):
         element, size = item
-        return _TsExpr(_hgraph.tsl(_resolve(element), int(size)), f"TSL[{element!r}, {size}]")
+        try:
+            if isinstance(element, _GenericTsExpr) or isinstance(size, _TypeVarSentinel):
+                raise _GenericType()
+            return _TsExpr(_hgraph.tsl(_resolve(element), int(size)), f"TSL[{element!r}, {size}]")
+        except _GenericType:
+            return _GenericTsExpr(f"TSL[{element!r}, {size!r}]")
 
 
 class TSL(metaclass=_TSLMeta):
@@ -167,3 +189,65 @@ class _Required:
 
 
 REQUIRED = _Required()
+
+
+class _TypeVarSentinel:
+    """hgraph's generic type variables (SCALAR / TIME_SERIES_TYPE / ...):
+    usable as annotations - resolution happens from the wired arguments,
+    exactly like an un-annotated parameter."""
+
+    __slots__ = ("name",)
+
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return self.name
+
+
+SCALAR = _TypeVarSentinel("SCALAR")
+SCHEMA = _TypeVarSentinel("SCHEMA")
+TS_SCHEMA = _TypeVarSentinel("TS_SCHEMA")
+SCALAR_1 = _TypeVarSentinel("SCALAR_1")
+KEYABLE_SCALAR = _TypeVarSentinel("KEYABLE_SCALAR")
+TIME_SERIES_TYPE = _TypeVarSentinel("TIME_SERIES_TYPE")
+TIME_SERIES_TYPE_1 = _TypeVarSentinel("TIME_SERIES_TYPE_1")
+TIME_SERIES_TYPE_2 = _TypeVarSentinel("TIME_SERIES_TYPE_2")
+OUT = _TypeVarSentinel("OUT")
+SIZE = _TypeVarSentinel("SIZE")
+V = _TypeVarSentinel("V")
+K = _TypeVarSentinel("K")
+
+
+class _GenericTsExpr:
+    """A generic (unresolved) time-series annotation: TS[SCALAR] etc.
+    Treated like an absent annotation - types resolve from wired ports or
+    sample values."""
+
+    __slots__ = ("label",)
+
+    def __init__(self, label):
+        self.label = label
+
+    def __repr__(self):
+        return self.label
+
+
+class _DefaultMeta(type):
+    def __getitem__(cls, item):
+        return item   # DEFAULT[OUT] documents the defaulted output
+
+
+class DEFAULT(metaclass=_DefaultMeta):
+    """hgraph's DEFAULT[...] output marker (documentary here)."""
+
+
+class _REFMeta(type):
+    def __getitem__(cls, item):
+        # DEVIATION (agreed): REF is VALUE-ONLY - a REF[X] annotation is X.
+        return item
+
+
+class REF(metaclass=_REFMeta):
+    """REF[X] - value-only in this runtime (agreed deviation): behaves as X
+    at the API surface; output dereferencing is not exposed."""

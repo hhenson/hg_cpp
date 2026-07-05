@@ -36,6 +36,8 @@ OperatorWiringNodeClass = type(_operator_function("add_"))
 # (the ported suite imports them at module load); raise at USE with a
 # "gap:" message so tests skip precisely.
 _KNOWN_GAPS = (
+    "reduce_tsd_with_race", "reduce_tsd_of_bundles_with_race",
+    "json_encode", "json_decode",
     "to_window", "window", "batch", "filter_by",
     "convert", "combine", "collect", "emit",
     "cast_", "downcast_", "downcast_ref",
@@ -51,3 +53,26 @@ def _gap(name):
 
     _raise.__name__ = name
     return _raise
+
+
+class BoolResult(Enum):
+    TRUE = 1
+    FALSE = 0
+    NONE = -1
+
+
+class CompoundScalar:
+    """Base class for compound scalars (dataclass-style). Instances are
+    first-class python-object scalars in this runtime."""
+
+
+class JSON(str):
+    """hgraph's JSON string newtype (a plain str scalar here)."""
+
+
+class TimeSeriesReference:
+    """DEVIATION (agreed): REF is value-only; reference objects are not
+    exposed. Constructing one raises."""
+
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError("deviation: REF is value-only (TimeSeriesReference is not exposed)")

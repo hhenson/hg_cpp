@@ -7,7 +7,7 @@ import inspect
 
 import _hgraph
 
-from ._types import _TsExpr, _ContextExpr, _Required
+from ._types import _TsExpr, _ContextExpr, _Required, _GenericTsExpr
 
 _wiring_stack = []
 
