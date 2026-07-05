@@ -1,8 +1,8 @@
 """The hgraph-shaped Python API over the C++ runtime."""
 import datetime
 
-import hgraph_cpp as hg
-from hgraph_cpp import TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, graph, run_graph, eval_node
+import hgraph as hg
+from hgraph import TS, TSS, TSD, TSL, TSB, Size, TimeSeriesSchema, graph, run_graph, eval_node
 
 
 def check(condition, message):
@@ -92,6 +92,42 @@ def test_scalars_in_operators():
 
     out = eval_node(lagged, [1, 2, 3])
     check(out == [None, 1, 2], f"lag: {out}")
+
+
+
+
+
+def test_map_and_reduce_over_tsd():
+    @graph
+    def doubled(d: TSD[str, TS[int]]) -> TSD[str, TS[int]]:
+        return hg.map_("add_", d, d)
+
+    out = eval_node(doubled, [{"a": 1}, {"b": 2}, {"a": 5}])
+    check(out == [{"a": 2}, {"b": 4}, {"a": 10}], f"map_: {out}")
+
+    @graph
+    def summed(d: TSD[str, TS[int]]) -> TS[int]:
+        return hg.reduce("add_", d, 0)
+
+    check(eval_node(summed, [{"a": 1}, {"b": 2}, {"a": 5}]) == [1, 3, 7], "reduce")
+
+
+def test_tsd_key_removal():
+    @graph
+    def keys(d: TSD[str, TS[int]]) -> TSD[str, TS[int]]:
+        return hg.map_("add_", d, d)
+
+    out = eval_node(keys, [{"a": 1, "b": 2}, {"a": None}])
+    check(out == [{"a": 2, "b": 4}, {"a": hg.REMOVED}], f"removal: {out}")
+
+
+def test_tss_deltas():
+    @graph
+    def sized(s: TSS[int]) -> TS[int]:
+        return hg.len_(s)
+
+    out = eval_node(sized, [{1, 2}, {3}, {"removed": [1]}])
+    check(out == [2, 3, 2], f"tss: {out}")
 
 
 def main():

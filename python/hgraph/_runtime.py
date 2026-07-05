@@ -1,14 +1,13 @@
 """Wiring context, ports, decorators and runners over the _hgraph bridge.
 
-The API mirrors hgraph's: @graph composes, run_graph evaluates, eval_node
-drives a node/graph from vectors of values. Wiring state is a module-level
-stack (the runtime is single-threaded by design)."""
-import datetime
+The API mirrors Python hgraph's: @graph composes, run_graph evaluates,
+eval_node drives a node/graph from vectors of values. Wiring state is a
+module-level stack (the runtime is single-threaded by design)."""
 import inspect
 
 import _hgraph
 
-from ._types import _TsExpr, _resolve
+from ._types import _TsExpr
 
 _wiring_stack = []
 
@@ -87,6 +86,38 @@ WiringPort.__getitem__ = lambda self, item: wire("getitem_", self, item)
 WiringPort.__hash__ = object.__hash__  # __eq__ wires a node; identity hashing stands
 
 
+def _port_getattr(self, name):
+    if name.startswith("_"):
+        raise AttributeError(name)
+    return wire("getattr_", self, name)
+
+
+WiringPort.__getattr__ = _port_getattr
+
+
+def _as_wired(func):
+    """Accept an operator name, an operator_function, or a WiredFn handle."""
+    if isinstance(func, _hgraph.WiredFn):
+        return func
+    if callable(func) and not isinstance(func, str):
+        func = getattr(func, "__name__", None) or func
+    return _hgraph.wired_op(func)
+
+
+def map_(func, *args, **kwargs):
+    """hgraph's map_. ``func`` may be a registered operator name or the
+    module-level operator function (Python-defined @graph callables cannot
+    compile as C++ sub-graphs yet - a recorded divergence)."""
+    return wire("map_", _as_wired(func), *args, **kwargs)
+
+
+def reduce(func, ts, zero=None, **kwargs):
+    """hgraph's reduce over a collection with an operator callable."""
+    if zero is None:
+        return wire("reduce", _as_wired(func), ts, **kwargs)
+    return wire("reduce", _as_wired(func), ts, zero, **kwargs)
+
+
 class _GraphFn:
     """The @graph decorator: a plain composition function. Inside an active
     wiring it inlines (a call is just a call); run_graph/eval_node make it a
@@ -104,6 +135,40 @@ class _GraphFn:
 
 def graph(fn):
     return _GraphFn(fn)
+
+
+class _Removed:
+    """hgraph's REMOVE marker: a removed TSD key / TSS element in test output."""
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self):
+        return "REMOVED"
+
+
+REMOVED = _Removed()
+
+
+def _simplify_delta(value):
+    """Map canonical delta bundles back to hgraph's friendly test shapes:
+    TSD {removed, modified} -> {key: value, removed_key: REMOVED};
+    TSS {added, removed} -> frozenset (or a dict when removals occurred)."""
+    if isinstance(value, dict):
+        if set(value.keys()) == {"removed", "modified"}:
+            out = {k: _simplify_delta(v) for k, v in value["modified"].items()}
+            out.update({k: REMOVED for k in value["removed"]})
+            return out
+        if set(value.keys()) == {"added", "removed"}:
+            if value["removed"]:
+                return {"added": frozenset(value["added"]), "removed": frozenset(value["removed"])}
+            return frozenset(value["added"])
+        return {k: _simplify_delta(v) for k, v in value.items()}
+    return value
 
 
 def _times_for(values):
@@ -149,7 +214,7 @@ def eval_node(fn, *inputs, output_type=None, __scalars__=None):
                 raise TypeError(f"parameter '{params[i].name}' needs a TS[...] annotation")
             key = f"eval_node::{params[i].name}"
             src = w.wire("replay", (key,), {}, output_type=annotation.handle)
-            w.set_replay(key, list(series))
+            w.set_replay(key, list(series), ts_type=annotation.handle)
             ports.append(WiringPort(src))
         scalars = __scalars__ or {}
         out = fn(*ports, **scalars)
@@ -161,6 +226,6 @@ def eval_node(fn, *inputs, output_type=None, __scalars__=None):
         run = w.run()
     finally:
         _wiring_stack.pop()
-    recorded = run.recorded("eval_node::out")
+    recorded = [None if v is None else _simplify_delta(v) for v in run.recorded("eval_node::out")]
     recorded += [None] * (length - len(recorded))
     return recorded

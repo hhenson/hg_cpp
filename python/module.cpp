@@ -10,6 +10,7 @@
  * remaining atoms follow with the type-conversion layer.
  */
 #include <hgraph/lib/std/std_operators.h>
+#include <hgraph/types/wired_fn.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/runtime.h>
 #include <hgraph/types/graph_wiring.h>
@@ -19,6 +20,7 @@
 #include <hgraph/types/registry_reset.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/specialized_views.h>
+#include <hgraph/types/value/value_builder.h>
 #include <hgraph/python/chrono.h>
 
 #include <nanobind/nanobind.h>
@@ -183,11 +185,11 @@ namespace
                 return nb::tuple(items);
             }
             case ValueTypeKind::Bundle: {
-                auto     tuple = view.as_tuple();
+                auto     bundle = view.as_bundle();
                 nb::dict result;
-                for (std::size_t index = 0; index < tuple.size(); ++index)
+                for (std::size_t index = 0; index < meta->field_count; ++index)
                 {
-                    result[meta->fields[index].name] = value_to_py(tuple.at(index));
+                    result[meta->fields[index].name] = value_to_py(bundle.at(index));
                 }
                 return result;
             }
@@ -213,6 +215,107 @@ namespace
     }
 
     // ---------------------------------------------------------------
+    // Schema-directed conversion: Python test-vector entries to CANONICAL
+    // delta values for a target ts type (what replay applies per cycle).
+    // ---------------------------------------------------------------
+
+    [[nodiscard]] const ValueTypeBinding &delta_binding(const ValueTypeMetaData *meta)
+    {
+        const auto *binding = ValuePlanFactory::instance().binding_for(meta);
+        if (binding == nullptr) { throw nb::type_error("schema has no canonical binding"); }
+        return *binding;
+    }
+
+    [[nodiscard]] Value py_to_value_as(nb::handle object, const ValueTypeMetaData *meta)
+    {
+        // Atomic coercions the generic converter cannot do (int -> float).
+        if (meta == scalar_descriptor<Float>::value_meta() && nb::isinstance<nb::int_>(object) &&
+            !nb::isinstance<nb::bool_>(object))
+        {
+            return Value{Float{static_cast<Float>(nb::cast<Int>(object))}};
+        }
+        Value value = py_to_value(object);
+        if (meta->kind == ValueTypeKind::Any && value.schema() != meta)
+        {
+            Value boxed{delta_binding(meta)};
+            MutableAnyView{boxed.begin_mutation()}.set(std::move(value));
+            return boxed;
+        }
+        return value;
+    }
+
+    [[nodiscard]] Value py_to_delta(nb::handle object, const TSValueTypeMetaData *ts)
+    {
+        switch (ts->kind)
+        {
+            case TSTypeKind::TS: return py_to_value_as(object, ts->value_schema);
+            case TSTypeKind::TSS: {
+                // A set/frozenset adds; {"added": ..., "removed": ...} is explicit.
+                const auto *elem = ts->value_schema->element_type;
+                SetBuilder  added{delta_binding(elem)};
+                SetBuilder  removed{delta_binding(elem)};
+                nb::handle  add_from = object, remove_from = nb::handle{};
+                if (nb::isinstance<nb::dict>(object))
+                {
+                    auto spec = nb::cast<nb::dict>(object);
+                    add_from    = spec.contains("added") ? spec["added"] : nb::handle{};
+                    remove_from = spec.contains("removed") ? spec["removed"] : nb::handle{};
+                }
+                if (add_from.is_valid())
+                {
+                    for (nb::handle item : add_from) { (void)added.insert_copy(py_to_value_as(item, elem).view().data()); }
+                }
+                if (remove_from.is_valid())
+                {
+                    for (nb::handle item : remove_from) { (void)removed.insert_copy(py_to_value_as(item, elem).view().data()); }
+                }
+                BundleBuilder bundle{delta_binding(ts->delta_value_schema)};
+                bundle.set("added", added.build());
+                bundle.set("removed", removed.build());
+                return bundle.build();
+            }
+            case TSTypeKind::TSD: {
+                // {key: child-delta}; a None value removes the key (hgraph's REMOVE).
+                const auto *key_meta   = ts->key_type();
+                const auto *child      = ts->element_ts();
+                SetBuilder  removed{delta_binding(key_meta)};
+                MapBuilder  modified{delta_binding(key_meta), delta_binding(child->delta_value_schema)};
+                for (auto [key, item] : nb::cast<nb::dict>(object))
+                {
+                    Value key_value = py_to_value_as(key, key_meta);
+                    if (item.is_none()) { (void)removed.insert_copy(key_value.view().data()); }
+                    else
+                    {
+                        Value child_delta = py_to_delta(item, child);
+                        modified.set_item_copy(key_value.view().data(), child_delta.view().data());
+                    }
+                }
+                BundleBuilder bundle{delta_binding(ts->delta_value_schema)};
+                bundle.set("removed", removed.build());
+                bundle.set("modified", modified.build());
+                return bundle.build();
+            }
+            case TSTypeKind::TSL: {
+                // A list/tuple of per-index entries; None = index silent this cycle.
+                const auto *map_meta = ts->delta_value_schema;
+                MapBuilder  builder{delta_binding(map_meta->key_type), delta_binding(map_meta->element_type)};
+                std::int64_t index = 0;
+                for (nb::handle item : object)
+                {
+                    if (!item.is_none())
+                    {
+                        Value child_delta = py_to_delta(item, ts->element_ts());
+                        builder.set_item_copy(std::addressof(index), child_delta.view().data());
+                    }
+                    ++index;
+                }
+                return builder.build();
+            }
+            default: return py_to_value_as(object, ts->delta_value_schema);
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Wiring surface
     // ---------------------------------------------------------------
 
@@ -225,6 +328,29 @@ namespace
     {
         const ValueTypeMetaData *meta{nullptr};
     };
+
+    struct PyWiredFn
+    {
+        WiredFn fn{};
+    };
+
+    // fn<X>() erases at a template instantiation point, so runtime names
+    // resolve through a pre-instantiated table of the stdlib markers usable
+    // as higher-order callables.
+    [[nodiscard]] const std::unordered_map<std::string_view, WiredFn> &wired_fn_table()
+    {
+        static const auto *table = new std::unordered_map<std::string_view, WiredFn>{
+            {"add_", fn<stdlib::add_>()},   {"sub_", fn<stdlib::sub_>()},
+            {"mul_", fn<stdlib::mul_>()},   {"div_", fn<stdlib::div_>()},
+            {"min_", fn<stdlib::min_>()},   {"max_", fn<stdlib::max_>()},
+            {"bit_and", fn<stdlib::bit_and>()}, {"bit_or", fn<stdlib::bit_or>()},
+            {"bit_xor", fn<stdlib::bit_xor>()}, {"union", fn<stdlib::union_>()},
+            {"merge", fn<stdlib::merge>()}, {"eq_", fn<stdlib::eq_>()},
+            {"not_", fn<stdlib::not_>()},   {"neg_", fn<stdlib::neg_>()},
+            {"abs_", fn<stdlib::abs_>()},   {"str_", fn<stdlib::str_>()},
+        };
+        return *table;
+    }
 
     struct PyPort
     {
@@ -244,6 +370,12 @@ namespace
             {
                 arg.kind = WiringArg::Kind::TimeSeries;
                 arg.port = nb::cast<PyPort &>(object).ref;
+            }
+            else if (nb::isinstance<PyWiredFn>(object))
+            {
+                arg.kind         = WiringArg::Kind::Scalar;
+                arg.scalar_value = Value{nb::cast<PyWiredFn &>(object).fn};
+                arg.scalar_meta  = arg.scalar_value.schema();
             }
             else
             {
@@ -291,7 +423,7 @@ namespace
             return nb::cast(PyPort{result.output.erased()});
         }
 
-        void set_replay(const std::string &key, nb::list values)
+        void set_replay(const std::string &key, nb::list values, std::optional<PyTsType> ts_type)
         {
             ensure_open();
             std::vector<std::optional<Value>> deltas;
@@ -299,6 +431,7 @@ namespace
             for (nb::handle object : values)
             {
                 if (object.is_none()) { deltas.emplace_back(std::nullopt); }
+                else if (ts_type.has_value()) { deltas.emplace_back(py_to_delta(object, ts_type->meta)); }
                 else { deltas.emplace_back(py_to_value(object)); }
             }
             testing::set_replay_deltas(wiring.global_state(), key, deltas);
@@ -376,6 +509,18 @@ NB_MODULE(_hgraph, m)
 
     m.def("operator_names", [] { return OperatorRegistry::instance().registered_names(); });
 
+    nb::class_<PyWiredFn>(m, "WiredFn");
+    m.def("wired_op", [](const std::string &name) {
+        const auto &table = wired_fn_table();
+        const auto  found = table.find(name);
+        if (found == table.end())
+        {
+            throw nb::value_error(
+                ("no wired-fn erasure for operator '" + name + "' (the bridge pre-instantiates a fixed set)").c_str());
+        }
+        return PyWiredFn{found->second};
+    });
+
     // Conversion-layer round trip (test/debug aid): Python -> Value -> Python.
     m.def("_roundtrip_value", [](nb::handle object) { return value_to_py(py_to_value(object).view()); });
 
@@ -383,7 +528,8 @@ NB_MODULE(_hgraph, m)
         .def(nb::init<>())
         .def("wire", &PyWiring::wire, nb::arg("name"), nb::arg("args") = nb::tuple(),
              nb::arg("kwargs") = nb::dict(), nb::arg("output_type") = nb::none())
-        .def("set_replay", &PyWiring::set_replay, nb::arg("key"), nb::arg("values"))
+        .def("set_replay", &PyWiring::set_replay, nb::arg("key"), nb::arg("values"),
+             nb::arg("ts_type") = nb::none())
         .def("run", &PyWiring::run);
 
     m.def(
