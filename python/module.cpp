@@ -13,6 +13,7 @@
 #include <hgraph/types/wired_fn.h>
 #include <hgraph/lib/std/component.h>
 #include <hgraph/types/time_series/ts_delta.h>
+#include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/types/context_wiring.h>
 #include <hgraph/types/service_runtime.h>
@@ -269,6 +270,13 @@ namespace
         return Value{Frame{.table = std::move(*table)}};
     }
 
+    /** Registered python enum classes for C++ enum scalars (immortal). */
+    [[nodiscard]] nb::object &cmp_result_enum_slot()
+    {
+        static auto *slot = new nb::object{};
+        return *slot;
+    }
+
     [[nodiscard]] nb::object atomic_to_py(const ValueView &view)
     {
         const auto *meta = view.schema();
@@ -294,6 +302,12 @@ namespace
         }
         if (meta == scalar_descriptor<Frame>::value_meta()) { return frame_to_py(view.checked_as<Frame>()); }
         if (meta == scalar_descriptor<PyObj>::value_meta()) { return view.checked_as<PyObj>().get(); }
+        if (meta == scalar_descriptor<stdlib::CmpResult>::value_meta())
+        {
+            const auto value = static_cast<std::int64_t>(view.checked_as<stdlib::CmpResult>());
+            nb::object &enum_class = cmp_result_enum_slot();
+            return enum_class.is_valid() ? enum_class(value) : nb::cast(value);
+        }
         if (meta == scalar_descriptor<Bytes>::value_meta())
         {
             const auto &bytes = view.checked_as<Bytes>();
@@ -1462,6 +1476,20 @@ NB_MODULE(_hgraph, m)
         return PyValueType{meta};
     });
     m.def("ts", [](PyValueType v) { return PyTsType{TypeRegistry::instance().ts(v.meta)}; });
+    m.def("set_vt", [](PyValueType e) { return PyValueType{TypeRegistry::instance().set(e.meta)}; });
+    m.def("map_vt", [](PyValueType k, PyValueType v) {
+        return PyValueType{TypeRegistry::instance().map(k.meta, v.meta)};
+    });
+    m.def("tuple_vt", [](PyValueType e) {
+        // A homogeneous variadic tuple (python's tuple[X, ...]).
+        return PyValueType{TypeRegistry::instance().list(e.meta, 0, true)};
+    });
+    m.def("fixed_tuple_vt", [](nb::list elements) {
+        std::vector<const ValueTypeMetaData *> metas;
+        metas.reserve(nb::len(elements));
+        for (nb::handle element : elements) { metas.push_back(nb::cast<PyValueType &>(element).meta); }
+        return PyValueType{TypeRegistry::instance().tuple(metas)};
+    });
     m.def("tss", [](PyValueType v) { return PyTsType{TypeRegistry::instance().tss(v.meta)}; });
     m.def("tsd", [](PyValueType k, PyTsType v) { return PyTsType{TypeRegistry::instance().tsd(k.meta, v.meta)}; });
     m.def("tsl", [](PyTsType e, std::size_t size) { return PyTsType{TypeRegistry::instance().tsl(e.meta, size)}; },
@@ -1687,6 +1715,7 @@ NB_MODULE(_hgraph, m)
         .def("__len__", &PyTimeSeries::size)
         .def("__str__", [](const PyTimeSeries &self) { return nb::str(self.value()); })
         .def("__repr__", [](const PyTimeSeries &self) { return nb::str("TimeSeries({})").format(self.value()); });
+    m.def("_set_cmp_result_enum", [](nb::object enum_class) { cmp_result_enum_slot() = std::move(enum_class); });
     m.def("_set_removed_sentinel", [](nb::object sentinel) { PyTimeSeries::removed_slot() = std::move(sentinel); });
     nb::class_<PyArrowStream>(m, "ArrowStream")
         .def("__arrow_c_stream__",

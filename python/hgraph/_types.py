@@ -21,7 +21,24 @@ _SCALAR_NAMES = {
 def _value_type(scalar):
     if isinstance(scalar, str):
         return _hgraph.value_type(scalar)
+    # typing generics: tuple[X, ...] / tuple[A, B] / frozenset[X] / dict[K, V]
+    import typing
+
+    origin = typing.get_origin(scalar)
+    if origin is not None:
+        args = typing.get_args(scalar)
+        if origin is tuple:
+            if len(args) == 2 and args[1] is Ellipsis:
+                return _hgraph.tuple_vt(_value_type(args[0]))
+            return _hgraph.fixed_tuple_vt([_value_type(a) for a in args])
+        if origin in (frozenset, set):
+            return _hgraph.set_vt(_value_type(args[0]))
+        if origin is dict or getattr(origin, "__name__", "") == "frozendict":
+            return _hgraph.map_vt(_value_type(args[0]), _value_type(args[1]))
+        raise TypeError(f"unsupported generic scalar type for hgraph: {scalar!r}")
     name = _SCALAR_NAMES.get(scalar)
+    if name is None and scalar in (tuple, frozenset, set, dict):
+        raise TypeError(f"bare '{scalar.__name__}' needs element types (e.g. tuple[int, ...])")
     if name is None and isinstance(scalar, type):
         # Any python class is a first-class scalar (hgraph parity): it maps
         # onto the "object" value kind; type checking stays python-side.

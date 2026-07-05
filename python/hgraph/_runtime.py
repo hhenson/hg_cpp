@@ -41,13 +41,40 @@ def wire(name, *args, __output_type__=None, **kwargs):
     if out_type is not None:
         out_type = out_type.handle if isinstance(out_type, _TsExpr) else out_type
     w = _current_wiring()
-    result = w.wire(
-        name,
-        tuple(_unwrap(a) for a in args),
-        {k: _unwrap(v) for k, v in kwargs.items()},
-        output_type=out_type,
-    )
+    unwrapped = tuple(_unwrap(a) for a in args)
+    unwrapped_kw = {k: _unwrap(v) for k, v in kwargs.items()}
+    try:
+        result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type)
+    except RuntimeError as error:
+        # hgraph parity: plain python values lift to const where a TS input
+        # is expected. Retry with every liftable positional lifted.
+        lifted = _lift_scalars_to_const(args)
+        if lifted is None:
+            raise WiringError(str(error)) from error
+        try:
+            result = w.wire(name, tuple(lifted), unwrapped_kw, output_type=out_type)
+        except RuntimeError:
+            raise WiringError(str(error)) from error
     return WiringPort(result) if result is not None else None
+
+
+def _lift_scalars_to_const(args):
+    """const-lift plain values among ``args`` (None = nothing liftable)."""
+    from ._types import TS
+
+    lifted = []
+    any_lifted = False
+    for arg in args:
+        value = _unwrap(arg)
+        if isinstance(arg, WiringPort) or isinstance(value, (_hgraph.WiredFn,)) or not isinstance(
+            value, (bool, int, float, str)
+        ):
+            lifted.append(value)
+            continue
+        port = wire("const", value, tp=TS[type(value)])
+        lifted.append(_unwrap(port))
+        any_lifted = True
+    return lifted if any_lifted else None
 
 
 def operator_function(name):
@@ -860,6 +887,28 @@ def run_graph(graph_fn, *args, start_time=None, end_time=None,
     return _times_for(run.recorded("__run_graph__"), start_time or _hgraph.MIN_ST)
 
 
+def _infer_ts_type(series):
+    """The TS type for an eval_node input vector, from its first non-None
+    sample (hgraph's operators are driven without annotations)."""
+    from ._types import TS, TSS, TSD
+
+    for sample in series:
+        if sample is None:
+            continue
+        if isinstance(sample, (set, frozenset)):
+            for element in sample:
+                return TSS[type(element)]
+            continue
+        if isinstance(sample, dict):
+            for key_sample, value_sample in sample.items():
+                if value_sample is None:
+                    continue
+                return TSD[type(key_sample), TS[type(value_sample)]]
+            continue
+        return TS[type(sample)]
+    return None
+
+
 def eval_node(fn, *inputs, output_type=None, __start_time__=None, __end_time__=None, __scalars__=None):
     """Drive a @graph/composition ``fn`` with vectors of per-cycle values
     (None = no tick), mirroring hgraph's eval_node test util. Time-series
@@ -868,23 +917,34 @@ def eval_node(fn, *inputs, output_type=None, __start_time__=None, __end_time__=N
     scheduled. ``__end_time__`` (Python-hgraph parity) bounds a run
     explicitly; a test that cannot quiesce (e.g. a bound feedback loop
     until per-edge passive support lands) must set it and say why."""
-    fn_sig = inspect.signature(fn.fn if isinstance(fn, _GraphFn) else fn)
-    params = list(fn_sig.parameters.values())
+    try:
+        fn_sig = inspect.signature(fn.fn if isinstance(fn, _GraphFn) else fn)
+        params = list(fn_sig.parameters.values())
+    except (TypeError, ValueError):
+        params = []
     w = _hgraph.Wiring()
     _wiring_stack.append(w)
     try:
         ports = []
         for i, series in enumerate(inputs):
-            annotation = params[i].annotation
+            if not isinstance(series, (list, tuple)):
+                # hgraph parity: a non-list argument is a plain value (lifted
+                # to const where a TS input is expected, or a scalar param).
+                ports.append(series)
+                continue
+            annotation = params[i].annotation if i < len(params) else None
             if not isinstance(annotation, _TsExpr):
-                raise TypeError(f"parameter '{params[i].name}' needs a TS[...] annotation")
-            key = f"eval_node::{params[i].name}"
+                annotation = _infer_ts_type(series)
+                if annotation is None:
+                    name = params[i].name if i < len(params) else f"arg_{i}"
+                    raise TypeError(f"parameter '{name}' needs a TS[...] annotation or a typed sample value")
+            key = f"eval_node::{params[i].name if i < len(params) else i}"
             src = w.wire("__harness_replay", (key,), {}, output_type=annotation.handle)
             w.set_replay(key, list(series), ts_type=annotation.handle)
             ports.append(WiringPort(src))
         scalars = __scalars__ or {}
         out = fn(*ports, **scalars)
-        length = max((len(series) for series in inputs), default=0)
+        length = max((len(series) for series in inputs if isinstance(series, (list, tuple))), default=0)
         if out is None:
             run = w.run(start_time=__start_time__, end_time=__end_time__)
             return None
