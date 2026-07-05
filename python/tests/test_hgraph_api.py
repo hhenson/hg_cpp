@@ -204,6 +204,7 @@ def test_python_user_nodes():
     # nodes - graph-thread only, GIL per call, values across the boundary.
     @hg.compute_node
     def fizzbuzz(n: TS[int]) -> TS[str]:
+        n = n.value
         return "fizzbuzz" if n % 15 == 0 else ("fizz" if n % 3 == 0 else ("buzz" if n % 5 == 0 else str(n)))
 
     @graph
@@ -217,7 +218,7 @@ def test_python_user_nodes():
 
     @hg.sink_node
     def collect(v: TS[str]) -> None:
-        seen.append(v)
+        seen.append(v.value)
 
     @graph
     def watched(n: TS[int]) -> TS[str]:
@@ -244,10 +245,11 @@ def test_python_generator():
     check(out[0][0] == hg.MIN_ST, "generator times")
 
 
-def test_compute_node_two_inputs():
+def test_compute_node_any_arity():
+    # One bundle-based operator serves ANY arity (no per-arity stubs).
     @hg.compute_node
     def weighted(price: TS[float], qty: TS[int]) -> TS[float]:
-        return price * qty
+        return price.value * qty.value
 
     @graph
     def notional(p: TS[float], q: TS[int]) -> TS[float]:
@@ -256,6 +258,16 @@ def test_compute_node_two_inputs():
     out = eval_node(notional, [2.5, 4.0], [10, 20])
     check(out == [25.0, 80.0], f"two inputs: {out}")
 
+    @hg.compute_node
+    def combine(a: TS[int], b: TS[int], c: TS[int], d: TS[int], e: TS[int]) -> TS[int]:
+        return a.value + b.value + c.value + d.value + e.value
+
+    @graph
+    def wide(a: TS[int], b: TS[int], c: TS[int], d: TS[int], e: TS[int]) -> TS[int]:
+        return combine(a, b, c, d, e)
+
+    check(eval_node(wide, [1], [2], [3], [4], [5]) == [15], "five inputs")
+
 
 def test_user_node_scalars_and_injectables():
     # Wiring-time scalars ride the node identity; STATE/CLOCK/SCHEDULER
@@ -263,7 +275,7 @@ def test_user_node_scalars_and_injectables():
     @hg.compute_node
     def ema(x: TS[float], alpha: float, state: hg.STATE = None, clock: hg.CLOCK = None) -> TS[float]:
         prev = getattr(state, "value", None)
-        state.value = x if prev is None else alpha * x + (1 - alpha) * prev
+        state.value = x.value if prev is None else alpha * x.value + (1 - alpha) * prev
         check(clock.evaluation_time is not None, "clock injected")
         return state.value
 
@@ -281,9 +293,9 @@ def test_user_node_scheduler():
         if getattr(state, "pending", None) is not None:
             value, state.pending = state.pending, None
             return value
-        state.pending = x + 100
+        state.pending = x.value + 100
         sched.schedule_delta(hg.MIN_TD)
-        return x
+        return x.value
 
     @graph
     def deferred(x: TS[int]) -> TS[int]:
@@ -364,7 +376,7 @@ def test_realtime_push_queue():
 
     @hg.sink_node
     def collect(v: TS[int]) -> None:
-        collected.append(v)
+        collected.append(v.value)
 
     @graph
     def live() -> None:
@@ -460,7 +472,7 @@ def test_hgraph_context_compat():
 
     @hg.compute_node
     def use_context(ts: TS[bool], context: CONTEXT[TS[_TestContext]] = None) -> TS[str]:
-        return f"{_TestContext.instance().msg} {ts}"
+        return f"{_TestContext.instance().msg} {ts.value}"
 
     @graph
     def g(ts: TS[bool]) -> TS[str]:
@@ -497,7 +509,7 @@ def test_hgraph_context_named():
 
     @hg.compute_node
     def named(ts: TS[bool], context: CONTEXT[TS[_TestContext]] = REQUIRED["a"]) -> TS[str]:
-        return context.msg
+        return context.value.msg
 
     @graph
     def g(ts: TS[bool]) -> TS[str]:
@@ -522,7 +534,7 @@ def test_arbitrary_object_scalars():
 
     @hg.compute_node
     def total(o: TS[Order]) -> TS[int]:
-        return o.qty * 2
+        return o.value.qty * 2
 
     @graph
     def g(o: TS[Order]) -> TS[int]:
@@ -530,6 +542,54 @@ def test_arbitrary_object_scalars():
 
     out = eval_node(g, [Order(3), Order(5)])
     check(out == [6, 10], f"object scalars: {out}")
+
+
+def test_time_series_view_api():
+    # The full view surface: value/delta_value/modified/last_modified_time
+    # plus the TSD conveniences (hgraph parity).
+    observations = []
+
+    @hg.compute_node
+    def observe(d: TSD[str, TS[int]]) -> TS[int]:
+        observations.append(
+            (dict(d.value), d.delta_value, d.modified, sorted(d.modified_keys()), d.removed_keys())
+        )
+        return len(d.value)
+
+    @graph
+    def g(d: TSD[str, TS[int]]) -> TS[int]:
+        return observe(d)
+
+    out = eval_node(g, [{"a": 1, "b": 2}, {"a": None}])
+    check(out == [2, 1], f"sizes: {out}")
+    check(observations[0][0] == {"a": 1, "b": 2}, f"value: {observations[0]}")
+    check(observations[0][3] == ["a", "b"] and observations[0][4] == [], "first delta keys")
+    check(observations[1][0] == {"b": 2}, f"post-removal value: {observations[1]}")
+    check(observations[1][4] == ["a"], f"removed key: {observations[1]}")
+    check(all(entry[2] for entry in observations), "modified flags")
+    check(observations[0][1] == {"a": 1, "b": 2}, f"delta_value: {observations[0][1]}")
+
+
+def test_time_series_view_lifetime_guard():
+    # A view is only usable during its node's evaluation: storing it and
+    # touching it later raises rather than dangling.
+    stashed = []
+
+    @hg.compute_node
+    def stash(x: TS[int]) -> TS[int]:
+        stashed.append(x)
+        return x.value
+
+    @graph
+    def g(x: TS[int]) -> TS[int]:
+        return stash(x)
+
+    eval_node(g, [1])
+    try:
+        _ = stashed[0].value
+        check(False, "expected a lifetime error")
+    except RuntimeError as e:
+        check("outside its node's evaluation" in str(e), f"unexpected error: {e}")
 
 
 def main():

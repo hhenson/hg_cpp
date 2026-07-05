@@ -21,6 +21,9 @@ frame_store_contains = _hgraph.frame_store_contains
 frame_store_read = _hgraph.frame_store_read
 evaluate_const = _hgraph.evaluate_const
 
+TimeSeries = _hgraph.TimeSeries
+_hgraph._set_removed_sentinel(REMOVED)
+
 _OPERATOR_NAMES = frozenset(_hgraph.operator_names())
 
 
@@ -37,7 +40,7 @@ def __dir__():
 
 
 __all__ = [
-    "TS", "TSS", "TSD", "TSL", "TSB", "Size", "TimeSeriesSchema", "CONTEXT", "REQUIRED", "WiringError",
+    "TS", "TSS", "TSD", "TSL", "TSB", "Size", "TimeSeriesSchema", "CONTEXT", "REQUIRED", "WiringError", "TimeSeries",
     "WiringPort", "graph", "run_graph", "eval_node", "wire", "map_", "reduce", "REMOVED", "feedback", "switch_", "passive", "compute_node", "sink_node", "generator", "STATE", "SCHEDULER", "CLOCK", "component", "record_replay_scope", "RecordReplayEnum", "comparison_summary", "push_queue", "EvaluationMode", "context",
     "MIN_ST", "MIN_TD", "IN_MEMORY", "DATA_FRAME",
     "set_record_replay_config", "frame_store_contains", "frame_store_read", "evaluate_const",

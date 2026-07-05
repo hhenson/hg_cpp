@@ -233,5 +233,15 @@ Recorded divergences / gaps (the morning-summary list):
   identity = ``typeid(marker<Service>)``); Python service descriptors
   need runtime identity — an interning-semantics design decision, flagged
   for a design session rather than improvised.
-- Deferred: TS-view objects for user nodes (inputs arrive as plain
-  VALUES today).
+- **TimeSeries view objects** (Howard's rulings: proper C++ objects, all
+  kinds, strictly lazy): user nodes receive a C++-bound ``TimeSeries``
+  view over the LIVE input — nothing converts unless accessed.
+  Universal: ``.value`` / ``.delta_value`` / ``.modified`` / ``.valid`` /
+  ``.all_valid`` / ``.last_modified_time``. Kind-dispatched: TSS
+  ``added()``/``removed()``; TSD ``[]``/``keys()``/``modified_keys()``/
+  ``modified_items()``/``removed_keys()``/``in``; TSL ``[i]``/``len``;
+  TSB ``.field`` / ``[]``. Child access returns child views sharing the
+  parent's lifetime guard: a view stored past its node's evaluation
+  raises rather than dangling. ``delta_value`` builds hgraph's friendly
+  shapes natively from the dict/set views (no canonical-delta
+  intermediate).

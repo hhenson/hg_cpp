@@ -12,6 +12,7 @@
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/types/wired_fn.h>
 #include <hgraph/lib/std/component.h>
+#include <hgraph/types/time_series/ts_delta.h>
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/types/context_wiring.h>
 #include <hgraph/lib/std/operators/higher_order.h>
@@ -920,10 +921,194 @@ namespace
         }
     }
 
+    /** Call-scope lifetime guard: python must not use a view after its eval. */
+    struct PyTsGuard
+    {
+        bool alive{true};
+    };
+
+    /**
+     * The hgraph TimeSeries object handed to python user nodes: a LAZY,
+     * C++-bound view over the node's live input - nothing converts unless
+     * accessed. Kind-specific methods dispatch on the schema (TS/TSS/TSD/
+     * TSL/TSB); child access returns child views sharing the same guard.
+     */
+    struct PyTimeSeries
+    {
+        TSInputView                view;
+        std::shared_ptr<PyTsGuard> guard;
+
+        [[nodiscard]] const TSInputView &checked() const
+        {
+            if (guard == nullptr || !guard->alive)
+            {
+                throw std::logic_error("a TimeSeries view was accessed outside its node's evaluation");
+            }
+            return view;
+        }
+
+        [[nodiscard]] TSTypeKind kind() const { return checked().schema()->kind; }
+
+        [[nodiscard]] nb::object value() const { return value_to_py(checked().value()); }
+
+        [[nodiscard]] nb::object delta_value() const
+        {
+            const auto &ts = checked();
+            switch (ts.schema()->kind)
+            {
+                case TSTypeKind::TS: return value_to_py(ts.value());
+                case TSTypeKind::TSD: {
+                    // hgraph's friendly shape: {key: child delta, removed: REMOVED}
+                    nb::dict result;
+                    auto dict = ts.as_dict();
+                    for (auto &&[key, child] : dict.modified_items())
+                    {
+                        result[value_to_py(key)] = PyTimeSeries{std::move(child), guard}.delta_value();
+                    }
+                    for (const ValueView &key : dict.removed_keys()) { result[value_to_py(key)] = removed_sentinel(); }
+                    return result;
+                }
+                case TSTypeKind::TSS: {
+                    auto     set = ts.as_set();
+                    nb::list added_items;
+                    for (const ValueView &element : set.added()) { added_items.append(value_to_py(element)); }
+                    nb::object added = nb::steal(PyFrozenSet_New(nb::list(added_items).ptr()));
+                    nb::list removed_items;
+                    for (const ValueView &element : set.removed()) { removed_items.append(value_to_py(element)); }
+                    if (nb::len(removed_items) == 0) { return added; }
+                    nb::dict result;
+                    result["added"]   = added;
+                    result["removed"] = nb::steal(PyFrozenSet_New(nb::list(removed_items).ptr()));
+                    return result;
+                }
+                default: {
+                    Value delta = capture_delta(ts);
+                    return delta.has_value() ? value_to_py(delta.view()) : nb::none();
+                }
+            }
+        }
+
+        [[nodiscard]] bool modified() const { return checked().modified(); }
+        [[nodiscard]] bool valid() const { return checked().valid(); }
+        [[nodiscard]] bool all_valid() const { return checked().all_valid(); }
+        [[nodiscard]] DateTime last_modified_time() const { return checked().last_modified_time(); }
+
+        // --- TSS ---
+        [[nodiscard]] nb::object added() const
+        {
+            nb::list items;
+            for (const ValueView &element : checked().as_set().added()) { items.append(value_to_py(element)); }
+            return nb::steal(PyFrozenSet_New(nb::list(items).ptr()));
+        }
+
+        [[nodiscard]] nb::object removed() const
+        {
+            nb::list items;
+            for (const ValueView &element : checked().as_set().removed()) { items.append(value_to_py(element)); }
+            return nb::steal(PyFrozenSet_New(nb::list(items).ptr()));
+        }
+
+        // --- TSD / TSL / TSB children (share the guard) ---
+        [[nodiscard]] PyTimeSeries child_at(nb::handle key) const
+        {
+            const auto &ts = checked();
+            switch (ts.schema()->kind)
+            {
+                case TSTypeKind::TSD: {
+                    Value key_value = py_to_value_as(key, ts.schema()->key_type());
+                    return PyTimeSeries{ts.as_dict().at(key_value.view()), guard};
+                }
+                case TSTypeKind::TSL: {
+                    auto list = ts.as_list();
+                    return PyTimeSeries{list[nb::cast<std::size_t>(key)], guard};
+                }
+                case TSTypeKind::TSB: {
+                    auto bundle = ts.as_bundle();
+                    if (nb::isinstance<nb::str>(key))
+                    {
+                        return PyTimeSeries{bundle.field(nb::cast<std::string>(key)), guard};
+                    }
+                    return PyTimeSeries{bundle[nb::cast<std::size_t>(key)], guard};
+                }
+                default: throw nb::type_error("this time-series kind has no children");
+            }
+        }
+
+        [[nodiscard]] std::size_t size() const
+        {
+            const auto &ts = checked();
+            switch (ts.schema()->kind)
+            {
+                case TSTypeKind::TSD: return ts.as_dict().size();
+                case TSTypeKind::TSL: return ts.as_list().size();
+                case TSTypeKind::TSB: return ts.as_bundle().size();
+                case TSTypeKind::TSS: return ts.as_set().size();
+                default: throw nb::type_error("this time-series kind has no size");
+            }
+        }
+
+        [[nodiscard]] nb::list keys() const
+        {
+            nb::list result;
+            for (const ValueView &key : checked().as_dict().keys()) { result.append(value_to_py(key)); }
+            return result;
+        }
+
+        [[nodiscard]] nb::list modified_keys() const
+        {
+            nb::list result;
+            for (const auto &[key, child] : checked().as_dict().modified_items()) { result.append(value_to_py(key)); }
+            return result;
+        }
+
+        [[nodiscard]] nb::list modified_items() const
+        {
+            nb::list result;
+            auto dict = checked().as_dict();
+            for (auto &&[key, child] : dict.modified_items())
+            {
+                result.append(nb::make_tuple(value_to_py(key), PyTimeSeries{std::move(child), guard}));
+            }
+            return result;
+        }
+
+        [[nodiscard]] nb::list removed_keys() const
+        {
+            nb::list result;
+            for (const ValueView &key : checked().as_dict().removed_keys()) { result.append(value_to_py(key)); }
+            return result;
+        }
+
+        [[nodiscard]] bool contains(nb::handle key) const
+        {
+            const auto &ts = checked();
+            if (ts.schema()->kind == TSTypeKind::TSD)
+            {
+                Value key_value = py_to_value_as(key, ts.schema()->key_type());
+                return ts.as_dict().contains(key_value.view());
+            }
+            throw nb::type_error("contains: not a keyed time-series");
+        }
+
+        /** The python REMOVED sentinel, registered by the hgraph package at import. */
+        [[nodiscard]] static nb::object &removed_slot()
+        {
+            static auto *slot = new nb::object{};
+            return *slot;
+        }
+
+        [[nodiscard]] static nb::object removed_sentinel()
+        {
+            nb::object &slot = removed_slot();
+            return slot.is_valid() ? slot : nb::none();
+        }
+    };
+
     /** Assemble the python call args per the layout; false = a ts arg is not yet valid. */
     [[nodiscard]] bool py_assemble_args(std::string_view layout, const TSInputView &args, const ValueView &scalars,
                                         State<PyStateRef> &state, NodeScheduler scheduler, DateTime now,
-                                        nb::list &call_args, nb::list &context_values)
+                                        nb::list &call_args, nb::list &context_values,
+                                        const std::shared_ptr<PyTsGuard> &guard)
     {
         auto        bundle       = args.as_bundle();
         std::size_t ts_index     = 0;
@@ -933,20 +1118,22 @@ namespace
         {
             switch (kind)
             {
-                case 't': {
-                    auto child = bundle[ts_index++];
-                    if (!child.valid()) { return false; }
-                    call_args.append(value_to_py(child.value()));
-                    break;
-                }
+                case 't':
                 case 'C': {
-                    // A context input: passed like a ts value AND entered
-                    // (python context-manager protocol) around the call.
                     auto child = bundle[ts_index++];
                     if (!child.valid()) { return false; }
-                    nb::object value = value_to_py(child.value());
-                    context_values.append(value);
-                    call_args.append(value);
+                    // The LAZY C++ TimeSeries view: nothing converts unless
+                    // the python code touches it. Guard-invalidated after
+                    // the call (a view must not outlive its evaluation).
+                    nb::object ts_obj = nb::cast(PyTimeSeries{std::move(child), guard});
+                    call_args.append(ts_obj);
+                    if (kind == 'C')
+                    {
+                        // A context input is ALSO entered (python
+                        // context-manager protocol) around the call - the
+                        // value converts here because entering needs it.
+                        context_values.append(nb::cast<PyTimeSeries &>(ts_obj).value());
+                    }
                     break;
                 }
                 case 's': {
@@ -1004,12 +1191,16 @@ namespace
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
+            auto     guard   = std::make_shared<PyTsGuard>();
+            auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
             if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args,
-                                  context_values))
+                                  context_values, guard))
             {
                 return;
             }
             apply_py_result(py_call_with_contexts(fn.value().record->fn, call_args, context_values), out);
+            invalid.release();
+            guard->alive = false;
         }
 
         static void stop(State<PyStateRef> state) { py_release_state(state); }
@@ -1026,12 +1217,16 @@ namespace
             nb::gil_scoped_acquire gil;
             nb::list call_args;
             nb::list context_values;
+            auto     guard   = std::make_shared<PyTsGuard>();
+            auto     invalid = UnwindCleanupGuard([&] { guard->alive = false; });
             if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args,
-                                  context_values))
+                                  context_values, guard))
             {
                 return;
             }
             (void)py_call_with_contexts(fn.value().record->fn, call_args, context_values);
+            invalid.release();
+            guard->alive = false;
         }
 
         static void stop(State<PyStateRef> state) { py_release_state(state); }
@@ -1321,6 +1516,29 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyNodeHandle>(m, "NodeRef");
     nb::class_<PyScalarValue>(m, "ScalarValue");
     nb::class_<PySender>(m, "Sender").def("send", &PySender::send, nb::arg("value"));
+    nb::class_<PyTimeSeries>(m, "TimeSeries")
+        .def_prop_ro("value", &PyTimeSeries::value)
+        .def_prop_ro("delta_value", &PyTimeSeries::delta_value)
+        .def_prop_ro("modified", &PyTimeSeries::modified)
+        .def_prop_ro("valid", &PyTimeSeries::valid)
+        .def_prop_ro("all_valid", &PyTimeSeries::all_valid)
+        .def_prop_ro("last_modified_time", &PyTimeSeries::last_modified_time)
+        .def("added", &PyTimeSeries::added)
+        .def("removed", &PyTimeSeries::removed)
+        .def("keys", &PyTimeSeries::keys)
+        .def("modified_keys", &PyTimeSeries::modified_keys)
+        .def("modified_items", &PyTimeSeries::modified_items)
+        .def("removed_keys", &PyTimeSeries::removed_keys)
+        .def("__getitem__", &PyTimeSeries::child_at)
+        .def("__getattr__", [](const PyTimeSeries &self, const std::string &name) {
+            if (self.kind() != TSTypeKind::TSB) { throw nb::attribute_error(name.c_str()); }
+            return self.child_at(nb::cast(name));
+        })
+        .def("__contains__", &PyTimeSeries::contains)
+        .def("__len__", &PyTimeSeries::size)
+        .def("__str__", [](const PyTimeSeries &self) { return nb::str(self.value()); })
+        .def("__repr__", [](const PyTimeSeries &self) { return nb::str("TimeSeries({})").format(self.value()); });
+    m.def("_set_removed_sentinel", [](nb::object sentinel) { PyTimeSeries::removed_slot() = std::move(sentinel); });
     nb::class_<PyArrowStream>(m, "ArrowStream")
         .def("__arrow_c_stream__",
              [](const PyArrowStream &self, nb::handle) { return self.capsule(); },
