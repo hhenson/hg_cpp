@@ -376,7 +376,7 @@ namespace hgraph
 
             if (expected_output != nullptr && impl.has_output)
             {
-                if (!ts_pattern_match(impl.output, expected_output, map))
+                if (!output_ts_pattern_match(impl.output, expected_output, map))
                 {
                     why = fmt::format("output does not match requested {}", expected_output->display_name != nullptr
                                                                                ? expected_output->display_name

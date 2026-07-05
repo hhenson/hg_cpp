@@ -71,8 +71,18 @@ class JSON(str):
 
 
 class TimeSeriesReference:
-    """DEVIATION (agreed): REF is value-only; reference objects are not
-    exposed. Constructing one raises."""
+    """The opaque reference-value API (Howard's ruling 2026-07-05):
+    references are values - store, emit, compare - never dereferenced
+    (.output is not exposed; code needing the dereferenced value accepts
+    it as an input)."""
 
     def __init__(self, *args, **kwargs):
-        raise NotImplementedError("deviation: REF is value-only (TimeSeriesReference is not exposed)")
+        raise NotImplementedError(
+            "TimeSeriesReference instances come from REF inputs (ref.value) or make()")
+
+    @staticmethod
+    def make():
+        """An EMPTY reference (binds nothing)."""
+        import _hgraph
+
+        return _hgraph.empty_time_series_reference()

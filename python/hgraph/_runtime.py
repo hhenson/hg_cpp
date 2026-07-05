@@ -369,7 +369,7 @@ class _PyNode:
 
     def __call__(self, *args, **kwargs):
         ref = _hgraph.node_ref(self.fn)
-        layout, ports, scalars = [], [], []
+        layout, ports, scalars, keep_ref = [], [], [], []
         supplied = iter(args)
         for param in self._params:
             marker = _INJECTABLE_MARKERS.get(param.annotation)
@@ -395,15 +395,17 @@ class _PyNode:
                     continue   # optional and absent: the fn sees its None default
                 layout.append("C")
                 ports.append(_unwrap(resolved))
+                keep_ref.append(False)
                 continue
             value = next(supplied)
             if isinstance(value, WiringPort):
                 layout.append("t")
                 ports.append(_unwrap(value))
+                keep_ref.append(getattr(param.annotation, "is_ref", False))
             else:
                 layout.append("s")
                 scalars.append(value)
-        packed = WiringPort(_hgraph.bundle_port(ports))
+        packed = WiringPort(_hgraph.bundle_port(ports, keep_ref))
         kwargs = {"fn": ref, "config": "".join(layout), "scalars": _hgraph.any_list(scalars)}
         if self.has_output:
             if not isinstance(self._out_tp, _TsExpr):

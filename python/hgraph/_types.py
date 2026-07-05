@@ -74,11 +74,12 @@ class _TsExpr:
 
     """A resolved time-series type: wraps the C++ TsType handle."""
 
-    __slots__ = ("handle", "_label")
+    __slots__ = ("handle", "_label", "is_ref")
 
     def __init__(self, handle, label):
         self.handle = handle
         self._label = label
+        self.is_ref = False
 
     def __repr__(self):
         return self._label
@@ -274,10 +275,17 @@ class DEFAULT(metaclass=_DefaultMeta):
 
 class _REFMeta(type):
     def __getitem__(cls, item):
-        # DEVIATION (agreed): REF is VALUE-ONLY - a REF[X] annotation is X.
-        return item
+        # Howard's REF ruling (2026-07-05): references are OPAQUE VALUES -
+        # storable and emittable, never dereferenced (.output is not
+        # exposed). A REF[X] input receives the reference itself; a non-REF
+        # input bound to a REF source receives the DEREFERENCED value.
+        import _hgraph as _m
+
+        expr = _TsExpr(_m.ref_ts(_resolve(item)), f"REF[{item!r}]")
+        expr.is_ref = True
+        return expr
 
 
 class REF(metaclass=_REFMeta):
-    """REF[X] - value-only in this runtime (agreed deviation): behaves as X
-    at the API surface; output dereferencing is not exposed."""
+    """REF[X] - an opaque reference over X: pass/store/emit the reference
+    value; dereferencing (.output) is not exposed (agreed deviation)."""

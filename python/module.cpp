@@ -119,6 +119,13 @@ namespace
     };
 
 
+    /** An OPAQUE reference value (Howard's REF ruling: store/emit, never
+        dereference - no .output surface). */
+    struct PyOpaqueRef
+    {
+        Value value;   // holds a TimeSeriesReference
+    };
+
     /** Registered python enum classes for C++ enum scalars (immortal). */
     [[nodiscard]] nb::object &cmp_result_enum_slot()
     {
@@ -227,6 +234,7 @@ namespace
         TimeDelta delta;
         if (nb::try_cast<TimeDelta>(object, delta)) { return Value{delta}; }
         if (nb::hasattr(object, "__arrow_c_stream__")) { return py_arrow_to_frame(object); }
+        if (nb::isinstance<PyOpaqueRef>(object)) { return Value{nb::cast<PyOpaqueRef &>(object).value.view()}; }
         if (cmp_result_enum_slot().is_valid() && nb::isinstance(object, cmp_result_enum_slot()))
         {
             return Value{static_cast<stdlib::CmpResult>(nb::cast<std::int64_t>(object.attr("value")))};
@@ -318,6 +326,11 @@ namespace
         }
         if (meta == scalar_descriptor<Frame>::value_meta()) { return frame_to_py(view.checked_as<Frame>()); }
         if (meta == scalar_descriptor<PyObj>::value_meta()) { return view.checked_as<PyObj>().get(); }
+        if (meta != nullptr && meta->display_name != nullptr &&
+            std::string_view{meta->display_name} == "TimeSeriesReference")
+        {
+            return nb::cast(PyOpaqueRef{Value{view}});
+        }
         if (meta == scalar_descriptor<stdlib::CmpResult>::value_meta())
         {
             const auto value = static_cast<std::int64_t>(view.checked_as<stdlib::CmpResult>());
@@ -964,7 +977,23 @@ namespace
     {
         if (result.is_none()) { return; }
         const auto &erased = static_cast<const TSOutputView &>(out);
-        Value       delta  = py_to_delta(result, erased.schema());
+        if (erased.schema() != nullptr && erased.schema()->kind == TSTypeKind::REF)
+        {
+            // REF outputs carry OPAQUE reference values (Howard's ruling):
+            // move the reference in whole - REF data has no delta ops. The
+            // Value is rebuilt from the raw TimeSeriesReference (the same
+            // construction the C++ runtime uses) so its binding matches the
+            // output plan regardless of which side produced the reference.
+            Value raw = py_to_value(result);
+            Value reference{raw.view().checked_as<TimeSeriesReference>()};
+            auto  mutation = erased.begin_mutation(erased.evaluation_time());
+            if (!mutation.move_value_from(std::move(reference)))
+            {
+                throw std::logic_error("REF output failed to move the reference value");
+            }
+            return;
+        }
+        Value delta = py_to_delta(result, erased.schema());
         // The python return is a CANONICAL DELTA (py_to_delta) - apply it as
         // one (atomic TS deltas coincide with values; compound kinds do not).
         apply_delta(out, delta.view());
@@ -1560,6 +1589,7 @@ NB_MODULE(_hgraph, m)
         return PyValueType{meta};
     });
     m.def("ts", [](PyValueType v) { return PyTsType{TypeRegistry::instance().ts(v.meta)}; });
+    m.def("ref_ts", [](PyTsType target) { return PyTsType{TypeRegistry::instance().ref(target.meta)}; });
     m.def("set_vt", [](PyValueType e) { return PyValueType{TypeRegistry::instance().set(e.meta)}; });
     m.def("map_vt", [](PyValueType k, PyValueType v) {
         return PyValueType{TypeRegistry::instance().map(k.meta, v.meta)};
@@ -1887,21 +1917,49 @@ NB_MODULE(_hgraph, m)
         return PyPort{WiringPortRef::structural_source(schema, std::move(children))};
     });
 
-    m.def("bundle_port", [](nb::list ports) {
+    m.def("bundle_port", [](nb::list ports, nb::list keep_ref) {
         if (nb::len(ports) == 0) { throw nb::value_error("bundle_port requires at least one port"); }
         std::vector<std::pair<std::string, const TSValueTypeMetaData *>> fields;
         std::vector<WiringPortRef> children;
         fields.reserve(nb::len(ports));
         children.reserve(nb::len(ports));
         std::size_t index = 0;
+        auto &registry = TypeRegistry::instance();
         for (nb::handle port : ports)
         {
             const WiringPortRef &ref = nb::cast<PyPort &>(port).ref;
-            fields.emplace_back("_" + std::to_string(index++), ref.schema);
+            // Howard's REF ruling: a non-REF parameter bound to a REF source
+            // accepts the DEREFERENCED value (binding inserts the from-REF
+            // adaptation); a REF parameter receives the reference itself as
+            // an opaque value.
+            const bool as_ref = index < nb::len(keep_ref) && nb::cast<bool>(keep_ref[index]);
+            const auto *field_schema = as_ref ? ref.schema : registry.dereference(ref.schema);
+            fields.emplace_back("_" + std::to_string(index++), field_schema);
             children.push_back(ref);
         }
-        const auto *schema = TypeRegistry::instance().un_named_tsb(fields);
+        const auto *schema = registry.un_named_tsb(fields);
         return PyPort{WiringPortRef::structural_source(schema, std::move(children))};
+    });
+
+    nb::class_<PyOpaqueRef>(m, "TimeSeriesRef")
+        .def("__eq__",
+             [](const PyOpaqueRef &self, nb::handle other) {
+                 return nb::isinstance<PyOpaqueRef>(other) &&
+                        nb::cast<PyOpaqueRef &>(other).value.view().equals(self.value.view());
+             })
+        .def("__repr__", [](const PyOpaqueRef &self) {
+            return std::string{self.value.view().checked_as<TimeSeriesReference>().is_empty() ? "<ref: empty>"
+                                                                                              : "<ref>"};
+        });
+    m.def("empty_time_series_reference", [] {
+        // The registry's interned reference meta - taken from a REF schema
+        // directly (every REF plan shares it; a Value built any other way
+        // would fail the binding-identity checks).
+        auto       &registry = TypeRegistry::instance();
+        const auto *ref_meta = registry.ref(registry.ts(scalar_descriptor<Int>::value_meta()));
+        const auto *binding  = ValuePlanFactory::instance().binding_for(ref_meta->value_schema);
+        if (binding == nullptr) { throw std::logic_error("TimeSeriesReference meta has no plan binding"); }
+        return PyOpaqueRef{Value{*binding}};
     });
 
     m.def("node_ref", [](nb::object fn) {

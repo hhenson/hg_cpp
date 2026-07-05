@@ -86,6 +86,28 @@ namespace hgraph
         return true;
     }
 
+    bool output_ts_pattern_match(const TypePattern &pattern,
+                                 const TSValueTypeMetaData *concrete,
+                                 ResolutionMap &map)
+    {
+        if (pattern.kind == TypePattern::Kind::Var && concrete != nullptr && concrete->kind == TSTypeKind::REF)
+        {
+            // OUTPUT direction: no REF transparency for a top-level variable -
+            // the caller asked for a reference, so the produced port must BE
+            // one. (Input-side transparency stands: consumers of value ports
+            // adapt at input binding.)
+            if (const TSValueTypeMetaData *bound = map.find_ts(pattern.name))
+            {
+                auto &registry = TypeRegistry::instance();
+                return time_series_schema_equivalent(registry.dereference(bound), registry.dereference(concrete));
+            }
+            if (!ts_allowed_by_constraints(pattern, concrete)) { return false; }
+            map.bind_ts(pattern.name, concrete);
+            return true;
+        }
+        return ts_pattern_match(pattern, concrete, map);
+    }
+
     bool ts_pattern_match(const TypePattern &pattern, const TSValueTypeMetaData *concrete, ResolutionMap &map)
     {
         if (concrete == nullptr) { return false; }

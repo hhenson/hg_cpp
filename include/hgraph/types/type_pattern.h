@@ -193,6 +193,16 @@ namespace hgraph
     [[nodiscard]] HGRAPH_EXPORT bool ts_pattern_match(const TypePattern &pattern, const TSValueTypeMetaData *concrete,
                                                       ResolutionMap &map);
 
+    /**
+     * OUTPUT-direction match: REF transparency does NOT apply to a top-level
+     * variable — a caller requesting ``REF[X]`` binds the variable to the
+     * reference schema verbatim (the produced port must BE a reference;
+     * consumers of a value port adapt at input binding, not here).
+     */
+    [[nodiscard]] HGRAPH_EXPORT bool output_ts_pattern_match(const TypePattern &pattern,
+                                                             const TSValueTypeMetaData *concrete,
+                                                             ResolutionMap &map);
+
     /** Scalar-layer counterpart of ``ts_pattern_match``. */
     [[nodiscard]] HGRAPH_EXPORT bool scalar_pattern_match(const ScalarPattern &pattern,
                                                           const ValueTypeMetaData *concrete, ResolutionMap &map);
