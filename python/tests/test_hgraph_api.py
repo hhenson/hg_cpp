@@ -427,6 +427,111 @@ def test_context_publish_and_get():
     eval_node(unpublished, [1])
 
 
+class _TestContext:
+    # Transcribed from ext/main hgraph_unit_tests/_wiring/test_context.py.
+    __instance__ = None
+
+    def __init__(self, msg="non-default"):
+        self.msg = msg
+
+    @classmethod
+    def instance(cls):
+        if _TestContext.__instance__ is None:
+            return _TestContext("default")
+        return _TestContext.__instance__
+
+    def __enter__(self):
+        _TestContext.__instance__ = self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        _TestContext.__instance__ = None
+
+    def __eq__(self, other):
+        return isinstance(other, _TestContext) and other.msg == self.msg
+
+    def __hash__(self):
+        return hash(self.msg)
+
+
+def test_hgraph_context_compat():
+    # The existing hgraph context API: `with port:` publishes; CONTEXT[...]
+    # params resolve by type; the context VALUE is entered around eval.
+    from hgraph import CONTEXT, REQUIRED
+
+    @hg.compute_node
+    def use_context(ts: TS[bool], context: CONTEXT[TS[_TestContext]] = None) -> TS[str]:
+        return f"{_TestContext.instance().msg} {ts}"
+
+    @graph
+    def g(ts: TS[bool]) -> TS[str]:
+        with hg.const(_TestContext("Hello"), tp=TS[_TestContext]):
+            return use_context(ts)
+
+    out = eval_node(g, [True, None, False])
+    check(out == ["Hello True", None, "Hello False"], f"context: {out}")
+
+    @graph
+    def g_no_context(ts: TS[bool]) -> TS[str]:
+        return use_context(ts)
+
+    out = eval_node(g_no_context, [True])
+    check(out == ["default True"], f"no context: {out}")
+
+    @hg.compute_node
+    def needs_context(ts: TS[bool], context: CONTEXT[TS[_TestContext]] = REQUIRED) -> TS[str]:
+        return "x"
+
+    @graph
+    def g_required(ts: TS[bool]) -> TS[str]:
+        return needs_context(ts)
+
+    try:
+        eval_node(g_required, [True])
+        check(False, "expected WiringError")
+    except hg.WiringError:
+        pass
+
+
+def test_hgraph_context_named():
+    from hgraph import CONTEXT, REQUIRED
+
+    @hg.compute_node
+    def named(ts: TS[bool], context: CONTEXT[TS[_TestContext]] = REQUIRED["a"]) -> TS[str]:
+        return context.msg
+
+    @graph
+    def g(ts: TS[bool]) -> TS[str]:
+        with hg.const(_TestContext("Hello_A")) as a:
+            with hg.const(_TestContext("Hello_Z")) as z:
+                return hg.format_("{} {}", named(ts), named(ts, context="z"))
+
+    out = eval_node(g, [True])
+    check(out == ["Hello_A Hello_Z"], f"named contexts: {out}")
+
+
+def test_arbitrary_object_scalars():
+    class Order:
+        def __init__(self, qty):
+            self.qty = qty
+
+        def __eq__(self, other):
+            return isinstance(other, Order) and other.qty == self.qty
+
+        def __hash__(self):
+            return hash(self.qty)
+
+    @hg.compute_node
+    def total(o: TS[Order]) -> TS[int]:
+        return o.qty * 2
+
+    @graph
+    def g(o: TS[Order]) -> TS[int]:
+        return total(o)
+
+    out = eval_node(g, [Order(3), Order(5)])
+    check(out == [6, 10], f"object scalars: {out}")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

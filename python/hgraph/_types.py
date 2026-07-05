@@ -22,6 +22,10 @@ def _value_type(scalar):
     if isinstance(scalar, str):
         return _hgraph.value_type(scalar)
     name = _SCALAR_NAMES.get(scalar)
+    if name is None and isinstance(scalar, type):
+        # Any python class is a first-class scalar (hgraph parity): it maps
+        # onto the "object" value kind; type checking stays python-side.
+        name = "object"
     if name is None:
         raise TypeError(f"unsupported scalar type for hgraph: {scalar!r}")
     return _hgraph.value_type(name)
@@ -103,3 +107,46 @@ class _TSBMeta(type):
 
 class TSB(metaclass=_TSBMeta):
     """TSB[SchemaClass] — a named time-series bundle."""
+
+
+class _ContextExpr:
+    """CONTEXT[X] — a context-injected parameter's type marker."""
+
+    __slots__ = ("ts",)
+
+    def __init__(self, ts):
+        self.ts = ts
+
+    def __repr__(self):
+        return f"CONTEXT[{self.ts!r}]"
+
+
+class _CONTEXTMeta(type):
+    def __getitem__(cls, item):
+        if isinstance(item, _TsExpr):
+            return _ContextExpr(item)
+        # CONTEXT[SomeScalar] means CONTEXT[TS[SomeScalar]] (hgraph parity).
+        return _ContextExpr(TS[item])
+
+
+class CONTEXT(metaclass=_CONTEXTMeta):
+    """Annotate a node parameter as context-injected: resolved from the
+    nearest published ``with port:`` context of matching type (and name,
+    when specified). Default ``None`` = optional; ``REQUIRED`` /
+    ``REQUIRED["name"]`` = mandatory."""
+
+
+class _Required:
+    __slots__ = ("name",)
+
+    def __init__(self, name=None):
+        self.name = name
+
+    def __getitem__(self, name):
+        return _Required(name)
+
+    def __repr__(self):
+        return f"REQUIRED[{self.name!r}]" if self.name else "REQUIRED"
+
+
+REQUIRED = _Required()

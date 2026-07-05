@@ -23,6 +23,7 @@
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/record_replay.h>
 #include <hgraph/types/registry_reset.h>
+#include <hgraph/util/scope.h>
 #include <hgraph/types/metadata/value_plan_factory.h>
 #include <hgraph/types/value/specialized_views.h>
 #include <hgraph/types/value/value_builder.h>
@@ -52,6 +53,66 @@ namespace
     // ---------------------------------------------------------------
     // Python <-> Value scalar conversion (slice 1: the core atoms)
     // ---------------------------------------------------------------
+
+    /**
+     * An arbitrary python object as a value-layer scalar (hgraph allows any
+     * python class as a scalar type). Refcount management acquires the GIL:
+     * value ops (copy/destroy) run on the graph thread with the GIL
+     * RELEASED during the run loop.
+     */
+    struct PyObj
+    {
+        PyObject *object{nullptr};
+
+        PyObj() noexcept = default;
+        explicit PyObj(nb::object value) noexcept : object(value.release().ptr()) {}
+
+        PyObj(const PyObj &other) noexcept : object(other.object)
+        {
+            if (object != nullptr)
+            {
+                nb::gil_scoped_acquire gil;
+                Py_INCREF(object);
+            }
+        }
+
+        PyObj(PyObj &&other) noexcept : object(other.object) { other.object = nullptr; }
+
+        PyObj &operator=(const PyObj &other) noexcept
+        {
+            if (this == &other) { return *this; }
+            PyObj copy{other};
+            std::swap(object, copy.object);
+            return *this;
+        }
+
+        PyObj &operator=(PyObj &&other) noexcept
+        {
+            std::swap(object, other.object);
+            return *this;
+        }
+
+        ~PyObj()
+        {
+            if (object != nullptr)
+            {
+                nb::gil_scoped_acquire gil;
+                Py_DECREF(object);
+            }
+        }
+
+        [[nodiscard]] nb::object get() const { return nb::borrow(nb::handle(object)); }
+
+        friend bool operator==(const PyObj &lhs, const PyObj &rhs) noexcept
+        {
+            if (lhs.object == rhs.object) { return true; }
+            if (lhs.object == nullptr || rhs.object == nullptr) { return false; }
+            nb::gil_scoped_acquire gil;
+            const int result = PyObject_RichCompareBool(lhs.object, rhs.object, Py_EQ);
+            return result == 1;
+        }
+    };
+
 
     [[nodiscard]] Value py_to_value(nb::handle object);
     [[nodiscard]] nb::object value_to_py(const ValueView &view);
@@ -147,7 +208,14 @@ namespace
         TimeDelta delta;
         if (nb::try_cast<TimeDelta>(object, delta)) { return Value{delta}; }
         if (nb::hasattr(object, "__arrow_c_stream__")) { return py_arrow_to_frame(object); }
-        return py_container_to_value(object);
+        if (nb::isinstance<nb::frozenset>(object) || nb::isinstance<nb::set>(object) ||
+            nb::isinstance<nb::dict>(object) || nb::isinstance<nb::tuple>(object) ||
+            nb::isinstance<nb::list>(object))
+        {
+            return py_container_to_value(object);
+        }
+        // Any other python object is a first-class scalar (hgraph parity).
+        return Value{PyObj{nb::borrow(object)}};
     }
 
     struct PyArrowStream
@@ -222,6 +290,7 @@ namespace
                 static_cast<int>(micros / 1'000'000LL % 60), static_cast<int>(micros % 1'000'000LL));
         }
         if (meta == scalar_descriptor<Frame>::value_meta()) { return frame_to_py(view.checked_as<Frame>()); }
+        if (meta == scalar_descriptor<PyObj>::value_meta()) { return view.checked_as<PyObj>().get(); }
         if (meta == scalar_descriptor<Bytes>::value_meta())
         {
             const auto &bytes = view.checked_as<Bytes>();
@@ -854,7 +923,7 @@ namespace
     /** Assemble the python call args per the layout; false = a ts arg is not yet valid. */
     [[nodiscard]] bool py_assemble_args(std::string_view layout, const TSInputView &args, const ValueView &scalars,
                                         State<PyStateRef> &state, NodeScheduler scheduler, DateTime now,
-                                        nb::list &call_args)
+                                        nb::list &call_args, nb::list &context_values)
     {
         auto        bundle       = args.as_bundle();
         std::size_t ts_index     = 0;
@@ -868,6 +937,16 @@ namespace
                     auto child = bundle[ts_index++];
                     if (!child.valid()) { return false; }
                     call_args.append(value_to_py(child.value()));
+                    break;
+                }
+                case 'C': {
+                    // A context input: passed like a ts value AND entered
+                    // (python context-manager protocol) around the call.
+                    auto child = bundle[ts_index++];
+                    if (!child.valid()) { return false; }
+                    nb::object value = value_to_py(child.value());
+                    context_values.append(value);
+                    call_args.append(value);
                     break;
                 }
                 case 's': {
@@ -884,6 +963,36 @@ namespace
         return true;
     }
 
+    /** Enter context-manager values (hgraph's context semantics), call, exit in reverse. */
+    [[nodiscard]] nb::object py_call_with_contexts(const nb::object &fn, nb::list &call_args,
+                                                   nb::list &context_values)
+    {
+        std::vector<nb::object> entered;
+        entered.reserve(nb::len(context_values));
+        auto unwind = UnwindCleanupGuard([&] {
+            for (auto it = entered.rbegin(); it != entered.rend(); ++it)
+            {
+                (*it).attr("__exit__")(nb::none(), nb::none(), nb::none());
+            }
+        });
+        for (nb::handle value : context_values)
+        {
+            if (nb::hasattr(value, "__enter__"))
+            {
+                nb::object holder = nb::borrow(value);
+                holder.attr("__enter__")();
+                entered.push_back(std::move(holder));
+            }
+        }
+        nb::object result = fn(*nb::tuple(call_args));
+        unwind.release();
+        for (auto it = entered.rbegin(); it != entered.rend(); ++it)
+        {
+            (*it).attr("__exit__")(nb::none(), nb::none(), nb::none());
+        }
+        return result;
+    }
+
     struct py_compute_node
     {
         static constexpr auto name = "__py_compute";
@@ -894,11 +1003,13 @@ namespace
         {
             nb::gil_scoped_acquire gil;
             nb::list call_args;
-            if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args))
+            nb::list context_values;
+            if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args,
+                                  context_values))
             {
                 return;
             }
-            apply_py_result(fn.value().record->fn(*nb::tuple(call_args)), out);
+            apply_py_result(py_call_with_contexts(fn.value().record->fn, call_args, context_values), out);
         }
 
         static void stop(State<PyStateRef> state) { py_release_state(state); }
@@ -914,11 +1025,13 @@ namespace
         {
             nb::gil_scoped_acquire gil;
             nb::list call_args;
-            if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args))
+            nb::list context_values;
+            if (!py_assemble_args(config.value(), args.base(), scalars.value(), state, scheduler, now, call_args,
+                                  context_values))
             {
                 return;
             }
-            (void)fn.value().record->fn(*nb::tuple(call_args));
+            (void)py_call_with_contexts(fn.value().record->fn, call_args, context_values);
         }
 
         static void stop(State<PyStateRef> state) { py_release_state(state); }
@@ -1030,6 +1143,19 @@ namespace
 }  // namespace
 
 template <>
+struct std::hash<PyObj>
+{
+    [[nodiscard]] std::size_t operator()(const PyObj &value) const noexcept
+    {
+        if (value.object == nullptr) { return 0; }
+        nanobind::gil_scoped_acquire gil;
+        const Py_hash_t result = PyObject_Hash(value.object);
+        if (result == -1) { PyErr_Clear(); return std::hash<const void *>{}(value.object); }
+        return static_cast<std::size_t>(result);
+    }
+};
+
+template <>
 struct std::hash<PyNodeRef>
 {
     [[nodiscard]] std::size_t operator()(const PyNodeRef &ref) const noexcept
@@ -1059,6 +1185,12 @@ struct std::hash<PyGenStateRef>
 namespace hgraph::static_schema_detail
 {
     template <>
+    struct scalar_name<PyObj>
+    {
+        static constexpr std::string_view value{"object"};
+    };
+
+    template <>
     struct scalar_name<PyNodeRef>
     {
         static constexpr std::string_view value{"py_node_ref"};
@@ -1087,6 +1219,7 @@ NB_MODULE(_hgraph, m)
     nb::set_leak_warnings(false);
 
     stdlib::register_standard_operators();
+    (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar
     register_overload<op_py_compute, py_compute_node>();
     register_overload<op_py_sink, py_sink_node>();
     register_overload<op_py_generator, py_generator_node>();
@@ -1094,8 +1227,13 @@ NB_MODULE(_hgraph, m)
     register_overload<op_harness_replay, harness_replay>();
     register_overload<op_harness_record, harness_record>();
 
-    nb::class_<PyTsType>(m, "TsType");
-    nb::class_<PyPort>(m, "Port");
+    nb::class_<PyTsType>(m, "TsType")
+        .def("__eq__", [](const PyTsType &self, nb::handle other) {
+            return nb::isinstance<PyTsType>(other) && nb::cast<PyTsType &>(other).meta == self.meta;
+        })
+        .def("__hash__", [](const PyTsType &self) { return std::hash<const void *>{}(self.meta); });
+    nb::class_<PyPort>(m, "Port")
+        .def_prop_ro("ts_type", [](const PyPort &self) { return PyTsType{self.ref.schema}; });
     nb::class_<PyRun>(m, "Run").def("recorded", &PyRun::recorded, nb::arg("key"));
 
     m.def("ts_type", [](const std::string &name) {
@@ -1329,6 +1467,7 @@ NB_MODULE(_hgraph, m)
     m.def("reset_registries", [] {
         reset_all_registries();
         stdlib::register_standard_operators();
+    (void)scalar_descriptor<PyObj>::value_meta();   // the python-object scalar
     register_overload<op_py_compute, py_compute_node>();
     register_overload<op_py_sink, py_sink_node>();
     register_overload<op_py_generator, py_generator_node>();

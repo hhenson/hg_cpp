@@ -214,10 +214,20 @@ Recorded divergences / gaps (the morning-summary list):
   zero copy, version-independent): ``frame_store_read`` returns Tables,
   Tables convert back to Frame values, and ``to_table``/``from_table``
   are fully usable from Python.
-- **Contexts** are surfaced: ``with hg.context("name", port): ...``
-  publishes for the wiring scope within (the C++ design record's
-  same-wiring semantics over the string-keyed scope stack);
-  ``hg.context.get(name)`` / ``hg.context.has(name)`` consume.
+- **Contexts** are surfaced BOTH ways (Howard: existing python code must
+  keep working). The hgraph-compatible API: ``with port:`` publishes (the
+  wiring port is a context manager; ``as name`` binds the context name via
+  frame-local resolution), and a ``CONTEXT[TS[X]] = None`` parameter on a
+  user node resolves by type/name — ``REQUIRED`` / ``REQUIRED["name"]`` /
+  a call-site ``context="name"`` override, ``WiringError`` on failure; the
+  resolved context VALUE is entered (context-manager protocol) around each
+  eval, exactly hgraph's semantics. The C++-design-record API also stands:
+  ``with hg.context("name", port)`` + ``hg.context.get/has`` over the
+  string-keyed scope stack. Underpinning both: **arbitrary python objects
+  are first-class scalars** — ``TS[AnyClass]`` maps onto the new
+  ``object`` value kind (a GIL-safe refcounted ``PyObj`` scalar; value ops
+  acquire the GIL around refcount changes since the run loop releases it),
+  and ``const`` infers it without ``tp=``.
 - Services/adaptors are not yet surfaced in Python. NOTE: the
   service wiring is descriptor-TYPE-parameterized throughout (node
   identity = ``typeid(marker<Service>)``); Python service descriptors

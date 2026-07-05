@@ -7,7 +7,7 @@ import inspect
 
 import _hgraph
 
-from ._types import _TsExpr
+from ._types import _TsExpr, _ContextExpr, _Required
 
 _wiring_stack = []
 
@@ -187,6 +187,50 @@ def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
     return wire("switch_", key, erased, *args, **kwargs)
 
 
+class WiringError(RuntimeError):
+    """A wiring-time error (hgraph parity)."""
+
+
+_published_contexts = []   # [(port, ts_type_handle, frame)] most recent last
+
+
+def _port_enter(self):
+    import sys
+
+    frame = sys._getframe(1)
+    _published_contexts.append((self, self._port.ts_type, frame))
+    return self
+
+
+def _port_exit(self, *exc):
+    _published_contexts.pop()
+    return False
+
+
+WiringPort.__enter__ = _port_enter
+WiringPort.__exit__ = _port_exit
+
+
+def _context_name_of(port, frame):
+    """The `as` variable name: the frame local bound to this port."""
+    for var_name, value in frame.f_locals.items():
+        if value is port:
+            return var_name
+    return None
+
+
+def _resolve_context(ctx_expr, name=None):
+    """The most recent published context matching type (and name)."""
+    wanted = ctx_expr.ts.handle
+    for port, ts_type, frame in reversed(_published_contexts):
+        if ts_type != wanted:
+            continue
+        if name is not None and _context_name_of(port, frame) != name:
+            continue
+        return port
+    return None
+
+
 class STATE:
     """Injectable: a per-node mutable namespace (attribute access), created
     lazily and preserved across ticks. Annotate a parameter with STATE."""
@@ -228,7 +272,7 @@ class _PyNode:
                     f"injectable parameter '{param.name}' of '{self.__name__}' must default to None"
                 )
 
-    def __call__(self, *args):
+    def __call__(self, *args, **kwargs):
         ref = _hgraph.node_ref(self.fn)
         layout, ports, scalars = [], [], []
         supplied = iter(args)
@@ -236,6 +280,26 @@ class _PyNode:
             marker = _INJECTABLE_MARKERS.get(param.annotation)
             if marker is not None:
                 layout.append(marker)
+                continue
+            if isinstance(param.annotation, _ContextExpr):
+                # Context-injected: resolved from the published stack by
+                # type (and name); never supplied positionally.
+                requirement = kwargs.pop(param.name, param.default)
+                name = None
+                required = False
+                if isinstance(requirement, _Required):
+                    required, name = True, requirement.name
+                elif isinstance(requirement, str):
+                    name = requirement
+                resolved = _resolve_context(param.annotation, name)
+                if resolved is None:
+                    where = f" with name {name}" if name else ""
+                    if required or name is not None:
+                        raise WiringError(
+                            f"no context published for '{param.name}'{where} of '{self.__name__}'")
+                    continue   # optional and absent: the fn sees its None default
+                layout.append("C")
+                ports.append(_unwrap(resolved))
                 continue
             value = next(supplied)
             if isinstance(value, WiringPort):
