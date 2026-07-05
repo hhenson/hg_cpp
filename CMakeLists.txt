@@ -246,7 +246,15 @@ if(HGRAPH_BUILD_PYTHON_BINDINGS OR HGRAPH_ENABLE_PYTHON_USER_NODES)
         nanobind_build_library(nanobind-static AS_SYSINCLUDE)
         target_link_libraries(hgraph_options INTERFACE $<BUILD_INTERFACE:nanobind-static>)
     endif()
-    target_compile_definitions(hgraph_options INTERFACE HGRAPH_ENABLE_PYTHON_USER_NODES=1)
+    # The user-nodes code paths in hgraph_core reference the Python C API and
+    # need an embedding link (Python::Python). A BINDINGS-only build must NOT
+    # compile them: plain executables (the unit tests) would fail at load with
+    # unresolved Python symbols.
+    if(HGRAPH_ENABLE_PYTHON_USER_NODES)
+        target_compile_definitions(hgraph_options INTERFACE HGRAPH_ENABLE_PYTHON_USER_NODES=1)
+    else()
+        target_compile_definitions(hgraph_options INTERFACE HGRAPH_ENABLE_PYTHON_USER_NODES=0)
+    endif()
 else()
     if(HGRAPH_ENABLE_IDE_PYTHON_HEADER_HINTS)
         if(WIN32)
