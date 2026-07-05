@@ -214,7 +214,11 @@ Recorded divergences / gaps (the morning-summary list):
   zero copy, version-independent): ``frame_store_read`` returns Tables,
   Tables convert back to Frame values, and ``to_table``/``from_table``
   are fully usable from Python.
-- Services/adaptors/contexts are not yet surfaced in Python. NOTE: the
+- **Contexts** are surfaced: ``with hg.context("name", port): ...``
+  publishes for the wiring scope within (the C++ design record's
+  same-wiring semantics over the string-keyed scope stack);
+  ``hg.context.get(name)`` / ``hg.context.has(name)`` consume.
+- Services/adaptors are not yet surfaced in Python. NOTE: the
   service wiring is descriptor-TYPE-parameterized throughout (node
   identity = ``typeid(marker<Service>)``); Python service descriptors
   need runtime identity — an interning-semantics design decision, flagged

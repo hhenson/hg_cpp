@@ -287,6 +287,32 @@ def generator(fn):
     return _Generator(fn)
 
 
+class context:
+    """Publish a port as a named context for the wiring scope within:
+    ``with hg.context("name", port): ...``; consume with
+    ``hg.context.get("name")`` / test with ``hg.context.has("name")``.
+    Same-wiring only (the design record's semantics)."""
+
+    def __init__(self, name, port):
+        self._name, self._port = name, port
+
+    def __enter__(self):
+        _hgraph.push_context(_current_wiring(), self._name, _unwrap(self._port))
+        return self
+
+    def __exit__(self, *exc):
+        _hgraph.pop_context()
+        return False
+
+    @staticmethod
+    def get(name):
+        return WiringPort(_hgraph.get_context(_current_wiring(), name))
+
+    @staticmethod
+    def has(name):
+        return _hgraph.has_context(_current_wiring(), name)
+
+
 class _RecordReplayModes:
     NONE = _hgraph.MODE_NONE
     RECORD = _hgraph.MODE_RECORD

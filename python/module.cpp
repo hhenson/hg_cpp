@@ -13,6 +13,7 @@
 #include <hgraph/types/wired_fn.h>
 #include <hgraph/lib/std/component.h>
 #include <hgraph/lib/std/operators/control.h>
+#include <hgraph/types/context_wiring.h>
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/push_source_node.h>
@@ -1152,6 +1153,19 @@ NB_MODULE(_hgraph, m)
     });
     m.def("frame_store_contains", [](const std::string &key) { return record_replay::store_contains(key); });
     m.def("frame_store_read", [](const std::string &key) { return frame_to_py(record_replay::store_read(key)); });
+
+    // Context publishing (same-wiring; the C++ design record's semantics).
+    m.def("push_context", [](PyWiring &w, const std::string &name, const PyPort &port) {
+        if (name.empty()) { throw nb::value_error("context requires a non-empty name"); }
+        graph_wiring_detail::push_context_source(w.wiring_ref(), name, port.ref);
+    });
+    m.def("pop_context", [] { graph_wiring_detail::pop_context_source(); });
+    m.def("get_context", [](PyWiring &w, const std::string &name) {
+        return PyPort{graph_wiring_detail::resolve_context_source(w.wiring_ref(), name)};
+    });
+    m.def("has_context", [](PyWiring &w, const std::string &name) {
+        return graph_wiring_detail::has_context_source(w.wiring_ref(), name);
+    });
     m.attr("IN_MEMORY")  = std::string{record_replay::IN_MEMORY};
     m.attr("DATA_FRAME") = std::string{record_replay::DATA_FRAME};
     m.attr("MIN_ST")     = nb::cast(MIN_ST);

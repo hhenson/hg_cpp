@@ -403,6 +403,30 @@ def test_frame_pyarrow_round_trip():
     hg.set_record_replay_config(hg.IN_MEMORY)
 
 
+def test_context_publish_and_get():
+    # with hg.context("name", port): publish for the wiring scope within;
+    # nested graphs consume by name (same-wiring, the design record).
+    @graph
+    def inner() -> TS[int]:
+        check(hg.context.has("rate"), "context visible")
+        return hg.context.get("rate") + hg.const(1, tp=TS[int])
+
+    @graph
+    def outer(r: TS[int]) -> TS[int]:
+        with hg.context("rate", r):
+            return inner()
+
+    out = eval_node(outer, [10, 20])
+    check(out == [11, 21], f"context: {out}")
+
+    @graph
+    def unpublished(r: TS[int]) -> TS[int]:
+        check(not hg.context.has("rate"), "context not leaked")
+        return r
+
+    eval_node(unpublished, [1])
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:
