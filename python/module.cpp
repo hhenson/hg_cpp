@@ -15,6 +15,7 @@
 #include <hgraph/types/time_series/ts_delta.h>
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/types/context_wiring.h>
+#include <hgraph/types/service_runtime.h>
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/testing/record_replay.h>
 #include <hgraph/runtime/push_source_node.h>
@@ -507,6 +508,11 @@ namespace
     };
 
     /** An opaque pre-converted scalar Value (e.g. the user-node scalars list). */
+    struct PyServiceDesc
+    {
+        const RuntimeServiceDescriptor *descriptor{nullptr};
+    };
+
     struct PyScalarValue
     {
         Value value{};
@@ -870,7 +876,9 @@ namespace
         if (result.is_none()) { return; }
         const auto &erased = static_cast<const TSOutputView &>(out);
         Value       delta  = py_to_delta(result, erased.schema());
-        out.apply(delta.view());
+        // The python return is a CANONICAL DELTA (py_to_delta) - apply it as
+        // one (atomic TS deltas coincide with values; compound kinds do not).
+        apply_delta(out, delta.view());
     }
 
     /**
@@ -1488,6 +1496,72 @@ NB_MODULE(_hgraph, m)
     m.def("frame_store_read", [](const std::string &key) { return frame_to_py(record_replay::store_read(key)); });
 
     // Context publishing (same-wiring; the C++ design record's semantics).
+    // --- services (runtime identity; services.rst rulings 2026-07-05) ---
+    nb::class_<PyServiceDesc>(m, "ServiceDescriptor");
+    m.def("service_descriptor",
+          [](const std::string &name, const std::string &flavour, std::optional<PyTsType> output,
+             std::optional<PyTsType> key_ts, std::optional<PyTsType> value, std::optional<PyTsType> request,
+             std::optional<PyTsType> response, const std::string &default_path) {
+              RuntimeServiceDescriptor descriptor;
+              descriptor.name         = name;
+              descriptor.default_path = default_path;
+              if (flavour == "reference")
+              {
+                  descriptor.flavour       = ServiceFlavour::Reference;
+                  descriptor.output_schema = output.value().meta;
+              }
+              else if (flavour == "subscription")
+              {
+                  descriptor.flavour      = ServiceFlavour::Subscription;
+                  descriptor.key_type     = key_ts.value().meta->value_schema;
+                  descriptor.value_schema = value.value().meta;
+              }
+              else if (flavour == "request_reply")
+              {
+                  descriptor.flavour         = ServiceFlavour::RequestReply;
+                  descriptor.request_schema  = request.value().meta;
+                  descriptor.response_schema = response.value().meta;
+              }
+              else { throw nb::value_error("unknown service flavour"); }
+              return PyServiceDesc{&intern_service_descriptor(std::move(descriptor))};
+          },
+          nb::arg("name"), nb::arg("flavour"), nb::arg("output") = nb::none(), nb::arg("key_ts") = nb::none(),
+          nb::arg("value") = nb::none(), nb::arg("request") = nb::none(), nb::arg("response") = nb::none(),
+          nb::arg("default_path") = std::string{});
+    m.def("find_service", [](const std::string &name) -> nb::object {
+        const auto *descriptor = find_service_descriptor(name);
+        return descriptor != nullptr ? nb::cast(PyServiceDesc{descriptor}) : nb::none();
+    });
+    m.def("service_client", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                               std::optional<PyPort> ts) {
+        switch (desc.descriptor->flavour)
+        {
+            case ServiceFlavour::Reference:
+                return PyPort{reference_service_client(w.wiring_ref(), *desc.descriptor, path)};
+            case ServiceFlavour::Subscription:
+                return PyPort{subscription_service_subscribe(w.wiring_ref(), *desc.descriptor, path,
+                                                             ts.value().ref)};
+            case ServiceFlavour::RequestReply:
+                return PyPort{request_reply_service_call(w.wiring_ref(), *desc.descriptor, path, ts.value().ref)};
+        }
+        throw std::logic_error("unreachable");
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("ts") = nb::none());
+    m.def("register_service_impl", [](PyWiring &w, const PyServiceDesc &desc, const std::string &path,
+                                      const PyWiredFn &impl) {
+        switch (desc.descriptor->flavour)
+        {
+            case ServiceFlavour::Reference:
+                register_reference_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+                return;
+            case ServiceFlavour::Subscription:
+                register_subscription_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+                return;
+            case ServiceFlavour::RequestReply:
+                register_request_reply_service_impl(w.wiring_ref(), *desc.descriptor, path, impl.fn);
+                return;
+        }
+    }, nb::arg("w"), nb::arg("desc"), nb::arg("path") = std::string{}, nb::arg("impl"));
+
     m.def("push_context", [](PyWiring &w, const std::string &name, const PyPort &port) {
         if (name.empty()) { throw nb::value_error("context requires a non-empty name"); }
         graph_wiring_detail::push_context_source(w.wiring_ref(), name, port.ref);

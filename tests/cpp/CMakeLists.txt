@@ -62,6 +62,7 @@ add_executable(hgraph_unit_tests
     test_component.cpp
     test_logger.cpp
     test_const_eval.cpp
+    test_service_runtime.cpp
     test_record_replay.cpp
     test_eval_node.cpp
     test_std_nodes.cpp

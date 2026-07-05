@@ -65,6 +65,7 @@ set(HGRAPH_CORE_SOURCES
     hgraph/types/operator_dispatch.cpp
     hgraph/types/registry_reset.cpp
     hgraph/types/record_replay.cpp
+    hgraph/types/service_runtime.cpp
     hgraph/types/primitive_types.cpp
     hgraph/types/value/json_codec.cpp
     hgraph/types/value/table_codec.cpp
@@ -111,6 +112,7 @@ set(HGRAPH_CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/type_pattern.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/operator_dispatch.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/record_replay.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/service_runtime.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/lib/std/component.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/time_series_reference.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/hgraph/types/metadata/ts_data_plan_factory.h

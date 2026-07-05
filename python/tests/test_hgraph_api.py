@@ -592,6 +592,48 @@ def test_time_series_view_lifetime_guard():
         check("outside its node's evaluation" in str(e), f"unexpected error: {e}")
 
 
+def test_services_from_python():
+    # All three flavours: python stubs + python impls + python clients over
+    # the erased runtime-identity core (services.rst rulings 2026-07-05).
+    @hg.reference_service
+    def base_rate() -> TS[int]: ...
+
+    @graph
+    def ref_graph(x: TS[int]) -> TS[int]:
+        hg.register_service(base_rate, lambda: hg.const(100, tp=TS[int]), path="main")
+        return x + hg.passive(base_rate(path="main"))
+
+    check(eval_node(ref_graph, [1, 2]) == [101, 102], "reference service")
+
+    @hg.subscription_service
+    def quotes(symbol: TS[str]) -> TS[int]: ...
+
+    @hg.compute_node
+    def price_impl(keys: TSS[str]) -> TSD[str, TS[int]]:
+        return {k: len(k) * 10 for k in keys.value}
+
+    @graph
+    def sub_graph(sym: TS[str]) -> TS[int]:
+        hg.register_service(quotes, price_impl, path="live")
+        return quotes(sym, path="live")
+
+    # Subscription keys forward NEXT cycle by design (the sanctioned stub).
+    out = eval_node(sub_graph, ["fx", None, "rates"], __end_time__=hg.MIN_ST + 5 * hg.MIN_TD)
+    check(out == [None, 20, None, 50], f"subscription service: {out}")
+
+    @hg.request_reply_service
+    def doubler(request: TS[int]) -> TS[int]: ...
+
+    @graph
+    def rr_graph(x: TS[int]) -> TS[int]:
+        hg.register_service(doubler, lambda reqs: hg.map_("add_", reqs, reqs), path="dbl")
+        return doubler(x, path="dbl")
+
+    # Request stubs forward next cycle; a re-requesting client conflates.
+    out = eval_node(rr_graph, [5, 7], __end_time__=hg.MIN_ST + 4 * hg.MIN_TD)
+    check(out == [None, None, 14], f"request/reply service: {out}")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

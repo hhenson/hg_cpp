@@ -377,6 +377,70 @@ class context:
         return _hgraph.has_context(_current_wiring(), name)
 
 
+class _ServiceStub:
+    """A service interface stub (hgraph's service decorators): calling it
+    wires a CLIENT; register_service registers an implementation."""
+
+    def __init__(self, fn, flavour):
+        self.fn = fn
+        self.__name__ = fn.__name__
+        sig = inspect.signature(fn)
+        params = [p for p in sig.parameters.values() if isinstance(p.annotation, _TsExpr)]
+        out = sig.return_annotation
+        kwargs = {"name": fn.__name__, "flavour": flavour}
+        if flavour == "reference":
+            kwargs["output"] = _unwrap(out)
+        elif flavour == "subscription":
+            if not params:
+                raise TypeError(f"@subscription_service '{self.__name__}' needs a TS[key] parameter")
+            kwargs["key_ts"] = _unwrap(params[0].annotation)
+            kwargs["value"] = _unwrap(out)
+        elif flavour == "request_reply":
+            if not params:
+                raise TypeError(f"@request_reply_service '{self.__name__}' needs a request parameter")
+            kwargs["request"] = _unwrap(params[0].annotation)
+            kwargs["response"] = _unwrap(out)
+        self.descriptor = _hgraph.service_descriptor(**kwargs)
+
+    def __call__(self, ts=None, *, path=""):
+        w = _current_wiring()
+        port = _hgraph.service_client(w, self.descriptor, path,
+                                      None if ts is None else _unwrap(ts))
+        return WiringPort(port)
+
+
+def reference_service(fn):
+    """The service interface stub for a reference service: the return
+    annotation is the shared output type; calling the stub wires a client."""
+    return _ServiceStub(fn, "reference")
+
+
+def subscription_service(fn):
+    """Subscription-service stub: first TS param = the subscription key,
+    return annotation = the per-key value; call with the key time-series."""
+    return _ServiceStub(fn, "subscription")
+
+
+def request_reply_service(fn):
+    """Request/reply stub: first TS param = the request, return annotation
+    = the response; call with the request time-series."""
+    return _ServiceStub(fn, "request_reply")
+
+
+def register_service(stub, impl, path=""):
+    """Register ``impl`` (a @graph / lambda / operator name) as the
+    implementation of ``stub`` on ``path``. ``stub`` may also be the NAME of
+    a C++-defined interface (the ruled direction: Python impls for C++
+    stubs)."""
+    if isinstance(stub, str):
+        descriptor = _hgraph.find_service(stub)
+        if descriptor is None:
+            raise WiringError(f"no service interface named '{stub}'")
+    else:
+        descriptor = stub.descriptor
+    _hgraph.register_service_impl(_current_wiring(), descriptor, path, _as_wired(impl))
+
+
 class _RecordReplayModes:
     NONE = _hgraph.MODE_NONE
     RECORD = _hgraph.MODE_RECORD

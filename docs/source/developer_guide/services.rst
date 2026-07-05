@@ -553,6 +553,48 @@ Tests: ``tests/cpp/test_context_wiring.cpp`` (scope binding, mixed
 caller/context params, shadowing, keyword override, ``get``/``has``, generic
 resolution, missing-context error).
 
+Runtime service identity (the Python bridge)
+--------------------------------------------
+
+**Rulings (Howard, 2026-07-05):** Python implementations must be able to
+serve C++ interface stubs (the reverse — C++ impls for Python-defined
+stubs — is NOT required); identity is the **name-qualified full path**;
+descriptors intern **by name** with schema-match enforced on
+re-registration; the C++ template API stays source-compatible; all three
+flavours land in one pass.
+
+The design, following the ``WiredFn`` precedent (an erased core with the
+templates as sugar):
+
+- **``RuntimeServiceDescriptor``** — an immortal, name-interned record:
+  ``{ name, flavour, schemas (output | key+value | request+response),
+  default_path }``. C++ descriptor types synthesise one at first use;
+  Python's service decorators build one from the stub's annotations.
+  Re-registration with matching schemas returns the interned record
+  (Python re-import tolerance); mismatched schemas throw.
+- **Identity** — the full path ALREADY embeds the service name
+  (``ref_svc://<path>/<name>``) and already participates in node identity
+  as the path scalar. The per-service marker templates
+  (``typeid(x_marker<Service>)``) therefore de-template to per-ROLE
+  typeids: ``(role-typeid, full-path scalar, schemas)`` is a total key.
+  Two services cannot collide because descriptor names are unique by
+  interning.
+- **The erased core** — per flavour: client wiring
+  (``wire_service_client(w, desc, path[, port])``) and implementation
+  registration (``register_service_impl(w, desc, path, WiredFn impl)``)
+  over the runtime descriptor. The existing templates delegate; Python
+  implementations arrive as ``WiredFn`` graph callables (the same erasure
+  ``map_``/``switch_`` consume).
+- **Python surface** — ``@reference_service`` / ``@subscription_service``
+  / ``@request_reply_service`` decorate stub functions (annotations give
+  the schemas; calling the stub wires a client);
+  ``register_service(stub_or_name, impl, path=...)`` registers a Python
+  ``@graph``/``@compute_node`` implementation — by NAME for C++-defined
+  interfaces (the Q1 direction: Python impls for C++ stubs).
+
+Adaptor families keep their template-only surface for now (excluded from
+this pass; same erasure recipe when needed).
+
 Status / deferred
 -----------------
 
@@ -574,6 +616,5 @@ Deferred (see :doc:`roadmap` Priority 1):
   external events with the scheduler/real-time executor, lifecycle ownership
   for external resources, and concrete adaptor families (kafka/sql/…);
 - ``@component`` and the recordable-id/traits ecosystem it depends on;
-- a Python-drivable registration shape for services (the wiring surface above
-  is compile-time; the runtime dispatch contract for operators —
-  ``OperatorRegistry`` — is the model to mirror when Python lands).
+- adaptor-family erasure for Python (services follow the runtime-identity
+  design above; adaptors keep the template surface until needed).

@@ -228,11 +228,17 @@ Recorded divergences / gaps (the morning-summary list):
   ``object`` value kind (a GIL-safe refcounted ``PyObj`` scalar; value ops
   acquire the GIL around refcount changes since the run loop releases it),
   and ``const`` infers it without ``tp=``.
-- Services/adaptors are not yet surfaced in Python. NOTE: the
-  service wiring is descriptor-TYPE-parameterized throughout (node
-  identity = ``typeid(marker<Service>)``); Python service descriptors
-  need runtime identity — an interning-semantics design decision, flagged
-  for a design session rather than improvised.
+- **Services** are surfaced per the runtime-identity rulings
+  (services.rst *Runtime service identity*): ``@reference_service`` /
+  ``@subscription_service`` / ``@request_reply_service`` decorate
+  interface stubs (annotations give the schemas; calling the stub wires a
+  client with ``path=``); ``register_service(stub_or_name, impl, path=)``
+  registers a Python impl — by NAME for C++-defined interfaces (the ruled
+  direction). The erased core (``types/service_runtime.{h,cpp}``) shares
+  the role markers, path grammar and node makers with the templates, so
+  an erased registration UNIFIES with a template client on the same path
+  (proven in ``test_service_runtime.cpp``). Adaptors keep the template
+  surface for now.
 - **TimeSeries view objects** (Howard's rulings: proper C++ objects, all
   kinds, strictly lazy): user nodes receive a C++-bound ``TimeSeries``
   view over the LIVE input — nothing converts unless accessed.
