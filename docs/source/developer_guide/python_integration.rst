@@ -190,4 +190,15 @@ Recorded divergences / gaps (the morning-summary list):
   consumption still needs an explicit end time.
 - ``run_graph`` output times are cycle-aligned from the start time in
   ``MIN_TD`` steps (the simulation clock convention).
-- Services/adaptors/contexts/components are not yet surfaced in Python.
+- ``@component`` + the record/replay modes are surfaced (all through the
+  ``hgraph`` package — ``_hgraph`` is internal and never user-imported):
+  ``record_replay_scope(RecordReplayEnum.RECORD | ...)`` is the context
+  manager over the C++ RAII scope; the Python ``@component`` decorator
+  replicates the C++ wrapping rules by name (Record / Replay /
+  ReplayOutput / Recover / Compare); ``comparison_summary`` reads Compare
+  results and ``frame_store_contains`` probes the store;
+  ``recovering_pass_through`` is registry-wirable as
+  ``__recovering_pass_through``. The eval_node/run_graph harness wires
+  ungated ``__harness_record``/``__harness_replay`` aliases so the active
+  record/replay MODEL never captures the test harness itself.
+- Services/adaptors/contexts are not yet surfaced in Python.

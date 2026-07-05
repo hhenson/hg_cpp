@@ -293,6 +293,53 @@ def test_user_node_scheduler():
     check(out == [1, 101], f"scheduler: {out}")
 
 
+def test_component_record_replay_modes():
+    hg.set_record_replay_config(hg.DATA_FRAME)
+    M = hg.RecordReplayEnum
+
+    @hg.component
+    def calc(lhs: TS[int], rhs: TS[int]) -> TS[int]:
+        return lhs + rhs
+
+    @graph
+    def recording(a: TS[int], b: TS[int]) -> TS[int]:
+        with hg.record_replay_scope(M.RECORD):
+            return calc(a, b)
+
+    out = eval_node(recording, [1, None, 3], [10, 20, None])
+    check(out == [11, 21, 23], f"record: {out}")
+    for key in ("calc.lhs", "calc.rhs", "calc.__out__"):
+        check(hg.frame_store_contains(key), f"missing frame {key}")
+
+    @graph
+    def replaying(a: TS[int], b: TS[int]) -> TS[int]:
+        with hg.record_replay_scope(M.REPLAY):
+            return calc(a, b)
+
+    # The recordings win over garbage live inputs.
+    out = eval_node(replaying, [100, 100, 100], [100, 100, 100])
+    check(out == [11, 21, 23], f"replay: {out}")
+
+    @graph
+    def comparing(a: TS[int], b: TS[int]) -> TS[int]:
+        with hg.record_replay_scope(M.COMPARE):
+            return calc(a, b)
+
+    eval_node(comparing, [100, 100, 100], [100, 100, 100])
+    check(hg.comparison_summary("calc.__compare__") == (3, 0), "compare clean")
+
+    @graph
+    def recovering(a: TS[int], b: TS[int]) -> TS[int]:
+        with hg.record_replay_scope(M.RECOVER):
+            return calc(a, b)
+
+    # Seeded from the recordings at start (1+10), live overrides (100+10).
+    out = eval_node(recovering, [None, 100], [None, None])
+    check(out == [11, 110], f"recover: {out}")
+
+    hg.set_record_replay_config(hg.IN_MEMORY)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

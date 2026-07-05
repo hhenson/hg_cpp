@@ -287,6 +287,99 @@ def generator(fn):
     return _Generator(fn)
 
 
+class _RecordReplayModes:
+    NONE = _hgraph.MODE_NONE
+    RECORD = _hgraph.MODE_RECORD
+    REPLAY = _hgraph.MODE_REPLAY
+    COMPARE = _hgraph.MODE_COMPARE
+    REPLAY_OUTPUT = _hgraph.MODE_REPLAY_OUTPUT
+    RECOVER = _hgraph.MODE_RECOVER
+
+
+RecordReplayEnum = _RecordReplayModes
+
+
+class record_replay_scope:
+    """Context manager: pushes a record/replay mode scope for the wiring
+    within (the C++ RAII scope)."""
+
+    def __init__(self, mode, recordable_id=""):
+        self._mode, self._id = mode, recordable_id
+        self._scope = None
+
+    def __enter__(self):
+        self._scope = _hgraph.record_replay_scope(self._mode, self._id)
+        return self
+
+    def __exit__(self, *exc):
+        del self._scope
+        self._scope = None
+        return False
+
+
+class _Component:
+    """@component: Python's component decorator over the C++ wrapping
+    rules (the design record's mode set). Consults the ambient mode scope;
+    wraps inputs/outputs with the name-resolved record/replay operators;
+    fq ids chain through nested scopes."""
+
+    def __init__(self, fn, recordable_id=None):
+        self.fn = fn
+        self.__name__ = fn.__name__
+        self.recordable_id = recordable_id or fn.__name__
+        self._params = list(inspect.signature(fn).parameters.values())
+
+    def __call__(self, *ports):
+        mode, ambient_id = _hgraph.current_record_replay_mode()
+        fq = f"{ambient_id}.{self.recordable_id}" if ambient_id else self.recordable_id
+        if mode != _RecordReplayModes.NONE and not fq:
+            raise ValueError("component requires a recordable id under an active record/replay mode")
+        if (mode & _RecordReplayModes.RECOVER) and (
+            mode & (_RecordReplayModes.REPLAY | _RecordReplayModes.REPLAY_OUTPUT)
+        ):
+            raise ValueError("component cannot recover and replay at the same time")
+
+        wrapped = []
+        for param, port in zip(self._params, ports):
+            key = param.name
+            if mode & (_RecordReplayModes.REPLAY | _RecordReplayModes.COMPARE):
+                port = wire("replay", key, recordable_id=fq,
+                            output_type=param.annotation if isinstance(param.annotation, _TsExpr) else None)
+            if mode & _RecordReplayModes.RECOVER:
+                port = wire("__recovering_pass_through", port, f"{fq}.{key}")
+            if mode & _RecordReplayModes.RECORD:
+                wire("record", port, key, recordable_id=fq)
+            wrapped.append(port)
+
+        with record_replay_scope(mode, fq):
+            out = self.fn(*wrapped)
+
+        if out is None:
+            return None
+        out_tp = inspect.signature(self.fn).return_annotation
+        if mode & _RecordReplayModes.REPLAY_OUTPUT:
+            out = wire("replay", "__out__", recordable_id=fq,
+                       output_type=out_tp if isinstance(out_tp, _TsExpr) else None)
+        if mode & _RecordReplayModes.RECORD:
+            wire("record", out, "__out__", recordable_id=fq)
+        if mode & _RecordReplayModes.COMPARE:
+            recorded = wire("replay", "__out__", recordable_id=fq,
+                            output_type=out_tp if isinstance(out_tp, _TsExpr) else None)
+            wire("compare", out, recorded, recordable_id=fq)
+        return out
+
+
+def component(fn=None, *, recordable_id=None):
+    if fn is None:
+        return lambda f: _Component(f, recordable_id)
+    return _Component(fn)
+
+
+def comparison_summary(fq_key):
+    """(compared, mismatches) from a Compare run's ``fq.__compare__``."""
+    return _hgraph.comparison_summary(fq_key)
+
+
 class _GraphFn:
     """The @graph decorator: a plain composition function. Inside an active
     wiring it inlines (a call is just a call); run_graph/eval_node make it a
@@ -360,7 +453,7 @@ def run_graph(graph_fn, *args, start_time=None, end_time=None, **kwargs):
     try:
         out = graph_fn(*args, **kwargs)
         if out is not None:
-            w.wire("record", (_unwrap(out), "__run_graph__"), {})
+            w.wire("__harness_record", (_unwrap(out), "__run_graph__"), {})
         run = w.run(start_time=start_time, end_time=end_time)
     finally:
         _wiring_stack.pop()
@@ -388,7 +481,7 @@ def eval_node(fn, *inputs, output_type=None, __start_time__=None, __end_time__=N
             if not isinstance(annotation, _TsExpr):
                 raise TypeError(f"parameter '{params[i].name}' needs a TS[...] annotation")
             key = f"eval_node::{params[i].name}"
-            src = w.wire("replay", (key,), {}, output_type=annotation.handle)
+            src = w.wire("__harness_replay", (key,), {}, output_type=annotation.handle)
             w.set_replay(key, list(series), ts_type=annotation.handle)
             ports.append(WiringPort(src))
         scalars = __scalars__ or {}
@@ -397,7 +490,7 @@ def eval_node(fn, *inputs, output_type=None, __start_time__=None, __end_time__=N
         if out is None:
             run = w.run(start_time=__start_time__, end_time=__end_time__)
             return None
-        w.wire("record", (_unwrap(out), "eval_node::out"), {})
+        w.wire("__harness_record", (_unwrap(out), "eval_node::out"), {})
         run = w.run(start_time=__start_time__, end_time=__end_time__)
     finally:
         _wiring_stack.pop()

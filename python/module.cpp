@@ -11,6 +11,7 @@
  */
 #include <hgraph/lib/std/std_operators.h>
 #include <hgraph/types/wired_fn.h>
+#include <hgraph/lib/std/component.h>
 #include <hgraph/lib/std/operators/control.h>
 #include <hgraph/lib/std/operators/higher_order.h>
 #include <hgraph/lib/testing/record_replay.h>
@@ -878,6 +879,39 @@ namespace
     struct op_py_sink : Operator<"__py_sink", In<"args", TsVar<"A">>, Scalar<"fn", PyNodeRef>,
                                  Scalar<"config", Str>, Scalar<"scalars", ScalarVar<"SV">>> {};
     struct op_py_generator : Operator<"__py_generator", Scalar<"fn", PyNodeRef>, Out<TsVar<"O">>> {};
+    struct harness_replay
+    {
+        static constexpr auto name              = "__harness_replay";
+        static constexpr bool schedule_on_start = true;
+
+        static void eval(Scalar<"key", std::string> key, GlobalStateView gs, NodeScheduler sched, State<Int> index,
+                         Out<TsVar<"S">> out)
+        {
+            testing::replay::eval(std::move(key), std::move(gs), std::move(sched), std::move(index), std::move(out));
+        }
+    };
+
+    struct harness_record
+    {
+        static constexpr auto name = "__harness_record";
+
+        static void start(Scalar<"key", std::string> key, GlobalStateView gs)
+        {
+            testing::record::start(std::move(key), std::move(gs));
+        }
+
+        static void eval(In<"ts", TsVar<"S">> ts, Scalar<"key", std::string> key, GlobalStateView gs, DateTime now)
+        {
+            testing::record::eval(std::move(ts), std::move(key), std::move(gs), now);
+        }
+    };
+
+    struct op_harness_replay
+        : Operator<"__harness_replay", Scalar<"key", Str>, Out<TsVar<"S">>> {};
+    struct op_harness_record : Operator<"__harness_record", In<"ts", TsVar<"S">>, Scalar<"key", Str>> {};
+
+    struct op_recover_pt
+        : Operator<"__recovering_pass_through", In<"ts", TsVar<"S">>, Scalar<"fq_key", Str>, Out<TsVar<"S">>> {};
 
 }  // namespace
 
@@ -942,6 +976,9 @@ NB_MODULE(_hgraph, m)
     register_overload<op_py_compute, py_compute_node>();
     register_overload<op_py_sink, py_sink_node>();
     register_overload<op_py_generator, py_generator_node>();
+    register_overload<op_recover_pt, stdlib::component_detail::recovering_pass_through>();
+    register_overload<op_harness_replay, harness_replay>();
+    register_overload<op_harness_record, harness_record>();
 
     nb::class_<PyTsType>(m, "TsType");
     nb::class_<PyPort>(m, "Port");
@@ -981,6 +1018,26 @@ NB_MODULE(_hgraph, m)
     m.def("set_record_replay_config", [](const std::string &model) {
         record_replay::set_config(record_replay::Config{.model = model});
     });
+    m.attr("MODE_NONE")          = static_cast<unsigned>(record_replay::Mode::None);
+    m.attr("MODE_RECORD")        = static_cast<unsigned>(record_replay::Mode::Record);
+    m.attr("MODE_REPLAY")        = static_cast<unsigned>(record_replay::Mode::Replay);
+    m.attr("MODE_COMPARE")       = static_cast<unsigned>(record_replay::Mode::Compare);
+    m.attr("MODE_REPLAY_OUTPUT") = static_cast<unsigned>(record_replay::Mode::ReplayOutput);
+    m.attr("MODE_RECOVER")       = static_cast<unsigned>(record_replay::Mode::Recover);
+    nb::class_<record_replay::scope>(m, "RecordReplayScope")
+        .def(nb::init<record_replay::Mode, std::string>(), nb::arg("mode"), nb::arg("recordable_id") = std::string{});
+    m.def("record_replay_scope", [](unsigned mode, const std::string &recordable_id) {
+        return new record_replay::scope{static_cast<record_replay::Mode>(mode), recordable_id};
+    }, nb::arg("mode"), nb::arg("recordable_id") = std::string{}, nb::rv_policy::take_ownership);
+    m.def("current_record_replay_mode", [] {
+        const auto &state = record_replay::current_scope();
+        return nb::make_tuple(static_cast<unsigned>(state.mode), state.recordable_id);
+    });
+    m.def("comparison_summary", [](const std::string &fq_key) {
+        const auto summary = record_replay::comparison_summary(fq_key);
+        return nb::make_tuple(summary.compared, summary.mismatches);
+    });
+    m.def("frame_store_contains", [](const std::string &key) { return record_replay::store_contains(key); });
     m.attr("IN_MEMORY")  = std::string{record_replay::IN_MEMORY};
     m.attr("DATA_FRAME") = std::string{record_replay::DATA_FRAME};
     m.attr("MIN_ST")     = nb::cast(MIN_ST);
@@ -1139,5 +1196,8 @@ NB_MODULE(_hgraph, m)
     register_overload<op_py_compute, py_compute_node>();
     register_overload<op_py_sink, py_sink_node>();
     register_overload<op_py_generator, py_generator_node>();
+    register_overload<op_recover_pt, stdlib::component_detail::recovering_pass_through>();
+    register_overload<op_harness_replay, harness_replay>();
+    register_overload<op_harness_record, harness_record>();
     });
 }
