@@ -336,6 +336,20 @@ namespace
         WiredFn fn{};
     };
 
+    struct PyNodeRecord;
+
+    /** The user-node callable scalar (immortal record; identity by pointer). */
+    struct PyNodeRef
+    {
+        const PyNodeRecord *record{nullptr};
+        friend bool operator==(const PyNodeRef &, const PyNodeRef &) noexcept = default;
+    };
+
+    struct PyNodeHandle
+    {
+        const PyNodeRecord *record{nullptr};
+    };
+
     // ---------------------------------------------------------------
     // Python graph callables as WiredFn values (Howard's ruling: the
     // type-erased context+ops pattern, so Python and C++ backends coexist;
@@ -415,6 +429,12 @@ namespace
             {
                 arg.kind         = WiringArg::Kind::Scalar;
                 arg.scalar_value = Value{nb::cast<PyWiredFn &>(object).fn};
+                arg.scalar_meta  = arg.scalar_value.schema();
+            }
+            else if (nb::isinstance<PyNodeHandle>(object))
+            {
+                arg.kind         = WiringArg::Kind::Scalar;
+                arg.scalar_value = Value{PyNodeRef{nb::cast<PyNodeHandle &>(object).record}};
                 arg.scalar_meta  = arg.scalar_value.schema();
             }
             else if (nb::isinstance<PySwitchCases>(object))
@@ -516,7 +536,12 @@ namespace
                 .start_time(start_time.value_or(MIN_ST))
                 .end_time(end_time.value_or(MAX_ET));
             auto run = std::make_unique<PyRun>(PyRun{eb.make_executor()});
-            run->executor.view().run();
+            {
+                // Ruling: the GIL is released the instant we enter the run
+                // loop; python user nodes re-acquire it per call.
+                nb::gil_scoped_release release;
+                run->executor.view().run();
+            }
             return run;
         }
 
@@ -616,7 +641,208 @@ namespace
         return ops;
     }
 
+
+    // ---------------------------------------------------------------
+    // Python user nodes (@compute_node / @generator / @sink_node).
+    // Ruling: graph-thread only, both modes; the GIL is RELEASED on
+    // entering the run loop and ACQUIRED around each python call; values
+    // cross the boundary through the module converters.
+    // ---------------------------------------------------------------
+
+    struct PyNodeRecord
+    {
+        nb::object fn;
+    };
+
+    /** Immortal callable records (stable scalar identity by pointer). */
+    [[nodiscard]] std::unordered_map<PyObject *, PyNodeRecord *> &py_node_registry()
+    {
+        static auto *registry = new std::unordered_map<PyObject *, PyNodeRecord *>{};
+        return *registry;
+    }
+
+    [[nodiscard]] nb::object call_py_node(const PyNodeRef &ref, std::span<const nb::object> args)
+    {
+        nb::list call_args;
+        for (const nb::object &arg : args) { call_args.append(arg); }
+        return ref.record->fn(*nb::tuple(call_args));
+    }
+
+    void apply_py_result(nb::handle result, Out<TsVar<"O">> &out)
+    {
+        if (result.is_none()) { return; }
+        const auto &erased = static_cast<const TSOutputView &>(out);
+        Value       delta  = py_to_delta(result, erased.schema());
+        out.apply(delta.view());
+    }
+
+    struct py_compute_node_1
+    {
+        static constexpr auto name = "__py_compute_1";
+
+        static void eval(In<"a", TsVar<"A">> a, Scalar<"fn", PyNodeRef> fn, Out<TsVar<"O">> out)
+        {
+            nb::gil_scoped_acquire gil;
+            std::array<nb::object, 1> args{value_to_py(a.value())};
+            apply_py_result(call_py_node(fn.value(), args), out);
+        }
+    };
+
+    struct py_compute_node_2
+    {
+        static constexpr auto name = "__py_compute_2";
+
+        static void eval(In<"a", TsVar<"A">> a, In<"b", TsVar<"B">> b, Scalar<"fn", PyNodeRef> fn,
+                         Out<TsVar<"O">> out)
+        {
+            nb::gil_scoped_acquire gil;
+            std::array<nb::object, 2> args{value_to_py(a.value()), value_to_py(b.value())};
+            apply_py_result(call_py_node(fn.value(), args), out);
+        }
+    };
+
+    struct py_compute_node_3
+    {
+        static constexpr auto name = "__py_compute_3";
+
+        static void eval(In<"a", TsVar<"A">> a, In<"b", TsVar<"B">> b, In<"c", TsVar<"C">> c,
+                         Scalar<"fn", PyNodeRef> fn, Out<TsVar<"O">> out)
+        {
+            nb::gil_scoped_acquire gil;
+            std::array<nb::object, 3> args{value_to_py(a.value()), value_to_py(b.value()), value_to_py(c.value())};
+            apply_py_result(call_py_node(fn.value(), args), out);
+        }
+    };
+
+    struct py_sink_node_1
+    {
+        static constexpr auto name = "__py_sink_1";
+
+        static void eval(In<"a", TsVar<"A">> a, Scalar<"fn", PyNodeRef> fn)
+        {
+            nb::gil_scoped_acquire gil;
+            std::array<nb::object, 1> args{value_to_py(a.value())};
+            (void)call_py_node(fn.value(), args);
+        }
+    };
+
+    struct py_sink_node_2
+    {
+        static constexpr auto name = "__py_sink_2";
+
+        static void eval(In<"a", TsVar<"A">> a, In<"b", TsVar<"B">> b, Scalar<"fn", PyNodeRef> fn)
+        {
+            nb::gil_scoped_acquire gil;
+            std::array<nb::object, 2> args{value_to_py(a.value()), value_to_py(b.value())};
+            (void)call_py_node(fn.value(), args);
+        }
+    };
+
+    /** Heap iterator state (pointer-in-State, the frame-backend pattern). */
+    struct PyGenHandle
+    {
+        nb::object iterator;
+        nb::object pending;      ///< the value yielded for the SCHEDULED time
+        bool       exhausted{false};
+    };
+
+    struct PyGenStateRef
+    {
+        PyGenHandle *handle{nullptr};
+        friend bool operator==(const PyGenStateRef &, const PyGenStateRef &) noexcept = default;
+    };
+
+    /** Pull the next (datetime, value) pair; schedules it or marks exhaustion. */
+    template <typename Scheduler>
+    void py_gen_advance(PyGenHandle &handle, Scheduler &sched)
+    {
+        nb::object next = nb::steal(PyIter_Next(handle.iterator.ptr()));
+        if (!next.is_valid())
+        {
+            if (PyErr_Occurred() != nullptr) { throw nb::python_error(); }
+            handle.exhausted = true;
+            handle.pending   = nb::object{};
+            return;
+        }
+        auto pair = nb::cast<nb::tuple>(next);
+        handle.pending = nb::object(pair[1]);
+        sched.schedule(nb::cast<DateTime>(pair[0]));
+    }
+
+    struct py_generator_node
+    {
+        static constexpr auto name = "__py_generator";
+
+        static void start(Scalar<"fn", PyNodeRef> fn, State<PyGenStateRef> state, SingleShotScheduler sched)
+        {
+            nb::gil_scoped_acquire gil;
+            auto handle      = std::make_unique<PyGenHandle>();
+            handle->iterator = nb::steal(PyObject_GetIter(fn.value().record->fn().ptr()));
+            if (!handle->iterator.is_valid()) { throw nb::python_error(); }
+            py_gen_advance(*handle, sched);
+            state.set(PyGenStateRef{handle.release()});   // owned by node State until stop
+        }
+
+        static void eval(Scalar<"fn", PyNodeRef> fn, State<PyGenStateRef> state, NodeScheduler sched,
+                         Out<TsVar<"O">> out)
+        {
+            static_cast<void>(fn);
+            nb::gil_scoped_acquire gil;
+            PyGenHandle *handle = state.get().handle;
+            if (handle == nullptr || handle->exhausted) { return; }
+            apply_py_result(handle->pending, out);
+            py_gen_advance(*handle, sched);
+        }
+
+        static void stop(State<PyGenStateRef> state)
+        {
+            nb::gil_scoped_acquire gil;
+            std::unique_ptr<PyGenHandle> handle{state.get().handle};
+            state.set(PyGenStateRef{});
+        }
+    };
+
+    struct op_py_compute_1 : Operator<"__py_compute_1", In<"a", TsVar<"A">>, Scalar<"fn", PyNodeRef>, Out<TsVar<"O">>> {};
+    struct op_py_compute_2 : Operator<"__py_compute_2", In<"a", TsVar<"A">>, In<"b", TsVar<"B">>, Scalar<"fn", PyNodeRef>, Out<TsVar<"O">>> {};
+    struct op_py_compute_3 : Operator<"__py_compute_3", In<"a", TsVar<"A">>, In<"b", TsVar<"B">>, In<"c", TsVar<"C">>, Scalar<"fn", PyNodeRef>, Out<TsVar<"O">>> {};
+    struct op_py_sink_1 : Operator<"__py_sink_1", In<"a", TsVar<"A">>, Scalar<"fn", PyNodeRef>> {};
+    struct op_py_sink_2 : Operator<"__py_sink_2", In<"a", TsVar<"A">>, In<"b", TsVar<"B">>, Scalar<"fn", PyNodeRef>> {};
+    struct op_py_generator : Operator<"__py_generator", Scalar<"fn", PyNodeRef>, Out<TsVar<"O">>> {};
+
 }  // namespace
+
+template <>
+struct std::hash<PyNodeRef>
+{
+    [[nodiscard]] std::size_t operator()(const PyNodeRef &ref) const noexcept
+    {
+        return std::hash<const void *>{}(ref.record);
+    }
+};
+
+template <>
+struct std::hash<PyGenStateRef>
+{
+    [[nodiscard]] std::size_t operator()(const PyGenStateRef &ref) const noexcept
+    {
+        return std::hash<const void *>{}(ref.handle);
+    }
+};
+
+namespace hgraph::static_schema_detail
+{
+    template <>
+    struct scalar_name<PyNodeRef>
+    {
+        static constexpr std::string_view value{"py_node_ref"};
+    };
+
+    template <>
+    struct scalar_name<PyGenStateRef>
+    {
+        static constexpr std::string_view value{"py_gen_state"};
+    };
+}  // namespace hgraph::static_schema_detail
 
 NB_MODULE(_hgraph, m)
 {
@@ -628,6 +854,12 @@ NB_MODULE(_hgraph, m)
     nb::set_leak_warnings(false);
 
     stdlib::register_standard_operators();
+    register_overload<op_py_compute_1, py_compute_node_1>();
+    register_overload<op_py_compute_2, py_compute_node_2>();
+    register_overload<op_py_compute_3, py_compute_node_3>();
+    register_overload<op_py_sink_1, py_sink_node_1>();
+    register_overload<op_py_sink_2, py_sink_node_2>();
+    register_overload<op_py_generator, py_generator_node>();
 
     nb::class_<PyTsType>(m, "TsType");
     nb::class_<PyPort>(m, "Port");
@@ -681,6 +913,18 @@ NB_MODULE(_hgraph, m)
     });
 
     nb::class_<PyWiredFn>(m, "WiredFn");
+    nb::class_<PyNodeHandle>(m, "NodeRef");
+    m.def("node_ref", [](nb::object fn) {
+        auto &registry = py_node_registry();
+        auto  found    = registry.find(fn.ptr());
+        if (found == registry.end())
+        {
+            auto *record = new PyNodeRecord{fn};   // immortal: scalar identity by pointer
+            found        = registry.emplace(fn.ptr(), record).first;
+        }
+        return PyNodeHandle{found->second};
+    });
+
     m.def("graph_fn", [](nb::object wrapper, nb::object user_fn, nb::list param_names, bool has_output) {
         auto &registry = py_graph_fn_registry();
         auto  found    = registry.find(user_fn.ptr());
@@ -768,5 +1012,11 @@ NB_MODULE(_hgraph, m)
     m.def("reset_registries", [] {
         reset_all_registries();
         stdlib::register_standard_operators();
+    register_overload<op_py_compute_1, py_compute_node_1>();
+    register_overload<op_py_compute_2, py_compute_node_2>();
+    register_overload<op_py_compute_3, py_compute_node_3>();
+    register_overload<op_py_sink_1, py_sink_node_1>();
+    register_overload<op_py_sink_2, py_sink_node_2>();
+    register_overload<op_py_generator, py_generator_node>();
     });
 }

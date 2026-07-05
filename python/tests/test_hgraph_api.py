@@ -199,6 +199,64 @@ def test_python_graph_fns_in_higher_order_operators():
     check(eval_node(summed, [{"a": 1}, {"b": 2}, {"a": 5}]) == [1, 3, 7], "reduce lambda")
 
 
+def test_python_user_nodes():
+    # @compute_node / @sink_node / @generator: python functions as runtime
+    # nodes - graph-thread only, GIL per call, values across the boundary.
+    @hg.compute_node
+    def fizzbuzz(n: TS[int]) -> TS[str]:
+        return "fizzbuzz" if n % 15 == 0 else ("fizz" if n % 3 == 0 else ("buzz" if n % 5 == 0 else str(n)))
+
+    @graph
+    def game(n: TS[int]) -> TS[str]:
+        return fizzbuzz(n)
+
+    out = eval_node(game, [1, 3, 5, 15])
+    check(out == ["1", "fizz", "buzz", "fizzbuzz"], f"compute_node: {out}")
+
+    seen = []
+
+    @hg.sink_node
+    def collect(v: TS[str]) -> None:
+        seen.append(v)
+
+    @graph
+    def watched(n: TS[int]) -> TS[str]:
+        result = fizzbuzz(n)
+        collect(result)
+        return result
+
+    eval_node(watched, [3, 5])
+    check(seen == ["fizz", "buzz"], f"sink_node: {seen}")
+
+
+def test_python_generator():
+    @hg.generator
+    def ticks(count: int) -> TS[int]:
+        for i in range(count):
+            yield (hg.MIN_ST + i * hg.MIN_TD, i * 10)
+
+    @graph
+    def src() -> TS[int]:
+        return ticks(3)
+
+    out = run_graph(src)
+    check([v for _, v in out] == [0, 10, 20], f"generator: {out}")
+    check(out[0][0] == hg.MIN_ST, "generator times")
+
+
+def test_compute_node_two_inputs():
+    @hg.compute_node
+    def weighted(price: TS[float], qty: TS[int]) -> TS[float]:
+        return price * qty
+
+    @graph
+    def notional(p: TS[float], q: TS[int]) -> TS[float]:
+        return weighted(p, q)
+
+    out = eval_node(notional, [2.5, 4.0], [10, 20])
+    check(out == [25.0, 80.0], f"two inputs: {out}")
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for test in tests:

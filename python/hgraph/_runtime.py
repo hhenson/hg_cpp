@@ -187,6 +187,65 @@ def switch_(key, cases, *args, reload_on_ticked=False, **kwargs):
     return wire("switch_", key, erased, *args, **kwargs)
 
 
+class _PyNode:
+    """@compute_node / @sink_node: a Python function as a runtime node. The
+    function runs on the graph thread (both modes) under the GIL, receives
+    its inputs as plain Python VALUES, and (for compute nodes) returns the
+    output value (None = no tick). It must have no side effects beyond its
+    output."""
+
+    def __init__(self, fn, has_output):
+        self.fn = fn
+        self.has_output = has_output
+        self.__name__ = fn.__name__
+        sig = inspect.signature(fn)
+        self._out_tp = sig.return_annotation if has_output else None
+
+    def __call__(self, *ports):
+        ref = _hgraph.node_ref(self.fn)
+        kind = "compute" if self.has_output else "sink"
+        name = f"__py_{kind}_{len(ports)}"
+        if self.has_output:
+            if not isinstance(self._out_tp, _TsExpr):
+                raise TypeError(f"@compute_node '{self.__name__}' needs a TS[...] return annotation")
+            return wire(name, *ports, fn=ref, output_type=self._out_tp)
+        return wire(name, *ports, fn=ref)
+
+
+def compute_node(fn):
+    return _PyNode(fn, has_output=True)
+
+
+def sink_node(fn):
+    return _PyNode(fn, has_output=False)
+
+
+class _Generator:
+    """@generator: a Python generator function yielding (datetime, value)
+    pairs; each pair is emitted at its ABSOLUTE time. Wiring-time arguments
+    are captured per call (each call is a distinct source node)."""
+
+    def __init__(self, fn):
+        self.fn = fn
+        self.__name__ = fn.__name__
+        self._out_tp = inspect.signature(fn).return_annotation
+
+    def __call__(self, *args, **kwargs):
+        if not isinstance(self._out_tp, _TsExpr):
+            raise TypeError(f"@generator '{self.__name__}' needs a TS[...] return annotation")
+        fn, call_args, call_kwargs = self.fn, args, kwargs
+
+        def bound():
+            return fn(*call_args, **call_kwargs)
+
+        ref = _hgraph.node_ref(bound)
+        return wire("__py_generator", fn=ref, output_type=self._out_tp)
+
+
+def generator(fn):
+    return _Generator(fn)
+
+
 class _GraphFn:
     """The @graph decorator: a plain composition function. Inside an active
     wiring it inlines (a call is just a call); run_graph/eval_node make it a

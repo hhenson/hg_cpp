@@ -164,7 +164,17 @@ Recorded divergences / gaps (the morning-summary list):
   C++ sub-graphs, ``reduce`` accepts raw lambdas (un-annotated callables
   assume an output; only an explicit ``-> None`` marks a sink). Identity
   is the user function object; records are immortal (WiredFn contexts).
-  ``@compute_node`` Python user nodes remain the next large feature.
+- **Python user nodes landed** (the ruling realised): ``@compute_node`` /
+  ``@sink_node`` / ``@generator`` run Python functions as runtime nodes —
+  graph-thread only, both modes, no side effects beyond their output. The
+  GIL is RELEASED the instant the run loop starts and ACQUIRED around each
+  Python-node call. Inputs arrive as plain Python VALUES (a recorded
+  divergence from Python hgraph's TimeSeries view objects); a compute
+  node's return value ticks its output (``None`` = no tick); a generator
+  yields ``(datetime, value)`` pairs emitted at their absolute times. The
+  bridge registers internal erased operators (``__py_compute_N`` /
+  ``__py_sink_N`` / ``__py_generator``) over an immortal callable-record
+  scalar; each ``@generator`` call is a distinct source node.
 - ``passive(port)`` landed (both languages): the feedback idiom is
   ``a + passive(fb())``, and such loops quiesce naturally. ACTIVE feedback
   consumption still needs an explicit end time.
