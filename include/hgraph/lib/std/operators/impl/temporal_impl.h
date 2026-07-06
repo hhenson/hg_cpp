@@ -2,6 +2,8 @@
 #define HGRAPH_LIB_STD_OPERATORS_IMPL_TEMPORAL_IMPL_H
 
 #include <hgraph/lib/std/operators/temporal.h>
+
+#include <fmt/format.h>
 #include <hgraph/runtime/node_scheduler.h>
 #include <hgraph/types/operator_dispatch.h>
 #include <hgraph/types/primitive_types.h>
@@ -20,6 +22,50 @@ namespace hgraph::stdlib
         static void eval(In<"ts", TS<Date>> ts, Out<TS<Int>> out)
         {
             out.set(static_cast<Int>(static_cast<unsigned>(ts.value().day())));
+        }
+    };
+
+    struct weekday_impl
+    {
+        static void eval(In<"ts", TS<Date>> ts, Out<TS<Int>> out)
+        {
+            // python date.weekday(): Monday == 0.
+            const std::chrono::weekday wd{std::chrono::sys_days{ts.value()}};
+            out.set(static_cast<Int>(wd.iso_encoding() - 1));
+        }
+    };
+
+    struct isoweekday_impl
+    {
+        static void eval(In<"ts", TS<Date>> ts, Out<TS<Int>> out)
+        {
+            // python date.isoweekday(): Monday == 1.
+            const std::chrono::weekday wd{std::chrono::sys_days{ts.value()}};
+            out.set(static_cast<Int>(wd.iso_encoding()));
+        }
+    };
+
+    struct sub_date_timedelta_impl
+    {
+        static constexpr auto name = "sub_date_timedelta";
+
+        static void eval(In<"lhs", TS<Date>> lhs, In<"rhs", TS<TimeDelta>> rhs, Out<TS<Date>> out)
+        {
+            const auto shifted = std::chrono::sys_days{lhs.value()} -
+                                 std::chrono::floor<std::chrono::days>(rhs.value());
+            out.set(Date{std::chrono::year_month_day{std::chrono::floor<std::chrono::days>(shifted)}});
+        }
+    };
+
+    struct isoformat_impl
+    {
+        static constexpr auto name = "isoformat";
+
+        static void eval(In<"ts", TS<Date>> ts, Out<TS<Str>> out)
+        {
+            const auto d = ts.value();
+            out.set(fmt::format("{:04}-{:02}-{:02}", static_cast<int>(d.year()),
+                                static_cast<unsigned>(d.month()), static_cast<unsigned>(d.day())));
         }
     };
 
@@ -108,6 +154,12 @@ namespace hgraph::stdlib
     inline void register_temporal_operators()
     {
         register_overload<day_of_month, day_of_month_impl>();
+        register_overload<day, day_of_month_impl>();
+        register_overload<sub_, sub_date_timedelta_impl>();
+        register_overload<isoformat, isoformat_impl>();
+        register_overload<month, month_of_year_impl>();
+        register_overload<weekday, weekday_impl>();
+        register_overload<isoweekday, isoweekday_impl>();
         register_overload<month_of_year, month_of_year_impl>();
         register_overload<year, year_impl>();
         register_overload<explode, explode_date_impl>();

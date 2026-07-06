@@ -201,6 +201,11 @@ namespace hgraph::stdlib
     template <typename L, typename R>
     struct div_numbers
     {
+        static std::vector<std::pair<std::string_view, Value>> defaults()
+        {
+            return {{"divide_by_zero", Value{DivideByZero::Error}}};
+        }
+
         static void eval(In<"lhs", TS<L>> lhs, In<"rhs", TS<R>> rhs,
                          Scalar<"divide_by_zero", DivideByZero> on_zero, Out<TS<Float>> out)
         {
@@ -557,6 +562,128 @@ namespace hgraph::stdlib
             }
         };
 
+        /** timedelta scaling (python: timedelta * n, timedelta / n). */
+        struct timedelta_scale_impl
+        {
+            static constexpr auto name = "mul_timedelta_int";
+
+            static void eval(In<"lhs", TS<TimeDelta>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<TimeDelta>> out)
+            {
+                out.set(TimeDelta{lhs.value() * rhs.value()});
+            }
+        };
+
+        struct timedelta_div_impl
+        {
+            static constexpr auto name = "div_timedelta_int";
+
+            static void eval(In<"lhs", TS<TimeDelta>> lhs, In<"rhs", TS<Int>> rhs, Out<TS<TimeDelta>> out)
+            {
+                out.set(TimeDelta{lhs.value() / rhs.value()});
+            }
+        };
+
+        /** frozendict difference (sub_: lhs entries whose key is not in rhs). */
+        struct diff_maps_impl
+        {
+            static constexpr auto name = "sub_maps";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *meta = resolved_t(resolution);
+                return meta != nullptr && meta->kind == ValueTypeKind::Map;
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
+                             Out<TS<ScalarVar<"T">>> out)
+            {
+                const auto *meta = lhs.base().value().schema();
+                auto        rhs_map = rhs.base().value().as_map();
+                MapBuilder  builder{element_binding_of(meta->key_type), element_binding_of(meta->element_type)};
+                for (const auto [key, item] : lhs.base().value().as_map())
+                {
+                    if (!rhs_map.contains(key)) { builder.set_item_copy(key.data(), item.data()); }
+                }
+                out.apply(builder.build().view());
+            }
+        };
+
+        /** Container truthiness (and_ / or_ over container scalars -> Bool). */
+        template <bool IsAnd>
+        struct container_truthy_impl
+        {
+            static constexpr auto name = IsAnd ? "and_containers" : "or_containers";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *meta = resolved_t(resolution);
+                if (meta == nullptr) { return false; }
+                switch (meta->kind)
+                {
+                    case ValueTypeKind::Map:
+                    case ValueTypeKind::Set:
+                    case ValueTypeKind::List:
+                    case ValueTypeKind::Tuple: return true;
+                    default: return false;
+                }
+            }
+
+            [[nodiscard]] static bool truthy(const ValueView &container)
+            {
+                switch (container.schema()->kind)
+                {
+                    case ValueTypeKind::Map: return container.as_map().size() != 0;
+                    case ValueTypeKind::Set: return container.as_set().size() != 0;
+                    default: return container.as_list().size() != 0;
+                }
+            }
+
+            static void eval(In<"lhs", TS<ScalarVar<"T">>> lhs, In<"rhs", TS<ScalarVar<"T">>> rhs,
+                             Out<TS<Bool>> out)
+            {
+                const bool a = truthy(lhs.base().value());
+                const bool b = truthy(rhs.base().value());
+                out.set(IsAnd ? (a && b) : (a || b));
+            }
+        };
+
+        /** getitem_ over a MAP-scalar: the value at the key (no tick when
+            the key is absent). */
+        struct getitem_map_scalar_impl
+        {
+            static constexpr auto name = "getitem_map_scalar";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *meta = resolved_t(resolution);
+                return meta != nullptr && meta->kind == ValueTypeKind::Map;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                for (const WiringArg &arg : context.args)
+                {
+                    if (arg.kind != WiringArg::Kind::TimeSeries || arg.port.schema == nullptr) { continue; }
+                    const auto *value_meta = arg.port.schema->value_schema;
+                    if (value_meta == nullptr || value_meta->kind != ValueTypeKind::Map) { continue; }
+                    resolution.bind_scalar("K", value_meta->key_type);
+                    resolution.bind_scalar("E", value_meta->element_type);
+                    return;
+                }
+            }
+
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts, In<"key", TS<ScalarVar<"K">>> key,
+                             Out<TS<ScalarVar<"E">>> out)
+            {
+                auto map = ts.base().value().as_map();
+                const auto key_value = key.base().value();
+                if (!map.contains(key_value)) { return; }
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                auto mutation = erased.begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.copy_value_from(map.at(key_value)));
+            }
+        };
+
         /** frozendict merge (bit_or: rhs entries win). */
         struct merge_maps_impl
         {
@@ -615,6 +742,193 @@ namespace hgraph::stdlib
                     case ValueTypeKind::Map: out.set(static_cast<Int>(value.as_map().size())); return;
                     default: throw std::logic_error("len_: not a sized container");
                 }
+            }
+        };
+    }  // namespace arithmetic_impl_detail
+
+    namespace arithmetic_impl_detail
+    {
+        /** Per-tick aggregates over CONTAINER-SCALAR values (frozendict ->
+            its values; frozenset/tuple -> its elements). NOT the running
+            scalar aggregates: each tick aggregates the container's content. */
+        enum class ContainerAgg : std::uint8_t { Min, Max, Sum, Mean, Std, Var };
+
+        [[nodiscard]] inline const ValueTypeMetaData *container_element_meta(const ValueTypeMetaData *meta) noexcept
+        {
+            if (meta == nullptr) { return nullptr; }
+            switch (meta->kind)
+            {
+                case ValueTypeKind::Map: return meta->element_type;      // aggregate the VALUES
+                case ValueTypeKind::Set:
+                case ValueTypeKind::List:
+                case ValueTypeKind::Tuple: return meta->element_type;
+                default: return nullptr;
+            }
+        }
+
+        [[nodiscard]] inline bool container_agg_requires(const ResolutionMap &resolution)
+        {
+            const auto *meta = resolution.find_scalar("T");
+            return meta != nullptr && !meta->is_mutable() && container_element_meta(meta) != nullptr;
+        }
+
+        template <typename Fn>
+        void for_each_container_element(const ValueView &container, Fn &&fn)
+        {
+            switch (container.schema()->kind)
+            {
+                case ValueTypeKind::Map:
+                    for (const auto [key, item] : container.as_map()) { fn(item); }
+                    return;
+                case ValueTypeKind::Set:
+                    for (const ValueView &item : container.as_set().values()) { fn(item); }
+                    return;
+                case ValueTypeKind::List:
+                case ValueTypeKind::Tuple:
+                    for (const ValueView &item : container.as_list()) { fn(item); }
+                    return;
+                default: throw std::logic_error("container aggregate: unsupported container kind");
+            }
+        }
+
+        [[nodiscard]] inline Float numeric_of(const ValueView &item)
+        {
+            const auto *meta = item.schema();
+            if (meta == scalar_descriptor<Int>::value_meta()) { return static_cast<Float>(item.checked_as<Int>()); }
+            if (meta == scalar_descriptor<Float>::value_meta()) { return item.checked_as<Float>(); }
+            throw std::invalid_argument("container aggregate requires numeric elements");
+        }
+
+        template <ContainerAgg Agg, bool HasDefault>
+        struct container_agg_impl
+        {
+            static constexpr auto name = Agg == ContainerAgg::Min   ? (HasDefault ? "min_container_d" : "min_container")
+                                         : Agg == ContainerAgg::Max ? (HasDefault ? "max_container_d" : "max_container")
+                                         : Agg == ContainerAgg::Sum ? (HasDefault ? "sum_container_d" : "sum_container")
+                                         : Agg == ContainerAgg::Mean ? (HasDefault ? "mean_container_d" : "mean_container")
+                                         : Agg == ContainerAgg::Std ? (HasDefault ? "std_container_d" : "std_container")
+                                                                    : (HasDefault ? "var_container_d" : "var_container");
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                return container_agg_requires(resolution);
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext context)
+            {
+                for (const WiringArg &arg : context.args)
+                {
+                    if (arg.kind != WiringArg::Kind::TimeSeries || arg.port.schema == nullptr) { continue; }
+                    const auto *value_meta = arg.port.schema->value_schema;
+                    const auto *element    = container_element_meta(value_meta);
+                    if (element == nullptr) { continue; }
+                    const auto *out_meta = (Agg == ContainerAgg::Mean || Agg == ContainerAgg::Std ||
+                                            Agg == ContainerAgg::Var)
+                                               ? scalar_descriptor<Float>::value_meta()
+                                               : element;
+                    resolution.bind_scalar("E", out_meta);
+                    return;
+                }
+            }
+
+            static void do_eval(const ValueView &container, const TSInputView *default_value,
+                                const TSOutputView &out_view)
+            {
+                std::size_t count = 0;
+                if constexpr (Agg == ContainerAgg::Min || Agg == ContainerAgg::Max)
+                {
+                    Value best;   // owned copy of the current extremum
+                    for_each_container_element(container, [&](const ValueView &item) {
+                        ++count;
+                        if (!best.has_value() ||
+                            (Agg == ContainerAgg::Min
+                                 ? item.compare(best.view()) == std::partial_ordering::less
+                                 : item.compare(best.view()) == std::partial_ordering::greater))
+                        {
+                            best = Value{item};
+                        }
+                    });
+                    if (count > 0)
+                    {
+                        auto mutation = out_view.begin_mutation(out_view.evaluation_time());
+                        static_cast<void>(mutation.move_value_from(std::move(best)));
+                        return;
+                    }
+                }
+                else
+                {
+                    Float sum = 0.0;
+                    for_each_container_element(container, [&](const ValueView &item) {
+                        ++count;
+                        sum += numeric_of(item);
+                    });
+                    if (Agg == ContainerAgg::Sum)
+                    {
+                        // Empty sums yield the ZERO of the element type.
+                        Value result;
+                        if (out_view.schema()->value_schema == scalar_descriptor<Int>::value_meta())
+                        {
+                            result = Value{static_cast<Int>(sum)};
+                        }
+                        else { result = Value{sum}; }
+                        auto mutation = out_view.begin_mutation(out_view.evaluation_time());
+                        static_cast<void>(mutation.move_value_from(std::move(result)));
+                        return;
+                    }
+                    // hgraph parity: mean of EMPTY is NaN; std/var of
+                    // empty/singleton spreads are 0.0. SAMPLE variance via
+                    // the two-pass formula.
+                    Float out = Agg == ContainerAgg::Mean && count == 0
+                                    ? std::numeric_limits<Float>::quiet_NaN()
+                                    : 0.0;
+                    if (count > 0)
+                    {
+                        const Float mean_v = sum / static_cast<Float>(count);
+                        out                = mean_v;
+                        if constexpr (Agg == ContainerAgg::Std || Agg == ContainerAgg::Var)
+                        {
+                            Float squares = 0.0;
+                            for_each_container_element(container, [&](const ValueView &item) {
+                                const Float d = numeric_of(item) - mean_v;
+                                squares += d * d;
+                            });
+                            const Float variance = count > 1 ? squares / static_cast<Float>(count - 1) : 0.0;
+                            out = Agg == ContainerAgg::Std ? std::sqrt(variance) : variance;
+                        }
+                    }
+                    Value result{out};
+                    auto  mutation = out_view.begin_mutation(out_view.evaluation_time());
+                    static_cast<void>(mutation.move_value_from(std::move(result)));
+                    return;
+                }
+                if (default_value != nullptr && default_value->valid())
+                {
+                    auto mutation = out_view.begin_mutation(out_view.evaluation_time());
+                    static_cast<void>(mutation.copy_value_from(default_value->value()));
+                }
+            }
+        };
+
+        template <ContainerAgg Agg>
+        struct container_agg_plain : container_agg_impl<Agg, false>
+        {
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts, Out<TS<ScalarVar<"E">>> out)
+            {
+                container_agg_impl<Agg, false>::do_eval(ts.base().value(), nullptr,
+                                                        static_cast<const TSOutputView &>(out));
+            }
+        };
+
+        template <ContainerAgg Agg>
+        struct container_agg_default : container_agg_impl<Agg, true>
+        {
+            static void eval(In<"ts", TS<ScalarVar<"T">>> ts,
+                             In<"default_value", TS<ScalarVar<"E">>, InputValidity::Unchecked> default_value,
+                             Out<TS<ScalarVar<"E">>> out)
+            {
+                const auto &fallback = default_value.base();
+                container_agg_impl<Agg, true>::do_eval(ts.base().value(), &fallback,
+                                                       static_cast<const TSOutputView &>(out));
             }
         };
     }  // namespace arithmetic_impl_detail
@@ -686,8 +1000,31 @@ namespace hgraph::stdlib
         register_overload<bit_xor,
                           arithmetic_impl_detail::set_op_impl<arithmetic_impl_detail::SetOpKind::SymmetricDifference>>();
         register_overload<bit_or, arithmetic_impl_detail::merge_maps_impl>();
+        register_overload<sub_, arithmetic_impl_detail::diff_maps_impl>();
+        register_overload<mul_, arithmetic_impl_detail::timedelta_scale_impl>();
+        register_overload<div_, arithmetic_impl_detail::timedelta_div_impl>();
+        register_overload<getitem_, arithmetic_impl_detail::getitem_map_scalar_impl>();
+        register_overload<and_, arithmetic_impl_detail::container_truthy_impl<true>>();
+        register_overload<or_, arithmetic_impl_detail::container_truthy_impl<false>>();
         register_overload<len_, arithmetic_impl_detail::len_container_impl>();
 
+        {
+            using arithmetic_impl_detail::ContainerAgg;
+            using arithmetic_impl_detail::container_agg_default;
+            using arithmetic_impl_detail::container_agg_plain;
+            register_overload<min_, container_agg_plain<ContainerAgg::Min>>();
+            register_overload<min_, container_agg_default<ContainerAgg::Min>>();
+            register_overload<max_, container_agg_plain<ContainerAgg::Max>>();
+            register_overload<max_, container_agg_default<ContainerAgg::Max>>();
+            register_overload<sum_, container_agg_plain<ContainerAgg::Sum>>();
+            register_overload<sum_, container_agg_default<ContainerAgg::Sum>>();
+            register_overload<mean, container_agg_plain<ContainerAgg::Mean>>();
+            register_overload<mean, container_agg_default<ContainerAgg::Mean>>();
+            register_overload<std_, container_agg_plain<ContainerAgg::Std>>();
+            register_overload<std_, container_agg_default<ContainerAgg::Std>>();
+            register_overload<var_, container_agg_plain<ContainerAgg::Var>>();
+            register_overload<var_, container_agg_default<ContainerAgg::Var>>();
+        }
         register_overload<sum_, arithmetic_impl_detail::running_sum_impl<Int>>();
         register_overload<sum_, arithmetic_impl_detail::running_sum_impl<Float>>();
         register_overload<sum_, arithmetic_impl_detail::running_sum_reset_impl<Int>>();

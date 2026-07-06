@@ -140,7 +140,14 @@ WiringPort.__iter__ = _port_iter
 def _port_getattr(self, name):
     if name.startswith("_"):
         raise AttributeError(name)
-    return wire("getattr_", self, name)
+    try:
+        return wire("getattr_", self, name)
+    except WiringError:
+        # hgraph attribute sugar: port.year / .month / .weekday ... resolve
+        # as unary operators when no bundle field matches.
+        if name in _hgraph.operator_names():
+            return wire(name, self)
+        raise
 
 
 WiringPort.__getattr__ = _port_getattr

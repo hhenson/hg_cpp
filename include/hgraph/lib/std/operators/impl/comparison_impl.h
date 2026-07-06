@@ -158,6 +158,22 @@ namespace hgraph::stdlib
         {
             static constexpr auto name = Min ? "min_unary" : "max_unary";
 
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                // Container scalars take the PER-TICK collection aggregate
+                // (min over the container's values), not the running form.
+                const auto *meta = resolution.find_scalar("T");
+                if (meta == nullptr) { return false; }
+                switch (meta->kind)
+                {
+                    case ValueTypeKind::Map:
+                    case ValueTypeKind::Set:
+                    case ValueTypeKind::List:
+                    case ValueTypeKind::Tuple: return false;
+                    default: return true;
+                }
+            }
+
             static void eval(In<"ts", TS<ScalarVar<"T">>> ts, Out<TS<ScalarVar<"T">>> out)
             {
                 const ValueView value = ts.base().value();

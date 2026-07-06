@@ -34,6 +34,27 @@ namespace hgraph::stdlib
     };
 
     /** ``explode`` — the (year, month, day) of a ``TS<Date>`` as a 3-element list. */
+    /** hgraph's date ATTRIBUTES (port.month / .day / .weekday / .isoweekday). */
+    struct month : Operator<"month", In<"ts", TS<Date>>, Out<TS<Int>>>
+    {
+    };
+
+    struct day : Operator<"day", In<"ts", TS<Date>>, Out<TS<Int>>>
+    {
+    };
+
+    struct weekday : Operator<"weekday", In<"ts", TS<Date>>, Out<TS<Int>>>
+    {
+    };
+
+    struct isoweekday : Operator<"isoweekday", In<"ts", TS<Date>>, Out<TS<Int>>>
+    {
+    };
+
+    struct isoformat : Operator<"isoformat", In<"ts", TS<Date>>, Out<TS<Str>>>
+    {
+    };
+
     struct explode : Operator<"explode", In<"ts", TS<Date>>, Out<TsVar<"O">>>
     {
     };
