@@ -1965,6 +1965,14 @@ NB_MODULE(_hgraph, m)
         return PyPort{graph_wiring_detail::adapt_source_for_input(*wiring.raw, ref_schema, port.ref)};
     });
 
+    m.def("tsl_element", [](const PyPort &port, std::size_t index) {
+        // Fixed-TSL scalar indexing: the structural element projection
+        // (zero-copy; no node) - the intended mechanism for tsl[i].
+        const auto *element_schema =
+            port.ref.schema != nullptr ? port.ref.schema->element_ts() : nullptr;
+        return PyPort{subgraph_wiring_detail::tsl_element_ref(port.ref, index, element_schema)};
+    });
+
     m.def("tsl_port", [](nb::list ports) {
         if (nb::len(ports) == 0) { throw nb::value_error("tsl_port requires at least one port"); }
         std::vector<WiringPortRef> children;

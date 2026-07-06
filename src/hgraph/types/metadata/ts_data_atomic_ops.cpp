@@ -138,6 +138,16 @@ namespace hgraph::ts_data_plan_factory_detail
             plan.move_assign(dst, src);
         }
 
+        /** Same binding, or distinct schema identities over ONE layout
+            (variadic tuple vs list: same plan + ops, flag-only meta split). */
+        [[nodiscard]] static bool atomic_value_binding_compatible(const ValueTypeBinding *source,
+                                                                  const ValueTypeBinding *bound) noexcept
+        {
+            if (source == bound) { return true; }
+            if (source == nullptr || bound == nullptr) { return false; }
+            return source->plan() == bound->plan() && source->ops == bound->ops;
+        }
+
         [[nodiscard]] static bool atomic_copy_value_from(const void *context, void *memory, const ValueView &source,
                                                          DateTime modified_time)
         {
@@ -155,7 +165,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             const auto *layout = atomic_layout(context);
-            if (source.binding() != layout->value_binding)
+            if (!atomic_value_binding_compatible(source.binding(), layout->value_binding))
             {
                 throw std::invalid_argument("TSData atomic copy requires the bound value schema and plan");
             }
@@ -185,7 +195,7 @@ namespace hgraph::ts_data_plan_factory_detail
             }
 
             const auto *layout = atomic_layout(context);
-            if (source.binding() != layout->value_binding)
+            if (!atomic_value_binding_compatible(source.binding(), layout->value_binding))
             {
                 throw std::invalid_argument("TSData atomic move requires the bound value schema and plan");
             }

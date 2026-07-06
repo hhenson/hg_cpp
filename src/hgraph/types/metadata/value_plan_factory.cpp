@@ -999,7 +999,7 @@ namespace hgraph
                 if (schema->fixed_size == 0)
                 {
                     binding = schema->is_mutable() ? &mutable_list_binding(*element_binding)
-                                                   : &compact_list_binding(*element_binding);
+                                                   : &compact_list_binding(*element_binding, *schema);
                 }
                 else
                 {

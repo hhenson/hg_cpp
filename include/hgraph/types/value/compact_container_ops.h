@@ -1100,6 +1100,14 @@ namespace hgraph
         return ValueTypeBinding::intern(*meta, compact_list_plan(element_binding), compact_list_ops());
     }
 
+    /** Meta-preserving form: a variadic-TUPLE schema keeps its identity (and
+        its python read-back as a tuple) while sharing the list plan+ops. */
+    [[nodiscard]] inline const ValueTypeBinding &
+    compact_list_binding(const ValueTypeBinding &element_binding, const ValueTypeMetaData &meta)
+    {
+        return ValueTypeBinding::intern(meta, compact_list_plan(element_binding), compact_list_ops());
+    }
+
     [[nodiscard]] inline const ValueTypeBinding &compact_set_binding(const ValueTypeBinding &element_binding)
     {
         const auto *meta = TypeRegistry::instance().set(element_binding.type_meta);

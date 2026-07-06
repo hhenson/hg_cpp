@@ -794,13 +794,27 @@ TEST_CASE("std operators: string operators support replace substr and container 
 {
     stdlib::register_standard_operators();
 
+    // hgraph shape: TSB{is_match: TS[bool], groups: TS[tuple[str, ...]]}.
+    const auto match_delta = [](Bool flag, std::optional<std::vector<Str>> groups) {
+        const auto *schema = stdlib::match_impl::result_schema();
+        BundleBuilder builder{*ValuePlanFactory::instance().binding_for(schema->delta_value_schema)};
+        builder.set("is_match", Value{flag});
+        if (groups.has_value())
+        {
+            const auto *groups_meta = schema->fields()[1].type->value_schema;
+            ListBuilder items{*ValuePlanFactory::instance().binding_for(groups_meta->element_type)};
+            for (const Str &group : *groups) { items.push_back(group); }
+            builder.set("groups", items.build());
+        }
+        return builder.build();
+    };
+    // a match with no capture groups still writes groups = () (hgraph shape)
     CHECK_OUTPUT(eval_node<stdlib::match_>(values<Str>(Str{"a"}), values<Str>(Str{"a"})),
-                 values<Value>(tsb_delta<stdlib::MatchResult>(Bool{true}, std::nullopt)));
+                 values<Value>(match_delta(true, std::vector<Str>{})));
     CHECK_OUTPUT(eval_node<stdlib::match_>(values<Str>(Str{"(a)"}), values<Str>(Str{"aa"})),
-                 values<Value>(tsb_delta<stdlib::MatchResult>(Bool{true},
-                                                              list_delta<TS<Str>>({{0, Str{"a"}}}))));
+                 values<Value>(match_delta(true, std::vector<Str>{Str{"a"}})));
     CHECK_OUTPUT(eval_node<stdlib::match_>(values<Str>(Str{"a"}), values<Str>(Str{"b"})),
-                 values<Value>(tsb_delta<stdlib::MatchResult>(Bool{false}, std::nullopt)));
+                 values<Value>(match_delta(false, std::nullopt)));
     CHECK_OUTPUT(eval_node<stdlib::replace>(values<Str>(Str{"a"}, Str{"^a"}),
                                             values<Str>(Str{"z"}, Str{"z"}),
                                             values<Str>(Str{"abcabcabc"}, Str{"abcabcabc"})),
@@ -830,10 +844,16 @@ TEST_CASE("std operators: string operators support replace substr and container 
     split_separator.scalar_meta  = split_separator.scalar_value.schema();
 
     std::array<WiringArg, 2> unresolved_split_args{split_source, split_separator};
-    CHECK_THROWS_AS(OperatorRegistry::instance().resolve(
-                        "split", std::span<const WiringArg>{unresolved_split_args.data(), unresolved_split_args.size()},
-                        true),
-                    OperatorResolutionError);
+    // hgraph parity: split WITHOUT an expected type resolves to the default
+    // TS[tuple[str, ...]] shape (all splits).
+    {
+        ResolvedOperatorCall default_split = OperatorRegistry::instance().resolve(
+            "split", std::span<const WiringArg>{unresolved_split_args.data(), unresolved_split_args.size()}, true);
+        const auto *out = default_split.map.find_ts("O");
+        REQUIRE(out != nullptr);
+        CHECK(out->value_schema->kind == ValueTypeKind::List);
+        CHECK(out->value_schema->has(ValueTypeFlags::VariadicTuple));
+    }
 
     ResolvedOperatorCall resolved_split = OperatorRegistry::instance().resolve(
         "split", std::span<const WiringArg>{unresolved_split_args.data(), unresolved_split_args.size()}, true,

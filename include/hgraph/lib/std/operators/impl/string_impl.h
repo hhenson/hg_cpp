@@ -180,23 +180,53 @@ namespace hgraph::stdlib
         }
     };
 
-    using MatchResult = UnNamedTSB<Field<"is_match", TS<Bool>>, Field<"groups", TSL<TS<Str>>>>;
-
     struct match_impl
     {
-        static void eval(In<"pattern", TS<Str>> pattern, In<"s", TS<Str>> s, Out<MatchResult> out)
+        static constexpr auto name = "match_";
+
+        /** hgraph shape: TSB{is_match: TS[bool], groups: TS[tuple[str, ...]]}
+            - groups is a TUPLE SCALAR, not a TSL. */
+        [[nodiscard]] static const TSValueTypeMetaData *result_schema()
+        {
+            auto &registry = TypeRegistry::instance();
+            const auto *groups_meta = registry.list(scalar_descriptor<Str>::value_meta(), 0, true);
+            return registry.un_named_tsb({
+                {"is_match", registry.ts(scalar_descriptor<Bool>::value_meta())},
+                {"groups", registry.ts(groups_meta)},
+            });
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+        {
+            resolution.bind_ts("O", result_schema());
+        }
+
+        static void eval(In<"pattern", TS<Str>> pattern, In<"s", TS<Str>> s, Out<TsVar<"O">> out)
         {
             const Str   value = s.value();
             std::smatch match;
             const bool  is_match = std::regex_search(value, match, std::regex{pattern.value()});
-            out.field<"is_match">().set(is_match);
+
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            auto        bundle = erased.as_bundle();
+            {
+                auto flag = bundle.at(0);
+                auto mutation = flag.begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(Value{Bool{is_match}}));
+            }
             if (!is_match) { return; }
 
-            auto groups = out.field<"groups">();
+            const auto *groups_meta = bundle.at(1).schema()->value_schema;
+            const auto *element_binding = ValuePlanFactory::instance().binding_for(groups_meta->element_type);
+            ListBuilder builder{*element_binding};
             for (std::size_t i = 1; i < match.size(); ++i)
             {
-                groups[i - 1].set(match[i].str());
+                const Str group = match[i].str();
+                builder.push_back(group);
             }
+            auto groups = bundle.at(1);
+            auto mutation = groups.begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(builder.build()));
         }
     };
 
@@ -210,6 +240,108 @@ namespace hgraph::stdlib
             const std::size_t safe_end   = std::max(begin, finish);
             const std::size_t char_count = safe_end - begin;
             out.set(value.substr(begin, char_count));
+        }
+    };
+
+    /** hgraph's default split shape: TS[tuple[str, ...]] (all splits), or a
+        FIXED tuple via subscript - split[TS[Tuple[str, str]]] keeps the
+        remainder in the last slot (python str.split maxsplit semantics). */
+    struct split_tuple_impl
+    {
+        static constexpr auto name = "split_tuple";
+
+        static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+        {
+            const auto *out = resolution.find_ts("O");
+            if (out == nullptr) { return true; }   // default form resolves the variadic tuple
+            if (out->kind != TSTypeKind::TS || out->value_schema == nullptr) { return false; }
+            const auto *value_meta = out->value_schema;
+            if (value_meta->kind == ValueTypeKind::List)
+            {
+                return value_meta->element_type == scalar_descriptor<Str>::value_meta();
+            }
+            if (value_meta->kind == ValueTypeKind::Tuple)
+            {
+                // Tuple[str, str, ...]: every field must be str.
+                for (std::size_t index = 0; index < value_meta->field_count; ++index)
+                {
+                    if (value_meta->fields[index].type != scalar_descriptor<Str>::value_meta()) { return false; }
+                }
+                return value_meta->field_count > 0;
+            }
+            return false;
+        }
+
+        static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+        {
+            if (resolution.find_ts("O") != nullptr) { return; }
+            auto &registry = TypeRegistry::instance();
+            resolution.bind_ts("O", registry.ts(registry.list(scalar_descriptor<Str>::value_meta(), 0, true)));
+        }
+
+        static void eval(In<"s", TS<Str>> s, Scalar<"separator", Str> separator, Out<TsVar<"O">> out)
+        {
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            const auto *value_meta = erased.schema()->value_schema;
+            const auto  fixed = value_meta->kind == ValueTypeKind::Tuple
+                                    ? static_cast<std::size_t>(value_meta->field_count)
+                                    : static_cast<std::size_t>(value_meta->fixed_size);
+
+            const Str value = s.value();
+            const Str sep   = separator.value();
+            std::vector<Str> parts;
+            std::size_t      begin = 0;
+            while (true)
+            {
+                if (fixed != 0 && parts.size() + 1 == fixed) { parts.push_back(value.substr(begin)); break; }
+                const auto at = value.find(sep, begin);
+                if (at == Str::npos) { parts.push_back(value.substr(begin)); break; }
+                parts.push_back(value.substr(begin, at - begin));
+                begin = at + sep.size();
+            }
+
+            Value result;
+            if (fixed == 0)
+            {
+                const auto *element_binding =
+                    ValuePlanFactory::instance().binding_for(value_meta->element_type);
+                ListBuilder builder{*element_binding};
+                for (const Str &part : parts) { builder.push_back(part); }
+                result = builder.build();
+            }
+            else
+            {
+                if (parts.size() != fixed)
+                {
+                    throw std::invalid_argument("split: input does not produce the fixed tuple arity");
+                }
+                if (value_meta->kind == ValueTypeKind::Tuple)
+                {
+                    BundleBuilder builder{*ValuePlanFactory::instance().binding_for(value_meta)};
+                    for (std::size_t index = 0; index < fixed; ++index)
+                    {
+                        builder.set(index, Value{parts[index]});
+                    }
+                    result = builder.build();
+                }
+                else
+                {
+                    const auto *binding = ValuePlanFactory::instance().binding_for(value_meta);
+                    result = Value{*binding};
+                    auto mutation = result.begin_mutation();
+                    auto *base = static_cast<std::byte *>(mutation.mutable_data());
+                    const auto stride = ValuePlanFactory::instance()
+                                            .binding_for(value_meta->element_type)
+                                            ->checked_plan()
+                                            .layout.size;
+                    for (std::size_t index = 0; index < fixed; ++index)
+                    {
+                        *reinterpret_cast<Str *>(base + index * stride) = parts[index];
+                    }
+                }
+            }
+            auto mutation = erased.begin_mutation(erased.evaluation_time());
+            static_cast<void>(mutation.move_value_from(std::move(result)));
         }
     };
 
@@ -431,6 +563,7 @@ namespace hgraph::stdlib
         register_overload<replace, replace_impl>();
         register_overload<substr, substr_impl>();
         register_overload<split, split_tsl_impl>();
+        register_overload<split, split_tuple_impl>();
         register_overload<join, join_tsl_impl>();
         register_graph_overload<join, join_multi_impl>();
         register_overload<join, join_tuple_impl>();

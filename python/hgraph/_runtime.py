@@ -69,7 +69,12 @@ class _OperatorFunction:
         return wire(self.__name__, *args, **kwargs)
 
     def __getitem__(self, item):
-        return _OperatorFunction(self.__name__, output_type=item)
+        # hgraph's ``op[TYPEVAR: TYPE]`` pre-resolution subscripts arrive as
+        # SLICES - drop them (resolution happens from the wired inputs);
+        # a plain type subscript is the requested output type.
+        items = item if isinstance(item, tuple) else (item,)
+        types = [i for i in items if not isinstance(i, slice)]
+        return _OperatorFunction(self.__name__, output_type=types[0] if types else None)
 
     def _normalise_type_arguments(self, args, kwargs):
         if "tp" in kwargs or "output_type" in kwargs:
@@ -112,7 +117,18 @@ for dunder, op_name in {
     "__neg__": "neg_", "__pos__": "pos_", "__abs__": "abs_", "__invert__": "invert_",
 }.items():
     setattr(WiringPort, dunder, (lambda op: lambda x: wire(op, x))(op_name))
-WiringPort.__getitem__ = lambda self, item: wire("getitem_", self, item)
+def _port_getitem(self, item):
+    # Fixed-TSL integer indexing is the STRUCTURAL element projection
+    # (zero-copy, no node); everything else dispatches getitem_.
+    if isinstance(item, int) and not isinstance(item, bool):
+        raw = _unwrap(self)
+        ts_type = raw.ts_type
+        if ts_type.kind == _TSL_KIND and ts_type.fixed_size > 0:
+            return WiringPort(_hgraph.tsl_element(raw, item))
+    return wire("getitem_", self, item)
+
+
+WiringPort.__getitem__ = _port_getitem
 WiringPort.__hash__ = object.__hash__  # __eq__ wires a node; identity hashing stands
 
 
@@ -1031,7 +1047,24 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
         # hgraph parity: keyword arguments naming the function's parameters
         # are INPUT SERIES (eval_node(g, a=[...], b=[...])); the rest flow to
         # the node as scalars.
+        params = [p for p in params
+                  if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
         param_names = {p.name for p in params}
+        if not params:
+            # OPERATOR functions have no python signature: named list kwargs
+            # are input series wired as keyword ports.
+            named_ports = {}
+            for k in [k for k, v in kwargs.items() if isinstance(v, (list, tuple))]:
+                series = kwargs.pop(k)
+                annotation = _infer_ts_type(series)
+                if annotation is None:
+                    raise TypeError(f"named series '{k}' needs typed sample values")
+                key = f"eval_node::{k}"
+                src = w.wire("__harness_replay", (key,), {}, output_type=annotation.handle)
+                w.set_replay(key, list(series), ts_type=annotation.handle)
+                named_ports[k] = WiringPort(src)
+                inputs = (*inputs, series)   # count toward the run length
+            kwargs.update(named_ports)
         named_series = {k: v for k, v in kwargs.items() if k in param_names and isinstance(v, (list, tuple))}
         for k in named_series: kwargs.pop(k)
         if named_series:

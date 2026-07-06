@@ -109,7 +109,11 @@ namespace hgraph::stdlib
 
         static void eval(In<"ts", TsVar<"S">, InputValidity::Unchecked> ts, Out<TS<Bool>> out)
         {
-            out.set(ts.valid());
+            // hgraph parity: ticks only when the answer CHANGES.
+            const Bool value = ts.valid();
+            const auto &erased = static_cast<const TSOutputView &>(out);
+            if (erased.valid() && erased.data_view().value().checked_as<Bool>() == value) { return; }
+            out.set(value);
         }
     };
 
