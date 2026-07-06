@@ -147,7 +147,14 @@ namespace
 
 
     [[nodiscard]] Value py_to_value(nb::handle object);
-    [[nodiscard]] nb::object value_to_py(const ValueView &view);
+    [[nodiscard]]     /** CompoundScalar bundle name -> python class (rebuild on read-back). */
+    [[nodiscard]] inline nb::dict &bundle_class_registry()
+    {
+        static nb::dict *registry = new nb::dict();   // IMMORTAL (teardown rule)
+        return *registry;
+    }
+
+    nb::object value_to_py(const ValueView &view);
     [[nodiscard]] Value py_arrow_to_frame(nb::handle object);
 
     // datetime.date / datetime.time have no chrono caster; convert by attribute.
@@ -367,7 +374,25 @@ namespace
                 return nb::tuple(items);
             }
             case ValueTypeKind::Bundle: {
-                auto     bundle = view.as_bundle();
+                auto bundle = view.as_bundle();
+                // A NAMED bundle with a registered python class rebuilds the
+                // class (CompoundScalar read-back; UNSET fields -> None).
+                if (!meta->name().empty())
+                {
+                    nb::dict &classes = bundle_class_registry();
+                    nb::str   key{std::string{meta->name()}.c_str()};
+                    if (classes.contains(key))
+                    {
+                        nb::dict kwargs;
+                        for (std::size_t index = 0; index < meta->field_count; ++index)
+                        {
+                            auto field = bundle.at(index);
+                            kwargs[meta->fields[index].name] =
+                                field.has_value() ? value_to_py(field) : nb::none();
+                        }
+                        return classes[key](**kwargs);
+                    }
+                }
                 nb::dict result;
                 for (std::size_t index = 0; index < meta->field_count; ++index)
                 {
@@ -464,17 +489,30 @@ namespace
                 return builder.build();
             }
             case ValueTypeKind::Bundle: {
-                // Target-directed: partial dicts mark exactly the provided
-                // fields (Bundle field validity, core_concepts.rst).
+                // Target-directed: partial dicts / dataclass instances mark
+                // exactly the provided (non-None) fields (Bundle field
+                // validity, core_concepts.rst).
                 BundleBuilder builder{delta_binding(meta)};
-                auto          spec = nb::cast<nb::dict>(object);
+                const bool    is_dict = nb::isinstance<nb::dict>(object);
                 for (std::size_t index = 0; index < meta->field_count; ++index)
                 {
                     const auto &field = meta->fields[index];
                     if (field.name == nullptr) { continue; }
-                    nb::str key{field.name};
-                    if (!spec.contains(key)) { continue; }
-                    builder.set(index, py_to_value_as(spec[key], field.type));
+                    nb::object item;
+                    if (is_dict)
+                    {
+                        nb::dict spec = nb::cast<nb::dict>(object);
+                        nb::str  key{field.name};
+                        if (!spec.contains(key)) { continue; }
+                        item = spec[key];
+                    }
+                    else
+                    {
+                        if (!nb::hasattr(object, field.name)) { continue; }
+                        item = nb::getattr(object, field.name);
+                    }
+                    if (item.is_none()) { continue; }   // None = UNSET (CS semantics)
+                    builder.set(index, py_to_value_as(item, field.type));
                 }
                 return builder.build();
             }
@@ -2020,6 +2058,21 @@ NB_MODULE(_hgraph, m)
         const auto *target   = registry.dereference(port.ref.schema);
         const auto *ref_schema = registry.ref(target);
         return PyPort{graph_wiring_detail::adapt_source_for_input(*wiring.raw, ref_schema, port.ref)};
+    });
+
+    m.def("bundle_vt", [](const std::string &name, nb::list fields) {
+        std::vector<std::pair<std::string, const ValueTypeMetaData *>> field_metas;
+        field_metas.reserve(nb::len(fields));
+        for (nb::handle item : fields)
+        {
+            auto pair = nb::cast<nb::tuple>(item);
+            field_metas.emplace_back(nb::cast<std::string>(pair[0]), nb::cast<PyValueType &>(pair[1]).meta);
+        }
+        return PyValueType{TypeRegistry::instance().bundle(name, field_metas)};
+    });
+
+    m.def("register_bundle_class", [](const std::string &name, nb::object cls) {
+        bundle_class_registry()[nb::str(name.c_str())] = std::move(cls);
     });
 
     m.def("tsl_element", [](const PyPort &port, std::size_t index) {

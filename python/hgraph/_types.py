@@ -42,6 +42,18 @@ def _value_type(scalar):
     name = _SCALAR_NAMES.get(scalar)
     if name is None and scalar in (tuple, frozenset, set, dict):
         raise TypeError(f"bare '{scalar.__name__}' needs element types (e.g. tuple[int, ...])")
+    if name is None and isinstance(scalar, type):
+        from ._compat import CompoundScalar
+
+        if issubclass(scalar, CompoundScalar) and scalar is not CompoundScalar:
+            # C++-first ruling (2026-07-06): a CompoundScalar IS a C++
+            # Bundle value - the schema maps to a named bundle schema.
+            import dataclasses
+
+            fields = [(f.name, _value_type(f.type)) for f in dataclasses.fields(scalar)]
+            meta = _hgraph.bundle_vt(scalar.__name__, fields)
+            _hgraph.register_bundle_class(scalar.__name__, scalar)
+            return meta
     if name is None and isinstance(scalar, type) and issubclass(scalar, _enum.Enum):
         # C++-registered enums resolve by CLASS NAME (CmpResult,
         # DivideByZero); unknown enums stay python objects.

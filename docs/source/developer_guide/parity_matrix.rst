@@ -170,6 +170,34 @@ Notes on the gap clusters (deliberate ordering per :doc:`roadmap` P3):
   The ``to_table`` schema ecosystem, ``from_data_frame``/``to_data_frame``
   and ``json_encode``/``json_decode`` remain blocked on the table / DataFrame
   / JSON **value kinds** (Arrow ``Frame`` design approved).
+
+  **C++-first API ruling (2026-07-06).** Anything exposed to Python must
+  be C++-clean as the *primary* API — no Python-only value kinds or
+  operators; Python is sugar over the erased registry. Two consequences
+  recorded here:
+
+  - **CompoundScalar IS a C++ Bundle value** (ruled explicitly): the
+    Python dataclass schema maps to a *named bundle schema*
+    (``bundle_vt`` from the dataclass fields; the class registers for
+    read-back reconstruction, UNSET fields → ``None``). ``None`` field
+    values convert as UNSET (Bundle field validity), and the
+    ``combine(orig, delta)`` merge is the **erased C++**
+    ``combine_bundles`` overload — a recursive right-over-left merge
+    honouring field validity (delta's UNSET fields keep the original).
+    This replaced a short-lived Python-object + Python-node
+    implementation the ruling struck down.
+  - **Dynamic JSON** (``TS[JSON]``: ``combine`` over keyword values,
+    ``json_encode``/``json_decode``, path access ``j["a"]``, leaf
+    coercions ``.int``/``.str``/``.float``) is specified as a **C++
+    value tree**: a registry-interned ``JSON`` meta over the existing
+    ``Any`` storage — one of ``Bool | Int | Float | Str | List<JSON> |
+    Map<Str, JSON> | null`` (empty ``Any`` = null) — with erased
+    registered operators (``combine_json``, ``json_encode``,
+    ``json_decode``, ``getitem_`` by key/index, ``json_as_*``).
+    Python's ``combine[TS[JSON]]`` and ``port["a"].int`` are pure sugar
+    over the registered names. The schema-directed ``to_json`` /
+    ``from_json`` codec is unchanged — the tree is for payloads whose
+    shape is *data*, not schema. Not yet implemented.
 - **Record/replay ecosystem** — ``record``/``replay`` are registered
   (in-memory GlobalState backend), and the config/traits layer landed in
   step 2 of :doc:`record_replay_table` (``record_replay::Config`` + mode

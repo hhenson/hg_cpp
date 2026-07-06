@@ -16,6 +16,7 @@
 #include <hgraph/lib/std/lifted_kernels.h>
 #include <hgraph/lib/std/operators/arithmetic.h>
 #include <hgraph/lib/std/operators/collection.h>
+#include <hgraph/lib/std/operators/conversion.h>
 #include <hgraph/lib/std/operators/comparison.h>
 #include <hgraph/lib/std/operators/impl/tsb_itemwise_impl.h>
 #include <hgraph/lib/std/operators/impl/tsl_itemwise_impl.h>
@@ -1810,6 +1811,64 @@ namespace hgraph::stdlib
                 publish_value(static_cast<const TSOutputView &>(out), builder.build());
             }
         };
+        /** combine(orig, delta) over BUNDLE scalars: recursive right-over-
+            left merge honouring FIELD VALIDITY - delta's UNSET fields keep
+            the original (hgraph's combine_compound_scalars; C++-first
+            ruling 2026-07-06: CompoundScalar IS a C++ Bundle value). */
+        struct combine_bundles_impl
+        {
+            static constexpr auto name = "combine_bundles";
+
+            static bool requires_(const ResolutionMap &resolution, OperatorCallContext)
+            {
+                const auto *orig  = ts_scalar_meta(resolution.find_ts("A"));
+                const auto *delta = ts_scalar_meta(resolution.find_ts("B"));
+                return orig != nullptr && delta != nullptr && orig->kind == ValueTypeKind::Bundle &&
+                       delta->kind == ValueTypeKind::Bundle;
+            }
+
+            static void resolve_default_types(ResolutionMap &resolution, OperatorCallContext)
+            {
+                if (resolution.find_ts("O") != nullptr) { return; }
+                const auto *orig = resolution.find_ts("A");
+                if (orig != nullptr) { resolution.bind_ts("O", orig); }
+            }
+
+            static Value merge(const ValueView &orig, const ValueView &delta)
+            {
+                const auto *meta = orig.schema();
+                BundleBuilder builder{*ValuePlanFactory::instance().binding_for(meta)};
+                auto orig_fields  = orig.as_indexed_view();
+                auto delta_fields = delta.as_indexed_view();
+                for (std::size_t index = 0; index < meta->field_count; ++index)
+                {
+                    auto original = orig_fields.at(index);
+                    auto update   = delta_fields.at(index);
+                    if (!update.valid())
+                    {
+                        if (original.valid()) { builder.set(index, Value{original}); }
+                        continue;
+                    }
+                    if (original.valid() && meta->fields[index].type->kind == ValueTypeKind::Bundle)
+                    {
+                        builder.set(index, merge(original, update));
+                        continue;
+                    }
+                    builder.set(index, Value{update});
+                }
+                return builder.build();
+            }
+
+            static void eval(In<"orig", TsVar<"A">> orig, In<"delta", TsVar<"B">, InputValidity::Unchecked> delta,
+                             Out<TsVar<"O">> out)
+            {
+                const auto &erased = static_cast<const TSOutputView &>(out);
+                Value result = delta.base().valid() ? merge(orig.base().value(), delta.base().value())
+                                                    : Value{orig.base().value()};
+                auto mutation = erased.begin_mutation(erased.evaluation_time());
+                static_cast<void>(mutation.move_value_from(std::move(result)));
+            }
+        };
     }  // namespace collection_impl_detail
 
     template <typename Operator, template <typename...> class Kernel>
@@ -1847,6 +1906,7 @@ namespace hgraph::stdlib
         register_overload<flip_keys, collection_impl_detail::flip_keys_map_scalar>();
         register_overload<collapse_keys, collection_impl_detail::collapse_keys_map_scalar>();
         register_overload<uncollapse_keys, collection_impl_detail::uncollapse_keys_map_scalar>();
+        register_overload<combine, collection_impl_detail::combine_bundles_impl>();
         register_overload<combine_map, collection_impl_detail::combine_map_pair>();
         register_overload<combine_map, collection_impl_detail::combine_map_tuples>();
         register_overload<combine_map, collection_impl_detail::combine_map_tsls>();

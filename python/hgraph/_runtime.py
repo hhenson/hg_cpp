@@ -1180,12 +1180,6 @@ def _merge_cs(orig, delta):
 
 
 def _combine_compound_scalars(orig, delta):
-    from ._types import TS
-
-    @compute_node(valid=("orig",))
-    def _combine_cs(orig: TS[object], delta: TS[object]) -> TS[object]:
-        if not delta.valid:
-            return orig.value
-        return _merge_cs(orig.value, delta.value)
-
-    return _combine_cs(orig, delta)
+    # C++-first ruling (2026-07-06): CS = C++ Bundle value; the merge is
+    # the erased C++ combine over bundle scalars.
+    return wire("combine", orig, delta)
