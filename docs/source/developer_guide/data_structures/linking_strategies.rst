@@ -435,3 +435,19 @@ tick to consumers — the sampled-runtime contract at the input boundary:
   sampled delta rule. The data-level element ops intentionally keep
   resolving THROUGH to the target (value-plan copies need the raw target
   memory).
+
+Deferral: embedded is_empty / contains outputs (ruling 2026-07-06)
+------------------------------------------------------------------
+
+Python hgraph's TSS/TSD outputs embed auxiliary ``TS[bool]`` outputs
+(``_is_empty_ref_output`` + ref-counted per-item contains outputs) that
+update incrementally inside the set mutation; ``is_empty``/``contains_``
+hand consumers REFs to them. **Not ported.** Here they are ordinary
+operator nodes (``container_impl.h``): the check is an O(1) slot-store
+probe and ``set_if_changed`` gives identical downstream tick semantics
+(flips only). The embedded design's saving — one node evaluation per
+container tick per check — mattered at Python node costs, not at C++
+node costs; porting it would add aux-output lifecycle machinery and a
+second way to derive a ``TS[bool]`` from a set (the parallel-abstraction
+smell). If profiling ever shows a hot set with many contains consumers,
+the alternative store is the natural home for an embedded variant.

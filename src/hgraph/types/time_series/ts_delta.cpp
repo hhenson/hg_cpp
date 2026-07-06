@@ -402,6 +402,7 @@ namespace hgraph
             MapBuilder modified{key_binding, delta_binding};
             for (const auto &[key, child] : dict.modified_items())
             {
+                if (!child.valid()) { continue; }   // empty-reference elements have no value
                 const Value child_delta = capture_delta(child);
                 modified.set_item_copy(key.data(), child_delta.view().data());
             }
@@ -423,6 +424,7 @@ namespace hgraph
             const auto list = in.as_list();
             for (const auto &[index, child] : list.modified_items())
             {
+                if (!child.valid()) { continue; }   // empty-reference elements have no value
                 const std::int64_t key = static_cast<std::int64_t>(index);
                 // The child's canonical delta is exactly the map's value schema, so a
                 // whole-value copy of the (owned, rebuilt) child delta is correct for
@@ -443,7 +445,10 @@ namespace hgraph
             for (std::size_t index = 0; index < bundle.size(); ++index)
             {
                 auto child = bundle.at(index);
-                if (!child.modified()) { continue; }
+                // modified-but-INVALID children are skipped: a from-REF
+                // rebind marks the position modified, but an EMPTY reference
+                // leaves it unbound - there is no value to capture.
+                if (!child.modified() || !child.valid()) { continue; }
                 Value child_delta = capture_delta(child);
                 builder.set(index, std::move(child_delta));
             }

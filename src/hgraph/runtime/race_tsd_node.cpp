@@ -42,6 +42,7 @@ namespace hgraph
         struct RaceTsdEntry
         {
             DateTime                    first_valid{MAX_DT};
+            TimeSeriesReference         last_item{};   // identity: a NEW reference re-stamps first-valid
             std::vector<TSOutputHandle> subscribed{};
             bool                        seen{false};
         };
@@ -59,11 +60,19 @@ namespace hgraph
             }
         };
 
+        /** One race per FIELD (hgraph's reduce_tsd_of_bundles_with_race);
+            a non-bundle OUT is the single-field degenerate case. */
+        struct RaceFieldState
+        {
+            ankerl::unordered_dense::map<Value, RaceTsdEntry, ValueKeyHash, ValueKeyEq> entries{};
+            Value winner{};
+        };
+
         struct RaceTsdStorage
         {
             RaceTsdNotifier notifier{};
-            ankerl::unordered_dense::map<Value, RaceTsdEntry, ValueKeyHash, ValueKeyEq> entries{};
-            Value winner{};
+            std::vector<RaceFieldState> fields{};
+            TimeSeriesReference         published{};
 
             void unsubscribe(RaceTsdEntry &entry) noexcept
             {
@@ -79,7 +88,10 @@ namespace hgraph
 
             void unsubscribe_all() noexcept
             {
-                for (auto &[key, entry] : entries) { unsubscribe(entry); }
+                for (auto &field : fields)
+                {
+                    for (auto &[key, entry] : field.entries) { unsubscribe(entry); }
+                }
             }
 
             ~RaceTsdStorage() noexcept { unsubscribe_all(); }
@@ -88,6 +100,7 @@ namespace hgraph
         struct RaceTsdContext
         {
             std::size_t storage_offset{0};
+            std::size_t field_count{1};
         };
 
         /** Subscribe the notifier to every peered target inside ``reference``. */
@@ -121,8 +134,9 @@ namespace hgraph
 
         struct RaceTsdView
         {
-            NodeView view;
-            void    *storage{nullptr};
+            NodeView    view;
+            void       *storage{nullptr};
+            const void *context{nullptr};
 
             [[nodiscard]] static const void *node_view_type_id() noexcept
             {
@@ -134,67 +148,112 @@ namespace hgraph
             {
                 const auto &typed = *static_cast<const RaceTsdContext *>(context);
                 void       *storage = MemoryUtils::advance(view.data(), typed.storage_offset);
-                return RaceTsdView{std::move(view), storage};
+                return RaceTsdView{std::move(view), storage, context};
             }
         };
 
-        bool race_tsd_evaluate(const NodeView &view, DateTime evaluation_time, RaceTsdStorage &storage)
+        /** The per-key FIELD reference: peered TSB refs project the field
+            child; non-peered refs index their items. Whole (non-bundle)
+            mode passes the reference through. */
+        [[nodiscard]] TimeSeriesReference field_item(const TimeSeriesReference &reference, std::size_t field,
+                                                     std::size_t field_count)
+        {
+            if (field_count == 1 && (reference.target_schema() == nullptr ||
+                                     reference.target_schema()->kind != TSTypeKind::TSB))
+            {
+                return reference;
+            }
+            if (reference.is_empty()) { return TimeSeriesReference{}; }
+            if (reference.is_non_peered())
+            {
+                return field < reference.items().size() ? reference[field] : TimeSeriesReference{};
+            }
+            // Peered TSB reference: the field child of the target output.
+            const TSOutputHandle &target = reference.target_output();
+            auto data   = target.data_view();
+            auto bundle = data.as_bundle();
+            if (field >= bundle.size()) { return TimeSeriesReference{}; }
+            return TimeSeriesReference{TSOutputHandle{target.output(), bundle.at(field)}};
+        }
+
+        bool race_tsd_evaluate(const NodeView &view, DateTime evaluation_time, RaceTsdStorage &storage,
+                               std::size_t field_count)
         {
             auto  root    = view.input(evaluation_time);
             auto  bundle  = root.as_bundle();
             auto  tsd_ts  = bundle[0];
             auto  tsd     = tsd_ts.as_dict();
 
-            for (auto &[key, entry] : storage.entries) { entry.seen = false; }
+            if (storage.fields.size() != field_count) { storage.fields.resize(field_count); }
 
-            // hgraph's reduce_tsd_with_race loop, over the live key set.
+            for (auto &field : storage.fields)
+            {
+                for (auto &[key, entry] : field.entries) { entry.seen = false; }
+            }
+
+            // Scan the live key set, per field (hgraph's per-field loop with
+            // reference-identity re-stamping).
             for (auto &&[key, child] : tsd.items())
             {
-                Value key_value{key};
-                auto &entry = storage.entries[key_value];
-                entry.seen  = true;
-
                 const bool has_reference = child.valid();
                 const TimeSeriesReference reference =
                     has_reference ? child.value().checked_as<TimeSeriesReference>() : TimeSeriesReference{};
-                const bool target_valid = has_reference && reference.is_valid(evaluation_time);
 
-                if (target_valid)
+                for (std::size_t f = 0; f < field_count; ++f)
                 {
-                    if (entry.first_valid == MAX_DT) { entry.first_valid = evaluation_time; }
-                    storage.unsubscribe(entry);
-                }
-                else
-                {
-                    entry.first_valid = MAX_DT;
-                    storage.unsubscribe(entry);
+                    auto &field = storage.fields[f];
+                    auto &entry = field.entries[Value{key}];
+                    entry.seen  = true;
+
+                    const TimeSeriesReference item = field_item(reference, f, field_count);
+                    const bool item_valid = !item.is_empty() && item.is_valid(evaluation_time);
+                    if (item_valid)
+                    {
+                        if (entry.first_valid == MAX_DT || !(entry.last_item == item))
+                        {
+                            entry.first_valid = evaluation_time;
+                            entry.last_item   = item;
+                        }
+                        storage.unsubscribe(entry);
+                    }
+                    else
+                    {
+                        entry.first_valid = MAX_DT;
+                        entry.last_item   = TimeSeriesReference{};
+                        storage.unsubscribe(entry);
+                    }
                 }
             }
 
-            // Keys removed from the dict drop out of the race entirely.
-            for (auto it = storage.entries.begin(); it != storage.entries.end();)
+            for (auto &field : storage.fields)
             {
-                if (!it->second.seen)
+                for (auto it = field.entries.begin(); it != field.entries.end();)
                 {
-                    storage.unsubscribe(it->second);
-                    it = storage.entries.erase(it);
+                    if (!it->second.seen)
+                    {
+                        storage.unsubscribe(it->second);
+                        it = field.entries.erase(it);
+                    }
+                    else { ++it; }
                 }
-                else { ++it; }
             }
 
-            const auto winner_it = storage.winner.has_value() ? storage.entries.find(storage.winner)
-                                                              : storage.entries.end();
-            const bool winner_ok = winner_it != storage.entries.end() && winner_it->second.first_valid != MAX_DT;
-
-            if (!winner_ok)
+            // Per-field winners: keep a still-valid winner; else the earliest
+            // first-valid key (smallest key on ties). With no winner, PENDING
+            // candidates (valid reference, invalid target) subscribe so a
+            // target becoming valid wakes the node.
+            bool any_field_unwon = false;
+            for (auto &field : storage.fields)
             {
+                const auto winner_it = field.winner.has_value() ? field.entries.find(field.winner)
+                                                                : field.entries.end();
+                const bool winner_ok = winner_it != field.entries.end() && winner_it->second.first_valid != MAX_DT;
+                if (winner_ok) { continue; }
+
                 const Value *best      = nullptr;
                 DateTime     best_time = MAX_DT;
-                for (const auto &[key, entry] : storage.entries)
+                for (const auto &[key, entry] : field.entries)
                 {
-                    // Deterministic tie-break on equal first-valid times: the
-                    // SMALLEST key (hgraph resolves ties by dict insertion
-                    // order, which the erased key map does not preserve).
                     if (entry.first_valid < best_time ||
                         (entry.first_valid == best_time && best != nullptr &&
                          key.view().compare(best->view()) == std::partial_ordering::less))
@@ -203,57 +262,81 @@ namespace hgraph
                         best      = &key;
                     }
                 }
-                if (best != nullptr)
-                {
-                    storage.winner = Value{best->view()};
-                    storage.unsubscribe_all();
-                    auto child = tsd.at(storage.winner.view());
-                    publish_reference(view, evaluation_time, child.value().checked_as<TimeSeriesReference>());
-                }
+                if (best != nullptr) { field.winner = Value{best->view()}; }
                 else
                 {
-                    // No winner: subscribe PENDING candidates (valid reference,
-                    // invalid target) so a target becoming valid wakes us.
-                    storage.winner = Value{};
-                    for (auto &&[key, child] : tsd.items())
+                    field.winner = Value{};
+                    any_field_unwon = true;
+                }
+            }
+
+            if (any_field_unwon)
+            {
+                const std::size_t f_count = storage.fields.size();
+                for (auto &&[key, child] : tsd.items())
+                {
+                    if (!child.valid()) { continue; }
+                    const TimeSeriesReference reference = child.value().checked_as<TimeSeriesReference>();
+                    for (std::size_t f = 0; f < f_count; ++f)
                     {
-                        if (!child.valid()) { continue; }
-                        const TimeSeriesReference reference = child.value().checked_as<TimeSeriesReference>();
-                        if (reference.is_empty() || reference.is_valid(evaluation_time)) { continue; }
-                        auto &entry = storage.entries[Value{key}];
-                        if (entry.subscribed.empty())
-                        {
-                            subscribe_reference_targets(storage, entry, reference);
-                        }
+                        auto &field = storage.fields[f];
+                        if (field.winner.has_value()) { continue; }
+                        const TimeSeriesReference item = field_item(reference, f, f_count);
+                        if (item.is_empty() || item.is_valid(evaluation_time)) { continue; }
+                        auto &entry = field.entries[Value{key}];
+                        if (entry.subscribed.empty()) { subscribe_reference_targets(storage, entry, item); }
                     }
                 }
             }
+
+            // Assemble + publish (same-reference dedup: an unchanged assembly
+            // must not re-tick consumers - rebinds sample every field).
+            TimeSeriesReference assembled{};
+            if (field_count == 1)
+            {
+                auto &field = storage.fields[0];
+                if (field.winner.has_value()) { assembled = field.entries[field.winner].last_item; }
+            }
             else
             {
-                // Re-publish only when the winner's REFERENCE ticked this
-                // cycle - the dict's SLOT delta state (per-element tracking
-                // on an owned TSD is root-coupled and reads modified on any
-                // sibling tick).
-                const std::size_t slot = tsd.find_slot(storage.winner.view());
-                if (slot != TS_DATA_NO_CHILD_ID && tsd.slot_modified(slot))
+                std::vector<TimeSeriesReference> items;
+                items.reserve(field_count);
+                bool any = false;
+                for (auto &field : storage.fields)
                 {
-                    auto child = tsd.at_slot(slot);
-                    publish_reference(view, evaluation_time, child.value().checked_as<TimeSeriesReference>());
+                    if (field.winner.has_value())
+                    {
+                        items.push_back(field.entries[field.winner].last_item);
+                        any = true;
+                    }
+                    else { items.push_back(TimeSeriesReference{}); }
                 }
+                if (any)
+                {
+                    const auto *out_schema = view.schema()->output_schema;
+                    assembled = TimeSeriesReference::non_peered(
+                        out_schema != nullptr ? out_schema->referenced_ts() : nullptr, std::move(items));
+                }
+            }
+
+            if (!assembled.is_empty() && !(assembled == storage.published))
+            {
+                storage.published = assembled;
+                publish_reference(view, evaluation_time, assembled);
             }
             return true;
         }
 
-        // Contexts intern by storage offset (immortal - node builders are
-        // long-lived registry artifacts).
-        const RaceTsdContext &intern_race_context(std::size_t offset)
+        // Contexts intern by (offset, field-count) - node builders are
+        // long-lived registry artifacts (immortal).
+        const RaceTsdContext &intern_race_context(std::size_t offset, std::size_t field_count)
         {
             static auto *contexts = new std::vector<RaceTsdContext *>{};
             for (const auto *context : *contexts)
             {
-                if (context->storage_offset == offset) { return *context; }
+                if (context->storage_offset == offset && context->field_count == field_count) { return *context; }
             }
-            auto *context = new RaceTsdContext{offset};
+            auto *context = new RaceTsdContext{offset, field_count};
             contexts->push_back(context);
             return *context;
         }
@@ -261,7 +344,9 @@ namespace hgraph
         bool race_tsd_evaluate_impl(const void *, const NodeView &view, DateTime evaluation_time)
         {
             auto typed = view.as<RaceTsdView>();
-            return race_tsd_evaluate(view, evaluation_time, *MemoryUtils::cast<RaceTsdStorage>(typed.storage));
+            const auto &context = *static_cast<const RaceTsdContext *>(typed.context);
+            return race_tsd_evaluate(view, evaluation_time, *MemoryUtils::cast<RaceTsdStorage>(typed.storage),
+                                     context.field_count);
         }
 
         void race_tsd_start(const NodeView &view, DateTime)
@@ -308,8 +393,11 @@ namespace hgraph
         }};
         descriptor.storage_plan = &node_storage_plan_for(descriptor.schema, fields);
 
-        const auto &context =
-            intern_race_context(descriptor.storage_plan->component(race_tsd_storage_field_name).offset);
+        const auto *out_target = tsd_schema.element_ts()->referenced_ts();
+        const std::size_t field_count =
+            out_target != nullptr && out_target->kind == TSTypeKind::TSB ? out_target->field_count() : 1;
+        const auto &context = intern_race_context(
+            descriptor.storage_plan->component(race_tsd_storage_field_name).offset, field_count);
 
         descriptor.callbacks.start          = &race_tsd_start;
         descriptor.callbacks.stop           = &race_tsd_stop;
