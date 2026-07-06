@@ -13,7 +13,7 @@ namespace hgraph
         const auto minutes       = (total_seconds / 60) % 60;
         const auto seconds       = total_seconds % 60;
 
-        char buffer[16];
+        char buffer[24];
         std::snprintf(buffer, sizeof buffer, "%02lld:%02lld:%02lld",
                       static_cast<long long>(hours), static_cast<long long>(minutes),
                       static_cast<long long>(seconds));
