@@ -627,11 +627,25 @@ namespace hgraph
         return nullptr;
     }
 
+    namespace
+    {
+        void collect_size_vars(const TypePattern &pattern, std::vector<std::string> &names)
+        {
+            if (pattern.size_var && !pattern.size_name.empty() &&
+                std::find(names.begin(), names.end(), pattern.size_name) == names.end())
+            {
+                names.push_back(pattern.size_name);
+            }
+            for (const TypePattern &child : pattern.children) { collect_size_vars(child, names); }
+        }
+    }  // namespace
+
     ResolvedOperatorCall OperatorRegistry::resolve(
         std::string_view name,
         std::span<const WiringArg> args,
         std::optional<bool> output_required,
-        const TSValueTypeMetaData *expected_output) const
+        const TSValueTypeMetaData *expected_output,
+        std::span<const std::size_t> size_hints) const
     {
         auto it = overloads_.find(std::string{name});
         if (it == overloads_.end() || it->second.empty())
@@ -660,6 +674,21 @@ namespace hgraph
             }
 
             ResolutionMap map;
+            // Caller-pinned SIZE variables (op[SIZE: Size[4]]): bind the
+            // impl's size vars positionally from the hints.
+            if (!size_hints.empty())
+            {
+                std::vector<std::string> size_names;
+                for (const ParamPattern &param : impl.params)
+                {
+                    if (param.kind == ParamPattern::Kind::Input) { collect_size_vars(param.ts, size_names); }
+                }
+                if (impl.has_output) { collect_size_vars(impl.output, size_names); }
+                for (std::size_t index = 0; index < size_names.size() && index < size_hints.size(); ++index)
+                {
+                    map.bind_size(size_names[index], size_hints[index]);
+                }
+            }
             // Each default an overload falls back on makes it a little less
             // specific than one whose parameters were all supplied.
             int rank_adjustment = call.defaults_used;

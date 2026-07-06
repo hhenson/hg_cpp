@@ -41,10 +41,14 @@ def wire(name, *args, __output_type__=None, **kwargs):
     if out_type is not None:
         out_type = out_type.handle if isinstance(out_type, _TsExpr) else out_type
     w = _current_wiring()
+    sizes = kwargs.pop("__sizes__", None)
     unwrapped = tuple(_unwrap(a) for a in args)
     unwrapped_kw = {k: _unwrap(v) for k, v in kwargs.items()}
     try:
-        result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type)
+        if sizes is not None:
+            result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type, sizes=sizes)
+        else:
+            result = w.wire(name, unwrapped, unwrapped_kw, output_type=out_type)
     except RuntimeError as error:
         raise WiringError(str(error)) from error
     return WiringPort(result) if result is not None else None
@@ -55,16 +59,19 @@ class _OperatorFunction:
     hgraph's SUBSCRIPT form ``op[TYPE](...)`` - the type becomes the
     requested output type of the call."""
 
-    __slots__ = ("__name__", "__qualname__", "_output_type")
+    __slots__ = ("__name__", "__qualname__", "_output_type", "_sizes")
 
-    def __init__(self, name, output_type=None):
+    def __init__(self, name, output_type=None, sizes=None):
         self.__name__ = name
         self.__qualname__ = name
         self._output_type = output_type
+        self._sizes = sizes
 
     def __call__(self, *args, **kwargs):
         if self._output_type is not None and "tp" not in kwargs and "output_type" not in kwargs:
             kwargs["output_type"] = self._output_type
+        if self._sizes is not None:
+            kwargs.setdefault("__sizes__", self._sizes)
         args, kwargs = self._normalise_type_arguments(args, kwargs)
         return wire(self.__name__, *args, **kwargs)
 
@@ -76,14 +83,17 @@ class _OperatorFunction:
         from ._types import OUT
 
         output_type = None
+        sizes = []
         for i in (item if isinstance(item, tuple) else (item,)):
             if isinstance(i, slice):
                 if i.start is OUT and output_type is None:
                     output_type = i.stop
+                elif isinstance(i.stop, int):
+                    sizes.append(i.stop)   # op[SIZE: Size[4]] pins size vars
                 continue
             if output_type is None:
                 output_type = i
-        return _OperatorFunction(self.__name__, output_type=output_type)
+        return _OperatorFunction(self.__name__, output_type=output_type, sizes=sizes or None)
 
     def _normalise_type_arguments(self, args, kwargs):
         if "tp" in kwargs or "output_type" in kwargs:
@@ -303,8 +313,11 @@ def feedback(tp, initial=None):
 def combine(*args, __output_type__=None, **kwargs):
     """hgraph's combine: build a composite port. ``combine[TSB[S]](a=..., b=...)``
     (the subscript names the target type) builds a structural bundle;
-    plain values const-lift at the field types."""
+    plain values const-lift at the field types. The UNSUBSCRIPTED binary
+    form merges two CompoundScalar time-series (delta over orig)."""
     if __output_type__ is None:
+        if len(args) == 2 and not kwargs and all(isinstance(a, WiringPort) for a in args):
+            return _combine_compound_scalars(*args)
         raise TypeError("combine requires a subscripted type: combine[TSB[Schema]](...)")
     return __output_type__.from_ts(*args, **kwargs)
 
@@ -406,9 +419,10 @@ class _PyNode:
     compute node's return value ticks its output (None = no tick). It must
     have no side effects beyond its output."""
 
-    def __init__(self, fn, has_output):
+    def __init__(self, fn, has_output, valid=None):
         self.fn = fn
         self.has_output = has_output
+        self._valid = valid
         self.__name__ = fn.__name__
         sig = inspect.signature(fn)
         self._out_tp = sig.return_annotation if has_output else None
@@ -453,7 +467,8 @@ class _PyNode:
                 continue
             value = next(supplied)
             if isinstance(value, WiringPort):
-                layout.append("t")
+                required = self._valid is None or param.name in self._valid
+                layout.append("t" if required else "u")
                 ports.append(_unwrap(value))
                 keep_ref.append(getattr(param.annotation, "is_ref", False))
             else:
@@ -468,8 +483,13 @@ class _PyNode:
         return wire("__py_sink", packed, **kwargs)
 
 
-def compute_node(fn):
-    return _PyNode(fn, has_output=True)
+def compute_node(fn=None, *, valid=None, **_ignored):
+    """@compute_node[(valid=("orig",))] - hgraph parity: ``valid`` names the
+    inputs REQUIRED to be valid; unlisted time-series inputs are UNCHECKED
+    (the fn guards itself)."""
+    if fn is None:
+        return lambda f: _PyNode(f, has_output=True, valid=valid)
+    return _PyNode(fn, has_output=True, valid=valid)
 
 
 def sink_node(fn):
@@ -1121,6 +1141,13 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
                 for name, _ in _hgraph.ts_field_types(raw.ts_type)
             }
             record_port = _hgraph.tsb_port(record_port.ts_type, fields)
+        elif (raw.ts_type.kind == _TSL_KIND and raw.ts_type.fixed_size > 0
+              and _hgraph.tsl_element(raw, 0).ts_type.kind == 6):
+            # A TSL of REF elements: record a structural TSL of per-element
+            # projections, each dereferenced.
+            record_port = _hgraph.tsl_port(
+                [_hgraph.tsl_element(raw, i).dereferenced for i in range(raw.ts_type.fixed_size)]
+            )
         w.wire("__harness_record", (record_port, "eval_node::out"), {})
         run = w.run(start_time=__start_time__, end_time=__end_time__)
     finally:
@@ -1130,3 +1157,35 @@ def eval_node(fn, *inputs, output_type=None, resolution_dict=None,
     if not any(v is not None for v in recorded):
         return None   # hgraph parity: a never-ticking output reports None
     return recorded
+
+
+def _merge_cs(orig, delta):
+    """Recursive right-over-left CompoundScalar merge (hgraph's
+    combine_compound_scalars): delta's None fields keep the original."""
+    import dataclasses
+
+    if delta is None:
+        return orig
+    merged = {}
+    for field in dataclasses.fields(orig):
+        original = getattr(orig, field.name)
+        update = getattr(delta, field.name, None)
+        if update is None:
+            merged[field.name] = original
+        elif dataclasses.is_dataclass(update) and dataclasses.is_dataclass(original):
+            merged[field.name] = _merge_cs(original, update)
+        else:
+            merged[field.name] = update
+    return type(orig)(**merged)
+
+
+def _combine_compound_scalars(orig, delta):
+    from ._types import TS
+
+    @compute_node(valid=("orig",))
+    def _combine_cs(orig: TS[object], delta: TS[object]) -> TS[object]:
+        if not delta.valid:
+            return orig.value
+        return _merge_cs(orig.value, delta.value)
+
+    return _combine_cs(orig, delta)

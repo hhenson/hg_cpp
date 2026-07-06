@@ -808,13 +808,16 @@ namespace
         }
 
         [[nodiscard]] nb::object wire(const std::string &name, nb::tuple args, nb::dict kwargs,
-                                      std::optional<PyTsType> output_type)
+                                      std::optional<PyTsType> output_type,
+                                      std::optional<std::vector<std::size_t>> sizes = std::nullopt)
         {
             ensure_open();
             const auto wiring_args = build_args(args, kwargs);
+            const std::vector<std::size_t> size_hints = sizes.value_or(std::vector<std::size_t>{});
             ResolvedOperatorCall resolved = OperatorRegistry::instance().resolve(
                 name, std::span<const WiringArg>{wiring_args.data(), wiring_args.size()}, std::nullopt,
-                output_type.has_value() ? output_type->meta : nullptr);
+                output_type.has_value() ? output_type->meta : nullptr,
+                std::span<const std::size_t>{size_hints.data(), size_hints.size()});
             OperatorWireResult result =
                 resolved.impl->wire(wiring_ref(), resolved.map, resolved.args, resolved.kwargs);
             if (!result.has_output) { return nb::none(); }
@@ -1281,9 +1284,12 @@ namespace
             switch (kind)
             {
                 case 't':
+                case 'u':
                 case 'C': {
                     auto child = bundle[ts_index++];
-                    if (!child.valid()) { return false; }
+                    // 'u' = UNCHECKED (hgraph's valid=(...) opt-out): the
+                    // python fn sees the view and guards itself.
+                    if (kind != 'u' && !child.valid()) { return false; }
                     // The LAZY C++ TimeSeries view: nothing converts unless
                     // the python code touches it. Guard-invalidated after
                     // the call (a view must not outlive its evaluation).
@@ -2171,7 +2177,8 @@ NB_MODULE(_hgraph, m)
     nb::class_<PyWiring>(m, "Wiring")
         .def(nb::init<>())
         .def("wire", &PyWiring::wire, nb::arg("name"), nb::arg("args") = nb::tuple(),
-             nb::arg("kwargs") = nb::dict(), nb::arg("output_type") = nb::none())
+             nb::arg("kwargs") = nb::dict(), nb::arg("output_type") = nb::none(),
+             nb::arg("sizes") = nb::none())
         .def("set_replay", &PyWiring::set_replay, nb::arg("key"), nb::arg("values"),
              nb::arg("ts_type") = nb::none())
         .def("feedback", &PyWiring::feedback, nb::arg("ts_type"), nb::arg("initial") = nb::none())

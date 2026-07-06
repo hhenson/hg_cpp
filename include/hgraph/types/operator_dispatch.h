@@ -296,7 +296,8 @@ namespace hgraph
             std::string_view name,
             std::span<const WiringArg> args,
             std::optional<bool> output_required = std::nullopt,
-            const TSValueTypeMetaData *expected_output = nullptr) const;
+            const TSValueTypeMetaData *expected_output = nullptr,
+            std::span<const std::size_t> size_hints = {}) const;
 
         /**
          * Resolve and EAGERLY evaluate a const-evaluable overload (the
