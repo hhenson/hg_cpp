@@ -246,6 +246,11 @@ namespace hgraph
          * Stored in the per-plan byte block referenced by
          * ``StoragePlan::lifecycle_context``. The component array immediately
          * follows the ``CompositeState`` header in memory.
+         * 
+         * Note, this code could be significalntly simplified by using a flexible array member for the component array, 
+         * but that is not standard C++ as of 26 and would require compiler-specific GCC/Clang extensions and is not supported by MSVC. 
+         * Alternative is zero-size array member, but that is also not standard C++ even though supported by all compilers. Having -pendantic
+         * will cause warnings.
          */
         struct CompositeState
         {
@@ -254,14 +259,10 @@ namespace hgraph
 
             /** Byte offset from the start of the state block to the first component descriptor. */
             [[nodiscard]] static constexpr size_t components_offset() noexcept {
-                constexpr size_t alignment = alignof(CompositeComponent);
-                const size_t     offset    = sizeof(CompositeState);
-                if constexpr (alignment <= 1) {
-                    return offset;
-                } else {
-                    const size_t mask = alignment - 1;
-                    return (offset + mask) & ~mask;
-                }
+                static_assert(std::is_standard_layout_v<CompositeState>);
+                static_assert(std::is_standard_layout_v<CompositeComponent>);
+                struct Layout { CompositeState state; CompositeComponent first; };
+                return offsetof(Layout, first);
             }
 
             /** Total state-block size needed to hold ``component_count`` components. */
